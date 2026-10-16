@@ -1,4 +1,4 @@
-import type { UserPromptOrigin } from '#/agent/contextMemory/types';
+import type { PromptOrigin, UserPromptOrigin } from '#/agent/contextMemory/types';
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { type IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
@@ -239,7 +239,13 @@ export class AgentConversationUndoService
 
   private async reconcileLastPrompt(): Promise<void> {
     if (this.agentCtx.agentId !== MAIN_AGENT_ID) return;
-    const pending = this.loop.snapshot().queue.filter((item) => item.meta?.tracked === true).at(-1);
+    const pending = this.loop.snapshot().queue
+      .filter(
+        (item) =>
+          item.meta?.tracked === true &&
+          (item.meta?.origin as PromptOrigin | undefined)?.kind !== 'system_trigger',
+      )
+      .at(-1);
     let lastPrompt = pending === undefined
       ? undefined
       : promptMetadataTextFromContentParts(pending.message.content.filter((part) => !isUserPromptSubmitHookPart(part)), (pending.meta?.origin as UserPromptOrigin | undefined)?.clientMetadata);

@@ -41,7 +41,6 @@ import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
   promptAbortResponseSchema,
-  promptListResponseSchema,
   promptSteerRequestSchema,
   promptSteerResultSchema,
   promptSubmissionSchema,
@@ -66,14 +65,6 @@ import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
 
 interface PromptRouteHost {
-  get(
-    path: string,
-    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
-    handler: (
-      req: { id: string; params: unknown },
-      reply: { send(payload: unknown): unknown },
-    ) => Promise<void> | void,
-  ): unknown;
   post(
     path: string,
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
@@ -164,29 +155,6 @@ async function applyProfileSelection(
 }
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
-  const listRoute = defineRoute(
-    {
-      method: 'GET',
-      path: '/sessions/{session_id}/prompts',
-      params: sessionIdParamSchema,
-      success: { data: promptListResponseSchema },
-      errors: { [ErrorCode.SESSION_NOT_FOUND]: {} },
-      description: 'List the active prompt and queued prompts for a session',
-      tags: ['prompts'],
-      operationId: 'listPrompts',
-    },
-    async (req, reply) => {
-      try {
-        const { session_id } = req.params;
-        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt);
-        reply.send(okEnvelope(result, req.id));
-      } catch (error) {
-        sendMappedError(reply, req, error);
-      }
-    },
-  );
-  app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<PromptRouteHost['get']>[2]);
-
   const submitRoute = defineRoute(
     {
       method: 'POST',
@@ -463,28 +431,6 @@ async function steerPromptAction(ctx: PromptActionCtx): Promise<void> {
   const { resolved, req, reply, id } = ctx;
   await resolved.prompt.steer([id]);
   reply.send(okEnvelope({ steered: true, prompt_ids: [id] }, req.id));
-}
-
-function projectPromptList(loop: IAgentLoopService) {
-  const snapshot = loop.snapshot();
-  const active =
-    snapshot.activePromptId === undefined
-      ? undefined
-      : loop.promptHandle(snapshot.activePromptId);
-  return {
-    active: active === undefined ? null : projectPromptSnapshot(active),
-    queued: snapshot.queue
-      .filter((item) => item.meta?.tracked === true)
-      .map((item) =>
-        projectPromptSnapshot({
-          id: item.meta?.promptId ?? '',
-          userMessageId: item.meta?.userMessageId ?? '',
-          createdAt: item.meta?.createdAt ?? '',
-          state: 'pending',
-          message: { ...item.message, toolCalls: [], origin: item.meta?.origin as PromptOrigin | undefined },
-        }),
-      ),
-  };
 }
 
 function projectPromptHandle(handle: PromptHandle) {

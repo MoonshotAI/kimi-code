@@ -157,6 +157,7 @@ function stubHookRunner(partial: unknown): IExternalHooksRunnerService {
     ready: Promise.resolve(),
     onDidReload: Event.None,
     hasHooksFor: () => false,
+    loaded: true,
     ...p,
   } as IExternalHooksRunnerService;
 }
@@ -1213,7 +1214,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
       ix.get(IAgentExternalHooksService);
       const eventBus = ix.get(IEventBus);
-      await flushMicrotasks();
+      await new Promise((resolve) => setTimeout(resolve, 0));
 
       eventBus.publish(
         new TurnStarted({
@@ -1237,6 +1238,15 @@ describe('IExternalHooksRunnerService integration', () => {
           promptId: 'p1',
           content: queuedContent,
           queueLength: 2,
+        }),
+      );
+      eventBus.publish(
+        new PromptQueued({
+          agentId: 'main',
+          promptId: 'p2',
+          content: [{ type: 'text' as const, text: 'continue the goal' }],
+          queueLength: 3,
+          origin: { kind: 'system_trigger', name: 'goal_continuation' },
         }),
       );
       eventBus.publish(
@@ -1287,6 +1297,19 @@ describe('IExternalHooksRunnerService integration', () => {
             promptId: 'p1',
             prompt: queuedContent,
             queueLength: 2,
+            origin: undefined,
+          },
+        },
+        {
+          event: 'UserPromptQueued',
+          matcherValue: [{ type: 'text', text: 'continue the goal' }],
+          cwd: '/tmp',
+          inputData: {
+            sessionTitle: 'My Session',
+            promptId: 'p2',
+            prompt: [{ type: 'text', text: 'continue the goal' }],
+            queueLength: 3,
+            origin: { kind: 'system_trigger', name: 'goal_continuation' },
           },
         },
         {

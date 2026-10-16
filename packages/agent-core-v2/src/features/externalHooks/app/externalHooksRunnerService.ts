@@ -19,10 +19,15 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
   declare readonly _serviceBrand: undefined;
 
   private byEvent = new Map<string, HookDef[]>();
+  private loadComplete = false;
   readonly ready: Promise<void>;
 
   private readonly _onDidReload = this._register(new Emitter<void>());
   readonly onDidReload: Event<void> = this._onDidReload.event;
+
+  get loaded(): boolean {
+    return this.loadComplete;
+  }
 
   constructor(
     @IConfigService private readonly config: IConfigService,
@@ -115,6 +120,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     try {
       await this.load();
     } catch {}
+    this.loadComplete = true;
   }
 
   private async reloadSafe(): Promise<void> {

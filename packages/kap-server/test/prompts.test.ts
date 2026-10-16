@@ -23,6 +23,7 @@ import {
   MAX_IMAGE_DECODE_BYTES,
   closeSessionById,
   getLiveSessionById,
+  resumeSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -284,29 +285,6 @@ describe('server-v2 /api/v1 prompts', () => {
     if (agent === undefined) throw new Error(`main agent of session ${sessionId} not found`);
     await agent.accessor.get(IAgentProfileService).setModel(model);
   }
-
-  it('submits a prompt and lists it as active', async () => {
-    const id = await createSession(home as string);
-    await createMainAgent(id);
-
-    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
-      content: [{ type: 'text', text: 'hello' }],
-    });
-    expect(submitted.body.code).toBe(0);
-    expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
-    expect(submitted.body.data.status).toBe('running');
-    expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
-
-    const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
-      'GET',
-      `/api/v1/sessions/${id}/prompts`,
-    );
-    expect(list.body.code).toBe(0);
-    if (list.body.data.active !== null) {
-      expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
-    }
-    expect(Array.isArray(list.body.data.queued)).toBe(true);
-  });
 
   it('accepts a prompt-carried model when default_model is not configured', async () => {
     await writeConfigToml(home as string, PROMPT_TOML_NO_DEFAULT);
@@ -593,8 +571,8 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
     expect(submitted.body.data.metadata).toEqual(metadata);
     await closeSessionById(server!.core.accessor, id);
-    const resumed = await call('GET', `/api/v1/sessions/${id}/prompts`);
-    expect(resumed.body.code).toBe(0);
+    expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
+    await resumeSessionById(server!.core.accessor, id);
     const session = getLiveSessionById(server!.core.accessor, id);
     const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
     const history = agent!.accessor.get(IAgentContextMemoryService).get();
@@ -756,6 +734,8 @@ describe('server-v2 /api/v1 prompts', () => {
     handlers[2]!({ type: 'prompt.steered', promptIds: ['msg_3'], activePromptId: 'msg_parent' });
     expect(steered).not.toHaveBeenCalled();
     handlers[2]!({ type: 'prompt.completed', promptId: 'msg_other' });
+    expect(steered).not.toHaveBeenCalled();
+    handlers[2]!({ type: 'prompt.completed', promptId: 'msg_3' });
     expect(steered).not.toHaveBeenCalled();
     handlers[2]!({ type: 'prompt.completed', promptId: 'msg_parent' });
     expect(steered).toHaveBeenCalledTimes(1);
@@ -1742,20 +1722,6 @@ describe('server-v2 /api/v1 prompts', () => {
       content: [{ type: 'text', text: 'hello' }],
     });
     expect(body.code).toBe(40401);
-  });
-
-  it('lists prompts for a persisted session with no live handle (cold resume)', async () => {
-    const id = await createSession(home as string);
-    await closeSessionById(server!.core.accessor, id);
-    expect(getLiveSessionById(server!.core.accessor, id)).toBeUndefined();
-
-    const list = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
-      'GET',
-      `/api/v1/sessions/${id}/prompts`,
-    );
-    expect(list.body.code).toBe(0);
-    expect(list.body.data.active).toBeNull();
-    expect(list.body.data.queued).toEqual([]);
   });
 
   it('routes a submitted prompt to the agent named by agent_id (BTW side channel)', async () => {

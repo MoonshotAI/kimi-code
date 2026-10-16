@@ -1063,23 +1063,10 @@ A prompt is one unit of user input: submitting one enqueues it on the session's 
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/prompts` | Active and queued prompts |
 | `POST /api/v1/sessions/{session_id}/prompts` | Submit a prompt (content-part array, optional model / permission-mode overrides) |
 | `POST /api/v1/sessions/{session_id}/prompts:steer` | Steer queued prompts into the active turn |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:abort` | Abort a running prompt |
 | `POST /api/v1/sessions/{session_id}/prompts/{prompt_id}:steer` | Steer one queued prompt |
-
-#### `GET /api/v1/sessions/{session_id}/prompts`
-
-Reads the main agent's prompt queue snapshot.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ active, queued }`: `active` is the running prompt (`null` when idle) and `queued` lists the pending prompts in order. A prompt is `{ prompt_id, user_message_id, status, content, created_at }` with `status` one of `running` / `queued` / `blocked` and `content` in the content-part format accepted by `POST /api/v1/sessions/{session_id}/prompts`.
-
-- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 

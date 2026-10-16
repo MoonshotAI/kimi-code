@@ -1489,18 +1489,21 @@ export class AgentTranscriptProjector {
 
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
-    const active = this.upsertPrompt(event.activePromptId, (prev) => ({
-      promptId: event.activePromptId,
-      status: prev?.status ?? 'running',
-      userMessageId: prev?.userMessageId,
-      content: prev?.content ?? projectPromptContentParts(event.content),
-      clientMetadata: prev?.clientMetadata,
-      createdAt: prev?.createdAt ?? event.steeredAt,
-      finishedAt: prev?.finishedAt,
-      steeredAt: event.steeredAt,
-    }));
-    ops.push({ op: 'prompt.upsert', prompt: active });
+    if ((this.lookups?.prompt?.(event.activePromptId) ?? this.prompts.get(event.activePromptId)) !== undefined) {
+      const active = this.upsertPrompt(event.activePromptId, (prev) => ({
+        promptId: event.activePromptId,
+        status: prev?.status ?? 'running',
+        userMessageId: prev?.userMessageId,
+        content: prev?.content ?? projectPromptContentParts(event.content),
+        clientMetadata: prev?.clientMetadata,
+        createdAt: prev?.createdAt ?? event.steeredAt,
+        finishedAt: prev?.finishedAt,
+        steeredAt: event.steeredAt,
+      }));
+      ops.push({ op: 'prompt.upsert', prompt: active });
+    }
     for (const promptId of event.promptIds) {
+      if ((this.lookups?.prompt?.(promptId) ?? this.prompts.get(promptId)) === undefined) continue;
       const steered = this.upsertPrompt(promptId, (prev) => ({
         promptId,
         status: 'completed',

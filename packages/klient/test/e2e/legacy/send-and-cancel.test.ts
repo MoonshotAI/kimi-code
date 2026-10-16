@@ -140,13 +140,6 @@ describeLive('send prompt + cancel prompt (live server required)', () => {
       log('queued prompt submitted', queued);
       expect(queued.status).toBe('queued');
 
-      const listedBefore = await client.listPrompts(session.id);
-      log('prompt list before abort', listedBefore);
-      expect(listedBefore.active?.prompt_id).toBe(active.prompt_id);
-      expect(listedBefore.queued.map((prompt) => prompt.prompt_id)).toEqual([
-        queued.prompt_id,
-      ]);
-
       const abortedFramePromise = client.waitForFrame(
         (f) =>
           f.type === 'prompt.aborted' &&
@@ -161,10 +154,6 @@ describeLive('send prompt + cancel prompt (live server required)', () => {
       const abortedFrame = await abortedFramePromise;
       log('prompt.aborted frame', frameForLog(abortedFrame));
       expect(abortedFrame.type).toBe('prompt.aborted');
-
-      const listedAfter = await client.listPrompts(session.id);
-      log('prompt list after abort', listedAfter);
-      expect(listedAfter.queued).toHaveLength(0);
     },
     PROMPT_TIMEOUT_MS + SHORT_TIMEOUT_MS,
   );
@@ -192,10 +181,6 @@ describeLive('send prompt + cancel prompt (live server required)', () => {
       cleanup.promptIds.push(active.prompt_id);
       log('debug active prompt injected', active);
 
-      const listedBefore = await client.listPrompts(session.id);
-      log('prompt list before session abort', listedBefore);
-      expect(listedBefore.active?.prompt_id).toBe(active.prompt_id);
-
       const abortedFramePromise = client.waitForFrame(
         (f) =>
           f.type === 'prompt.aborted' &&
@@ -210,10 +195,6 @@ describeLive('send prompt + cancel prompt (live server required)', () => {
       const abortedFrame = await abortedFramePromise;
       log('prompt.aborted frame', frameForLog(abortedFrame));
       expect(abortedFrame.type).toBe('prompt.aborted');
-
-      const listedAfter = await client.listPrompts(session.id);
-      log('prompt list after session abort', listedAfter);
-      expect(listedAfter.active).toBeNull();
     },
     PROMPT_TIMEOUT_MS + SHORT_TIMEOUT_MS,
   );
@@ -309,10 +290,6 @@ describeLive('send prompt + cancel prompt (live server required)', () => {
       expect(secondError).toBeInstanceOf(EnvelopeError);
       expect((secondError as EnvelopeError).code).toBe(40903);
       expect((secondError as EnvelopeError).data).toEqual({ aborted: false });
-
-      const listed = await client.listPrompts(session.id);
-      log('prompt list after repeated ESC', listed);
-      expect(listed.active).toBeNull();
     },
     PROMPT_TIMEOUT_MS + SHORT_TIMEOUT_MS,
   );
@@ -366,10 +343,6 @@ describeLive('send prompt + cancel prompt (live server required)', () => {
       } finally {
         unsubscribe();
       }
-
-      const listed = await client.listPrompts(session.id);
-      log('prompt list after repeated session-level abort', listed);
-      expect(listed.active).toBeNull();
     },
     PROMPT_TIMEOUT_MS + SHORT_TIMEOUT_MS,
   );

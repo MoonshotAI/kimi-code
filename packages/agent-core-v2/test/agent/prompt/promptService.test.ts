@@ -881,7 +881,7 @@ describe('prompt queue', () => {
     expect(merged?.origin?.kind === 'user' && merged.origin.skillActivations).toBeUndefined();
   });
 
-  it('steers a fresh submission into the active turn and settles it with the parent', async () => {
+  it('steers a fresh submission into an untracked active turn and settles it with the parent', async () => {
     setup();
     const hold = holdNextStep();
     ctx.mockNextResponse({ type: 'text', text: 'active' });
@@ -889,7 +889,12 @@ describe('prompt queue', () => {
     const steered: PromptSteered[] = [];
     ctx.get(IEventBus).subscribe(PromptSteered, (event) => steered.push(event));
 
-    const active = await enqueue(loop, { message: message('active') });
+    const { id: activeId } = loop.submit({
+      message: { role: 'user', content: message('active').content },
+      meta: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
+    });
+    const activeHandle = loop.promptHandle(activeId)!;
+    await activeHandle.launched;
     await hold.started;
     const { id } = loop.submit(
       {
@@ -900,14 +905,81 @@ describe('prompt queue', () => {
     );
     const handle = loop.promptHandle(id)!;
 
+    expect(loop.snapshot().activePromptId).toBeUndefined();
     expect(steered.map((event) => [event.activePromptId, event.promptIds])).toEqual([
-      [active.id, [id]],
+      [activeId, [id]],
     ]);
     expect(handle.state).toBe('steered');
     await expect(handle.launched).resolves.toBeDefined();
 
     hold.release();
     await expect(handle.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
+
+    const gateCalls: boolean[] = [];
+    loop.hooks.onBeforeSubmitPrompt.register('test-steer-gate', async (hookCtx, next) => {
+      gateCalls.push(hookCtx.isSteer);
+      hookCtx.hookParts.push({ type: 'text', text: 'gate-injected' });
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'active2' });
+    ctx.mockNextResponse({ type: 'text', text: 'merged2' });
+    const hold2 = holdNextStep();
+    const { id: activeId2 } = loop.submit({
+      message: { role: 'user', content: message('active2').content },
+      meta: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin, tracked: true },
+    });
+    await loop.promptHandle(activeId2)!.launched;
+    await hold2.started;
+    const { id: gatedId } = loop.submit(
+      {
+        message: { role: 'user', content: message('gated steer').content },
+        meta: { tracked: true },
+      },
+      { steerIfActive: true },
+    );
+    const gatedHandle = loop.promptHandle(gatedId)!;
+    await expect(gatedHandle.launched).resolves.toBeDefined();
+    expect(gateCalls).toEqual([false, true]);
+    expect(steered.at(-1)?.promptIds).toEqual([gatedId]);
+    hold2.release();
+    await expect(gatedHandle.completion).resolves.toMatchObject({ state: 'completed' });
+    await loop.settled();
+    expect(JSON.stringify(ctx.llmCalls.at(-1)?.history)).toContain('gate-injected');
+    expect(JSON.stringify(ctx.llmCalls.at(-1)?.history)).toContain('gated steer');
+
+    loop.hooks.onBeforeSubmitPrompt.register('test-steer-gate', async (hookCtx, next) => {
+      hookCtx.block = true;
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'active3' });
+    const hold3 = holdNextStep();
+    const { id: activeId3 } = loop.submit({
+      message: { role: 'user', content: message('active3').content },
+      meta: { origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin },
+    });
+    await loop.promptHandle(activeId3)!.launched;
+    await hold3.started;
+    const completed: PromptCompleted[] = [];
+    ctx.get(IEventBus).subscribe(PromptCompleted, (event) => completed.push(event));
+    const { id: blockedId } = loop.submit(
+      {
+        message: { role: 'user', content: message('blocked steer').content },
+        meta: { tracked: true },
+      },
+      { steerIfActive: true },
+    );
+    const blockedHandle = loop.promptHandle(blockedId)!;
+    await expect(blockedHandle.launched).resolves.toBeUndefined();
+    await expect(blockedHandle.completion).resolves.toMatchObject({ state: 'blocked' });
+    expect(completed.map((event) => [event.promptId, event.reason])).toEqual([[blockedId, 'blocked']]);
+    expect(steered).toHaveLength(2);
+    expect(
+      ctx.context.get().some((entry) =>
+        entry.content.some((part) => part.type === 'text' && part.text === 'blocked steer'),
+      ),
+    ).toBe(true);
+    hold3.release();
     await loop.settled();
   });
 

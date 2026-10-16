@@ -122,13 +122,6 @@ describeLive('prompt queue + steer (live server required)', () => {
       cleanup.promptIds.push(queued.prompt_id);
       expect(queued.status).toBe('queued');
 
-      const listedBefore = await client.listPrompts(session.id);
-      log('prompt list before steer', listedBefore);
-      expect(listedBefore.active?.prompt_id).toBe(active.prompt_id);
-      expect(listedBefore.queued.map((prompt) => prompt.prompt_id)).toEqual([
-        queued.prompt_id,
-      ]);
-
       const steerFramePromise = client.waitForFrame(isPromptSteeredFor(session.id, queued.prompt_id), {
         timeoutMs: SHORT_TIMEOUT_MS,
       });
@@ -144,10 +137,6 @@ describeLive('prompt queue + steer (live server required)', () => {
       });
       expect(steered.activePromptId).toBe(active.prompt_id);
       expect(steered.promptIds).toEqual([queued.prompt_id]);
-
-      const listedAfter = await client.listPrompts(session.id);
-      log('prompt list after steer', listedAfter);
-      expect(listedAfter.queued).toHaveLength(0);
     },
     SHORT_TIMEOUT_MS + 30_000,
   );

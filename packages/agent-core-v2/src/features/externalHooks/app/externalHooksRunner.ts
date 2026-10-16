@@ -21,6 +21,7 @@ export interface IExternalHooksRunnerService {
   ): Promise<HookBlockDecision | undefined>;
   fireAndForgetTrigger(event: string, args?: ExternalHooksRunnerTriggerArgs): Promise<HookResult[]>;
   hasHooksFor(event: string): boolean;
+  readonly loaded: boolean;
 }
 
 export const IExternalHooksRunnerService: ServiceIdentifier<IExternalHooksRunnerService> =

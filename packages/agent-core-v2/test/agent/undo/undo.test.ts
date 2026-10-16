@@ -667,6 +667,19 @@ describe('AgentConversationUndoService', () => {
             userMessageId: 'queued',
           },
         },
+        {
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'Continue working toward the active goal.' }],
+          },
+          meta: {
+            promptId: 'continuation',
+            origin: { kind: 'system_trigger', name: 'goal_continuation' } as PromptOrigin,
+            tracked: true,
+            createdAt: new Date(1).toISOString(),
+            userMessageId: 'continuation',
+          },
+        },
       ],
       notificationCount: 0,
       paused: false,

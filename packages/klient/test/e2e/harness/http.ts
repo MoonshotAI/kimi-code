@@ -28,7 +28,6 @@ import type {
 } from '@moonshot-ai/kap-server/protocol/rest-modelCatalog';
 import type {
   PromptAbortResponse,
-  PromptListResponse,
   PromptSubmission,
   PromptSteerResult,
   PromptSubmitResult,
@@ -380,9 +379,6 @@ export class HttpClient {
   }
 
   // ── Prompts ─────────────────────────────────────────────────────────────
-  listPrompts(sid: string): Promise<PromptListResponse> {
-    return this.request('GET', `/sessions/${encodeURIComponent(sid)}/prompts`, undefined);
-  }
   submitPrompt(sid: string, body: PromptSubmission): Promise<PromptSubmitResult> {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}/prompts`, body);
   }
