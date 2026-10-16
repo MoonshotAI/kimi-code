@@ -22,6 +22,8 @@ export const Methods = {
   GetExtensionConfig: "getExtensionConfig",
   OpenSettings: "openSettings",
   OpenFolder: "openFolder",
+  OpenInDesktop: "openInDesktop",
+  InstallDesktop: "installDesktop",
   GetModels: "getModels",
 
   GetMCPServers: "getMCPServers",
@@ -137,6 +139,8 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.GetExtensionConfig:
     case Methods.OpenSettings:
     case Methods.OpenFolder:
+    case Methods.OpenInDesktop:
+    case Methods.InstallDesktop:
     case Methods.GetModels:
     case Methods.GetMCPServers:
     case Methods.AbortChat:

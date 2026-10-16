@@ -4,6 +4,7 @@
  * Wiring: the real BridgeHandler and handlers; VS Code and the public Node SDK harness boundary are replaced.
  * Run: pnpm --filter kimi-code exec vitest run --config vitest.config.ts test/bridge-handler.test.ts
  */
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -32,6 +33,7 @@ const host = vi.hoisted(() => {
     deleteSession: vi.fn(async () => undefined),
   };
   const showWarningMessage = vi.fn(async () => undefined as string | undefined);
+  const openExternal = vi.fn(async () => true);
 
   class Uri {
     readonly scheme = "file";
@@ -46,6 +48,10 @@ const host = vi.hoisted(() => {
       return new Uri(join(base.fsPath, ...segments));
     }
 
+    static parse(value: string): Uri {
+      return new Uri(value);
+    }
+
     toString(): string {
       return `file://${this.path}`;
     }
@@ -57,12 +63,22 @@ const host = vi.hoisted(() => {
     harness,
     createKimiHarness: vi.fn(() => harness),
     showWarningMessage,
+    openExternal,
+    execFile: vi.fn(),
+    spawn: vi.fn(),
+    remoteName: undefined as string | undefined,
     workspaceFolders: [] as Array<{ uri: Uri }>,
   };
 });
 
 vi.mock("vscode", () => ({
   Uri: host.Uri,
+  env: {
+    get remoteName() {
+      return host.remoteName;
+    },
+    openExternal: host.openExternal,
+  },
   workspace: {
     get workspaceFolders() {
       return host.workspaceFolders;
@@ -73,6 +89,11 @@ vi.mock("vscode", () => ({
   },
   window: { showWarningMessage: host.showWarningMessage },
 }));
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const original = await importOriginal<typeof import("node:child_process")>();
+  return { ...original, execFile: host.execFile, spawn: host.spawn };
+});
 
 vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
   const original = await importOriginal<typeof import("@moonshot-ai/kimi-code-sdk")>();
@@ -99,6 +120,20 @@ beforeEach(async () => {
   host.createKimiHarness.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
+  host.openExternal.mockReset();
+  host.openExternal.mockResolvedValue(true);
+  host.execFile.mockReset();
+  host.execFile.mockImplementation((_command, _args, _options, callback) => callback(null));
+  host.spawn.mockReset();
+  host.spawn.mockImplementation(() => {
+    const child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn() });
+    queueMicrotask(() => {
+      child.emit("spawn");
+      child.emit("exit", 0);
+    });
+    return child;
+  });
+  host.remoteName = undefined;
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
     vi.fn(),
@@ -113,6 +148,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await bridge.dispose();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await rm(root, { recursive: true, force: true });
 });
@@ -482,6 +518,176 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
       expect.stringContaining("Session state is invalid JSON at line 4"),
     );
     expect(next).toEqual({ id: "rpc-2", result: { ok: true } });
+  });
+});
+
+function expectDesktopUrl(value: string, workDir: string): void {
+  const url = new URL(value);
+  expect(url.protocol).toBe("kimi-code:");
+  expect(url.host).toBe("open");
+  expect(url.searchParams.get("root")).toBe(workDir);
+  expect(url.searchParams.get("new")).toBe("1");
+  expect(url.hash).toBe("");
+}
+
+describe("Desktop links", () => {
+  it("opens a new Desktop chat for the current workspace on macOS", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    expect(host.execFile).toHaveBeenCalledWith("open", [expect.any(String)], expect.objectContaining({ windowsHide: true }), expect.any(Function));
+    const args = host.execFile.mock.calls[0]?.[1] as string[];
+    expectDesktopUrl(args[0]!, root);
+    expect(host.execFile.mock.calls[0]?.[2].env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(host.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("opens a new Desktop chat and quotes the deep link on Windows", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
+    const workDir = join(root, "project's & %");
+    host.workspaceFolders.splice(0, host.workspaceFolders.length, { uri: new host.Uri(workDir) });
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    const url = `kimi-code://open?root=${encodeURIComponent(workDir)}&new=1`;
+    const args = host.execFile.mock.calls[0]?.[1] as string[];
+    expect(args.slice(0, 3)).toEqual(["-NoProfile", "-NonInteractive", "-EncodedCommand"]);
+    expect(Buffer.from(args[3]!, "base64").toString("utf16le")).toBe(
+      `if (-not (Test-Path 'Registry::HKEY_CLASSES_ROOT\\kimi-code\\shell\\open\\command')) { exit 1 } ` +
+        `try { Start-Process -FilePath '${url.replaceAll("'", "''")}' -ErrorAction Stop } catch { exit 1 }`,
+    );
+    expect(host.execFile).toHaveBeenCalledWith("powershell.exe", args, expect.objectContaining({ windowsHide: true }), expect.any(Function));
+    expect(host.execFile.mock.calls[0]?.[2].env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(host.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("opens a new Desktop chat for the current workspace on Linux", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    vi.stubEnv("ELECTRON_RUN_AS_NODE", "1");
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    expect(host.spawn).toHaveBeenCalledWith("xdg-open", [expect.any(String)], expect.objectContaining({ detached: true, stdio: "ignore" }));
+    expect(host.execFile).not.toHaveBeenCalled();
+    const args = host.spawn.mock.calls[0]?.[1] as string[];
+    expectDesktopUrl(args[0]!, root);
+    expect(host.spawn.mock.calls[0]?.[2].env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+    expect(host.spawn.mock.results[0]?.value.unref).toHaveBeenCalledOnce();
+  });
+
+  it("opens the selected working directory instead of always using the workspace root", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    const workDir = join(root, "packages", "demo");
+    await mkdir(workDir, { recursive: true });
+    await bridge.handle({ id: "rpc-1", method: Methods.SetWorkDir, params: { workDir } }, "view-1");
+
+    const result = await bridge.handle({ id: "rpc-2", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-2", result: { ok: true } });
+    const args = host.execFile.mock.calls[0]?.[1] as string[];
+    expectDesktopUrl(args[0]!, workDir);
+  });
+
+  it("reports a Windows launch failure without opening the installation page", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    host.execFile.mockImplementation((_command, _args, _options, callback) => callback(new Error("Desktop is not installed")));
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(host.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("reports a Linux spawn failure without opening the installation page", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    host.spawn.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn() });
+      queueMicrotask(() => child.emit("error", new Error("Desktop is not installed")));
+      return child;
+    });
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(host.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("reports an early non-zero Linux opener exit", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    host.spawn.mockImplementation(() => {
+      const child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn() });
+      queueMicrotask(() => {
+        child.emit("spawn");
+        child.emit("exit", 1);
+      });
+      return child;
+    });
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(host.openExternal).not.toHaveBeenCalled();
+  });
+
+  it("does not report a failure when the Linux opener stays running", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+      host.spawn.mockImplementation(() => {
+        const child = Object.assign(new EventEmitter(), { unref: vi.fn(), kill: vi.fn() });
+        queueMicrotask(() => child.emit("spawn"));
+        return child;
+      });
+
+      const resultPromise = bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(resultPromise).resolves.toEqual({ id: "rpc-1", result: { ok: true } });
+      const child = host.spawn.mock.results[0]?.value;
+      expect(child.unref).toHaveBeenCalledOnce();
+      expect(child.kill).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens the Desktop installation page", async () => {
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.InstallDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: true } });
+    expect(host.openExternal).toHaveBeenCalledWith(expect.objectContaining({ fsPath: "https://www.kimi.com/code" }));
+  });
+
+  it("reports when the workspace is remote", async () => {
+    host.remoteName = "ssh-remote";
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.CheckWorkspace }, "view-1");
+
+    expect(result).toMatchObject({ result: { isRemote: true } });
+  });
+
+  it("does not open a remote workspace in the local Desktop app", async () => {
+    host.remoteName = "ssh-remote";
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(host.execFile).not.toHaveBeenCalled();
+  });
+
+  it("does not open Desktop without a workspace folder", async () => {
+    host.workspaceFolders.splice(0);
+
+    const result = await bridge.handle({ id: "rpc-1", method: Methods.OpenInDesktop }, "view-1");
+
+    expect(result).toEqual({ id: "rpc-1", result: { ok: false } });
+    expect(host.execFile).not.toHaveBeenCalled();
   });
 });
 
