@@ -3,7 +3,11 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import {
+  IFileSystemStorageService,
+  StorageError,
+  StorageErrors,
+} from '#/persistence/interface/storage';
 import {
   AppendLogCorruptedError,
   IAppendLogStore,
@@ -14,6 +18,25 @@ import {
 } from '#/persistence/interface/appendLogStore';
 
 const textEncoder = new TextEncoder();
+
+const RECOVERY_BASE_DELAY_MS = 1_000;
+const RECOVERY_MAX_DELAY_MS = 30_000;
+const NEWLINE = 0x0a;
+
+interface RecoveryState {
+  readonly failedBatch: readonly unknown[];
+  readonly failedAtSize: number;
+  attempts: number;
+  timer: ReturnType<typeof setTimeout> | undefined;
+}
+
+function isRecoverableStorageError(error: unknown): boolean {
+  return (
+    error instanceof StorageError &&
+    (error.code === StorageErrors.codes.STORAGE_DISK_FULL ||
+      (StorageErrors.retryable as readonly string[]).includes(error.code))
+  );
+}
 
 const pendingRetirements = new Set<Promise<void>>();
 
@@ -28,6 +51,7 @@ interface LogState {
   flushPromise: Promise<void> | undefined;
   flushScheduled: boolean;
   storageFailure: { readonly error: unknown } | undefined;
+  recovery: RecoveryState | undefined;
   cutoverEpoch: number;
   refCount: number;
   retired: boolean;
@@ -42,9 +66,18 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   private readonly logs = new Map<string, LogState>();
   private readonly writeEmitter = this._register(new Emitter<AppendLogWrite>());
   readonly onDidWrite: Event<AppendLogWrite> = this.writeEmitter.event;
+  private readonly recoverEmitter = this._register(new Emitter<AppendLogWrite>());
+  readonly onDidRecover: Event<AppendLogWrite> = this.recoverEmitter.event;
 
   constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {
     super();
+    this._register(
+      toDisposable(() => {
+        for (const state of this.logs.values()) {
+          if (state.recovery?.timer !== undefined) clearTimeout(state.recovery.timer);
+        }
+      }),
+    );
   }
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void {
@@ -120,6 +153,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     const encoded = encodeBatch(records);
     const state = this.state(scope, key);
     state.cutoverEpoch++;
+    this.cancelRecovery(state);
     const prior = state.flushPromise ?? state.ready;
     const priorSettled = prior.then(
       () => undefined,
@@ -136,6 +170,15 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
           return false;
         }
         state.storageFailure = { error };
+        if (state.recovery === undefined && isRecoverableStorageError(error)) {
+          state.recovery = {
+            failedBatch: state.pending.slice(),
+            failedAtSize: 0,
+            attempts: 0,
+            timer: undefined,
+          };
+          this.scheduleRecovery(scope, key, state);
+        }
         throw error;
       }
     });
@@ -154,6 +197,15 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   }
 
   async close(): Promise<void> {
+    const recoveries: Promise<void>[] = [];
+    for (const [id, state] of this.logs) {
+      if (state.recovery === undefined) continue;
+      if (state.recovery.timer !== undefined) clearTimeout(state.recovery.timer);
+      state.recovery.timer = undefined;
+      const { scope, key } = fromLogId(id);
+      recoveries.push(this.attemptRecovery(scope, key, state));
+    }
+    await Promise.all(recoveries);
     await this.flush();
   }
 
@@ -179,6 +231,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         flushPromise: undefined,
         flushScheduled: false,
         storageFailure: undefined,
+        recovery: undefined,
         cutoverEpoch: 0,
         refCount: 0,
         retired: false,
@@ -192,6 +245,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
 
   private scheduleFlush(scope: string, key: string, state: LogState): void {
     if (state.flushScheduled || state.flushPromise !== undefined) return;
+    if (state.storageFailure !== undefined) return;
     state.flushScheduled = true;
     queueMicrotask(() => {
       state.flushScheduled = false;
@@ -223,11 +277,156 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
 
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {
     try {
+      if (state.recovery !== undefined) {
+        if (state.recovery.timer !== undefined) clearTimeout(state.recovery.timer);
+        state.recovery.timer = undefined;
+        await this.attemptRecovery(scope, key, state);
+      }
       await this.flushState(scope, key, state);
     } finally {
       const id = logId(scope, key);
       if (this.logs.get(id) === state) this.logs.delete(id);
     }
+  }
+
+  private cancelRecovery(state: LogState): void {
+    if (state.recovery?.timer !== undefined) clearTimeout(state.recovery.timer);
+    state.recovery = undefined;
+  }
+
+  private scheduleRecovery(scope: string, key: string, state: LogState): void {
+    const recovery = state.recovery;
+    if (recovery === undefined || state.retired || recovery.timer !== undefined) return;
+    const delay = Math.min(RECOVERY_BASE_DELAY_MS * 2 ** recovery.attempts, RECOVERY_MAX_DELAY_MS);
+    recovery.timer = setTimeout(() => {
+      recovery.timer = undefined;
+      void this.attemptRecovery(scope, key, state);
+    }, delay);
+    recovery.timer.unref();
+  }
+
+  private async attemptRecovery(scope: string, key: string, state: LogState): Promise<void> {
+    const recovery = state.recovery;
+    if (recovery === undefined) return;
+    state.recovery = undefined;
+    try {
+      if (state.flushPromise !== undefined) {
+        await state.flushPromise.catch(() => undefined);
+      }
+      if (state.storageFailure === undefined) return;
+      if (state.recovery !== undefined) return;
+      if (state.flushPromise !== undefined) {
+        state.recovery = recovery;
+        this.scheduleRecovery(scope, key, state);
+        return;
+      }
+      await this.ownFlush(
+        scope,
+        key,
+        state,
+        this.reconcileCommittedTail(scope, key, state, recovery),
+        { value: false },
+      );
+      state.storageFailure = undefined;
+      this.recoverEmitter.fire({ scope, key });
+    } catch (error) {
+      if (state.recovery !== undefined) {
+        state.recovery.attempts = recovery.attempts + 1;
+        if (state.recovery.timer !== undefined) clearTimeout(state.recovery.timer);
+        state.recovery.timer = undefined;
+        this.scheduleRecovery(scope, key, state);
+        return;
+      }
+      if (isRecoverableStorageError(error)) {
+        state.recovery = recovery;
+        recovery.attempts++;
+        this.scheduleRecovery(scope, key, state);
+      }
+    }
+  }
+
+  private async reconcileCommittedTail(
+    scope: string,
+    key: string,
+    state: LogState,
+    recovery: RecoveryState,
+  ): Promise<boolean> {
+    const encoded = encodeBatch(recovery.failedBatch);
+    if (encoded.byteLength === 0) return false;
+    const epoch = state.cutoverEpoch;
+    const boundary = recovery.failedAtSize;
+    const size = await this.storage.size(scope, key);
+    if (size === undefined || size === boundary) {
+      if (size !== undefined && size > 0) {
+        let lastByte = 0;
+        for await (const chunk of this.storage.readStream(scope, key, {
+          start: size - 1,
+          end: size - 1,
+        })) {
+          lastByte = chunk[chunk.byteLength - 1] ?? 0;
+        }
+        if (lastByte !== NEWLINE) {
+          throw new StorageError(
+            StorageErrors.codes.STORAGE_CORRUPTED,
+            'append-log tail does not match the failed batch; automatic recovery aborted',
+            { details: { scope, key } },
+          );
+        }
+      }
+      return false;
+    }
+    if (size < boundary) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log shrank while reconciling',
+        { details: { scope, key } },
+      );
+    }
+    const committed = size - boundary;
+    if (state.cutoverEpoch !== epoch) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log rewritten concurrently',
+        { details: { scope, key } },
+      );
+    }
+    if (committed > encoded.byteLength) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log grew past the failed batch',
+        { details: { scope, key } },
+      );
+    }
+    const tail = new Uint8Array(committed);
+    let offset = 0;
+    for await (const chunk of this.storage.readStream(scope, key, {
+      start: boundary,
+      end: size - 1,
+    })) {
+      tail.set(chunk.subarray(0, Math.min(chunk.byteLength, committed - offset)), offset);
+      offset += chunk.byteLength;
+    }
+    if (offset !== committed || !bytesEqual(tail, encoded.subarray(0, committed))) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log tail does not match the failed batch; automatic recovery aborted',
+        { details: { scope, key } },
+      );
+    }
+    if (committed === encoded.byteLength) {
+      state.pending.splice(0, recovery.failedBatch.length);
+      return false;
+    }
+    const full = await this.storage.read(scope, key);
+    if (full === undefined || full.byteLength !== size) {
+      throw new StorageError(
+        StorageErrors.codes.STORAGE_CORRUPTED,
+        'append-log recovery aborted: log changed while reconciling',
+        { details: { scope, key } },
+      );
+    }
+    await this.storage.write(scope, key, full.subarray(0, boundary), { atomic: true });
+    return false;
   }
 
   private ownFlush(
@@ -284,13 +483,23 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     let wrote = false;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
+      const sizeBefore = await this.storage.size(scope, key);
       try {
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
         wrote = true;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
-        const failure = (state.storageFailure ??= { error });
-        throw failure.error;
+        state.storageFailure = { error };
+        if (state.recovery === undefined && isRecoverableStorageError(error)) {
+          state.recovery = {
+            failedBatch: batch,
+            failedAtSize: sizeBefore ?? 0,
+            attempts: 0,
+            timer: undefined,
+          };
+          this.scheduleRecovery(scope, key, state);
+        }
+        throw error;
       }
       if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);
@@ -312,6 +521,14 @@ function encodeBatch(records: readonly unknown[]): Uint8Array {
   if (records.length === 0) return new Uint8Array(0);
   const content = records.map((record) => JSON.stringify(record) + '\n').join('');
   return textEncoder.encode(content);
+}
+
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  for (let i = 0; i < a.byteLength; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
 }
 
 registerScopedService(
