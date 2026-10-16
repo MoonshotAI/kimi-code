@@ -19,7 +19,6 @@ import {
   ITelemetryService,
   IWorkspaceService,
   InMemorySkillCatalog,
-  isError2,
   isUserActivatableSkillType,
   resumeSessionById,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
@@ -61,6 +60,7 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
+import { sendSessionError, sessionConflictErrors } from './sessionErrors';
 
 interface SkillsRouteHost {
   get(
@@ -192,6 +192,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        ...sessionConflictErrors,
       },
       description: 'Activate a skill in a session (REST analogue of the /<skill> slash command)',
       tags: ['skills'],
@@ -288,7 +289,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (error) {
         await preparedMedia?.discard();
-        sendMappedError(reply, req.id, error);
+        await sendSessionError(core, session_id, reply, req, error);
       }
     },
   );
@@ -370,30 +371,4 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
       : {}),
     scopes: skill.scopes === undefined ? undefined : [...skill.scopes],
   };
-}
-
-function sendMappedError(
-  reply: { send(payload: unknown): unknown },
-  requestId: string,
-  err: unknown,
-): void {
-  if (isError2(err)) {
-    switch (err.code) {
-      case ErrorCodes.SKILL_NOT_FOUND:
-      case ErrorCodes.SKILL_NAME_EMPTY:
-        reply.send(errEnvelope(ErrorCode.SKILL_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.SKILL_TYPE_UNSUPPORTED:
-        reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.FILE_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.REQUEST_INVALID:
-      case ErrorCodes.VALIDATION_FAILED:
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
-        return;
-    }
-  }
-  throw err;
 }

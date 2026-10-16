@@ -115,12 +115,13 @@ describe('server-v2 OpenAPI', () => {
     ).toBe(true);
   });
 
-  it('documents session conflicts for metadata mutation routes', async () => {
+  it('documents session conflicts for session mutation routes', async () => {
     const doc = await fetchOpenApi();
     const paths = [
       '/api/v1/sessions/{session_id}/profile',
       '/api/v1/sessions/{session_id}/title/generate',
       '/api/v1/sessions/{session_id}/children',
+      '/api/v1/sessions/{session_id}/skills/{tail}',
     ];
     for (const path of paths) {
       const op = operation(doc, path, 'post');
