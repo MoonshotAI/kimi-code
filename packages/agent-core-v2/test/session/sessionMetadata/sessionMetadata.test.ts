@@ -4,11 +4,16 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
+import { applyPromptMetadataUpdate } from '#/session/sessionMetadata/promptMetadata';
+import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -38,6 +43,25 @@ function makeContext(): ISessionContext {
     metaScope: META_SCOPE,
     cwd: '/tmp/sessions/wd_test/s1',
   });
+}
+
+function recordSessionMetaUpdates(): {
+  readonly eventService: IEventService;
+  readonly published: SessionMetaUpdated[];
+} {
+  const published: SessionMetaUpdated[] = [];
+  const emitter = new Emitter<Event2>();
+  return {
+    published,
+    eventService: {
+      _serviceBrand: undefined,
+      onDidPublish: emitter.event,
+      publish: (event) => {
+        published.push(event as SessionMetaUpdated);
+      },
+      subscribe: (handler) => emitter.event(handler),
+    },
+  };
 }
 
 describe('SessionMetadata', () => {
@@ -719,5 +743,105 @@ describe('SessionMetadata', () => {
     await writing;
     expect(locks.held('s1')).toBe(false);
     expect((await meta.read()).title).toBe('held');
+  });
+
+  describe('applyPromptMetadataUpdate', () => {
+    it('keeps a custom title written by another client while recording lastPrompt', async () => {
+      const meta = ix.get(ISessionMetadata);
+      const locks = ix.get(ISessionLockService);
+      const store = ix.get(IAtomicDocumentStore);
+      await meta.ready;
+
+      locks.endRun('s1');
+      const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+      await store.set(META_SCOPE, 'state.json', {
+        ...current!,
+        title: 'theirs',
+        titleKind: 'custom',
+        isCustomTitle: true,
+        updatedAt: Date.now(),
+      });
+
+      const { eventService, published } = recordSessionMetaUpdates();
+      await applyPromptMetadataUpdate(
+        { metadata: meta, eventService, sessionId: 's1' },
+        'hello from web',
+      );
+
+      const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+      expect(persisted).toMatchObject({
+        title: 'theirs',
+        titleKind: 'custom',
+        lastPrompt: 'hello from web',
+      });
+      expect(published).toHaveLength(1);
+      expect(published[0]?.payload.title).toBeUndefined();
+      expect(published[0]?.payload.patch).toEqual({
+        title: undefined,
+        isCustomTitle: undefined,
+        lastPrompt: 'hello from web',
+      });
+    });
+
+    it('derives a replaceable title from the prompt while the session is untitled', async () => {
+      const meta = ix.get(ISessionMetadata);
+      const store = ix.get(IAtomicDocumentStore);
+      await meta.ready;
+
+      const { eventService, published } = recordSessionMetaUpdates();
+      await applyPromptMetadataUpdate(
+        { metadata: meta, eventService, sessionId: 's1' },
+        'hello from web',
+      );
+
+      const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+      expect(persisted).toMatchObject({
+        title: 'hello from web',
+        titleKind: 'replaceable',
+        lastPrompt: 'hello from web',
+      });
+      expect(published).toHaveLength(1);
+      expect(published[0]?.payload.title).toBe('hello from web');
+      expect(published[0]?.payload.patch).toEqual({
+        title: 'hello from web',
+        isCustomTitle: false,
+        lastPrompt: 'hello from web',
+      });
+    });
+
+    it('publishes events whose title matches what was actually written', async () => {
+      const meta = ix.get(ISessionMetadata);
+      const locks = ix.get(ISessionLockService);
+      const store = ix.get(IAtomicDocumentStore);
+      await meta.ready;
+
+      const { eventService, published } = recordSessionMetaUpdates();
+      await applyPromptMetadataUpdate(
+        { metadata: meta, eventService, sessionId: 's1' },
+        'first prompt',
+      );
+
+      locks.endRun('s1');
+      const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+      await store.set(META_SCOPE, 'state.json', {
+        ...current!,
+        title: 'renamed elsewhere',
+        titleKind: 'custom',
+        isCustomTitle: true,
+        updatedAt: Date.now(),
+      });
+
+      await applyPromptMetadataUpdate(
+        { metadata: meta, eventService, sessionId: 's1' },
+        'second prompt',
+      );
+
+      const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
+      expect(persisted).toMatchObject({ title: 'renamed elsewhere', lastPrompt: 'second prompt' });
+      expect(published).toHaveLength(2);
+      expect(published[0]?.payload.title).toBe('first prompt');
+      expect(published[1]?.payload.title).toBeUndefined();
+      expect(published[1]?.payload.patch.isCustomTitle).toBeUndefined();
+    });
   });
 });

@@ -22,6 +22,7 @@ import {
   type SessionMetaPatch,
   type SessionTitleKind,
 } from './sessionMetadata';
+import { isUntitled } from './promptMetadata';
 
 const META_KEY = 'state.json';
 
@@ -148,6 +149,19 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       await this.ready;
       if (opts?.force !== true && this.data.titleKind === 'custom') return false;
       return this.applyUpdate({ title, titleKind: 'generated' }, { touchUpdatedAt: false });
+    });
+  }
+
+  async applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean> {
+    return this.enqueueUpdate(async () => {
+      await this.ready;
+      if (this.disposed) return false;
+      await this.ensureWriteOwnership();
+      const applyTitle = this.data.titleKind !== 'custom' && isUntitled(this.data.title);
+      const patch: SessionMetaPatch = applyTitle
+        ? { lastPrompt, title, titleKind: 'replaceable' }
+        : { lastPrompt };
+      return (await this.applyUpdate(patch)) && applyTitle;
     });
   }
 

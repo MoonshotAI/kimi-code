@@ -981,6 +981,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     onDidChangeMetadata: noopEvent,
     read: async () => meta,
     update: async () => {},
+    applyPromptMetadata: async () => false,
     setTitle: async () => {},
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},
