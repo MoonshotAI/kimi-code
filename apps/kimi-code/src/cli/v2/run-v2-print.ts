@@ -31,16 +31,23 @@ import {
   IEventDispatcher,
   IHostFileSystem,
   IOAuthToolkit,
+  ISessionContext,
   ISessionIndex,
+  ISessionLockService,
   ISessionManager,
   ITelemetryService,
   IWorkspaceInstanceManager,
+  IAppendLogStore,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
+  beginSessionRun,
   bootstrap,
+  closeSessionById,
   createCloudAppender,
   ensureMainAgent,
+  ErrorCodes,
+  isError2,
   resumeSessionById,
   logSeed,
   parseAgentFileText,
@@ -50,6 +57,7 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   setClampedTimeout,
+  type Error2,
   type Event2,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -286,7 +294,7 @@ export async function runV2Print(
       // Best-effort: a broken mcp.json or trust store must not fail the run.
     }
 
-    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+    let resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
     restorePermission = resolved.restorePermission;
     quiesceAgents = async () => {
       releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
@@ -302,27 +310,69 @@ export async function runV2Print(
     }
 
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
-    if (goalCreate !== undefined) {
-      await runNativeGoal(
-        app,
-        resolved.session,
-        resolved.agent,
-        goalCreate,
-        resolved.goalModel,
-        outputFormat,
-        stdout,
-        stderr,
+    const reloadAfterStale = async (): Promise<void> => {
+      stderr.write(
+        `Session "${resolved.session.id}" was updated by another client; reloading.\n`,
       );
-    } else {
-      await runNativeTurn(
-        app,
-        resolved.session,
-        resolved.agent,
-        opts.prompt!,
-        outputFormat,
-        stdout,
-        stderr,
-      );
+      await closeSessionById(app.accessor, resolved.session.id);
+      const reloaded = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+      resolved = reloaded;
+      restorePermission = reloaded.restorePermission;
+      quiesceAgents = async () => {
+        releaseQuiescence = await quiesceSessionAgents(reloaded.session, reloaded.agent);
+      };
+      flushWires = () => flushSessionWires(reloaded.session, reloaded.agent);
+    };
+    const conflictOf = (error: unknown): 'occupied' | 'stale' | undefined => {
+      if (!isError2(error)) return undefined;
+      if (error.code === ErrorCodes.SESSION_OCCUPIED) return 'occupied';
+      if (error.code === ErrorCodes.SESSION_STALE) return 'stale';
+      return undefined;
+    };
+    const runTurnOnce = async (): Promise<void> => {
+      if (goalCreate !== undefined) {
+        await ensureNativeGoal(resolved.agent, goalCreate, resolved.goalModel);
+        await runNativeGoalTurn(
+          app,
+          resolved.session,
+          resolved.agent,
+          goalCreate.objective,
+          outputFormat,
+          stdout,
+          stderr,
+        );
+      } else {
+        await runNativeTurn(app, resolved.session, resolved.agent, opts.prompt!, outputFormat, stdout, stderr);
+      }
+    };
+    try {
+      preflightSessionRun(app, resolved.session);
+    } catch (error) {
+      if (conflictOf(error) === 'occupied') {
+        reportSessionOccupied(error as Error2, outputFormat, stdout, stderr);
+        return;
+      }
+      if (conflictOf(error) === undefined) throw error;
+      await reloadAfterStale();
+    }
+    try {
+      await runTurnOnce();
+    } catch (error) {
+      if (conflictOf(error) === 'occupied') {
+        reportSessionOccupied(error as Error2, outputFormat, stdout, stderr);
+        return;
+      }
+      if (conflictOf(error) === undefined) throw error;
+      await reloadAfterStale();
+      try {
+        await runTurnOnce();
+      } catch (retryError) {
+        if (conflictOf(retryError) === 'occupied') {
+          reportSessionOccupied(retryError as Error2, outputFormat, stdout, stderr);
+          return;
+        }
+        throw retryError;
+      }
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
@@ -637,22 +687,60 @@ async function runNativeTurn(
   }
 }
 
-async function runNativeGoal(
-  app: Scope,
-  session: ISessionScopeHandle,
-  agent: IAgentScopeHandle,
-  goal: HeadlessGoalCreate,
-  model: string | undefined,
+const PRINT_EXIT_SESSION_OCCUPIED = 4;
+
+function reportSessionOccupied(
+  error: Error2,
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
+): void {
+  const message = error.message;
+  if (outputFormat === 'stream-json') {
+    stdout.write(
+      `${JSON.stringify({ type: 'error', code: 'session.occupied', message, details: error.details })}\n`,
+    );
+  } else {
+    stderr.write(`${message}\n`);
+  }
+  process.exitCode = PRINT_EXIT_SESSION_OCCUPIED;
+}
+
+function preflightSessionRun(app: Scope, session: ISessionScopeHandle): void {
+  const ctx = session.accessor.get(ISessionContext);
+  beginSessionRun(
+    app.accessor.get(ISessionLockService),
+    app.accessor.get(IAppendLogStore),
+    ctx,
+    session.accessor.get(IAgentLifecycleService),
+  );
+}
+
+async function ensureNativeGoal(
+  agent: IAgentScopeHandle,
+  goal: HeadlessGoalCreate,
+  model: string | undefined,
 ): Promise<void> {
   requireConfiguredModel(model);
   const goalService = agent.accessor.get(IAgentGoalService);
+  const existing = goalService.getGoal().goal;
+  if (existing?.status === 'active' && existing.objective === goal.objective) return;
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,
   });
+}
+
+async function runNativeGoalTurn(
+  app: Scope,
+  session: ISessionScopeHandle,
+  agent: IAgentScopeHandle,
+  objective: string,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): Promise<void> {
+  const goalService = agent.accessor.get(IAgentGoalService);
   let completedSnapshot: { readonly status: string } | null = null;
   const subscription = agent.accessor.get(IEventBus).subscribe((event: Event2<any>) => {
     if (event.type === 'goal.updated') {
@@ -662,18 +750,24 @@ async function runNativeGoal(
       }
     }
   });
+  let turnError: unknown;
   try {
-    await runNativeTurn(app, session, agent, goal.objective, outputFormat, stdout, stderr);
+    await runNativeTurn(app, session, agent, objective, outputFormat, stdout, stderr);
+  } catch (error) {
+    turnError = error;
+    throw error;
   } finally {
     subscription.dispose();
-    const snapshot = completedSnapshot ?? goalService.getGoal().goal;
-    if (outputFormat === 'stream-json') {
-      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
-    } else {
-      stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
-    }
-    if (snapshot !== null && snapshot.status !== 'complete') {
-      process.exitCode = goalExitCode(snapshot.status);
+    if (!isError2(turnError) || turnError.code !== ErrorCodes.SESSION_STALE) {
+      const snapshot = completedSnapshot ?? goalService.getGoal().goal;
+      if (outputFormat === 'stream-json') {
+        stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+      } else {
+        stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
+      }
+      if (snapshot !== null && snapshot.status !== 'complete') {
+        process.exitCode = goalExitCode(snapshot.status);
+      }
     }
   }
 }

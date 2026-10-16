@@ -31,7 +31,6 @@ import {
   resolveSubagentModelPool,
   resumeSessionById,
   setSessionArchived,
-  isError2,
   Error2,
   type ContextMessage,
   type IAgentScopeHandle,
@@ -77,6 +76,8 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
+import { sendSessionError, sessionConflictErrors } from './sessionErrors';
+import { isSessionStale, reloadStaleSession } from './sessionReload';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -266,7 +267,7 @@ export function registerSessionsRoutes(
         );
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, undefined, reply, req, error);
       }
     },
   );
@@ -510,6 +511,7 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        ...sessionConflictErrors,
       },
       description: 'Update session profile (title, metadata, agent_config)',
       tags: ['sessions'],
@@ -537,7 +539,7 @@ export function registerSessionsRoutes(
         }
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -563,6 +565,7 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_TITLE_UNAVAILABLE]: {},
+        ...sessionConflictErrors,
       },
       description: 'Generate the session title via the managed chat_title tool',
       tags: ['sessions'],
@@ -592,7 +595,7 @@ export function registerSessionsRoutes(
         }
         reply.send(okEnvelope({ title }, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -623,6 +626,7 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
+        ...sessionConflictErrors,
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
       },
@@ -643,7 +647,7 @@ export function registerSessionsRoutes(
           },
         });
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, undefined, reply, req, error);
       }
     },
   );
@@ -702,7 +706,7 @@ export function registerSessionsRoutes(
             : projected;
         reply.send(okEnvelope({ items, has_more: page.nextCursor !== undefined }, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -723,6 +727,7 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
+        ...sessionConflictErrors,
       },
       description: 'Create a child session',
       tags: ['sessions'],
@@ -749,7 +754,7 @@ export function registerSessionsRoutes(
         );
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -778,7 +783,7 @@ export function registerSessionsRoutes(
         const status = await core.accessor.get(ISessionLegacyService).status(session_id);
         reply.send(okEnvelope(status, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -807,7 +812,7 @@ export function registerSessionsRoutes(
         const goal = await core.accessor.get(ISessionLegacyService).goal(session_id);
         reply.send(okEnvelope(goal, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -854,7 +859,7 @@ export function registerSessionsRoutes(
               ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -932,9 +937,14 @@ async function compactSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor
-    .get(IAgentFullCompactionService)
-    .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  try {
+    agent.accessor
+      .get(IAgentFullCompactionService)
+      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  } catch (error) {
+    if (isSessionStale(error)) await reloadStaleSession(core, id).catch(() => undefined);
+    throw error;
+  }
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
 }
@@ -944,7 +954,12 @@ async function undoSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  try {
+    await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  } catch (error) {
+    if (isSessionStale(error)) await reloadStaleSession(core, id).catch(() => undefined);
+    throw error;
+  }
   const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const legacy = core.accessor.get(ISessionLegacyService);
@@ -1279,74 +1294,4 @@ function buildValidationEnvelope(
     request_id: requestId,
     details,
   };
-}
-
-function sendMappedError(
-  reply: { send(payload: unknown): unknown },
-  req: { id: string },
-  err: unknown,
-): void {
-  const requestId = req.id;
-  const log = requestLog(req);
-  if (isError2(err)) {
-    switch (err.code) {
-      case 'session.not_found':
-      case 'agent.not_found':
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'session.fork_active_turn':
-      case ErrorCodes.SESSION_BUSY:
-        reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
-        return;
-      case 'compaction.unable':
-        reply.send(errEnvelope(ErrorCode.COMPACTION_UNABLE, err.message, requestId, err.stack));
-        return;
-      case 'session.undo_unavailable':
-        reply.send({
-          code: ErrorCode.SESSION_UNDO_UNAVAILABLE,
-          msg: err.message,
-          data: (err as { details?: unknown }).details ?? null,
-          request_id: requestId,
-          stack: err.stack,
-        });
-        return;
-      case ErrorCodes.GOAL_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.GOAL_ALREADY_EXISTS, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.GOAL_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_STATUS_INVALID:
-        reply.send(errEnvelope(ErrorCode.GOAL_STATUS_INVALID, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_NOT_RESUMABLE:
-        reply.send(errEnvelope(ErrorCode.GOAL_NOT_RESUMABLE, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_OBJECTIVE_EMPTY:
-        reply.send(errEnvelope(ErrorCode.GOAL_OBJECTIVE_EMPTY, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_OBJECTIVE_TOO_LONG:
-        reply.send(
-          errEnvelope(ErrorCode.GOAL_OBJECTIVE_TOO_LONG, err.message, requestId, err.stack),
-        );
-        return;
-      case ErrorCodes.FS_PATH_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'request.invalid':
-      case 'validation.failed':
-      case ErrorCodes.CONFIG_INVALID:
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
-        return;
-    }
-  }
-  log?.error({ err }, 'session request failed');
-  reply.send(
-    errEnvelope(
-      ErrorCode.INTERNAL_ERROR,
-      err instanceof Error ? err.message : String(err),
-      requestId,
-      err instanceof Error ? err.stack : undefined,
-    ),
-  );
 }

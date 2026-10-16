@@ -22,6 +22,15 @@ describe('/api/v1/debug transport mapError', () => {
     expect(env.code).toBe(wire);
   });
 
+  it('preserves session conflict details', () => {
+    const details = { holder: { clientIdentity: 'other' } };
+    const env = mapError(
+      new Error2(ErrorCodes.SESSION_OCCUPIED, 'boom', { details }),
+      'req-1',
+    );
+    expect(env.details).toEqual(details);
+  });
+
   it('falls back to INTERNAL_ERROR for coded errors without a wire equivalent', () => {
     const env = mapError(new Error2(ErrorCodes.OS_FS_UNKNOWN, 'boom'), 'req-1');
     expect(env.code).toBe(ErrorCode.INTERNAL_ERROR);

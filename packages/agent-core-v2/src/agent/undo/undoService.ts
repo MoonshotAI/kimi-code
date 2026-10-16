@@ -28,7 +28,9 @@ import { IEventService } from '#/app/event/event';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
@@ -76,6 +78,9 @@ export class AgentConversationUndoService
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IWireService private readonly wire: IWireService,
     @ILogService private readonly log: ILogService,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
   }
@@ -119,6 +124,12 @@ export class AgentConversationUndoService
           `Conversation undo requires a restored dispatcher (phase '${this.dispatcher.restorePhase}')`,
         );
       }
+      beginSessionRun(
+        this.sessionLocks,
+        this.appendLogStore,
+        this.session,
+        this.agentLifecycle,
+      );
       this.assertUndoAvailable(turns);
       const fromTurnId = this.removedFromTurnId(turns);
       try {

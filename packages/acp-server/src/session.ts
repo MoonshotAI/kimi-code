@@ -102,6 +102,8 @@ function leadingText(blocks: readonly ContentBlock[]): string | undefined {
  * only reaches us from `agent.activateSkill`, which rejects instead.
  */
 const TURN_AGENT_BUSY_CODE = 'turn.agent_busy';
+const SESSION_OCCUPIED_CODE = 'session.occupied';
+const SESSION_STALE_CODE = 'session.stale';
 
 /**
  * Map a prompt-launch rejection (from `agent.prompt` / `agent.activateSkill`)
@@ -128,6 +130,17 @@ export function mapPromptLaunchError(error: unknown, sessionId: string): Request
   if (code === TURN_AGENT_BUSY_CODE) {
     log.warn('acp: prompt rejected because another turn is active', { sessionId });
     return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_OCCUPIED_CODE) {
+    log.warn('acp: prompt rejected because another client holds the session', { sessionId });
+    return RequestError.invalidRequest({ code }, message);
+  }
+  if (code === SESSION_STALE_CODE) {
+    log.warn('acp: prompt rejected because the session was updated elsewhere', { sessionId });
+    return RequestError.invalidRequest(
+      { code },
+      'Session was updated by another client. Close and reopen the session, then retry.',
+    );
   }
   log.error('acp: prompt launch failed', {
     sessionId,

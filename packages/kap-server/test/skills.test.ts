@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  Error2,
+  ErrorCodes,
   IAgentLifecycleService,
+  IAgentSkillService,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -11,7 +14,7 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../src/protocol/rest-skill';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -265,6 +268,25 @@ describe('server-v2 /api/v1 skills', () => {
         `/api/v1/sessions/${id}/skills/does-not-exist:activate`,
       );
       expect(body.code).toBe(40415);
+    });
+
+    it.each([
+      [ErrorCodes.SESSION_OCCUPIED, 40931],
+      [ErrorCodes.SESSION_STALE, 40930],
+    ])('maps skill activation conflict %s', async (code, expected) => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const handle = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const activate = vi
+        .spyOn(agent.accessor.get(IAgentSkillService), 'activate')
+        .mockRejectedValue(new Error2(code, 'conflict'));
+
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`);
+
+      expect(result.status).toBe(200);
+      expect(result.body.code).toBe(expected);
+      activate.mockRestore();
     });
 
     it('returns 40401 for an unknown session', async () => {

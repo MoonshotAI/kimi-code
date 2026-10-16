@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
 import { log } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -83,6 +84,7 @@ import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
+import { SessionOccupiedDialogComponent } from './components/dialogs/session-occupied-dialog';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
 import {
   FileMentionProvider,
@@ -192,6 +194,8 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { reloadSessionAfterStale, occupiedHolderClientId } from './utils/session-lock-errors';
+import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { lazyModelSelection } from './utils/model-switch';
@@ -1683,7 +1687,7 @@ export class KimiTUI {
       prepared.stagingPaths,
       'user',
     );
-    this.appendTranscriptEntry({
+    const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
@@ -1692,9 +1696,27 @@ export class KimiTUI {
       skillNames: activations.map((activation) => activation.skillName),
       imageAttachmentIds:
         extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
-    });
+    };
+    this.appendTranscriptEntry(entry);
     const request = session.promptWithSkills(input, prepared.skills);
     this.staging.trackDispatch(stagingLease, request, (error) => {
+      const recovered = this.handlePromptConflict({
+        session,
+        error,
+        entries: [entry],
+        retry: () => this.runInlineSkillActivations(session, text, activations, extraction),
+        restore: () => {
+          this.staging.releaseRecalled([
+            ...extraction.imageAttachmentIds,
+            ...extraction.videoAttachmentIds,
+          ]);
+          this.restoreInputText(text);
+        },
+      });
+      if (recovered) {
+        this.staging.defer(stagingLease);
+        return;
+      }
       if (this.session === session && stagingLease !== undefined && stagingLease.turnId === undefined) {
         this.staging.defer(stagingLease);
         for (const id of stagingLease.mediaAttachmentIds) this.staging.releaseRecalled([id]);
@@ -1965,14 +1987,15 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
-    this.appendTranscriptEntry({
+    const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
-    });
+    };
+    this.appendTranscriptEntry(entry);
     // A goal-active steer is buffered into the running goal turn — no new
     // turn.started will fire for handleTurnStarted to claim the lease — so
     // bind it to that turn here. The turn context must be read BEFORE
@@ -2028,17 +2051,134 @@ export class KimiTUI {
     if (goalActive) {
       if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
       this.staging.trackDispatch(stagingLease, session.steer(sdkInput), (error) => {
-        // Same reset as the prompt path: beginSessionRequest already moved the
-        // TUI to the waiting phase, and no turn events may follow a failed
-        // steer (e.g. the session is gone), which would leave the UI stuck
-        // queueing input behind a request that never completes.
+        const recovered = this.handlePromptConflict({
+          session,
+          error,
+          entries: [entry],
+          retry: () => {
+            this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+            this.updateQueueDisplay();
+            this.drainQueueIfIdle();
+          },
+          restore: () => {
+            this.staging.releaseRecalled([
+              ...(options?.imageAttachmentIds ?? []),
+              ...(options?.videoAttachmentIds ?? []),
+            ]);
+            this.restoreInputText(input);
+          },
+        });
+        if (recovered) {
+          this.staging.defer(stagingLease);
+          return;
+        }
         this.failSessionRequest(`Failed to steer: ${formatErrorMessage(error)}`);
       });
       return;
     }
     this.staging.trackDispatch(stagingLease, session.prompt(sdkInput, { promptId: submissionId }), (error) => {
+      const recovered = this.handlePromptConflict({
+        session,
+        error,
+        entries: [entry],
+        retry: () => {
+          this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+          this.updateQueueDisplay();
+          this.drainQueueIfIdle();
+        },
+        restore: () => {
+          this.staging.releaseRecalled([
+            ...(options?.imageAttachmentIds ?? []),
+            ...(options?.videoAttachmentIds ?? []),
+          ]);
+          this.restoreInputText(input);
+        },
+      });
+      if (recovered) {
+        this.staging.defer(stagingLease);
+        return;
+      }
       this.failSessionRequest(`Failed to send: ${formatErrorMessage(error)}`);
     });
+  }
+
+  private handlePromptConflict(args: {
+    session: Session;
+    error: unknown;
+    entries?: readonly TranscriptEntry[];
+    retry: () => void;
+    restore: () => void;
+  }): boolean {
+    const { session, error, entries, retry, restore } = args;
+    if (this.session?.id !== session.id) return false;
+    if (isKimiError(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
+      if (entries !== undefined) this.removeTranscriptEntries(entries);
+      this.setAppState({ streamingPhase: 'idle' });
+      this.resetLivePane();
+      const holderClient = occupiedHolderClientId(error);
+      this.track('occupied_prompt_shown', {
+        holder_client: holderClient,
+        opener_client: CLI_MSH_PLATFORM,
+      });
+      const cancelOccupied = (): void => {
+        this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
+        restore();
+      };
+      this.mountEditorReplacement(
+        new SessionOccupiedDialogComponent({
+          message: formatErrorMessage(error),
+          onSelect: (action) => {
+            if (action === 'retry') {
+              this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
+              this.restoreEditor();
+              retry();
+              return;
+            }
+            cancelOccupied();
+          },
+          onCancel: cancelOccupied,
+        }),
+      );
+      return true;
+    }
+    if (isKimiError(error) && error.code === ErrorCodes.SESSION_STALE) {
+      if (entries !== undefined) this.removeTranscriptEntries(entries);
+      this.resetLivePane();
+      const mediaSnapshot = this.imageStore.snapshot();
+      void (async () => {
+        // The request stays in flight across the reload: submissions queue
+        // instead of racing the closing session, and the queue is parked
+        // around switchToSession so resetSessionRuntime cannot wipe it.
+        const reloaded = await reloadSessionAfterStale(
+          this,
+          session.id,
+          'Loaded updates from another client. Your message is back in the input.',
+          () => {
+            const parked = this.state.queuedMessages;
+            this.state.queuedMessages = [];
+            this.updateQueueDisplay();
+            return () => {
+              if (parked.length === 0) return;
+              this.state.queuedMessages.push(...parked);
+              this.updateQueueDisplay();
+            };
+          },
+        );
+        this.imageStore.restore(mediaSnapshot);
+        const typedDuringReload = this.state.editor.getText();
+        restore();
+        if (typedDuringReload.trim().length > 0) {
+          const restored = this.state.editor.getText();
+          this.restoreInputText(
+            restored.length > 0 ? `${restored}\n${typedDuringReload}` : typedDuringReload,
+          );
+        }
+        this.setAppState({ streamingPhase: 'idle' });
+        if (reloaded) this.drainQueueIfIdle();
+      })();
+      return true;
+    }
+    return false;
   }
 
   activatePluginCommand(
@@ -2068,6 +2208,19 @@ export class KimiTUI {
       stagingLease,
       session.activatePluginCommand(pluginId, commandName, rewrite.text),
       (error) => {
+        const recovered = this.handlePromptConflict({
+          session,
+          error,
+          retry: () => this.activatePluginCommand(session, pluginId, commandName, args),
+          restore: () => {
+            this.staging.releaseRecalled(rewrite.imageAttachmentIds);
+            this.restoreInputText(`/${pluginId}:${commandName}${args.length > 0 ? ` ${args}` : ''}`);
+          },
+        });
+        if (recovered) {
+          this.staging.defer(stagingLease);
+          return;
+        }
         this.failSessionRequest(
           `Command "${pluginId}:${commandName}" failed: ${formatErrorMessage(error)}`,
         );
@@ -2309,6 +2462,21 @@ export class KimiTUI {
     this.staging.trackDispatch(stagingLease, request, (error) => {
       if (this.session !== session) {
         onSettled?.(false);
+        return;
+      }
+      const recovered = this.handlePromptConflict({
+        session,
+        error,
+        entries: prepared === undefined && !manual ? steeredEntries : undefined,
+        retry: () => this.steerMessage(session, input, onSettled, manual),
+        restore: () => {
+          this.staging.releaseRecalled(mediaAttachmentIds);
+          this.restoreInputText(input.map((item) => item.text).join('\n'));
+          onSettled?.(false);
+        },
+      });
+      if (recovered) {
+        this.staging.defer(stagingLease);
         return;
       }
       const message = `Failed to steer: ${formatErrorMessage(error)}`;

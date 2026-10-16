@@ -368,6 +368,7 @@ function makeCore(
   sessions: Map<string, FakeLifecycle>,
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
+  managerEvents?: { closeHandlers: Array<(event: { sessionId: string }) => void> },
 ): Scope {
   const handles = new WeakMap<FakeLifecycle, IScopeHandle>();
   const sessionFor = (sid: string) => {
@@ -407,6 +408,10 @@ function makeCore(
         return {
           get: sessionFor,
           list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+          onDidCloseSession: (handler: (event: { sessionId: string }) => void) => {
+            managerEvents?.closeHandlers.push(handler);
+            return { dispose: () => {} };
+          },
         };
       }
       if (token === IWorkspaceInstanceManager) {
@@ -1126,6 +1131,39 @@ describe('SessionEventBroadcaster', () => {
     main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
     const next = await bc.getSnapshotState('s1');
     expect(next.subagents).toEqual([]);
+  });
+
+  it('clears the in-flight turn and subagent roster across a close and reattach', async () => {
+    const closeHandlers: Array<(event: { sessionId: string }) => void> = [];
+    await bc.close();
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus, {}, { closeHandlers }),
+      maxBufferSize: 3,
+    });
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    lc.addAgent('agent-1');
+    sessions.set('s1', lc);
+    await bc.subscribe('s1', collectingTarget().target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    main.bus.emit(
+      agentEvent('subagent.spawned', {
+        subagentId: 'agent-1',
+        subagentName: 'kimi-subagent',
+        description: 'task agent-1',
+      }),
+    );
+    const before = await bc.getSnapshotState('s1');
+    expect(before.inFlightTurn).toMatchObject({ turn_id: 1 });
+    expect(before.subagents).toHaveLength(1);
+
+    for (const handler of closeHandlers) handler({ sessionId: 's1' });
+
+    const after = await bc.getSnapshotState('s1');
+    expect(after.inFlightTurn).toBeNull();
+    expect(after.subagents).toEqual([]);
   });
 
   it('subscribe returns false for an unknown session', async () => {

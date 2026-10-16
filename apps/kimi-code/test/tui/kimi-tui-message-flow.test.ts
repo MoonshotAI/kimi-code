@@ -14,6 +14,8 @@ import {
 } from '@moonshot-ai/pi-tui';
 import {
   createKimiHarness,
+  ErrorCodes,
+  KimiError,
   type ApprovalRequest,
   type ApprovalResponse,
   type Event,
@@ -954,6 +956,106 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toMatchObject([
       { content: 'please /skill:review', skillNames: ['review'] },
     ]);
+  });
+
+  it('merges input typed during a stale reload instead of overwriting it (v2 engine)', async () => {
+    const reloaded = makeSession({ id: 'ses-1' });
+    let finishReload!: (value: unknown) => void;
+    const session = makeSession({
+      id: 'ses-1',
+      prompt: vi.fn(async () => {
+        throw new KimiError(
+          ErrorCodes.SESSION_STALE,
+          'Session "ses-1" was updated by another client; reload it before continuing',
+        );
+      }),
+    });
+    const { driver, harness } = await makeDriver(session, {
+      reloadSession: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finishReload = resolve;
+          }),
+      ),
+    });
+
+    driver.handleUserInput('original message');
+    await vi.waitFor(() => {
+      expect(harness.reloadSession).toHaveBeenCalled();
+    });
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
+
+    driver.state.editor.setText('typed during reload');
+    finishReload(reloaded);
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(driver.state.editor.getText()).toBe('original message\ntyped during reload');
+    expect(reloaded.prompt).not.toHaveBeenCalled();
+  });
+
+  it('sends messages queued during a stale reload to the reloaded session (v2 engine)', async () => {
+    const reloaded = makeSession({ id: 'ses-1' });
+    let finishReload!: (value: unknown) => void;
+    const session = makeSession({
+      id: 'ses-1',
+      prompt: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.SESSION_STALE, 'stale');
+      }),
+    });
+    const { driver, harness } = await makeDriver(session, {
+      reloadSession: vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finishReload = resolve;
+          }),
+      ),
+    });
+
+    driver.handleUserInput('original message');
+    await vi.waitFor(() => {
+      expect(harness.reloadSession).toHaveBeenCalled();
+    });
+
+    driver.handleUserInput('queued while reloading');
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toHaveLength(1);
+    });
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+
+    finishReload(reloaded);
+    await vi.waitFor(() => {
+      expect(reloaded.prompt).toHaveBeenCalled();
+    });
+    expect(reloaded.prompt.mock.calls[0]?.[0]).toBe('queued while reloading');
+    expect(driver.state.editor.getText()).toBe('original message');
+  });
+
+  it.each([
+    ['two words', '/plug:cmd two words'],
+    ['', '/plug:cmd'],
+  ])('restores the complete plugin command after occupied cancellation', async (args, expected) => {
+    const session = makeSession({
+      activatePluginCommand: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    (
+      driver as unknown as {
+        activatePluginCommand(s: unknown, pluginId: string, command: string, value: string): void;
+      }
+    ).activatePluginCommand(session, 'plug', 'cmd', args);
+    await vi.waitFor(() => {
+      expect(driver.state.editorReplacementMounted).toBe(true);
+    });
+    (driver.state.editorContainer.children[0] as { handleInput(data: string): void }).handleInput(
+      '\u001B',
+    );
+
+    expect(driver.state.editor.getText()).toBe(expected);
   });
 
   it('renders a bundled replay submission as a single turn', async () => {

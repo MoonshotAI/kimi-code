@@ -2,11 +2,14 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { isError2 } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { SessionErrors } from '#/session/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
 
@@ -19,6 +22,7 @@ import {
   type SessionMetaPatch,
   type SessionTitleKind,
 } from './sessionMetadata';
+import { isUntitled } from './promptMetadata';
 
 const META_KEY = 'state.json';
 
@@ -45,6 +49,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   );
   private readonly scope: string;
   private updateQueue: Promise<void> = Promise.resolve();
+  private lastRefreshToken: string | undefined;
 
   constructor(
     @ISessionStateService private readonly states: ISessionStateService,
@@ -52,6 +57,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {
     super();
     this._register({
@@ -93,16 +99,42 @@ export class SessionMetadata extends Service implements ISessionMetadata {
   ): Promise<boolean> {
     await this.ready;
     if (this.disposed) return false;
-    const updatedAt =
-      patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
-    this.data = { ...this.data, ...patch, updatedAt };
-    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
-    if (this.disposed) return false;
-    this.mirrorToReadModel();
-    this._onDidChangeMetadata.fire({
-      changed: Object.keys(patch) as (keyof SessionMeta)[],
-    });
-    return true;
+    await this.ensureWriteOwnership();
+    const lease = this.sessionLocks.acquire(this.ctx.sessionId);
+    try {
+      const updatedAt =
+        patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
+      this.data = { ...this.data, ...patch, updatedAt };
+      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+      if (this.disposed) return false;
+      this.mirrorToReadModel();
+      this._onDidChangeMetadata.fire({
+        changed: Object.keys(patch) as (keyof SessionMeta)[],
+      });
+      return true;
+    } finally {
+      lease.release();
+    }
+  }
+
+  private async ensureWriteOwnership(): Promise<void> {
+    this.sessionLocks.beginRun(this.ctx.sessionId);
+    const token = this.sessionLocks.holdToken(this.ctx.sessionId);
+    if (token !== undefined && token === this.lastRefreshToken) return;
+    const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
+    if (existing !== undefined) {
+      this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+    }
+    this.lastRefreshToken = token;
+  }
+
+  private tryHoldForWrite(): boolean {
+    try {
+      this.sessionLocks.beginRun(this.ctx.sessionId);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async setTitle(title: string): Promise<void> {
@@ -120,6 +152,19 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     });
   }
 
+  async applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean> {
+    return this.enqueueUpdate(async () => {
+      await this.ready;
+      if (this.disposed) return false;
+      await this.ensureWriteOwnership();
+      const applyTitle = this.data.titleKind !== 'custom' && isUntitled(this.data.title);
+      const patch: SessionMetaPatch = applyTitle
+        ? { lastPrompt, title, titleKind: 'replaceable' }
+        : { lastPrompt };
+      return (await this.applyUpdate(patch)) && applyTitle;
+    });
+  }
+
   async setArchived(archived: boolean): Promise<void> {
     await this.update(
       archived ? { archived: true, archivedAt: Date.now() } : { archived: false, archivedAt: undefined },
@@ -133,7 +178,18 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       const existing = this.data.agents?.[agentId];
       if (existing !== undefined && agentMetaEquals(existing, meta)) return;
       const agents = { ...this.data.agents, [agentId]: meta };
-      await this.applyUpdate({ agents }, { touchUpdatedAt: false });
+      try {
+        await this.applyUpdate({ agents }, { touchUpdatedAt: false });
+      } catch (error) {
+        if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) {
+          this.log.warn(
+            'session metadata agent registration skipped; session is in use by another client',
+            { sessionId: this.ctx.sessionId, agentId },
+          );
+          return;
+        }
+        throw error;
+      }
     });
   }
 
@@ -188,7 +244,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+        if (this.tryHoldForWrite()) {
+          await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+        }
       }
       return;
     }
@@ -203,7 +261,9 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    if (this.tryHoldForWrite()) {
+      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+    }
     this.mirrorToReadModel();
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }

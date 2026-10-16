@@ -536,6 +536,7 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
       agents,
     }),
     update: async () => {},
+    applyPromptMetadata: async () => false,
     setTitle: async () => {},
     setGeneratedTitleIfUncustomized: async () => false,
     setArchived: async () => {},

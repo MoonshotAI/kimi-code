@@ -28,7 +28,6 @@ import {
   resumeSessionById,
   ITelemetryService,
   applyPromptMetadataUpdate,
-  isError2,
   Error2,
   ErrorCodes,
   sessionMediaOriginalsDir,
@@ -51,6 +50,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { sendSessionError, sessionConflictErrors } from './sessionErrors';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
@@ -181,7 +181,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         const result = projectPromptList((await resolvePrompt(core, session_id)).prompt);
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -201,6 +201,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
+        ...sessionConflictErrors,
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -360,7 +361,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
         if (!enqueued) await preparedMedia?.discard();
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       } finally {
         reservation?.dispose();
       }
@@ -391,7 +392,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         await resolved.prompt.steer(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, req.params.session_id, reply, req, error);
       }
     },
   );
@@ -412,8 +413,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       operationId: 'promptAction',
     },
     async (req, reply) => {
+      const { session_id, tail } = req.params as { session_id: string; tail: string };
       try {
-        const { session_id, tail } = req.params as { session_id: string; tail: string };
         const target = resolveActionTarget({
           tail,
           actions: promptActions,
@@ -431,7 +432,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           extra: { resolved, session_id, req, reply },
         });
       } catch (error) {
-        sendMappedError(reply, req, error);
+        await sendSessionError(core, session_id, reply, req, error);
       }
     },
   );
@@ -598,52 +599,4 @@ export function watchPromptSettlements(events: IEventBus): {
       subscription.dispose();
     },
   };
-}
-
-function sendMappedError(
-  reply: { send(payload: unknown): unknown },
-  req: { id: string },
-  err: unknown,
-): void {
-  const requestId = req.id;
-  const log = requestLog(req);
-  if (isError2(err)) {
-    switch (err.code) {
-      case 'session.not_found':
-      case 'agent.not_found':
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'file.not_found':
-        reply.send(errEnvelope(ErrorCode.FILE_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'prompt.not_found':
-        reply.send(errEnvelope(ErrorCode.PROMPT_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'prompt.id_conflict':
-        reply.send(errEnvelope(ErrorCode.PROMPT_ID_CONFLICT, err.message, requestId, err.stack));
-        return;
-      case 'session.busy':
-        reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
-        return;
-      case 'request.invalid':
-      case 'validation.failed':
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
-        return;
-      case 'skill.not_found':
-        reply.send(errEnvelope(ErrorCode.SKILL_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'skill.type_unsupported':
-        reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
-        return;
-    }
-  }
-  log?.error({ err }, 'prompt request failed');
-  reply.send(
-    errEnvelope(
-      ErrorCode.INTERNAL_ERROR,
-      err instanceof Error ? err.message : String(err),
-      requestId,
-      err instanceof Error ? err.stack : undefined,
-    ),
-  );
 }
