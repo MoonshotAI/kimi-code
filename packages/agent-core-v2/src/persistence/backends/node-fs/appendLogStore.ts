@@ -66,6 +66,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   async *read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R> {
     await this.flushLog(scope, key);
     const state = this.state(scope, key);
+    const lengthAtStart = this.diskLength(scope, key);
     try {
       const onTruncate = options?.onTruncate;
       const textDecoder = new TextDecoder();
@@ -103,7 +104,9 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       }
     } finally {
       const disk = this.diskLength(scope, key);
-      if (disk !== undefined) state.knownLength = disk;
+      if (disk !== undefined) {
+        state.knownLength = lengthAtStart === disk ? disk : (lengthAtStart ?? 0);
+      }
     }
   }
 

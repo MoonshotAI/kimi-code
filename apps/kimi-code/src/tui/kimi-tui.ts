@@ -2214,7 +2214,7 @@ export class KimiTUI {
           retry: () => this.activatePluginCommand(session, pluginId, commandName, args),
           restore: () => {
             this.staging.releaseRecalled(rewrite.imageAttachmentIds);
-            this.restoreInputText(args);
+            this.restoreInputText(`/${pluginId}:${commandName}${args.length > 0 ? ` ${args}` : ''}`);
           },
         });
         if (recovered) {

@@ -801,6 +801,7 @@ describe('AppendLogStore', () => {
 describe('AppendLogStore session lock integration', () => {
   let homeDir: string;
   let disposables: DisposableStore;
+  let storage: FileStorageService;
   let log: IAppendLogStore;
 
   beforeEach(() => {
@@ -808,7 +809,8 @@ describe('AppendLogStore session lock integration', () => {
     mkdirSync(join(homeDir, SCOPE), { recursive: true });
     disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
+    storage = new FileStorageService(homeDir);
+    ix.stub(IFileSystemStorageService, storage);
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
   });
@@ -838,6 +840,20 @@ describe('AppendLogStore session lock integration', () => {
     log.append<Rec>(SCOPE, KEY, { n: 2 });
     await log.flush();
     expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not treat bytes appended while reading as already consumed', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      appendFileSync(path, `${JSON.stringify({ n: 2 })}\n`);
+    };
+
+    await readAll();
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
   });
 
   it('resets known length after rewrite', async () => {

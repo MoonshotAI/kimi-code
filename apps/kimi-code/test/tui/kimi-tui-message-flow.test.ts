@@ -1032,6 +1032,32 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.editor.getText()).toBe('original message');
   });
 
+  it.each([
+    ['two words', '/plug:cmd two words'],
+    ['', '/plug:cmd'],
+  ])('restores the complete plugin command after occupied cancellation', async (args, expected) => {
+    const session = makeSession({
+      activatePluginCommand: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    (
+      driver as unknown as {
+        activatePluginCommand(s: unknown, pluginId: string, command: string, value: string): void;
+      }
+    ).activatePluginCommand(session, 'plug', 'cmd', args);
+    await vi.waitFor(() => {
+      expect(driver.state.editorReplacementMounted).toBe(true);
+    });
+    (driver.state.editorContainer.children[0] as { handleInput(data: string): void }).handleInput(
+      '\u001B',
+    );
+
+    expect(driver.state.editor.getText()).toBe(expected);
+  });
+
   it('renders a bundled replay submission as a single turn', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
