@@ -5,7 +5,7 @@ import { headersToRecord } from '#/llm/errors';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
-import { resolveModelConnection } from '#/llm/protocol/connection';
+import { resolveModelConnection, withOpencodeSessionHeader } from '#/llm/protocol/connection';
 import { applyThinking } from '#/llm/protocol/thinking';
 import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import { encodeReasoningEffortFallback } from '#/llm/thinking';
@@ -137,7 +137,10 @@ async function executeOpenAIResponsesRequest(
   const client = resolveClient({
     model: ctx.model,
     headers: mergeRequestHeaders(
-      mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      withOpencodeSessionHeader(
+        ctx.model.baseUrl,
+        mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+      ),
       request.headers,
     ),
   });

@@ -160,3 +160,127 @@ describe('default client headers timeout', () => {
     }
   });
 });
+
+describe('opencode session header', () => {
+  async function generateWith(
+    requester: LlmRequester,
+    testModel: LlmModel,
+  ): Promise<LlmRequestEvent[]> {
+    const events: LlmRequestEvent[] = [];
+    await requester.generate(
+      { model: testModel },
+      { messages },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    return events;
+  }
+
+  function sessionHeaderOf(fetchStub: ReturnType<typeof vi.fn>, call: number): string | null {
+    const init = fetchStub.mock.calls[call]?.[1] as RequestInit | undefined;
+    return init?.headers === undefined ? null : new Headers(init.headers).get('x-opencode-session');
+  }
+
+  const uuidPattern =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+  it('sends a stable x-opencode-session header to opencode.ai hosts on every protocol', async () => {
+    let currentSse = openAISse;
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(currentSse, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const opencodeModel: LlmModel = {
+        ...model,
+        baseUrl: 'https://opencode.ai/inference/go/v1',
+      };
+      const protocols = [
+        { create: () => createOpenAIRequester(), sse: openAISse },
+        { create: () => createOpenAIResponsesRequester(), sse: responsesSse },
+        { create: () => createAnthropicRequester(), sse: anthropicSse },
+      ];
+      const seen: (string | null)[] = [];
+      for (const protocol of protocols) {
+        currentSse = protocol.sse;
+        const events = await generateWith(protocol.create(), opencodeModel);
+        expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+        seen.push(sessionHeaderOf(fetchStub, seen.length));
+      }
+      for (const value of seen) {
+        expect(value).toMatch(uuidPattern);
+      }
+      expect(new Set(seen).size).toBe(1);
+
+      currentSse = openAISse;
+      await generateWith(createOpenAIRequester(), opencodeModel);
+      expect(sessionHeaderOf(fetchStub, 3)).toBe(seen[0]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('sends the header to opencode.ai subdomains', async () => {
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(openAISse, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const events = await generateWith(createOpenAIRequester(), {
+        ...model,
+        baseUrl: 'https://gateway.opencode.ai/v1',
+      });
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toMatch(uuidPattern);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('omits the header for non-opencode hosts', async () => {
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(openAISse, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const events = await generateWith(createOpenAIRequester(), model);
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toBeNull();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps a user-provided x-opencode-session header', async () => {
+    const fetchStub = vi.fn(
+      async () =>
+        new Response(openAISse, {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchStub);
+    try {
+      const events = await generateWith(createOpenAIRequester(), {
+        ...model,
+        baseUrl: 'https://opencode.ai/inference/go/v1',
+        defaultHeaders: { 'x-opencode-session': 'user-session' },
+      });
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(sessionHeaderOf(fetchStub, 0)).toBe('user-session');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

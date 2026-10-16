@@ -6,7 +6,7 @@ import { providerImagePolicy } from '#/llm/media/image-formats';
 import type { LlmModel } from '#/llm/model';
 import { toLlmSyntaxErrorMessage } from '#/llm/syntax-errors';
 import type { ProtocolBase, ProtocolRequesterOptions, TraitContext } from '#/llm/protocol/base';
-import { resolveModelConnection } from '#/llm/protocol/connection';
+import { resolveModelConnection, withOpencodeSessionHeader } from '#/llm/protocol/connection';
 import { applyThinking } from '#/llm/protocol/thinking';
 import { resolveMaxCompletionCap, type FormatRequestInput } from '#/llm/protocol/format';
 import {
@@ -176,7 +176,10 @@ async function executeAnthropicRequest(
   const { connection, ctx, format, resolveClient, signal, onEvent } = transport;
   const client = resolveClient({
     model: ctx.model,
-    headers: mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+    headers: withOpencodeSessionHeader(
+      ctx.model.baseUrl,
+      mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
+    ),
   });
   onEvent?.({ type: 'llm.sent' });
   const betaHeaders =
