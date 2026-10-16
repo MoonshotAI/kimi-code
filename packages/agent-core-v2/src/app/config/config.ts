@@ -111,6 +111,7 @@ export interface RegisterSectionOptions<T> {
 }
 
 export interface ConfigEffectiveOverlay {
+  readonly domains?: readonly string[];
   apply(
     effective: Record<string, unknown>,
     getEnv: (name: string) => string | undefined,
