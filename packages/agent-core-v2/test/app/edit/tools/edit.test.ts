@@ -552,6 +552,275 @@ describe('EditTool', () => {
     expect(writeText).toHaveBeenCalledWith('/tmp/e.txt', 'Hello !');
   });
 
+  it('refuses multi-line empty deletions unless allow_large_delete is set', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const file = ['# Practice Phase', '', 'body line', '', 'more'].join('\n');
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(file),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const refused = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: '# Practice Phase\n\nbody line',
+      new_string: '',
+    });
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain('Refusing a multi-line deletion');
+    expect(refused.output).toContain('allow_large_delete=true');
+    expect(writeText).not.toHaveBeenCalled();
+
+    const allowed = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: '# Practice Phase\n\nbody line',
+      new_string: '',
+      allow_large_delete: true,
+    });
+    expect(allowed.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', '\n\nmore');
+  });
+
+  it('refuses cumulative replace_all empty deletions unless allow_large_delete is set', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const file = ['keep', 'alpha', 'beta', 'mid', 'alpha', 'beta', 'tail'].join('\n');
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(file),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const refused = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: 'alpha\nbeta',
+      new_string: '',
+      replace_all: true,
+    });
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain('Refusing a multi-line deletion');
+    expect(refused.output).toContain('allow_large_delete=true');
+    expect(refused.output).toContain('2 matched occurrence(s) of old_string span 2 lines each (4 lines summed across matches)');
+    expect(refused.output).not.toContain('old_string spans 3+ lines');
+    expect(writeText).not.toHaveBeenCalled();
+
+    const allowed = await execute(tool, {
+      path: '/tmp/skill.md',
+      old_string: 'alpha\nbeta',
+      new_string: '',
+      replace_all: true,
+      allow_large_delete: true,
+    });
+    expect(allowed.output).toContain('Replaced 2 occurrences');
+    expect(writeText).toHaveBeenCalledWith('/tmp/skill.md', 'keep\n\nmid\n\ntail');
+  });
+
+  it('describes adjacent multi-line matches that share a source line as a per-match sum', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('a\nba\nb'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const refused = await execute(tool, {
+      path: '/tmp/shared.txt',
+      old_string: 'a\nb',
+      new_string: '',
+      replace_all: true,
+    });
+
+    expect(refused).toMatchObject({ isError: true });
+    expect(refused.output).toContain(
+      '2 matched occurrence(s) of old_string span 2 lines each (4 lines summed across matches)',
+    );
+    expect(refused.output).not.toContain('lines in total');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('allows replace_all empty deletion of a single-line token that occurs many times', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('"a, b, c, d"'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/list.txt',
+      old_string: ', ',
+      new_string: '',
+      replace_all: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Replaced 3 occurrences');
+    expect(writeText).toHaveBeenCalledWith('/tmp/list.txt', '"abcd"');
+  });
+
+  it.each(['\n', '\r\n', '\r'])('allows deletion of two complete lines ending in %j', async (eol) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(`one${eol}two${eol}tail`),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const viewEol = eol === '\r\n' ? '\n' : eol;
+
+    const result = await execute(tool, {
+      path: '/tmp/lines.txt',
+      old_string: `one${viewEol}two${viewEol}`,
+      new_string: '',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(writeText).toHaveBeenCalledWith('/tmp/lines.txt', 'tail');
+  });
+
+  it.each(['\n', '\r\n', '\r'])('allows repeated one-line deletions ending in %j', async (eol) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(`alpha${eol}alpha${eol}alpha${eol}tail`),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const viewEol = eol === '\r\n' ? '\n' : eol;
+
+    const result = await execute(tool, {
+      path: '/tmp/lines.txt',
+      old_string: `alpha${viewEol}`,
+      new_string: '',
+      replace_all: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Replaced 3 occurrences');
+    expect(writeText).toHaveBeenCalledWith('/tmp/lines.txt', 'tail');
+  });
+
+  it.each(['\n', '\r\n', '\r'])('still refuses three complete lines ending in %j', async (eol) => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(`one${eol}two${eol}three${eol}tail`),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+    const viewEol = eol === '\r\n' ? '\n' : eol;
+
+    const result = await execute(tool, {
+      path: '/tmp/lines.txt',
+      old_string: `one${viewEol}two${viewEol}three${viewEol}`,
+      new_string: '  ',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('span 3 lines each (3 lines summed across matches)');
+    expect(result.output).toContain('allow_large_delete=true');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('allows replace_all empty deletion of a one-line token on several lines', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('foo\nfoo\nfoo'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/tok.txt',
+      old_string: 'foo',
+      new_string: '',
+      replace_all: true,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Replaced 3 occurrences');
+    expect(writeText).toHaveBeenCalledWith('/tmp/tok.txt', '\n\n');
+  });
+
+  it('reports old_string not found before refusing a stale multi-line empty deletion', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('alpha beta'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/stale.md',
+      old_string: '# Practice Phase\n\nbody line',
+      new_string: '',
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('old_string not found');
+    expect(result.output).toContain('large enough region');
+    expect(result.output).not.toContain('Refusing a multi-line deletion');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('reports a non-unique old_string before refusing a multi-line empty deletion', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const file = ['# Practice Phase', '', 'body line', 'mid', '# Practice Phase', '', 'body line'].join(
+      '\n',
+    );
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue(file),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/dup.md',
+      old_string: '# Practice Phase\n\nbody line',
+      new_string: '',
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('is not unique');
+    expect(result.output).not.toContain('Refusing a multi-line deletion');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('counts lone carriage returns when guarding multi-line deletions', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('first\rsecond\rthird\rtail'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/cr.txt',
+      old_string: 'first\rsecond\rthird',
+      new_string: '',
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('Refusing a multi-line deletion');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('tells the model to reread a large region when old_string is missing', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('alpha beta'),
+      writeText,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/a.txt',
+      old_string: 'delta',
+      new_string: 'gamma',
+    });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('large enough region');
+    expect(result.output).toContain('30–50 line window');
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
   it('allows absolute edits outside the workspace under default policy', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const { fs } = createSpiedEditFs({
@@ -610,4 +879,28 @@ describe('EditTool', () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it.each([false, true])(
+    'rejects an empty old_string at the service boundary (replace_all=%s)',
+    async (replaceAll) => {
+      const dir = await mkdtemp(join(tmpdir(), 'edit-empty-needle-'));
+      const file = join(dir, 'sample.txt');
+      await writeFile(file, 'alpha\nbeta\n');
+      try {
+        const service = new FileEditService(new HostFileSystem());
+        const result = await service.edit({
+          path: file,
+          displayPath: file,
+          old_string: '',
+          new_string: 'x',
+          replace_all: replaceAll,
+        });
+
+        expect(result.ok).toBe(false);
+        expect(await readFile(file, 'utf8')).toBe('alpha\nbeta\n');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
 });
