@@ -236,7 +236,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           candidates.push(
             nextTimed.then(
               (result): ToolExecutionStreamEvent => ({ type: 'timed', result }),
-              (reason): ToolExecutionStreamEvent => ({ type: 'timedRejected', reason }),
+              (error): ToolExecutionStreamEvent => ({ type: 'timedRejected', reason: error }),
             ),
           );
         }
@@ -266,7 +266,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
             options,
           ).then(
             (value): SettledToolExecutionResult => ({ status: 'fulfilled', value }),
-            (reason): SettledToolExecutionResult => ({ status: 'rejected', reason }),
+            (error): SettledToolExecutionResult => ({ status: 'rejected', reason: error }),
           );
           finalizations.add(finalization);
           nextTimed = timedResults.next();
@@ -397,7 +397,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       return settleError(call.args, output, 'resolution-failed');
     }
 
-    const displayFields = toolCallDisplayFieldsFromExecution(execution);
+    let displayFields = toolCallDisplayFieldsFromExecution(execution);
 
     if (options.signal.aborted) {
       return settleError(
@@ -417,6 +417,31 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     if (decision?.veto !== undefined) {
       return settleSynthetic(call.args, decision.veto, 'vetoed', displayFields);
+    }
+
+    if (decision?.updatedArgs !== undefined) {
+      const validationError = validateExecutableToolArgs(call.tool, call.args);
+      if (validationError !== null) {
+        return settleError(
+          call.args,
+          `Invalid args for tool "${call.toolName}": ${validationError}`,
+          'preflight-rejected',
+          displayFields,
+        );
+      }
+      try {
+        execution = await call.tool.resolveExecution(call.args);
+      } catch (error) {
+        const output =
+          error instanceof PathSecurityError
+            ? error.message
+            : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
+        return settleError(call.args, output, 'resolution-failed', displayFields);
+      }
+      displayFields = toolCallDisplayFieldsFromExecution(execution);
+      if (execution.isError === true) {
+        return settleSynthetic(call.args, execution, 'synthetic', displayFields);
+      }
     }
 
     const executionMetadata = decision?.executionMetadata;
@@ -484,7 +509,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         index,
         pendingResult.then(
           (value): SettledTimedToolResult => ({ status: 'fulfilled', value }),
-          (reason): SettledTimedToolResult => ({ status: 'rejected', index, reason }),
+          (error): SettledTimedToolResult => ({ status: 'rejected', index, reason: error }),
         ),
       );
     }
