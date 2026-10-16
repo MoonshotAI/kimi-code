@@ -19,15 +19,34 @@ export interface RenderedUserPromptHookParts {
   readonly parts: readonly TextPart[];
 }
 
+export function extractHookMessages(
+  results: readonly HookResult[] | undefined,
+  options: { readonly allowPlainStdout?: boolean } = {},
+): string[] {
+  const allowPlainStdout = options.allowPlainStdout ?? true;
+  return (
+    results
+      ?.filter((result) => result.action !== 'block')
+      ?.map((result) => extractHookMessage(result, allowPlainStdout))
+      .filter(isNonEmptyString) ?? []
+  );
+}
+
+export function extractUpdatedInput(
+  results: readonly HookResult[] | undefined,
+): Record<string, unknown> | undefined {
+  let merged: Record<string, unknown> | undefined;
+  for (const result of results ?? []) {
+    if (result.action === 'block' || result.updatedInput === undefined) continue;
+    merged = { ...merged, ...result.updatedInput };
+  }
+  return merged;
+}
+
 export function renderUserPromptHookResult(
   results: readonly HookResult[] | undefined,
 ): RenderedUserPromptHookParts | undefined {
-  const messages =
-    results
-      ?.filter((result) => result.action !== 'block')
-      ?.map(userPromptHookMessage)
-      .filter(isNonEmptyString) ??
-    [];
+  const messages = extractHookMessages(results, { allowPlainStdout: true });
   if (messages.length === 0) return undefined;
   return {
     event: 'UserPromptSubmit',
@@ -61,13 +80,19 @@ export function renderUserPromptHookBlockResult(
   };
 }
 
-function userPromptHookMessage(result: HookResult): string | undefined {
+function extractHookMessage(result: HookResult, allowPlainStdout: boolean): string | undefined {
   if (result.timedOut === true || (result.exitCode !== undefined && result.exitCode !== 0)) {
     return undefined;
   }
-  const message = result.message?.trim();
-  if (message !== undefined && message.length > 0) return message;
-  if (result.structuredOutput === true) return undefined;
+  const parts: string[] = [];
+  for (const candidate of [result.message, result.additionalContext]) {
+    const trimmed = candidate?.trim();
+    if (trimmed !== undefined && trimmed.length > 0 && !parts.includes(trimmed)) {
+      parts.push(trimmed);
+    }
+  }
+  if (parts.length > 0) return parts.join('\n');
+  if (!allowPlainStdout || result.structuredOutput === true) return undefined;
   const stdout = result.stdout?.trim();
   return stdout === undefined || stdout.length === 0 ? undefined : stdout;
 }

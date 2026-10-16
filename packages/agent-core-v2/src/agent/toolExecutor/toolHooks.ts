@@ -26,12 +26,15 @@ export interface ResolvedToolExecutionHookContext extends ToolExecutionHookConte
 export interface BeforeExecuteDecision {
   readonly veto?: ExecutableToolResult;
   readonly executionMetadata?: unknown;
+  readonly updatedArgs?: Record<string, unknown>;
+  readonly updatedBy?: unknown;
 }
 
 export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext {
   veto(result: ExecutableToolResult): void;
   allow(): void;
   pass(metadata?: unknown): void;
+  updateArgs?(args: Record<string, unknown>): void;
   waitUntil(factory: () => Promise<BeforeExecuteDecision | undefined>): void;
 }
 
