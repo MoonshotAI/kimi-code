@@ -1528,6 +1528,44 @@ describe('IExternalHooksRunnerService integration', () => {
       expect(submitCtx.block).toBe(false);
       expect(hookParts).toHaveLength(1);
       expect(hookParts[0]?.text).toContain('[hook-ctx] seen:/my-skill arg1');
+
+      const pluginParts: Array<{ type: 'text'; text: string }> = [];
+      const pluginCtx = {
+        promptMessage: {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: 'expanded body' }],
+          toolCalls: [],
+          origin: {
+            kind: 'plugin_command' as const,
+            activationId: 'act-2',
+            trigger: 'user-slash' as const,
+            pluginId: 'demo',
+            commandName: 'deploy',
+            commandArgs: 'prod',
+          },
+        },
+        hookParts: pluginParts,
+        isSteer: false,
+        block: false,
+      };
+      await loop.hooks.onBeforeSubmitPrompt.run(pluginCtx);
+      expect(pluginParts).toHaveLength(1);
+      expect(pluginParts[0]?.text).toContain('[hook-ctx] seen:/demo:deploy prod');
+
+      const mediaParts: Array<{ type: 'text'; text: string }> = [];
+      const mediaCtx = {
+        promptMessage: {
+          role: 'user' as const,
+          content: [{ type: 'image_url' as const, imageUrl: { url: 'https://example.com/a.png' } }],
+          toolCalls: [],
+        },
+        hookParts: mediaParts,
+        isSteer: false,
+        block: false,
+      };
+      await loop.hooks.onBeforeSubmitPrompt.run(mediaCtx);
+      expect(mediaParts).toHaveLength(1);
+      expect(mediaParts[0]?.text).toContain('[hook-ctx] seen:');
     } finally {
       ix?.dispose();
       disposables.dispose();
@@ -1572,6 +1610,7 @@ describe('IExternalHooksRunnerService integration', () => {
           matcher: 'Edit|Write',
           command: stdinScript([
             'process.stdout.write(JSON.stringify({',
+            '  systemMessage: "[post-status] ok",',
             '  hookSpecificOutput: {',
             '    hookEventName: "PostToolUse",',
             '    additionalContext: "[post-hook] saw response:" + parsed.tool_response,',
@@ -1629,7 +1668,6 @@ describe('IExternalHooksRunnerService integration', () => {
         });
       }
 
-      expect(args).toEqual({ file_path: 'src/app.ts', patched: true });
       expect(updatedArgs).toEqual({ file_path: 'src/app.ts', patched: true });
       expect(context.messages).toHaveLength(0);
 
@@ -1638,7 +1676,7 @@ describe('IExternalHooksRunnerService integration', () => {
         signal,
         toolCall: { id: 'c1', type: 'function', name: 'Edit', arguments: '{}' },
         toolCalls: [],
-        args,
+        args: updatedArgs,
         outcome: 'executed',
         result: { output: 'file edited' },
       });
@@ -1647,6 +1685,7 @@ describe('IExternalHooksRunnerService integration', () => {
       expect((context.messages[0]?.content[0] as any)?.text).toContain(
         '[pre-hook] file warning for src/app.ts',
       );
+      expect((context.messages[1]?.content[0] as any)?.text).toContain('[post-status] ok');
       expect((context.messages[1]?.content[0] as any)?.text).toContain(
         '[post-hook] saw response:file edited',
       );

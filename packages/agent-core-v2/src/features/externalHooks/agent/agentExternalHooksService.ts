@@ -378,12 +378,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     if (block === undefined) {
       const updatedInput = extractUpdatedInput(results);
       if (updatedInput !== undefined) {
-        if (isPlainRecord(ctx.args)) {
-          for (const key of Object.keys(ctx.args)) {
-            delete ctx.args[key];
-          }
-          Object.assign(ctx.args, updatedInput);
-        }
         ctx.updateArgs?.(updatedInput);
       }
     }
@@ -426,16 +420,18 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
 
     const signal = new AbortController().signal;
     const input = ctx.promptMessage.content;
-    const promptText = resolveUserPromptHookText(input, origin);
+    const slashText = resolveSlashPromptHookText(origin);
+    const promptText = slashText ?? turnPromptText(input, origin) ?? '';
     signal.throwIfAborted();
     const results = await this.runner.trigger('UserPromptSubmit', {
-      matcherValue: promptText !== undefined ? promptText : input,
+      matcherValue: slashText ?? input,
       signal,
       cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
       inputData: this.withSessionFacts({
-        prompt: promptText ?? input,
+        prompt: promptText,
         isSteer: ctx.isSteer,
+        transcriptPath: `${this.sessionContext.sessionDir}/agents/${this.scopeContext.agentId}/wire.jsonl`,
       }),
     });
     signal.throwIfAborted();
@@ -558,10 +554,7 @@ function isUserPromptSubmitOrigin(origin: PromptOrigin): boolean {
   );
 }
 
-function resolveUserPromptHookText(
-  content: PromptSubmitContext['promptMessage']['content'],
-  origin: PromptOrigin,
-): string | undefined {
+function resolveSlashPromptHookText(origin: PromptOrigin): string | undefined {
   if (origin.kind === 'skill_activation') {
     const args = origin.skillArgs?.trim();
     return args !== undefined && args.length > 0
@@ -569,12 +562,11 @@ function resolveUserPromptHookText(
       : `/${origin.skillName}`;
   }
   if (origin.kind === 'plugin_command') {
+    const command = `/${origin.pluginId}:${origin.commandName}`;
     const args = origin.commandArgs?.trim();
-    return args !== undefined && args.length > 0
-      ? `/${origin.commandName} ${args}`
-      : `/${origin.commandName}`;
+    return args !== undefined && args.length > 0 ? `${command} ${args}` : command;
   }
-  return turnPromptText(content, origin);
+  return undefined;
 }
 
 function toolOutputText(output: ExecutableToolResult['output']): string {

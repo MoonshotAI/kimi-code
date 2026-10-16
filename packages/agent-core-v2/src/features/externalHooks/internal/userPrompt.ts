@@ -84,8 +84,14 @@ function extractHookMessage(result: HookResult, allowPlainStdout: boolean): stri
   if (result.timedOut === true || (result.exitCode !== undefined && result.exitCode !== 0)) {
     return undefined;
   }
-  const message = result.message?.trim();
-  if (message !== undefined && message.length > 0) return message;
+  const parts: string[] = [];
+  for (const candidate of [result.message, result.additionalContext]) {
+    const trimmed = candidate?.trim();
+    if (trimmed !== undefined && trimmed.length > 0 && !parts.includes(trimmed)) {
+      parts.push(trimmed);
+    }
+  }
+  if (parts.length > 0) return parts.join('\n');
   if (!allowPlainStdout || result.structuredOutput === true) return undefined;
   const stdout = result.stdout?.trim();
   return stdout === undefined || stdout.length === 0 ? undefined : stdout;

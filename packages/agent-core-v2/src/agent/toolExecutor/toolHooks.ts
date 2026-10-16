@@ -27,6 +27,7 @@ export interface BeforeExecuteDecision {
   readonly veto?: ExecutableToolResult;
   readonly executionMetadata?: unknown;
   readonly updatedArgs?: Record<string, unknown>;
+  readonly updatedBy?: unknown;
 }
 
 export interface BeforeToolExecuteEvent extends ResolvedToolExecutionHookContext {
