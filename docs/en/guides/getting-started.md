@@ -168,6 +168,61 @@ npm install -g @moonshot-ai/kimi-code@latest
 npm uninstall -g @moonshot-ai/kimi-code
 ```
 
+## FAQ
+
+::: details Empty model list during /login
+If the selected platform returns no usable models, the CLI reports "No models available for this platform." This usually means no model matches the platform's supported prefix. Check that the account and platform match first, then check whether any models are available there.
+
+If the CLI reports "Failed to verify API key", handle it as an API key or network issue:
+
+- **Invalid or expired API key**: Check whether the API key you entered is correct and still valid.
+- **Network connection issues**: Confirm you can access the API service addresses (such as `api.kimi.com` or `api.moonshot.cn`).
+
+**Note: Distinguish Platforms**
+
+Kimi Code membership benefits and the [Kimi Open Platform](https://platform.kimi.com) have different Base URLs. Please ensure your Base URL and API key are matched correctly.
+
+| Platform | Base URL | Billing | API key source |
+|----------|----------|---------|----------------|
+| **Kimi Code** | Anthropic-compatible: `https://api.kimi.com/coding/` | Membership subscription (quota included) | [Kimi Code Console](https://www.kimi.com/code/console) |
+| **Kimi Open Platform** | `https://api.moonshot.cn/v1` | Pay-as-you-go | [Kimi Open Platform](https://platform.kimi.com) |
+:::
+
+::: details Invalid API key
+Possible reasons:
+
+- **Typo**: Check for extra spaces or missing characters.
+- **Expired or revoked**: Verify the key status in the console.
+:::
+
+::: details Membership expired or quota exhausted
+Use `/usage` to check your current quota and booster balance; check membership status in the account or membership page. If your quota is exhausted or membership has expired, renew or upgrade at [Kimi Code](https://kimi.com/code).
+:::
+
+::: details Image paste fails
+Use `Ctrl-V` on macOS / Linux or `Alt-V` on Windows to paste an image. If you see "Current model does not support image input", the current model does not support image input.
+
+Solutions:
+
+- **Switch to a vision-capable model**: Use a model with `image_in` capability.
+- **Check clipboard content**: Make sure the clipboard contains actual image data, not just a file path.
+:::
+
+::: details Slow first launch on macOS
+macOS Gatekeeper performs a security check on new programs the first time they run, causing a slow startup. Solutions:
+
+- **Wait for the check to complete**: Be patient on first launch; subsequent startups will be normal.
+- **Add to Developer Tools**: Go to System Settings → Privacy & Security → Developer Tools and add your terminal app.
+:::
+
+::: details How to upgrade Kimi Code CLI
+Exit the TUI and run `kimi upgrade` in a terminal to check for the latest version and upgrade interactively. You can also use the package manager directly:
+
+```sh
+npm install -g @moonshot-ai/kimi-code@latest
+```
+:::
+
 ## Next steps
 
 - [Interaction and input](./interaction.md) — input box operations, approval flow, Plan mode, and Ask When Needed mode explained

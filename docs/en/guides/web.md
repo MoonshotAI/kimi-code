@@ -84,21 +84,21 @@ How the two sides compare:
 
 ## FAQ
 
-### The port is already taken
-
+::: details The port is already taken
 Nothing to do. `kimi web` automatically retries with the next port (58628, 58629, …) — just use the address printed in the startup banner.
+:::
 
-### The URL won't open in the browser
-
+::: details The URL won't open in the browser
 First check the server is still running in the terminal (it runs in the foreground there). Copy the full URL including the `#token=` part; opening only `http://127.0.0.1:58627` lands on a token input page, where pasting the `Token` value from the banner also works.
+:::
 
-### How to recover from an invalid token
-
+::: details How to recover from an invalid token
 Run `kimi web rotate-token` to generate a new token, then open the new banner URL. All running instances switch to the new token automatically — no restart needed.
+:::
 
-### Other devices on the same Wi-Fi can't connect
-
+::: details Other devices on the same Wi-Fi can't connect
 Make sure you started with `--host` (bare is fine), and use the LAN URL from the banner (like `http://192.168.x.x:58627/#token=...`). If it still fails, check that the machine's firewall allows the port, and that both devices are really on the same network segment — guest Wi-Fi, VPNs, and switching to a 4G/5G hotspot all isolate devices.
+:::
 
 ## Next steps
 
