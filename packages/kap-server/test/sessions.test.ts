@@ -18,6 +18,7 @@ import {
   type Event2,
   type IOAuthService as IOAuthServiceType,
   IAgentContextMemoryService,
+  IAgentFullCompactionService,
   IAgentGoalService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -1278,6 +1279,29 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(response.body.code).toBe(40901);
     } finally {
       undo.mockRestore();
+    }
+  });
+
+  it('returns 40901 when :reload is requested during an active compaction', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const compacting = vi
+      .spyOn(agent.accessor.get(IAgentFullCompactionService), 'compacting', 'get')
+      .mockReturnValue({} as never);
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:reload`);
+      expect(response.body.code).toBe(40901);
+    } finally {
+      compacting.mockRestore();
     }
   });
 

@@ -1036,6 +1036,13 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
           { details: { sessionId: id } },
         );
       }
+      if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while compaction is running`,
+          { details: { sessionId: id } },
+        );
+      }
     }
   } else if (indexEntry === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
@@ -1066,7 +1073,14 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     await core.accessor.get(IPluginService).reloadPlugins();
     await refreshWorkspaceCatalogs(core, workspaceId, id);
   } catch (error) {
-    staleNotifier?.unmute();
+    if (staleNotifier !== undefined) {
+      staleNotifier.unmute();
+      await Promise.all([
+        staleNotifier.notifyAgentsMdChanges(),
+        staleNotifier.notifySkillChanges(),
+        staleNotifier.notifySubagentChanges({}),
+      ]).catch(() => undefined);
+    }
     throw error;
   }
   if (live !== undefined) {
