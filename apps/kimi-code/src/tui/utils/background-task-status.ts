@@ -13,6 +13,8 @@ import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi
 
 import type { BackgroundAgentStatusData, BackgroundAgentStatusPhase } from '@/tui/types';
 
+import { isMonitorTaskId } from './monitor-event';
+
 const MAX_DETAIL_LENGTH = 240;
 
 function truncate(value: string | undefined): string | undefined {
@@ -42,6 +44,7 @@ function phaseFromStatus(status: BackgroundTaskStatus): BackgroundAgentStatusPha
 function subjectFor(info: BackgroundTaskInfo): string {
   if (info.kind === 'agent') return 'agent task';
   if (info.kind === 'question') return 'question task';
+  if (isMonitorTaskId(info.taskId)) return 'monitor';
   return 'bash task';
 }
 

@@ -1,5 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { PassThrough, Readable, type Writable } from 'node:stream';
 import { join } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,8 @@ import { type IAgentScopeHandle } from '#/_base/di/scope';
 import type { LlmRequester } from '#human/llm/requester/requester';
 import { IAgentTaskService } from '#/agent/task/task';
 import { SubagentTask } from '#/agent/tools/agent/subagent-task';
+import { MonitorProcessTask } from '#/agent/tools/task/monitor/monitorTool';
+import type { IHostProcess } from '#/os/interface/hostProcess';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -91,6 +94,35 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(flatHistoryText).toContain('idle-state repro completed.');
       expect(flatHistoryText).toContain('<output-file');
       expect(flatHistoryText).not.toContain('background agent finished its job');
+    });
+
+    it('IDLE: a monitor event launches a turn that sees the new lines', async () => {
+      const stdout = new PassThrough();
+      const proc: IHostProcess = {
+        _serviceBrand: undefined,
+        stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+        stdout,
+        stderr: Readable.from([]),
+        pid: 4343,
+        exitCode: null,
+        wait: () => new Promise<number>(() => {}),
+        kill: vi.fn(async () => {
+          stdout.end();
+        }) as unknown as IHostProcess['kill'],
+        dispose: vi.fn().mockResolvedValue(undefined) as IHostProcess['dispose'],
+      };
+
+      ctx.mockNextResponse({ type: 'text', text: 'saw the monitor event' });
+      const turnEnd = ctx.untilTurnEnd();
+      const taskId = background.registerTask(new MonitorProcessTask(proc, 'tail -F app.log', 'watch app log'));
+      stdout.write('ERROR connection refused\n');
+      await turnEnd;
+
+      const flatHistoryText = JSON.stringify(ctx.llmCalls.at(-1)!.history);
+      expect(flatHistoryText).toContain('task.event');
+      expect(flatHistoryText).toContain(taskId);
+      expect(flatHistoryText).toContain('ERROR connection refused');
+      await background.stop(taskId);
     });
 
     it('BUSY: completed bg agent during an active turn is flushed into an LLM call', async () => {

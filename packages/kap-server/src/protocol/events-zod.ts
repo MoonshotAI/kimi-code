@@ -989,6 +989,14 @@ export const backgroundTaskTerminatedEventSchema = z.object({
   info: taskInfoSchema,
 });
 
+export const backgroundTaskEventDeliveredEventSchema = z.object({
+  type: z.literal('background.task.event'),
+  taskId: z.string(),
+  description: z.string(),
+  lines: z.array(z.string()),
+  omitted: z.number(),
+});
+
 export const cronFiredEventSchema = z.object({
   type: z.literal('cron.fired'),
   origin: cronJobOriginSchema,
@@ -1111,6 +1119,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   taskTerminatedEventSchema,
   backgroundTaskStartedEventSchema,
   backgroundTaskTerminatedEventSchema,
+  backgroundTaskEventDeliveredEventSchema,
   cronFiredEventSchema,
   promptSubmittedEventSchema,
   promptCompletedEventSchema,

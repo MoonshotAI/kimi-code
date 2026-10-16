@@ -305,6 +305,15 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(permissionRan).toBe(false);
     });
 
+    it('blocks Monitor while plan mode is active, since TaskStop could not stop it', async () => {
+      await enterPlan();
+      const decision = await run(hookContext('Monitor', { args: { command: 'tail -F app.log', description: 'log' } }));
+
+      expect(decision?.veto?.isError).toBe(true);
+      expect(decision?.veto?.output).toContain('ExitPlanMode');
+      expect(permissionRan).toBe(false);
+    });
+
     it.each(['CronCreate', 'CronDelete'] as const)(
       'blocks %s while plan mode is active',
       async (toolName) => {

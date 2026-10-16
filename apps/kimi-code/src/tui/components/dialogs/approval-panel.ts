@@ -192,6 +192,8 @@ function headerFor(toolName: string): string {
   switch (toolName) {
     case 'Bash':
       return 'Run this command?';
+    case 'Monitor':
+      return 'Start this monitor?';
     case 'Write':
       return 'Write this file?';
     case 'Edit':

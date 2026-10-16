@@ -127,6 +127,17 @@ export class AgentPlanService extends Service implements IAgentPlanService {
       return;
     }
 
+    if (toolName === 'Monitor') {
+      event.veto(
+        denyToolExecution(
+          this.toolApproval.formatDenyMessage(
+            'Monitor is not available in plan mode because TaskStop is blocked here, so the monitor could not be stopped. Call ExitPlanMode first.',
+          ),
+        ),
+      );
+      return;
+    }
+
     if (toolName === 'CronCreate' || toolName === 'CronDelete') {
       event.veto(
         denyToolExecution(

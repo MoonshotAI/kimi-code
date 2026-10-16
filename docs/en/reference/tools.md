@@ -70,7 +70,7 @@ Foreground mode blocks the current turn until the command completes or times out
 | `EnterPlanMode` | Auto-allow | Enter Plan mode |
 | `ExitPlanMode` | Auto-allow (requires user to confirm the plan) | Exit Plan mode and submit the plan |
 
-Plan mode is a constrained working state: once entered, `Write` and `Edit` are restricted to writing the current plan file only, and `TaskStop` is blocked entirely. All other tools (including `Bash`) are still governed by the current permission rules.
+Plan mode is a constrained working state: once entered, `Write` and `Edit` are restricted to writing the current plan file only, and `TaskStop` and `Monitor` are blocked entirely. All other tools (including `Bash`) are still governed by the current permission rules.
 
 **`EnterPlanMode`** accepts no parameters; upon success it returns workflow guidance and the plan file path.
 
@@ -124,6 +124,7 @@ Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuest
 | `TaskOutput` | Auto-allow | View the output of a background task |
 | `TaskStop` | Requires approval | Stop a running background task |
 | `WaitFor` | Auto-allow | Wait for background tasks to finish |
+| `Monitor` | Requires approval | Run a background command whose output lines reach the agent as they appear (experimental) |
 
 **`TaskList`** returns the list of background tasks. Optional parameters: `active_only` (defaults to true; lists only running tasks) and `limit` (defaults to 20; range 1–100).
 
@@ -134,6 +135,8 @@ Background task tools manage tasks started via `Bash`, `Agent`, or `AskUserQuest
 **`WaitFor`** suspends the current turn until a background task finishes, the timeout elapses, or a steer message arrives. Parameters: `timeout` (required, in seconds, max 90) and optional `task_id`. Without `task_id`, the wait ends as soon as any background task that was running at call time finishes; when no background tasks are running, it returns immediately. A timeout is not an error — the result lists the tasks still running, and the Agent can wait again or do other work meanwhile. A new message ends the wait early.
 
 In the terminal, pressing `Enter` while the agent waits steers the message into the turn, and messages already queued when the wait starts are steered in automatically too. If the queue holds a shell command or skill, automatic steering is skipped and the queue and new input stay queued until the turn ends. Press `Ctrl-S` to manually steer non-shell inputs from the editor and the queue. Background tasks keep running and still notify the agent on completion. A task whose result was reported by `WaitFor` does not also produce an automatic completion notification.
+
+**`Monitor`** starts a background command whose stdout lines are delivered to the agent while it keeps working, so it can react to a log line, a failing test, or a status change as soon as it happens. Parameters: `command`, `description`, optional `timeout` (in seconds, default 300, max 3600), and optional `persistent` (disable the timeout; command exit, `TaskStop`, session end, and output limits still stop the monitor). Lines that arrive close together are batched into one notification; an idle agent starts a new turn for it, and a busy one sees it at its next step. stderr is not delivered, only saved to the task output. A monitor that prints more than 300 stdout lines in a minute or more than 16 MiB of cumulative stdout and stderr is stopped, even with `persistent: true`. Filter both output channels at the source. `WaitFor` with a monitor's `task_id` returns as soon as its next batch of lines is ready; `WaitFor` without a `task_id` does not wait for monitors. Only the main agent has this tool, and it is blocked in Plan mode; call `ExitPlanMode` before starting a monitor. It is experimental and off by default: enable it with `KIMI_CODE_EXPERIMENTAL_MONITOR=1`, `[experimental] monitor = true` in `config.toml`, or `/experiments`.
 
 ## Scheduled Tasks
 

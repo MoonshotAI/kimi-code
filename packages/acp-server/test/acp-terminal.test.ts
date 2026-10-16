@@ -175,6 +175,24 @@ describe('AcpProcessService local fallback', () => {
     });
   });
 
+  it('runs Bash-shaped spawns that need stderr kept separate locally even with the terminal capability', async () => {
+    let created = 0;
+    const connection = makeConnection({
+      terminalEnabled: true,
+      createTerminal: () => {
+        created += 1;
+        return makeTerminalHandle();
+      },
+    });
+    const { local, calls } = makeLocalProcessService();
+    const runtime = await bindRuntime(makeEnvironment(), { connection, local });
+
+    await runtime.process!.spawn('/bin/bash', ['-c', 'tail -F app.log'], { env: { ...bashEnv }, mergeStderr: false });
+
+    expect(created).toBe(0);
+    expect(calls).toHaveLength(1);
+  });
+
   it('falls back to local execution for non-Bash spawns even with the terminal capability', async () => {
     let created = 0;
     const connection = makeConnection({

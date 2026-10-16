@@ -96,6 +96,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
+import { isMonitorTaskId } from '#/tui/utils/monitor-event';
 import { currentKimiProfile } from '#/utils/region';
 
 import {
@@ -987,7 +988,7 @@ function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
   for (const agent of agentManager.list()) {
     const handle = agentManager.handleOf(agent.agentId);
     if (handle === undefined) continue;
-    count += handle.accessor.get(IAgentTaskService).list(true).length;
+    count += handle.accessor.get(IAgentTaskService).list(true).filter((task) => !isMonitorTaskId(task.taskId)).length;
   }
   return count;
 }
@@ -1114,6 +1115,7 @@ async function drainBackgroundTasks(
       if (handle === undefined) continue;
       const taskService = handle.accessor.get(IAgentTaskService);
       for (const task of taskService.list(true)) {
+        if (isMonitorTaskId(task.taskId)) continue;
         activeCount++;
         if (seen.has(task.taskId)) continue;
         seen.add(task.taskId);

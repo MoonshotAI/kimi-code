@@ -42,6 +42,7 @@ export type AgentTaskInfo = AgentTaskInfoByKind[AgentTaskKind];
 export interface AgentTaskSink {
   readonly signal: AbortSignal;
   appendOutput(chunk: string): void;
+  appendEvent?(chunk: string): void;
   settle(settlement: AgentTaskSettlement): Promise<boolean>;
 }
 
@@ -50,6 +51,7 @@ export interface AgentTask {
   readonly kind: AgentTaskKind;
   readonly description: string;
   readonly timeoutMs?: number;
+  readonly stopsWithSession?: boolean;
 
   start(sink: AgentTaskSink): void | Promise<void>;
   onDetach?(): void;

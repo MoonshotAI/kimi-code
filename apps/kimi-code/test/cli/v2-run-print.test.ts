@@ -360,6 +360,35 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
+  it.each(['drain', 'steer'])('does not wait for a running monitor in %s mode before shutting down', async (mode) => {
+    const { app, agentServices, sessionServices, appServices } = makeFakeHarness();
+    const config = appServices.get(IConfigService) as { get: ReturnType<typeof vi.fn> };
+    config.get.mockImplementation((section: string) =>
+      section === 'defaultModel' ? 'k2' : section === 'background' ? { printBackgroundMode: mode } : undefined,
+    );
+    const lifecycle = sessionServices.get(IAgentLifecycleService) as { list: ReturnType<typeof vi.fn> };
+    lifecycle.list.mockReturnValue([{ agentId: 'main' }]);
+    const taskService = agentServices.get(IAgentTaskService) as {
+      list: ReturnType<typeof vi.fn>;
+      stopAllOnExit: ReturnType<typeof vi.fn>;
+      wait?: ReturnType<typeof vi.fn>;
+      suppressTerminalNotification?: ReturnType<typeof vi.fn>;
+    };
+    taskService.list.mockReturnValue([{ taskId: 'monitor-abc12345', status: 'running' }]);
+    taskService.wait = vi.fn(() => new Promise(() => {}));
+    taskService.suppressTerminalNotification = vi.fn(async () => {});
+    (agentServices.get(IAgentGoalService) as { getGoal: ReturnType<typeof vi.fn> }).getGoal.mockReturnValue({});
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const stderr = writer();
+    await runV2Print(opts() as never, '1.2.3-test', { stdout: writer(), stderr });
+
+    expect(stderr.text()).not.toContain('Warning');
+    expect(taskService.wait).not.toHaveBeenCalled();
+    expect(taskService.stopAllOnExit).toHaveBeenCalled();
+  }, 10_000);
+
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
     const stdout = writer();
     const stderr = writer();
