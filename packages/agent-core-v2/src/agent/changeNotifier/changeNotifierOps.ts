@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import { ContextClear } from '#/agent/contextMemory/contextEvents';
+import { ContextApplyCompaction, ContextClear } from '#/agent/contextMemory/contextEvents';
 import { defineState } from '#/state/state';
 
 import type { SubagentModelPoolSnapshot } from './changeNotifier';
@@ -52,6 +52,7 @@ export const changeNotifierSnapshotKey = defineState(
   .replayable({ schema: z.custom<ChangeNotifierSnapshotState>() })
   .undoable()
   .on(ContextClear, () => ({}))
+  .on(ContextApplyCompaction, () => ({}))
   .on(ChangeNotifierSnapshotEvent, (_s, e) => ({
     agentsMdHash: e.agentsMdHash ?? undefined,
     agentsMdFiles: e.agentsMdFiles ?? undefined,

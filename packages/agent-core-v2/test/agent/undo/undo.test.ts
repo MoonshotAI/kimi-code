@@ -390,6 +390,28 @@ describe('AgentConversationUndoService', () => {
     expect(ctx.agentState.get(changeNotifierSnapshotKey)).toEqual({});
   });
 
+  it('resets change-notifier beliefs on compaction', async () => {
+    await setup();
+    ctx.get(IAgentChangeNotifierService);
+    const dispatcher = ctx.get(IEventDispatcher);
+    ctx.appendTurnExchange('u1', 'a1');
+    await dispatcher.dispatch(
+      new ChangeNotifierSnapshotEvent({
+        agentId: 'main',
+        agentsMdHash: null,
+        skillsHash: null,
+        subagentNames: ['default'],
+      }),
+    );
+    expect(ctx.agentState.get(changeNotifierSnapshotKey).subagentNames).toEqual(['default']);
+
+    await dispatcher.dispatch(
+      new ContextApplyCompaction({ agentId: 'main', summary: 'summary', compactedCount: 1 }),
+    );
+
+    expect(ctx.agentState.get(changeNotifierSnapshotKey)).toEqual({});
+  });
+
   it('keeps machine and wire turn ids aligned across undo, a continued turn, and a restart', async () => {
     await setup();
     const undo = ctx.get(IAgentConversationUndoService);
