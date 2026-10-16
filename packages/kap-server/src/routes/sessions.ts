@@ -502,6 +502,8 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.SESSION_OCCUPIED]: {},
+        [ErrorCode.SESSION_STALE]: {},
       },
       description: 'Update session profile (title, metadata, agent_config)',
       tags: ['sessions'],
@@ -555,6 +557,8 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_TITLE_UNAVAILABLE]: {},
+        [ErrorCode.SESSION_OCCUPIED]: {},
+        [ErrorCode.SESSION_STALE]: {},
       },
       description: 'Generate the session title via the managed chat_title tool',
       tags: ['sessions'],
@@ -717,6 +721,8 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
+        [ErrorCode.SESSION_OCCUPIED]: {},
+        [ErrorCode.SESSION_STALE]: {},
       },
       description: 'Create a child session',
       tags: ['sessions'],
