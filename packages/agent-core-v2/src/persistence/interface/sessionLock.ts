@@ -40,10 +40,9 @@ export const ISessionLockService: ServiceIdentifier<ISessionLockService> =
   createDecorator<ISessionLockService>('sessionLockService');
 
 export function sessionOccupiedError(sessionId: string, holder?: SessionLockHolder): Error2 {
-  const client = holder?.clientIdentity ?? 'another client';
   return new Error2(
     SessionErrors.codes.SESSION_OCCUPIED,
-    `Session "${sessionId}" is in use by ${client}`,
+    '该会话正在被其他 Kimi Code 进程使用；请停止其他进程中的会话或退出该进程后重试',
     { details: { sessionId, holder } },
   );
 }
@@ -56,6 +55,8 @@ export function sessionStaleError(sessionId: string): Error2 {
   );
 }
 
+const lastCheckedTokens = new Map<string, string>();
+
 export function beginSessionRun(
   locks: ISessionLockService,
   log: IAppendLogStore,
@@ -64,7 +65,13 @@ export function beginSessionRun(
   wireKey: string,
 ): void {
   locks.beginRun(sessionId);
-  if (!log.externallyModified(wireScope, wireKey)) return;
+  const token = locks.holdToken(sessionId);
+  if (token !== undefined && token === lastCheckedTokens.get(sessionId)) return;
+  if (!log.externallyModified(wireScope, wireKey)) {
+    if (token !== undefined) lastCheckedTokens.set(sessionId, token);
+    return;
+  }
+  lastCheckedTokens.delete(sessionId);
   locks.endRun(sessionId);
   throw sessionStaleError(sessionId);
 }

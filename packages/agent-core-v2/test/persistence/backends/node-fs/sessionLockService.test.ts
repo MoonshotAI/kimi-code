@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, appendFil
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -120,7 +120,7 @@ describe('SessionLockService', () => {
     serviceA.beginRun('warmup');
     serviceA.endRun('warmup');
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(foreign), { mode: 0o600 });
-    expect(() => serviceA.beginRun(SID)).toThrowError(/in use/);
+    expect(() => serviceA.beginRun(SID)).toThrowError(/Kimi Code/);
     expect(readLockFile(homeDir, SID).token).toBe('foreign-token');
   });
 
@@ -129,7 +129,7 @@ describe('SessionLockService', () => {
     serviceA.beginRun(SID);
     serviceA.endRun(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(true);
-    expect(() => serviceB.beginRun(SID)).toThrowError(/in use/);
+    expect(() => serviceB.beginRun(SID)).toThrowError(/Kimi Code/);
     lease.release();
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
     expect(() => serviceB.beginRun(SID)).not.toThrow();
@@ -211,6 +211,18 @@ describe('beginSessionRun', () => {
     expect(isError2(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe('session.stale');
     expect(serviceA.held(SID)).toBe(false);
+  });
+
+  it('checks staleness once per lock hold, not per run', async () => {
+    await readAll();
+    const spy = vi.spyOn(log, 'externallyModified');
+    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    expect(spy).toHaveBeenCalledTimes(1);
+    serviceA.endRun(SID);
+    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    expect(spy).toHaveBeenCalledTimes(2);
+    serviceA.endRun(SID);
   });
 
   it('checks staleness even when the lock was already acquired by another path', async () => {

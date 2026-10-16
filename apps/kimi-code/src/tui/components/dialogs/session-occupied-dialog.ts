@@ -24,7 +24,7 @@ const OPTIONS: readonly SessionOccupiedOption[] = [
 ];
 
 export interface SessionOccupiedDialogOptions {
-  readonly client: string;
+  readonly message: string;
   readonly onSelect: (action: SessionOccupiedAction) => void;
   readonly onCancel: () => void;
 }
@@ -62,13 +62,9 @@ export class SessionOccupiedDialogComponent extends Container implements Focusab
     const view = this.list.view();
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ` Session in use by ${this.opts.client}`),
+      currentTheme.boldFg('primary', ` ${this.opts.message}`),
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'),
       '',
-      currentTheme.fg(
-        'text',
-        ' Another client is running this session (turn, approval, or background task).',
-      ),
     ];
 
     const maxLabelWidth = Math.max(...OPTIONS.map((o) => visibleWidth(o.label)));

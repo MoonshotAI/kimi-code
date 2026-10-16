@@ -1,7 +1,7 @@
 import { ErrorCodes, isKimiError } from '@moonshot-ai/kimi-code-sdk';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
-import { sessionClientLabel, sessionLockHolderFromDetails } from './session-client';
+import { sessionLockHolderFromDetails } from './session-client';
 
 export function isSessionOccupiedError(error: unknown): boolean {
   return isKimiError(error) && error.code === ErrorCodes.SESSION_OCCUPIED;
@@ -9,11 +9,6 @@ export function isSessionOccupiedError(error: unknown): boolean {
 
 export function isSessionStaleError(error: unknown): boolean {
   return isKimiError(error) && error.code === ErrorCodes.SESSION_STALE;
-}
-
-export function occupiedHolderLabel(error: unknown): string {
-  const holder = isKimiError(error) ? sessionLockHolderFromDetails(error.details) : undefined;
-  return sessionClientLabel(holder);
 }
 
 export function occupiedHolderClientId(error: unknown): string {

@@ -25,7 +25,6 @@ import { formatErrorMessage } from '../utils/event-payload';
 import {
   isSessionOccupiedError,
   isSessionStaleError,
-  occupiedHolderLabel,
   reloadSessionAfterStale,
 } from '../utils/session-lock-errors';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
@@ -109,9 +108,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       return false;
     }
     if (isSessionOccupiedError(error)) {
-      host.showError(
-        `Session is in use by ${occupiedHolderLabel(error)}. Wait for it to finish, then retry.`,
-      );
+      host.showError(formatErrorMessage(error));
       return false;
     }
     if (isSessionStaleError(error)) {

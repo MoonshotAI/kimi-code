@@ -80,7 +80,6 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "session.init_failed": "Failed to initialize the session.",
   "session.closed": "Session was closed.",
   "session.fork_active_turn": "Wait for the current response before forking.",
-  "session.occupied": "Session is in use by another client. Try again when it's free.",
   "session.stale": "Session was updated by another client. Reopen the session to load the latest updates.",
   "turn.agent_busy": "A message is being sent. Please wait.",
   "provider.api_error": "Service temporarily unavailable.",

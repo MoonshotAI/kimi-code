@@ -326,7 +326,7 @@ export async function runV2Print(
       await runTurn(resolved.session, resolved.agent);
     } catch (error) {
       if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
-        reportSessionOccupied(error, resolved.session.id, outputFormat, stdout, stderr);
+        reportSessionOccupied(error, outputFormat, stdout, stderr);
         return;
       }
       if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE) throw error;
@@ -345,7 +345,7 @@ export async function runV2Print(
         await runTurn(reloaded.session, reloaded.agent);
       } catch (retryError) {
         if (isError2(retryError) && retryError.code === ErrorCodes.SESSION_OCCUPIED) {
-          reportSessionOccupied(retryError, reloaded.session.id, outputFormat, stdout, stderr);
+          reportSessionOccupied(retryError, outputFormat, stdout, stderr);
           return;
         }
         throw retryError;
@@ -668,18 +668,11 @@ const PRINT_EXIT_SESSION_OCCUPIED = 4;
 
 function reportSessionOccupied(
   error: Error2,
-  sessionId: string,
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
 ): void {
-  const holder = error.details?.['holder'];
-  const clientIdentity =
-    holder !== null && typeof holder === 'object'
-      ? (holder as { clientIdentity?: unknown }).clientIdentity
-      : undefined;
-  const client = typeof clientIdentity === 'string' ? clientIdentity : 'another client';
-  const message = `Session "${sessionId}" is in use by ${client}. Wait for it to finish, then retry.`;
+  const message = error.message;
   if (outputFormat === 'stream-json') {
     stdout.write(
       `${JSON.stringify({ type: 'error', code: 'session.occupied', message, details: error.details })}\n`,

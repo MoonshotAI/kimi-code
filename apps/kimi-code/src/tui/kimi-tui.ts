@@ -194,7 +194,7 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
-import { reloadSessionAfterStale, occupiedHolderClientId, occupiedHolderLabel } from './utils/session-lock-errors';
+import { reloadSessionAfterStale, occupiedHolderClientId } from './utils/session-lock-errors';
 import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -2067,7 +2067,6 @@ export class KimiTUI {
     this.resetLivePane();
     this.removeTranscriptEntries([entry]);
     const holderClient = occupiedHolderClientId(error);
-    const client = occupiedHolderLabel(error);
     this.track('occupied_prompt_shown', {
       holder_client: holderClient,
       opener_client: CLI_MSH_PLATFORM,
@@ -2082,7 +2081,7 @@ export class KimiTUI {
     };
     this.mountEditorReplacement(
       new SessionOccupiedDialogComponent({
-        client,
+        message: formatErrorMessage(error),
         onSelect: (action) => {
           if (action === 'retry') {
             this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });

@@ -193,7 +193,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     const disk = this.diskLength(scope, key);
     if (disk === undefined) return false;
     if (state?.rewriteInFlight !== undefined && disk === state.rewriteInFlight) return false;
-    return disk !== known + (state?.inFlightBytes ?? 0);
+    return disk < known || disk > known + (state?.inFlightBytes ?? 0);
   }
 
   bindSessionLock(scope: string, key: string, tryAcquire: () => boolean): IDisposable {

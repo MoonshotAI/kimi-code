@@ -30,7 +30,6 @@ import { formatErrorMessage } from '../utils/event-payload';
 import {
   isSessionOccupiedError,
   isSessionStaleError,
-  occupiedHolderLabel,
   reloadSessionAfterStale,
 } from '../utils/session-lock-errors';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -134,9 +133,7 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
     await session.compact({ instruction: customInstruction });
   } catch (error) {
     if (isSessionOccupiedError(error)) {
-      host.showError(
-        `Session is in use by ${occupiedHolderLabel(error)}. Wait for it to finish, then retry.`,
-      );
+      host.showError(formatErrorMessage(error));
       return;
     }
     if (isSessionStaleError(error)) {
