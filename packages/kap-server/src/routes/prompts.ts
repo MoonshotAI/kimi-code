@@ -623,6 +623,7 @@ function sendMappedError(
         reply.send(errEnvelope(ErrorCode.PROMPT_ID_CONFLICT, err.message, requestId, err.stack));
         return;
       case 'session.busy':
+      case 'session.active_in_another_process':
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
         return;
       case 'request.invalid':

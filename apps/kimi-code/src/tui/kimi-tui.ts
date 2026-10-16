@@ -934,6 +934,7 @@ export class KimiTUI {
       model: startup.model,
       permission: startup.auto ? 'auto' : startup.yolo ? 'yolo' : undefined,
       planMode: startup.plan ? true : undefined,
+      metadata: { source: 'cli' },
       // --agent/--agent-file bind the startup session only; sessions created
       // later in this process fall back to the default profile.
       agentProfile: startup.agentProfile,
@@ -2513,6 +2514,7 @@ export class KimiTUI {
     const options: MutableCreateSessionOptions = {
       workDir: this.state.appState.workDir,
       model,
+      metadata: { source: 'cli' },
       // With an active session, carry the live effort. Session-less (lazy
       // creation / `/new` before the first session), carry the session-only
       // thinking override chosen via Alt+S if any — never the initial 'off'

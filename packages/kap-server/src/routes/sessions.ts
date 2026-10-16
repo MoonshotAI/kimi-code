@@ -1295,6 +1295,7 @@ function sendMappedError(
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
         return;
       case 'session.fork_active_turn':
+      case 'session.active_in_another_process':
       case ErrorCodes.SESSION_BUSY:
         reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
         return;

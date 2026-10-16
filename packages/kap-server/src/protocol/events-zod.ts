@@ -296,6 +296,7 @@ export const kimiErrorCodeSchema = z.enum([
   'session.state_not_found',
   'session.state_invalid',
   'session.fork_active_turn',
+  'session.active_in_another_process',
   'session.undo_unavailable',
   'session.export_not_found',
   'session.export_missing_version',

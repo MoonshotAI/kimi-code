@@ -100,6 +100,11 @@ import { PLUGIN_SKILL_SOURCE_ID } from '#/features/skill/catalog/skillSource';
 import { agentScopeOf, sessionDirOf, sessionScopeOf } from './internal/addressing';
 import { SessionArchived, SessionDeleted } from './sessionLifecycleEvents';
 import {
+  assertNoActiveRuntimeElsewhere,
+  resolveRuntimeProcess,
+  SessionRuntimeBeacon,
+} from './sessionRuntimeBeacon';
+import {
   assertForkTurnIndex,
   sliceMainRecordsAtTurn,
   sliceSubagentRecordsAtTime,
@@ -157,6 +162,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   readonly onDidForkSession: Event<SessionForkedEvent> = this._onDidForkSession.event;
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
+  private readonly runtimeBeacons = new Map<string, SessionRuntimeBeacon>();
 
   constructor(
     private readonly instantiation: IInstantiationService,
@@ -193,6 +199,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ) {
     super();
     if (onDispose !== undefined) this._register({ dispose: onDispose });
+    this._register({
+      dispose: () => {
+        for (const beacon of this.runtimeBeacons.values()) beacon.stop();
+        this.runtimeBeacons.clear();
+      },
+    });
   }
 
   private get workspaceId(): string {
@@ -230,6 +242,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } catch (error) {
       const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
       this.sessions.delete(sessionId);
+      this.stopRuntimeBeacon(sessionId);
       await this.drainAgents(handle).catch(() => {});
       void handle.dispose();
       await this.hostFs.remove(sessionDir).catch(() => {});
@@ -319,7 +332,27 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw error;
     }
     this.sessions.set(opts.sessionId, handle);
+    this.startRuntimeBeacon(opts.sessionId);
     return handle;
+  }
+
+  private startRuntimeBeacon(sessionId: string): void {
+    this.runtimeBeacons.get(sessionId)?.stop();
+    const beacon = new SessionRuntimeBeacon(
+      this.bootstrap.sessionsDir,
+      sessionId,
+      this.workspaceId,
+      resolveRuntimeProcess(this.bootstrap.args),
+    );
+    this.runtimeBeacons.set(sessionId, beacon);
+    beacon.start();
+  }
+
+  private stopRuntimeBeacon(sessionId: string): void {
+    const beacon = this.runtimeBeacons.get(sessionId);
+    if (beacon === undefined) return;
+    this.runtimeBeacons.delete(sessionId);
+    beacon.stop();
   }
 
   private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
@@ -379,6 +412,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return live;
 
+    assertNoActiveRuntimeElsewhere(this.bootstrap.sessionsDir, sessionId);
     const summary = await this.index.get(sessionId);
     if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
     const workDir = summary.cwd ?? this.workspaceContext.cwd;
@@ -397,6 +431,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.announceCreated({ sessionId, handle, source: 'resume' });
     } catch (error) {
       this.sessions.delete(sessionId);
+      this.stopRuntimeBeacon(sessionId);
       void handle.dispose();
       throw error;
     }
@@ -422,6 +457,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.indexMirror.drain();
     void handle.dispose();
     await drainLogCloses();
+    this.stopRuntimeBeacon(sessionId);
     this._onDidCloseSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
   }
@@ -444,6 +480,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.indexMirror.drain();
     void handle.dispose();
     await drainLogCloses();
+    this.stopRuntimeBeacon(sessionId);
     this._onDidArchiveSession.fire({ sessionId });
     this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
   }
@@ -469,6 +506,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined && !persistedHere) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
+    assertNoActiveRuntimeElsewhere(this.bootstrap.sessionsDir, sessionId);
     if (handle !== undefined) {
       await this.close(sessionId);
     }

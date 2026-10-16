@@ -33,6 +33,7 @@ import {
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
+  ISessionMetadata,
   ITelemetryService,
   IWorkspaceInstanceManager,
   PRINT_MAX_TURNS_DEFAULT,
@@ -475,6 +476,11 @@ async function resolveNativeSession(
       profile: agentProfileName ?? 'agent',
       model,
     },
+  });
+  const sessionMetadata = session.accessor.get(ISessionMetadata);
+  const existingMeta = await sessionMetadata.read();
+  await sessionMetadata.update({
+    custom: { ...existingMeta.custom, source: process.env['KIMI_CODE_INVOKED_BY'] || 'cli-print' },
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
