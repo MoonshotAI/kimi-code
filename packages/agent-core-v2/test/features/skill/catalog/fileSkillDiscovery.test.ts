@@ -104,6 +104,15 @@ describe('FileSkillDiscovery', () => {
     expect(result.skills.map((s) => s.name)).toEqual(['summarize']);
   });
 
+  it('does not register payload files beside a bundle SKILL.md at a plugin root', async () => {
+    await writeSkill('teach/SKILL.md', 'name: teach\ndescription: the teach bundle');
+    await writeFile(join(root, 'teach', 'GLOSSARY-FORMAT.md'), '# payload\n');
+
+    const result = await discover([pluginSkillRoot('teach', 'mattpocock-skills')]);
+
+    expect(result.skills.map((s) => s.name)).toEqual(['teach']);
+  });
+
   it('discovers only the root SKILL.md for a root-skill-only plugin root', async () => {
     await writeSkill('plugin/SKILL.md', 'name: root-skill\ndescription: at plugin root');
     await writeFile(join(root, 'plugin', 'CHANGELOG.md'), '# Changelog\n');
