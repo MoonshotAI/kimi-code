@@ -903,7 +903,7 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['max_tokens']).toBe(1024);
     });
 
-    it.each(['gpt-5', 'gpt-5-codex', 'o3'])(
+    it.each(['gpt-5', 'gpt-5-codex', 'gpt-6', 'gpt-6.1-sol', 'o3'])(
       'withMaxCompletionTokens sets max_completion_tokens for %s',
       async (model) => {
         const provider = createProvider({ model }).withMaxCompletionTokens(1024);
