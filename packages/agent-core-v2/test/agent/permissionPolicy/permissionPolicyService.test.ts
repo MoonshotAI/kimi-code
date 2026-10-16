@@ -438,6 +438,14 @@ describe('AgentPermissionPolicyService chain', () => {
       policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },
     });
+
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: '/workspace/.git/config' },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
   });
 
   it('does not let session approval history exempt dangerous commands', async () => {
