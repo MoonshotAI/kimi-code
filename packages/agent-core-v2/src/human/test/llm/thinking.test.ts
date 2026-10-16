@@ -928,6 +928,60 @@ describe('openai requester thinking', () => {
     ]);
   });
 
+  it('keeps whitespace-only reasoning deltas between non-empty chunks', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([{ reasoning: 'First' }, { reasoning: '\n\n' }, { reasoning: 'Second' }]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    expect(accumulator.finish().content).toEqual([
+      { type: 'think', think: 'First\n\nSecond', reasoningKey: 'reasoning' },
+    ]);
+  });
+
+  it('keeps an empty marker deferred by a standalone delta when a tool call repeats it', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        { content: 'hello' },
+        { reasoning: '' },
+        { content: ' world' },
+        {
+          reasoning: '',
+          tool_calls: [
+            { index: 0, id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+  });
+
   it('keeps one empty reasoning marker when text clears the first and a tool call repeats it', async () => {
     const client = stubOpenAIClient(
       chatCompletionChunks([

@@ -341,7 +341,7 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
             reasoningKey: reasoning.key,
           };
           const vacuous = isVacuousContentPart(part);
-          if (vacuous && emittedThinkKeys.has(reasoning.key)) {
+          if (reasoning.value.length === 0 && emittedThinkKeys.has(reasoning.key)) {
             continue;
           }
           const laterRetains =
@@ -351,7 +351,9 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
             discardedMarkers.push(part);
             continue;
           }
-          emittedThinkKeys.add(reasoning.key);
+          if (!(vacuous && textPending)) {
+            emittedThinkKeys.add(reasoning.key);
+          }
           emit(part);
         }
         for (const part of detailParts) {
