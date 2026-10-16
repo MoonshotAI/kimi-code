@@ -58,7 +58,7 @@ export function sessionStaleError(sessionId: string): Error2 {
   );
 }
 
-const lastCheckedTokens = new Map<string, string>();
+const lastCheckedTokens = new WeakMap<ISessionContext, string>();
 
 export function beginSessionRun(
   locks: ISessionLockService,
@@ -69,7 +69,7 @@ export function beginSessionRun(
   const sessionId = sessionContext.sessionId;
   locks.beginRun(sessionId);
   const token = locks.holdToken(sessionId);
-  if (token !== undefined && token === lastCheckedTokens.get(sessionId)) return;
+  if (token !== undefined && token === lastCheckedTokens.get(sessionContext)) return;
   const stale = agents
     .list()
     .some((agent) =>
@@ -79,10 +79,10 @@ export function beginSessionRun(
       ),
     );
   if (!stale) {
-    if (token !== undefined) lastCheckedTokens.set(sessionId, token);
+    if (token !== undefined) lastCheckedTokens.set(sessionContext, token);
     return;
   }
-  lastCheckedTokens.delete(sessionId);
+  lastCheckedTokens.delete(sessionContext);
   locks.endRun(sessionId);
   throw sessionStaleError(sessionId);
 }

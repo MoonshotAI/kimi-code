@@ -276,6 +276,15 @@ describe('beginSessionRun', () => {
     serviceA.endRun(SID);
   });
 
+  it('scopes the once-per-hold cache to the session context', async () => {
+    await readAll();
+    const spy = vi.spyOn(log, 'externallyModified');
+    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
+    beginSessionRun(serviceA, log, { ...sessionContextStub }, mainOnlyAgents);
+    expect(spy).toHaveBeenCalledTimes(2);
+    serviceA.endRun(SID);
+  });
+
   it('checks staleness even when the lock was already acquired by another path', async () => {
     await readAll();
     serviceA.beginRun(SID);
