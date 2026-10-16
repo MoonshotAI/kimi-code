@@ -119,12 +119,6 @@ describe('DefaultWorkspaceService', () => {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
       get: (domain: string) => sections[domain],
-      set: async (domain: string, value: Record<string, unknown>) => {
-        sections[domain] = { ...(sections[domain] as object | undefined), ...value };
-      },
-      replace: async (domain: string, value: unknown) => {
-        sections[domain] = value;
-      },
     } as unknown as IConfigService;
   }
 
@@ -279,7 +273,6 @@ describe('DefaultWorkspaceService', () => {
     const service = build();
 
     await expect(service.ensure()).rejects.toMatchObject(unavailable('blocked_by_file'));
-    expect(await service.status()).toMatchObject({ exists: false });
   });
 
   it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
@@ -315,84 +308,14 @@ describe('DefaultWorkspaceService', () => {
       const service = build({}, undefined, { defaultWorkspace: { path: 'Chats' } });
 
       await expect(service.ensure()).rejects.toMatchObject(unavailable('invalid_path'));
-      expect(await service.status()).toEqual({ path: undefined, customPath: 'Chats', exists: false });
     });
-
-    it('rejects a Windows drive path on a POSIX host', async () => {
-      const sections: Record<string, unknown> = {};
-      const service = build({}, undefined, sections);
-
-      await expect(service.setCustomPath('C:\\Chats')).rejects.toMatchObject(
-        unavailable('invalid_path'),
-      );
-      expect(sections['defaultWorkspace']).toBeUndefined();
-    });
-
-    it('creates the folder and saves the trimmed path', async () => {
-      const sections: Record<string, unknown> = {};
-      const service = build({}, undefined, sections);
-
-      const status = await service.setCustomPath('  ~/Chats  ');
-
-      expect(sections['defaultWorkspace']).toEqual({ path: '~/Chats' });
-      expect(status).toEqual({ path: join(osHomeDir, 'Chats'), customPath: '~/Chats', exists: true });
-      expect((await fsp.stat(join(osHomeDir, 'Chats'))).isDirectory()).toBe(true);
-    });
-
-    it('returns to the system location when cleared', async () => {
-      const sections: Record<string, unknown> = { defaultWorkspace: { path: '/somewhere' } };
-      const service = build({}, undefined, sections);
-
-      const status = await service.setCustomPath('   ');
-
-      expect(sections['defaultWorkspace']).toBeUndefined();
-      expect(status).toEqual({
-        path: join(osHomeDir, 'Documents', 'KimiCode', 'Default'),
-        customPath: undefined,
-        exists: false,
-      });
-    });
-
-    it('refuses a folder it cannot create and keeps the saved location', async () => {
-      await fsp.writeFile(join(osHomeDir, 'note.txt'), 'x', 'utf8');
-      const sections: Record<string, unknown> = { defaultWorkspace: { path: '~/Kept' } };
-      const service = build({}, undefined, sections);
-
-      await expect(service.setCustomPath('relative')).rejects.toMatchObject(
-        unavailable('invalid_path'),
-      );
-      await expect(service.setCustomPath(join(osHomeDir, 'note.txt', 'Chats'))).rejects.toMatchObject(
-        unavailable('blocked_by_file'),
-      );
-      expect(sections['defaultWorkspace']).toEqual({ path: '~/Kept' });
-    });
-
-    it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
-      'reports a permission failure when creating the folder',
-      async () => {
-        const locked = join(osHomeDir, 'Locked');
-        await fsp.mkdir(locked);
-        await fsp.chmod(locked, 0o500);
-        const sections: Record<string, unknown> = {};
-        const service = build({}, undefined, sections);
-
-        try {
-          await expect(service.setCustomPath(join(locked, 'Chats'))).rejects.toMatchObject(
-            unavailable('permission_denied'),
-          );
-        } finally {
-          await fsp.chmod(locked, 0o755);
-        }
-        expect(sections['defaultWorkspace']).toBeUndefined();
-      },
-    );
 
     it('explains that an overlong path is too long', async () => {
-      const service = build();
+      const service = build({}, undefined, {
+        defaultWorkspace: { path: join(osHomeDir, 'a'.repeat(300)) },
+      });
 
-      await expect(
-        service.setCustomPath(join(osHomeDir, 'a'.repeat(300))),
-      ).rejects.toMatchObject({
+      await expect(service.ensure()).rejects.toMatchObject({
         ...unavailable('invalid_path'),
         message: expect.stringContaining('too long'),
       });

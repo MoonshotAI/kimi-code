@@ -27,6 +27,7 @@ import {
   isError2,
   Error2,
   type ContextMessage,
+  type DefaultWorkspaceUnavailableError,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
@@ -70,7 +71,6 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
-import { defaultWorkspaceErrorEnvelope } from './defaultWorkspace';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -1185,13 +1185,18 @@ function sendMappedError(
 ): void {
   const requestId = req.id;
   const log = requestLog(req);
-  const defaultWorkspaceEnvelope = defaultWorkspaceErrorEnvelope(err, requestId);
-  if (defaultWorkspaceEnvelope !== undefined) {
-    reply.send(defaultWorkspaceEnvelope);
-    return;
-  }
   if (isError2(err)) {
     switch (err.code) {
+      case ErrorCodes.DEFAULT_WORKSPACE_UNAVAILABLE: {
+        const { path, reason } = (err as DefaultWorkspaceUnavailableError).details;
+        reply.send({
+          code: ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE,
+          msg: err.message,
+          data: { path: path ?? null, reason },
+          request_id: requestId,
+        });
+        return;
+      }
       case 'session.not_found':
       case 'agent.not_found':
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));

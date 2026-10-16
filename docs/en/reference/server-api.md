@@ -664,7 +664,7 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when neither `metadata.cwd` nor `default_workspace` is given. Registered workspace id; the session is created at that workspace's root |
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when neither `workspace_id` nor `default_workspace` is given; with both given, it must equal the workspace root |
-| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `<Documents>/KimiCode/Default` unless [a custom location](#patch-api-v1-default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
+| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `<Documents>/KimiCode/Default` unless [`default_workspace.path`](../configuration/config-files.md#default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
 
@@ -673,7 +673,7 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 - `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with `workspace_id` or `metadata`, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
-- `40930`: the default workspace folder cannot be created or used; `data` is `{ path, reason }` as described under [`PATCH /api/v1/default-workspace`](#patch-api-v1-default-workspace)
+- `40930`: the default workspace folder cannot be created or used. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), `documents_unavailable` (the system Documents folder cannot be located), or `unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -1628,8 +1628,6 @@ Workspaces are the registered project directories sessions live in. These endpoi
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
 | `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
-| `GET /api/v1/default-workspace` | Read the default workspace location |
-| `PATCH /api/v1/default-workspace` | Set or clear a custom default workspace location |
 
 #### The workspace object
 
@@ -1640,7 +1638,7 @@ Every endpoint that returns a workspace uses this wire shape. Registration and r
 | `id` | string | Workspace id, a `wd_<slug>_<hash12>` string derived from the root path |
 | `root` | string | Absolute path of the project directory |
 | `name` | string | Display name, 1–100 characters; defaults to the root's base name |
-| `is_default` | boolean | Whether the root is the current [default workspace](#get-api-v1-default-workspace); computed on every response |
+| `is_default` | boolean | Whether the root is the current [default workspace](../configuration/config-files.md#default-workspace); computed on every response |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -1742,31 +1740,6 @@ On success, `data` is `{ project_root, config_path, additional_dirs, persisted }
 - `40001`: validation failure (`details` lists each field), or an engine-side config validation error such as a corrupted project local config
 - `40409`: `path` does not exist or is not a directory
 - `40410`: workspace not found
-
-#### `GET /api/v1/default-workspace`
-
-Reads where sessions created with `default_workspace` go. The location is `<Documents>/KimiCode/Default` unless `default_workspace.path` is set in `config.toml`. The folder is not created here. Change the location through `PATCH`; `POST /api/v1/config` ignores this setting. Changing the location broadcasts no workspace events, so refetch `GET /api/v1/workspaces` to see the new `is_default`.
-
-On success, `data` is:
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `path` | string \| null | Effective absolute path; `null` when it cannot be resolved |
-| `custom_path` | string \| null | Custom location as saved (may start with `~`); `null` when unset |
-| `exists` | boolean | Whether the folder exists |
-
-#### `PATCH /api/v1/default-workspace`
-
-Sets a custom default workspace location, or clears it with `null` (or an empty string) to return to the system location. The path must be absolute or start with `~/` (the home folder); the folder is created if needed. Existing files and workspaces are never moved.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `path` | body | string \| null | **Required.** New location, or `null` to clear |
-
-On success, `data` is the same object as `GET /api/v1/default-workspace`.
-
-- `40001`: validation failure (`details` lists each field)
-- `40930`: the location cannot be used, and the saved location is kept. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), `documents_unavailable` (the system Documents folder cannot be located), or `unknown`
 
 ### File system
 

@@ -106,10 +106,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/default-workspace",
-    ],
-    [
-      "GET",
       "/api/v1/files/{file_id}",
     ],
     [
@@ -335,10 +331,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/openapi.json",
-    ],
-    [
-      "PATCH",
-      "/api/v1/default-workspace",
     ],
     [
       "PATCH",

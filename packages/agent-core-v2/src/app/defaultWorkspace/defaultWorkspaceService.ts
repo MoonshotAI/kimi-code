@@ -10,7 +10,7 @@ import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { DEFAULT_WORKSPACE_SECTION, type DefaultWorkspaceConfig } from './configSection';
-import { IDefaultWorkspace, type DefaultWorkspaceStatus } from './defaultWorkspace';
+import { IDefaultWorkspace } from './defaultWorkspace';
 import {
   DEFAULT_WORKSPACE_RELATIVE_ROOT,
   WINDOWS_DOCUMENTS_COMMAND,
@@ -42,45 +42,17 @@ export class DefaultWorkspaceService implements IDefaultWorkspace {
 
   async ensure(): Promise<string> {
     const root = await this.root();
-    await this.create(root);
+    try {
+      await this.fs.mkdir(root, { recursive: true });
+    } catch (error) {
+      throw unavailable(root, reasonOf(error), error);
+    }
     return root;
   }
 
   async isDefault(root: string): Promise<boolean> {
     const defaultRoot = await this.root().catch(() => undefined);
     return defaultRoot !== undefined && workspaceRootKey(root) === workspaceRootKey(defaultRoot);
-  }
-
-  async status(): Promise<DefaultWorkspaceStatus> {
-    await this.config.ready;
-    const path = await this.root().catch(() => undefined);
-    return {
-      path,
-      customPath: this.customPath(),
-      exists: path !== undefined && (await this.isDirectory(path)),
-    };
-  }
-
-  async setCustomPath(path: string | undefined): Promise<DefaultWorkspaceStatus> {
-    await this.config.ready;
-    const trimmed = path?.trim() ?? '';
-    if (trimmed.length === 0) {
-      await this.config.replace(DEFAULT_WORKSPACE_SECTION, undefined);
-      return this.status();
-    }
-    const root = resolveCustomRoot(trimmed, this.bootstrap.osHomeDir, this.bootstrap.platform);
-    if (root === undefined) throw unavailable(trimmed, 'invalid_path');
-    await this.create(root);
-    await this.config.set(DEFAULT_WORKSPACE_SECTION, { path: trimmed });
-    return this.status();
-  }
-
-  private async create(root: string): Promise<void> {
-    try {
-      await this.fs.mkdir(root, { recursive: true });
-    } catch (error) {
-      throw unavailable(root, reasonOf(error), error);
-    }
   }
 
   private customPath(): string | undefined {

@@ -498,7 +498,7 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 path = "~/Projects/Chats"
 ```
 
-Changing the location does not move existing chats; the previous folder stays as an ordinary workspace. The desktop app edits this value from Settings.
+Changing the location does not move existing chats; the previous folder stays as an ordinary workspace.
 
 <!--
 ## `experimental`
