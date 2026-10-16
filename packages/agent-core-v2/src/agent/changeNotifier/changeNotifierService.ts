@@ -26,7 +26,6 @@ import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
-import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import {
   IAgentChangeNotifierService,
@@ -112,18 +111,16 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       if (profileData.profileName === undefined) return;
       const lease = this.runtime.acquire(['fs']);
       let fresh: LoadedAgentsMd;
-      let contents: ReadonlyMap<string, string>;
       try {
-        const fs = lease.runtime.fs!;
         fresh = await loadAgentsMdForRoots(
-          { fs, homeDir: lease.runtime.environment.homeDir },
+          { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
           this.bootstrap.homeDir,
           [this.sessionContext.cwd],
         );
-        contents = await readAgentsMdFileContents(fs, fresh.paths);
       } finally {
         lease.dispose();
       }
+      const contents = splitAgentsMdFiles(fresh.content, fresh.paths);
       const hash = hashText(`${fresh.paths.join('\n')}\n\n${fresh.content}`);
       const snapshot = this.snapshot;
       if (snapshot.agentsMdHash === hash || this.muted) return;
@@ -354,19 +351,6 @@ function sameModelPool(
     leftAliases.length === rightAliases.length &&
     leftAliases.every((alias) => right.models[alias] === left.models[alias])
   );
-}
-
-async function readAgentsMdFileContents(
-  fs: IHostFileSystem,
-  paths: readonly string[],
-): Promise<ReadonlyMap<string, string>> {
-  const contents = new Map<string, string>();
-  for (const path of paths) {
-    try {
-      contents.set(normalize(path), (await fs.readText(path, { errors: 'ignore' })).trim());
-    } catch {}
-  }
-  return contents;
 }
 
 function hashAgentsMdContents(contents: ReadonlyMap<string, string>): Record<string, string> {
