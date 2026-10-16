@@ -77,8 +77,6 @@ export const ErrorCodes = {
 
   SHELL_GIT_BASH_NOT_FOUND: 'shell.git_bash_not_found',
 
-  DEFAULT_WORKSPACE_UNAVAILABLE: 'default_workspace.unavailable',
-
   NOT_IMPLEMENTED: 'not_implemented',
   INTERNAL: 'internal',
 } as const;
@@ -445,13 +443,6 @@ export const KIMI_ERROR_INFO = {
     retryable: false,
     public: true,
     action: 'Install Git for Windows from https://gitforwindows.org/ or set KIMI_SHELL_PATH to a bash.exe.',
-  },
-
-  'default_workspace.unavailable': {
-    title: 'Default workspace unavailable',
-    retryable: false,
-    public: true,
-    action: 'Fix the folder or choose another default workspace location.',
   },
 
   not_implemented: {

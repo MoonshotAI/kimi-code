@@ -423,10 +423,6 @@ export class KimiHarness {
     return this.rpc.trustWorkspace(workDir);
   }
 
-  async ensureDefaultWorkspace(): Promise<string> {
-    return this.rpc.ensureDefaultWorkspace();
-  }
-
   async getConfig(options: GetConfigOptions = {}): Promise<KimiConfig> {
     return this.rpc.getConfig(options);
   }

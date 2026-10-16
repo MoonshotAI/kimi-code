@@ -205,8 +205,6 @@ export abstract class SDKRpcClientBase {
 
   abstract trustWorkspace(workDir: string): Promise<void>;
 
-  abstract ensureDefaultWorkspace(): Promise<string>;
-
   abstract renameSession(input: RenameSessionInput): Promise<void>;
 
   abstract generateSessionTitle(input: GenerateSessionTitleInput): Promise<string | undefined>;

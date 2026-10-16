@@ -486,7 +486,7 @@ max_chars = 500000
 
 ## `default_workspace`
 
-`default_workspace` 设置未选择工作区时对话存放的位置，例如桌面端不选项目直接新建的对话，或 `kimi --default-workspace`。未设置时为 `<文稿目录>/KimiCode/Default`。
+`default_workspace` 设置未选择工作区时对话存放的位置，例如桌面端不选项目直接新建的对话。未设置时为 `<文稿目录>/KimiCode/Default`。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |

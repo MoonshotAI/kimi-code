@@ -303,37 +303,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
-  it('restates an unusable default workspace as a public KimiError', async () => {
-    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
-    tempDirs.push(homeDir);
-    const blocked = join(homeDir, 'not-a-folder');
-    await writeFile(blocked, 'x', 'utf8');
-    await writeFile(
-      join(homeDir, 'config.toml'),
-      `[default_workspace]\npath = ${JSON.stringify(join(blocked, 'Chats'))}\n`,
-      'utf8',
-    );
-    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
-    try {
-      const error = await client.ensureDefaultWorkspace().then(
-        () => expect.unreachable('expected ensureDefaultWorkspace to reject'),
-        (error: unknown) => error,
-      );
-
-      expect(isKimiError(error)).toBe(true);
-      expect(error).toMatchObject({
-        code: ErrorCodes.DEFAULT_WORKSPACE_UNAVAILABLE,
-        details: { path: join(blocked, 'Chats'), reason: 'blocked_by_file' },
-      });
-      expect(toKimiErrorPayload(error)).toMatchObject({
-        code: 'default_workspace.unavailable',
-        retryable: false,
-      });
-    } finally {
-      await client.close();
-    }
-  });
-
   it('close() awaits the MCP OAuth service shutdown', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);

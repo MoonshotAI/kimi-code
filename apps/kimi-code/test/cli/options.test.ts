@@ -175,23 +175,6 @@ describe('CLI options parsing', () => {
     });
   });
 
-  describe('--default-workspace', () => {
-    it('is off by default', () => {
-      expect(parse([]).defaultWorkspace).toBe(false);
-    });
-
-    it.each([
-      [['--default-workspace']],
-      [['--default-workspace', '-c']],
-      [['--default-workspace', '-S', 'sess-123']],
-      [['--default-workspace', '-p', 'hello']],
-    ])('combines with other startup options: %j', (argv) => {
-      const opts = parse(argv);
-      expect(opts.defaultWorkspace).toBe(true);
-      expect(() => validateOptions(opts)).not.toThrow();
-    });
-  });
-
   describe('--plan', () => {
     it('sets plan mode flag', () => {
       expect(parse(['--plan']).plan).toBe(true);
