@@ -16,6 +16,10 @@ import type { IAgentPlanService } from './plan';
 type PlanReviewDisplay = Extract<ToolInputDisplay, { kind: 'plan_review' }>;
 type PlanReviewOption = NonNullable<PlanReviewDisplay['options']>[number];
 
+const PLAN_REVIEW_NON_INTERACTIVE_MESSAGE =
+  'Nobody can review this plan in a non-interactive run, so plan mode is still active and you cannot edit files. ' +
+  'Do not call ExitPlanMode again; report your plan and this limitation in your final message.';
+
 export class ExitPlanModeReview {
   constructor(
     private readonly plan: IAgentPlanService,
@@ -40,6 +44,7 @@ export class ExitPlanModeReview {
           has_options: display.options !== undefined,
         },
         resolveApproval: (result) => this.approvalResult(result, display),
+        resolveNonInteractive: () => ({ kind: 'deny', message: PLAN_REVIEW_NON_INTERACTIVE_MESSAGE }),
       },
       'exit-plan-mode-review-ask',
     );

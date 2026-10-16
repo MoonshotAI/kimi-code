@@ -97,7 +97,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions: `manual`, `yolo`, or `auto`. See [the three permission modes](../guides/interaction.md#the-three-permission-modes) |
-| `default_plan_mode` | `boolean` | `false` | Whether new sessions start in [Plan mode](../guides/interaction.md#plan-mode) by default |
+| `default_plan_mode` | `boolean` | `false` | Whether new sessions start in [Plan mode](../guides/interaction.md#plan-mode) by default. Not applied in non-interactive mode (`kimi -p`) |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
@@ -429,7 +429,7 @@ Name matching follows the same rules as the same-named fields in an agent file: 
 
 ```toml
 [tools]
-disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
+disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
 ::: warning Note

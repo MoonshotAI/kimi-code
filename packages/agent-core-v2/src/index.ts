@@ -337,8 +337,6 @@ export * from '#/features/btw/btw';
 export * from '#/features/btw/btwService';
 import '#/features/btw/btwFeature';
 import '#/features/plan/profile/plan';
-export * from '#/features/plan/tools/enter-plan-mode/enter-plan-mode';
-import '#/features/plan/tools/enter-plan-mode/enterPlanModeTool';
 export * from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import '#/features/plan/tools/exit-plan-mode/exitPlanModeTool';
 export * from '#/features/plan/configSection';

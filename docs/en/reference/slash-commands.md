@@ -49,7 +49,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
 | `/yolo` | `/yes` | Open the permission mode list with Ask When Needed preselected; press `Enter` to confirm. In this mode, routine edits and commands run automatically; risky actions, questions, and plans still ask | Yes |
-| `/auto` | — | Open the permission mode list with Never Ask preselected; press `Enter` to confirm. In this mode, Kimi never interrupts you; everything runs and is decided automatically | Yes |
+| `/auto` | — | Open the permission mode list with Never Ask preselected; press `Enter` to confirm. In this mode, everything runs and is decided automatically; only plans in Plan mode wait for your review | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. Simply toggling does not create an empty plan file | Yes |
 | `/plan clear` | — | Clear the current plan | No |
 | `/swarm on\|off` | — | Turn swarm mode on or off without sending a prompt. | Yes |

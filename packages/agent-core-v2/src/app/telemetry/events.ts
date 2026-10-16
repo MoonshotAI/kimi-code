@@ -197,14 +197,9 @@ export interface PlanResolvedEvent {
     | 'dismissed'
     | 'rejected_and_exited'
     | 'revise'
-    | 'rejected'
-    | 'auto_approved';
+    | 'rejected';
   chosen_option?: string;
   has_feedback?: boolean;
-}
-
-export interface PlanEnterResolvedEvent {
-  outcome: 'auto_approved';
 }
 
 export interface TowerModeEnterEvent {
@@ -844,13 +839,6 @@ export const telemetryEventDefinitions = {
       outcome: 'How the plan was resolved',
       chosen_option: 'Label of the option the user chose',
       has_feedback: 'Whether the user attached revision feedback',
-    },
-  }),
-  plan_enter_resolved: defineAgentTelemetryEvent<PlanEnterResolvedEvent>({
-    owner: 'kimi-code',
-    comment: 'A request to enter plan mode is resolved.',
-    properties: {
-      outcome: 'How the request was resolved',
     },
   }),
   tower_mode_enter: defineAgentTelemetryEvent<TowerModeEnterEvent>({

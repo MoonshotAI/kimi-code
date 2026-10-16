@@ -97,7 +97,7 @@ timeout = 5
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | 默认模型别名，必须在 `models` 中定义 |
 | `default_permission_mode` | `string` | `manual` | 新会话的默认权限模式，可选 `yolo` / `auto`，见 [交互与权限](../guides/interaction.md#三种权限模式) |
-| `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 [Plan 模式](../guides/interaction.md#plan-模式)启动 |
+| `default_plan_mode` | `boolean` | `false` | 新会话是否默认以 [Plan 模式](../guides/interaction.md#plan-模式)启动。非交互模式（`kimi -p`）下不生效 |
 | `merge_all_available_skills` | `boolean` | `true` | 是否合并所有目录中的 Agent Skills |
 | `extra_skill_dirs` | `array<string>` | — | 额外 Skill 搜索目录，叠加到默认目录之上 |
 | `extra_agent_dirs` | `array<string>` | — | 额外自定义 Agent 搜索目录，叠加到默认目录之上 |
@@ -428,7 +428,7 @@ slug = "acme-dev"        # 可选
 
 ```toml
 [tools]
-disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
+disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
 ::: warning 注意

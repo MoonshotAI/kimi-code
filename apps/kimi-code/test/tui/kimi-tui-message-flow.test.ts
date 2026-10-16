@@ -3077,7 +3077,7 @@ command = "vim"
     expect(transcript).not.toContain('Cannot undo 10 prompts');
     expect(transcript).toContain('Permission mode: Never Ask');
     expect(transcript).toContain(
-      'Never interrupts you; everything runs and is decided automatically.',
+      'Everything runs and is decided automatically; only plans in Plan mode wait for your review.',
     );
     expect(driver.state.appState.permissionMode).toBe('auto');
   });
