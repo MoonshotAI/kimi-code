@@ -10,4 +10,5 @@ Perform exact replacements in existing files.
 - DO NOT issue consecutive Edit calls on the same file. A previous Edit can invalidate a later Edit's `old_string`, causing `old_string not found`. Read the file again before the next Edit.
 - A write lock serializes same-file edits in response order, but serialization does not make stale `old_string` valid.
 - For pure CRLF files, Read shows LF; use LF in `old_string` and `new_string`, and Edit writes CRLF back.
+- A leading UTF-8 byte order mark (BOM) is kept in the file but never shown in content; match and replace without it, and Edit writes it back.
 - For mixed endings or lone carriage returns, Read shows carriage returns as \r; include actual \r escapes in those positions.
