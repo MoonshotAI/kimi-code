@@ -62,6 +62,9 @@ describe('default workspace paths', () => {
     expect(resolveCustomRoot('~\\Chats', 'C:\\Users\\alice', 'win32')).toBe('C:/Users/alice/Chats');
     expect(resolveCustomRoot('Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
     expect(resolveCustomRoot('C:Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
+    expect(resolveCustomRoot('\\Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
+    expect(resolveCustomRoot('/Chats', 'C:\\Users\\alice', 'win32')).toBeUndefined();
+    expect(resolveCustomRoot('\\\\server', 'C:\\Users\\alice', 'win32')).toBeUndefined();
     expect(resolveCustomRoot('\\\\server\\share\\Chats', 'C:\\Users\\alice', 'win32')).toBe(
       '//server/share/Chats',
     );
