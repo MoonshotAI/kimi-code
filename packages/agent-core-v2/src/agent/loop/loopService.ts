@@ -45,9 +45,8 @@ import { IFileService } from '#/app/file/fileService';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
   TurnInterruptedEvent,
@@ -177,6 +176,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     this.states.contributeState(turnKey);
@@ -312,9 +312,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     beginSessionRun(
       this.sessionLocks,
       this.appendLogStore,
-      this.sessionContext.sessionId,
-      this.sessionContext.scope(`agents/${MAIN_AGENT_ID}`),
-      AGENT_WIRE_RECORD_KEY,
+      this.sessionContext,
+      this.agentLifecycle,
     );
     const meta = input.meta;
     const id = meta?.promptId ?? newMessageId();

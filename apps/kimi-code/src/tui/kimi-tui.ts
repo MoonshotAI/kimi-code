@@ -2143,17 +2143,38 @@ export class KimiTUI {
     }
     if (isKimiError(error) && error.code === ErrorCodes.SESSION_STALE) {
       if (entries !== undefined) this.removeTranscriptEntries(entries);
-      this.setAppState({ streamingPhase: 'idle' });
       this.resetLivePane();
       const mediaSnapshot = this.imageStore.snapshot();
       void (async () => {
-        await reloadSessionAfterStale(
+        // The request stays in flight across the reload: submissions queue
+        // instead of racing the closing session, and the queue is parked
+        // around switchToSession so resetSessionRuntime cannot wipe it.
+        const reloaded = await reloadSessionAfterStale(
           this,
           session.id,
           'Loaded updates from another client. Your message is back in the input.',
+          () => {
+            const parked = this.state.queuedMessages;
+            this.state.queuedMessages = [];
+            this.updateQueueDisplay();
+            return () => {
+              if (parked.length === 0) return;
+              this.state.queuedMessages.push(...parked);
+              this.updateQueueDisplay();
+            };
+          },
         );
         this.imageStore.restore(mediaSnapshot);
+        const typedDuringReload = this.state.editor.getText();
         restore();
+        if (typedDuringReload.trim().length > 0) {
+          const restored = this.state.editor.getText();
+          this.restoreInputText(
+            restored.length > 0 ? `${restored}\n${typedDuringReload}` : typedDuringReload,
+          );
+        }
+        this.setAppState({ streamingPhase: 'idle' });
+        if (reloaded) this.drainQueueIfIdle();
       })();
       return true;
     }

@@ -27,15 +27,23 @@ export async function reloadSessionAfterStale(
   host: StaleReloadHost,
   sessionId: string,
   statusMessage: string,
-): Promise<void> {
+  beforeSwitch?: () => () => void,
+): Promise<boolean> {
   host.track('session_stale_reload', {});
   try {
     const reloaded = await host.harness.reloadSession({
       id: sessionId,
       forcePluginSessionStartReminder: true,
     });
-    await host.switchToSession(reloaded, statusMessage);
+    const unpark = beforeSwitch?.();
+    try {
+      await host.switchToSession(reloaded, statusMessage);
+    } finally {
+      unpark?.();
+    }
+    return true;
   } catch {
     host.showError('Failed to reload the session. Run /reload to retry.');
+    return false;
   }
 }

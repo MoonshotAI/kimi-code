@@ -578,6 +578,8 @@ export class SessionEventBroadcaster {
     for (const disposable of state.agentDisposables.values()) disposable.dispose();
     state.agentDisposables.clear();
     state.knownInteractions.clear();
+    state.tracker.clear(sessionId);
+    state.roster.clear(sessionId);
     state.deferredWork = undefined;
     state.transcriptSeeded.clear();
     state.deferredTranscriptSeeds.clear();

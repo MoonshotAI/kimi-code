@@ -30,14 +30,13 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ForkLineError, IWireService } from '#/wire/wire';
-import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 
 import { IAgentConversationUndoService, type UndoAvailability } from './undo';
 
@@ -81,6 +80,7 @@ export class AgentConversationUndoService
     @ILogService private readonly log: ILogService,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
   }
@@ -127,9 +127,8 @@ export class AgentConversationUndoService
       beginSessionRun(
         this.sessionLocks,
         this.appendLogStore,
-        this.session.sessionId,
-        this.session.scope(`agents/${MAIN_AGENT_ID}`),
-        AGENT_WIRE_RECORD_KEY,
+        this.session,
+        this.agentLifecycle,
       );
       this.assertUndoAvailable(turns);
       const fromTurnId = this.removedFromTurnId(turns);

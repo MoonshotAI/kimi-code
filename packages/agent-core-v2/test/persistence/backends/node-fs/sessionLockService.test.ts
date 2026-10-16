@@ -15,6 +15,8 @@ import {
   beginSessionRun,
   type SessionLockHolder,
 } from '#/persistence/interface/sessionLock';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
@@ -22,6 +24,15 @@ import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockSe
 const SID = 'session-1';
 const SCOPE = 'sessions/ws1/session-1/agents/main';
 const KEY = 'wire.jsonl';
+
+const sessionContextStub = {
+  sessionId: SID,
+  scope: (subKey?: string) => `sessions/ws1/${SID}/${subKey}`,
+} as ISessionContext;
+
+const mainOnlyAgents = {
+  list: () => [{ agentId: 'main' }],
+} as unknown as IAgentLifecycleService;
 
 function bootstrapStub(homeDir: string, platform = 'test_client'): IBootstrapService {
   return {
@@ -205,15 +216,15 @@ describe('beginSessionRun', () => {
     }
   }
 
-  function writeExternally(text: string): void {
-    const filePath = join(homeDir, SCOPE, KEY);
-    mkdirSync(join(homeDir, SCOPE), { recursive: true });
+  function writeExternally(text: string, scope = SCOPE): void {
+    const filePath = join(homeDir, scope, KEY);
+    mkdirSync(join(homeDir, scope), { recursive: true });
     appendFileSync(filePath, text);
   }
 
   it('acquires the lock on a fresh session', async () => {
     await readAll();
-    expect(() => beginSessionRun(serviceA, log, SID, SCOPE, KEY)).not.toThrow();
+    expect(() => beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents)).not.toThrow();
     expect(serviceA.held(SID)).toBe(true);
     serviceA.endRun(SID);
   });
@@ -223,7 +234,28 @@ describe('beginSessionRun', () => {
     writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`);
     let caught: unknown;
     try {
-      beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+      beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
+    } catch (error) {
+      caught = error;
+    }
+    expect(isError2(caught)).toBe(true);
+    expect((caught as { code: string }).code).toBe('session.stale');
+    expect(serviceA.held(SID)).toBe(false);
+  });
+
+  it('throws session.stale and releases when a loaded subagent wire changed on disk', async () => {
+    const subScope = 'sessions/ws1/session-1/agents/coder-1';
+    const withSubagent = {
+      list: () => [{ agentId: 'main' }, { agentId: 'coder-1' }],
+    } as unknown as IAgentLifecycleService;
+    await readAll();
+    for await (const _ of log.read(subScope, KEY)) {
+      void _;
+    }
+    writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`, subScope);
+    let caught: unknown;
+    try {
+      beginSessionRun(serviceA, log, sessionContextStub, withSubagent);
     } catch (error) {
       caught = error;
     }
@@ -235,11 +267,11 @@ describe('beginSessionRun', () => {
   it('checks staleness once per lock hold, not per run', async () => {
     await readAll();
     const spy = vi.spyOn(log, 'externallyModified');
-    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
-    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
+    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
     expect(spy).toHaveBeenCalledTimes(1);
     serviceA.endRun(SID);
-    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
     expect(spy).toHaveBeenCalledTimes(2);
     serviceA.endRun(SID);
   });
@@ -250,7 +282,7 @@ describe('beginSessionRun', () => {
     writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`);
     let caught: unknown;
     try {
-      beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+      beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
     } catch (error) {
       caught = error;
     }
@@ -261,10 +293,10 @@ describe('beginSessionRun', () => {
 
   it('passes after own appends are flushed', async () => {
     await readAll();
-    beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
     log.append(SCOPE, KEY, { type: 'metadata', protocol_version: 1 });
     await log.flush();
-    expect(() => beginSessionRun(serviceA, log, SID, SCOPE, KEY)).not.toThrow();
+    expect(() => beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents)).not.toThrow();
     serviceA.endRun(SID);
   });
 
@@ -273,7 +305,7 @@ describe('beginSessionRun', () => {
     serviceB.beginRun(SID);
     let caught: unknown;
     try {
-      beginSessionRun(serviceA, log, SID, SCOPE, KEY);
+      beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
     } catch (error) {
       caught = error;
     }

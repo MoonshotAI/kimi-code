@@ -3,6 +3,9 @@ import { Error2 } from '#/_base/errors/errors';
 import type { Event } from '#/_base/event';
 
 import { SessionErrors } from '#/session/errors';
+import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import type { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 
 import type { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 
@@ -60,14 +63,22 @@ const lastCheckedTokens = new Map<string, string>();
 export function beginSessionRun(
   locks: ISessionLockService,
   log: IAppendLogStore,
-  sessionId: string,
-  wireScope: string,
-  wireKey: string,
+  sessionContext: ISessionContext,
+  agents: IAgentLifecycleService,
 ): void {
+  const sessionId = sessionContext.sessionId;
   locks.beginRun(sessionId);
   const token = locks.holdToken(sessionId);
   if (token !== undefined && token === lastCheckedTokens.get(sessionId)) return;
-  if (!log.externallyModified(wireScope, wireKey)) {
+  const stale = agents
+    .list()
+    .some((agent) =>
+      log.externallyModified(
+        sessionContext.scope(`agents/${agent.agentId}`),
+        AGENT_WIRE_RECORD_KEY,
+      ),
+    );
+  if (!stale) {
     if (token !== undefined) lastCheckedTokens.set(sessionId, token);
     return;
   }

@@ -38,8 +38,6 @@ import {
   ITelemetryService,
   IWorkspaceInstanceManager,
   IAppendLogStore,
-  MAIN_AGENT_ID,
-  AGENT_WIRE_RECORD_KEY,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
@@ -713,9 +711,8 @@ function preflightSessionRun(app: Scope, session: ISessionScopeHandle): void {
   beginSessionRun(
     app.accessor.get(ISessionLockService),
     app.accessor.get(IAppendLogStore),
-    ctx.sessionId,
-    ctx.scope(`agents/${MAIN_AGENT_ID}`),
-    AGENT_WIRE_RECORD_KEY,
+    ctx,
+    session.accessor.get(IAgentLifecycleService),
   );
 }
 

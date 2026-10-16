@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { isPreflightError } from '../shared/errors';
+import { isPreflightError, getUserMessage } from '../shared/errors';
 import {
   adaptSdkEvent,
   createEventAdapterState,
@@ -566,5 +566,14 @@ describe('event adapter (projects SDK events into the legacy Webview contract)',
 
   it('classifies a missing Windows Git Bash runtime as a preflight error', () => {
     expect(isPreflightError('shell.git_bash_not_found')).toBe(true);
+  });
+
+  it('classifies session occupancy conflicts as preflight errors with user-visible copy', () => {
+    expect(isPreflightError('session.occupied')).toBe(true);
+    expect(isPreflightError('session.stale')).toBe(true);
+    expect(getUserMessage('session.occupied', 'fallback')).toBe(
+      'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.',
+    );
+    expect(getUserMessage('session.stale', 'fallback')).not.toBe('fallback');
   });
 });

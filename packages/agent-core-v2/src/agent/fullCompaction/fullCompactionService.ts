@@ -47,9 +47,8 @@ import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
 import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
 import {
@@ -164,6 +163,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
@@ -345,9 +345,8 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       beginSessionRun(
         this.sessionLocks,
         this.appendLogStore,
-        this.sessionContext.sessionId,
-        this.sessionContext.scope(`agents/${MAIN_AGENT_ID}`),
-        AGENT_WIRE_RECORD_KEY,
+        this.sessionContext,
+        this.agentLifecycle,
       );
     }
     if (!this.reserveCompactionSlot(data.source)) return false;
