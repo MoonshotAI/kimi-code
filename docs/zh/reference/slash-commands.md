@@ -34,6 +34,8 @@
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
 | `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
 | `/undo [<count>]` | — | 从当前上下文撤销最近的提示词。不带数量时打开选择器；带数量时撤销对应条数。最后一次上下文压缩之前的提示词不能撤销。撤销会一并回滚这些提示词产生的 todo 列表和计划模式状态（不回滚代码改动） | 否 |
+| `/reload` | — | 重新加载当前会话并应用最新的 `config.toml` 设置（供应商、模型等）和 `tui.toml` 界面偏好，无需重启 CLI；同时会把 AGENTS.md、Skill、subagent 及模型的外部变更告知 Agent | 否 |
+| `/reload-tui` | — | 仅重新加载 `tui.toml` 界面偏好（主题、编辑器、通知等），不重建会话 | 是 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
@@ -52,7 +54,14 @@
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 "Ask When Needed" 或 "Never Ask" 模式。 | 否 |
+| `/tower` 或 `/tower status` | — | 查看 base、mission、roster、review 门槛、inbox、并发和近期活动，不启动模型轮次 | 是 |
+| `/tower on` | — | 开启 Tower 模式，不改变已记录的 base，也不发送提示词；首次初始化时默认采用当前本地 branch | 是 |
+| `/tower off` | — | 退出 Tower 模式，不停止运行中的后台 Agent，也不删除 `.tower/` 状态 | 是 |
+| `/tower <base-branch>` | — | 开启 Tower，并设定或重新锚定 mission 要合并到的本地 base branch；不会发送任务目标 | 是 |
+| `/tower teardown` | — | 要求 Agent 移除符合条件的 mission worktree，同时保护有未提交改动或有存活 Agent 的 worktree；保留 branch 和 `.tower/comms/`，Tower 模式保持开启 | 是 |
 | `/goal [...]` | — | 开始或管理目标模式 | 见下文 |
+
+Tower 是实验功能。开启方式、工作流程、安全边界和清理边界见 [Tower 多 Agent 协作](../guides/tower.md)。
 
 ::: warning 注意
 `/yolo` 会跳过普通工具调用的审批确认，使用前请确保了解可能的风险。Plan 模式的退出审批不会被 `/yolo` 跳过；Plan 模式下的 `Bash` 也按 `/yolo` 的普通放行规则处理。

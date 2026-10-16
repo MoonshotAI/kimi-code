@@ -29,6 +29,7 @@ interface InternalEntry {
   readonly config: McpServerConfig;
   attemptId: number;
   status: McpServerStatus;
+  deferred: boolean;
   tools?: readonly Tool[];
   rawTools?: readonly MCPToolDefinition[];
   enabledNames?: ReadonlySet<string>;
@@ -43,7 +44,7 @@ export interface McpConnectionView {
   readonly oauthService: McpOAuthService | undefined;
   list(): readonly McpServerEntry[];
   get(name: string): McpServerEntry | undefined;
-  configOf(name: string): McpServerConfig | undefined;
+  deferredOf(name: string): boolean;
   resolved(
     name: string,
   ):
@@ -75,9 +76,10 @@ const defaultLog: Logger = {
   child: () => defaultLog,
 };
 
-export interface McpDefaultTimeouts {
+export interface McpDefaults {
   readonly startupTimeoutMs?: number;
   readonly toolTimeoutMs?: number;
+  readonly defaultDeferred?: boolean;
 }
 
 export interface McpConnectionManagerOptions {
@@ -89,7 +91,7 @@ export interface McpConnectionManagerOptions {
   readonly requireStdioRuntimeId?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
-  readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
+  readonly resolveDefaults?: () => McpDefaults;
   readonly resolveClientName?: () => string | undefined;
 }
 
@@ -137,8 +139,12 @@ export class McpConnectionManager implements McpConnectionView {
     return entry !== undefined ? toPublicEntry(entry) : undefined;
   }
 
-  configOf(name: string): McpServerConfig | undefined {
-    return this.entries.get(name)?.config;
+  deferredOf(name: string): boolean {
+    return this.entries.get(name)?.deferred ?? false;
+  }
+
+  private resolveDeferred(config: McpServerConfig): boolean {
+    return config.deferred ?? this.options.resolveDefaults?.().defaultDeferred ?? false;
   }
 
   resolved(
@@ -166,7 +172,7 @@ export class McpConnectionManager implements McpConnectionView {
       tools: entry.tools,
       rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
-      deferred: entry.config.deferred === true,
+      deferred: entry.deferred,
     };
   }
 
@@ -200,6 +206,7 @@ export class McpConnectionManager implements McpConnectionView {
       config,
       attemptId: 0,
       status: disabled ? 'disabled' : 'pending',
+      deferred: this.resolveDeferred(config),
     };
     this.entries.set(name, entry);
     this.emit(entry);
@@ -256,6 +263,7 @@ export class McpConnectionManager implements McpConnectionView {
         config,
         attemptId: 0,
         status: disabled ? 'disabled' : 'pending',
+        deferred: this.resolveDeferred(config),
       };
       this.entries.set(name, entry);
       this.emit(entry);
@@ -354,9 +362,10 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
+    entry.deferred = this.resolveDeferred(entry.config);
     const timeoutMs =
       entry.config.startupTimeoutMs ??
-      this.options.resolveDefaultTimeouts?.().startupTimeoutMs ??
+      this.options.resolveDefaults?.().startupTimeoutMs ??
       DEFAULT_STARTUP_TIMEOUT_MS;
 
     let client: RuntimeMcpClient | undefined;
@@ -433,7 +442,7 @@ export class McpConnectionManager implements McpConnectionView {
     startupTimeoutMs: number,
   ): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs =
-      config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
+      config.toolTimeoutMs ?? this.options.resolveDefaults?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       const runtimeResolver = this.options.runtimeResolver;

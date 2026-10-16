@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { effectiveModelAlias, log } from '@moonshot-ai/kimi-code-sdk';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -81,7 +81,6 @@ import {
 } from './components/dialogs/approval-preview';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
-import { defaultThinkingEffortFor } from './components/dialogs/model-selector';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
@@ -117,6 +116,7 @@ import type { TuiConfig } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
+  MAX_AUTO_TITLE_ATTEMPTS,
   NO_ACTIVE_SESSION_MESSAGE,
   PRODUCT_NAME,
   SESSION_LIST_PAGE_SIZE,
@@ -130,6 +130,7 @@ import { AuthFlowController } from './controllers/auth-flow';
 import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
+import { ModelMigrationController } from './controllers/model-migration';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { SessionReplayRenderer } from './controllers/session-replay';
 import { StagingLeaseTracker, type StagingLease } from './controllers/staging-leases';
@@ -193,7 +194,7 @@ import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './u
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
-import { thinkingEffortFromConfig } from './utils/thinking-config';
+import { lazyModelSelection } from './utils/model-switch';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
 import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
@@ -296,6 +297,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     renderLatex: input.tuiConfig.renderLatex,
     cacheExpiryHint: input.tuiConfig.cacheExpiryHint,
     disableFeedbackSurvey: input.tuiConfig.disableFeedbackSurvey,
+    autoSessionTitle: input.tuiConfig.autoSessionTitle,
     notifications: input.tuiConfig.notifications,
     upgrade: input.tuiConfig.upgrade,
     statusLine: input.tuiConfig.statusLine,
@@ -348,10 +350,13 @@ export class KimiTUI {
   state: TUIState;
   /** In-flight lazy session creation (v2 engine), shared by concurrent first-use triggers. */
   private ensureSessionPromise: Promise<Session | undefined> | null = null;
+  /** In-flight `/new` session replacement, shared by concurrent `/new` triggers. */
+  private newSessionPromise: Promise<void> | null = null;
   private readonly cacheHint = new CacheHintController(this);
   /** Staged prompt media lifecycle (daemon uploads + cache copies) — see StagingLeaseTracker. */
   private readonly staging: StagingLeaseTracker;
   private readonly steeringQueuedMessages = new Set<QueuedMessage>();
+  private readonly autoTitleAttempts = new Map<string, { attempts: number; done: boolean }>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
@@ -400,6 +405,8 @@ export class KimiTUI {
   readonly tasksBrowserController: TasksBrowserController;
   readonly surveyController: SurveyController;
   readonly editorKeyboard: EditorKeyboardController;
+  readonly modelMigration: ModelMigrationController;
+  private editorReplacementOnDisplaced: (() => void) | undefined;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -514,6 +521,7 @@ export class KimiTUI {
       accessToken: () => this.harness.auth.getCachedAccessToken(),
       telemetryDisabled: () => isTelemetryDisabledByEnv() || this.telemetryDisabled,
     });
+    this.modelMigration = new ModelMigrationController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
     this.editorKeyboard.install();
     this.buildLayout();
@@ -834,10 +842,13 @@ export class KimiTUI {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {
         if (c.added <= 0) continue;
-        this.showStatus(`${c.providerName} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`);
+        this.showStatus(`${c.provider_name} · +${String(c.added)} model${c.added > 1 ? 's' : ''}.`);
       }
       for (const f of result.failed) {
         this.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
+      }
+      if (result.retired_default !== undefined) {
+        await this.modelMigration.retire(result.retired_default);
       }
     } catch {
       // Best-effort: startup must not crash on background refresh failures.
@@ -856,6 +867,9 @@ export class KimiTUI {
     void this.showConfigWarningsIfAny();
     if (this.state.startupState === 'picker') {
       void this.bootstrapFromPicker();
+      void this.backgroundRefreshPromise?.then(() => {
+        this.modelMigration.request();
+      });
       return;
     }
     if (shouldReplayHistory) {
@@ -880,6 +894,9 @@ export class KimiTUI {
     }
     void this.refreshSkillCommands(this.session);
     void this.refreshPluginCommands(this.session);
+    void this.backgroundRefreshPromise?.then(() => {
+      this.modelMigration.request();
+    });
   }
 
   private async showSessionWarnings(session: Session): Promise<void> {
@@ -1904,6 +1921,35 @@ export class KimiTUI {
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
+    this.state.footer.refreshGitStatus();
+    if (event.reason === 'completed') void this.maybeAutoGenerateSessionTitle();
+  }
+
+  private async maybeAutoGenerateSessionTitle(): Promise<void> {
+    const sessionId = this.state.appState.sessionId;
+    if (sessionId.length === 0) return;
+    if (this.state.appState.autoSessionTitle === false) return;
+    const record = this.autoTitleAttempts.get(sessionId);
+    if (record !== undefined && (record.done || record.attempts >= MAX_AUTO_TITLE_ATTEMPTS)) {
+      return;
+    }
+    try {
+      const config = await this.harness.getConfig();
+      if (config.autoSessionTitle === false) return;
+      this.autoTitleAttempts.set(sessionId, {
+        attempts: (record?.attempts ?? 0) + 1,
+        done: false,
+      });
+      const title = await this.harness.generateSessionTitle({
+        id: sessionId,
+        source: 'first_turn',
+      });
+      if (title !== undefined) {
+        this.autoTitleAttempts.set(sessionId, { attempts: 0, done: true });
+      }
+    } catch {
+      /* title generation is best-effort; the session keeps its current title */
+    }
   }
 
   releaseStagingMedia(mediaAttachmentIds: readonly number[]): void {
@@ -2321,6 +2367,7 @@ export class KimiTUI {
 
   setExternalEditorRunning(running: boolean): void {
     this.state.externalEditorRunning = running;
+    if (!running) this.modelMigration.retry();
   }
 
   setTasksBrowser(value: TUIState['tasksBrowser']): void {
@@ -2377,6 +2424,7 @@ export class KimiTUI {
       this.sessionEventHandler.retryQueuedGoalPromotion();
     }
     if (additionalDirsChanged) this.setupAutocomplete();
+    this.modelMigration.retry();
     this.state.ui.requestRender();
   }
 
@@ -2421,21 +2469,10 @@ export class KimiTUI {
   async hydrateLazyConfigDefaults(): Promise<void> {
     const { startup } = this.options;
     const config = await this.harness.getConfig({ reload: true });
-    const patch: Partial<AppState> = {};
-    const startupModel = startup.model ?? config.defaultModel;
-    if (startupModel !== undefined) {
-      patch.model = startupModel;
-      const selected = config.models?.[startupModel];
-      if (selected?.maxContextSize !== undefined) {
-        patch.maxContextTokens = selected.maxContextSize;
-      }
-    } else {
-      // The default disappeared from config (edited externally): clear the
-      // previously hydrated value instead of passing a stale explicit model
-      // to the first lazy-created session.
-      patch.model = '';
-      patch.maxContextTokens = 0;
-    }
+    const patch: Partial<AppState> = lazyModelSelection(
+      config,
+      startup.model ?? config.defaultModel,
+    );
     // CLI --auto/--yolo/--plan win over config defaults; the flags are
     // re-applied by applyStartupPermissionAndPlanToAppState at startup.
     if (!startup.auto && !startup.yolo) {
@@ -2449,20 +2486,6 @@ export class KimiTUI {
     patch.configDefaultPlanMode = config.defaultPlanMode === true;
     if (!startup.plan) {
       patch.planMode = config.defaultPlanMode === true;
-    }
-    const effort = thinkingEffortFromConfig(config.thinking);
-    if (effort !== undefined) {
-      patch.thinkingEffort = effort;
-    } else if (startupModel !== undefined) {
-      // No concrete effort configured: mirror the engine, which resolves the
-      // model's default effort at createSession time.
-      const raw = config.models?.[startupModel];
-      if (raw !== undefined) {
-        const providerType = config.providers?.[raw.provider]?.type;
-        patch.thinkingEffort = defaultThinkingEffortFor(
-          effectiveModelAlias(raw, providerType ?? raw.protocol),
-        );
-      }
     }
     if (startup.agentProfile !== undefined || startup.agentFiles !== undefined) {
       patch.agentProfile = startup.agentProfile;
@@ -2544,9 +2567,15 @@ export class KimiTUI {
     return this.ensureSessionPromise;
   }
 
-  /** Await the in-flight lazy session creation, if any (v2); no-op otherwise. */
-  async waitForLazyCreation(): Promise<void> {
+  /** Await in-flight session assembly — lazy creation or a `/new` replacement — if any; no-op otherwise. */
+  async waitForSessionAssembly(): Promise<void> {
     await this.ensureSessionPromise;
+    await this.newSessionPromise;
+  }
+
+  /** True while a `/new` replacement is assembling; idle checks must treat it as busy. */
+  get sessionReplacementInFlight(): boolean {
+    return this.newSessionPromise !== null;
   }
 
   private async lazyCreateSession(): Promise<Session | undefined> {
@@ -2853,7 +2882,7 @@ export class KimiTUI {
     // A first-use lazy creation may still be in flight: wait it out so the
     // checks below see settled state — the pending prompt would otherwise
     // replace the resumed session when creation completes.
-    await this.waitForLazyCreation();
+    await this.waitForSessionAssembly();
     if (targetSessionId === this.state.appState.sessionId) {
       this.showStatus('Already on this session.');
       return true;
@@ -2952,7 +2981,19 @@ export class KimiTUI {
       this.showError('Cannot start a new session while history is replaying.');
       return;
     }
+    // Track the replacement like `ensureSession` tracks lazy creation: a
+    // second `/new` shares the in-flight assembly instead of racing a second
+    // createSession, and idle checks (the model-migration prompt) treat the
+    // switch as busy until it has fully settled.
+    if (this.newSessionPromise !== null) return this.newSessionPromise;
+    this.newSessionPromise = this.assembleNewSession().finally(() => {
+      this.newSessionPromise = null;
+      this.modelMigration.retry();
+    });
+    return this.newSessionPromise;
+  }
 
+  private async assembleNewSession(): Promise<void> {
     let session: Session;
     try {
       session = await this.createSessionFromCurrentState();
@@ -3108,6 +3149,32 @@ export class KimiTUI {
     }
   }
 
+  /**
+   * Relocate an already-mounted transcript entry (and its component) to the
+   * end of the transcript. Used to re-anchor an asynchronously mounted
+   * background-task terminal card to the start of its notification turn, so
+   * the card's fold-segment boundary guards that turn's output instead of
+   * splitting whatever turn happened to be live when the task terminated.
+   * Returns false when the entry is no longer mounted (e.g. trimmed).
+   */
+  moveTranscriptEntryToEnd(entry: TranscriptEntry): boolean {
+    const entries = this.state.transcriptEntries;
+    const entryIndex = entries.indexOf(entry);
+    if (entryIndex < 0) return false;
+    entries.splice(entryIndex, 1);
+    entries.push(entry);
+    const children = this.state.transcriptContainer.children;
+    const childIndex = children.findIndex(
+      (child) => getTranscriptComponentEntry(child) === entry,
+    );
+    if (childIndex >= 0) {
+      const [component] = children.splice(childIndex, 1);
+      children.push(component!);
+    }
+    this.state.ui.requestRender();
+    return true;
+  }
+
   private appendApprovalTranscriptEntry(
     request: ApprovalRequest,
     response: ApprovalResponse,
@@ -3210,13 +3277,22 @@ export class KimiTUI {
 
   /**
    * Fold-segment boundary: everything {@link isTurnBoundaryComponent} counts,
-   * plus the cron card. A cron-fired turn mounts no user message, so without
-   * the card as a boundary its output would share the previous user turn's
+   * plus the cron card and terminal background-task cards. Cron-fired and
+   * task-notification turns mount no user message, so without one of these
+   * cards as a boundary their output would share the previous user turn's
    * fold segment — and the completed-turn assistant cap would fold that turn's
-   * final answer into the step summary.
+   * final answer into the step summary. A task-notification turn re-anchors
+   * its terminal card to the turn's start (see SessionEventHandler), because
+   * the card's asynchronous mount point may sit inside an unrelated turn;
+   * cards that never get a notification turn (resumed sessions, missed
+   * drains) still bound whatever segment they landed in.
    */
   private isFoldSegmentBoundaryComponent(child: Component): boolean {
-    return this.isTurnBoundaryComponent(child) || child instanceof CronMessageComponent;
+    return (
+      this.isTurnBoundaryComponent(child) ||
+      child instanceof CronMessageComponent ||
+      (child instanceof BackgroundAgentStatusComponent && child.phase !== 'started')
+    );
   }
 
   private trimTranscriptWindow(): boolean {
@@ -4004,20 +4080,27 @@ export class KimiTUI {
   // Dialogs / Selectors
   // =========================================================================
 
-  mountEditorReplacement(panel: Component & Focusable): void {
+  mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void {
+    const previousOnDisplaced = this.editorReplacementOnDisplaced;
+    this.editorReplacementOnDisplaced = onDisplaced;
     this.surveyController.notifyDisplaced();
     this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
     this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
+    previousOnDisplaced?.();
   }
 
   restoreEditor(): void {
+    const onDisplaced = this.editorReplacementOnDisplaced;
+    this.editorReplacementOnDisplaced = undefined;
     this.state.editorReplacementMounted = false;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
+    onDisplaced?.();
+    this.modelMigration.retry();
     // Differential render only: closing a tall panel leaves the editor a few
     // rows above the bottom (blank tail) until the next append, but avoids a
     // destructive full redraw on every dialog close.
@@ -4238,7 +4321,7 @@ export class KimiTUI {
     // that is about to lock itself for the delete.
     this.sessionPickerScopeRequestToken += 1;
     try {
-      await this.waitForLazyCreation();
+      await this.waitForSessionAssembly();
       if (session.id === this.state.appState.sessionId && this.session !== undefined) {
         await this.deleteCurrentSessionFromPicker(session);
         return;

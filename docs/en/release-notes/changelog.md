@@ -6,6 +6,27 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.2.0 (2026-10-14)
+
+### Features
+
+- Add an opt-in NotifyUser progress update feature (off by default): new sessions can show the agent's mid-turn progress updates. Enable it in the TUI `/experiments` panel.
+- Add `kimi app [path]` to open a new desktop chat in the current or specified directory.
+- Add sticky user message summaries in fullscreen mode: when a user message scrolls out of view, a one-line summary stays on screen, and clicking it jumps back to the original message. Fullscreen mode is enabled via the TUI mode setting in `/settings`, or `tui_mode = "fullscreen"` in `~/.kimi-code/tui.toml`.
+
+### Polish
+
+- Replace user skill cards with highlighted prompts, and support Ctrl-S for skill prompts.
+- Tower mode: a message sent while the agent is running aborts the in-progress turn and runs as its own turn.
+- Show a "Shutting down" status hint while shutdown hooks run during exit; press Ctrl+C during that window to force an immediate exit instead of waiting for the hook timeout.
+
+### Bug Fixes
+
+- Fix shifted turns, lost replies, and out-of-place rendering in sessions where a UserPromptSubmit hook injects text; hook JSON output without a "message" field is no longer added to the conversation.
+- Remove the never-implemented `executor = "kaos"` option from MCP stdio server configuration; configs using it now fail validation at load time.
+- Cron tasks from the source session no longer fire inside a forked session.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.1.1 (2026-09-24)
 
 ### Polish
