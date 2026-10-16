@@ -20,7 +20,7 @@ import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
-import { loadAgentsMdForRoots, type LoadedAgentsMd } from '#/agent/profile/context';
+import { loadAgentsMdForRoots, splitAgentsMdFiles, type LoadedAgentsMd } from '#/agent/profile/context';
 import { resolveSubagentModelPool, type SubagentModelPool } from '#/session/subagent/configSection';
 import { isToolActiveComposed } from '#/agent/toolPolicy/evaluate';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
@@ -56,6 +56,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
 
   private muted = false;
 
+  private legacySubagentBaseline:
+    | { readonly names: readonly string[]; readonly pool: SubagentModelPoolSnapshot | undefined }
+    | undefined;
+
   constructor(
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -90,6 +94,14 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
         void this.notifySubagentChanges();
       }),
     );
+    void this.agentCatalog.ready.then(() => {
+      if (this.scopeContext.agentId !== MAIN_AGENT_ID) return;
+      if (this.snapshot.subagentNames !== undefined) return;
+      this.legacySubagentBaseline = {
+        names: this.agentCatalog.list().map((profile) => profile.name),
+        pool: snapshotModelPool(resolveSubagentModelPool(this.config)),
+      };
+    });
   }
 
   private get snapshot(): ChangeNotifierSnapshotState {
@@ -120,7 +132,7 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       } finally {
         lease.dispose();
       }
-      const contents = splitAgentsMdFiles(fresh.content, fresh.paths);
+      const contents = fresh.files;
       const hash = hashText(`${fresh.paths.join('\n')}\n\n${fresh.content}`);
       const snapshot = this.snapshot;
       if (snapshot.agentsMdHash === hash || this.muted) return;
@@ -156,7 +168,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       if (snapshot.skillsHash === undefined) {
         if (listing === '') {
           if (!profileData.systemPrompt.includes(SKILL_LISTING_MARKER)) return;
-        } else if (profileData.systemPrompt.includes(listing)) {
+        } else if (
+          profileData.systemPrompt.includes(`${listing}\n\n`) ||
+          profileData.systemPrompt.endsWith(listing)
+        ) {
           return;
         }
       }
@@ -211,13 +226,18 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
       }
       if (this.muted) return;
       const baseProfiles =
-        snapshot.subagentNames ?? input?.previousSubagentNames ?? currentProfiles;
+        snapshot.subagentNames ??
+        input?.previousSubagentNames ??
+        this.legacySubagentBaseline?.names ??
+        currentProfiles;
       const basePool =
         snapshot.subagentNames !== undefined
           ? (snapshot.modelPool ?? null)
           : input?.previousModelPool !== undefined
             ? input.previousModelPool
-            : currentPool;
+            : this.legacySubagentBaseline !== undefined
+              ? (this.legacySubagentBaseline.pool ?? null)
+              : currentPool;
       const profilesAdded = difference(currentProfiles, baseProfiles).map((name) => {
         const profile = currentProfileList.find((candidate) => candidate.name === name);
         return { name, description: profile?.description, whenToUse: profile?.whenToUse };
@@ -359,29 +379,6 @@ function hashAgentsMdContents(contents: ReadonlyMap<string, string>): Record<str
     result[path] = hashText(content);
   }
   return result;
-}
-
-function splitAgentsMdFiles(
-  content: string,
-  paths: readonly string[],
-): ReadonlyMap<string, string> {
-  const wanted = new Set(paths.map(normalize));
-  const files = new Map<string, string>();
-  const markerRe = /^<!-- From: (.+) -->$/gm;
-  let prev: { key: string; bodyStart: number } | undefined;
-  const flush = (end: number): void => {
-    if (prev === undefined) return;
-    files.set(prev.key, content.slice(prev.bodyStart, end).trim());
-    prev = undefined;
-  };
-  for (const match of content.matchAll(markerRe)) {
-    const key = normalize(match[1]!);
-    if (!wanted.has(key)) continue;
-    flush(match.index);
-    prev = { key, bodyStart: match.index + match[0].length + 1 };
-  }
-  flush(content.length);
-  return files;
 }
 
 function classifyAgainstBeliefs(

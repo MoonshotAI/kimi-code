@@ -791,6 +791,21 @@ describe('notifySkillChanges', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.variant).toBe('skills_change');
   });
+
+  it('detects a truncated skill listing before the first check of a legacy session', async () => {
+    const h = createHarness({
+      profile: makeProfileData({
+        profileName: 'default',
+        systemPrompt: `header\n\n${LISTING_AB}\n\nfooter`,
+      }),
+    });
+    h.skillListing.value = LISTING_A;
+
+    await h.notifier.notifySkillChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.variant).toBe('skills_change');
+    expect(h.reminders[0]?.content).toContain('skill-a');
+  });
 });
 
 describe('notifySubagentChanges', () => {
@@ -1122,6 +1137,31 @@ describe('notifySubagentChanges', () => {
     expect(h.reminders).toHaveLength(1);
     expect(h.reminders[0]?.content).toContain('Profiles added: coder');
     expect(h.reminders[0]?.content).not.toContain('deploy');
+  });
+
+  it('diffs the first watch profile change against the startup baseline of a legacy session', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    h.profileNames.value = ['default', 'deploy'];
+    h.agentCatalogChange.fire('workspace');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Profiles added: deploy');
+  });
+
+  it('diffs the first watch pool change against the startup baseline of a legacy session', async () => {
+    const h = createHarness({
+      profile: makeProfileData({ profileName: 'default' }),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    h.secondaryModel.value = { defaultModel: 'k1', models: { k1: '' } };
+    await h.notifier.notifySubagentChanges();
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Models added: k1');
   });
 });
 

@@ -50,6 +50,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   extractAgentsMdPathsFromSystemPrompt,
   prepareSystemPromptContext,
+  splitAgentsMdFiles,
   type LoadedAgentsMd,
 } from './context';
 import type {
@@ -917,10 +918,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private async workspaceInstructionsSnapshot(): Promise<LoadedAgentsMd> {
     await this.instructions.ready;
+    const paths = this.instructions.agentsMdPaths ?? [];
+    const content = this.instructions.agentsMd ?? '';
     return {
-      content: this.instructions.agentsMd ?? '',
+      content,
       warning: this.instructions.agentsMdWarning,
-      paths: this.instructions.agentsMdPaths ?? [],
+      paths,
+      files: splitAgentsMdFiles(content, paths),
     };
   }
 
