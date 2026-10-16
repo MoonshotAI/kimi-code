@@ -20,6 +20,7 @@ import {
   type Event2,
   type IOAuthService as IOAuthServiceType,
   IAgentContextMemoryService,
+  IAgentFullCompactionService,
   IAgentGoalService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -1093,6 +1094,150 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
+  it('reloads a session via :reload and injects change reminders for external updates', async () => {
+    await server?.close();
+    server = undefined;
+    await writeFile(
+      join(home as string, 'config.toml'),
+      [
+        'default_model = "stub"',
+        '',
+        '[providers.stub]',
+        'type = "openai"',
+        'base_url = "http://127.0.0.1:9999"',
+        'api_key = "stub"',
+        '',
+        '[models.stub]',
+        'provider = "stub"',
+        'model = "stub"',
+        'max_context_size = 1000',
+        '',
+        '[watch]',
+        'enabled = false',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-cwd-'));
+    await mkdir(join(cwd, '.git'));
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const id = created.body.data.id;
+      const bound = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+        agent_config: { model: 'stub' },
+      });
+      expect(bound.body.code).toBe(0);
+
+      const first = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(first.body.code).toBe(0);
+      expect(first.body.data.id).toBe(id);
+
+      const baseline = await getJson<{ items: unknown[]; has_more: boolean }>(
+        `/api/v1/sessions/${id}/messages`,
+      );
+      const baselineCount = baseline.body.data.items.length;
+
+      await writeFile(join(cwd, 'AGENTS.md'), 'new workspace rules');
+
+      const second = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(second.body.code).toBe(0);
+
+      const after = await getJson<{ items: unknown[]; has_more: boolean }>(
+        `/api/v1/sessions/${id}/messages`,
+      );
+      expect(after.body.data.items.length).toBeGreaterThan(baselineCount);
+      const text = JSON.stringify(after.body.data.items);
+      expect(text).toContain('AGENTS.md');
+      expect(text).toContain('were not included in your system prompt');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('delivers a single subagents reminder when profiles and the model pool change together', async () => {
+    await server?.close();
+    server = undefined;
+    const configToml = [
+      'default_model = "stub"',
+      '',
+      '[providers.stub]',
+      'type = "openai"',
+      'base_url = "http://127.0.0.1:9999"',
+      'api_key = "stub"',
+      '',
+      '[models.stub]',
+      'provider = "stub"',
+      'model = "stub"',
+      'max_context_size = 1000',
+      '',
+      '[watch]',
+      'enabled = false',
+      '',
+    ].join('\n');
+    await writeFile(join(home as string, 'config.toml'), configToml, 'utf-8');
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-pool-cwd-'));
+    await mkdir(join(cwd, '.git'));
+    try {
+      const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const id = created.body.data.id;
+      const bound = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+        agent_config: { model: 'stub' },
+      });
+      expect(bound.body.code).toBe(0);
+
+      await mkdir(join(home as string, 'agents'), { recursive: true });
+      await writeFile(
+        join(home as string, 'agents', 'deploy.md'),
+        '---\nname: deploy\ndescription: Deploys things.\n---\nYou deploy things.\n',
+        'utf-8',
+      );
+      await writeFile(
+        join(home as string, 'config.toml'),
+        `${configToml}[secondary_model.models]\n"stub" = "fast stub"\n`,
+        'utf-8',
+      );
+
+      const reloaded = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(reloaded.body.code).toBe(0);
+
+      const after = await getJson<{ items: unknown[]; has_more: boolean }>(
+        `/api/v1/sessions/${id}/messages`,
+      );
+      const subagentReminders = (
+        after.body.data.items as {
+          metadata?: { origin?: { kind?: string; variant?: string } };
+        }[]
+      ).filter((item) => item.metadata?.origin?.variant === 'subagents_change');
+      expect(subagentReminders).toHaveLength(1);
+      const text = JSON.stringify(subagentReminders[0]);
+      expect(text).toContain('Profiles added: deploy');
+      expect(text).toContain('Models added: stub');
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+      await rm(join(home as string, 'agents'), { recursive: true, force: true });
+    }
+  });
+
   it('keeps failed journal cleanup retriable without publishing deletion', async () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
@@ -1209,6 +1354,29 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(response.body.code).toBe(40901);
     } finally {
       undo.mockRestore();
+    }
+  });
+
+  it('returns 40901 when :reload is requested during an active compaction', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    await session.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: MAIN_AGENT_ID });
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
+    const compacting = vi
+      .spyOn(agent.accessor.get(IAgentFullCompactionService), 'compacting', 'get')
+      .mockReturnValue({} as never);
+
+    try {
+      const response = await postJson<null>(`/api/v1/sessions/${id}:reload`);
+      expect(response.body.code).toBe(40901);
+    } finally {
+      compacting.mockRestore();
     }
   });
 
