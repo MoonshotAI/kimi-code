@@ -33,6 +33,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   private _vetoResult: ExecutableToolResult | undefined;
   private _finalAllowed = false;
   private _passMetadata: unknown;
+  private _updatedArgs: Record<string, unknown> | undefined;
   private readonly _pendingVetos: PendingVetoFactory[] = [];
   private _open = true;
 
@@ -62,6 +63,11 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this._passMetadata ??= metadata;
   }
 
+  updateArgs(args: Record<string, unknown>): void {
+    this.assertOpen('updateArgs');
+    this._updatedArgs = args;
+  }
+
   waitUntil(factory: PendingVetoFactory): void {
     this.assertOpen('waitUntil');
     this._pendingVetos.push(factory);
@@ -77,6 +83,10 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
 
   get passMetadata(): unknown {
     return this._passMetadata;
+  }
+
+  get updatedArgs(): Record<string, unknown> | undefined {
+    return this._updatedArgs;
   }
 
   get pendingVetos(): readonly PendingVetoFactory[] {
@@ -105,17 +115,25 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
     const event = new BeforeToolExecuteEventImpl(context);
     for (const entry of Array.from(this._listeners)) {
       await entry.listener.call(entry.thisArg, event);
-      if (event.finalAllowed) return undefined;
+      if (event.finalAllowed) {
+        return event.updatedArgs === undefined ? undefined : { updatedArgs: event.updatedArgs };
+      }
       if (event.vetoResult !== undefined) return { veto: event.vetoResult };
     }
     event.closeRegistration();
 
     let passMetadata = event.passMetadata;
+    let updatedArgs = event.updatedArgs;
     for (const factory of event.pendingVetos) {
       const decision = await factory();
       if (decision?.veto !== undefined) return { veto: decision.veto };
       passMetadata ??= decision?.executionMetadata;
+      updatedArgs = decision?.updatedArgs ?? updatedArgs;
     }
-    return passMetadata === undefined ? undefined : { executionMetadata: passMetadata };
+    if (passMetadata === undefined && updatedArgs === undefined) return undefined;
+    return {
+      ...(passMetadata === undefined ? {} : { executionMetadata: passMetadata }),
+      ...(updatedArgs === undefined ? {} : { updatedArgs }),
+    };
   }
 }

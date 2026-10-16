@@ -39,6 +39,15 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
         void this.reloadSafe();
       }),
     );
+    if (this.config.onDidSectionChange !== undefined) {
+      this._register(
+        this.config.onDidSectionChange((event) => {
+          if (event.domain === HOOKS_SECTION) {
+            void this.reloadSafe();
+          }
+        }),
+      );
+    }
   }
 
   get summary(): Record<string, number> {
