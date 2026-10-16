@@ -1597,6 +1597,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
               { details: { sessionId } },
             );
           }
+          if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) {
+            throw new KimiError(
+              ErrorCodes.TURN_AGENT_BUSY,
+              `Session "${sessionId}" cannot be reloaded while compaction is running`,
+              { details: { sessionId } },
+            );
+          }
         }
       } else if (indexEntry === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
@@ -1629,7 +1636,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         await this.reloadWorkspaceCatalogs(workspaceId);
         await this.refreshPluginSessionStarts(sessionId);
       } catch (error) {
-        staleNotifier?.unmute();
+        if (staleNotifier !== undefined) {
+          staleNotifier.unmute();
+          await Promise.all([
+            staleNotifier.notifyAgentsMdChanges(),
+            staleNotifier.notifySkillChanges(),
+            staleNotifier.notifySubagentChanges({}),
+          ]).catch(() => undefined);
+        }
         throw error;
       }
       if (live !== undefined) {
