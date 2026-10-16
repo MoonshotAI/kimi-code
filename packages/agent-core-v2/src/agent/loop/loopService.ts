@@ -342,7 +342,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           result: undefined,
           state: 'failed',
         });
-        this.publishPromptCompleted(id, 'failed');
+        this.publishPromptCompleted(id, 'failed', createdAt);
         this.terminalStates.set(id, 'failed');
         waiter.failedEntry = entry;
         return { id };
@@ -551,8 +551,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       this.steered.delete(childId);
     }
     if (prompt.tracked) {
-      if (state === 'cancelled') this.publishPromptAborted(waiter.id);
-      else this.publishPromptCompleted(waiter.id, state);
+      if (state === 'cancelled') this.publishPromptAborted(waiter.id, prompt.createdAt);
+      else this.publishPromptCompleted(waiter.id, state, prompt.createdAt);
     }
     this.terminalStates.set(waiter.id, state);
     this.promptWaiters.delete(waiter.id);
@@ -631,7 +631,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       result: undefined,
       state,
     });
-    this.publishPromptCompleted(waiter.id, state);
+    this.publishPromptCompleted(waiter.id, state, entry?.meta?.createdAt);
     this.terminalStates.set(waiter.id, state);
     this.promptWaiters.delete(waiter.id);
     this.maybeSettle();
@@ -652,13 +652,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
   }
 
-  private publishPromptCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked'): void {
+  private publishPromptCompleted(promptId: string, reason: 'completed' | 'failed' | 'blocked', createdAt?: string): void {
     void this.dispatcher.dispatch(
       new PromptCompleted({
         agentId: this.scopeContext.agentId,
         promptId,
         finishedAt: new Date().toISOString(),
         reason,
+        createdAt: createdAt === '' ? undefined : createdAt,
       }),
     );
   }
@@ -714,12 +715,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     );
   }
 
-  private publishPromptAborted(promptId: string): void {
+  private publishPromptAborted(promptId: string, createdAt?: string): void {
     void this.dispatcher.dispatch(
       new PromptAborted({
         agentId: this.scopeContext.agentId,
         promptId,
         abortedAt: new Date().toISOString(),
+        createdAt: createdAt === '' ? undefined : createdAt,
       }),
     );
   }
@@ -745,11 +747,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (active !== undefined && active.prompt.id === waiter.id) {
       return this.cancelActiveTurn(undefined, cancellation);
     }
-    const tracked = this.promptProjection(waiter.id)?.tracked === true;
+    const projection = this.promptProjection(waiter.id);
+    const tracked = projection?.tracked === true;
     this.engine?.cancelQueueItem(waiter.id);
     this.settleWaiterCancelled(waiter);
     if (tracked) {
-      this.publishPromptAborted(waiter.id);
+      this.publishPromptAborted(waiter.id, projection?.createdAt);
     }
     this.terminalStates.set(waiter.id, 'cancelled');
     this.promptWaiters.delete(waiter.id);
@@ -1202,6 +1205,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         origin: prompt.origin,
         promptId: prompt.promptId,
         turnId: id,
+        createdAt: prompt.createdAt === '' ? undefined : prompt.createdAt,
       }),
     );
     turn.state = 'running';
@@ -1373,6 +1377,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             messageId,
             content: children.flatMap((child) =>
               stripBundledSkillBlocks(child.projection.message),
+            ),
+            createdAts: Object.fromEntries(
+              children
+                .filter((child) => child.projection.createdAt !== '')
+                .map((child) => [child.waiter.id, child.projection.createdAt]),
             ),
             steeredAt: new Date().toISOString(),
           }),

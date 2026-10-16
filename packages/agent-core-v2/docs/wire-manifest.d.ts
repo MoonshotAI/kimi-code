@@ -542,6 +542,7 @@ interface PromptAbortedPayload {
   agentId: string;
   promptId: string;
   abortedAt: string;
+  createdAt?: string;
 }
 
 /**
@@ -554,6 +555,7 @@ interface PromptCompletedPayload {
   promptId: string;
   finishedAt: string;
   reason: 'completed' | 'failed' | 'blocked';
+  createdAt?: string;
 }
 
 /**
@@ -568,6 +570,7 @@ interface PromptSteeredPayload {
   content: ContentPart[];
   steeredAt: string;
   messageId?: string;
+  createdAts?: Record<string, string>;
 }
 
 /**
@@ -894,6 +897,7 @@ interface TurnPromptPayload {
   origin: 'user' | 'skill_activation' | 'plugin_command' | 'injection' | 'shell_command' | 'compaction_summary' | 'system_trigger' | 'task' | 'cron_job' | 'cron_missed' | 'hook_result' | 'retry';
   promptId?: string;
   turnId?: number;
+  createdAt?: string;
 }
 
 /**

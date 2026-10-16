@@ -33,6 +33,7 @@ const turnPromptSchema = z.object({
   origin: z.custom<PromptOrigin>(),
   promptId: z.string().optional(),
   turnId: z.number().optional(),
+  createdAt: z.string().optional(),
 });
 
 export class TurnPrompt extends AgentEvent2<z.infer<typeof turnPromptSchema>> {
@@ -46,6 +47,7 @@ export interface TurnPrompt {
   readonly origin: PromptOrigin;
   readonly promptId?: string;
   readonly turnId?: number;
+  readonly createdAt?: string;
 }
 
 const turnSteerSchema = z.object({
