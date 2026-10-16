@@ -99,16 +99,21 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     await this.ready;
     if (this.disposed) return false;
     await this.ensureWriteOwnership();
-    const updatedAt =
-      patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
-    this.data = { ...this.data, ...patch, updatedAt };
-    await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
-    if (this.disposed) return false;
-    this.mirrorToReadModel();
-    this._onDidChangeMetadata.fire({
-      changed: Object.keys(patch) as (keyof SessionMeta)[],
-    });
-    return true;
+    const lease = this.sessionLocks.acquire(this.ctx.sessionId);
+    try {
+      const updatedAt =
+        patch.updatedAt ?? (opts?.touchUpdatedAt === false ? this.data.updatedAt : Date.now());
+      this.data = { ...this.data, ...patch, updatedAt };
+      await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
+      if (this.disposed) return false;
+      this.mirrorToReadModel();
+      this._onDidChangeMetadata.fire({
+        changed: Object.keys(patch) as (keyof SessionMeta)[],
+      });
+      return true;
+    } finally {
+      lease.release();
+    }
   }
 
   private async ensureWriteOwnership(): Promise<void> {

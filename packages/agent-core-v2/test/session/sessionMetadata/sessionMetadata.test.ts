@@ -692,4 +692,32 @@ describe('SessionMetadata', () => {
     expect(persisted?.title).toBe('theirs');
     expect(persisted?.lastPrompt).toBe('hello');
   });
+
+  it('holds an explicit lease while writing state.json', async () => {
+    const meta = ix.get(ISessionMetadata);
+    const locks = ix.get(ISessionLockService);
+    const store = ix.get(IAtomicDocumentStore);
+    await meta.read();
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realSet = store.set.bind(store);
+    vi.spyOn(store, 'set').mockImplementation(async (...args: Parameters<typeof store.set>) => {
+      await gate;
+      return realSet(...args);
+    });
+
+    const writing = meta.setTitle('held');
+    await vi.waitFor(() => {
+      expect(store.set).toHaveBeenCalled();
+    });
+    locks.endRun('s1');
+    expect(locks.held('s1')).toBe(true);
+    release();
+    await writing;
+    expect(locks.held('s1')).toBe(false);
+    expect((await meta.read()).title).toBe('held');
+  });
 });

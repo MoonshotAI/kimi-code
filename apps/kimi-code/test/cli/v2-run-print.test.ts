@@ -13,6 +13,7 @@ import {
   IAgentProfileService,
   IAgentScopeContext,
   IAgentTaskService,
+  IAppendLogStore,
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
@@ -21,11 +22,15 @@ import {
   IFileSystemStorageService,
   IHostFileSystem,
   IOAuthToolkit,
+  ISessionContext,
   ISessionIndex,
+  ISessionLockService,
   ISessionManager,
   ITelemetryService,
   IWorkspaceInstanceManager,
+  InMemorySessionLockService,
   makeAgentScopeContext,
+  makeSessionContext,
   resolveKimiHome,
   type BootstrapInput,
   type Event2,
@@ -236,6 +241,16 @@ function makeFakeHarness() {
         handleOf: vi.fn(() => agent),
       },
     ],
+    [
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 'ses_v2',
+        workspaceId: 'wd_v2',
+        sessionDir: '/tmp/ses_v2',
+        sessionScope: 'sessions/wd_v2/ses_v2',
+        cwd: process.cwd(),
+      }),
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -276,6 +291,8 @@ function makeFakeHarness() {
       },
     ],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
+    [ISessionLockService, new InMemorySessionLockService()],
+    [IAppendLogStore, { externallyModified: vi.fn(() => false) }],
     [
       IBootstrapService,
       {
