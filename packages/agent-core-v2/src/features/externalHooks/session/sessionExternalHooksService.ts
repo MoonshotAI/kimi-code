@@ -1,7 +1,9 @@
 import { Service } from '#/_base/di/service';
 import { IntervalTimer } from '#/_base/utils/timer';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IModelService } from '#/llm-adapter/model/model';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   ISessionAgentProfileCatalog,
 } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -12,12 +14,16 @@ import {
   type AgentTaskStopHookContext,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   type SessionCloseReason,
   type SessionCreateSource,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
+import { HookResult as HookResultEvent } from '../agent/agentExternalHooksService';
 import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import type { HookResult as HookRunResult } from '../internal/types';
+import { hookResultMessage, renderHookResult } from '../internal/userPrompt';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
 
 type SessionStartHookSource = Exclude<SessionCreateSource, 'fork'>;
@@ -41,6 +47,7 @@ export class SessionExternalHooksService
     @ISessionAgentProfileCatalog private readonly profiles: ISessionAgentProfileCatalog,
     @IModelService private readonly models: IModelService,
     @IExternalHooksRunnerService private readonly runner: IExternalHooksRunnerService,
+    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
   ) {
     super();
     void this.metadata
@@ -107,7 +114,7 @@ export class SessionExternalHooksService
   }
 
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
-    await this.runner.trigger('SessionStart', {
+    const results = await this.runner.trigger('SessionStart', {
       matcherValue: source,
       cwd: this.context.cwd,
       sessionId: this.context.sessionId,
@@ -118,6 +125,34 @@ export class SessionExternalHooksService
         profile: await this.defaultProfileName(),
       },
     });
+    this.surfaceSessionStartResults(results);
+  }
+
+  private surfaceSessionStartResults(results: readonly HookRunResult[]): void {
+    const messages = results
+      .filter((result) => result.action !== 'block')
+      .map(hookResultMessage)
+      .filter((message): message is string => message !== undefined);
+    if (messages.length === 0) return;
+    const main = this.agents.handleOf(MAIN_AGENT_ID);
+    if (main === undefined) return;
+    const memory = main.accessor.get(IAgentContextMemoryService);
+    const dispatcher = main.accessor.get(IEventDispatcher);
+    for (const message of messages) {
+      memory.append({
+        role: 'assistant',
+        content: [{ type: 'text', text: renderHookResult('SessionStart', message) }],
+        toolCalls: [],
+        origin: { kind: 'hook_result', event: 'SessionStart' },
+      });
+      void dispatcher.dispatch(
+        new HookResultEvent({
+          agentId: MAIN_AGENT_ID,
+          hookEvent: 'SessionStart',
+          content: message,
+        }),
+      );
+    }
   }
 
   private async defaultProfileName(): Promise<string | undefined> {
