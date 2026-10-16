@@ -1934,11 +1934,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * `compaction.unable` on an empty history or an active turn.
    */
   override async compact(input: SessionIdRpcInput & CompactOptions): Promise<void> {
-    const agent = await this.agentScope(input.sessionId);
-    agent.accessor.get(IAgentFullCompactionService).begin({
-      source: 'manual',
-      instruction: input.instruction,
-    });
+    try {
+      const agent = await this.agentScope(input.sessionId);
+      agent.accessor.get(IAgentFullCompactionService).begin({
+        source: 'manual',
+        instruction: input.instruction,
+      });
+    } catch (error) {
+      throw restateEngineError(error);
+    }
   }
 
   /**
@@ -1969,8 +1973,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
-    const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
+    try {
+      const agent = await this.agentScope(input.sessionId);
+      await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
+    } catch (error) {
+      throw restateEngineError(error);
+    }
   }
 
   /**
@@ -2030,11 +2038,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * where v2 queues it FIFO.
    */
   override async prompt(input: SessionPromptRpcInput): Promise<void> {
-    const agent = await this.agentFacade(input.sessionId);
-    await agent.prompt({
-      input: input.input,
-      promptId: input.promptId,
-    });
+    try {
+      const agent = await this.agentFacade(input.sessionId);
+      await agent.prompt({
+        input: input.input,
+        promptId: input.promptId,
+      });
+    } catch (error) {
+      throw restateEngineError(error);
+    }
   }
 
   /**
@@ -2044,12 +2056,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * anchor. v2-only: the base class rejects this method on the v1 engine.
    */
   override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
-    const agent = await this.agentFacade(input.sessionId);
-    await agent.promptWithSkills({
-      input: input.input,
-      skills: input.skills,
-      steerIfActive: input.steerIfActive,
-    });
+    try {
+      const agent = await this.agentFacade(input.sessionId);
+      await agent.promptWithSkills({
+        input: input.input,
+        skills: input.skills,
+        steerIfActive: input.steerIfActive,
+      });
+    } catch (error) {
+      throw restateEngineError(error);
+    }
   }
 
   /**
@@ -2059,8 +2075,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * title/lastPrompt are updated like a prompt's.
    */
   override async steer(input: SessionPromptRpcInput): Promise<void> {
-    const agent = await this.agentFacade(input.sessionId);
-    await agent.steer({ input: input.input });
+    try {
+      const agent = await this.agentFacade(input.sessionId);
+      await agent.steer({ input: input.input });
+    } catch (error) {
+      throw restateEngineError(error);
+    }
   }
 
   /**
@@ -2118,12 +2138,16 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * v1 drops the activation while a turn runs where v2 queues it.
    */
   override async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
-    const agent = await this.agentScope(input.sessionId);
-    await agent.accessor.get(IAgentPluginCommandService).activate({
-      pluginId: input.pluginId,
-      commandName: input.commandName,
-      args: input.args,
-    });
+    try {
+      const agent = await this.agentScope(input.sessionId);
+      await agent.accessor.get(IAgentPluginCommandService).activate({
+        pluginId: input.pluginId,
+        commandName: input.commandName,
+        args: input.args,
+      });
+    } catch (error) {
+      throw restateEngineError(error);
+    }
   }
 
   /**
@@ -2831,7 +2855,7 @@ function normalizeRequiredWorkDir(operation: string, workDir: string): string {
 
 /**
  * Restate an engine `Error2` in the SDK's public error shape (`KimiError`,
- * what `isKimiError` branches on) so the delegated management plane throws
+ * what `isKimiError` branches on) so the engine-backed entry points throw
  * the same class the v1 client throws for the same failure. Non-Error2
  * failures (DI resolution bugs, aborts) pass through untouched.
  *
