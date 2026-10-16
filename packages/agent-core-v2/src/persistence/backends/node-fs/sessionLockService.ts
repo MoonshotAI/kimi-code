@@ -33,7 +33,7 @@ let exitHooked = false;
 function hookExit(): void {
   if (exitHooked) return;
   exitHooked = true;
-  process.on('beforeExit', () => {
+  process.on('exit', () => {
     for (const service of heldServices) service.releaseAll();
   });
 }

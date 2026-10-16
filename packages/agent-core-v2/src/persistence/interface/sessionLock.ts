@@ -42,7 +42,7 @@ export const ISessionLockService: ServiceIdentifier<ISessionLockService> =
 export function sessionOccupiedError(sessionId: string, holder?: SessionLockHolder): Error2 {
   return new Error2(
     SessionErrors.codes.SESSION_OCCUPIED,
-    '该会话正在被其他 Kimi Code 进程使用；请停止其他进程中的会话或退出该进程后重试',
+    'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.',
     { details: { sessionId, holder } },
   );
 }

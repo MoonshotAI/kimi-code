@@ -8,7 +8,9 @@ function strip(text: string): string {
   return text.replaceAll(ANSI_SGR, '');
 }
 
-function renderDialog(message = '该会话正在被其他 Kimi Code 进程使用；请停止其他进程中的会话或退出该进程后重试') {
+function renderDialog(
+  message = 'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.',
+) {
   const onSelect = vi.fn();
   const onCancel = vi.fn();
   const dialog = new SessionOccupiedDialogComponent({ message, onSelect, onCancel });
@@ -18,7 +20,7 @@ function renderDialog(message = '该会话正在被其他 Kimi Code 进程使用
 describe('SessionOccupiedDialogComponent', () => {
   it('renders the occupancy message in the title and the standard hint vocabulary', () => {
     const { lines } = renderDialog();
-    const titleIdx = lines.findIndex((l) => l.includes('该会话正在被其他 Kimi Code 进程使用'));
+    const titleIdx = lines.findIndex((l) => l.includes('in use by another Kimi Code process'));
     expect(titleIdx).toBeGreaterThanOrEqual(0);
     expect(lines[titleIdx + 1]).toContain('↑↓ navigate');
     expect(lines[titleIdx + 1]).toContain('Enter select');

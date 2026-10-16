@@ -120,7 +120,7 @@ describe('SessionLockService', () => {
     serviceA.beginRun('warmup');
     serviceA.endRun('warmup');
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(foreign), { mode: 0o600 });
-    expect(() => serviceA.beginRun(SID)).toThrowError(/Kimi Code/);
+    expect(() => serviceA.beginRun(SID)).toThrowError(/in use by another Kimi Code process/);
     expect(readLockFile(homeDir, SID).token).toBe('foreign-token');
   });
 
@@ -129,7 +129,7 @@ describe('SessionLockService', () => {
     serviceA.beginRun(SID);
     serviceA.endRun(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(true);
-    expect(() => serviceB.beginRun(SID)).toThrowError(/Kimi Code/);
+    expect(() => serviceB.beginRun(SID)).toThrowError(/in use by another Kimi Code process/);
     lease.release();
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
     expect(() => serviceB.beginRun(SID)).not.toThrow();
@@ -152,6 +152,25 @@ describe('SessionLockService', () => {
     expect(degraded.held(SID)).toBe(true);
     expect(() => degraded.endRun(SID)).not.toThrow();
     degraded.dispose();
+  });
+
+  it('releases held locks when the process exit hook fires', async () => {
+    vi.resetModules();
+    const fresh = await import('#/persistence/backends/node-fs/sessionLockService');
+    const onSpy = vi.spyOn(process, 'on');
+    try {
+      const freshService = new fresh.SessionLockService(bootstrapStub(homeDir, 'client_fresh'));
+      freshService.beginRun(SID);
+      expect(existsSync(lockPath(homeDir, SID))).toBe(true);
+      const exitCalls = onSpy.mock.calls.filter(([event]) => event === 'exit');
+      expect(exitCalls).toHaveLength(1);
+      const exitListener = exitCalls[0]?.[1] as () => void;
+      exitListener();
+      expect(existsSync(lockPath(homeDir, SID))).toBe(false);
+      freshService.dispose();
+    } finally {
+      onSpy.mockRestore();
+    }
   });
 });
 
