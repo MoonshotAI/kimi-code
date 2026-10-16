@@ -384,7 +384,7 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   it('caps total cleaning work across many long lines', () => {
     const line = `/home/${'a.'.repeat(4090)}x`;
     const parts = cleanTelemetryString(Array.from({ length: 25 }, () => line).join('\n')).split('\n');
-    expect(parts).toHaveLength(25);
+    expect(parts).toHaveLength(5);
     expect(parts.at(-1)).toBe('<REDACTED: oversized telemetry-line>');
   });
 
@@ -430,6 +430,41 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
       );
     },
   );
+
+  it('collapses everything past the value budget into a single marker', () => {
+    const cleaned = cleanTelemetryString('x\n'.repeat(100_000));
+    expect(cleaned.length).toBeLessThan(70_000);
+    expect(cleaned.endsWith('<REDACTED: oversized telemetry-line>')).toBe(true);
+    expect(cleaned.split('<REDACTED: oversized telemetry-line>')).toHaveLength(2);
+  });
+
+  it('splits labeled paths separated by whitespace', () => {
+    expect(cleanTelemetryString('old=C:\\Users\\alice\\cache new=D:\\Users\\bob\\private')).toBe(
+      `old=${REDACTED} new=${REDACTED}`,
+    );
+    expect(cleanTelemetryString('old=/home/alice/node_modules/pkg new=/home/bob/private')).toBe(
+      `old=node_modules/pkg new=${REDACTED}`,
+    );
+  });
+
+  it('redacts UNC paths with a separator run between host and share', () => {
+    expect(cleanTelemetryString('\\\\server\\\\share\\alice\\secret.txt')).toBe(REDACTED);
+  });
+
+  it('stops extensionless POSIX paths at shell operators', () => {
+    expect(cleanTelemetryString('/home/alice/cache&&echo retry')).toBe(`${REDACTED}&&echo retry`);
+    expect(cleanTelemetryString('/home/alice/cache||echo retry')).toBe(`${REDACTED}||echo retry`);
+  });
+
+  it('leaves spaced division and relative slash text intact', () => {
+    expect(cleanTelemetryString('result = total / count / duration')).toBe(
+      'result = total / count / duration',
+    );
+    expect(cleanTelemetryString('branch feature/foo / status clean')).toBe(
+      'branch feature/foo / status clean',
+    );
+    expect(cleanTelemetryString('/home/alice/private /secret.txt')).toBe(REDACTED);
+  });
 
   it('still redacts emails and URLs before paths', () => {
     expect(cleanTelemetryString('user@example.com')).toBe('<REDACTED: Email>');

@@ -19,7 +19,7 @@ const FILE_EXTENSION = String.raw`\.[\p{L}\p{M}\p{N}_+#~@$%=-]+`;
 const PATH_BOUNDARY = String.raw`(?![\p{L}\p{M}\p{N}.$_~+\\/-])`;
 const EXTENSION_BOUNDARY = String.raw`(?=$|[\s'",;:!?) }\u0060\]&|]|\.(?=\s|$))`;
 const WINDOWS_EXTENSION_BOUNDARY = String.raw`${EXTENSION_BOUNDARY}(?!\s[^\\/:*?"<>|\u0060]*[\\/])`;
-const WINDOWS_NEXT_DRIVE = String.raw`(?:[,;]\s(?=[^\\/:*?"<>|\u0060]*[A-Za-z]:[\\/])|(?:[,;]|&&?|\|\|?)(?=(?:[\w.-]+=)?[A-Za-z]:[\\/])|\s(?=[A-Za-z]:[\\/])|(?:[,;]|&&?|\|\|?)(?=[\\/]))`;
+const WINDOWS_NEXT_DRIVE = String.raw`(?:[,;]\s(?=[^\\/:*?"<>|\u0060]*[A-Za-z]:[\\/])|(?:[,;]|&&?|\|\|?)(?=(?:[\w.-]+=)?[A-Za-z]:[\\/])|\s(?=(?:[\w.-]+=)?[A-Za-z]:[\\/])|(?:[,;]|&&?|\|\|?)(?=[\\/]))`;
 const WINDOWS_DIAGNOSTIC_COMMA = String.raw`,\s(?![^\\/:*?"<>|\u0060]*[\\/])`;
 const WINDOWS_CLOSING_QUOTE = String.raw`'\s(?![^\\/:*?"<>|\u0060]*[\\/])`;
 const WINDOWS_SEGMENT_END = String.raw`(?:${WINDOWS_NEXT_DRIVE}|${WINDOWS_DIAGNOSTIC_COMMA}|${WINDOWS_CLOSING_QUOTE})`;
@@ -32,16 +32,16 @@ const WINDOWS_GENERIC_TAIL = String.raw`(?:[\\/]+${WINDOWS_COMPONENT})+[\\/]*(?=
 const WINDOWS_TAIL = String.raw`(?:${WINDOWS_EXTENSION_TAIL}|${WINDOWS_GENERIC_TAIL})`;
 
 const WINDOWS_LONG_BASE = String.raw`[\\/]{2}\?[\\/](?:UNC[\\/][^\s\\/]+\\${WINDOWS_COMPONENT}|[A-Za-z]:)`;
-const WINDOWS_UNC_BASE = String.raw`[\\/]{2}[^\s\\/]+[\\/]${WINDOWS_COMPONENT}`;
+const WINDOWS_UNC_BASE = String.raw`[\\/]{2}[^\s\\/]+[\\/]+${WINDOWS_COMPONENT}`;
 const WINDOWS_UNC_OR_LONG = String.raw`(?:${WINDOWS_LONG_BASE}|${WINDOWS_UNC_BASE})(?:${WINDOWS_TAIL}|[\\/]?)`;
 const WINDOWS_DEVICE_DRIVE = String.raw`[\\/]{2}\.[\\/][A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
 const WINDOWS_DRIVE = String.raw`\b[A-Za-z]:${WINDOWS_TAIL}${PATH_BOUNDARY}`;
-const POSIX_LIST_SPLIT = String.raw`(?:[,:;]|&&?|\|\|?)(?=(?:[\w.-]+=)?\/)`;
+const POSIX_LIST_SPLIT = String.raw`(?:(?:[,:;]|&&?|\|\|?)(?=(?:[\w.-]+=)?\/)|\s(?=[\w.-]+=\/)|(?:&&|\|\|)(?![^\s/]*\/))`;
 const POSIX_ATOM = String.raw`(?:(?![,:] | \/|${POSIX_LIST_SPLIT})[^/'"\u0000-\u001F\u0060])+`;
 const POSIX_COMPONENT = String.raw`${POSIX_ATOM}(?:'(?=[^\s/])${POSIX_ATOM})*`;
 const POSIX_FINAL_WITH_EXTENSION = String.raw`${POSIX_COMPONENT}?${FILE_EXTENSION}`;
 const POSIX_EXTENSION_PATH = String.raw`(?:\/+${POSIX_COMPONENT})+\/+${POSIX_FINAL_WITH_EXTENSION}${EXTENSION_BOUNDARY}`;
-const POSIX_GENERIC_COMPONENT = POSIX_COMPONENT.replace(String.raw`| \/`, '');
+const POSIX_GENERIC_COMPONENT = String.raw`(?!\s)` + POSIX_COMPONENT.replace(String.raw`| \/`, '');
 const POSIX_GENERIC_PATH = String.raw`(?:\/+${POSIX_GENERIC_COMPONENT}){2,}\/*(?=$|['"\u0000-\u001F\u0060]|[,:] |${POSIX_LIST_SPLIT})`;
 const POSIX_PATH = String.raw`(?<![\p{L}\p{M}\p{N}.$_~+\\/-])(?:${POSIX_EXTENSION_PATH}|${POSIX_GENERIC_PATH})`;
 const WINDOWS_PATH = `${WINDOWS_DEVICE_DRIVE}|${WINDOWS_UNC_OR_LONG}|${WINDOWS_DRIVE}`;
@@ -73,14 +73,19 @@ function cleanTelemetryLine(line: string): string {
 
 export function cleanTelemetryString(value: string): string {
   let budget = MAX_TELEMETRY_VALUE_LENGTH;
-  return value
-    .split(/(\r\n|[\n\r\u2028\u2029])/)
-    .map((part, index) => {
-      if (index % 2 === 1) return part;
-      budget -= part.length;
-      return budget < 0 && part.length > 0 ? OVERSIZED_LINE : cleanTelemetryLine(part);
-    })
-    .join('');
+  const parts = value.split(/(\r\n|[\n\r\u2028\u2029])/);
+  let out = '';
+  for (let index = 0; index < parts.length; index++) {
+    const part = parts[index]!;
+    if (index % 2 === 1) {
+      out += part;
+      continue;
+    }
+    budget -= part.length;
+    if (budget < 0 && part.length > 0) return out + OVERSIZED_LINE;
+    out += cleanTelemetryLine(part);
+  }
+  return out;
 }
 
 export function cleanTelemetryProperties<P extends Record<string, unknown>>(properties: P): P {
