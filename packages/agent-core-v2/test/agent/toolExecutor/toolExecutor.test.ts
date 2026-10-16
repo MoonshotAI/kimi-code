@@ -988,6 +988,71 @@ describe('onBeforeExecuteTool veto semantics', () => {
       'veto can NOT be called asynchronously',
     );
   });
+
+  it('centrally applies updateArgs without manual mutation and re-evaluates guards against the rewritten execution', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const guardSeenTexts: string[] = [];
+    let hookCalls = 0;
+    let didArgs: unknown;
+
+    executor.onBeforeExecuteTool((event) => {
+      const text = (event.args as { text?: string }).text ?? '';
+      guardSeenTexts.push(text);
+      if (text === 'blocked') {
+        event.veto({ output: 'blocked-by-guard', isError: true });
+        return;
+      }
+      event.pass({ approvedText: text });
+    });
+    executor.onBeforeExecuteTool((event) => {
+      hookCalls += 1;
+      event.updateArgs?.({ text: 'rewritten' });
+    });
+    executor.hooks.onDidExecuteTool.register('test', async (ctx, next) => {
+      didArgs = ctx.args;
+      await next();
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'initial' })]);
+
+    expect(results).toEqual([expect.objectContaining({ output: 'rewritten' })]);
+    expect(hookCalls).toBe(1);
+    expect(guardSeenTexts).toEqual(['initial', 'rewritten']);
+    expect(tool.calls[0]).toEqual(
+      expect.objectContaining({
+        args: { text: 'rewritten' },
+        metadata: { approvedText: 'rewritten' },
+      }),
+    );
+    expect(didArgs).toEqual({ text: 'rewritten' });
+  });
+
+  it('vetoes a call when updateArgs rewrites it to an execution denied by an earlier guard', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    const askFactory = vi.fn(async () => undefined);
+
+    executor.onBeforeExecuteTool((event) => {
+      const text = (event.args as { text?: string }).text ?? '';
+      if (text === 'forbidden') {
+        event.veto({ output: 'forbidden-target', isError: true });
+        return;
+      }
+      event.waitUntil(askFactory);
+    });
+    executor.onBeforeExecuteTool((event) => {
+      event.updateArgs?.({ text: 'forbidden' });
+    });
+
+    const results = await execute([toolCall('call_echo', 'echo', { text: 'allowed' })]);
+
+    expect(results).toEqual([
+      expect.objectContaining({ output: 'forbidden-target', isError: true }),
+    ]);
+    expect(askFactory).not.toHaveBeenCalled();
+    expect(tool.calls).toEqual([]);
+  });
 });
 
 describe('onWillExecuteTool', () => {
