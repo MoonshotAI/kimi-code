@@ -1,19 +1,21 @@
 {
-  "extends": "../../tsconfig.json",
   "compilerOptions": {
-    "lib": ["ES2024"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
     "types": ["node", "vscode"],
-    "sourceMap": true,
-    "declaration": false,
-    "noEmit": true,
-    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
     "esModuleInterop": true,
-    "paths": {
-      "@/*": ["./src/*"],
-      "shared/*": ["./shared/*"],
-      "@moonshot-ai/kimi-code-sdk": ["../../packages/node-sdk/src/index.ts"]
-    }
+    "skipLibCheck": true,
+    "noEmit": true
   },
-  "include": ["src/**/*", "shared/**/*", "test/**/*"],
-  "exclude": ["dist", "node_modules", "webview-ui", "test/settings-store.test.ts", "test/app-init.test.ts", "test/webview"]
+  "include": ["src/**/*"],
+  "exclude": ["dist", "node_modules"]
 }
