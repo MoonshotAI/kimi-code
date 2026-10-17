@@ -229,6 +229,9 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         if (part.type === 'think' && textPending && isVacuousContentPart(part)) {
           return;
         }
+        if (part.type === 'tool_call_part' && part.index !== undefined && textPending) {
+          return;
+        }
         textPending = false;
       };
 
