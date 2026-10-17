@@ -190,6 +190,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
         };
         await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
       }
+      this.mirrorToReadModel();
       return;
     }
     const now = Date.now();

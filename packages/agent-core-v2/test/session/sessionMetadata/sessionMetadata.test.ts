@@ -187,12 +187,13 @@ describe('SessionMetadata', () => {
 
     const meta = ix.get(ISessionMetadata);
     await meta.ready;
-    expect(mirror.recorded).toEqual([]);
+    expect(mirror.recorded).toHaveLength(1);
+    expect(mirror.recorded[0]).toMatchObject({ id: 's1', archived: false });
 
     await meta.update({ title: 'x' });
 
-    expect(mirror.recorded).toHaveLength(1);
-    expect(mirror.recorded[0]).toMatchObject({ id: 's1', archived: false });
+    expect(mirror.recorded).toHaveLength(2);
+    expect(mirror.recorded[1]).toMatchObject({ id: 's1', archived: false });
   });
 
   it('persists the authoritative document before recording to the mirror', async () => {
@@ -546,7 +547,7 @@ describe('SessionMetadata', () => {
       }),
     ]);
 
-    expect(Object.keys((await meta.read()).agents ?? {}).sort()).toEqual([
+    expect(Object.keys((await meta.read()).agents ?? {}).toSorted()).toEqual([
       'agent-0',
       'agent-1',
     ]);
@@ -648,7 +649,7 @@ describe('SessionMetadata', () => {
     expect(mirror.recorded[1]?.updatedAt).toBe((await meta.read()).updatedAt);
   });
 
-  it('does not re-record when loading an existing document', async () => {
+  it('mirrors the loaded document to the read model on load, so externally edited titles reach the index', async () => {
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {
       id: 's1',
@@ -656,16 +657,22 @@ describe('SessionMetadata', () => {
       createdAt: 1700000000000,
       updatedAt: 1700000000000,
       archived: false,
+      title: '蒙自考勤表生成',
+      titleKind: 'custom',
+      lastPrompt: '你好',
       agents: {},
       custom: {},
     });
 
     const meta = ix.get(ISessionMetadata);
     await meta.ready;
-    expect(mirror.recorded).toEqual([]);
-
-    await meta.setArchived(true);
     expect(mirror.recorded).toHaveLength(1);
-    expect(mirror.recorded[0]?.archived).toBe(true);
+    expect(mirror.recorded[0]).toMatchObject({
+      id: 's1',
+      workspaceId: 'wd_test',
+      title: '蒙自考勤表生成',
+      lastPrompt: '你好',
+      updatedAt: 1700000000000,
+    });
   });
 });
