@@ -1,5 +1,6 @@
 import {
   isKimiError,
+  KimiError,
   type ContentPart as SdkContentPart,
   type Event,
   type PromptInput,
@@ -49,6 +50,17 @@ const ALREADY_GENERATING_MESSAGE = "A response is already being generated for th
 
 export interface PromptResult {
   readonly status: "finished" | "cancelled" | "failed";
+  /**
+   * Present when the call was rejected because the session was already busy —
+   * the message never started a turn and can safely be queued for later.
+   */
+  readonly reason?: "busy";
+  /**
+   * Present when a busy rejection raced a live turn: that turn's terminal
+   * event is guaranteed to arrive later, so the caller can queue the message
+   * instead of restoring it to the composer.
+   */
+  readonly activeTurn?: boolean;
 }
 
 interface SuppressedError {
@@ -189,11 +201,11 @@ export class SessionRuntime {
       // such terminal event, so reject terminally: the caller's composer must
       // unlock rather than hang until the handshake timeout.
       this.emitError(
-        new Error(ALREADY_GENERATING_MESSAGE),
+        new KimiError("turn.agent_busy", ALREADY_GENERATING_MESSAGE),
         "runtime",
         { terminal: this.hasActiveWork ? false : undefined },
       );
-      return { status: "failed" };
+      return { status: "failed", reason: "busy", activeTurn: this.hasActiveWork };
     }
 
     let resolveCompletion!: (result: PromptResult) => void;
@@ -226,7 +238,7 @@ export class SessionRuntime {
   beginHostAction(input: string | LegacyContentPart[], forkable = false): number {
     this.ensureOpen();
     if (this.isBusy) {
-      throw new Error(ALREADY_GENERATING_MESSAGE);
+      throw new KimiError("turn.agent_busy", ALREADY_GENERATING_MESSAGE);
     }
     const actionId = ++this.hostActionSequence;
     this.hostActionActive = true;
