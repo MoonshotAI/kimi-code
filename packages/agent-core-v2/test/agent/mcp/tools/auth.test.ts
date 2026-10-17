@@ -1,8 +1,11 @@
-import { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/agent/mcp/tools/auth';
+import {
+  createMcpAuthTool,
+  MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
+  type McpOAuthAuthorizationUrlUpdateData,
+} from '#/agent/mcp/tools/auth';
 import { describe, expect, it } from 'vitest';
 
 import { AlreadyAuthorizedError, type BeginAuthorizationResult, type McpOAuthService } from '#/mcpCore/oauth/service';
-import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import type { ToolUpdate } from '#/tool/toolContract';
 
 import { executeTool } from '../../../mcpCore/stubs';
@@ -23,6 +26,7 @@ function runTool(opts: {
   oauthService: McpOAuthService;
   reconnect: (signal?: AbortSignal) => Promise<void>;
   signal?: AbortSignal;
+  onAuthorizationUrl?: (data: McpOAuthAuthorizationUrlUpdateData) => void;
 }) {
   const tool = createMcpAuthTool({
     serverName: 'notion',
@@ -30,6 +34,7 @@ function runTool(opts: {
     oauthService: opts.oauthService,
     reconnect: opts.reconnect,
     timeoutMs: 100,
+    onAuthorizationUrl: opts.onAuthorizationUrl,
   });
   const signal = opts.signal ?? new AbortController().signal;
   const updates: ToolUpdate[] = [];
@@ -72,6 +77,43 @@ describe('createMcpAuthTool', () => {
     const { expiresAt } = authUpdate?.customData as { expiresAt?: number };
     expect(expiresAt).toBeGreaterThan(Date.now());
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 60 * 1000);
+  });
+
+  it('invokes onAuthorizationUrl with the authorization URL when the flow starts', async () => {
+    const seen: McpOAuthAuthorizationUrlUpdateData[] = [];
+    const oauthService = fakeOAuthService(async () => ({
+      authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+      complete: async () => undefined,
+      cancel: async () => undefined,
+    }));
+    const { result } = runTool({
+      oauthService,
+      reconnect: async () => undefined,
+      onAuthorizationUrl: (data) => seen.push(data),
+    });
+    const final = await result;
+    expect(final.isError).toBeUndefined();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      serverName: 'notion',
+      authorizationUrl: 'https://example.com/authorize?state=abc',
+    });
+    expect(seen[0]?.expiresAt).toBeGreaterThan(Date.now());
+  });
+
+  it('does not invoke onAuthorizationUrl when beginAuthorization fails outright', async () => {
+    const seen: McpOAuthAuthorizationUrlUpdateData[] = [];
+    const oauthService = fakeOAuthService(async () => {
+      throw new Error('DCR unsupported');
+    });
+    const { result } = runTool({
+      oauthService,
+      reconnect: async () => undefined,
+      onAuthorizationUrl: (data) => seen.push(data),
+    });
+    const final = await result;
+    expect(final.isError).toBe(true);
+    expect(seen).toHaveLength(0);
   });
 
   it('falls through to reconnect when the provider reports already-authorized', async () => {
