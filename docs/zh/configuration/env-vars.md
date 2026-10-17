@@ -52,6 +52,16 @@ export KIMI_CODE_CUSTOM_HEADERS=$'X-Gateway-Cluster: my-cluster\nX-Custom-Tag: d
 
 > 优先级：Kimi 身份头（`User-Agent`、`X-Msh-*`）和 `config.toml` 里供应商的 `custom_headers`（见 [配置文件](./config-files.md#providers)）会覆盖这里的同名条目。认证头的行为因协议而异：在 `kimi`、`openai`、`openai_responses` 协议上，`Authorization` 条目会替换生成的 bearer token；`/models` 列表请求始终使用自己的认证头。`authorization` 这类大小写变体不会被当作同名头。它会与真正的头合并，可能导致请求失败。不要用它设置认证等保留头。需要按供应商区分请求头时，请改用 `custom_headers`。
 
+### `KIMI_CODE_OPENAI_PROMPT_CACHE_KEY`
+
+控制是否向非官方 OpenAI 端点发送 `prompt_cache_key`。默认情况下，prompt cache key 仅发送给官方 OpenAI 端点（`api.openai.com`），以避免与拒绝未知字段的第三方网关或代理产生兼容性问题。
+
+设置为 `1` 或 `true`（不区分大小写）可为兼容的第三方 OpenAI 网关强制启用缓存键透传：
+
+```sh
+export KIMI_CODE_OPENAI_PROMPT_CACHE_KEY=1
+```
+
 ## 供应商凭证键（写在 config.toml 里）
 
 下面这些键名不是直接从 shell 读取的。它们是写在 `config.toml` 的 `[providers.<name>.env]` 子表里、作为 `api_key` / `base_url` 备用来源的键名。CLI 只从配置文件读取，不从 `process.env` 读取。

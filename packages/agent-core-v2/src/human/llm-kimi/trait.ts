@@ -77,7 +77,10 @@ export function kimiUnsetCompletionTokens(input: {
 
 export const kimiResponsesTrait: OpenAIResponsesTrait = {
   completionTokensWhenUnset: kimiUnsetCompletionTokens,
+  encodeCacheKey: (key) => ({ prompt_cache_key: key }),
 };
+
+export const kimiOpenAIResponsesTrait: OpenAIResponsesTrait = kimiResponsesTrait;
 
 export const kimiOpenAITrait: OpenAITrait = {
   strictThinkingValidation: true,
@@ -178,3 +181,6 @@ export const kimiAnthropicTrait: AnthropicTrait = {
     };
   },
 };
+
+
+
