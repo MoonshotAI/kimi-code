@@ -789,6 +789,71 @@ describe('agent machine lifecycle', () => {
     ]);
   });
 
+  it('drains every queued input into one following turn in FIFO order', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'first' }]),
+      createAssistantMessage([{ type: 'text', text: 'batched' }]),
+    ]);
+    let resolveTool: ((result: ToolResult) => void) | undefined;
+    const tools = stubTools(
+      () =>
+        new Promise((resolve) => {
+          resolveTool = resolve;
+        }),
+      'slow_tool',
+    );
+    const store = await testStore();
+    const actor = createTestAgent(store, requester, tools);
+    const started: Extract<AgentEmitted, { type: 'turn.started' }>[] = [];
+    actor.on('turn.started', (event) => started.push(event));
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('initial') } });
+
+    await vi.waitFor(() => {
+      expect(resolveTool).toBeDefined();
+    });
+    for (const [promptId, text] of [
+      ['p1', 'queued one'],
+      ['p2', 'queued two'],
+      ['p3', 'queued three'],
+    ] as const) {
+      actor.send({
+        type: 'input.submit',
+        entry: { message: createUserMessage(text), meta: { promptId } },
+      });
+    }
+    await vi.waitFor(() => {
+      expect(actor.getSnapshot().context.queue).toHaveLength(3);
+    });
+
+    resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
+    await waitFor(
+      actor,
+      (state) => state.matches('idle') && store.getState().history.length === 8,
+      { timeout: 5000 },
+    );
+
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:initial',
+      'assistant:',
+      'tool:slow',
+      'assistant:first',
+      'user:queued one',
+      'user:queued two',
+      'user:queued three',
+      'assistant:batched',
+    ]);
+    expect(actor.getSnapshot().context.queue).toEqual([]);
+    expect(started).toHaveLength(2);
+    expect(started[1]?.queueItemId).toBe('p1');
+    expect(started[1]?.entries.map((entry) => extractText(entry.message))).toEqual([
+      'queued one',
+      'queued two',
+      'queued three',
+    ]);
+  });
+
   it('emits turn.failed on llm failure, recovers, and emits agent.failed when linking fails', async () => {
     let call = 0;
     const requester: LlmRequester = {
@@ -1319,6 +1384,91 @@ describe('agent machine prompt gate', () => {
     expect(store.getState().history).toHaveLength(2);
     expect(actor.getSnapshot().matches('idle')).toBe(true);
     expect(gateCalls).toEqual(['original', 'blocked', 'explode']);
+    actor.stop();
+  });
+
+  it('gates queued inputs independently and drains every passing rewrite together', async () => {
+    const requester = createStubRequester([
+      createAssistantMessage([], [toolCall('call-1', 'slow_tool')]),
+      createAssistantMessage([{ type: 'text', text: 'first' }]),
+      createAssistantMessage([{ type: 'text', text: 'batched' }]),
+    ]);
+    let resolveTool: ((result: ToolResult) => void) | undefined;
+    const tools = stubTools(
+      () =>
+        new Promise((resolve) => {
+          resolveTool = resolve;
+        }),
+      'slow_tool',
+    );
+    const store = await testStore();
+    const gateCalls: string[] = [];
+    const actor = createActor(createAgentMachine({}), {
+      input: {
+        request: { model },
+        scopeFactory: testScopeFactory({
+          store,
+          requester,
+          tools,
+          promptGate: (_id, message) => {
+            const text = extractText(message);
+            gateCalls.push(text);
+            if (text === 'blocked') return Promise.resolve(true);
+            if (text === 'failed') return Promise.reject(new Error('gate failed'));
+            if (text === 'rewrite') {
+              return Promise.resolve({ block: false, message: createUserMessage('rewritten') });
+            }
+            return Promise.resolve(false);
+          },
+        }),
+      },
+    });
+    const blocked: string[] = [];
+    const failed: string[] = [];
+    const started: Extract<AgentEmitted, { type: 'turn.started' }>[] = [];
+    actor.on('prompt.blocked', (event) => blocked.push(event.queueItemId ?? ''));
+    actor.on('prompt.gate_failed', (event) => failed.push(event.queueItemId ?? ''));
+    actor.on('turn.started', (event) => started.push(event));
+    actor.start();
+    actor.send({ type: 'input.submit', entry: { message: createUserMessage('initial') } });
+
+    await vi.waitFor(() => {
+      expect(resolveTool).toBeDefined();
+    });
+    actor.send({
+      type: 'input.submit',
+      entry: { message: createUserMessage('rewrite'), meta: { promptId: 'p1' } },
+    });
+    actor.send({
+      type: 'input.submit',
+      entry: { message: createUserMessage('blocked'), meta: { promptId: 'p2' } },
+    });
+    actor.send({
+      type: 'input.submit',
+      entry: { message: createUserMessage('failed'), meta: { promptId: 'p3' } },
+    });
+    resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
+
+    await waitFor(
+      actor,
+      (state) => state.matches('idle') && store.getState().history.length === 6,
+      { timeout: 5000 },
+    );
+
+    expect(gateCalls).toEqual(['initial', 'rewrite', 'blocked', 'failed']);
+    expect(blocked).toEqual(['p2']);
+    expect(failed).toEqual(['p3']);
+    expect(rolesAndTexts(store.getState().history)).toEqual([
+      'user:initial',
+      'assistant:',
+      'tool:slow',
+      'assistant:first',
+      'user:rewritten',
+      'assistant:batched',
+    ]);
+    expect(actor.getSnapshot().context.queue).toEqual([]);
+    expect(started).toHaveLength(2);
+    expect(started[1]?.entries.map((entry) => extractText(entry.message))).toEqual(['rewritten']);
     actor.stop();
   });
 });
