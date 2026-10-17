@@ -46,10 +46,22 @@ describe('classifyByPathHeuristic', () => {
     ).toBe('yarn-global');
   });
 
-  it('detects bun global', () => {
+  it('detects bun global (install/global layout)', () => {
     expect(
       classifyByPathHeuristic('/Users/me/.bun/install/global/node_modules/@moonshot-ai/kimi-code'),
     ).toBe('bun-global');
+  });
+
+  it('detects bun global (node_modules layout)', () => {
+    expect(
+      classifyByPathHeuristic('/Users/me/.bun/node_modules/@moonshot-ai/kimi-code'),
+    ).toBe('bun-global');
+  });
+
+  it('does not treat a local project named foo.bun as bun global', () => {
+    expect(
+      classifyByPathHeuristic('/work/foo.bun/node_modules/@moonshot-ai/kimi-code'),
+    ).toBeNull();
   });
 
   it('detects homebrew on macOS (Cellar path)', () => {
@@ -113,10 +125,21 @@ describe('detectInstallSource', () => {
     ).resolves.toBe('yarn-global');
   });
 
-  it('returns bun-global when packageRoot matches bun heuristic', async () => {
+  it('returns bun-global when packageRoot matches bun heuristic (install/global layout)', async () => {
     await expect(
       detectInstallSource({
         getPackageRoot: () => '/Users/me/.bun/install/global/node_modules/@moonshot-ai/kimi-code',
+        getGlobalPrefix: async () => '/usr/local',
+        detectNative: () => false,
+        platform: 'darwin',
+      }),
+    ).resolves.toBe('bun-global');
+  });
+
+  it('returns bun-global when packageRoot matches bun heuristic (node_modules layout)', async () => {
+    await expect(
+      detectInstallSource({
+        getPackageRoot: () => '/Users/me/.bun/node_modules/@moonshot-ai/kimi-code',
         getGlobalPrefix: async () => '/usr/local',
         detectNative: () => false,
         platform: 'darwin',
