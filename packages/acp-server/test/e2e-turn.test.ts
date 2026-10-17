@@ -165,6 +165,53 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(JSON.stringify(scripted!.callHistory()[1])).toContain('hello_from_bash');
   }, 30_000);
 
+
+  it('ships the full Bash command to the client in the permission request', async () => {
+    // Runs against a client that does NOT advertise the terminal capability
+    // (see below) so the approval goes through the request_permission bridge
+    // instead of being routed to a client-side terminal. That is the path
+    // where the 50-char preview used to be the only command text on the wire.
+    const c = await boot({ terminal: false });
+    const longCommand =
+      'echo "a longer command that crosses the 50-char threshold used for the action preview"';
+    expect(longCommand.length).toBeGreaterThan(50);
+    scripted!.mockNextResponse({
+      type: 'function',
+      id: 'call_long',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: longCommand }),
+    });
+    scripted!.mockNextText('done');
+
+    const permissionRequests: Array<{
+      toolCall?: { title?: string; content?: Array<{ content?: { text?: string } }> };
+    }> = [];
+    c.onRequest('session/request_permission', (params) => {
+      permissionRequests.push(params as (typeof permissionRequests)[number]);
+      return { outcome: { outcome: 'selected', optionId: 'approve_once' } };
+    });
+
+    const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
+      sessionId: string;
+    };
+    await c.waitForSessionUpdate('available_commands_update', 10_000);
+    await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'run a long command' }],
+    });
+
+    expect(permissionRequests).toHaveLength(1);
+    const toolCall = permissionRequests[0]!.toolCall!;
+    expect(toolCall.title).toBe('Bash');
+    // The first content entry now carries the full command (a text content
+    // entry whose text is block.command); the trailing summary still uses the
+    // 50-char preview. Clients read content[0] to display the command.
+    const textContents = (toolCall.content ?? [])
+      .map((c) => c.content?.text)
+      .filter((t): t is string => typeof t === 'string');
+    expect(textContents).toContain(longCommand);
+    expect(textContents.some((t) => t.includes('Requesting approval to'))).toBe(true);
+  }, 30_000);
   it('bridges AskUserQuestion through elicitation/create for form-capable clients', async () => {
     const c = await boot({ elicitation: { form: {} } });
     // First model response: an AskUserQuestion tool call with a single-select
