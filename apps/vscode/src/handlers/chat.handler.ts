@@ -71,7 +71,7 @@ function prependSystemContext(content: string | ContentPart[], context: string):
   return copy;
 }
 
-const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, ctx) => {
+const streamChat: Handler<StreamChatParams, { done: boolean; bounced?: boolean; busyTurn?: boolean }> = async (params, ctx) => {
   if (!ctx.workDir) {
     emitPreflightError(ctx, "NO_WORKSPACE", "Please open a folder to start.");
     void vscode.window.showWarningMessage("Kimi: Please open a folder first.", "Open Folder").then((action) => {
@@ -137,7 +137,15 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
   const systemContext = await buildSystemContext(runtime.id, ctx);
   try {
     const result = await runtime.prompt(prependSystemContext(params.content, systemContext));
-    return { done: result.status === "finished" };
+    // A busy bounce tells the webview the message never started a turn and is
+    // safe to queue for when the live turn ends. busyTurn distinguishes a
+    // bounce racing a live turn (whose terminal event will flush the queue)
+    // from one during an exclusive operation (no terminal event will come).
+    return {
+      done: result.status === "finished",
+      bounced: result.reason === "busy" ? true : undefined,
+      busyTurn: result.reason === "busy" && result.activeTurn === true ? true : undefined,
+    };
   } catch (error) {
     emitCaughtError(ctx, error, "runtime", runtime.id);
     return { done: false };
