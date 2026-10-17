@@ -86,6 +86,8 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "provider.auth_error": "Authentication failed. Please sign in again.",
   "provider.connection_error": "Could not connect to the model provider.",
   "request.prompt_input_empty": "Prompt cannot be empty.",
+  "context.overflow": "The conversation is too long for the model's context window.",
+  "compaction.failed": "Failed to compact the conversation context.",
   internal: "Internal error occurred.",
 };
 
@@ -103,4 +105,13 @@ export function isPreflightError(code: string): boolean {
 
 export function isUserInterrupt(code: string): boolean {
   return code === LEGACY.TURN_INTERRUPTED || code === "turn.cancelled";
+}
+
+/**
+ * The engine's auto-compaction has already retried by the time this surfaces,
+ * so the only way forward is a user-driven compact. The Webview offers a
+ * "Compact & Retry" action for this code.
+ */
+export function isContextOverflowError(code: string): boolean {
+  return code === "context.overflow";
 }
