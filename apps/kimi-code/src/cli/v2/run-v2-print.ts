@@ -14,6 +14,7 @@
  *     `exit` / `drain` / `steer`) before exiting.
  */
 
+import { realpathSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -417,12 +418,32 @@ async function resolveNativeSession(
     };
   };
 
+  function normalizePathForComparison(p: string): string {
+    try {
+      return realpathSync.native(p);
+    } catch {
+      return resolve(p);
+    }
+  }
+
+  function compareNormalizedPaths(a: string, b: string): boolean {
+    return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  }
+
+  function isSamePath(a: string, b: string): boolean {
+    return compareNormalizedPaths(normalizePathForComparison(a), normalizePathForComparison(b));
+  }
+
   if (opts.session !== undefined) {
     const target = await index.get(opts.session);
     if (target === undefined) {
       throw new Error(`Session "${opts.session}" not found.`);
     }
-    if (target.cwd !== undefined && resolve(target.cwd) !== resolve(workDir)) {
+    if (
+      typeof target.cwd === 'string' &&
+      target.cwd.length > 0 &&
+      !isSamePath(target.cwd, workDir)
+    ) {
       stderr.write(
         `Session "${opts.session}" was created under a different directory.\n` +
           `  cd "${target.cwd}" && kimi -r ${opts.session}\n\n`,
@@ -447,7 +468,13 @@ async function resolveNativeSession(
 
   if (opts.continue) {
     const page = await index.listRecent({});
-    const previous = page.items.find((summary) => summary.cwd === workDir);
+    const normalizedWorkDir = normalizePathForComparison(workDir);
+    const previous = page.items.find(
+      (summary) =>
+        typeof summary.cwd === 'string' &&
+        summary.cwd.length > 0 &&
+        compareNormalizedPaths(normalizePathForComparison(summary.cwd), normalizedWorkDir),
+    );
     if (previous !== undefined) {
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);

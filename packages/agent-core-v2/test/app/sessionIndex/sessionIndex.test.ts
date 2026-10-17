@@ -583,6 +583,17 @@ describe('FileSessionIndex (read model)', () => {
     expect(fileStorage.listCalls).toBe(0);
   });
 
+  it('coalesces a workspace-scoped miss onto the authoritative directory', async () => {
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    await seedSession('legacy', { workDir: WORK_DIR, createdAt: 1, updatedAt: 2 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['legacy']);
+    expect(page.items[0]).toMatchObject({ cwd: WORK_DIR });
+  });
+
   it('paginates exactly through same-millisecond ties', async () => {
     const specs: [string, number][] = [
       ['a', 100],
@@ -749,6 +760,29 @@ describe('FileSessionIndex (read model)', () => {
 
     const unknown = await store.listRecent({ workspaceIds: [workspaceId], before: 'missing' });
     expect(unknown.items).toEqual([]);
+  });
+
+  it('resolves a cursor even when the cached row has a malformed cwd', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 4 });
+    const store = build();
+    await store.prepare();
+    await queryStore.put(sessionCollection(1), 'b', {
+      id: 'b',
+      workspaceId,
+      title: 'b',
+      createdAt: 2,
+      updatedAt: 4,
+      archived: false,
+      cwd: '',
+    });
+
+    const rest = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 5,
+      before: 'b',
+    });
+    expect(rest.items.map((s) => s.id)).toEqual(['a']);
   });
 
   it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {

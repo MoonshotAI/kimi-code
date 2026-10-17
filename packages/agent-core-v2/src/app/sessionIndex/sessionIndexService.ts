@@ -73,7 +73,9 @@ function isSessionSummaryShape(value: unknown): value is SessionSummary {
     typeof summary['workspaceId'] === 'string' &&
     typeof summary['createdAt'] === 'number' &&
     typeof summary['updatedAt'] === 'number' &&
-    typeof summary['archived'] === 'boolean'
+    typeof summary['archived'] === 'boolean' &&
+    (summary['cwd'] === undefined ||
+      (typeof summary['cwd'] === 'string' && summary['cwd'].length > 0))
   );
 }
 
@@ -347,7 +349,14 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   async listRecent(query: SessionListQuery): Promise<Page<SessionSummary>> {
     return this.withReadModel(
-      (generation) => this.listRecentFromReadModel(generation, query),
+      async (generation) => {
+        const page = await this.listRecentFromReadModel(generation, query);
+        if (page.items.length === 0 && query.workspaceIds !== undefined) {
+          const legacy = await this.listLegacy(query);
+          if (legacy.items.length > 0) return legacy;
+        }
+        return page;
+      },
       () => this.listLegacy(query),
     );
   }
@@ -567,11 +576,26 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   > {
     const id = query.before ?? query.after;
     if (id === undefined) return { filter: {}, bounds: {} };
+    let u: number | undefined;
     const storedValue: unknown = await this.queryStore.get(sessionCollection(generation), id);
-    const stored = isSessionSummaryShape(storedValue) ? storedValue : undefined;
-    const cursor = stored ?? this.mirror.pending().find((summary) => summary.id === id);
-    if (cursor === undefined) return undefined;
-    const u = cursor.updatedAt;
+    if (isSessionSummaryShape(storedValue)) {
+      u = storedValue.updatedAt;
+    } else {
+      const summary =
+        this.mirror.pending().find((item) => item.id === id) ??
+        (await this.getLegacy(id));
+      if (summary !== undefined) {
+        this.mirror.record(summary);
+        u = summary.updatedAt;
+      } else if (
+        storedValue !== null &&
+        typeof storedValue === 'object' &&
+        typeof (storedValue as Record<string, unknown>)['updatedAt'] === 'number'
+      ) {
+        u = (storedValue as Record<string, unknown>)['updatedAt'] as number;
+      }
+    }
+    if (u === undefined) return undefined;
     if (query.before !== undefined) {
       return {
         bounds: { lte: u },
