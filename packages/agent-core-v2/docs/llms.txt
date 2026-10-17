@@ -1,0 +1,25 @@
+# agent-core v1 → v2 migration docs
+
+> Migration documentation for consumers moving from `@moonshot-ai/agent-core` (v1, deleted on main in #3542) to `@moonshot-ai/agent-core-v2` (v2); baseline commit `ccf3d5d6`, where v1 0.15.8 and v2 0.4.3 coexist.
+
+## Main guide
+
+- [Migrating from agent-core v1 to v2](migration-from-v1.md): the operation-manual main guide — baseline, verified current state, six migration steps, discipline, and domain-mapping cheat sheets (zh-CN mirror: migration-from-v1.zh-CN.md).
+
+## Reference
+
+- [Symbol map: v1 root barrel → v2](migration/reference/symbol-map.md): exhaustive mapping of all 714 unique v1 root-entry symbols to their v2 destinations (root 279 / deep 63 / gone 372), with same-name collisions and open verification items (zh-CN mirror available).
+- [Event and RPC map: v1 CoreAPI / Event → the v2 ecosystem](migration/reference/event-and-rpc-map.md): full CoreAPI method inventory, the 54-member Event union, destinations in klient/protocol/kap-server/IEventBus/Event2, and the node-sdk v2 mapper rules (zh-CN mirror available).
+- [Wire and on-disk data](migration/reference/wire-and-data.md): the v2 wire migration chain step by step, version determination and failure behavior, journal repair, the `~/.kimi-code` layout vs v1, and resume-replay's v1 dependency points (zh-CN mirror available).
+
+## Explanation
+
+- [The v2 architecture, explained for v1 readers](migration/explanation/architecture.md): how v1 DI/services worked, what v2 `_base/di` adds, LifecycleScope tiers and the unit lifecycle, the Feature seam, and the migration history with key decisions (zh-CN mirror available).
+
+## How-to
+
+- [How to start, use, and shut down the v2 engine](migration/how-to/engine-lifecycle.md): bootstrap inputs and seeds, accessor usage, Program, session controllers, consumer helper functions, drain* shutdown order, and how tests boot the engine (zh-CN mirror available).
+
+## Tutorials
+
+- [Migrate your first consumer](migration/tutorials/first-consumer-migration.md): a guided minimal loop (read config → create session → send prompt → receive events → shut down) with v1/v2 code side by side, the pit list, and verification methods (zh-CN mirror available).
