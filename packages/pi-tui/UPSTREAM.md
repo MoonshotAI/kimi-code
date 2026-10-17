@@ -192,3 +192,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** Fullscreen hosts can register synchronous `addLayoutEffect` callbacks after layout and search reveal, before terminal output. An effect's `requestRender` coalesces into another complete layout pass without invalidating component caches; only the settled frame is written. Search keeps its selected occurrence while effect-driven layout shifts rendered rows; selections retain their content when effects only add or remove leading empty rows. Effects must converge within ten passes or rendering throws. With no effects registered, the existing rendering path is preserved.
 
 **Why not in the app:** The settled scroll state and the opportunity to repeat layout before terminal output belong to the alternate-screen render path. Hosts cannot reach this point through component composition alone.
+
+### above-viewport-in-place-change-is-not-destructive — keep
+
+**Decision:** An in-place change above the visible viewport (same line count, no kitty image lines in the above-viewport part of the changed range) does not fall back to the destructive ESC[2J/ESC[3J redraw: entirely-above changes only commit the frame caches without painting (scrollback keeps a stale frame), and boundary-spanning changes repaint only from the viewport top on the differential path. Layout shifts or image involvement keep the destructive redraw. The lowest skipped row is tracked in `aboveViewportStaleTop` — carried through `captureRenderState`/`restoreRenderState` — so the Termux height-increase path can invalidate and repaint re-exposed rows.
+
+**Why not in the app:** The choice between painting, skipping, and clearing lives inside the main-screen differential renderer; the host only sees whole frames.
