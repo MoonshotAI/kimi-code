@@ -28,6 +28,7 @@ import {
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
+  IDefaultWorkspace,
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
@@ -417,6 +418,9 @@ function makeCore(
       }
       if (token === IWorkspaceSessions) {
         return { listRecent: async () => [], count: async () => 3 };
+      }
+      if (token === IDefaultWorkspace) {
+        return { isDefault: async () => false };
       }
       return undefined;
     },
@@ -1276,6 +1280,7 @@ describe('SessionEventBroadcaster', () => {
           id: 'wd_a',
           root: '/repo/a',
           name: 'repo-a',
+          is_default: false,
           created_at: new Date(1_000).toISOString(),
           last_opened_at: new Date(2_000).toISOString(),
           session_count: 3,
