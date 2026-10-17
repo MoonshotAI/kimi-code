@@ -305,6 +305,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const id = meta?.promptId ?? newMessageId();
     const origin = (meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
     const tracked = meta?.tracked === true;
+    const gated = meta?.gated === true;
     const createdAt = meta?.createdAt ?? (tracked ? new Date().toISOString() : '');
     const userMessageId = meta?.userMessageId ?? (tracked ? id : '');
     const waiter = this.createWaiter(id, meta?.promptId, options?.onMaterialize);
@@ -330,7 +331,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     }
     const entry: UserEntry = {
       message: { role: 'user', content: [...input.message.content] },
-      meta: { promptId: id, origin, tracked, createdAt, userMessageId },
+      meta: {
+        promptId: id,
+        origin,
+        tracked,
+        ...(gated ? { gated: true } : {}),
+        createdAt,
+        userMessageId,
+      },
     };
     if (this.engine !== undefined) {
       try {
@@ -578,7 +586,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       queueItemId === undefined
         ? undefined
         : this.machineEngine().snapshot().queue.find((item) => item.meta?.promptId === queueItemId);
-    if (waiter === undefined || entry?.meta?.tracked !== true) {
+    if (waiter === undefined || (entry?.meta?.tracked !== true && entry?.meta?.gated !== true)) {
       return false;
     }
     const promptMessage: ContextMessage = {
