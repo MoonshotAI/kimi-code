@@ -52,6 +52,7 @@ const payload: StatusLinePayload = {
   contextUsage: 12,
   contextTokens: 1024,
   maxContextTokens: 8192,
+  decodeTps: 42.3,
   sessionId: 'ses-1',
   version: '1.2.3',
 };
@@ -75,6 +76,21 @@ describe('FooterComponent status_line items', () => {
     expect(cwdAt).toBeGreaterThanOrEqual(0);
     expect(modelAt).toBeGreaterThan(cwdAt);
     expect(line1).not.toContain('goal');
+  });
+
+  it('renders the tps slot after cwd in the default layout', () => {
+    const footer = new FooterComponent({ ...baseState, decodeTps: 42.34 });
+
+    const line1 = plain(footer.render(120)[0]!);
+    const cwdAt = line1.indexOf('/tmp/project');
+    const tpsAt = line1.indexOf('42.3 tok/s');
+    expect(cwdAt).toBeGreaterThanOrEqual(0);
+    expect(tpsAt).toBeGreaterThan(cwdAt);
+  });
+
+  it('omits the tps slot until a step reports a measurable rate', () => {
+    const line1 = plain(new FooterComponent({ ...baseState }).render(120)[0]!);
+    expect(line1).not.toContain('tok/s');
   });
 
   it('keeps the default layout when statusLine is unset', () => {
@@ -144,6 +160,7 @@ describe('runStatusLineCommand', () => {
     expect(parsed.model).toBe('kimi-k2');
     expect(parsed.gitBranch).toBe('main');
     expect(parsed.cwd).toBe('/tmp/project');
+    expect(parsed.decodeTps).toBe(42.3);
   });
 
   it('returns null on a nonzero exit', async () => {
@@ -190,6 +207,33 @@ describe('FooterComponent status_line command', () => {
     await new Promise((resolve) => setTimeout(resolve, 200));
 
     expect(plain(footer.render(120)[0]!)).toContain('my-custom-status');
+  });
+
+  it('hands the decode rate to the command so it can render its own', async () => {
+    const state: AppState = {
+      ...baseState,
+      decodeTps: 42.34,
+      statusLine: { items: null, command: 'cat' },
+    };
+    const footer = new FooterComponent(state);
+
+    // The first render is what kicks the command off; its output lands later.
+    footer.render(2000);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(plain(footer.render(2000)[0]!)).toContain('"decodeTps":42.34');
+  });
+
+  it('reports a null decode rate before any step has been measured', async () => {
+    const footer = new FooterComponent({
+      ...baseState,
+      statusLine: { items: null, command: 'cat' },
+    });
+
+    footer.render(2000);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    expect(plain(footer.render(2000)[0]!)).toContain('"decodeTps":null');
   });
 
   it('keeps the built-in layout when the command fails', async () => {
