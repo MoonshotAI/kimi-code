@@ -111,6 +111,8 @@ const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
 const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
 const GOAL_CONTINUATION_FAILURE_PAUSE_PREFIX = 'Paused after goal continuation failure';
 const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy block';
+const GOAL_IDLE_TURNS_BEFORE_BACKOFF = 2;
+const GOAL_IDLE_CONTINUATION_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000] as const;
 const GOAL_BUDGET_BLOCK_PREFIX = 'Blocked after goal budget reached';
 const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
@@ -191,9 +193,11 @@ interface ResumeContinuation {
 interface GoalEffectState {
   pendingContinuation?: PendingContinuation;
   liveTurnId?: number;
+  consecutiveIdleTurns: number;
   readonly goalDrivenTurns: Map<number, string>;
   readonly countedGoalTurns: Set<number>;
   readonly goalStarterTurns: Set<number>;
+  readonly goalTurnsWithToolCalls: Set<number>;
   readonly goalOutcomeToolResultTurns: Map<number, string>;
   readonly goalOutcomeContinuationTurns: Set<number>;
   readonly budgetGraceTurns: Set<number>;
@@ -202,6 +206,7 @@ interface GoalEffectState {
   readonly exhaustedTurnBudgetGoals: Map<number, string>;
   liveWallClockStartedAt?: number;
   resumeContinuation?: ResumeContinuation;
+  wakeGoalContinuation?: () => void;
 }
 
 interface GoalActorContext {
@@ -308,6 +313,7 @@ function validateObjective(context: GoalOperationContext, value: string): string
 }
 
 function prepareForGoalCreation(context: GoalOperationContext, replace: boolean): void {
+  context.effects.consecutiveIdleTurns = 0;
   if (context.runtime.getState().goal === null) return;
   if (!replace) {
     throw new Error2(
@@ -357,6 +363,7 @@ async function resumeGoal(context: GoalOperationContext, input: ResumeGoalInput 
     continuePaused ||
     (actor === 'user' && state.status === 'blocked' && input.continueIfBlocked === true);
   const snapshot = applyLifecycle(context, state, 'active', input.reason, actor);
+  context.effects.consecutiveIdleTurns = 0;
   if (!shouldContinue) return snapshot;
   const budgetBlocked = blockIfBudgetReached(context, requireState(context));
   if (budgetBlocked !== null) return budgetBlocked;
@@ -613,7 +620,7 @@ async function handleTurnEnded(context: GoalOperationContext,
   turnId: number,
   result: Pick<TurnEnded, 'reason' | 'error'>,
 ): Promise<void> {
-  const { goalId, lifecycleGoalId, starterTurn } = clearTurnTracking(context, turnId);
+  const { goalId, lifecycleGoalId, starterTurn, madeToolCall } = clearTurnTracking(context, turnId);
   const resumeContinuation = context.effects.resumeContinuation;
   if (resumeContinuation?.turnId === turnId) context.effects.resumeContinuation = undefined;
   if (resumeContinuation?.turnId === turnId && result.reason === 'cancelled') {
@@ -641,6 +648,11 @@ async function handleTurnEnded(context: GoalOperationContext,
   const state = context.runtime.getState().goal;
   if (state === null || state.status !== 'active' || state.goalId !== lifecycleGoalId) return;
   if (blockIfBudgetReached(context, state) !== null) return;
+  context.effects.consecutiveIdleTurns = madeToolCall ? 0 : context.effects.consecutiveIdleTurns + 1;
+  const idleDelayMs = goalIdleContinuationDelayMs(context.effects.consecutiveIdleTurns);
+  if (idleDelayMs > 0 && !(await waitForGoalContinuation(context, lifecycleGoalId, state, idleDelayMs))) {
+    return;
+  }
   launchContinuationTurn(context, lifecycleGoalId, stepCapped);
 }
 
@@ -651,6 +663,7 @@ function clearTurnTracking(
   readonly goalId?: string;
   readonly lifecycleGoalId?: string;
   readonly starterTurn: boolean;
+  readonly madeToolCall: boolean;
 } {
   if (context.effects.pendingContinuation?.turnId === turnId) {
     context.effects.pendingContinuation = undefined;
@@ -659,6 +672,7 @@ function clearTurnTracking(
   const goalId = context.effects.goalDrivenTurns.get(turnId);
   const lifecycleGoalId = goalTurnTarget(context, turnId);
   const starterTurn = context.effects.goalStarterTurns.delete(turnId);
+  const madeToolCall = context.effects.goalTurnsWithToolCalls.delete(turnId);
   context.effects.goalDrivenTurns.delete(turnId);
   context.effects.countedGoalTurns.delete(turnId);
   context.effects.goalOutcomeToolResultTurns.delete(turnId);
@@ -667,7 +681,59 @@ function clearTurnTracking(
   context.effects.pendingContinuationGoals.delete(turnId);
   context.effects.goalTurnTargets.delete(turnId);
   context.effects.exhaustedTurnBudgetGoals.delete(turnId);
-  return { goalId, lifecycleGoalId, starterTurn };
+  return { goalId, lifecycleGoalId, starterTurn, madeToolCall };
+}
+
+function goalIdleContinuationDelayMs(consecutiveIdleTurns: number): number {
+  const delayIndex = consecutiveIdleTurns - GOAL_IDLE_TURNS_BEFORE_BACKOFF;
+  if (delayIndex < 0) return 0;
+  return GOAL_IDLE_CONTINUATION_DELAYS_MS[
+    Math.min(delayIndex, GOAL_IDLE_CONTINUATION_DELAYS_MS.length - 1)
+  ]!;
+}
+
+async function waitForGoalContinuation(
+  context: GoalOperationContext,
+  goalId: string,
+  state: GoalState,
+  idleDelayMs: number,
+): Promise<boolean> {
+  const remainingWallClockMs = computeBudgetReport(
+    state,
+    liveWallClockMs(context, state),
+  ).remainingWallClockMs;
+  const delayMs =
+    remainingWallClockMs === null ? idleDelayMs : Math.min(idleDelayMs, remainingWallClockMs);
+  if (delayMs <= 0) return true;
+  if ((await waitForGoalContinuationWake(context, delayMs)) === 'woke') {
+    context.effects.consecutiveIdleTurns = 0;
+    return false;
+  }
+  const current = context.runtime.getState().goal;
+  return current !== null && current.status === 'active' && current.goalId === goalId;
+}
+
+function waitForGoalContinuationWake(
+  context: GoalOperationContext,
+  delayMs: number,
+): Promise<'elapsed' | 'woke'> {
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const wake = (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (context.effects.wakeGoalContinuation === wake) {
+        context.effects.wakeGoalContinuation = undefined;
+      }
+      resolve('woke');
+    };
+    timer = setTimeout(() => {
+      if (context.effects.wakeGoalContinuation === wake) {
+        context.effects.wakeGoalContinuation = undefined;
+      }
+      resolve('elapsed');
+    }, delayMs);
+    context.effects.wakeGoalContinuation = wake;
+  });
 }
 
 async function settleAbnormalTurn(context: GoalOperationContext,
@@ -1125,7 +1191,10 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
       if (state === null || state.status !== 'active') return;
       applyLifecycle(context, state, 'paused', 'Paused after agent closed', 'runtime');
     },
-    turnStarted: (event: TurnStarted) => { handleTurnLaunched(context, event.turnId, event.origin); },
+    turnStarted: (event: TurnStarted) => {
+      if (!isGoalContinuationOrigin(event.origin)) context.effects.wakeGoalContinuation?.();
+      handleTurnLaunched(context, event.turnId, event.origin);
+    },
     usageRecorded: (usage: UsageRecordedContext) => {
       if (usage.agent === runtime.agent) handleUsageRecorded(context, usage);
     },
@@ -1162,6 +1231,7 @@ function createGoalEffectHandlers(runtime: AgentActorContext<GoalRuntimeState>) 
       }
     },
     toolCompleted: (tool: Parameters<Parameters<IAgentToolExecutorService['hooks']['onDidExecuteTool']['register']>[1]>[0]) => {
+      context.effects.goalTurnsWithToolCalls.add(tool.turnId);
       const goalId = goalTurnTarget(context, tool.turnId);
       if (
         goalId !== undefined &&
@@ -1248,9 +1318,11 @@ const goalActorLogic = setup({
       forkNotice: { goalPresent: false, reminderPending: false },
     },
     effects: {
+      consecutiveIdleTurns: 0,
       goalDrivenTurns: new Map(),
       countedGoalTurns: new Set(),
       goalStarterTurns: new Set(),
+      goalTurnsWithToolCalls: new Set(),
       goalOutcomeToolResultTurns: new Map(),
       goalOutcomeContinuationTurns: new Set(),
       budgetGraceTurns: new Set(),
