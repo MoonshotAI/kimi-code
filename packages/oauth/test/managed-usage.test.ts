@@ -144,6 +144,29 @@ describe('parseManagedUsagePayload', () => {
   it('parses the booster wallet from the usage payload', () => {
     const parsed = parseManagedUsagePayload({
       goods_version: 1,
+      booster_wallet: {
+        balance: {
+          type: 'BOOSTER',
+          amount: '20000000000',
+          amountLeft: '10000000000',
+        },
+        monthlyChargeLimitEnabled: true,
+        monthlyChargeLimit: { currency: 'CNY', priceInCents: '20000' },
+        monthlyUsed: { currency: 'CNY', priceInCents: '5000' },
+      },
+    });
+    expect(parsed.extraUsage).toEqual({
+      balanceCents: 10000,
+      totalCents: 20000,
+      monthlyChargeLimitEnabled: true,
+      monthlyChargeLimitCents: 20000,
+      monthlyUsedCents: 5000,
+      currency: 'CNY',
+    });
+  });
+
+  it('falls back to camelCase boosterWallet for older payloads', () => {
+    const parsed = parseManagedUsagePayload({
       boosterWallet: {
         balance: {
           type: 'BOOSTER',
@@ -166,9 +189,9 @@ describe('parseManagedUsagePayload', () => {
   });
 
   it('drops the booster wallet when the balance is missing or not a booster', () => {
-    expect(parseManagedUsagePayload({ boosterWallet: {} }).extraUsage).toBeNull();
+    expect(parseManagedUsagePayload({ booster_wallet: {} }).extraUsage).toBeNull();
     expect(
-      parseManagedUsagePayload({ boosterWallet: { balance: { type: 'PLAN' } } }).extraUsage,
+      parseManagedUsagePayload({ booster_wallet: { balance: { type: 'PLAN' } } }).extraUsage,
     ).toBeNull();
   });
 });
