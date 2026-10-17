@@ -104,7 +104,7 @@ These rules apply to every pull request review, automated or human. The user pop
 - Review only the PR's diff against its base. A problem in code the PR does not touch (pre-existing on base) is reported as a non-blocking note, never as a blocking finding — the sole exception is pre-existing code that the PR's behavior directly triggers or amplifies.
 - Report a class of issues in one pass: when a finding generalizes to several locations in the diff, list all of them at once instead of raising them across successive rounds.
 - No pure style or personal-preference findings. Every finding carries a severity: P0 blocking / P1 should-fix / P2 suggestion.
-- Re-reviews are incremental: review only what changed since the previous review; do not restate findings on unchanged code or re-raise resolved threads.
+- Re-reviews are incremental: review only what changed since the previous review; do not restate findings on unchanged code or re-raise resolved threads. Before treating a resolved thread as settled, verify the current code: suppress a finding only when the problem is actually fixed or the finding no longer holds.
 - Domain-specific rules keep their own canonical homes — changesets (`.agents/skills/gen-changesets/SKILL.md`), comment-free zones (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
 
 ### Enumerate changed behavior, not just bugs
