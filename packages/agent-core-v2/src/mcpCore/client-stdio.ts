@@ -110,6 +110,10 @@ export class StdioMcpClient implements MCPClient {
     return result.tools.map(toMcpToolDefinition);
   }
 
+  getInstructions(): string | undefined {
+    return this.client.getInstructions();
+  }
+
   async callTool(
     name: string,
     args: Record<string, unknown>,

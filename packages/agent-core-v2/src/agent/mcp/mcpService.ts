@@ -69,6 +69,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     this.attachMcpTools();
     loop.hooks.onWillBeginStep.register('mcp', async (ctx, next) => {
       await this.waitForInitialLoad(ctx.signal);
+      this.syncMcpInstructions();
       await next();
     });
     this._register(
@@ -361,6 +362,37 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     const pending = this.pendingDiscoveries.splice(0);
     for (const work of pending) {
       work();
+    }
+  }
+
+  private syncMcpInstructions(): void {
+    if (
+      typeof this.profile.getSystemPrompt !== 'function' ||
+      typeof this.profile.update !== 'function'
+    ) {
+      return;
+    }
+    const sections: string[] = [];
+    for (const entry of this.list()) {
+      if (!this.mcpHandle.isBaselineServer(entry.name) || entry.status !== 'connected') continue;
+      const instructions = this.resolved(entry.name)?.instructions?.trim();
+      if (instructions !== undefined && instructions.length > 0) {
+        sections.push(`## ${entry.name}\n${instructions}`);
+      }
+    }
+    if (sections.length === 0) return;
+    const block =
+      '# MCP Server Instructions\n\n' +
+      'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+      sections.join('\n\n');
+    const current = this.profile.getSystemPrompt();
+    if (current.length === 0) return;
+    const marker = '\n\n# MCP Server Instructions\n\n';
+    const index = current.indexOf(marker);
+    const base = index === -1 ? current : current.slice(0, index);
+    const next = `${base}\n\n${block}`;
+    if (next !== current) {
+      this.profile.update({ systemPrompt: next });
     }
   }
 
