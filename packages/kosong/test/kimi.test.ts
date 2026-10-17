@@ -1250,7 +1250,7 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
-    it('yields an empty ThinkPart when reasoning_content is explicitly empty', async () => {
+    it('keeps the empty reasoning marker on a non-stream tool call', async () => {
       const provider = createProvider();
       (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() =>
         mockCreateResult({
@@ -1446,6 +1446,49 @@ describe('KimiChatProvider', () => {
       expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
     });
 
+    it('keeps one empty reasoning marker and preserves later non-empty deltas', async () => {
+      const provider = createProvider(true);
+      const captured: Array<Record<string, unknown>> = [];
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockImplementation((params: unknown) => {
+          captured.push(params as Record<string, unknown>);
+          const resumeReasoning = captured.length > 1;
+          async function* chunks(): AsyncIterable<Record<string, unknown>> {
+            yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: '' } }] };
+            if (resumeReasoning) {
+              yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: 'hmm' } }] };
+              yield { id: 'chatcmpl-s', choices: [{ index: 0, delta: { reasoning: '' } }] };
+            }
+            yield {
+              id: 'chatcmpl-s',
+              choices: [{ index: 0, delta: { content: 'ok' }, finish_reason: 'stop' }],
+            };
+          }
+          return mockCreateResult(chunks());
+        });
+
+      const first = await provider.generate('', [], []);
+      const firstParts = [];
+      for await (const part of first) firstParts.push(part);
+      expect(firstParts).toEqual([
+        { type: 'think', think: '' },
+        { type: 'text', text: 'ok' },
+      ]);
+
+      const second = await provider.generate('', [], THINK_HISTORY);
+      const secondParts = [];
+      for await (const part of second) secondParts.push(part);
+      expect(secondParts).toEqual([
+        { type: 'think', think: '' },
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'ok' },
+      ]);
+
+      const messages = captured[1]?.['messages'] as Array<Record<string, unknown>>;
+      expect(messages[0]).toEqual({ role: 'assistant', content: 'ok', reasoning: 'hmm' });
+    });
+
     it('defaults to reasoning_content before any detection', async () => {
       const provider = createProvider();
       let captured: Record<string, unknown> | undefined;
@@ -1588,12 +1631,20 @@ describe('KimiChatProvider', () => {
       }
     }
 
-    it('yields an empty ThinkPart from an explicitly empty streaming delta', async () => {
+    it('skips empty streaming reasoning deltas so reasoning_content: "" chunks do not bloat the journal', async () => {
       const provider = createProvider(true);
       const chunks = [
         {
           id: 'chatcmpl-empty-reasoning',
+          choices: [{ index: 0, delta: { reasoning_content: 'hmm' }, finish_reason: null }],
+        },
+        {
+          id: 'chatcmpl-empty-reasoning',
           choices: [{ index: 0, delta: { reasoning_content: '' }, finish_reason: null }],
+        },
+        {
+          id: 'chatcmpl-empty-reasoning',
+          choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
         },
       ];
       (
@@ -1604,7 +1655,50 @@ describe('KimiChatProvider', () => {
       const parts = [];
       for await (const part of stream) parts.push(part);
 
-      expect(parts).toEqual([{ type: 'think', think: '' }]);
+      expect(parts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'hi' },
+      ]);
+    });
+
+    it('keeps one empty reasoning marker when a streamed tool call has only empty reasoning', async () => {
+      const provider = createProvider(true);
+      const chunks = [
+        {
+          id: 'chatcmpl-empty-tool',
+          choices: [{ index: 0, delta: { reasoning_content: '' }, finish_reason: null }],
+        },
+        {
+          id: 'chatcmpl-empty-tool',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_content: '',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        },
+      ];
+      (
+        provider as unknown as { _client: { chat: { completions: { create: unknown } } } }
+      )._client.chat.completions.create = vi.fn().mockImplementation(() => mockCreateResult(mockStream(chunks)));
+
+      const stream = await provider.generate('', [], []);
+      const parts = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts.filter((p) => p.type === 'think')).toEqual([{ type: 'think', think: '' }]);
+      expect(parts.some((p) => p.type === 'function')).toBe(true);
     });
 
     it('buffers indexed argument deltas until the real tool name arrives', async () => {
