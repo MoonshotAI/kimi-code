@@ -33,6 +33,7 @@ interface InternalEntry {
   tools?: readonly Tool[];
   rawTools?: readonly MCPToolDefinition[];
   enabledNames?: ReadonlySet<string>;
+  instructions?: string;
   error?: string;
   client?: RuntimeMcpClient;
   connectedAt?: number;
@@ -54,6 +55,7 @@ export interface McpConnectionView {
         rawTools: readonly MCPToolDefinition[];
         enabledNames: ReadonlySet<string>;
         deferred: boolean;
+        instructions?: string;
       }
     | undefined;
   getRemoteServerUrl(name: string): string | undefined;
@@ -156,6 +158,7 @@ export class McpConnectionManager implements McpConnectionView {
         rawTools: readonly MCPToolDefinition[];
         enabledNames: ReadonlySet<string>;
         deferred: boolean;
+        instructions?: string;
       }
     | undefined {
     const entry = this.entries.get(name);
@@ -173,6 +176,7 @@ export class McpConnectionManager implements McpConnectionView {
       rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
       deferred: entry.deferred,
+      instructions: entry.instructions,
     };
   }
 
@@ -387,6 +391,7 @@ export class McpConnectionManager implements McpConnectionView {
       entry.tools = discovered.tools;
       entry.rawTools = discovered.rawTools;
       entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
+      entry.instructions = discovered.instructions;
       entry.status = 'connected';
       entry.connectedAt = this.oauthService?.now() ?? Date.now();
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
@@ -501,9 +506,10 @@ export class McpConnectionManager implements McpConnectionView {
 
   private async connectAndDiscoverTools(
     client: RuntimeMcpClient,
-  ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
+  ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[]; instructions?: string }> {
     await client.connect();
     const mcpTools = await client.listTools();
+    const rawInstructions = client.getInstructions?.()?.trim();
     return {
       rawTools: mcpTools,
       tools: mcpTools.map((mcpTool) => ({
@@ -511,6 +517,8 @@ export class McpConnectionManager implements McpConnectionView {
         description: mcpTool.description,
         parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
       })),
+      instructions:
+        rawInstructions !== undefined && rawInstructions.length > 0 ? rawInstructions : undefined,
     };
   }
 

@@ -59,6 +59,7 @@ interface ResolvedServer {
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
   readonly deferred: boolean;
+  readonly instructions?: string;
 }
 
 class FakeMcpManager {
@@ -137,6 +138,7 @@ class FakeMcpManager {
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
     deferred = false,
+    instructions?: string,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -151,6 +153,7 @@ class FakeMcpManager {
       rawTools: resolvedRawTools,
       enabledNames,
       deferred,
+      instructions,
     });
   }
 
@@ -1576,5 +1579,34 @@ describe('AgentMcpService + AgentProfileService', () => {
         .filter((tool) => tool.source === 'mcp' && tool.active)
         .map((tool) => tool.name),
     ).toEqual(['mcp__slack__echo']);
+  });
+
+  it('injects connected MCP server instructions into the system prompt before a step begins', async () => {
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools for pull requests and issues.',
+    );
+    manager.connect('github');
+    profile.update({ systemPrompt: 'Base system prompt.' });
+
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+
+    expect(profile.getSystemPrompt()).toBe(
+      'Base system prompt.\n\n# MCP Server Instructions\n\n' +
+        'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+        '## github\nUse github tools for pull requests and issues.',
+    );
   });
 });

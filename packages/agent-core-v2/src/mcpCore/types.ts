@@ -33,6 +33,7 @@ export interface MCPToolDefinition {
 
 export interface MCPClient {
   listTools(): Promise<MCPToolDefinition[]>;
+  getInstructions?(): string | undefined;
   callTool(
     name: string,
     args: Record<string, unknown>,
