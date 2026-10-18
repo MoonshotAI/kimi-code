@@ -4,12 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   mountSessionRating,
   type RatingEnvironment,
-  type RatingView,
   type ResumedAgentSeed,
   type SessionFact,
   type SessionRatingMount,
 } from '#/sessionRating/engine';
-import type { RatingResponse } from '#/sessionRating/machine';
+import type { RatingOffer, RatingReport, RatingResponse } from '#/sessionRating/types';
+import { SessionRatingLedger } from '#/sessionRating/ledger';
 import {
   DEFAULT_SURVEY_POPUP_PAYLOAD,
   SurveyPopupConfigFeed,
@@ -81,7 +81,7 @@ interface HarnessOptions {
   readonly random?: () => number;
   readonly telemetryDisabled?: () => boolean;
   readonly feedbackSurveyDisabled?: () => boolean;
-  readonly readGlobalLastShown?: () => Promise<number | undefined>;
+  readonly readGlobalLastShown?: () => number | undefined;
   readonly writeGlobalLastShown?: (wallTime: number) => void;
   readonly configFresh?: () => boolean;
   readonly configRegion?: () => string;
@@ -102,8 +102,6 @@ interface FakeHost {
   displace(): void;
   escape(): void;
   choose(digit: string): void;
-  select(response: RatingResponse): RatingView;
-  undo(): RatingView;
 }
 
 interface Harness {
@@ -113,7 +111,7 @@ interface Harness {
   readonly clock: { mono: number; wall: number };
   readonly track: ReturnType<typeof vi.fn>;
   readonly writes: number[];
-  readonly views: RatingView[];
+  readonly ledger: SessionRatingLedger;
   readonly randomCalls: () => number;
   readonly visible: () => boolean;
   elapse(ms: number): Promise<void>;
@@ -127,7 +125,11 @@ function createHarness(options: HarnessOptions = {}): Harness {
   const scheduler = createScheduler(clock);
   const track = vi.fn();
   const writes: number[] = [];
-  const views: RatingView[] = [];
+  let offer: RatingOffer | undefined;
+  const ledger = new SessionRatingLedger({
+    telemetryDisabled: () => options.telemetryDisabled?.() ?? env.telemetryDisabled,
+    now: () => clock.mono,
+  });
   let randomCallCount = 0;
   let appearanceCounter = 0;
   let idleTimer: unknown;
@@ -161,8 +163,8 @@ function createHarness(options: HarnessOptions = {}): Harness {
       }),
       config,
       cooldown: {
-        read: options.readGlobalLastShown ?? (async () => writes.at(-1)),
-        write: async (wallTime) => {
+        read: options.readGlobalLastShown ?? (() => writes.at(-1)),
+        write: (wallTime) => {
           writes.push(wallTime);
           options.writeGlobalLastShown?.(wallTime);
         },
@@ -174,9 +176,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
           track(event, properties);
         }
       },
-      onViewChange: (view) => {
-        views.push(view);
-      },
+      ledger,
       now: () => clock.mono,
       wallNow: () => clock.wall,
       random: () => {
@@ -187,18 +187,17 @@ function createHarness(options: HarnessOptions = {}): Harness {
         appearanceCounter += 1;
         return `appearance-${String(appearanceCounter)}`;
       },
-      setTimer: scheduler.setTimer,
-      clearTimer: scheduler.clearTimer,
     });
-  const act = (build: (appearanceId: string) => Parameters<SessionRatingMount['act']>[0]) => {
-    const view = harness.mount.view();
-    if (view.phase === 'closed') return view;
-    return harness.mount.act(build(view.appearanceId));
+  const report = (build: (appearanceId: string) => RatingReport) => {
+    if (offer === undefined) throw new Error('expected a rating offer');
+    ledger.report(env.sessionId, build(offer.appearanceId));
+    offer = undefined;
   };
   const host: FakeHost = {
     turnStarted: (user) => {
       if (idleTimer !== undefined) scheduler.clearTimer(idleTimer);
       idleTimer = undefined;
+      offer = undefined;
       harness.mount.observe({ kind: 'turn-started', origin: user ? USER_ORIGIN : SYSTEM_ORIGIN });
     },
     turnEnded: (traceId) => {
@@ -207,7 +206,8 @@ function createHarness(options: HarnessOptions = {}): Harness {
       if (idleTimer !== undefined) scheduler.clearTimer(idleTimer);
       idleTimer = scheduler.setTimer(() => {
         idleTimer = undefined;
-        void harness.mount.evaluate();
+        offer = harness.mount.evaluate();
+        if (offer !== undefined) ledger.report(env.sessionId, { type: 'shown', appearanceId: offer.appearanceId });
       }, 2000);
     },
     toolCallStarted: (toolCallId, toolName) => {
@@ -229,33 +229,19 @@ function createHarness(options: HarnessOptions = {}): Harness {
       env.resumedAgents = agents;
     },
     remount: () => {
-      harness.mount.end('unmount');
+      harness.mount.end();
+      offer = undefined;
       if (idleTimer !== undefined) scheduler.clearTimer(idleTimer);
       idleTimer = undefined;
       env.historyUserTurnCount = 0;
       env.resumedAgents = undefined;
       harness.mount = create();
     },
-    displace: () => {
-      act((appearanceId) => ({ type: 'displace', appearanceId }));
-    },
-    escape: () => {
-      act((appearanceId) =>
-        harness.mount.view().phase === 'pending'
-          ? { type: 'undo', appearanceId }
-          : { type: 'dismiss', appearanceId },
-      );
-    },
-    choose: (digit) => {
-      const response = DIGIT_RESPONSES[digit];
-      act((appearanceId) =>
-        response === undefined
-          ? { type: 'dismiss', appearanceId }
-          : { type: 'select', appearanceId, response },
-      );
-    },
-    select: (response) => act((appearanceId) => ({ type: 'select', appearanceId, response })),
-    undo: () => act((appearanceId) => ({ type: 'undo', appearanceId })),
+    displace: () => report((appearanceId) => ({ type: 'abandon', appearanceId })),
+    escape: () => report((appearanceId) => ({ type: 'respond', appearanceId, response: 'dismissed' })),
+    choose: (digit) => report((appearanceId) => ({
+      type: 'respond', appearanceId, response: DIGIT_RESPONSES[digit] ?? 'dismissed',
+    })),
   };
   const harness: Harness = {
     mount: create(),
@@ -264,9 +250,9 @@ function createHarness(options: HarnessOptions = {}): Harness {
     clock,
     track,
     writes,
-    views,
+    ledger,
     randomCalls: () => randomCallCount,
-    visible: () => harness.mount.view().phase !== 'closed',
+    visible: () => offer !== undefined,
     elapse: (ms) => scheduler.advance(ms),
     flush: flushAsync,
     runTurns: (count) => {
@@ -350,245 +336,59 @@ function manual(options: HarnessOptions = {}): Harness {
   return createHarness({ config: () => OPEN_CONFIG, manualEvaluation: true, ...options });
 }
 
-async function opened(options: HarnessOptions = {}): Promise<Harness & { appearanceId: string }> {
-  const harness = manual(options);
-  harness.runTurns(1);
-  await harness.elapse(2000);
-  const view = await harness.mount.evaluate();
-  if (view.phase !== 'open') throw new Error('expected an open rating');
-  return Object.assign(harness, { appearanceId: view.appearanceId });
-}
-
 describe('session rating evaluation slot', () => {
-  it('keeps the slot for a caller that asks before the idle period ends', async () => {
+  it('accepts a delayed evaluation without recording a display', async () => {
     const harness = manual();
     harness.runTurns(1);
-    await harness.elapse(1000);
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
+    await harness.elapse(100_000);
 
-    await harness.elapse(1000);
-    await expect(harness.mount.evaluate()).resolves.toMatchObject({ phase: 'open' });
+    expect(harness.mount.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
+    expect(harness.track.mock.calls).toEqual([]);
+    expect(harness.writes).toEqual([1_700_000_000_000]);
+    expect(harness.mount.evaluate()).toBeUndefined();
+
+    harness.ledger.report('', { type: 'shown', appearanceId: 'appearance-1' });
+    expect(trackedEvent(harness, 'appeared')).toMatchObject({ appearance_id: 'appearance-1' });
   });
 
-  it('waits out the idle period for a caller whose timer fires slightly early', async () => {
+  it('leaves the two-second presentation delay to the client', () => {
     const harness = manual();
     harness.runTurns(1);
-    await harness.elapse(1800);
-
-    const evaluation = harness.mount.evaluate();
-    await harness.elapse(200);
-    await expect(evaluation).resolves.toMatchObject({ phase: 'open' });
+    expect(harness.mount.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
   });
 
-  it('drops a slot that nobody evaluated within the window', async () => {
-    const harness = manual();
-    harness.runTurns(1);
-    await harness.elapse(12_001);
-
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
-    expect(harness.track).not.toHaveBeenCalled();
-  });
-
-  it('spends the slot on the first evaluation', async () => {
-    const harness = manual();
-    harness.runTurns(1);
-    await harness.elapse(2000);
-
-    const first = await harness.mount.evaluate();
-    const second = await harness.mount.evaluate();
-
-    expect(second).toEqual(first);
-    expect(harness.track).toHaveBeenCalledTimes(1);
-  });
-
-  it('loses a vetoed slot once a later non-user turn starts', async () => {
+  it('invalidates a vetoed slot on a later non-user turn but allows an early continuation', async () => {
     const harness = manual();
     harness.runTurns(1);
     await harness.elapse(2000);
     harness.host.turnStarted(false);
     harness.host.turnEnded();
-    await harness.elapse(2000);
+    expect(harness.mount.evaluate()).toBeUndefined();
 
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
-  });
-
-  it('postpones the slot when a non-user turn starts inside the idle period', async () => {
-    const harness = manual();
     harness.runTurns(1);
-    await harness.elapse(1500);
-    harness.host.turnStarted(false);
     await harness.elapse(1000);
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
-
+    harness.host.turnStarted(false);
+    expect(harness.mount.evaluate()).toBeUndefined();
     harness.host.turnEnded();
-    await harness.elapse(2000);
-    await expect(harness.mount.evaluate()).resolves.toMatchObject({ phase: 'open' });
+    expect(harness.mount.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
   });
 
-  it('drops an evaluation when a turn starts while the cooldown file is read', async () => {
-    let release!: (value: number | undefined) => void;
+  it('checks the cooldown again for each evaluation', () => {
+    let stored: number | undefined = 1_700_000_000_000;
     const harness = manual({
-      readGlobalLastShown: () =>
-        new Promise((resolve) => {
-          release = resolve;
-        }),
+      config: () => ({ ...OPEN_CONFIG, min_time_between_global_feedback_ms: 1000 }),
+      readGlobalLastShown: () => stored,
     });
     harness.runTurns(1);
-    await harness.elapse(2000);
-
-    const evaluation = harness.mount.evaluate();
-    harness.host.turnStarted(true);
-    release(undefined);
-
-    await expect(evaluation).resolves.toEqual({ phase: 'closed' });
-    expect(harness.track).not.toHaveBeenCalled();
-  });
-
-  it('rereads the shared cooldown before every evaluation', async () => {
-    let stored: number | undefined;
-    const harness = manual({
-      config: () => ({ ...OPEN_CONFIG, min_time_between_global_feedback_ms: 100_000_000 }),
-      readGlobalLastShown: async () => stored,
-    });
+    expect(harness.mount.evaluate()).toBeUndefined();
+    stored = undefined;
+    harness.clock.wall += 1000;
     harness.runTurns(1);
-    await harness.elapse(2000);
-    stored = harness.clock.wall - 1000;
-
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
-    expect(harness.track).not.toHaveBeenCalled();
-  });
-
-  it('degrades to closed when the environment cannot be read', async () => {
-    const harness = manual();
-    harness.runTurns(1);
-    await harness.elapse(2000);
-    Object.defineProperty(harness.env, 'busy', {
-      get: () => {
-        throw new Error('runtime gone');
-      },
-    });
-
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
-  });
-});
-
-describe('session rating appearance lifecycle', () => {
-  it('settles an answer after the undo window and closes after the thanks period', async () => {
-    const harness = await opened();
-    const { appearanceId } = harness;
-
-    expect(harness.host.select('good')).toEqual({
-      phase: 'pending',
-      appearanceId,
-      survey: 'session',
-      response: 'good',
-      settleInMs: 3000,
-    });
-    await harness.elapse(1000);
-    expect(harness.mount.view()).toMatchObject({ phase: 'pending', settleInMs: 2000 });
-
-    await harness.elapse(2000);
-    expect(harness.mount.view()).toEqual({
-      phase: 'thanks',
-      appearanceId,
-      survey: 'session',
-      response: 'good',
-      closeInMs: 5000,
-    });
-
-    await harness.elapse(5000);
-    expect(harness.mount.view()).toEqual({ phase: 'closed' });
-    expect(harness.views.map((view) => view.phase)).toEqual(['open', 'pending', 'thanks', 'closed']);
-  });
-
-  it('returns to the question when the answer is undone in time', async () => {
-    const harness = await opened();
-    harness.host.select('bad');
-    await harness.elapse(2000);
-
-    expect(harness.host.undo()).toEqual({
-      phase: 'open',
-      appearanceId: harness.appearanceId,
-      survey: 'session',
-    });
-    await harness.elapse(5000);
-    expect(harness.mount.view()).toMatchObject({ phase: 'open' });
-    expect(harness.track).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores actions for another appearance or the wrong phase', async () => {
-    const harness = await opened();
-    const { appearanceId } = harness;
-
-    expect(
-      harness.mount.act({ type: 'select', appearanceId: 'stale', response: 'good' }),
-    ).toMatchObject({ phase: 'open' });
-    expect(harness.mount.act({ type: 'undo', appearanceId })).toMatchObject({ phase: 'open' });
-    harness.mount.act({ type: 'select', appearanceId, response: 'fine' });
-    expect(harness.mount.act({ type: 'select', appearanceId, response: 'bad' })).toMatchObject({
-      phase: 'pending',
-      response: 'fine',
-    });
-    await harness.elapse(3000);
-    expect(trackedEvent(harness, 'responded')).toMatchObject({ response: 'fine' });
-  });
-
-  it('reports a dismissal and closes', async () => {
-    const harness = await opened();
-
-    expect(harness.mount.act({ type: 'dismiss', appearanceId: harness.appearanceId })).toEqual({
-      phase: 'closed',
-    });
-    expect(trackedEvent(harness, 'responded')).toMatchObject({ response: 'dismissed' });
-  });
-
-  it.each([
-    ['open', undefined, ['appeared', 'abandoned']],
-    ['pending', 'good', ['appeared', 'responded']],
-  ] as const)('settles a displaced %s rating', async (_phase, answer, events) => {
-    const harness = await opened();
-    if (answer !== undefined) harness.host.select(answer);
-
-    expect(
-      harness.mount.act({ type: 'displace', appearanceId: harness.appearanceId }),
-    ).toEqual({ phase: 'closed' });
-    await harness.elapse(10_000);
-    expect(harness.track.mock.calls.map((call) => (call[1] as { event_type: string }).event_type)).toEqual(events);
-  });
-
-  it('closes a thanks view silently when the next turn starts', async () => {
-    const harness = await opened();
-    harness.host.select('good');
-    await harness.elapse(3000);
-    harness.host.turnStarted(false);
-
-    expect(harness.mount.view()).toEqual({ phase: 'closed' });
-    expect(harness.track).toHaveBeenCalledTimes(2);
+    expect(harness.mount.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
   });
 });
 
 describe('session rating global cooldown', () => {
-  it('honors a cooldown read that settles after the evaluation starts', async () => {
-    let settleRead!: () => void;
-    const harness = createHarness({
-      readGlobalLastShown: () =>
-        new Promise<number | undefined>((resolve) => {
-          settleRead = () => {
-            resolve(1_700_000_000_000);
-          };
-        }),
-    });
-    harness.clock.mono += 600_000;
-    harness.runTurns(5);
-    await harness.elapse(2000);
-    expect(harness.visible()).toBe(false);
-
-    settleRead();
-    await harness.flush();
-    expect(harness.visible()).toBe(false);
-    expect(harness.track).not.toHaveBeenCalled();
-  });
-
   it('keeps the just-written global cooldown across a remount', async () => {
     const harness = createHarness();
     await harness.appear();
@@ -608,7 +408,7 @@ describe('session rating global cooldown', () => {
     let diskValue: number | undefined = 1_600_000_000_000;
     const harness = createHarness({
       config: () => ({ ...DEFAULT_SURVEY_POPUP_PAYLOAD, min_time_between_feedback_ms: 0 }),
-      readGlobalLastShown: async () => diskValue,
+      readGlobalLastShown: () => diskValue,
     });
     await harness.appear();
     expect(harness.writes).toEqual([1_700_000_000_000]);
@@ -625,7 +425,7 @@ describe('session rating global cooldown', () => {
 
   it('respects a cooldown another process wrote during the mount', async () => {
     let diskValue: number | undefined;
-    const harness = createHarness({ readGlobalLastShown: async () => diskValue });
+    const harness = createHarness({ readGlobalLastShown: () => diskValue });
     harness.clock.mono += 600_000;
     harness.runTurns(4);
     diskValue = harness.clock.wall - 1000;
@@ -638,40 +438,19 @@ describe('session rating global cooldown', () => {
 });
 
 describe('session rating mount end', () => {
-  it('abandons an unanswered rating when the session unmounts', async () => {
-    const harness = await opened();
-    harness.mount.end('unmount');
-
-    expect(trackedEvent(harness, 'abandoned')).toMatchObject({ appearance_index: 1 });
-    expect(harness.mount.view()).toEqual({ phase: 'closed' });
-  });
-
-  it('settles the pending answer when the session unmounts', async () => {
-    const harness = await opened();
-    harness.host.select('fine');
-    harness.mount.end('unmount');
-
-    expect(trackedEvent(harness, 'responded')).toMatchObject({ response: 'fine' });
-  });
-
-  it('ends silently when the process exits', async () => {
-    const harness = await opened();
-    harness.host.select('fine');
-    harness.mount.end('exit');
-    await harness.elapse(10_000);
-
-    expect(harness.track).toHaveBeenCalledTimes(1);
-  });
-
-  it('ignores facts, evaluations and repeated ends after the mount ends', async () => {
+  it('does not settle on a new turn or unmount and accepts a delayed report', () => {
     const harness = manual();
-    harness.mount.end('unmount');
-    harness.mount.end('exit');
     harness.runTurns(1);
-    await harness.elapse(2000);
+    expect(harness.mount.evaluate()).toEqual({ appearanceId: 'appearance-1', survey: 'session' });
+    harness.ledger.report('', { type: 'shown', appearanceId: 'appearance-1' });
+    harness.runTurns(1);
+    harness.mount.end();
+    harness.mount.end();
+    expect(harness.mount.evaluate()).toBeUndefined();
+    expect(harness.track.mock.calls.map((call) => call[1].event_type)).toEqual(['appeared']);
 
-    await expect(harness.mount.evaluate()).resolves.toEqual({ phase: 'closed' });
-    expect(harness.track).not.toHaveBeenCalled();
+    harness.ledger.report('', { type: 'respond', appearanceId: 'appearance-1', response: 'fine' });
+    expect(trackedEvent(harness, 'responded')).toMatchObject({ response: 'fine', user_turn_count: 1 });
   });
 });
 
@@ -832,7 +611,7 @@ describe('session rating gating', () => {
 
   it('stays hidden inside the persisted global cooldown', async () => {
     const harness = createHarness({
-      readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
+      readGlobalLastShown: () => 1_700_000_000_000 - 1000,
     });
     await harness.flush();
     await harness.appear();
@@ -1199,7 +978,7 @@ describe('session rating long-context arm', () => {
 
   it('honors the shared persisted cooldown without spending the roll', async () => {
     const harness = createHarness({
-      readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
+      readGlobalLastShown: () => 1_700_000_000_000 - 1000,
     });
     harness.env.contextTokens = 250_000;
     await harness.flush();
@@ -1257,7 +1036,7 @@ describe('session rating long-context arm', () => {
   it('keeps the long-context arm closed across a remount inside the shared cooldown', async () => {
     let stored: number | undefined;
     const harness = createHarness({
-      readGlobalLastShown: async () => stored,
+      readGlobalLastShown: () => stored,
       writeGlobalLastShown: (wallTime) => {
         stored = wallTime;
       },
@@ -1492,7 +1271,7 @@ describe('session rating model overrides', () => {
 
   it('honors the override global cooldown against the shared persisted clock', async () => {
     const harness = createHarness({
-      readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
+      readGlobalLastShown: () => 1_700_000_000_000 - 1000,
       config: () => ({
         ...DEFAULT_SURVEY_POPUP_PAYLOAD,
         model_overrides: { k3: { min_time_between_global_feedback_ms: 0 } },
@@ -1637,7 +1416,7 @@ describe('session rating model overrides', () => {
 
   it('honors the override global cooldown on the long-context arm', async () => {
     const harness = createHarness({
-      readGlobalLastShown: async () => 1_700_000_000_000 - 1000,
+      readGlobalLastShown: () => 1_700_000_000_000 - 1000,
       config: () => ({
         ...DEFAULT_SURVEY_POPUP_PAYLOAD,
         model_overrides: { k3: { min_time_between_global_feedback_ms: 0 } },

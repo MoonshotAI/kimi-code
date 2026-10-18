@@ -8,8 +8,8 @@ import { writeJsonFileSync } from '#/jsonFile';
 export const RATING_COOLDOWN_FILE_NAME = 'feedback-survey-state.json';
 
 export interface RatingCooldownStore {
-  read(): Promise<number | undefined>;
-  write(lastShownTime: number): Promise<void>;
+  read(): number | undefined;
+  write(lastShownTime: number): void;
 }
 
 const ratingCooldownStateSchema = z.object({
@@ -20,7 +20,7 @@ const ratingCooldownStateSchema = z.object({
 export function ratingCooldownFile(dataDir: string): RatingCooldownStore {
   const filePath = join(dataDir, RATING_COOLDOWN_FILE_NAME);
   return {
-    read: async () => {
+    read: () => {
       try {
         const state = ratingCooldownStateSchema.safeParse(
           JSON.parse(readFileSync(filePath, 'utf-8')) as unknown,
@@ -32,7 +32,7 @@ export function ratingCooldownFile(dataDir: string): RatingCooldownStore {
         return undefined;
       }
     },
-    write: async (lastShownTime) => {
+    write: (lastShownTime) => {
       writeJsonFileSync(filePath, ratingCooldownStateSchema, {
         version: 1,
         last_shown_time: lastShownTime,

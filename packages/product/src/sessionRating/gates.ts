@@ -1,14 +1,10 @@
-import type { SurveyKind, SurveyPhase } from './machine';
+import type { SurveyKind } from './types';
 import type { SurveyPopupConfig } from './surveyPopupConfig';
-
-export const RATING_IDLE_STABILITY_MS = 2000;
 
 export type SurveyGateSkipReason =
   | 'mount-roll-consumed'
   | 'mount-survey-shown'
-  | 'survey-active'
   | 'turn-in-progress'
-  | 'idle-too-short'
   | 'feature-disabled'
   | 'telemetry-disabled'
   | 'model-gated'
@@ -20,9 +16,7 @@ export type SurveyGateSkipReason =
   | 'global-cooldown';
 
 export interface SharedArmGateInput {
-  readonly phase: SurveyPhase;
   readonly turnInProgress: boolean;
-  readonly idleForMs: number;
   readonly feedbackSurveyDisabled: boolean;
   readonly telemetryDisabled: boolean;
   readonly kfcModelId: string | undefined;
@@ -74,9 +68,7 @@ function sharedSkipReason(
   input: SharedArmGateInput,
   config: SurveyPopupConfig,
 ): SurveyGateSkipReason | undefined {
-  if (input.phase !== 'closed') return 'survey-active';
   if (input.turnInProgress) return 'turn-in-progress';
-  if (input.idleForMs < RATING_IDLE_STABILITY_MS) return 'idle-too-short';
   if (input.feedbackSurveyDisabled) return 'feature-disabled';
   if (input.telemetryDisabled) return 'telemetry-disabled';
   if (!modelGatePasses(config.on_for_models, input.kfcModelId)) return 'model-gated';

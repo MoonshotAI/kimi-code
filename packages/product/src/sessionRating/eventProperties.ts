@@ -1,6 +1,6 @@
 import type { FeedbackSurveyEvent } from '@moonshot-ai/agent-core-v2';
 
-import type { SurveyEventType, SurveyKind, SurveyResponse } from './machine';
+import type { SurveyEventType, SurveyKind, SurveyResponse } from './types';
 import type { SurveyPopupConfig } from './surveyPopupConfig';
 
 export const SURVEY_EVENT_NAMES = {

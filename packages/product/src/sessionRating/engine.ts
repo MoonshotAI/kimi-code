@@ -1,69 +1,30 @@
 import { randomUUID } from 'node:crypto';
 
-import {
-  isUserTurnOrigin,
-  type FeedbackSurveyEvent,
-  type PromptOrigin,
-} from '@moonshot-ai/agent-core-v2';
+import { isUserTurnOrigin, type PromptOrigin } from '@moonshot-ai/agent-core-v2';
 
 import type { RatingCooldownStore } from './cooldownStore';
 import {
   buildSurveyEventProperties,
   SURVEY_EVENT_NAMES,
   type SurveyEventEnvironmentFields,
-  type SurveyEventName,
 } from './eventProperties';
 import {
   evaluateSurveyGate,
-  RATING_IDLE_STABILITY_MS,
   type LongContextArmGateInput,
   type SessionArmGateInput,
 } from './gates';
 import { kfcModelIdOf, type RatingModelRoute } from './kfc';
-import {
-  SURVEY_MACHINE_CLOSED,
-  surveyMachineReduce,
-  type RatingResponse,
-  type SurveyAppearance,
-  type SurveyKind,
-  type SurveyMachineAction,
-  type SurveyMachineEffect,
-  type SurveyMachineState,
-} from './machine';
+import { SessionRatingLedger, type RatingTracker } from './ledger';
+import type { RatingOffer, SurveyAppearance, SurveyKind } from './types';
 import {
   resolveSurveyPopupConfig,
   type SurveyPopupConfig,
   type SurveyPopupPayload,
 } from './surveyPopupConfig';
 
-export const SESSION_RATING_IDLE_MS = RATING_IDLE_STABILITY_MS;
-export const SESSION_RATING_EARLY_TOLERANCE_MS = 250;
-export const SESSION_RATING_EVALUATION_WINDOW_MS = 10_000;
-export const SESSION_RATING_UNDO_WINDOW_MS = 3000;
-export const SESSION_RATING_THANKS_MS = 5000;
-
+const SESSION_RATING_IDLE_MS = 2000;
 const SESSION_INIT_PARENT_TOOL_CALL_ID = 'generate-agents-md';
 const TOWER_WORKER_PROFILE_NAME = 'tower-worker';
-
-export type RatingView =
-  | { readonly phase: 'closed' }
-  | { readonly phase: 'open'; readonly appearanceId: string; readonly survey: SurveyKind }
-  | {
-      readonly phase: 'pending';
-      readonly appearanceId: string;
-      readonly survey: SurveyKind;
-      readonly response: RatingResponse;
-      readonly settleInMs: number;
-    }
-  | {
-      readonly phase: 'thanks';
-      readonly appearanceId: string;
-      readonly survey: SurveyKind;
-      readonly response: RatingResponse;
-      readonly closeInMs: number;
-    };
-
-export const CLOSED_RATING_VIEW: RatingView = { phase: 'closed' };
 
 export type SessionFact =
   | { readonly kind: 'turn-started'; readonly origin: PromptOrigin | undefined }
@@ -77,14 +38,6 @@ export type SessionFact =
       readonly model?: string;
     }
   | { readonly kind: 'compaction-completed' };
-
-export type RatingAction =
-  | { readonly type: 'select'; readonly appearanceId: string; readonly response: RatingResponse }
-  | { readonly type: 'undo'; readonly appearanceId: string }
-  | { readonly type: 'dismiss'; readonly appearanceId: string }
-  | { readonly type: 'displace'; readonly appearanceId: string };
-
-export type SessionRatingMountEnd = 'unmount' | 'exit';
 
 export interface ResumedAgentSeed {
   readonly type: string;
@@ -108,10 +61,6 @@ export interface RatingEnvironment {
   readonly resumedAgents?: Readonly<Record<string, ResumedAgentSeed>>;
 }
 
-export interface RatingTrackContext {
-  readonly sessionId: string;
-}
-
 export interface RatingConfigFeed {
   readyForEvaluation(): boolean;
   payload(): SurveyPopupPayload;
@@ -121,41 +70,22 @@ export interface SessionRatingDeps {
   readonly environment: () => RatingEnvironment;
   readonly config: RatingConfigFeed;
   readonly cooldown: RatingCooldownStore;
-  readonly track: (
-    event: SurveyEventName,
-    properties: FeedbackSurveyEvent,
-    context: RatingTrackContext,
-  ) => void;
-  readonly onViewChange?: (view: RatingView) => void;
+  readonly ledger: SessionRatingLedger;
+  readonly track: RatingTracker;
   readonly now?: () => number;
   readonly wallNow?: () => number;
   readonly random?: () => number;
   readonly appearanceId?: () => string;
-  readonly setTimer?: (fn: () => void, ms: number) => unknown;
-  readonly clearTimer?: (handle: unknown) => void;
 }
 
 export interface SessionRatingMount {
   observe(fact: SessionFact): void;
-  evaluate(): Promise<RatingView>;
-  act(action: RatingAction): RatingView;
-  view(): RatingView;
-  end(kind: SessionRatingMountEnd): void;
+  evaluate(): RatingOffer | undefined;
+  end(): void;
 }
 
 export function mountSessionRating(deps: SessionRatingDeps): SessionRatingMount {
   return new SessionRatingMountImpl(deps);
-}
-
-interface AppearanceSnapshot {
-  readonly sessionId: string;
-  readonly config: SurveyPopupConfig;
-  readonly fields: SurveyEventEnvironmentFields;
-}
-
-interface PhaseTimer {
-  readonly handle: unknown;
-  readonly deadline: number;
 }
 
 function recordModel(models: Set<string>, model: string | undefined): void {
@@ -182,9 +112,8 @@ function resumedSubagentCount(
 }
 
 class SessionRatingMountImpl implements SessionRatingMount {
-  private machine: SurveyMachineState = SURVEY_MACHINE_CLOSED;
+  private readonly mountId = Symbol();
   private ended = false;
-  private generation = 0;
   private readonly mountedAt: number;
   private currentTurnUserOrigin: boolean | undefined;
   private turnInProgress = false;
@@ -206,8 +135,6 @@ class SessionRatingMountImpl implements SessionRatingMount {
   private swarmRunCount = 0;
   private readonly swarmModels = new Set<string>();
   private readonly toolCallFamilies = new Map<string, string>();
-  private snapshot: AppearanceSnapshot | undefined;
-  private phaseTimer: PhaseTimer | undefined;
 
   constructor(private readonly deps: SessionRatingDeps) {
     this.mountedAt = this.now();
@@ -238,52 +165,39 @@ class SessionRatingMountImpl implements SessionRatingMount {
     }
   }
 
-  async evaluate(): Promise<RatingView> {
-    if (!this.takeEvaluationSlot()) return this.view();
+  evaluate(): RatingOffer | undefined {
+    if (this.ended || !this.evaluationPending || this.turnInProgress) return undefined;
+    this.evaluationPending = false;
     try {
-      await this.evaluateGates();
-    } catch {}
-    return this.view();
-  }
-
-  act(action: RatingAction): RatingView {
-    if (!this.ended && this.machine.appearance?.appearanceId === action.appearanceId) {
-      this.apply(this.machineActionFor(action));
+      if (!this.deps.config.readyForEvaluation()) return undefined;
+      const persisted = this.deps.cooldown.read();
+      if (persisted !== undefined) {
+        this.globalLastShownAt = Math.max(persisted, this.globalLastShownAt ?? 0);
+      }
+      const environment = this.deps.environment();
+      const kfcModelId = kfcModelIdOf(environment.model);
+      const config = resolveSurveyPopupConfig(this.deps.config.payload(), kfcModelId);
+      const verdict = evaluateSurveyGate({ ...this.gateInputs(environment, kfcModelId), config });
+      if (verdict.longContextRollConsumed === true) {
+        this.longContextRollConsumedModels.add(kfcModelId);
+      }
+      return verdict.show ? this.open(verdict.survey, config, environment, kfcModelId) : undefined;
+    } catch {
+      return undefined;
     }
-    return this.view();
   }
 
-  view(): RatingView {
-    const { phase, appearance, response } = this.machine;
-    if (phase === 'closed' || appearance === undefined) return CLOSED_RATING_VIEW;
-    const base = { appearanceId: appearance.appearanceId, survey: appearance.survey };
-    if (phase === 'open') return { phase, ...base };
-    if (response === undefined || response === 'dismissed') return CLOSED_RATING_VIEW;
-    const remaining =
-      this.phaseTimer === undefined
-        ? 0
-        : Math.max(0, Math.round(this.phaseTimer.deadline - this.now()));
-    return phase === 'pending'
-      ? { phase, ...base, response, settleInMs: remaining }
-      : { phase, ...base, response, closeInMs: remaining };
-  }
-
-  end(kind: SessionRatingMountEnd): void {
+  end(): void {
     if (this.ended) return;
-    if (kind === 'unmount') this.displace();
-    this.clearPhaseTimer();
-    this.machine = SURVEY_MACHINE_CLOSED;
     this.ended = true;
-    this.generation += 1;
+    this.deps.ledger.detach(this.mountId);
   }
 
   private turnStarted(userOrigin: boolean): void {
     if (this.slotElapsed()) this.evaluationPending = false;
-    this.generation += 1;
     this.currentTurnUserOrigin = userOrigin;
     this.turnInProgress = true;
     this.idleSince = undefined;
-    this.displace();
     if (!userOrigin) return;
     this.userTurnsSinceMount += 1;
     this.evaluationPending = false;
@@ -332,48 +246,13 @@ class SessionRatingMountImpl implements SessionRatingMount {
     );
   }
 
-  private takeEvaluationSlot(): boolean {
-    if (this.ended || !this.evaluationPending || this.turnInProgress) return false;
-    if (this.idleSince === undefined) return false;
-    const idleFor = this.now() - this.idleSince;
-    if (idleFor < SESSION_RATING_IDLE_MS - SESSION_RATING_EARLY_TOLERANCE_MS) return false;
-    this.evaluationPending = false;
-    return (
-      idleFor <= SESSION_RATING_IDLE_MS + SESSION_RATING_EVALUATION_WINDOW_MS &&
-      this.machine.phase === 'closed'
-    );
-  }
-
-  private async evaluateGates(): Promise<void> {
-    if (!this.deps.config.readyForEvaluation()) return;
-    const generation = this.generation;
-    const idleSince = this.idleSince ?? this.now();
-    const idleShortfall = SESSION_RATING_IDLE_MS - (this.now() - idleSince);
-    if (idleShortfall > 0) await this.delay(idleShortfall);
-    const persisted = await this.deps.cooldown.read().catch(() => undefined);
-    if (this.ended || generation !== this.generation || this.machine.phase !== 'closed') return;
-    if (persisted !== undefined) {
-      this.globalLastShownAt = Math.max(persisted, this.globalLastShownAt ?? 0);
-    }
-    const environment = this.deps.environment();
-    const kfcModelId = kfcModelIdOf(environment.model);
-    const config = resolveSurveyPopupConfig(this.deps.config.payload(), kfcModelId);
-    const verdict = evaluateSurveyGate({ ...this.gateInputs(environment, kfcModelId), config });
-    if (verdict.longContextRollConsumed === true) {
-      this.longContextRollConsumedModels.add(kfcModelId);
-    }
-    if (verdict.show) this.open(verdict.survey, config, environment, kfcModelId);
-  }
-
   private gateInputs(
     environment: RatingEnvironment,
     kfcModelId: string | undefined,
   ): { session: SessionArmGateInput; longContext: LongContextArmGateInput } {
     const now = this.now();
     const shared = {
-      phase: this.machine.phase,
       turnInProgress: this.turnInProgress || environment.busy,
-      idleForMs: this.idleSince === undefined ? 0 : now - this.idleSince,
       feedbackSurveyDisabled: environment.ratingDisabled,
       telemetryDisabled: environment.telemetryDisabled,
       kfcModelId,
@@ -417,28 +296,38 @@ class SessionRatingMountImpl implements SessionRatingMount {
     config: SurveyPopupConfig,
     environment: RatingEnvironment,
     kfcModelId: string | undefined,
-  ): void {
+  ): RatingOffer {
     this.appearanceCount += 1;
     const appearance: SurveyAppearance = {
       survey,
       appearanceId: (this.deps.appearanceId ?? randomUUID)(),
       appearanceIndex: this.appearanceCount,
     };
-    const shownAt = this.now();
-    this.snapshot = {
-      sessionId: environment.sessionId,
-      config,
-      fields: this.environmentFields(environment, kfcModelId),
-    };
+    this.deps.ledger.register({
+      mount: this.mountId,
+      event: SURVEY_EVENT_NAMES[survey],
+      properties: buildSurveyEventProperties(
+        {
+          event_type: 'appeared',
+          appearance_id: appearance.appearanceId,
+          appearance_index: appearance.appearanceIndex,
+        },
+        this.environmentFields(environment, kfcModelId),
+        config,
+      ),
+      context: { sessionId: environment.sessionId },
+      track: this.deps.track,
+    });
     this.pendingTraceId = undefined;
-    this.apply({ type: 'open', appearance });
-    if (this.machine.phase !== 'open') return;
-    this.lastShownAt = shownAt;
+    this.lastShownAt = this.now();
     this.userTurnsAtLastShown = this.userTurnsSinceMount;
     if (survey === 'long_context') this.longContextShownThisMount = true;
     const wallTime = this.wallNow();
     this.globalLastShownAt = wallTime;
-    void this.deps.cooldown.write(wallTime).catch(() => undefined);
+    try {
+      this.deps.cooldown.write(wallTime);
+    } catch {}
+    return { appearanceId: appearance.appearanceId, survey };
   }
 
   private environmentFields(
@@ -464,101 +353,6 @@ class SessionRatingMountImpl implements SessionRatingMount {
       swarm_run_count: this.swarmRunCount,
       swarm_models: joinModels(this.swarmModels),
     };
-  }
-
-  private displace(): void {
-    if (this.machine.phase === 'open') {
-      this.apply({ type: 'abandon' });
-      return;
-    }
-    if (this.machine.phase !== 'closed') this.apply({ type: 'close-silently' });
-  }
-
-  private machineActionFor(action: RatingAction): SurveyMachineAction {
-    switch (action.type) {
-      case 'select':
-        return { type: 'select', response: action.response };
-      case 'undo':
-        return { type: 'undo' };
-      case 'dismiss':
-        return this.machine.phase === 'thanks' ? { type: 'close-silently' } : { type: 'dismiss' };
-      case 'displace':
-        return this.machine.phase === 'open' ? { type: 'abandon' } : { type: 'close-silently' };
-    }
-  }
-
-  private apply(action: SurveyMachineAction): void {
-    const previous = this.machine;
-    const transition = surveyMachineReduce(previous, action);
-    if (transition.state === previous && transition.effects.length === 0) return;
-    this.clearPhaseTimer();
-    const appearance = transition.state.appearance ?? previous.appearance;
-    this.machine = transition.state;
-    for (const effect of transition.effects) this.runEffect(effect, appearance);
-    this.deps.onViewChange?.(this.view());
-  }
-
-  private runEffect(effect: SurveyMachineEffect, appearance: SurveyAppearance | undefined): void {
-    if (effect.type === 'schedule') {
-      if (effect.timer === 'pending-settle') {
-        this.schedule(SESSION_RATING_UNDO_WINDOW_MS, { type: 'settle' });
-      } else {
-        this.schedule(SESSION_RATING_THANKS_MS, { type: 'thanks-elapsed' });
-      }
-      return;
-    }
-    if (appearance === undefined || this.snapshot === undefined) return;
-    const properties = buildSurveyEventProperties(
-      {
-        event_type: effect.eventType,
-        appearance_id: appearance.appearanceId,
-        appearance_index: appearance.appearanceIndex,
-        response: effect.response,
-      },
-      this.snapshot.fields,
-      this.snapshot.config,
-    );
-    try {
-      this.deps.track(SURVEY_EVENT_NAMES[appearance.survey], properties, {
-        sessionId: this.snapshot.sessionId,
-      });
-    } catch {}
-  }
-
-  private schedule(ms: number, action: SurveyMachineAction): void {
-    const handle = this.setTimer(() => {
-      this.phaseTimer = undefined;
-      this.apply(action);
-    }, ms);
-    this.phaseTimer = { handle, deadline: this.now() + ms };
-  }
-
-  private clearPhaseTimer(): void {
-    if (this.phaseTimer === undefined) return;
-    this.clearTimer(this.phaseTimer.handle);
-    this.phaseTimer = undefined;
-  }
-
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      this.setTimer(resolve, ms);
-    });
-  }
-
-  private setTimer(fn: () => void, ms: number): unknown {
-    return (this.deps.setTimer ?? ((callback: () => void, delay: number) => setTimeout(callback, delay)))(
-      fn,
-      ms,
-    );
-  }
-
-  private clearTimer(handle: unknown): void {
-    (
-      this.deps.clearTimer ??
-      ((value: unknown) => {
-        clearTimeout(value as Parameters<typeof clearTimeout>[0]);
-      })
-    )(handle);
   }
 
   private now(): number {

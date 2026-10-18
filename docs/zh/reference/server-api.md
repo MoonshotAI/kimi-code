@@ -626,6 +626,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/children` | 列出子会话 |
 | `POST /api/v1/sessions/{session_id}/children` | 创建子会话（fork 并打标） |
 | `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
+| `POST /api/v1/sessions/{session_id}/rating` | 评估或报告会话评分 |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
 | `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
@@ -879,6 +880,25 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 成功时，`data` 为 `{ busy, model?, thinking_level, permission, plan_mode, swarm_mode, context_tokens, max_context_tokens?, context_usage? }`：`busy` 表示是否有进行中的轮次，`model` / `thinking_level` / `permission` 为当前生效的 Agent 设置，`plan_mode` / `swarm_mode` 为模式标志，`context_tokens` 与 `max_context_tokens`、`context_usage`（0–1）描述上下文窗口的占用情况。
 
 - `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/rating`
+
+评估是否提供会话评分，或报告已显示的问卷及其结果。选择、撤销和展示时机由客户端管理。
+
+| `op` | 必填请求体字段 | 成功时的 `data` |
+| --- | --- | --- |
+| `evaluate` | `turn_id` | `{ appearance: { id, survey } }` 或 `{ appearance: null }` |
+| `shown` | `appearance_id` | `null` |
+| `respond` | `appearance_id`、`response` | `null` |
+| `abandon` | `appearance_id` | `null` |
+
+- `turn_id` 是 main agent 最近一个已完成 transcript 回合的 id。id 过期、回合仍在运行、会话未加载或评估未通过时，不提供问卷。评估不会加载会话。
+- `survey` 为 `session` 或 `long_context`。生成问卷会消耗本次评估资格并记录冷却，但不记录问卷已显示。
+- 客户端显示问卷后发送 `shown`，确定最终答案后发送 `respond`。`response` 为 `bad`、`fine`、`good` 或 `dismissed`。已显示的问卷在未作答时结束，发送 `abandon`。
+- 报告同时绑定会话 id 和 appearance id。报告快照仍可用时，首次结算生效。重复、未知、过期或会话不匹配的报告均成功返回，不再产生事件。若结算先于 `shown` 到达，服务端先记录显示，再记录结果。
+- 新回合和会话卸载不会结算问卷。卸载后，报告快照会有界保留，但不跨服务端重启保存。这不保证报告持久送达。
+- 不提供评分视图恢复接口，也不新增评分 WebSocket 事件。
+- 操作或请求体字段无效时，返回 `40001`。
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 

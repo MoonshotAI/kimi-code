@@ -142,8 +142,8 @@ function createHarness(deps: HarnessOptions = {}): Harness {
       now: () => clock.mono,
     }),
     cooldown: {
-      read: async () => writes.at(-1),
-      write: async (wallTime) => {
+      read: () => writes.at(-1),
+      write: (wallTime) => {
         writes.push(wallTime);
       },
     },

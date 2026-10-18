@@ -29,29 +29,29 @@ describe('ratingCooldownFile', () => {
     expect(RATING_COOLDOWN_FILE_NAME).toBe('feedback-survey-state.json');
   });
 
-  it('returns undefined when the file is missing', async () => {
-    await expect(store.read()).resolves.toBeUndefined();
+  it('returns undefined when the file is missing', () => {
+    expect(store.read()).toBeUndefined();
   });
 
-  it('round-trips last_shown_time', async () => {
-    await store.write(1_700_000_000_000);
-    await expect(store.read()).resolves.toBe(1_700_000_000_000);
+  it('round-trips last_shown_time', () => {
+    store.write(1_700_000_000_000);
+    expect(store.read()).toBe(1_700_000_000_000);
   });
 
   it('returns undefined when the file is corrupt', async () => {
     await writeFile(file, 'not json', 'utf-8');
-    await expect(store.read()).resolves.toBeUndefined();
+    expect(store.read()).toBeUndefined();
   });
 
   it('returns undefined when the schema does not match', async () => {
     await writeFile(file, JSON.stringify({ version: 2, last_shown_time: 1 }), 'utf-8');
-    await expect(store.read()).resolves.toBeUndefined();
+    expect(store.read()).toBeUndefined();
   });
 
-  it('overwrites a previous timestamp atomically', async () => {
-    await store.write(1);
-    await store.write(2);
-    await expect(store.read()).resolves.toBe(2);
+  it('overwrites a previous timestamp atomically', () => {
+    store.write(1);
+    store.write(2);
+    expect(store.read()).toBe(2);
   });
 
   it('reads the format earlier CLI releases wrote', async () => {
@@ -60,6 +60,6 @@ describe('ratingCooldownFile', () => {
       `${JSON.stringify({ version: 1, last_shown_time: 1_700_000_000_000 }, null, 2)}\n`,
       'utf-8',
     );
-    await expect(store.read()).resolves.toBe(1_700_000_000_000);
+    expect(store.read()).toBe(1_700_000_000_000);
   });
 });

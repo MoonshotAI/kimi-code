@@ -64,7 +64,6 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
-import { currentTuiConfig } from './commands/config';
 import * as slashCommands from './commands/dispatch';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
@@ -114,7 +113,7 @@ import {
 } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
-import { saveTuiConfig, type TuiConfig } from './config';
+import { removeLegacySurveySetting, type TuiConfig } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -850,8 +849,7 @@ export class KimiTUI {
         legacyValue: this.state.appState.disableFeedbackSurvey,
         getConfig: () => this.harness.getConfig(),
         setConfig: (patch) => this.harness.setConfig(patch),
-        dropLegacy: () =>
-          saveTuiConfig({ ...currentTuiConfig(this), disableFeedbackSurvey: undefined }),
+        dropLegacy: removeLegacySurveySetting,
         warn: (message) => {
           this.showStatus(message, 'warning');
         },

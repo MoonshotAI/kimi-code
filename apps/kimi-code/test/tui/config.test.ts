@@ -9,6 +9,7 @@ import {
   INVALID_TUI_CONFIG_MESSAGE,
   loadTuiConfig,
   parseTuiConfig,
+  removeLegacySurveySetting,
   saveTuiConfig,
   TuiConfigParseError,
 } from '#/tui/config';
@@ -196,14 +197,41 @@ command = "   "
     });
   });
 
-  it('drops a legacy disable_feedback_survey value when the file is rewritten', async () => {
-    await saveTuiConfig(
-      { ...DEFAULT_TUI_CONFIG, disableFeedbackSurvey: true },
-      filePath,
-    );
+  it('preserves the legacy opt-out when an unrelated preference is saved', async () => {
+    writeFileSync(filePath, 'disable_feedback_survey = true\nauto_session_title = false\n');
+    const previous = await loadTuiConfig(filePath);
+    await saveTuiConfig({ ...previous, disableFeedbackSurvey: undefined, theme: 'light' }, filePath);
 
+    expect(await loadTuiConfig(filePath)).toMatchObject({
+      theme: 'light', disableFeedbackSurvey: true, autoSessionTitle: false,
+    });
+  });
+
+  it.each([
+    { source: '[[[', legacy: undefined },
+    { source: 'render_latex = "false"\ndisable_feedback_survey = true', legacy: true },
+    { source: 'theme = 42\ndisable_feedback_survey = false', legacy: false },
+    { source: 'disable_feedback_survey = "true"', legacy: undefined },
+  ])('saves valid preferences after falling back from $source', async ({ source, legacy }) => {
+    writeFileSync(filePath, source);
+    await expect(loadTuiConfig(filePath)).rejects.toBeInstanceOf(TuiConfigParseError);
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, theme: 'light' }, filePath);
+    const saved = await loadTuiConfig(filePath);
+    expect(saved.theme).toBe('light');
+    expect(saved.disableFeedbackSurvey).toBe(legacy);
+  });
+
+  it('removes only the migrated survey setting and can repeat the cleanup', async () => {
+    writeFileSync(filePath, 'disable_feedback_survey = true\nauto_session_title = false\ntheme = "light"\n[custom]\nvalue = 42\n');
+    await removeLegacySurveySetting(filePath);
+    const cleaned = readFileSync(filePath, 'utf-8');
+    expect(cleaned).not.toContain('disable_feedback_survey');
+    expect(cleaned).toContain('value = 42');
+    expect(await loadTuiConfig(filePath)).toMatchObject({ theme: 'light', autoSessionTitle: false });
+    await removeLegacySurveySetting(filePath);
+    expect(readFileSync(filePath, 'utf-8')).toBe(cleaned);
+    await saveTuiConfig({ ...DEFAULT_TUI_CONFIG, theme: 'dark' }, filePath);
     expect(readFileSync(filePath, 'utf-8')).not.toContain('disable_feedback_survey');
-    expect((await loadTuiConfig(filePath)).disableFeedbackSurvey).toBeUndefined();
   });
 
   it('round-trips an auto_session_title opt-out', async () => {

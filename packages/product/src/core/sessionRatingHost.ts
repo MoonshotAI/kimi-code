@@ -40,16 +40,15 @@ import {
 
 import { ClientConfigClient } from '#/clientConfigs/clientConfigs';
 import {
-  CLOSED_RATING_VIEW,
   mountSessionRating,
-  type RatingAction,
   type RatingConfigFeed,
   type RatingEnvironment,
-  type RatingView,
   type ResumedAgentSeed,
   type SessionRatingMount,
 } from '#/sessionRating/engine';
 import type { SurveyEventName } from '#/sessionRating/eventProperties';
+import { SessionRatingLedger } from '#/sessionRating/ledger';
+import type { RatingOffer, RatingReport } from '#/sessionRating/types';
 import { ratingCooldownFile, type RatingCooldownStore } from '#/sessionRating/cooldownStore';
 import {
   cloudSurveyPopupConfigFeed,
@@ -75,8 +74,8 @@ const PREVIEW_SURVEY_POPUP_PAYLOAD: SurveyPopupPayload = {
 function memoryCooldownStore(): RatingCooldownStore {
   let lastShownTime: number | undefined;
   return {
-    read: async () => lastShownTime,
-    write: async (value) => {
+    read: () => lastShownTime,
+    write: (value) => {
       lastShownTime = value;
     },
   };
@@ -119,6 +118,7 @@ export class SessionRatingHost implements IDisposable {
   private readonly config: RatingConfigFeed;
   private readonly cooldown: RatingCooldownStore;
   private readonly settings: IConfigService;
+  private readonly ledger: SessionRatingLedger;
 
   constructor(
     core: Scope,
@@ -126,6 +126,7 @@ export class SessionRatingHost implements IDisposable {
   ) {
     const bootstrap = core.accessor.get(IBootstrapService);
     this.settings = core.accessor.get(IConfigService);
+    this.ledger = new SessionRatingLedger({ telemetryDisabled: options.telemetryDisabled });
     this.preview = options.preview === true;
     if (this.preview) {
       this.config = new SurveyPopupConfigFeed({
@@ -159,30 +160,27 @@ export class SessionRatingHost implements IDisposable {
     for (const handle of manager.list()) this.mountSession(handle.id, handle);
   }
 
-  view(sessionId: string): RatingView {
-    return this.sessions.get(sessionId)?.mount.view() ?? CLOSED_RATING_VIEW;
+  evaluate(sessionId: string): RatingOffer | undefined {
+    return this.sessions.get(sessionId)?.mount.evaluate();
   }
 
-  async evaluate(sessionId: string): Promise<RatingView> {
-    return (await this.sessions.get(sessionId)?.mount.evaluate()) ?? CLOSED_RATING_VIEW;
-  }
-
-  act(sessionId: string, action: RatingAction): RatingView {
-    return this.sessions.get(sessionId)?.mount.act(action) ?? CLOSED_RATING_VIEW;
+  report(sessionId: string, report: RatingReport): void {
+    this.ledger.report(sessionId, report);
   }
 
   dispose(): void {
     for (const subscription of this.subscriptions.splice(0)) subscription.dispose();
     for (const session of this.sessions.values()) {
-      session.mount.end('exit');
+      session.mount.end();
       for (const disposable of session.disposables) disposable.dispose();
     }
     this.sessions.clear();
+    this.ledger.clear();
   }
 
   private mountSession(sessionId: string, handle: ISessionScopeHandle): void {
     if (this.sessions.has(sessionId)) return;
-    const telemetry = handle.accessor.get(ITelemetryService);
+    const telemetry = handle.accessor.get(ITelemetryService).withContext({});
     const agents = handle.accessor.get(IAgentLifecycleService);
     let mainAgent: IAgentScopeHandle | undefined;
     let mainAgentEvents: IDisposable | undefined;
@@ -204,6 +202,7 @@ export class SessionRatingHost implements IDisposable {
       }),
       config: this.config,
       cooldown: this.cooldown,
+      ledger: this.ledger,
       track: (event, properties) => {
         this.track(telemetry, event, properties);
       },
@@ -271,7 +270,7 @@ export class SessionRatingHost implements IDisposable {
     const session = this.sessions.get(sessionId);
     if (session === undefined) return;
     this.sessions.delete(sessionId);
-    session.mount.end('unmount');
+    session.mount.end();
     for (const disposable of session.disposables) disposable.dispose();
   }
 

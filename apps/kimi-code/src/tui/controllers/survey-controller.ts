@@ -7,7 +7,8 @@ import {
   type RatingCooldownStore,
   type RatingEnvironment,
   type RatingResponse,
-  type RatingView,
+  type RatingOffer,
+  SessionRatingLedger,
   type ResumedAgentSeed,
   type SessionRatingMount,
 } from '@moonshot-ai/kimi-code-product';
@@ -28,13 +29,20 @@ import {
   SURVEY_MOUNT_PROTECTION_MS,
   SURVEY_OPTION_COUNT,
   SURVEY_ORDERED_LIST_START,
+  SURVEY_PENDING_UNDO_WINDOW_MS,
   SURVEY_SINGLE_OPTION_DIGIT,
+  SURVEY_THANKS_DURATION_MS,
   surveyMinTotalHeight,
 } from '../constant/survey';
 import type { TUIState } from '../tui-state';
 import { printableChar } from '../utils/printable-key';
 import { surveyUiVeto } from '../utils/survey-policy';
 import type { BtwPanelController } from './btw-panel';
+
+type RatingView =
+  | { readonly phase: 'closed' }
+  | (RatingOffer & { readonly phase: 'open' })
+  | (RatingOffer & { readonly phase: 'pending' | 'thanks'; readonly response: RatingResponse });
 
 export interface SurveyHost {
   readonly state: TUIState;
@@ -73,6 +81,10 @@ function modelRoute(appState: TUIState['appState']): RatingEnvironment['model'] 
 
 export class SurveyController {
   private rating: SessionRatingMount;
+  private readonly ledger: SessionRatingLedger;
+  private ratingView: RatingView = { phase: 'closed' };
+  private ratingSessionId = '';
+  private phaseTimer: unknown;
   private readonly configFeed: RatingConfigFeed;
   private readonly cooldown: RatingCooldownStore;
   private readonly view: SurveyPanelView = { phase: 'open' };
@@ -93,14 +105,19 @@ export class SurveyController {
     this.configFeed =
       deps.configFeed ?? cloudSurveyPopupConfigFeed(clientConfigs, deps.accessToken);
     this.cooldown = deps.cooldown ?? ratingCooldownFile(getDataDir());
+    this.ledger = new SessionRatingLedger({
+      telemetryDisabled: () => (this.deps.telemetryDisabled ?? isTelemetryDisabledByEnv)(),
+      now: () => this.now(),
+    });
     this.rating = this.createRating();
   }
 
   reset(): void {
     this.clearIdleTimer();
     this.clearDigitTimer();
-    this.rating.end('unmount');
-    this.applyClose();
+    this.notifyDisplaced();
+    this.rating.end();
+    this.syncView({ phase: 'closed' });
     this.initialUserTurnCount = 0;
     this.resumedAgents = undefined;
     this.rating = this.createRating();
@@ -109,12 +126,15 @@ export class SurveyController {
   dispose(): void {
     this.clearIdleTimer();
     this.clearDigitTimer();
-    this.rating.end('exit');
-    this.applyClose();
+    this.clearPhaseTimer();
+    this.rating.end();
+    this.ledger.clear();
+    this.syncView({ phase: 'closed' });
   }
 
   notifyTurnStarted(origin: TurnStartedEvent['origin']): void {
     this.clearIdleTimer();
+    this.notifyDisplaced();
     this.rating.observe({ kind: 'turn-started', origin });
   }
 
@@ -123,8 +143,12 @@ export class SurveyController {
     this.clearIdleTimer();
     this.idleTimer = this.setT(() => {
       this.idleTimer = undefined;
-      if (surveyUiVeto(this.uiVetoInput()) !== undefined) return;
-      void this.rating.evaluate();
+      if (this.ratingView.phase !== 'closed' || surveyUiVeto(this.uiVetoInput()) !== undefined) return;
+      const offer = this.rating.evaluate();
+      if (offer === undefined) return;
+      this.ratingSessionId = this.host.state.appState.sessionId ?? '';
+      this.syncView({ phase: 'open', ...offer });
+      this.ledger.report(this.ratingSessionId, { type: 'shown', appearanceId: offer.appearanceId });
     }, SURVEY_IDLE_EVALUATION_DELAY_MS);
   }
 
@@ -171,7 +195,7 @@ export class SurveyController {
   }
 
   handlePreInput(data: string): boolean {
-    const phase = this.rating.view().phase;
+    const phase = this.ratingView.phase;
     if (phase === 'closed') return false;
     if (this.inMountProtection()) {
       const printable = printableChar(data);
@@ -227,7 +251,7 @@ export class SurveyController {
   }
 
   handleEditorChange(text: string): void {
-    if (this.rating.view().phase !== 'open') return;
+    if (this.ratingView.phase !== 'open') return;
     const wasTyped = text === this.lastTypedDigit;
     this.lastTypedDigit = undefined;
     if (this.inMountProtection()) {
@@ -265,7 +289,7 @@ export class SurveyController {
   }
 
   handleSubmit(text: string): boolean {
-    if (this.rating.view().phase !== 'open') return false;
+    if (this.ratingView.phase !== 'open') return false;
     if (this.inMountProtection()) return false;
     if (this.tooNarrow()) return false;
     if (this.tooShort()) return false;
@@ -292,6 +316,7 @@ export class SurveyController {
       environment: () => this.environment(),
       config: this.configFeed,
       cooldown: this.cooldown,
+      ledger: this.ledger,
       track: (event, properties, context) => {
         if (context.sessionId.length > 0) {
           this.host.track(event, { ...properties }, { sessionId: context.sessionId });
@@ -299,15 +324,10 @@ export class SurveyController {
           this.host.track(event, { ...properties });
         }
       },
-      onViewChange: (view) => {
-        this.syncView(view);
-      },
       now: this.deps.monotonicNow,
       wallNow: this.deps.wallNow,
       random: this.deps.random,
       appearanceId: this.deps.appearanceId,
-      setTimer: this.deps.setTimer,
-      clearTimer: this.deps.clearTimer,
     });
   }
 
@@ -367,19 +387,54 @@ export class SurveyController {
 
   private act(type: 'undo' | 'dismiss' | 'displace'): void {
     this.clearDigitTimer();
-    const view = this.rating.view();
+    const view = this.ratingView;
     if (view.phase === 'closed') return;
-    this.rating.act({ type, appearanceId: view.appearanceId });
+    if (type === 'undo') {
+      if (view.phase !== 'pending') return;
+      this.clearPhaseTimer();
+      this.syncView({ phase: 'open', appearanceId: view.appearanceId, survey: view.survey });
+      return;
+    }
+    if (type === 'dismiss' && view.phase === 'pending') return;
+    this.clearPhaseTimer();
+    this.syncView({ phase: 'closed' });
+    if (view.phase === 'pending') {
+      this.ledger.report(this.ratingSessionId, {
+        type: 'respond', appearanceId: view.appearanceId, response: view.response,
+      });
+    } else if (view.phase === 'open') {
+      this.ledger.report(this.ratingSessionId, type === 'dismiss'
+        ? { type: 'respond', appearanceId: view.appearanceId, response: 'dismissed' }
+        : { type: 'abandon', appearanceId: view.appearanceId });
+    }
   }
 
   private select(response: RatingResponse): void {
     this.clearDigitTimer();
-    const view = this.rating.view();
-    if (view.phase === 'closed') return;
-    this.rating.act({ type: 'select', appearanceId: view.appearanceId, response });
+    const view = this.ratingView;
+    if (view.phase !== 'open') return;
+    this.syncView({ ...view, phase: 'pending', response });
+    this.phaseTimer = this.setT(() => {
+      this.phaseTimer = undefined;
+      this.syncView({ ...view, phase: 'thanks', response });
+      this.ledger.report(this.ratingSessionId, {
+        type: 'respond', appearanceId: view.appearanceId, response,
+      });
+      this.phaseTimer = this.setT(() => {
+        this.phaseTimer = undefined;
+        this.syncView({ phase: 'closed' });
+      }, SURVEY_THANKS_DURATION_MS);
+    }, SURVEY_PENDING_UNDO_WINDOW_MS);
+  }
+
+  private clearPhaseTimer(): void {
+    if (this.phaseTimer === undefined) return;
+    this.clearT(this.phaseTimer);
+    this.phaseTimer = undefined;
   }
 
   private syncView(view: RatingView): void {
+    this.ratingView = view;
     if (view.phase === 'closed') {
       this.view.hoverIndex = undefined;
       this.applyClose();

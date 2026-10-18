@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { parse as parseToml } from 'smol-toml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 
 import type { MermaidRenderMode } from '#/tui/utils/markdown-options';
@@ -227,8 +227,28 @@ export async function saveTuiConfig(
   config: TuiConfig,
   filePath: string = getTuiConfigPath(),
 ): Promise<void> {
+  let legacyValue = config.disableFeedbackSurvey;
+  if (legacyValue === undefined && existsSync(filePath)) {
+    const source = await readFile(filePath, 'utf-8');
+    try {
+      const value = parseToml(source)['disable_feedback_survey'];
+      if (typeof value === 'boolean') legacyValue = value;
+    } catch {
+      legacyValue = undefined;
+    }
+  }
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, renderTuiConfig(config), 'utf-8');
+  await writeFile(filePath, renderTuiConfig({
+    ...config,
+    disableFeedbackSurvey: legacyValue,
+  }), 'utf-8');
+}
+
+export async function removeLegacySurveySetting(filePath: string = getTuiConfigPath()): Promise<void> {
+  const config = parseToml(await readFile(filePath, 'utf-8'));
+  if (!('disable_feedback_survey' in config)) return;
+  delete config['disable_feedback_survey'];
+  await writeFile(filePath, stringifyToml(config), 'utf-8');
 }
 
 export function normalizeTuiConfig(
@@ -341,7 +361,7 @@ ${tuiModeLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
-auto_session_title = ${String(config.autoSessionTitle !== false)} # false stops the TUI from auto-generating a session title after the first turn
+${config.disableFeedbackSurvey === undefined ? '' : `disable_feedback_survey = ${String(config.disableFeedbackSurvey)}\n`}auto_session_title = ${String(config.autoSessionTitle !== false)} # false stops the TUI from auto-generating a session title after the first turn
 
 [editor]
 command = "${escapeTomlBasicString(config.editorCommand ?? '')}" # Empty uses $VISUAL / $EDITOR

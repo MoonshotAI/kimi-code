@@ -1,7 +1,12 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import { applySurveyPreferenceChoice } from '#/tui/commands/config';
+import { loadTuiConfig, removeLegacySurveySetting, saveTuiConfig } from '#/tui/config';
 import { migrateLegacySurveySetting } from '#/utils/survey-setting';
 
 function makeHost(disableFeedbackSurvey: boolean) {
@@ -103,6 +108,33 @@ describe('legacy survey setting migration', () => {
     expect(migration.warn).toHaveBeenCalledWith(
       '[tui.toml] could not move disable_feedback_survey to config.toml; retrying on next start',
     );
+  });
+
+  it('retries a failed migration after another preference has been saved', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'survey-migration-'));
+    const filePath = join(directory, 'tui.toml');
+    try {
+      writeFileSync(filePath, 'disable_feedback_survey = true\nauto_session_title = false\n');
+      const migration = deps((await loadTuiConfig(filePath)).disableFeedbackSurvey, undefined);
+      migration.setConfig.mockRejectedValueOnce(new Error('read-only'));
+      migration.dropLegacy.mockImplementation(() => removeLegacySurveySetting(filePath));
+      await expect(migrateLegacySurveySetting(migration)).resolves.toBe(true);
+      await saveTuiConfig({
+        ...await loadTuiConfig(filePath), disableFeedbackSurvey: undefined, theme: 'light',
+      }, filePath);
+      expect(await loadTuiConfig(filePath)).toMatchObject({
+        disableFeedbackSurvey: true, autoSessionTitle: false, theme: 'light',
+      });
+      const retry = deps((await loadTuiConfig(filePath)).disableFeedbackSurvey, undefined);
+      retry.dropLegacy.mockImplementation(() => removeLegacySurveySetting(filePath));
+      await expect(migrateLegacySurveySetting(retry)).resolves.toBe(true);
+      expect(retry.setConfig).toHaveBeenCalledWith({ disableFeedbackSurvey: true });
+      const saved = await loadTuiConfig(filePath);
+      expect(saved).toMatchObject({ autoSessionTitle: false, theme: 'light' });
+      expect(saved.disableFeedbackSurvey).toBeUndefined();
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   it('warns when the tui.toml copy cannot be removed', async () => {

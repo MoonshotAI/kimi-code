@@ -13,11 +13,6 @@ import {
   type SurveyGateInput,
 } from '#/sessionRating/gates';
 import {
-  SURVEY_MACHINE_CLOSED,
-  surveyMachineReduce,
-  type SurveyMachineState,
-} from '#/sessionRating/machine';
-import {
   DEFAULT_SURVEY_POPUP_CONFIG,
   type SurveyPopupConfig,
 } from '#/sessionRating/surveyPopupConfig';
@@ -26,9 +21,7 @@ const CONFIG = DEFAULT_SURVEY_POPUP_CONFIG;
 
 function passingSession(overrides: Partial<SessionArmGateInput> = {}): SessionArmGateInput {
   return {
-    phase: 'closed',
     turnInProgress: false,
-    idleForMs: 2000,
     feedbackSurveyDisabled: false,
     telemetryDisabled: false,
     kfcModelId: 'k3',
@@ -46,9 +39,7 @@ function passingLongContext(
   overrides: Partial<LongContextArmGateInput> = {},
 ): LongContextArmGateInput {
   return {
-    phase: 'closed',
     turnInProgress: false,
-    idleForMs: 2000,
     feedbackSurveyDisabled: false,
     telemetryDisabled: false,
     kfcModelId: 'k3',
@@ -80,11 +71,7 @@ describe('evaluateSurveyGate (session arm)', () => {
   });
 
   it.each<[Partial<SessionArmGateInput>, string]>([
-    [{ phase: 'open' }, 'survey-active'],
-    [{ phase: 'pending' }, 'survey-active'],
-    [{ phase: 'thanks' }, 'survey-active'],
     [{ turnInProgress: true }, 'turn-in-progress'],
-    [{ idleForMs: 1999 }, 'idle-too-short'],
     [{ feedbackSurveyDisabled: true }, 'feature-disabled'],
     [{ telemetryDisabled: true }, 'telemetry-disabled'],
     [{ mountedForMs: 599_999 }, 'warmup'],
@@ -95,10 +82,10 @@ describe('evaluateSurveyGate (session arm)', () => {
     expect(evaluateSurveyGate(gate(overrides))).toEqual({ show: false, reason });
   });
 
-  it('applies the chain in order: an open survey reports survey-active, not later reasons', () => {
+  it('applies the chain in order: a running turn reports turn-in-progress, not later reasons', () => {
     expect(
-      evaluateSurveyGate(gate({ phase: 'open', turnInProgress: true, telemetryDisabled: true })),
-    ).toEqual({ show: false, reason: 'survey-active' });
+      evaluateSurveyGate(gate({ turnInProgress: true, telemetryDisabled: true })),
+    ).toEqual({ show: false, reason: 'turn-in-progress' });
   });
 
   it('samples with a half-open test: sample below probability shows, at-or-above is out', () => {
@@ -196,11 +183,7 @@ describe('evaluateLongContextArm', () => {
   it.each<[Partial<LongContextArmGateInput>, string]>([
     [{ mountRollConsumed: true }, 'mount-roll-consumed'],
     [{ mountSurveyShown: true }, 'mount-survey-shown'],
-    [{ phase: 'open' }, 'survey-active'],
-    [{ phase: 'pending' }, 'survey-active'],
-    [{ phase: 'thanks' }, 'survey-active'],
     [{ turnInProgress: true }, 'turn-in-progress'],
-    [{ idleForMs: 1999 }, 'idle-too-short'],
     [{ feedbackSurveyDisabled: true }, 'feature-disabled'],
     [{ telemetryDisabled: true }, 'telemetry-disabled'],
     [{ virtualContextTokens: 199_999 }, 'below-threshold'],
@@ -210,23 +193,23 @@ describe('evaluateLongContextArm', () => {
   });
 
   it('checks the mount cap first: a shown survey reports mount-survey-shown, not later reasons', () => {
-    expect(arm({ mountSurveyShown: true, mountRollConsumed: true, phase: 'open' })).toEqual({
+    expect(arm({ mountSurveyShown: true, mountRollConsumed: true })).toEqual({
       show: false,
       reason: 'mount-survey-shown',
     });
   });
 
   it('checks the mount latch first: a spent roll reports mount-roll-consumed, not later reasons', () => {
-    expect(arm({ mountRollConsumed: true, phase: 'open', telemetryDisabled: true })).toEqual({
+    expect(arm({ mountRollConsumed: true, telemetryDisabled: true })).toEqual({
       show: false,
       reason: 'mount-roll-consumed',
     });
   });
 
-  it('applies the chain in order: an open survey reports survey-active, not later reasons', () => {
-    expect(arm({ phase: 'open', telemetryDisabled: true })).toEqual({
+  it('applies the chain in order: a running turn reports turn-in-progress, not later reasons', () => {
+    expect(arm({ turnInProgress: true, telemetryDisabled: true })).toEqual({
       show: false,
-      reason: 'survey-active',
+      reason: 'turn-in-progress',
     });
   });
 
@@ -431,138 +414,6 @@ describe('evaluateSurveyGate (arbitration)', () => {
       show: false,
       reason: 'sampled-out',
       longContextRollConsumed: true,
-    });
-  });
-});
-
-describe('surveyMachineReduce', () => {
-  const appearance = { survey: 'session' as const, appearanceId: 'a1', appearanceIndex: 1 };
-  const openState: SurveyMachineState = { phase: 'open', appearance, response: undefined };
-
-  it('walks the happy path: closed → open → pending → thanks → closed', () => {
-    const opened = surveyMachineReduce(SURVEY_MACHINE_CLOSED, { type: 'open', appearance });
-    expect(opened.state.phase).toBe('open');
-    expect(opened.effects).toEqual([{ type: 'report', eventType: 'appeared' }]);
-
-    const selected = surveyMachineReduce(opened.state, { type: 'select', response: 'bad' });
-    expect(selected.state).toEqual({ phase: 'pending', appearance, response: 'bad' });
-    expect(selected.effects).toEqual([{ type: 'schedule', timer: 'pending-settle' }]);
-
-    const settled = surveyMachineReduce(selected.state, { type: 'settle' });
-    expect(settled.state.phase).toBe('thanks');
-    expect(settled.effects).toEqual([
-      { type: 'report', eventType: 'responded', response: 'bad' },
-      { type: 'schedule', timer: 'thanks-close' },
-    ]);
-
-    const closed = surveyMachineReduce(settled.state, { type: 'thanks-elapsed' });
-    expect(closed.state).toEqual(SURVEY_MACHINE_CLOSED);
-    expect(closed.effects).toEqual([]);
-  });
-
-  it('undo returns pending to open without reporting, and settle after an undo reports only the final choice', () => {
-    const selected = surveyMachineReduce(openState, { type: 'select', response: 'fine' });
-    const undone = surveyMachineReduce(selected.state, { type: 'undo' });
-    expect(undone.state).toEqual(openState);
-    expect(undone.effects).toEqual([]);
-
-    const reselected = surveyMachineReduce(undone.state, { type: 'select', response: 'good' });
-    const settled = surveyMachineReduce(reselected.state, { type: 'settle' });
-    expect(settled.effects).toEqual([
-      { type: 'report', eventType: 'responded', response: 'good' },
-      { type: 'schedule', timer: 'thanks-close' },
-    ]);
-  });
-
-  it('dismiss reports responded dismissed and closes without thanks', () => {
-    const dismissed = surveyMachineReduce(openState, { type: 'dismiss' });
-    expect(dismissed.state).toEqual(SURVEY_MACHINE_CLOSED);
-    expect(dismissed.effects).toEqual([
-      { type: 'report', eventType: 'responded', response: 'dismissed' },
-    ]);
-  });
-
-  it('abandon reports abandoned and closes', () => {
-    const abandoned = surveyMachineReduce(openState, { type: 'abandon' });
-    expect(abandoned.state).toEqual(SURVEY_MACHINE_CLOSED);
-    expect(abandoned.effects).toEqual([{ type: 'report', eventType: 'abandoned' }]);
-  });
-
-  it.each(['open', 'thanks'] as const)('close-silently from %s reports nothing', (phase) => {
-    const state: SurveyMachineState = { phase, appearance, response: 'good' };
-    const closed = surveyMachineReduce(state, { type: 'close-silently' });
-    expect(closed.state).toEqual(SURVEY_MACHINE_CLOSED);
-    expect(closed.effects).toEqual([]);
-  });
-
-  it('close-silently from pending settles the un-undone choice before closing', () => {
-    const state: SurveyMachineState = { phase: 'pending', appearance, response: 'bad' };
-    const closed = surveyMachineReduce(state, { type: 'close-silently' });
-    expect(closed.state).toEqual(SURVEY_MACHINE_CLOSED);
-    expect(closed.effects).toEqual([
-      { type: 'report', eventType: 'responded', response: 'bad' },
-    ]);
-  });
-
-  it.each([
-    [{ type: 'select', response: 'good' } as const],
-    [{ type: 'dismiss' } as const],
-    [{ type: 'abandon' } as const],
-    [{ type: 'undo' } as const],
-    [{ type: 'settle' } as const],
-    [{ type: 'thanks-elapsed' } as const],
-  ])('ignores %s while closed', (action) => {
-    const result = surveyMachineReduce(SURVEY_MACHINE_CLOSED, action);
-    expect(result.state).toEqual(SURVEY_MACHINE_CLOSED);
-    expect(result.effects).toEqual([]);
-  });
-
-  describe('takeover', () => {
-    const longContextAppearance = {
-      survey: 'long_context' as const,
-      appearanceId: 'a2',
-      appearanceIndex: 2,
-    };
-
-    it('a long-context survey takes over an open session survey silently', () => {
-      const result = surveyMachineReduce(openState, {
-        type: 'open',
-        appearance: longContextAppearance,
-      });
-      expect(result.state).toEqual({
-        phase: 'open',
-        appearance: longContextAppearance,
-        response: undefined,
-      });
-      expect(result.effects).toEqual([{ type: 'report', eventType: 'appeared' }]);
-    });
-
-    it('a session survey never takes over an open long-context survey', () => {
-      const longOpen: SurveyMachineState = {
-        phase: 'open',
-        appearance: longContextAppearance,
-        response: undefined,
-      };
-      const result = surveyMachineReduce(longOpen, { type: 'open', appearance });
-      expect(result.state).toEqual(longOpen);
-      expect(result.effects).toEqual([]);
-    });
-
-    it('ignores a re-open of the same survey while open (no double appearance)', () => {
-      const other = { survey: 'session' as const, appearanceId: 'a9', appearanceIndex: 3 };
-      const result = surveyMachineReduce(openState, { type: 'open', appearance: other });
-      expect(result.state).toEqual(openState);
-      expect(result.effects).toEqual([]);
-    });
-
-    it.each(['pending', 'thanks'] as const)('ignores a takeover while %s', (phase) => {
-      const state: SurveyMachineState = { phase, appearance, response: 'good' };
-      const result = surveyMachineReduce(state, {
-        type: 'open',
-        appearance: longContextAppearance,
-      });
-      expect(result.state).toEqual(state);
-      expect(result.effects).toEqual([]);
     });
   });
 });
