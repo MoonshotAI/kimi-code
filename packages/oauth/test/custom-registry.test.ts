@@ -112,6 +112,106 @@ describe('fetchCustomRegistry', () => {
     });
   });
 
+  it.each([
+    {
+      name: 'input only',
+      modalities: { input: ['text', 'image', 'video'] },
+      capabilities: ['image_in', 'video_in'],
+    },
+    {
+      name: 'output only',
+      modalities: { output: ['text', 'image', 'audio'] },
+      capabilities: ['image_out', 'audio_out'],
+    },
+    { name: 'empty input only', modalities: { input: [] }, capabilities: [] },
+    { name: 'empty output only', modalities: { output: [] }, capabilities: [] },
+  ])('preserves $name modalities through parsing and configuration', async ({ modalities, capabilities }) => {
+    const body = makeKokubResponseBody();
+    const upgrade = { model: 'next', migration_markdown: 'Use {model_to}' };
+    body['registry_chat-completions']!.models['current'] = { id: 'current', modalities, upgrade };
+    body['registry_chat-completions']!.models['next'] = { id: 'next' };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
+    );
+    const provider = result['registry_chat-completions']!;
+
+    expect(provider.models['current']?.modalities).toEqual(modalities);
+    expect(provider.models['current']?.upgrade).toEqual(upgrade);
+
+    const config: ManagedKimiConfigShape = { providers: {} };
+    applyCustomRegistryProvider(config, provider, KOKUB_SOURCE);
+    expect(config.models?.['registry_chat-completions/current']).toMatchObject({ capabilities });
+  });
+
+  it('parses upgrade metadata and null retirement time', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      name: 'GPT 5.5',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use {model_to}',
+        retirement_at: '2030-01-01T00:00:00Z',
+      },
+    };
+    body['registry_chat-completions']!.models['gpt-5.4'] = {
+      id: 'gpt-5.4',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: '',
+        retirement_at: null,
+      },
+    };
+    body['registry_chat-completions']!.models['gpt-5.3'] = {
+      id: 'gpt-5.3',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use GPT-6',
+        retirement_at: '2030-01-01t00:00:00z',
+      },
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    const result = await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
+    );
+
+    expect(result['registry_chat-completions']?.models['gpt-5.5']?.upgrade).toEqual({
+      model: 'gpt-6',
+      migration_markdown: 'Use {model_to}',
+      retirement_at: '2030-01-01T00:00:00Z',
+    });
+    expect(result['registry_chat-completions']?.models['gpt-5.4']?.upgrade).toEqual({
+      model: 'gpt-6',
+      migration_markdown: '',
+      retirement_at: null,
+    });
+    expect(result['registry_chat-completions']?.models['gpt-5.3']?.upgrade?.retirement_at).toBe(
+      '2030-01-01t00:00:00z',
+    );
+  });
+
+  it('rejects malformed upgrade timestamps', async () => {
+    const body = makeKokubResponseBody();
+    body['registry_chat-completions']!.models['gpt-5.5'] = {
+      id: 'gpt-5.5',
+      upgrade: {
+        model: 'gpt-6',
+        migration_markdown: 'Use GPT-6',
+        retirement_at: 'not-a-timestamp',
+      },
+    };
+    const fetchMock = vi.fn(async () => makeJsonResponse(body));
+
+    await expect(
+      fetchCustomRegistry(KOKUB_SOURCE, { fetchImpl: fetchMock as unknown as typeof fetch }),
+    ).rejects.toThrow('retirement_at must be an RFC3339 timestamp or null');
+  });
+
   it('omits the Authorization header when the apiKey is empty', async () => {
     const fetchMock = vi.fn(async () => makeJsonResponse(makeKokubResponseBody()));
 
@@ -493,6 +593,61 @@ describe('applyCustomRegistryProvider', () => {
     const alias = config.models?.['registry_chat-completions/gpt-5.5'];
     expect(alias?.['supportEfforts']).toBeUndefined();
     expect(alias?.['defaultEffort']).toBeUndefined();
+  });
+
+  it('persists upgrade metadata with model ids filled in and clears it when upstream removes it', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const source = {
+      kind: 'apiJson' as const,
+      url: 'https://demo.example/api.json',
+      apiKey: 'x',
+    };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'demo',
+      name: 'Demo',
+      api: 'https://demo.example/v1',
+      type: 'openai',
+      models: {
+        current: {
+          id: 'current',
+          upgrade: {
+            model: 'actual-next',
+            migration_markdown: 'Move from {model_from} to {model_to}',
+            retirement_at: null,
+          },
+        },
+        'replacement-key': { id: 'actual-next', default_effort: 'high' },
+        self: {
+          id: 'self',
+          upgrade: { model: 'self', migration_markdown: 'Ignore self' },
+        },
+        orphan: {
+          id: 'orphan',
+          upgrade: { model: 'missing', migration_markdown: 'Ignore missing' },
+        },
+      },
+    };
+
+    applyCustomRegistryProvider(config, entry, source);
+    expect(config.models?.['demo/current']?.['upgrade']).toEqual({
+      model: 'demo/replacement-key',
+      migrationMarkdown: 'Move from current to actual-next',
+    });
+    expect(config.models?.['demo/self']?.['upgrade']).toBeUndefined();
+    expect(config.models?.['demo/orphan']?.['upgrade']).toBeUndefined();
+
+    applyCustomRegistryProvider(
+      config,
+      {
+        ...entry,
+        models: {
+          current: { id: 'current' },
+          'replacement-key': { id: 'actual-next', default_effort: 'high' },
+        },
+      },
+      source,
+    );
+    expect(config.models?.['demo/current']?.['upgrade']).toBeUndefined();
   });
 
   it('does not preserve apiKeyEnv when the colliding provider is manual (no registry source)', () => {

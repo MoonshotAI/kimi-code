@@ -170,6 +170,7 @@ kimi
 | `KIMI_CODE_REPEAT_BREAKER` | 同一工具调用连续重复多次时，是否注入提醒并最终强制停止该轮。未设置时保持开启 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off`；其他值忽略 |
 | `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK` | 在 `Agent`/`AgentSwarm` 上启用实验性 `fork` 参数：以调用方对话历史快照而非空上下文启动 subagent | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_EXPERIMENTAL_TOOL_SELECT` | 启用实验性按需加载工具：标记 `deferred: true` 的 MCP server 工具不进入顶层工具列表，由模型经 `select_tools` 按需加载；还需模型声明 `dynamically_loaded_tools` 能力，详见 [MCP](../customization/mcp.md#按需加载工具) | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
+| `KIMI_CODE_EXPERIMENTAL_TOWER` | 启用实验性 [Tower 多 Agent 协作](../guides/tower.md) 和 `/tower` 命令，需在启动前设置。持久配置等价于在 `config.toml` 中设置 `[experimental] tower = true`；在运行中的 CLI 里修改该配置后，需要重启 Kimi Code。`KIMI_CODE_EXPERIMENTAL_FLAG=1` 仅在未显式配置 `[experimental] tower` 时启用 Tower；`tower = false` 会优先于总开关，而本变量可覆盖该配置 | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_WATCH` | 是否挂文件系统 watch 以热更新配置和工作区文件，优先级高于 `[watch] enabled`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_SEARCH_WORKER` | 在独立 worker 线程中运行全局搜索索引，优先级高于 `[database] search`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
 | `KIMI_CODE_PERSISTENCE_MINIDB_READMODEL` | 会话索引使用基于 minidb 的读模型，优先级高于 `[database] base`（默认 `true`） | 真值：`1`/`true`/`yes`/`on`；假值：`0`/`false`/`no`/`off` |
@@ -191,6 +192,7 @@ kimi
 | `KIMI_MODEL_TOP_P` | 每次请求的核采样 `top_p`，仅对 `kimi` 供应商生效（全局生效） | 数字，如 `0.95` |
 | `KIMI_MODEL_THINKING_EFFORT` | 在线上强制使用指定的思考强度，绕过模型声明的 `support_efforts`；仅 `kimi` 供应商生效 | 思考强度值，如 `max` |
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；`kimi` 以 `thinking.keep` 发送，`anthropic` 以 `clear_thinking_20251015` 编辑发送；覆盖 `[thinking] keep` | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
+| `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | `openai` / `openai-responses` / `anthropic` 协议的 LLM 请求等待响应头（首字节）的最长时间（毫秒），替代 HTTP 客户端默认的 300 秒响应头超时——长时间非流式 thinking 可调大；未设置保持默认；SDK 自身的总请求超时（默认 10 分钟）仍对单次尝试生效；`google-genai` 不支持（其 SDK 没有 dispatcher 配置项）；SOCKS 代理下不生效（请求仍走代理） | 正整数，不超过 2147483647；非法值会使请求失败 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 

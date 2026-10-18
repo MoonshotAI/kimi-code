@@ -21,7 +21,6 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - `packages/agent-core-v2`: the DI × Scope agent engine (the v2 port behind kap-server). Four `LifecycleScope` tiers — `App` / `Workspace` / `Session` / `Agent` (`app/scopes.ts`) — plus the L3 unit layer (`Service`/`Fiber` units, collection contribution points, the Feature seam in `src/features/`); there is no App-level session lifecycle facade — callers compose `ISessionIndex` → `IWorkspaceLifecycleService.handlerFor` → the handler.
 - `packages/node-sdk`: the public TypeScript SDK and harness.
 - `packages/kosong`: the LLM / provider abstraction layer.
-- `packages/kaos`: the execution environment and file/process abstractions.
 - `packages/oauth`: Kimi OAuth and managed auth utilities.
 - `packages/telemetry`: shared client-side telemetry infrastructure.
 - `packages/transcript`: the isomorphic transcript rendering data layer — L1 agent-granular store, L2 idempotent operations, L3 `off/turn/block/delta` subscription granularity, L4 framework-free view registry, plus turn-cursor pagination. Pure TypeScript (browser-safe, no engine imports); the sole owner of the transcript contract types (`src/contract/`) and the op-batch sequencing contract.
@@ -74,6 +73,11 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 - Project-map entries stay at 1–2 sentences; deep package docs live in the package's own `AGENTS.md`.
 - Keep instruction updates focused and supported by code facts.
 
+## Release Workflow
+
+- `main` accumulates changesets; `release/*` maintains `ci: release packages` PRs. Merging the matching version PR authorizes publication after its merge-commit CI succeeds. Ordinary pushes do not publish.
+- npm publishing and native artifacts retain the existing Changesets flow. CDN upload and routing remain separately approved operations. See `.changeset/README.md` for migration and main synchronization.
+
 ## Workflow Requirements
 
 - Prefer `rg` / `rg --files` when reading code.
@@ -94,6 +98,14 @@ This is a TypeScript monorepo built for agent-assisted development. Keep the roo
 ## Code Review Rules
 
 These rules apply to every pull request review, automated or human. The user populations and contract files they refer to are listed in `.agents/skills/review-pr/surfaces.md`.
+
+### Review scope: the PR's diff, not the repo
+
+- Review only the PR's diff against its base. A problem in code the PR does not touch (pre-existing on base) is reported as a non-blocking note, never as a blocking finding — the sole exception is pre-existing code that the PR's behavior directly triggers or amplifies.
+- Report a class of issues in one pass: when a finding generalizes to several locations in the diff, list all of them at once instead of raising them across successive rounds.
+- No pure style or personal-preference findings. Every finding carries a severity: P0 blocking / P1 should-fix / P2 suggestion.
+- Re-reviews are incremental: review only what changed since the previous review; do not restate findings on unchanged code or re-raise resolved threads. Before treating a resolved thread as settled, verify the current code: suppress a finding only when the problem is actually fixed or the finding no longer holds.
+- Domain-specific rules keep their own canonical homes — changesets (`.agents/skills/gen-changesets/SKILL.md`), comment-free zones (General Coding Rules), PR text (`write-pr` skill); review against those, not ad-hoc taste.
 
 ### Enumerate changed behavior, not just bugs
 

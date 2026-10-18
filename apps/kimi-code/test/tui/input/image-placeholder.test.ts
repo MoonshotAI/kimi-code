@@ -9,13 +9,14 @@ import { join } from 'node:path';
 
 import { describe, it, expect } from 'vitest';
 
-import { parseDaemonFileUrl } from '@moonshot-ai/kimi-code-sdk';
+import { parseDaemonFileUrl, type PromptPart } from '@moonshot-ai/kimi-code-sdk';
 
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
 import {
   extractMediaAttachments,
   makeExtractionResendable,
+  omitExpiredVideoFileRefs,
   pendingMediaIngestions,
   persistOriginalImageSync,
   refreshExpiringImageFileRefs,
@@ -65,7 +66,51 @@ function videoUrlFromParts(parts: unknown[]): string {
   return part.videoUrl.url;
 }
 
+describe('omitExpiredVideoFileRefs', () => {
+  it('omits an expired video only when its skill argument has a cached copy', () => {
+    const store = new ImageAttachmentStore();
+    const expired = store.addVideo('video/mp4', '/tmp/expired.mp4');
+    const live = store.addVideo('video/mp4', '/tmp/live.mp4');
+    store.completeVideo(expired, { fileId: 'file-expired', fileExpiresAt: Date.now() - 1 });
+    store.completeVideo(live, { fileId: 'file-live', fileExpiresAt: Date.now() + 3600_000 });
+    const parts: PromptPart[] = [
+      { type: 'text', text: 'describe these videos' },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-expired' } },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-live' } },
+      { type: 'video_url', videoUrl: { url: 'kimi-file://file-uncached' } },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQ==' } },
+    ];
+    expect(omitExpiredVideoFileRefs(parts, [expired, live])).toEqual([
+      parts[0], parts[2], parts[3], parts[4],
+    ]);
+    expect(omitExpiredVideoFileRefs(parts, [])).toEqual(parts);
+  });
+});
+
 describe('extractMediaAttachments', () => {
+  it('uses captured argument media after a reset without retaining a reused attachment id', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const store = new ImageAttachmentStore();
+      const original = store.addImage(new Uint8Array([1]), 'image/png', 1, 1);
+      const extraction = extractMediaAttachments(original.placeholder, store);
+      store.clear();
+      const current = store.addImage(new Uint8Array([2]), 'image/png', 1, 1, undefined, 'file-current');
+      expect(current.id).toBe(original.id);
+      const later = store.addImage(new Uint8Array([3]), 'image/png', 1, 1);
+      const rewrite = rewriteMediaPlaceholders(
+        `${original.placeholder} ${later.placeholder}`, store, 'plain', extraction.mediaSnapshots,
+      );
+      expect(rewrite.text).toContain(later.placeholder);
+      expect(rewrite.hasMedia).toBe(true);
+      expect(readFileSync(rewrite.stagingPaths[0]!)).toEqual(Buffer.from([1]));
+      expect(rewrite.imageAttachmentIds).toEqual([]);
+      expect(rewrite.videoAttachmentIds).toEqual([]);
+      expect(store.takeFileIds([current.id])).toEqual(['file-current']);
+    } finally {
+      cleanup();
+    }
+  });
   it('returns no parts and hasMedia=false for plain text', () => {
     const store = new ImageAttachmentStore();
     const r = extractMediaAttachments('hello world', store);

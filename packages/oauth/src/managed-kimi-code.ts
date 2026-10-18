@@ -232,8 +232,8 @@ interface SelectedDefaultModel {
 
 function capabilitiesForModel(model: ManagedKimiCodeModelInfo): string[] | undefined {
   const caps = new Set<string>();
-  // supports_thinking_type is the full three-state declaration and wins over
-  // the legacy supports_reasoning boolean; absent (older servers) falls back.
+  // supportsThinkingType is the full three-state declaration and wins over
+  // the supportsReasoning boolean; absent falls back to the boolean.
   switch (model.supportsThinkingType) {
     case 'only':
       caps.add('thinking');
@@ -421,9 +421,11 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   if (!isRecord(item) || typeof item['id'] !== 'string' || item['id'].length === 0) {
     return undefined;
   }
-  const contextLength = Number(item['context_length']);
+  const rawLimit = item['limit'];
+  const limit = isRecord(rawLimit) ? rawLimit : undefined;
+  const contextLength = Number(limit?.['context']);
   if (!Number.isInteger(contextLength) || contextLength <= 0) {
-    throw new Error(`Kimi Code model "${item['id']}" must include a positive context_length.`);
+    throw new Error(`Kimi Code model "${item['id']}" must include a positive limit.context.`);
   }
   const displayName = item['display_name'];
   const normalizedDisplayName =
@@ -431,22 +433,78 @@ function toModelInfo(item: unknown): ManagedKimiCodeModelInfo | undefined {
   const supportsToolUse = Object.hasOwn(item, 'supports_tool_use')
     ? Boolean(item['supports_tool_use'])
     : true;
-  // Effort levels come from the nested `think_efforts` object
-  // ({ support, valid_efforts, default_effort }) returned by /models.
-  const thinkEfforts = parseThinkEfforts(item['think_efforts']);
+  const rawModalities = item['modalities'];
+  const inputModalities = isRecord(rawModalities)
+    ? parseStringArray(rawModalities['input'])
+    : undefined;
+  const reasoning = parseModelReasoning(item['reasoning']);
+  const rawTools = item['tools'];
+  const supportsDynamicTools = isRecord(rawTools) && rawTools['dynamic_load'] === true;
   return {
     id: item['id'],
     contextLength,
-    supportsReasoning: Boolean(item['supports_reasoning']),
-    supportsImageIn: Boolean(item['supports_image_in']),
-    supportsVideoIn: Boolean(item['supports_video_in']),
+    supportsReasoning: reasoning.supportsReasoning,
+    supportsImageIn: inputModalities?.includes('image') ?? false,
+    supportsVideoIn: inputModalities?.includes('video') ?? false,
     supportsToolUse,
-    supportsDynamicTools: item['supports_dynamic_tools'] === true,
-    supportsThinkingType: parseSupportsThinkingType(item['supports_thinking_type']),
-    supportEfforts: thinkEfforts.supportEfforts,
-    defaultEffort: thinkEfforts.defaultEffort,
+    supportsDynamicTools,
+    supportsThinkingType: reasoning.supportsThinkingType,
+    supportEfforts: reasoning.supportEfforts,
+    defaultEffort: reasoning.defaultEffort,
     displayName: normalizedDisplayName,
     protocol: parseModelProtocol(item['protocol']),
+  };
+}
+
+/**
+ * Parse the unified `reasoning` object from `/models`:
+ *   { "type": "only", "effort": { "valid": ["low", "high", "max"], "default": "max" } }
+ * A missing object and `type: "none"` both mean the model cannot think and map
+ * to the internal 'no' state so a stale thinking default gets cleared;
+ * `undefined` is reserved for a present object whose type is unrecognized.
+ * The effort block is absent on models without adjustable effort; a default
+ * that is not listed in `valid` is dropped.
+ */
+function parseModelReasoning(value: unknown): {
+  supportsReasoning: boolean;
+  supportsThinkingType: SupportsThinkingType | undefined;
+  supportEfforts: readonly string[] | undefined;
+  defaultEffort: string | undefined;
+} {
+  if (!isRecord(value)) {
+    return {
+      supportsReasoning: false,
+      supportsThinkingType: 'no',
+      supportEfforts: undefined,
+      defaultEffort: undefined,
+    };
+  }
+  // The unified schema names the non-thinking state 'none'; the internal
+  // three-state keeps the legacy 'no'.
+  const rawType = value['type'];
+  const supportsThinkingType: SupportsThinkingType | undefined =
+    rawType === 'only' || rawType === 'both'
+      ? rawType
+      : rawType === 'none'
+        ? 'no'
+        : undefined;
+  const rawEffort = value['effort'];
+  const effort = isRecord(rawEffort) ? rawEffort : undefined;
+  const supportEfforts = effort !== undefined ? parseStringArray(effort['valid']) : undefined;
+  const rawDefault = effort?.['default'];
+  const parsedDefault =
+    typeof rawDefault === 'string' && rawDefault.length > 0 ? rawDefault : undefined;
+  const defaultEffort =
+    parsedDefault !== undefined &&
+    supportEfforts !== undefined &&
+    !supportEfforts.includes(parsedDefault)
+      ? undefined
+      : parsedDefault;
+  return {
+    supportsReasoning: supportsThinkingType !== undefined && supportsThinkingType !== 'no',
+    supportsThinkingType,
+    supportEfforts,
+    defaultEffort,
   };
 }
 
@@ -831,7 +889,7 @@ export function clearManagedKimiCodeConfig(
 
 function assertPositiveContextLength(model: ManagedKimiCodeModelInfo): void {
   if (!Number.isInteger(model.contextLength) || model.contextLength <= 0) {
-    throw new Error(`Kimi Code model "${model.id}" must include a positive context_length.`);
+    throw new Error(`Kimi Code model "${model.id}" must include a positive limit.context.`);
   }
 }
 

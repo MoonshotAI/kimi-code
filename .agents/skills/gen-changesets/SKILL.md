@@ -5,7 +5,7 @@ description: Use when generating changesets in the kimi-code repository — deci
 
 # Generate Changesets
 
-The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, kosong, kaos, oauth, telemetry, and so on) are internal.
+The only user-facing published package is the CLI: `@moonshot-ai/kimi-code`. All other `@moonshot-ai/*` packages (sdk, kosong, oauth, telemetry, and so on) are internal.
 
 ## 1. Whether to Write
 
@@ -61,4 +61,4 @@ Wording:
 4. **Show the changeset text to whoever requested the work and get their confirmation before committing.**
 5. Do not guess at changes you do not understand: finish the parts that are clear, then list what is unclear and ask whether you may dig into the code.
 
-Before a release, review the accumulated `.changeset/` entries and delete the non-user-facing ones — the release PR regenerates from `.changeset/` on main, so deleting a file removes its changelog entry without touching shipped code.
+Before a release, review the accumulated `.changeset/` entries and delete the non-user-facing ones — the release PR regenerates from `.changeset/` on the selected release branch, so deleting a file removes its changelog entry without touching shipped code.

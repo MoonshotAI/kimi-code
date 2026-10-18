@@ -28,7 +28,7 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
-import { effectiveModelForHost } from './config';
+import { effectiveModelForHost } from '../utils/model-switch';
 import {
   promptApiKey,
   promptBaseUrl,
@@ -307,7 +307,7 @@ export async function setDefaultModel(
     // A first prompt may still be inside lazy creation: wait it out so the
     // pick lands on the new session instead of racing its assembly (same
     // coordination as the /model path).
-    await host.waitForLazyCreation();
+    await host.waitForSessionAssembly();
   }
   await host.harness.setConfig({
     defaultModel: alias,

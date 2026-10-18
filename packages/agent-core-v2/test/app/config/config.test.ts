@@ -2847,6 +2847,76 @@ describe('ConfigService replaceSections', () => {
     disposables.dispose();
   });
 
+  it('round-trips model upgrade metadata using snake_case TOML fields', async () => {
+    const { config, disposables, storage } = await createSectionsConfig();
+    await config.replaceSections({
+      [MODELS_SECTION]: {
+        'acme/m1': {
+          provider: 'acme',
+          model: 'm1',
+          maxContextSize: 1000,
+          upgrade: {
+            model: 'm2',
+            migrationMarkdown: 'Use {model_to}',
+            retirementAt: '2030-01-01T00:00:00Z',
+          },
+        },
+      },
+    });
+
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('migration_markdown = "Use {model_to}"');
+    expect(onDisk).toContain('retirement_at = "2030-01-01T00:00:00Z"');
+    expect(onDisk).not.toContain('migrationMarkdown');
+    expect(onDisk).not.toContain('retirementAt');
+
+    await config.reload();
+    const models = config.get<Record<string, { upgrade?: unknown }>>(MODELS_SECTION);
+    expect(models['acme/m1']?.upgrade).toEqual({
+      model: 'm2',
+      migrationMarkdown: 'Use {model_to}',
+      retirementAt: '2030-01-01T00:00:00Z',
+    });
+    disposables.dispose();
+  });
+
+  it('removes withdrawn upgrade metadata instead of merging it', async () => {
+    const { config, disposables, storage } = await createSectionsConfig();
+    const model = {
+      provider: 'acme',
+      model: 'm1',
+      maxContextSize: 1000,
+    };
+    await config.replaceSections({
+      [MODELS_SECTION]: {
+        'acme/m1': {
+          ...model,
+          upgrade: {
+            model: 'm2',
+            migrationMarkdown: 'Use {model_to}',
+            retirementAt: '2030-01-01T00:00:00Z',
+          },
+        },
+      },
+    });
+    await config.replaceSections({
+      [MODELS_SECTION]: {
+        'acme/m1': {
+          ...model,
+          upgrade: { model: 'm2', migrationMarkdown: 'Use {model_to}' },
+        },
+      },
+    });
+
+    const withoutRetirement = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(withoutRetirement).not.toContain('retirement_at');
+
+    await config.replaceSections({ [MODELS_SECTION]: { 'acme/m1': model } });
+    const withoutUpgrade = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(withoutUpgrade).not.toContain('[models."acme/m1".upgrade]');
+    disposables.dispose();
+  });
+
   it('can replace selected domains exactly without touching other domains', async () => {
     const toml = [
       '[providers.acme]',

@@ -9,6 +9,7 @@ export const MCP_SECTION = 'mcp';
 export const McpSectionSchema = z.object({
   startupTimeoutMs: McpTimeoutMsSchema.optional(),
   toolTimeoutMs: McpTimeoutMsSchema.optional(),
+  defaultDeferred: z.boolean().optional(),
 });
 
 export type McpSection = z.infer<typeof McpSectionSchema>;

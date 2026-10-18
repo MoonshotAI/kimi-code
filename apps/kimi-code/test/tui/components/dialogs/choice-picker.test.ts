@@ -1,3 +1,6 @@
+import { stripVTControlCharacters } from 'node:util';
+
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ChoicePickerComponent, type ChoiceOption } from '#/tui/components/dialogs/choice-picker';
@@ -7,7 +10,6 @@ import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-sel
 import { ThemeSelectorComponent } from '#/tui/components/dialogs/theme-selector';
 import { UpdatePreferenceSelectorComponent } from '#/tui/components/dialogs/update-preference-selector';
 import { currentTheme } from '#/tui/theme';
-import { darkColors } from '#/tui/theme/colors';
 
 const ANSI_SGR = /\[[0-9;]*m/g;
 
@@ -16,6 +18,43 @@ function strip(text: string): string {
 }
 
 describe('ChoicePickerComponent', () => {
+  it('keeps ordinary notices as plain text', () => {
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      notice: '**Plain notice**',
+      options: [{ value: 'keep', label: 'Keep current' }],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    expect(picker.render(100).map(strip)).toContain(' **Plain notice**');
+  });
+
+  it.each([24, 100])('renders Markdown notices and preserves paragraphs at width %s', (width) => {
+    const picker = new ChoicePickerComponent({
+      title: 'Migration',
+      notice: { markdown: '### Upgrade\n\nUse **next** model.\n\n- Faster replies\n- [Details](https://example.com/upgrade)' },
+      options: [{ value: 'keep', label: 'Keep current' }],
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const rendered = picker.render(width);
+    const lines = rendered.map(stripVTControlCharacters);
+    const output = lines.join('\n');
+    expect(output).toContain(' Upgrade');
+    expect(output).toContain(' Use next model.');
+    expect(output).toContain('Faster replies');
+    expect(output).toContain('Details');
+    expect(output).not.toContain('###');
+    expect(output).not.toContain('**');
+    expect(output).not.toContain('[Details]');
+    const paragraph = lines.findIndex((line) => line.includes('Use next model.'));
+    expect(lines[paragraph - 1]?.trim()).toBe('');
+    expect(lines[paragraph + 1]?.trim()).toBe('');
+    expect(rendered.every((line) => visibleWidth(line) <= width)).toBe(true);
+  });
+
   it('uses the model-dialog header vocabulary (capitalized keys, "type to search")', () => {
     const picker = new ChoicePickerComponent({
       title: 'Add provider',
@@ -148,6 +187,21 @@ describe('ChoicePickerComponent', () => {
 
     picker.handleInput(' ');
     expect(onSelect).toHaveBeenCalledWith('a');
+  });
+
+  it.each([' ', '\u001B[32u'])('requires Enter when spaceSelect is disabled (%j)', (space) => {
+    const onSelect = vi.fn();
+    const picker = new ChoicePickerComponent({
+      title: 'Confirm migration',
+      options: [{ value: 'switch', label: 'Switch model' }],
+      spaceSelect: false,
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    picker.handleInput(space);
+    expect(onSelect).not.toHaveBeenCalled();
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith('switch');
   });
 
   it('renders the selected option description in descriptionTone, others in textMuted', () => {
