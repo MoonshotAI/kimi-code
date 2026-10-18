@@ -987,42 +987,31 @@ describe('video blocks', () => {
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
-  it('anthropic: illegal base64 video mime throws in conversion; retryable, so stepRetry re-runs (l2)', async () => {
-    // "Unsupported media type for base64 video" does NOT match the
-    // image-format non-retryable patterns, so stepRetry claims it. Cap the
-    // retries at 2 attempts (1 re-run, ~500ms backoff) for the suite's sake.
-    await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 2 } });
-    try {
-      const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
-      resetMock(queueScript(OK_ANTHROPIC));
+  it('anthropic: illegal base64 video mime is stripped by the media recovery ladder and the turn completes (l2)', async () => {
+    // "Unsupported media type for base64 video" now matches the
+    // unsupported-media recovery family: the conversion throws before any
+    // HTTP, the ladder re-projects with degraded media (a no-op for a single
+    // recent item), then strips the unconvertible video, and the retried
+    // request succeeds. Previously the step failed terminally and the video
+    // kept poisoning later turns from the history.
+    const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
+    resetMock(queueScript(OK_ANTHROPIC));
 
-      await promptAndWait(ctx, [
-        { type: 'text', text: 'watch this' },
-        { type: 'video_url', videoUrl: { url: VIDEO_BAD_MIME_URL } },
-      ]);
+    await promptAndWait(ctx, [
+      { type: 'text', text: 'watch this' },
+      { type: 'video_url', videoUrl: { url: VIDEO_BAD_MIME_URL } },
+    ]);
 
-      // The conversion throws before any HTTP on every attempt — zero requests
-      // even though stepRetry re-ran the step once (retry is invisible on the
-      // klient event surface; only the final failure is).
-      expect(requests).toHaveLength(0);
-      const turnEnded = ctx.payloads('turn.ended');
-      expect(turnEnded).toHaveLength(1);
-      expect(turnEnded[0]?.['reason']).toBe('failed');
-      const wireError = turnEnded[0]?.['error'] as Record<string, unknown> | undefined;
-      expect(wireError?.['code']).toBe('provider.api_error');
-      expect(wireError?.['name']).toBe('ChatProviderError');
-      expect(String(wireError?.['message'])).toContain('Unsupported media type for base64 video');
-
-      // The same v2-native payload is recorded on the klient error event, in
-      // order: turn.started → turn.ended → error → prompt.completed.
-      const errorEvents = ctx.payloads('error');
-      expect(errorEvents).toHaveLength(1);
-      expect(errorEvents[0]?.['code']).toBe('provider.api_error');
-      expect(ctx.eventNames()).toEqual(['turn.started', 'turn.ended', 'error', 'prompt.completed']);
-      expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('failed');
-    } finally {
-      await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 10 } });
-    }
+    // Exactly one request goes out (the two conversion-throwing attempts make
+    // no HTTP), and it carries the strip placeholder instead of the video.
+    expect(requests).toHaveLength(1);
+    const body = requests[0]?.json as { messages: Record<string, unknown>[] };
+    expect(JSON.stringify(body)).toContain(
+      '[video omitted for provider compatibility; re-read the file to view it]',
+    );
+    expect(JSON.stringify(body)).not.toContain('"type":"video"');
+    expect(ctx.payloads('error')).toHaveLength(0);
+    expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 });
 
