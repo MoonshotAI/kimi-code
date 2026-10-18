@@ -594,6 +594,23 @@ describe('FileSessionIndex (read model)', () => {
     expect(page.items[0]).toMatchObject({ cwd: WORK_DIR });
   });
 
+  it('does not scan outside the storage root when workspaceIds contains path traversal', async () => {
+    const outsideMetaDir = join(homeDir, 'outside', 'evil', 'session-meta');
+    await fsp.mkdir(outsideMetaDir, { recursive: true });
+    await fsp.writeFile(
+      join(outsideMetaDir, 'state.json'),
+      JSON.stringify({ workDir: '/tmp', createdAt: 1, updatedAt: 2 }),
+    );
+
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+
+    const page = await store.listRecent({ workspaceIds: ['../../outside'] });
+    expect(page.items).toEqual([]);
+    expect(await store.count({ workspaceIds: ['../../outside'] })).toBe(0);
+  });
+
   it('paginates exactly through same-millisecond ties', async () => {
     const specs: [string, number][] = [
       ['a', 100],
