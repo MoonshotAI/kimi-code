@@ -394,6 +394,9 @@ const OMITTED_MEDIA_PLACEHOLDER = {
   audio_url: '(audio omitted: not supported by this provider)',
 } as const;
 
+// Emitted when a tool result lowers to no blocks at all; see toolResultToBlock.
+const EMPTY_TOOL_RESULT_PLACEHOLDER = 'Tool output is empty.';
+
 const SUPPORTED_B64_MEDIA_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 const SUPPORTED_B64_VIDEO_TYPES = new Set([
@@ -486,6 +489,13 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
         blocks.push({ type: 'text', text: placeholder });
       }
     }
+  }
+  // Anthropic and Anthropic-compatible gateways reject a `tool_result` whose
+  // `content` is empty (some drop the key entirely and 400 with
+  // "`tool_result.content`: Field required", bricking the whole session once
+  // the empty block is persisted into history). Guarantee at least one block.
+  if (blocks.length === 0) {
+    blocks.push({ type: 'text', text: EMPTY_TOOL_RESULT_PLACEHOLDER });
   }
   return {
     type: 'tool_result',
