@@ -781,7 +781,7 @@ describe('FileSessionIndex (read model)', () => {
 
   it('resolves a cursor even when the cached row has a malformed cwd', async () => {
     await seedSession('a', { createdAt: 1, updatedAt: 2 });
-    await seedSession('b', { createdAt: 2, updatedAt: 4 });
+    await seedSession('b', { createdAt: 2, updatedAt: 100 });
     const store = build();
     await store.prepare();
     await queryStore.put(sessionCollection(1), 'b', {
@@ -800,6 +800,30 @@ describe('FileSessionIndex (read model)', () => {
       before: 'b',
     });
     expect(rest.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('rejects path traversal in cursor id and session id queries', async () => {
+    const outsideMetaDir = join(homeDir, 'outside', 'evil', 'session-meta');
+    await fsp.mkdir(outsideMetaDir, { recursive: true });
+    await fsp.writeFile(
+      join(outsideMetaDir, 'state.json'),
+      JSON.stringify({ workDir: '/tmp', createdAt: 1, updatedAt: 2 }),
+    );
+
+    const store = build();
+    await store.prepare();
+
+    expect(await store.get('../../outside/evil')).toBeUndefined();
+    const pageBefore = await store.listRecent({
+      workspaceIds: [workspaceId],
+      before: '../../outside/evil',
+    });
+    expect(pageBefore.items).toEqual([]);
+    const pageAfter = await store.listRecent({
+      workspaceIds: [workspaceId],
+      after: '../../outside/evil',
+    });
+    expect(pageAfter.items).toEqual([]);
   });
 
   it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {
