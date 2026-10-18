@@ -28,10 +28,40 @@ import {
   type SessionRatingMount,
 } from '#/sessionRating/engine';
 import type { SurveyEventName } from '#/sessionRating/eventProperties';
+import { ratingCooldownFile, type RatingCooldownStore } from '#/sessionRating/cooldownStore';
+import {
+  DEFAULT_SURVEY_POPUP_PAYLOAD,
+  SurveyPopupConfigFeed,
+  type SurveyPopupPayload,
+} from '#/sessionRating/surveyPopupConfig';
 
 export const SESSION_RATING_PREVIEW_ENV = 'KIMI_CODE_SESSION_RATING_PREVIEW';
 
 const ENABLED_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
+
+const PREVIEW_SURVEY_POPUP_PAYLOAD: SurveyPopupPayload = {
+  ...DEFAULT_SURVEY_POPUP_PAYLOAD,
+  probability: 1,
+  min_time_before_feedback_ms: 0,
+  min_user_turns_before_feedback: 0,
+  min_time_between_feedback_ms: 0,
+  min_user_turns_between_feedback: 0,
+  min_time_between_global_feedback_ms: 0,
+};
+
+function staticConfigFeed(payload: SurveyPopupPayload): SurveyPopupConfigFeed {
+  return new SurveyPopupConfigFeed({ peek: () => payload, isFresh: () => true, region: () => '' });
+}
+
+function memoryCooldownStore(): RatingCooldownStore {
+  let lastShownTime: number | undefined;
+  return {
+    read: async () => lastShownTime,
+    write: async (value) => {
+      lastShownTime = value;
+    },
+  };
+}
 
 export interface SessionRatingHostOptions {
   readonly log?: (message: string, properties: Readonly<Record<string, unknown>>) => void;
@@ -46,13 +76,20 @@ export class SessionRatingHost implements IDisposable {
   private readonly sessions = new Map<string, MountedSession>();
   private readonly subscriptions: IDisposable[] = [];
   private readonly preview: boolean;
+  private readonly config: SurveyPopupConfigFeed;
+  private readonly cooldown: RatingCooldownStore;
 
   constructor(
     core: Scope,
     private readonly options: SessionRatingHostOptions = {},
   ) {
-    const previewEnv = core.accessor.get(IBootstrapService).getEnv(SESSION_RATING_PREVIEW_ENV);
+    const bootstrap = core.accessor.get(IBootstrapService);
+    const previewEnv = bootstrap.getEnv(SESSION_RATING_PREVIEW_ENV);
     this.preview = previewEnv !== undefined && ENABLED_ENV_VALUES.has(previewEnv.trim().toLowerCase());
+    this.config = staticConfigFeed(
+      this.preview ? PREVIEW_SURVEY_POPUP_PAYLOAD : DEFAULT_SURVEY_POPUP_PAYLOAD,
+    );
+    this.cooldown = this.preview ? memoryCooldownStore() : ratingCooldownFile(bootstrap.homeDir);
     const manager = core.accessor.get(ISessionManager);
     const created = manager.onDidCreateSession?.((event) => {
       this.mountSession(event.sessionId, event.handle);
@@ -92,16 +129,14 @@ export class SessionRatingHost implements IDisposable {
     const agents = handle.accessor.get(IAgentLifecycleService);
     let mainAgent: IAgentScopeHandle | undefined;
     let mainAgentEvents: IDisposable | undefined;
-    const mount = mountSessionRating(
-      {},
-      {
-        environment: () => readEnvironment(mainAgent),
-        track: (event, properties) => {
-          this.track(telemetry, event, properties);
-        },
-        preview: this.preview,
+    const mount = mountSessionRating({
+      environment: () => readEnvironment(sessionId, mainAgent),
+      config: this.config,
+      cooldown: this.cooldown,
+      track: (event, properties) => {
+        this.track(telemetry, event, properties);
       },
-    );
+    });
     const attach = (agent: IAgentScopeHandle): void => {
       mainAgentEvents?.dispose();
       mainAgent = agent;
@@ -159,9 +194,20 @@ export class SessionRatingHost implements IDisposable {
   }
 }
 
-function readEnvironment(agent: IAgentScopeHandle | undefined): RatingEnvironment {
+function readEnvironment(
+  sessionId: string,
+  agent: IAgentScopeHandle | undefined,
+): RatingEnvironment {
+  const base = {
+    sessionId,
+    model: { modelId: undefined, baseUrl: undefined },
+    busy: false,
+    telemetryDisabled: false,
+    ratingDisabled: false,
+  };
   if (agent === undefined) {
     return {
+      ...base,
       currentModel: '',
       cumulativeTokens: 0,
       contextTokens: 0,
@@ -173,6 +219,7 @@ function readEnvironment(agent: IAgentScopeHandle | undefined): RatingEnvironmen
   const profile = agent.accessor.get(IAgentProfileService);
   const total = agent.accessor.get(ISessionUsageService).status(context).total;
   return {
+    ...base,
     currentModel: profile.getModel(),
     cumulativeTokens:
       total === undefined

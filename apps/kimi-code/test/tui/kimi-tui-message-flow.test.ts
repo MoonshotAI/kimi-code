@@ -61,7 +61,6 @@ import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
-import { readSurveyLastShownTime } from '#/utils/survey-state-store';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
 import { uploadArchive } from '../../src/feedback/upload';
@@ -11299,7 +11298,6 @@ describe('KimiTUI session rating survey', () => {
           emitTurn(driver, 1);
           await driver.reloadCurrentSessionView(session as unknown as Session, 'Reloaded session.');
         }
-        await readSurveyLastShownTime();
         vi.useFakeTimers();
         harness.trackWithContext.mockClear();
         emitTurn(driver, 41, () => {
@@ -11340,7 +11338,6 @@ describe('KimiTUI session rating survey', () => {
         } else {
           await driver.createNewSession();
         }
-        await readSurveyLastShownTime();
         vi.useFakeTimers();
         harness.trackWithContext.mockClear();
         emitTurn(driver, 1, () => {
@@ -11371,15 +11368,15 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver, harness } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       harness.track.mockClear();
 
       for (let turn = 1; turn <= 4; turn++) emitTurn(driver, turn);
       vi.advanceTimersByTime(600_000);
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       emitTurn(driver, 5, () => {
@@ -11408,7 +11405,7 @@ describe('KimiTUI session rating survey', () => {
           () => {},
         );
       });
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       const docked = stripSgr(driver.state.surveyContainer.render(120).join('\n'));
       expect(docked).toContain('How is Kimi doing this session? (optional)');
       expect(docked).toContain('1: Bad  2: Fine  3: Good  0: Dismiss');
@@ -11513,8 +11510,8 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver, harness } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       harness.track.mockClear();
@@ -11538,7 +11535,7 @@ describe('KimiTUI session rating survey', () => {
           () => {},
         );
       });
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
 
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
         'How is Kimi doing this session? (optional)',
@@ -11583,8 +11580,8 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       const emit = (event: Event) => {
@@ -11604,11 +11601,11 @@ describe('KimiTUI session rating survey', () => {
         emit({ type: 'turn.started', agentId: 'main', turnId: turn, origin: cronOrigin } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       for (let turn = 6; turn <= 10; turn++) emitTurn(driver, turn);
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).not.toHaveLength(0);
 
       vi.useRealTimers();
@@ -11630,8 +11627,8 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       const emit = (event: Event) => {
@@ -11653,7 +11650,7 @@ describe('KimiTUI session rating survey', () => {
         } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       for (let turn = 6; turn <= 8; turn++) {
@@ -11685,7 +11682,7 @@ describe('KimiTUI session rating survey', () => {
         } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).not.toHaveLength(0);
 
       vi.useRealTimers();

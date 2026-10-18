@@ -94,6 +94,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../../packages/oauth
+      '@moonshot-ai/kimi-code-product':
+        specifier: workspace:^
+        version: link:../../packages/product
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../../packages/node-sdk
@@ -830,6 +833,12 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
 
   packages/remote-control:
     dependencies:

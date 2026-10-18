@@ -1,3 +1,9 @@
+import { z } from 'zod';
+
+import type { ClientConfigClient, ClientConfigFetchOptions } from '#/clientConfigs/clientConfigs';
+
+const CONFIG_NAME = 'survey_popup';
+
 export interface SurveyPopupConfig {
   probability: number;
   on_for_models: string[];
@@ -23,3 +29,178 @@ export const DEFAULT_SURVEY_POPUP_CONFIG: SurveyPopupConfig = {
   long_context_probability: 0.2,
   long_context_trigger_mode: 'virtual_context',
 };
+
+export type SurveyPopupOverride = Partial<Omit<SurveyPopupConfig, 'on_for_models'>>;
+
+export interface SurveyPopupPayload extends SurveyPopupConfig {
+  model_overrides: Record<string, SurveyPopupOverride>;
+}
+
+export const DEFAULT_SURVEY_POPUP_PAYLOAD: SurveyPopupPayload = {
+  ...DEFAULT_SURVEY_POPUP_CONFIG,
+  model_overrides: {},
+};
+
+const FIELD_SCHEMAS = {
+  probability: z.number().min(0).max(1),
+  on_for_models: z.array(z.string()),
+  min_time_before_feedback_ms: z.number().min(0),
+  min_user_turns_before_feedback: z.number().int().min(0),
+  min_time_between_feedback_ms: z.number().min(0),
+  min_user_turns_between_feedback: z.number().int().min(0),
+  min_time_between_global_feedback_ms: z.number().min(0),
+  long_context_survey_threshold: z.number(),
+  long_context_probability: z.number().min(0).max(1),
+  long_context_trigger_mode: z.enum(['cumulative', 'virtual_context']),
+} satisfies Record<keyof SurveyPopupConfig, z.ZodType>;
+
+const surveyPopupOverrideSchema = z.object(FIELD_SCHEMAS).omit({ on_for_models: true }).partial();
+
+function parseModelOverrides(raw: unknown): Record<string, SurveyPopupOverride> {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const overrides: Record<string, SurveyPopupOverride> = {};
+  for (const [model, entry] of Object.entries(raw)) {
+    const parsed = surveyPopupOverrideSchema.safeParse(entry);
+    if (parsed.success) overrides[model] = parsed.data;
+  }
+  return overrides;
+}
+
+const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopupPayload> => {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const record = raw as Record<string, unknown>;
+  const partial: Record<string, unknown> = {};
+  for (const [key, schema] of Object.entries(FIELD_SCHEMAS)) {
+    const value = record[key];
+    if (value === undefined) continue;
+    const parsed = schema.safeParse(value);
+    if (parsed.success) partial[key] = parsed.data;
+  }
+  if (record['model_overrides'] !== undefined) {
+    partial['model_overrides'] = parseModelOverrides(record['model_overrides']);
+  }
+  return partial as Partial<SurveyPopupPayload>;
+});
+
+function withDefaults(partial: Partial<SurveyPopupPayload> | undefined): SurveyPopupPayload {
+  return { ...DEFAULT_SURVEY_POPUP_PAYLOAD, ...partial };
+}
+
+export async function getSurveyPopupConfig(
+  client: SurveyPopupConfigClient,
+  options: ClientConfigFetchOptions = {},
+): Promise<SurveyPopupPayload> {
+  return withDefaults(await client.get(CONFIG_NAME, surveyPopupConfigSchema, options));
+}
+
+export function peekSurveyPopupConfig(
+  client: SurveyPopupConfigClient,
+  now?: number,
+): SurveyPopupPayload {
+  return withDefaults(client.peek(CONFIG_NAME, surveyPopupConfigSchema, now));
+}
+
+export function isSurveyPopupConfigFresh(client: SurveyPopupConfigClient, now?: number): boolean {
+  return client.peek(CONFIG_NAME, surveyPopupConfigSchema, now) !== undefined;
+}
+
+export function resetSurveyPopupConfigCache(client: SurveyPopupConfigClient): void {
+  client.reset(CONFIG_NAME);
+}
+
+export function resolveSurveyPopupConfig(
+  payload: SurveyPopupPayload,
+  kfcModelId: string | undefined,
+): SurveyPopupConfig {
+  const { model_overrides: modelOverrides, ...base } = payload;
+  const override = kfcModelId === undefined ? undefined : modelOverrides[kfcModelId];
+  return override === undefined ? base : { ...base, ...override };
+}
+
+export const SURVEY_POPUP_CONFIG_REFRESH_INTERVAL_MS = 3_600_000;
+
+export interface SurveyPopupConfigFeedDeps {
+  readonly peek: () => SurveyPopupPayload;
+  readonly isFresh: () => boolean;
+  readonly region: () => string;
+  readonly refresh?: () => unknown;
+  readonly now?: () => number;
+}
+
+export class SurveyPopupConfigFeed {
+  private ready = false;
+  private refreshedAt = 0;
+  private coldRefreshAttemptedAt = 0;
+  private refreshedRegion: string | undefined;
+
+  constructor(private readonly deps: SurveyPopupConfigFeedDeps) {
+    this.refresh();
+    this.coldRefreshAttemptedAt = this.now();
+  }
+
+  payload(): SurveyPopupPayload {
+    return this.deps.peek();
+  }
+
+  readyForEvaluation(): boolean {
+    if (!this.ready) return false;
+    const now = this.now();
+    if (
+      !this.deps.isFresh() &&
+      now - this.coldRefreshAttemptedAt >= SURVEY_POPUP_CONFIG_REFRESH_INTERVAL_MS
+    ) {
+      this.coldRefreshAttemptedAt = now;
+      return !this.refresh();
+    }
+    if (
+      this.deps.region() !== this.refreshedRegion ||
+      now - this.refreshedAt >= SURVEY_POPUP_CONFIG_REFRESH_INTERVAL_MS
+    ) {
+      return !this.refresh();
+    }
+    return true;
+  }
+
+  private refresh(): boolean {
+    this.refreshedAt = this.now();
+    this.refreshedRegion = this.deps.region();
+    const refresh = this.deps.refresh;
+    if (refresh === undefined) {
+      this.ready = true;
+      return false;
+    }
+    this.ready = false;
+    void new Promise((resolve) => {
+      resolve(refresh());
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        this.ready = true;
+      });
+    return true;
+  }
+
+  private now(): number {
+    return (this.deps.now ?? (() => performance.now()))();
+  }
+}
+
+export type SurveyPopupConfigClient = Pick<ClientConfigClient, 'get' | 'peek' | 'region' | 'reset'>;
+
+export function cloudSurveyPopupConfigFeed(
+  client: SurveyPopupConfigClient,
+  accessToken: (() => Promise<string | undefined>) | undefined,
+): SurveyPopupConfigFeed {
+  return new SurveyPopupConfigFeed({
+    peek: () => peekSurveyPopupConfig(client),
+    isFresh: () => isSurveyPopupConfigFresh(client),
+    region: () => client.region(),
+    refresh:
+      accessToken === undefined
+        ? undefined
+        : async () => {
+            const token = await accessToken();
+            await getSurveyPopupConfig(client, { accessToken: token });
+          },
+  });
+}
