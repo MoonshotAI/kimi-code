@@ -167,6 +167,44 @@ describe('convertOpenAIError', () => {
     expect(convertOpenAIError(wrongStatus)).toMatchObject({ kind: 'status', statusCode: 422 });
   });
 
+  it('maps unsupported-media rejections to image_format', () => {
+    const unsupportedMedia = [
+      'messages.56.content.0.tool_result.content: Field required',
+      'Unsupported media type for base64 video: video/x-ms-wmv',
+      'Invalid data URL for video: data:video/avi;base64,AAAA',
+      'video not supported by this model',
+    ];
+    for (const message of unsupportedMedia) {
+      const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
+      expect(convertOpenAIError(raw)).toMatchObject({ kind: 'image_format', statusCode: 400 });
+    }
+    const unprocessable = new RawOpenAISDKAPIError(
+      422,
+      { message: 'messages.56.content.0.tool_result.content: Field required' },
+      undefined,
+      new Headers(),
+    );
+    expect(convertOpenAIError(unprocessable)).toMatchObject({
+      kind: 'image_format',
+      statusCode: 422,
+    });
+    const otherFields = [
+      'messages.1.content.0.tool_use.input: Field required',
+      'messages.0.content.0.text: Field required',
+    ];
+    for (const message of otherFields) {
+      const raw = new RawOpenAISDKAPIError(400, { message }, undefined, new Headers());
+      expect(convertOpenAIError(raw)).toMatchObject({ kind: 'status', statusCode: 400 });
+    }
+    const wrongStatus = new RawOpenAISDKAPIError(
+      500,
+      { message: 'messages.56.content.0.tool_result.content: Field required' },
+      undefined,
+      new Headers(),
+    );
+    expect(convertOpenAIError(wrongStatus)).toMatchObject({ kind: 'status', statusCode: 500 });
+  });
+
   it('classifies a bare APIError by message', () => {
     const raw = new RawOpenAISDKAPIError(
       undefined,

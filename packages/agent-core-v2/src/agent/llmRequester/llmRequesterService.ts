@@ -24,6 +24,7 @@ import {
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  isUnsupportedMediaError,
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#/llm-adapter/contract/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
@@ -580,21 +581,29 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     let projection: LlmRequestProjectionFallbackEvent['projection'];
     let nextPolicy: ProjectionPolicy;
     if (
-      raw instanceof APIRequestTooLargeError &&
+      (raw instanceof APIRequestTooLargeError || isUnsupportedMediaError(raw)) &&
       (media === undefined || media === 'degraded')
     ) {
       signal?.throwIfAborted();
+      const mediaRejected = !(raw instanceof APIRequestTooLargeError);
       if (media === undefined) {
-        this.log.warn('provider rejected request as too large; resending with degraded media', {
-          model: request.model.name,
-          ...request.logFields,
-        });
+        this.log.warn(
+          mediaRejected
+            ? 'provider rejected the media in the request; resending with degraded media'
+            : 'provider rejected request as too large; resending with degraded media',
+          {
+            model: request.model.name,
+            ...request.logFields,
+          },
+        );
         this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
         projection = 'media-degraded';
         nextPolicy = { ...policy, media: 'degraded' };
       } else {
         this.log.warn(
-          'provider rejected degraded-media request as too large; resending with rejected media stripped',
+          mediaRejected
+            ? 'provider still rejected the media after degrading; resending with rejected media stripped'
+            : 'provider rejected degraded-media request as too large; resending with rejected media stripped',
           {
             model: request.model.name,
             ...request.logFields,
