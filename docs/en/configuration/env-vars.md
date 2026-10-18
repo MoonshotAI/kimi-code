@@ -54,7 +54,7 @@ The format mirrors `ANTHROPIC_CUSTOM_HEADERS`: newline-separated `Name: Value` l
 
 ### `KIMI_CODE_OPENAI_PROMPT_CACHE_KEY`
 
-Controls whether `prompt_cache_key` is attached to requests sent to non-official OpenAI endpoints. By default, prompt cache keys are only sent to official OpenAI endpoints (`api.openai.com`) to prevent incompatibilities with third-party proxies and gateways that reject unknown fields.
+Controls whether `prompt_cache_key` is attached to requests sent to non-official OpenAI endpoints when no provider trait explicitly encodes it. For `openai` and `openai_responses` providers without dedicated trait overrides, prompt cache keys default to being sent only to official OpenAI endpoints (`api.openai.com`) to prevent incompatibilities with third-party proxies and gateways that reject unknown fields (dedicated `kimi` providers always attach `prompt_cache_key` via their provider trait regardless of endpoint).
 
 Set to `1` or `true` (case-insensitive) to force-enable cache key propagation for custom OpenAI-compatible gateways:
 
