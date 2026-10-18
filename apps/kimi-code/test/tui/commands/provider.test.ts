@@ -35,7 +35,7 @@ function makeHost(
   };
   const host = {
     state: { appState },
-    waitForLazyCreation: vi.fn(async () => {}),
+    waitForSessionAssembly: vi.fn(async () => {}),
     harness: {
       setConfig: vi.fn(async () => ({})),
     },
@@ -51,7 +51,7 @@ function makeHost(
       refreshConfigAfterLogin: ReturnType<typeof vi.fn>;
       activateModelAfterLogin: ReturnType<typeof vi.fn>;
     };
-    waitForLazyCreation: ReturnType<typeof vi.fn>;
+    waitForSessionAssembly: ReturnType<typeof vi.fn>;
     track: ReturnType<typeof vi.fn>;
   };
   return { host };
@@ -147,9 +147,9 @@ describe('setDefaultModel', () => {
 
     await setDefaultModel(host, 'opus', 'high');
 
-    expect(host.waitForLazyCreation).toHaveBeenCalled();
+    expect(host.waitForSessionAssembly).toHaveBeenCalled();
     expect(
-      host.waitForLazyCreation.mock.invocationCallOrder[0]!,
+      host.waitForSessionAssembly.mock.invocationCallOrder[0]!,
     ).toBeLessThan(host.harness.setConfig.mock.invocationCallOrder[0]!);
   });
 });

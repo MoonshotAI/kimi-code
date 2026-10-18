@@ -127,12 +127,14 @@ type MockReply =
 type MockHandler = (request: CapturedRequest, callIndex: number) => MockReply;
 
 const requests: CapturedRequest[] = [];
+const abortedRequests: string[] = [];
 let handler: MockHandler = () => {
   throw new Error('mock handler not installed for this case');
 };
 
 function resetMock(next: MockHandler): void {
   requests.length = 0;
+  abortedRequests.length = 0;
   handler = next;
 }
 
@@ -333,7 +335,12 @@ beforeAll(async () => {
         res.end(JSON.stringify({ error: { message: `mock handler: ${String(error)}` } }));
         return;
       }
-      if (reply.kind === 'hang') return; // never answered; the client aborts it
+      if (reply.kind === 'hang') {
+        res.on('close', () => {
+          if (!res.writableEnded) abortedRequests.push(req.url ?? '');
+        });
+        return;
+      }
       if (reply.kind === 'json') {
         res.writeHead(reply.status, { 'content-type': 'application/json' });
         res.end(JSON.stringify(reply.body));
@@ -934,6 +941,28 @@ describe('video blocks', () => {
     expect(JSON.stringify(toolMessage)).toContain('ms://file-mock-video');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
+
+  it('kimi (composed): cancelling ReadMediaFile aborts the in-flight video upload', async () => {
+    const ctx = await newCase(M_KIMI, 'kimi-video-upload-cancel');
+    await writeFile(join(ctx.workDir, 'clip.mp4'), Buffer.from(MP4_FTYP_HEX, 'hex'));
+
+    resetMock((req) => {
+      if (req.url === '/v1/files') return { kind: 'hang' };
+      return {
+        kind: 'sse',
+        lines: openAiToolCallSse('call_video_1', 'ReadMediaFile', '{"path":"clip.mp4"}'),
+      };
+    });
+    const promptAborted = onceEvent(ctx.agent.events, 'prompt.aborted', 10_000);
+    await ctx.agent.prompt({ input: [{ type: 'text', text: 'watch clip.mp4' }] });
+    await waitFor(() => requests.some((request) => request.url === '/v1/files'), 10_000);
+
+    await ctx.agent.cancel();
+    await promptAborted;
+
+    await waitFor(() => abortedRequests.includes('/v1/files'), 2_000);
+    expect(ctx.payloads('turn.ended')[0]?.['reason']).toBe('cancelled');
+  }, 15_000);
 
   it('openai: no uploadVideo capability — the tool result is an error text, no files call', async () => {
     const ctx = await newCase(M_OPENAI_VISION, 'openai-video-upload');

@@ -4,6 +4,11 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import {
+  IAgentLLMRequesterService,
+  type AgentLLMTurnRequestSnapshot,
+} from '#/agent/llmRequester/llmRequester';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -12,6 +17,7 @@ import {
   type UsageRecordedContext,
   type UsageStatus,
 } from '#/agent/usage/usage';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { SessionUsageService } from '#/session/usage/sessionUsageService';
 import type { Event2 } from '#/app/event/event2';
@@ -315,7 +321,22 @@ describe('SessionUsageService (wire-backed)', () => {
 });
 
 describe('AgentCacheProbeService', () => {
-  function stubProbeDeps(forkedFrom: string | undefined): ReturnType<typeof vi.fn> {
+  interface ProbeRequests {
+    parent?: AgentLLMTurnRequestSnapshot;
+    parentRevision?: number;
+    own?: AgentLLMTurnRequestSnapshot;
+  }
+
+  function requesterReturning(
+    lastTurnRequest: () => AgentLLMTurnRequestSnapshot | undefined,
+  ): IAgentLLMRequesterService {
+    return { _serviceBrand: undefined, lastTurnRequest } as unknown as IAgentLLMRequesterService;
+  }
+
+  function stubProbeDeps(
+    forkedFrom: string | undefined,
+    requests: ProbeRequests = {},
+  ): ReturnType<typeof vi.fn> {
     const track2 = vi.fn();
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -332,6 +353,25 @@ describe('AgentCacheProbeService', () => {
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'test-agent', agentScope: '', forkedFrom }),
     );
+    ix.stub(IAgentLLMRequesterService, requesterReturning(() => requests.own));
+    const parentRequester = requesterReturning(() => requests.parent);
+    const parentRevisionAtFork = requests.parent?.contextRevision ?? 0;
+    const parentContextMemory = {
+      _serviceBrand: undefined,
+      prefixRevision: () => requests.parentRevision ?? parentRevisionAtFork,
+    } as unknown as IAgentContextMemoryService;
+    ix.stub(IAgentLifecycleService, {
+      _serviceBrand: undefined,
+      handleOf: (agentId: string) =>
+        agentId === forkedFrom
+          ? {
+              accessor: {
+                get: (id: unknown) =>
+                  id === IAgentContextMemoryService ? parentContextMemory : parentRequester,
+              },
+            }
+          : undefined,
+    } as unknown as IAgentLifecycleService);
     return track2;
   }
 
@@ -342,6 +382,161 @@ describe('AgentCacheProbeService', () => {
     await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
 
     expect(track2).toHaveBeenCalledTimes(1);
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: 8,
+      input_cache_read: 3,
+      input_cache_creation: 4,
+      output_tokens: 2,
+    });
+  });
+
+  it('compares the first request with the parent turn request captured at fork time', async () => {
+    const requests: ProbeRequests = {
+      parent: {
+        modelAlias: 'model-a',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-a',
+        inputTokens: 1_200,
+        startedAt: 1_000,
+        finishedAt: 4_000,
+      },
+      own: {
+        modelAlias: 'model-a',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-b',
+        inputTokens: 8,
+        startedAt: 6_500,
+        finishedAt: 7_000,
+      },
+    };
+    const track2 = stubProbeDeps('main', requests);
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+    requests.parent = {
+      modelAlias: 'model-a',
+      contextRevision: 2,
+      toolsHash: 'tools-b',
+      systemPromptHash: 'system-b',
+      inputTokens: 1_500,
+      startedAt: 5_000,
+      finishedAt: 6_000,
+    };
+
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: 8,
+      input_cache_read: 3,
+      input_cache_creation: 4,
+      output_tokens: 2,
+      tools_match: true,
+      system_prompt_match: false,
+      parent_input_tokens: 1_200,
+      parent_request_gap_ms: 2_500,
+    });
+  });
+
+  it('leaves the prefix comparison out when the parent completed no turn request', async () => {
+    const track2 = stubProbeDeps('main', {
+      own: {
+        modelAlias: 'model-a',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-a',
+        inputTokens: 8,
+        startedAt: 6_500,
+        finishedAt: 7_000,
+      },
+    });
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: 8,
+      input_cache_read: 3,
+      input_cache_creation: 4,
+      output_tokens: 2,
+    });
+  });
+
+  it('leaves the prefix comparison out when the parent request ran on another model', async () => {
+    const track2 = stubProbeDeps('main', {
+      parent: {
+        modelAlias: 'model-b',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-a',
+        inputTokens: 1_200,
+        startedAt: 1_000,
+        finishedAt: 4_000,
+      },
+      own: {
+        modelAlias: 'model-a',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-a',
+        inputTokens: 8,
+        startedAt: 6_500,
+        finishedAt: 7_000,
+      },
+    });
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+
+    expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
+      source: 'fork',
+      turn_id: 1,
+      provider_type: 'kimi',
+      protocol: 'anthropic',
+      input_tokens: 8,
+      input_cache_read: 3,
+      input_cache_creation: 4,
+      output_tokens: 2,
+    });
+  });
+
+  it('drops the captured parent request once the parent prefix revision moves on', async () => {
+    const requests: ProbeRequests = {
+      parent: {
+        modelAlias: 'model-a',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-a',
+        inputTokens: 1_200,
+        startedAt: 1_000,
+        finishedAt: 4_000,
+      },
+      own: {
+        modelAlias: 'model-a',
+        contextRevision: 1,
+        toolsHash: 'tools-a',
+        systemPromptHash: 'system-a',
+        inputTokens: 8,
+        startedAt: 6_500,
+        finishedAt: 7_000,
+      },
+    };
+    const track2 = stubProbeDeps('main', requests);
+    disposables.add(ix.createInstance(AgentCacheProbeService));
+
+    requests.parentRevision = 2;
+    await svc.record(agent, 'model-a', a1, { type: 'turn', turnId: 1 });
+
     expect(track2).toHaveBeenCalledWith('prompt_cache_probe', {
       source: 'fork',
       turn_id: 1,

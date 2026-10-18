@@ -110,8 +110,13 @@ type MutableImageAttachment = {
 
 export class ImageAttachmentStore {
   private nextId = 1;
+  private currentGeneration = 0;
   private readonly byId = new Map<number, MediaAttachment>();
   private readonly stagingUses = new Map<number, number>();
+
+  get generation(): number {
+    return this.currentGeneration;
+  }
 
   addImage(
     bytes: Uint8Array,
@@ -242,6 +247,7 @@ export class ImageAttachmentStore {
     this.byId.clear();
     this.stagingUses.clear();
     this.nextId = 1;
+    this.currentGeneration += 1;
     return fileIds;
   }
 

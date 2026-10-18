@@ -122,9 +122,6 @@
  *   the agent scope's `IAgentTowerService`; `getTowerStatus` → the shared
  *   tower status summary reader (v2-only — the base class throws
  *   `not_implemented`).
- *   `createSessionWithKaos` / `resumeSessionWithKaos` deliberately keep the
- *   base class's kaos-ignoring degradation (the v2 engine has no kaos
- *   injection point — see the session-lifecycle section header), and
  *   `toolCall` keeps the base class's "not supported" answer, which the
  *   interaction bridge already relies on.
  */
@@ -147,6 +144,7 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   agentContextOf,
+  IAgentChangeNotifierService,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -187,6 +185,7 @@ import {
   ISessionManager,
   ISessionMcpHandle,
   ISessionMetadata,
+  ISessionAgentProfileCatalog,
   ISessionSkillCatalog,
   IAgentTodoService,
   ISessionWorkspaceContext,
@@ -213,6 +212,7 @@ import {
   ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
+  resolveSubagentModelPool,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -225,6 +225,7 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
+  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -232,6 +233,8 @@ import {
   type Klient,
   type ImportCustomRegistryOptions,
   type ImportCustomRegistryResult,
+  type RefreshProviderModelsOptions,
+  type RefreshProviderModelsResponse,
 } from '@moonshot-ai/klient';
 import { RegistryImportError } from '#/catalog';
 import { createKlient } from '@moonshot-ai/klient/memory';
@@ -805,10 +808,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.getConfig();
   }
 
-  override supportsAtomicSectionReplace(): boolean {
-    return true;
-  }
-
   override async importCustomRegistry(
     options: ImportCustomRegistryOptions,
   ): Promise<ImportCustomRegistryResult> {
@@ -827,9 +826,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     }
   }
 
-  override async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
+  override async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
     await this.configReady;
-    await this.klient.global.config.replaceSections({ sections });
+    return this.klient.global.kosong.refreshProviders(options);
   }
 
   override async listPlugins(): Promise<readonly PluginSummary[]> {
@@ -930,15 +931,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // metadata mutations of a LIVE session; everything that needs an explicit
   // session id, a resume, or a workspace command goes through the
   // `engineAccessor` escape hatch (named per method below).
-  //
-  // `createSessionWithKaos` / `resumeSessionWithKaos` are deliberately NOT
-  // overridden: agent-core-v2 has no kaos injection point (its fs/process
-  // abstraction is the engine-internal hostFs domain, resolved at bootstrap),
-  // so the base class's degradation — ignore the kaos arguments and run a
-  // plain local create/resume — is the honest behavior, the same one every
-  // daemon-transport client settles for. Failing loudly instead would break
-  // hosts that pass kaos opportunistically (the harness forwards it whenever
-  // the host supplies one).
   // -----------------------------------------------------------------------
 
   private liveSession(sessionId: string): ISessionScopeHandle | undefined {
@@ -1591,6 +1583,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const sessionId = input.sessionId;
     return this.runSessionAccess(sessionId, async () => {
       const live = this.liveSession(sessionId);
+      const indexEntry =
+        live === undefined ? await this.engineAccessor.get(ISessionIndex).get(sessionId) : undefined;
       if (live !== undefined) {
         const agentLifecycle = live.accessor.get(IAgentLifecycleService);
         for (const agent of agentLifecycle.list()) {
@@ -1603,14 +1597,55 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
               { details: { sessionId } },
             );
           }
+          if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) {
+            throw new KimiError(
+              ErrorCodes.TURN_AGENT_BUSY,
+              `Session "${sessionId}" cannot be reloaded while compaction is running`,
+              { details: { sessionId } },
+            );
+          }
         }
-      } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
+      } else if (indexEntry === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
+      const workspaceId =
+        live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
+      let previousSubagentNames: readonly string[] | undefined;
+      let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
+      let staleNotifier: IAgentChangeNotifierService | undefined;
+      if (live !== undefined) {
+        const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+        if (main !== undefined) {
+          previousSubagentNames = main.accessor
+            .get(ISessionAgentProfileCatalog)
+            .list()
+            .map((profile) => profile.name);
+          const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
+          previousModelPool =
+            pool === undefined
+              ? null
+              : { defaultModel: pool.defaultModel, models: { ...pool.models } };
+          staleNotifier = main.accessor.get(IAgentChangeNotifierService);
+          staleNotifier.mute();
+        }
+      }
       await this.configReady;
-      await this.klient.global.config.reload();
-      await this.klient.global.plugins.reload();
-      await this.refreshPluginSessionStarts(sessionId);
+      try {
+        await this.klient.global.config.reload();
+        await this.klient.global.plugins.reload();
+        await this.reloadWorkspaceCatalogs(workspaceId);
+        await this.refreshPluginSessionStarts(sessionId);
+      } catch (error) {
+        if (staleNotifier !== undefined) {
+          staleNotifier.unmute();
+          await Promise.all([
+            staleNotifier.notifyAgentsMdChanges(),
+            staleNotifier.notifySkillChanges(),
+            staleNotifier.notifySubagentChanges({}),
+          ]).catch(() => undefined);
+        }
+        throw error;
+      }
       if (live !== undefined) {
         await closeSessionById(this.engineAccessor, sessionId);
       }
@@ -1618,16 +1653,31 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+      if (main !== undefined) {
+        const notifier = main.accessor.get(IAgentChangeNotifierService);
+        await notifier.notifyAgentsMdChanges();
+        await notifier.notifySkillChanges();
+        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+      }
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
     });
+  }
+
+  private async reloadWorkspaceCatalogs(workspaceId: string | undefined): Promise<void> {
+    if (workspaceId === undefined) return;
+    const target = this.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (target === undefined) return;
+    await target.program.instructions.reload();
+    await target.program.skills.reload();
+    await target.program.agentProfiles.reload().catch(() => undefined);
+    await target.program.userAgentProfiles.reload().catch(() => undefined);
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
     const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
     await Promise.all(
       workspaces.list().map(async (handler) => {
-        await handler.program.skills.reload();
         const sessions = this.engineAccessor
           .get(ISessionManager)
           .list()
@@ -2054,13 +2104,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * the engine renders every skill activation into the prompt's own user
    * message, so the bundle launches as one turn and undoes as a single
    * anchor. v2-only: the base class rejects this method on the v1 engine.
-   * The launch result is dropped like `prompt` (v1's RPC shape returns void).
    */
   override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
     const agent = await this.agentFacade(input.sessionId);
     await agent.promptWithSkills({
       input: input.input,
       skills: input.skills,
+      steerIfActive: input.steerIfActive,
     });
   }
 

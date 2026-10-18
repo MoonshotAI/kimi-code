@@ -1,7 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 
 import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
-import type { Kaos } from '@moonshot-ai/kaos';
 
 import type { AgentContextData } from '#/context';
 import { ErrorCodes, KimiError, makeErrorPayload } from '#/errors';
@@ -66,6 +65,8 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
@@ -87,6 +88,7 @@ export interface SessionPromptRpcInput {
 
 export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
   readonly skills: readonly PromptSkillActivation[];
+  readonly steerIfActive?: boolean;
 }
 
 export interface SessionIdRpcInput {
@@ -183,27 +185,7 @@ export abstract class SDKRpcClientBase {
 
   abstract createSession(input: CreateSessionOptions): Promise<SessionSummary>;
 
-  async createSessionWithKaos(
-    input: CreateSessionOptions,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<SessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.createSession(input);
-  }
-
   abstract resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary>;
-
-  async resumeSessionWithKaos(
-    input: ResumeSessionInput,
-    kaos: Kaos,
-    persistenceKaos?: Kaos,
-  ): Promise<ResumedSessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.resumeSession(input);
-  }
 
   abstract reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary>;
 
@@ -239,13 +221,13 @@ export abstract class SDKRpcClientBase {
 
   abstract removeProvider(providerId: string): Promise<KimiConfig>;
 
-  abstract supportsAtomicSectionReplace(): boolean;
-
   abstract importCustomRegistry(
     options: ImportCustomRegistryOptions,
   ): Promise<ImportCustomRegistryResult>;
 
-  abstract replaceConfigSections(sections: Record<string, unknown>): Promise<void>;
+  abstract refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse>;
 
   abstract uploadFile(data: Uint8Array, options: UploadFileOptions): Promise<FileMeta>;
 

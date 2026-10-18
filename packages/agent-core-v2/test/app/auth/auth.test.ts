@@ -225,8 +225,8 @@ describe('OAuthService', () => {
         data: [
           {
             id: 'kimi-k2',
-            context_length: 131072,
-            supports_reasoning: true,
+            limit: { context: 131072 },
+            reasoning: { type: 'both' },
             display_name: 'Kimi K2',
           },
         ],
@@ -268,20 +268,20 @@ describe('OAuthService', () => {
           data: [
             {
               id: 'kimi-k2',
-              context_length: 131072,
-              supports_reasoning: true,
+              limit: { context: 131072 },
+              reasoning: { type: 'both' },
               display_name: 'Kimi K2',
             },
             {
               id: 'kimi-k2.5',
-              context_length: 262144,
-              supports_reasoning: true,
+              limit: { context: 262144 },
+              reasoning: { type: 'both' },
               display_name: 'Kimi K2.5',
             },
             {
               id: 'kimi-k3',
-              context_length: 1048576,
-              supports_reasoning: true,
+              limit: { context: 1048576 },
+              reasoning: { type: 'both' },
               display_name: 'Kimi K3',
             },
           ],
@@ -957,8 +957,8 @@ describe('OAuthService', () => {
         data: [
           {
             id: 'kimi-k2',
-            context_length: 131072,
-            supports_reasoning: true,
+            limit: { context: 131072 },
+            reasoning: { type: 'both' },
             display_name: 'Kimi K2',
           },
         ],
@@ -1012,8 +1012,8 @@ describe('OAuthService', () => {
           data: [
             {
               id: 'kimi-k2',
-              context_length: 131072,
-              supports_reasoning: true,
+              limit: { context: 131072 },
+              reasoning: { type: 'both' },
               display_name: 'Kimi K2',
             },
           ],
@@ -1047,8 +1047,8 @@ describe('OAuthService', () => {
         data: [
           {
             id: 'kimi-k2',
-            context_length: 131072,
-            supports_reasoning: true,
+            limit: { context: 131072 },
+            reasoning: { type: 'both' },
             display_name: 'Kimi K2',
           },
         ],

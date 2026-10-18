@@ -1,10 +1,12 @@
 import { resetCapabilitiesCache, setCapabilities, visibleWidth } from '@moonshot-ai/pi-tui';
+import chalk from 'chalk';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   UserMessageComponent,
   userMessageLineHeights,
 } from '#/tui/components/messages/user-message';
+import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ImageAttachment } from '#/tui/utils/image-attachment-store';
 
 function stripAnsi(text: string): string {
@@ -136,6 +138,90 @@ describe('UserMessageComponent', () => {
       expect(wrapped[1]?.startsWith('  word')).toBe(true);
     });
 
+  });
+
+  describe('skillNames', () => {
+    function withChalkLevel(run: () => void): void {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        run();
+      } finally {
+        chalk.level = previousLevel;
+      }
+    }
+
+    afterEach(() => {
+      currentTheme.setPalette(darkColors);
+    });
+
+    it('highlights only the listed skill tokens and keeps the text verbatim', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const component = new UserMessageComponent(
+          'please /skill:review this and /skill:security too /unknown https://example.com/a',
+          [],
+          undefined,
+          ['review', 'security'],
+        );
+
+        const lines = component.render(120);
+        const joined = lines.join('\n');
+        expect(stripAnsi(joined)).toContain(
+          'please /skill:review this and /skill:security too /unknown https://example.com/a',
+        );
+        expect(joined).toContain(currentTheme.boldFg('primary', '/skill:review'));
+        expect(joined).toContain(currentTheme.boldFg('primary', '/skill:security'));
+        expect(joined).not.toContain(currentTheme.boldFg('primary', '/unknown'));
+        expect(joined).toContain(currentTheme.boldFg('roleUser', 'please '));
+      });
+    });
+
+    it('highlights a leading skill command and bare-name aliases', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const leading = new UserMessageComponent('/skill:review src/app.ts', [], undefined, [
+          'review',
+        ]).render(80);
+        expect(leading.join('\n')).toContain(currentTheme.boldFg('primary', '/skill:review'));
+        expect(stripAnsi(leading.join('\n'))).toContain('/skill:review src/app.ts');
+
+        const alias = new UserMessageComponent('please /commit this', [], undefined, [
+          'commit',
+        ]).render(80);
+        expect(alias.join('\n')).toContain(currentTheme.boldFg('primary', '/commit'));
+      });
+    });
+
+    it('renders no highlight when skill names are absent or unmatched', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const plain = new UserMessageComponent('please /skill:review this', []).render(80);
+        expect(plain.join('\n')).not.toContain(currentTheme.boldFg('primary', '/skill:review'));
+
+        const unmatched = new UserMessageComponent('please /skill:review this', [], undefined, [
+          'security',
+        ]).render(80);
+        expect(unmatched.join('\n')).not.toContain(currentTheme.boldFg('primary', '/skill:review'));
+      });
+    });
+
+    it('re-dyes the highlight from the current theme after a switch', () => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      withChalkLevel(() => {
+        const component = new UserMessageComponent('please /skill:review this', [], undefined, [
+          'review',
+        ]);
+        const dark = component.render(80).join('\n');
+        expect(dark).toContain(chalk.hex(darkColors.primary).bold('/skill:review'));
+
+        currentTheme.setPalette(lightColors);
+        component.invalidate();
+        const light = component.render(80).join('\n');
+        expect(light).toContain(chalk.hex(lightColors.primary).bold('/skill:review'));
+        expect(stripAnsi(light)).toContain('please /skill:review this');
+      });
+    });
   });
 });
 
