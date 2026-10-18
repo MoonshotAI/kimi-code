@@ -410,13 +410,38 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it('does not load the dangerous command policy when disabled by config', async () => {
+  it('does not load the built-in guard policies when disabled by config', async () => {
     dangerousCommandGuardEnabled = false;
     mode = 'yolo';
 
     await expect(evaluate({
       toolName: 'Bash',
       args: { command: 'shutdown -h now', timeout: 60 },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: '/workspace/.env' },
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: '.git/config', content: 'x' },
+      accesses: ToolAccesses.writeFile('/workspace/.git/config'),
+    })).resolves.toMatchObject({
+      policyName: 'yolo-mode-approve',
+      result: { kind: 'approve' },
+    });
+
+    await expect(evaluate({
+      toolName: 'Read',
+      args: { path: '/workspace/.git/config' },
     })).resolves.toMatchObject({
       policyName: 'yolo-mode-approve',
       result: { kind: 'approve' },

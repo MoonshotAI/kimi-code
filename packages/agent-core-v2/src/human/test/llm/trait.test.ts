@@ -1998,4 +1998,54 @@ describe('google genai base', () => {
     expect(finish).toEqual({ finishReason: 'completed', rawFinishReason: 'STOP' });
     expect(messageId).toBe('gemini-resp-1');
   });
+
+  it.each(['gemini-3-pro-preview', 'gemini-4-argon'])(
+    'encodes thinking as a level for %s',
+    async (modelName) => {
+      const client = stubGoogleClient([
+        { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+      ]);
+      const requester = createGoogleGenAIRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        { model: { ...model, model: modelName }, thinking: { effort: 'high' } },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      const config = client.body()['config'] as Record<string, unknown>;
+      expect(config['thinkingConfig']).toEqual({ includeThoughts: true, thinkingLevel: 'HIGH' });
+    },
+  );
+
+  it('encodes effort off for gemini-3 as MINIMAL with thoughts hidden', async () => {
+    const client = stubGoogleClient([
+      { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+    ]);
+    const requester = createGoogleGenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      { model: { ...model, model: 'gemini-3-pro-preview' }, thinking: { effort: 'off' } },
+      { messages },
+      { signal: new AbortController().signal },
+    );
+    const config = client.body()['config'] as Record<string, unknown>;
+    expect(config['thinkingConfig']).toEqual({ includeThoughts: false, thinkingLevel: 'MINIMAL' });
+  });
+
+  it('rejects effort off for gemini-4 (thinking cannot be disabled)', async () => {
+    const client = stubGoogleClient([
+      { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] },
+    ]);
+    const requester = createGoogleGenAIRequester({ clientFactory: client.clientFactory });
+    const events: LlmRequestEvent[] = [];
+    await requester.generate(
+      { model: { ...model, model: 'gemini-4-argon' }, thinking: { effort: 'off' } },
+      { messages },
+      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+    );
+    const failed = events.find((event) => event.type === 'llm.failed.syntax');
+    expect(failed).toBeDefined();
+    if (failed?.type !== 'llm.failed.syntax') throw new Error('expected llm.failed.syntax');
+    expect(failed.error.code).toBe('thinking_config');
+    expect(failed.error.message).toContain('always reasons');
+    expect(events.some((event) => event.type === 'llm.sent')).toBe(false);
+  });
 });

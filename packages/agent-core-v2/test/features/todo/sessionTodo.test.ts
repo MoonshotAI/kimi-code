@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { KeyedResourceLeasePool } from '#/_base/lifecycle/keyedResource';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnEnded } from '#/agent/loop/turnOps';
+import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { TodoFeature } from '#/features/todo/todoFeature';
@@ -11,17 +14,18 @@ import { TODO_LIST_REMINDER_VARIANT } from '#/features/todo/todoListReminder';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { WireRecord } from '#/wire/record';
 
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import {
   createTestAgent,
   InMemoryWireRecordPersistence,
   type TestAgentContext,
 } from '../../harness';
 
-function reminderInjected(ctx: TestAgentContext): boolean {
-  return ctx.context.get().some(
+function reminderCount(memory: IAgentContextMemoryService): number {
+  return memory.get().filter(
     (message) =>
       message.origin?.kind === 'injection' && message.origin.variant === TODO_LIST_REMINDER_VARIANT,
-  );
+  ).length;
 }
 
 function appendAssistantTurns(memory: IAgentContextMemoryService, count: number): void {
@@ -178,35 +182,91 @@ describe('AgentTodoService', () => {
     }
   });
 
-  it('arms the stale-todo reminder on first use for the main agent only', async () => {
+  it('reminds the main agent only while its list has open items', async () => {
     const lifecycle = ctx.get(IAgentLifecycleService);
     const todo = ctx.get(IAgentTodoService);
     const reminder = ctx.get(IAgentReminderService);
 
-    appendAssistantTurns(ctx.context, 10);
+    appendAssistantTurns(ctx.context, 5);
     await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
-    expect(reminderInjected(ctx)).toBe(false);
+    expect(reminderCount(ctx.context)).toBe(0);
 
     await todo.replace([{ title: 'track me', status: 'pending' }]);
-    appendAssistantTurns(ctx.context, 10);
+    appendAssistantTurns(ctx.context, 5);
     await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
-    expect(reminderInjected(ctx)).toBe(true);
+    expect(reminderCount(ctx.context)).toBe(1);
+
+    await todo.replace([{ title: 'track me', status: 'done' }]);
+    appendAssistantTurns(ctx.context, 5);
+    await reminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
+    expect(reminderCount(ctx.context)).toBe(1);
 
     const sub = await lifecycle.create({ agentId: 'agent-1' });
     const subTodo = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentTodoService);
     const subReminder = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentReminderService);
     const subMemory = lifecycle.handleOf(sub.agentId)!.accessor.get(IAgentContextMemoryService);
     await subTodo.replace([{ title: 'sub task', status: 'pending' }]);
-    appendAssistantTurns(subMemory, 10);
+    appendAssistantTurns(subMemory, 5);
     await subReminder.reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
-    expect(
-      subMemory.get().some(
-        (message) =>
-          message.origin?.kind === 'injection' &&
-          message.origin.variant === TODO_LIST_REMINDER_VARIANT,
-      ),
-    ).toBe(false);
+    expect(reminderCount(subMemory)).toBe(0);
     await lifecycle.remove(sub);
+  });
+
+  it('tracks stale reminders and how each main-agent turn leaves the list', async () => {
+    const records: TelemetryRecord[] = [];
+    const tracked = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      await tracked.restorePersisted();
+      const todo = tracked.get(IAgentTodoService);
+      const bus = tracked.get(IEventBus);
+
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 1, origin: { kind: 'user' } }));
+      await todo.replace([
+        { title: 'parse config', status: 'done' },
+        { title: 'update callers', status: 'in_progress' },
+      ]);
+      appendAssistantTurns(tracked.context, 5);
+      await tracked.get(IAgentReminderService).reconcileWhenIdle(TODO_LIST_REMINDER_VARIANT);
+      bus.publish(new TurnEnded({ agentId: 'main', turnId: 1, reason: 'completed' }));
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 2, origin: { kind: 'user' } }));
+      bus.publish(new TurnEnded({ agentId: 'main', turnId: 2, reason: 'cancelled' }));
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 3, origin: { kind: 'user' } }));
+      await todo.replace([]);
+      bus.publish(new TurnEnded({ agentId: 'main', turnId: 3, reason: 'completed' }));
+      bus.publish(new TurnStarted({ agentId: 'main', turnId: 4, origin: { kind: 'user' } }));
+      bus.publish(new TurnEnded({ agentId: 'main', turnId: 4, reason: 'completed' }));
+
+      const propertiesOf = (event: string) =>
+        records.filter((record) => record.event === event).map((record) => record.properties);
+      expect(propertiesOf('todo_reminder_shown')).toEqual([
+        expect.objectContaining({ steps_since_write: 5, item_count: 2, open_count: 1 }),
+      ]);
+      expect(propertiesOf('todo_turn_ended')).toEqual([
+        expect.objectContaining({
+          turn_id: 1,
+          reason: 'completed',
+          item_count: 2,
+          open_count: 1,
+          updated_in_turn: true,
+        }),
+        expect.objectContaining({
+          turn_id: 2,
+          reason: 'cancelled',
+          item_count: 2,
+          open_count: 1,
+          updated_in_turn: false,
+        }),
+        expect.objectContaining({
+          turn_id: 3,
+          reason: 'completed',
+          item_count: 0,
+          open_count: 0,
+          updated_in_turn: true,
+        }),
+      ]);
+    } finally {
+      await tracked.dispose();
+    }
   });
 });
 

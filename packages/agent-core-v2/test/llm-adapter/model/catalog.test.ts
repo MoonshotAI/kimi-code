@@ -770,6 +770,7 @@ describe('wire projection (pure)', () => {
         capabilities: ['thinking'],
         support_efforts: undefined,
         default_effort: undefined,
+        upgrade: undefined,
       });
     } finally {
       host.dispose();
@@ -889,6 +890,32 @@ describe('ModelCatalog enumeration', () => {
         model: 'k2',
         support_efforts: ['low', 'high', 'max'],
         default_effort: 'max',
+      });
+    } finally {
+      host.dispose();
+    }
+  });
+
+  it('projects upgrade metadata from the model config', async () => {
+    const sections = structuredClone(catalogSections);
+    (sections['models'] as Record<string, ModelRecord>)['k2'] = {
+      ...(catalogSections['models'] as Record<string, ModelRecord>)['k2'],
+      upgrade: {
+        model: 'turbo',
+        migrationMarkdown: 'Use {model_to}',
+        retirementAt: '2030-01-01T00:00:00Z',
+      },
+    };
+    const { host, catalog } = createHost(sections);
+    try {
+      const [k2] = await catalog.listModels();
+      expect(k2).toMatchObject({
+        model: 'k2',
+        upgrade: {
+          model: 'turbo',
+          migration_markdown: 'Use {model_to}',
+          retirement_at: '2030-01-01T00:00:00Z',
+        },
       });
     } finally {
       host.dispose();

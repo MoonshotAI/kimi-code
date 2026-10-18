@@ -208,6 +208,18 @@ describe('ShellRunComponent hasHiddenContent', () => {
     short.render(100);
     expect(short.hasHiddenContent()).toBe(false);
   });
+
+  it('does not advertise ctrl+o when only one row would hide', () => {
+    const c = create();
+    c.finish(Array.from({ length: 11 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    c.render(100);
+    expect(c.hasHiddenContent()).toBe(false);
+
+    const foldable = create();
+    foldable.finish(Array.from({ length: 12 }, (_, i) => `row ${String(i + 1)}`).join('\n'), '', false);
+    foldable.render(100);
+    expect(foldable.hasHiddenContent()).toBe(true);
+  });
 });
 
 describe('ShellRunComponent hasHiddenContent when finished while expanded', () => {

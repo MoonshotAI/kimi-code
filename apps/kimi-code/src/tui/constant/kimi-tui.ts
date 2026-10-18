@@ -15,6 +15,9 @@ export const SESSIONLESS_STARTUP_NOTICE =
 export const TOWER_TEARDOWN_PROMPT =
   'Tear down the tower: call TowerTeardown and report what it did. It refuses to destroy dirty worktrees unless forced.';
 export const EXIT_CONFIRM_WINDOW_MS = 1500;
+// Per-session cap on automatic title-generation attempts; failures stay
+// retryable across turns until the cap so a transient error is not sticky.
+export const MAX_AUTO_TITLE_ATTEMPTS = 3;
 // Time window for treating two consecutive Esc presses as a double-Esc, which
 // opens the undo selector. Kept short (double-click feel) so two deliberate
 // presses far apart don't accidentally trigger undo.

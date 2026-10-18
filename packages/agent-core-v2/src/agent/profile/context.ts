@@ -74,6 +74,30 @@ export interface LoadedAgentsMd {
   readonly content: string;
   readonly warning: string | undefined;
   readonly paths: readonly string[];
+  readonly files: ReadonlyMap<string, string>;
+}
+
+export function splitAgentsMdFiles(
+  content: string,
+  paths: readonly string[],
+): ReadonlyMap<string, string> {
+  const wanted = new Set(paths.map(normalize));
+  const files = new Map<string, string>();
+  const markerRe = /^<!-- From: (.+) -->$/gm;
+  let prev: { key: string; bodyStart: number } | undefined;
+  const flush = (end: number): void => {
+    if (prev === undefined) return;
+    files.set(prev.key, content.slice(prev.bodyStart, end).trim());
+    prev = undefined;
+  };
+  for (const match of content.matchAll(markerRe)) {
+    const key = normalize(match[1]!);
+    if (!wanted.has(key)) continue;
+    flush(match.index);
+    prev = { key, bodyStart: match.index + match[0].length + 1 };
+  }
+  flush(content.length);
+  return files;
 }
 
 export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.md', 'agents.md'] as const;
@@ -192,7 +216,8 @@ export async function loadAgentsMdForRoots(
   }
   const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
   const paths = discovered.map((file) => normalize(file.path));
-  return { content, warning, paths };
+  const files = new Map(discovered.map((file) => [normalize(file.path), file.content]));
+  return { content, warning, paths, files };
 }
 
 export interface AgentsMdWatchRoot {

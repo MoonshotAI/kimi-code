@@ -236,7 +236,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
     });
-    const deferred = this.mcpHandle.connectionManager.configOf(entry.name)?.deferred === true;
+    const deferred = this.mcpHandle.connectionManager.deferredOf(entry.name);
     const disposable = this._register(
       this.registry.register(tool, {
         source: 'mcp',

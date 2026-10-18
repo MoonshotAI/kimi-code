@@ -241,6 +241,44 @@ describe('agent skill routing', () => {
       ],
     });
   });
+
+  it.each([{ steerIfActive: true }, { steerIfActive: false }, { steerIfActive: undefined }])(
+    'promptWithSkills keeps steerIfActive $steerIfActive and the skill args on the wire',
+    async ({ steerIfActive }) => {
+      const channel = new FakeChannel();
+      const klient = createKlientFromChannel(channel);
+      const agent = klient.session('s1').agent('main');
+
+      channel.result = {
+        prompt_id: 'p1',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+      };
+      await expect(
+        agent.promptWithSkills({
+          input: [{ type: 'text', text: 'Review this change.' }],
+          skills: [{ name: 'review', args: 'src/app.ts' }],
+          steerIfActive,
+        }),
+      ).resolves.toEqual({
+        prompt_id: 'p1',
+        created_at: '2026-01-01T00:00:00.000Z',
+        state: 'queued',
+      });
+      expect(channel.calls[0]).toEqual({
+        scope: { sessionId: 's1', agentId: 'main' },
+        service: 'agentSkillService',
+        method: 'promptWithSkills',
+        args: [
+          {
+            input: [{ type: 'text', text: 'Review this change.' }],
+            skills: [{ name: 'review', args: 'src/app.ts' }],
+            steerIfActive,
+          },
+        ],
+      });
+    },
+  );
 });
 
 describe('session skills routing', () => {

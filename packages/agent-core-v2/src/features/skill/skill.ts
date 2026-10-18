@@ -19,6 +19,7 @@ export interface PromptWithSkillsInput {
   readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
   readonly skills: readonly PromptSkillActivation[];
   readonly attachments?: readonly PromptFileAttachment[];
+  readonly steerIfActive?: boolean;
 }
 
 export interface PromptWithSkillsResult {

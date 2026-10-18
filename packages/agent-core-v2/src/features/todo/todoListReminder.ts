@@ -1,11 +1,11 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
 
-import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';
+import { TODO_LIST_TOOL_NAME, todoProgress, type TodoItem } from './todoItem';
 
 export const TODO_LIST_REMINDER_VARIANT = 'todo_list_reminder';
 
-const TODO_LIST_REMINDER_TURNS_SINCE_WRITE = 10;
-const TODO_LIST_REMINDER_TURNS_BETWEEN_REMINDERS = 10;
+const TODO_LIST_REMINDER_STEPS_SINCE_WRITE = 5;
+const TODO_LIST_REMINDER_STEPS_BETWEEN_REMINDERS = 5;
 
 interface TodoListReminderInput {
   readonly active: boolean;
@@ -13,32 +13,75 @@ interface TodoListReminderInput {
   readonly todos: readonly TodoItem[];
 }
 
-interface TodoListReminderTurnCounts {
-  readonly turnsSinceLastWrite: number;
-  readonly turnsSinceLastReminder: number;
+export interface TodoListStaleReminder {
+  readonly text: string;
+  readonly stepsSinceLastWrite: number;
 }
 
-export function todoListStaleReminder(input: TodoListReminderInput): string | undefined {
-  if (!input.active) return undefined;
+export interface TodoListWriteStats {
+  readonly stepsSinceLastWrite?: number;
+  readonly remindedSinceLastWrite: boolean;
+}
 
-  const counts = getTodoListReminderTurnCounts(input.history);
+interface TodoListReminderStepCounts {
+  readonly stepsSinceLastWrite: number;
+  readonly stepsSinceLastReminder: number;
+}
+
+export function todoListStaleReminder(
+  input: TodoListReminderInput,
+): TodoListStaleReminder | undefined {
+  if (!input.active) return undefined;
+  if (todoProgress(input.todos).open === 0) return undefined;
+
+  const counts = getTodoListReminderStepCounts(input.history);
   if (
-    counts.turnsSinceLastWrite < TODO_LIST_REMINDER_TURNS_SINCE_WRITE ||
-    counts.turnsSinceLastReminder < TODO_LIST_REMINDER_TURNS_BETWEEN_REMINDERS
+    counts.stepsSinceLastWrite < TODO_LIST_REMINDER_STEPS_SINCE_WRITE ||
+    counts.stepsSinceLastReminder < TODO_LIST_REMINDER_STEPS_BETWEEN_REMINDERS
   ) {
     return undefined;
   }
 
-  return renderTodoListReminder(input.todos);
+  return {
+    text: renderTodoListReminder(input.todos, counts.stepsSinceLastWrite),
+    stepsSinceLastWrite: counts.stepsSinceLastWrite,
+  };
 }
 
-function getTodoListReminderTurnCounts(
+export function todoListWriteStatsBefore(
   history: readonly ContextMessage[],
-): TodoListReminderTurnCounts {
+  toolCallId: string,
+): TodoListWriteStats {
+  const end = history.findLastIndex(
+    (message) =>
+      message.role === 'assistant' && message.toolCalls.some((call) => call.id === toolCallId),
+  );
+  let steps = 0;
+  let reminded = false;
+  for (let i = (end === -1 ? history.length : end) - 1; i >= 0; i -= 1) {
+    const message = history[i];
+    if (message === undefined) continue;
+
+    if (message.role === 'assistant') {
+      if (hasTodoListWrite(message)) {
+        return { stepsSinceLastWrite: steps, remindedSinceLastWrite: reminded };
+      }
+      steps += 1;
+      continue;
+    }
+
+    if (isTodoListReminder(message)) reminded = true;
+  }
+  return { remindedSinceLastWrite: reminded };
+}
+
+function getTodoListReminderStepCounts(
+  history: readonly ContextMessage[],
+): TodoListReminderStepCounts {
   let foundWrite = false;
   let foundReminder = false;
-  let turnsSinceLastWrite = 0;
-  let turnsSinceLastReminder = 0;
+  let stepsSinceLastWrite = 0;
+  let stepsSinceLastReminder = 0;
 
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const message = history[i];
@@ -48,8 +91,8 @@ function getTodoListReminderTurnCounts(
       if (!foundWrite && hasTodoListWrite(message)) {
         foundWrite = true;
       }
-      if (!foundWrite) turnsSinceLastWrite += 1;
-      if (!foundReminder) turnsSinceLastReminder += 1;
+      if (!foundWrite) stepsSinceLastWrite += 1;
+      if (!foundReminder) stepsSinceLastReminder += 1;
       continue;
     }
 
@@ -61,8 +104,8 @@ function getTodoListReminderTurnCounts(
   }
 
   return {
-    turnsSinceLastWrite,
-    turnsSinceLastReminder,
+    stepsSinceLastWrite,
+    stepsSinceLastReminder,
   };
 }
 
@@ -87,16 +130,20 @@ function isTodoListReminder(message: ContextMessage): boolean {
   );
 }
 
-function renderTodoListReminder(todos: readonly TodoItem[]): string {
-  let message =
-    'The TodoList tool has not been updated recently. If you are working on tasks that benefit from progress tracking, consider using TodoList to update task status. Also consider clearing or rewriting the todo list if it has become stale and no longer matches the current work. Only use it if relevant. This is a gentle reminder; ignore it if not applicable. Make sure that you NEVER mention this reminder to the user.';
-
-  const items = renderTodoItems(todos);
-  if (items.length > 0) {
-    message += `\n\nCurrent todo list:\n${items}`;
-  }
-
-  return message;
+function renderTodoListReminder(todos: readonly TodoItem[], stepsSinceLastWrite: number): string {
+  const { done, inProgress } = todoProgress(todos);
+  const [current] = inProgress;
+  const progress = `${String(done)}/${String(todos.length)} done`;
+  const status =
+    current === undefined
+      ? `${progress}, none in_progress`
+      : `${progress}, "${current.title}" still in_progress`;
+  return [
+    `The todo list has not been updated in the last ${String(stepsSinceLastWrite)} steps (${status}). If an item is finished, mark it done now; the TodoList call can go in the same response as your next tool call. If the list no longer matches the current work, rewrite or clear it. Never mention this reminder to the user.`,
+    '',
+    'Current todo list:',
+    renderTodoItems(todos),
+  ].join('\n');
 }
 
 function renderTodoItems(todos: readonly TodoItem[]): string {

@@ -193,7 +193,7 @@ export interface PluginUpdateStatus {
   readonly updateAvailable: boolean;
 }
 
-export const PLUGIN_NAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const PLUGIN_NAME_REGEX = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:@[A-Za-z0-9_-]+)?$/;
 
 export function normalizePluginId(name: string): string {
   return name.toLowerCase();

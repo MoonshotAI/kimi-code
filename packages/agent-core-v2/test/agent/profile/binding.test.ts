@@ -20,6 +20,7 @@ import type { ToolCall } from '#human/llm/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -145,6 +146,42 @@ describe('AgentProfileService.bind', () => {
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+  });
+
+  it('recomputes the bound subagent allowlist when the catalog gains a profile after bind', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan']);
+
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'code-reviewer',
+            description: 'Reviews code',
+            tools: ['Read'],
+            systemPrompt: () => 'reviewer',
+          }),
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.get(IWireService).flush();
+
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+
+    const bindCount = persistence.records.filter((record) => record.type === 'profile.bind').length;
+    await ctx.get(ISessionAgentProfileCatalog).reload();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.get(IWireService).flush();
+    expect(persistence.records.filter((record) => record.type === 'profile.bind')).toHaveLength(
+      bindCount,
+    );
   });
 
   it('honors the explicit subagents of a discovered profile bound as main', async () => {
@@ -282,6 +319,7 @@ describe('AgentProfileService.bind', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -543,6 +581,20 @@ describe('AgentToolPolicyService tool denylist', () => {
     expect(svc.isToolActive('Read')).toBe(true);
   });
 
+  it('distinguishes explicit denies from allowlist misses via isToolDenied', async () => {
+    const svc = await bindProfile('deny-over-allow');
+    expect(svc.isToolDenied('Bash')).toBe(true);
+    expect(svc.isToolDenied('Write')).toBe(false);
+    expect(svc.isToolDenied('Read')).toBe(false);
+  });
+
+  it('matches unregistered mcp names against deny globs via isToolDenied', async () => {
+    const svc = await bindProfile('deny-mcp');
+    expect(svc.isToolDenied('mcp__github__get_issue')).toBe(true);
+    expect(svc.isToolDenied('mcp__other__ping')).toBe(false);
+    expect(svc.isToolDenied('Read')).toBe(false);
+  });
+
   it('lists available profiles when binding an unknown profile', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     await expect(
@@ -586,6 +638,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -659,11 +712,31 @@ describe('AgentToolPolicyService global [tools] config', () => {
     expect(svc.isToolActive('Read')).toBe(true);
   });
 
+  it('fingerprints live global allowlist and denylist changes', async () => {
+    const svc = await bindWithToolsConfig({});
+    const initial = svc.getPolicyFingerprint();
+    await ctx.get(IConfigService).replace(TOOLS_SECTION, { enabled: ['Read'] }, ConfigTarget.Memory);
+    const allowed = svc.getPolicyFingerprint();
+    expect(allowed).not.toBe(initial);
+    await ctx.get(IConfigService).replace(
+      TOOLS_SECTION, { enabled: ['Read'], disabled: ['UnregisteredTool'] }, ConfigTarget.Memory,
+    );
+    expect(svc.getPolicyFingerprint()).not.toBe(allowed);
+  });
+
   it('matches globally disabled mcp tools by glob', async () => {
     const svc = await bindWithToolsConfig({ disabled: ['mcp__github__*'] });
     expect(svc.isToolActive('mcp__github__create_pr', 'mcp')).toBe(false);
     expect(svc.isToolActive('mcp__other__ping', 'mcp')).toBe(true);
     expect(svc.isToolActive('Read')).toBe(true);
+  });
+
+  it('marks globally disabled names as denied via isToolDenied', async () => {
+    const svc = await bindWithToolsConfig({ disabled: ['Bash', 'mcp__github__*'] });
+    expect(svc.isToolDenied('Bash')).toBe(true);
+    expect(svc.isToolDenied('mcp__github__create_pr')).toBe(true);
+    expect(svc.isToolDenied('mcp__other__ping')).toBe(false);
+    expect(svc.isToolDenied('Read')).toBe(false);
   });
 
   it('intersects the global config with the profile policy instead of overriding it', async () => {
@@ -721,6 +794,34 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     expect(svc.isToolActive('Edit')).toBe(false);
   });
 
+  it('marks session-disabled names as denied via isToolDenied', async () => {
+    const svc = await bind(DEFAULT_AGENT_PROFILE_NAME);
+
+    expect(svc.isToolDenied('Automation')).toBe(false);
+    await svc.setSessionDisabledTools(['Automation']);
+    expect(svc.isToolDenied('Automation')).toBe(true);
+    await svc.setSessionDisabledTools([]);
+    expect(svc.isToolDenied('Automation')).toBe(false);
+  });
+
+  it('fingerprints policy changes but ignores name ordering and duplicates', async () => {
+    const svc = await bind(DEFAULT_AGENT_PROFILE_NAME);
+    const initial = svc.getPolicyFingerprint();
+    await svc.setSessionDisabledTools(['UnregisteredTool', 'AnotherTool']);
+    const disabled = svc.getPolicyFingerprint();
+    expect(disabled).not.toBe(initial);
+    await svc.setSessionDisabledTools(['AnotherTool', 'UnregisteredTool', 'AnotherTool']);
+    expect(svc.getPolicyFingerprint()).toBe(disabled);
+    await svc.setSessionDisabledTools([]);
+    expect(svc.getPolicyFingerprint()).toBe(initial);
+
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['UnregisteredTool'] });
+    const profileDenied = svc.getPolicyFingerprint();
+    expect(profileDenied).not.toBe(initial);
+    ctx.get(IAgentProfileService).update({ activeToolNames: ['Read'] });
+    expect(svc.getPolicyFingerprint()).not.toBe(profileDenied);
+  });
+
   it('keeps the profile own denylist across replacement calls', async () => {
     const svc = await bind('session-deny');
 
@@ -751,6 +852,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -984,6 +1086,24 @@ describe('AgentToolPolicyService executor enforcement', () => {
       output: 'Tool "PolicyProbe" is disabled by the active tool policy',
     });
     expect(probe.calls).toBe(0);
+  });
+
+  it('fingerprints workspace tool-policy changes for unregistered names', async () => {
+    const gate = {
+      _serviceBrand: undefined,
+      disabledTools: [] as string[],
+      onDidChange: Event.None as Event<void>,
+    } satisfies ISessionToolPolicyGate;
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionToolPolicyGate, gate),
+    );
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    const svc = ctx.get(IAgentToolPolicyService);
+    const initial = svc.getPolicyFingerprint();
+    gate.disabledTools = ['UnregisteredTool'];
+    expect(svc.getPolicyFingerprint()).not.toBe(initial);
+    expect(svc.isToolDenied('UnregisteredTool')).toBe(true);
   });
 
   it('applies the workspace gate in the prompt projection (skillActive)', async () => {
@@ -1253,5 +1373,90 @@ describe('agentsMdReminder seeding', () => {
     );
 
     expect(seedInjected).not.toHaveBeenCalled();
+  });
+});
+
+describe('change-notifier belief seeding', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+  let workDir: string;
+
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'belief-throws-on-prompt',
+      systemPrompt: () => {
+        throw new Error('prompt build boom');
+      },
+    });
+  });
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-belief-home-'));
+    workDir = await mkdtemp(join(tmpdir(), 'kimi-belief-work-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  function buildNotifierContext(
+    seedBeliefs: IAgentChangeNotifierService['seedBeliefs'],
+  ): IAgentProfileService {
+    ctx = createTestAgent(
+      { cwd: workDir },
+      hostEnvironmentServices(homeDir),
+      agentService(IAgentChangeNotifierService, {
+        _serviceBrand: undefined,
+        notifyAgentsMdChanges: async () => {},
+        notifySkillChanges: async () => {},
+        notifySubagentChanges: async () => {},
+        seedBeliefs,
+        mute: () => {},
+        unmute: () => {},
+      }),
+    );
+    return ctx.get(IAgentProfileService);
+  }
+
+  it('seeds beliefs from the rendered prompt after a successful bind', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(seedBeliefs).toHaveBeenCalledTimes(1);
+    const seed = seedBeliefs.mock.calls[0]?.[0];
+    expect(seed?.agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+    expect(seed?.agentsMd).toContain('project instructions');
+    expect(seed?.skillsListing).toEqual(expect.any(String));
+  });
+
+  it('does not seed when the prompt build fails before the bind commits', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+
+    await expect(
+      profile.bind({ profile: 'belief-throws-on-prompt', model: MOCK_MODEL }),
+    ).rejects.toThrow('prompt build boom');
+
+    expect(seedBeliefs).not.toHaveBeenCalled();
+  });
+
+  it('does not reseed beliefs on binding snapshot restore', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    seedBeliefs.mockClear();
+
+    profile.applyBindingSnapshot({
+      profileName: DEFAULT_AGENT_PROFILE_NAME,
+      thinkingLevel: 'off',
+      systemPrompt: 'restored prompt',
+    });
+
+    expect(seedBeliefs).not.toHaveBeenCalled();
   });
 });
