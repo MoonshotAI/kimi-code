@@ -33,6 +33,7 @@ import {
   kimiRegionProfile,
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-oauth';
+import { SessionRatingHost } from '@moonshot-ai/kimi-code-product/core';
 import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
@@ -330,6 +331,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     configChangedPublisher.close();
     await remoteControlManager.close();
     await app.close();
+    sessionRating.dispose();
     configWarningSubscription.dispose();
     pluginChangeSubscription.dispose();
     capabilityInstallSubscription.dispose();
@@ -367,6 +369,11 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
 
   const connectionRegistry = new ConnectionRegistry();
   const transcriptService = new TranscriptService({ homeDir, core, logger });
+  const sessionRating = new SessionRatingHost(core, {
+    log: (message, properties) => {
+      logger.info(properties, message);
+    },
+  });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
     eventsDir: join(homeDir, 'server', 'events'),
@@ -487,6 +494,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     connectionRegistry,
     broadcaster,
     transcriptService,
+    sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
   });
