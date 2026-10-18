@@ -631,6 +631,34 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(projection.calls).toEqual(['normal', 'degraded']);
   });
 
+  it('keeps the too-large wording for size rejections', async () => {
+    const calls = { value: 0 };
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413),
+      undefined,
+    );
+    const imageMessage = (data: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${data}` } }],
+      toolCalls: [],
+    });
+
+    await service.request({
+      messages: [imageMessage('OLD'), imageMessage('NEW1'), imageMessage('NEW2')],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-degraded',
+        message:
+          'Provider rejected the request as too large; older media were dropped and the request was retried.',
+      }),
+    ]);
+  });
+
   it('attaches display paths to degraded older media', async () => {
     const calls = { value: 0 };
     const capturedInputs: ModelRequestInput[] = [];
@@ -936,6 +964,34 @@ describe('AgentLLMRequesterService unsupported-media resend', () => {
       .filter((part) => part.type === 'image_url')
       .map((part) => part.imageUrl.url);
     expect(imageUrls).toEqual(['data:image/png;base64,NEW1', 'data:image/png;base64,NEW2']);
+  });
+
+  it('reports the degraded-media warning with unsupported-media wording', async () => {
+    const calls = { value: 0 };
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, GATEWAY_MEDIA_400),
+      undefined,
+    );
+    const imageMessage = (data: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${data}` } }],
+      toolCalls: [],
+    });
+
+    await service.request({
+      messages: [...inlineVideoToolMessages(), imageMessage('NEW1'), imageMessage('NEW2')],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-degraded',
+        message:
+          'Provider does not accept the media in the request; older media were dropped and the request was retried.',
+      }),
+    ]);
   });
 
   it('does not resend for a field-required rejection on a non-media field', async () => {
