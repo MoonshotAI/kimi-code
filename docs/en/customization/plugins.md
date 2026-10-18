@@ -166,7 +166,7 @@ Look up national (GB), industry, local, and association standards by number or t
 
 <a id="kimi-webbridge"></a>
 
-### Kimi Browser Extension <Badge type="tip" text="v2.0.11" />
+### Kimi Browser Extension <Badge type="tip" text="v2.0.24" />
 
 Kimi Browser Extension lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi Browser Extension site](https://www.kimi.com/en/products/kimi-browser-extension) for a product overview.
 
@@ -203,7 +203,7 @@ Use this when you can't reach the stores:
 - **Competitive analysis**: Batch-question multiple AI products and collect their answers to build side-by-side comparison reports
 - **Flight price comparison**: Query the same itinerary across multiple travel platforms, record airlines, departure/arrival times, and links sorted by price, and get recommended options
 
-### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
+### Kimi Computer Use <Badge type="tip" text="v0.6.3" />
 
 Kimi Computer Use lets AI operate your desktop apps directly, clicking, dragging, scrolling, and typing. The macOS version works silently in the background without taking over your mouse (a few popup actions may still bring an app to the foreground); see [the notes below](#notes-for-the-windows-version) for how the Windows version differs.
 

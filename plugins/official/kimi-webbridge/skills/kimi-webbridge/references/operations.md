@@ -12,6 +12,7 @@ Everything below lives under `~/.kimi-webbridge/` (Windows: `%USERPROFILE%\.kimi
 ## What is on disk
 
 - `bin/kimi-webbridge` (`bin\kimi-webbridge.exe`) — the binary. It is not on PATH, so call it by this path. `command not found` means it is not installed.
+- `bin/kimi-webbridge.version` — written by the Kimi desktop app when it manages the daemon; it is that app's install record. Its leading number is the desktop app's version, not the daemon's — for the daemon's version, read `version` from `status`.
 - `config.json` — optional. Exists only if someone moved the daemon off the default port (see below).
 - `daemon.pid` / `daemon.addr` — the running daemon's PID and the address it actually bound; both removed on exit. `stop`/`status`/`start` find a live daemon through these, so they keep working after `config.json` has been edited to point elsewhere.
 - `logs/daemon.log` — current run; `daemon.log.prev` — the run before. Read them with `logs`, not by hand.
@@ -48,7 +49,7 @@ Always present:
 - `extension_connected` (bool), `extension_id`, `extension_version` — empty strings when no extension is attached. Not connected means the extension isn't installed, the browser is closed, or — after a port move — the extension is still pointed at the old address (Settings → Local agent remote control → Connection address). The first two are for the user via the help page.
 - `skills` — every place this skill is installed: `[{agent, path, version}]`
 
-Present only when something needs doing — each carries a `command` that is the exact next step. Relay it to the user to run; don't run it yourself, since every one of them restarts the daemon:
+Present only when something needs doing — each carries a `command` that is the exact next step, and CLI commands also print them on stderr as `==> … Run: <command>` lines. Relay the command to the user to run; don't run it yourself — `upgrade` restarts the daemon, and a skill reinstall only takes effect once the user restarts their agent:
 
 - `version_mismatch` `{daemon, extension, message, command}` — daemon and extension differ in major.minor. `command` is the `upgrade <version>` that pairs them. While this is set, `update_available` is suppressed: pairing with the extension comes before chasing the newest release.
 - `skill_mismatch` `{extension_version, outdated: [...], command}` — installed skill copies out of step with the extension; `command` reinstalls the matching version.

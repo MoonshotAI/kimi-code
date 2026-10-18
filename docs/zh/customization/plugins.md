@@ -166,7 +166,7 @@ Kimi Datasource 是 Kimi Code 官方数据插件。用自然语言直接查询�
 
 <a id="kimi-webbridge"></a>
 
-### Kimi Browser Extension <Badge type="tip" text="v2.0.11" />
+### Kimi Browser Extension <Badge type="tip" text="v2.0.24" />
 
 Kimi Browser Extension 让 AI 直接操控你的浏览器，带着你的登录状态和 Cookie 打开网页、阅读内容、点击按钮、填写表单、截图保存，把重复的网页操作交给它完成。产品介绍见 [Kimi Browser Extension 官网](https://www.kimi.com/products/kimi-browser-extension)。
 
@@ -205,7 +205,7 @@ Kimi Browser Extension 让 AI 直接操控你的浏览器，带着你的登录�
 - **竞品分析**：自动在多个 AI 产品间批量发问并采集回答，生成横向对比报告
 - **机票比价**：在多个旅行平台查询同一行程，按价格排序记录航司、起降时间和原始链接，给出推荐方案
 
-### Kimi Computer Use <Badge type="tip" text="v0.5.4" />
+### Kimi Computer Use <Badge type="tip" text="v0.6.3" />
 
 Kimi Computer Use 让 AI 直接操作你的桌面应用，可以完成点击、拖拽、滚动、输入等操作。macOS 版全程在后台静默运行，不抢占你的鼠标；少量弹窗操作仍会唤起前台 App。Windows 版的差异见 [Windows 版注意事项](#windows-版注意事项)。
 
