@@ -125,6 +125,33 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
+export function isUserTurnOrigin(origin: unknown): boolean | undefined {
+  if (origin === null || typeof origin !== 'object' || !('kind' in origin)) return undefined;
+  switch (origin.kind) {
+    case 'user':
+      return true;
+    case 'skill_activation':
+    case 'plugin_command':
+      if (!('trigger' in origin) || typeof origin.trigger !== 'string') return undefined;
+      return origin.trigger === 'user-slash';
+    case 'shell_command':
+      if (!('phase' in origin) || typeof origin.phase !== 'string') return undefined;
+      return origin.phase === 'input';
+    case 'cron_job':
+    case 'cron_missed':
+    case 'system_trigger':
+    case 'task':
+    case 'background_task':
+    case 'hook_result':
+    case 'compaction_summary':
+    case 'injection':
+    case 'retry':
+      return false;
+    default:
+      return undefined;
+  }
+}
+
 export interface ContextMessageTiming {
   readonly llmFirstTokenLatencyMs?: number;
   readonly llmStreamDurationMs?: number;

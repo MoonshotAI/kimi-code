@@ -12,7 +12,7 @@ import {
   selectRecentUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import { isUserTurnOrigin, type ContextMessage } from '#/agent/contextMemory/types';
 import {
   closeTrailingOpenToolExchange,
   INHERITED_IN_FLIGHT_TOOL_OUTPUT,
@@ -1000,5 +1000,34 @@ describe('closeTrailingOpenToolExchange', () => {
       toolCallId: 'call_agent',
       content: [{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }],
     });
+  });
+});
+
+describe('isUserTurnOrigin', () => {
+  it.each([
+    [{ kind: 'user' }, true],
+    [{ kind: 'skill_activation', trigger: 'user-slash' }, true],
+    [{ kind: 'skill_activation', trigger: 'model-tool' }, false],
+    [{ kind: 'plugin_command', trigger: 'user-slash' }, true],
+    [{ kind: 'shell_command', phase: 'input' }, true],
+    [{ kind: 'shell_command', phase: 'output' }, false],
+    [{ kind: 'cron_job' }, false],
+    [{ kind: 'background_task' }, false],
+    [{ kind: 'retry' }, false],
+  ])('classifies %j as %s', (origin, expected) => {
+    expect(isUserTurnOrigin(origin)).toBe(expected);
+  });
+
+  it.each([
+    undefined,
+    null,
+    'user',
+    {},
+    { kind: 'future_kind' },
+    { kind: 'skill_activation' },
+    { kind: 'plugin_command', trigger: 1 },
+    { kind: 'shell_command' },
+  ])('cannot classify %j', (origin) => {
+    expect(isUserTurnOrigin(origin)).toBeUndefined();
   });
 });

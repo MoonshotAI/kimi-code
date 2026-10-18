@@ -5,6 +5,7 @@ import {
   FOLD_RELEVANT_WIRE_TYPES,
   foldWireRecords,
   isRealUserInput,
+  isUserTurnOrigin,
   type AgentReplayRecord as V2AgentReplayRecord,
   type ContextMessage as V2ContextMessage,
   type WireRecord,
@@ -162,33 +163,6 @@ class UserTurnCounter {
     const userOrigin = isUserTurnOrigin(record['origin']);
     if (userOrigin === undefined) this.invalidate();
     else if (userOrigin) this.total += 1;
-  }
-}
-
-function isUserTurnOrigin(origin: unknown): boolean | undefined {
-  if (origin === null || typeof origin !== 'object' || !('kind' in origin)) return undefined;
-  switch (origin.kind) {
-    case 'user':
-      return true;
-    case 'skill_activation':
-    case 'plugin_command':
-      if (!('trigger' in origin) || typeof origin.trigger !== 'string') return undefined;
-      return origin.trigger === 'user-slash';
-    case 'shell_command':
-      if (!('phase' in origin) || typeof origin.phase !== 'string') return undefined;
-      return origin.phase === 'input';
-    case 'cron_job':
-    case 'cron_missed':
-    case 'system_trigger':
-    case 'task':
-    case 'background_task':
-    case 'hook_result':
-    case 'compaction_summary':
-    case 'injection':
-    case 'retry':
-      return false;
-    default:
-      return undefined;
   }
 }
 
