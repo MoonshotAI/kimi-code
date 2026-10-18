@@ -359,6 +359,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         : this.isRecoveryTurn(this.mediaDegradedTurns, request.source)
           ? { media: 'degraded' }
           : undefined;
+    let mediaCause: 'too-large' | 'unsupported' | undefined;
     const captureMediaStripPolicy = (): { readonly strip: MediaStripSnapshot } => {
       const snapshot = this.projector.captureMediaStripSnapshot(shaped);
       this.markMediaStrippedRecoveryTurn(snapshot, request.source);
@@ -404,7 +405,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
               code: mediaProjection,
               message:
                 mediaProjection === 'media-degraded'
-                  ? 'Provider rejected the request as too large; older media were dropped and the request was retried.'
+                  ? mediaCause === 'unsupported'
+                    ? 'Provider does not accept the media in the request; older media were dropped and the request was retried.'
+                    : 'Provider rejected the request as too large; older media were dropped and the request was retried.'
                   : 'Provider rejected the media in the request; all media were omitted and the request was retried.',
             }),
           );
@@ -526,16 +529,17 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       try {
         return await run(policy);
       } catch (error) {
-        const nextPolicy = this.nextProjectionPolicyForError(
+        const next = this.nextProjectionPolicyForError(
           error,
           policy,
           request,
           signal,
           captureMediaStripPolicy,
         );
-        if (nextPolicy !== undefined) {
+        if (next !== undefined) {
           onAttemptRetry?.();
-          policy = nextPolicy;
+          if (next.mediaCause !== undefined) mediaCause = next.mediaCause;
+          policy = next.policy;
           continue;
         }
         const raw = unwrapErrorCause(error);
@@ -574,12 +578,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     request: ResolvedLLMRequest,
     signal: AbortSignal | undefined,
     captureMediaStripPolicy: () => { readonly strip: MediaStripSnapshot },
-  ): ProjectionPolicy | undefined {
+  ):
+    | {
+        readonly policy: ProjectionPolicy;
+        readonly mediaCause?: 'too-large' | 'unsupported';
+      }
+    | undefined {
     if (signal?.aborted === true) return undefined;
     const raw = unwrapErrorCause(error);
     const media = policy?.media;
     let projection: LlmRequestProjectionFallbackEvent['projection'];
     let nextPolicy: ProjectionPolicy;
+    let mediaCause: 'too-large' | 'unsupported' | undefined;
     if (
       (raw instanceof APIRequestTooLargeError || isUnsupportedMediaError(raw)) &&
       (media === undefined || media === 'degraded')
@@ -599,6 +609,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
         projection = 'media-degraded';
         nextPolicy = { ...policy, media: 'degraded' };
+        mediaCause = mediaRejected ? 'unsupported' : 'too-large';
       } else {
         this.log.warn(
           mediaRejected
@@ -641,7 +652,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       turn_id: request.source?.turnId,
     };
     this.telemetry.track2('llm_request_projection_fallback', properties);
-    return nextPolicy;
+    return mediaCause === undefined ? { policy: nextPolicy } : { policy: nextPolicy, mediaCause };
   }
 
   private normalizeStreamPart(
