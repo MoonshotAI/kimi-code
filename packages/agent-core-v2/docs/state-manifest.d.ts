@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 75 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -121,6 +121,7 @@
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
 //     userTool                                        src/agent/userTool/userToolOps.ts
+//     userTurnTally                                   src/agent/loop/userTurnTally.ts
 
 /** App-scope keys registered into IAppStateService. */
 export interface AppStateSnapshot {
@@ -1048,6 +1049,13 @@ export interface AgentStateSnapshot {
       readonly reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
       readonly durationMs?: number;
     };
+  };
+  // src/agent/loop/userTurnTally.ts
+  // replayable · durable — folds: TurnPrompt, ContextAppendMessage
+  'userTurnTally': /* UserTurnTally — packages/agent-core-v2/src/agent/loop/userTurnTally.ts */ {
+    readonly count: number;
+    readonly reliable: boolean;
+    readonly promptSeen: boolean;
   };
   // src/agent/mcp/mcpDiscoveryOps.ts
   // replayable · durable — folds: McpToolsDiscovered

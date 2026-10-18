@@ -5,6 +5,7 @@ import { fullCompactionKey, fullCompactionWireRangesKey } from '#/agent/fullComp
 import { interruptionReminderKey } from '#/agent/interruptionReminder/interruptionReminderOps';
 import { llmRequestTraceKey } from '#/agent/llmRequester/llmRequestOps';
 import { turnKey } from '#/agent/loop/turnOps';
+import { userTurnTallyKey } from '#/agent/loop/userTurnTally';
 import { mcpDiscoveryKey } from '#/agent/mcp/mcpDiscoveryOps';
 import {
   permissionModeConfiguredKey,
@@ -30,6 +31,7 @@ export const BUILTIN_REPLAYABLE_STATE_KEYS: readonly ReplayableStateKey<any>[] =
   interruptionReminderKey,
   llmRequestTraceKey,
   turnKey,
+  userTurnTallyKey,
   mcpDiscoveryKey,
   permissionModeKey,
   permissionModeConfiguredKey,
