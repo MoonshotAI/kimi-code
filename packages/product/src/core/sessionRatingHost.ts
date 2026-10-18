@@ -4,6 +4,7 @@ import {
   IAgentPermissionModeService,
   IAgentProfileService,
   IBootstrapService,
+  IConfigService,
   IEventBus,
   ISessionManager,
   ISessionTokenCountingService,
@@ -78,12 +79,14 @@ export class SessionRatingHost implements IDisposable {
   private readonly preview: boolean;
   private readonly config: SurveyPopupConfigFeed;
   private readonly cooldown: RatingCooldownStore;
+  private readonly settings: IConfigService;
 
   constructor(
     core: Scope,
     private readonly options: SessionRatingHostOptions = {},
   ) {
     const bootstrap = core.accessor.get(IBootstrapService);
+    this.settings = core.accessor.get(IConfigService);
     const previewEnv = bootstrap.getEnv(SESSION_RATING_PREVIEW_ENV);
     this.preview = previewEnv !== undefined && ENABLED_ENV_VALUES.has(previewEnv.trim().toLowerCase());
     this.config = staticConfigFeed(
@@ -130,7 +133,10 @@ export class SessionRatingHost implements IDisposable {
     let mainAgent: IAgentScopeHandle | undefined;
     let mainAgentEvents: IDisposable | undefined;
     const mount = mountSessionRating({
-      environment: () => readEnvironment(sessionId, mainAgent),
+      environment: () => ({
+        ...readEnvironment(sessionId, mainAgent),
+        ratingDisabled: this.settings.get('disableFeedbackSurvey') === true,
+      }),
       config: this.config,
       cooldown: this.cooldown,
       track: (event, properties) => {

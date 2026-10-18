@@ -56,8 +56,6 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
-    disableFeedbackSurvey:
-      host.state.appState.disableFeedbackSurvey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
@@ -701,10 +699,10 @@ export function showSurveyPreferencePicker(host: SlashCommandHost): void {
 
 type SurveyPreferenceHost = {
   readonly state: {
-    readonly appState: Pick<
-      SlashCommandHost['state']['appState'],
-      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'disableFeedbackSurvey'
-    >;
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'disableFeedbackSurvey'>;
+  };
+  readonly harness: {
+    setConfig(patch: { disableFeedbackSurvey: boolean }): Promise<unknown>;
   };
   setAppState(
     patch: Pick<SlashCommandHost['state']['appState'], 'disableFeedbackSurvey'>,
@@ -723,10 +721,7 @@ export async function applySurveyPreferenceChoice(
   }
 
   try {
-    await saveTuiConfig({
-      ...currentTuiConfig(host as unknown as SlashCommandHost),
-      disableFeedbackSurvey,
-    });
+    await host.harness.setConfig({ disableFeedbackSurvey });
   } catch (error) {
     host.showStatus(
       `Failed to save session rating setting: ${formatErrorMessage(error)}`,

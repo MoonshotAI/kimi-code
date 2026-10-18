@@ -45,6 +45,7 @@ import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
 import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
+import { configuredSurveyOptOut, migrateLegacySurveySetting } from '#/utils/survey-setting';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
@@ -63,6 +64,7 @@ import {
   type KimiSlashCommand,
   type SkillListSession,
 } from './commands';
+import { currentTuiConfig } from './commands/config';
 import * as slashCommands from './commands/dispatch';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
@@ -112,7 +114,7 @@ import {
 } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
-import type { TuiConfig } from './config';
+import { saveTuiConfig, type TuiConfig } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -505,6 +507,8 @@ export class KimiTUI {
     this.surveyController = new SurveyController(this, {
       accessToken: () => this.harness.auth.getCachedAccessToken(),
       telemetryDisabled: () => isTelemetryDisabledByEnv() || this.telemetryDisabled,
+      feedbackSurveyDisabled: () =>
+        configuredSurveyOptOut() ?? this.state.appState.disableFeedbackSurvey === true,
     });
     this.modelMigration = new ModelMigrationController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
@@ -840,12 +844,29 @@ export class KimiTUI {
     }
   }
 
+  private async migrateLegacySurveySetting(): Promise<void> {
+    try {
+      const disableFeedbackSurvey = await migrateLegacySurveySetting({
+        legacyValue: this.state.appState.disableFeedbackSurvey,
+        getConfig: () => this.harness.getConfig(),
+        setConfig: (patch) => this.harness.setConfig(patch),
+        dropLegacy: () =>
+          saveTuiConfig({ ...currentTuiConfig(this), disableFeedbackSurvey: undefined }),
+        warn: (message) => {
+          this.showStatus(message, 'warning');
+        },
+      });
+      this.setAppState({ disableFeedbackSurvey });
+    } catch {}
+  }
+
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
     if (this.startupNotice !== undefined) {
       this.showStatus(this.startupNotice);
       this.startupNotice = undefined;
     }
     void this.showTmuxKeyboardWarningIfNeeded();
+    void this.migrateLegacySurveySetting();
     // Config diagnostics (deprecated keys/env vars, invalid sections) in
     // warning yellow at boot; `run-prompt`/`run-v2-print` print them to
     // stderr for non-interactive runs.

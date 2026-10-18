@@ -37,7 +37,7 @@ describe('TUI config', () => {
     expect(text).toContain('Client preferences for kimi-code.');
     expect(text).toContain('theme = "auto"');
     expect(text).toContain('cache_expiry_hint = true');
-    expect(text).toContain('disable_feedback_survey = false');
+    expect(text).not.toContain('disable_feedback_survey');
     expect(text).toContain('auto_session_title = true');
     expect(text).toContain('command = ""');
     expect(text).toContain('[upgrade]');
@@ -68,7 +68,6 @@ auto_install = false
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
-      disableFeedbackSurvey: false,
       autoSessionTitle: true,
       editorCommand: 'code --wait',
       notifications: { enabled: false, condition: 'always' },
@@ -106,8 +105,8 @@ cache_expiry_hint = false
     expect(config.cacheExpiryHint).toBe(false);
   });
 
-  it('defaults disable_feedback_survey to false and parses true', () => {
-    expect(parseTuiConfig('').disableFeedbackSurvey).toBe(false);
+  it('keeps a legacy disable_feedback_survey value only when the file sets it', () => {
+    expect(parseTuiConfig('').disableFeedbackSurvey).toBeUndefined();
 
     const config = parseTuiConfig(`
 disable_feedback_survey = true
@@ -138,7 +137,6 @@ command = "   "
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
-      disableFeedbackSurvey: false,
       autoSessionTitle: true,
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
@@ -189,7 +187,6 @@ command = "   "
       renderLatex: true,
       disablePasteBurst: false,
       cacheExpiryHint: true,
-      disableFeedbackSurvey: false,
       autoSessionTitle: true,
       editorCommand: 'vim',
       notifications: { enabled: false, condition: 'always' },
@@ -199,14 +196,14 @@ command = "   "
     });
   });
 
-  it('round-trips a disable_feedback_survey opt-out', async () => {
+  it('drops a legacy disable_feedback_survey value when the file is rewritten', async () => {
     await saveTuiConfig(
       { ...DEFAULT_TUI_CONFIG, disableFeedbackSurvey: true },
       filePath,
     );
 
-    expect(readFileSync(filePath, 'utf-8')).toContain('disable_feedback_survey = true');
-    expect((await loadTuiConfig(filePath)).disableFeedbackSurvey).toBe(true);
+    expect(readFileSync(filePath, 'utf-8')).not.toContain('disable_feedback_survey');
+    expect((await loadTuiConfig(filePath)).disableFeedbackSurvey).toBeUndefined();
   });
 
   it('round-trips an auto_session_title opt-out', async () => {

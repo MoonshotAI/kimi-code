@@ -137,4 +137,20 @@ describe('server-v2 /api/v1/sessions/{session_id}/rating', () => {
       ['feedback_survey', 'abandoned', undefined],
     ]);
   });
+
+  it('stays closed while disable_feedback_survey is set in config.toml', async () => {
+    const before = previewEvents().length;
+    await request('/api/v1/config', { disable_feedback_survey: true });
+    try {
+      const id = await finishUserTurn();
+      await new Promise((resolve) => setTimeout(resolve, 2100));
+
+      await expect(
+        request<RatingViewWire>(`/api/v1/sessions/${id}/rating`, { op: 'evaluate' }),
+      ).resolves.toMatchObject({ data: { phase: 'closed' } });
+      expect(previewEvents()).toHaveLength(before);
+    } finally {
+      await request('/api/v1/config', { disable_feedback_survey: false });
+    }
+  });
 });

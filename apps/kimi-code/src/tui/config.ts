@@ -145,7 +145,6 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   renderLatex: true,
   disablePasteBurst: false,
   cacheExpiryHint: true,
-  disableFeedbackSurvey: false,
   autoSessionTitle: true,
   editorCommand: null,
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
@@ -276,8 +275,7 @@ export function normalizeTuiConfig(
     renderLatex: config.render_latex ?? DEFAULT_TUI_CONFIG.renderLatex,
     disablePasteBurst: config.disable_paste_burst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     cacheExpiryHint: config.cache_expiry_hint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
-    disableFeedbackSurvey:
-      config.disable_feedback_survey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
+    disableFeedbackSurvey: config.disable_feedback_survey,
     autoSessionTitle: config.auto_session_title ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
     editorCommand: command === undefined || command.length === 0 ? null : command,
     notifications: {
@@ -343,7 +341,6 @@ ${tuiModeLine}
 render_latex = ${String(config.renderLatex !== false)} # false keeps LaTeX math in assistant messages as raw source
 disable_paste_burst = ${String(config.disablePasteBurst)} # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = ${String(config.cacheExpiryHint !== false)} # false disables the "cache expired" dialog on resume / idle submit
-disable_feedback_survey = ${String(config.disableFeedbackSurvey === true)} # true hides the occasional session rating prompt
 auto_session_title = ${String(config.autoSessionTitle !== false)} # false stops the TUI from auto-generating a session title after the first turn
 
 [editor]
