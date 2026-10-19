@@ -848,9 +848,10 @@ export class KimiTUI {
   }
 
   private async migrateLegacySurveySetting(): Promise<void> {
+    const legacyValue = this.state.appState.disableFeedbackSurvey;
     try {
-      const disableFeedbackSurvey = await migrateLegacySurveySetting({
-        legacyValue: this.state.appState.disableFeedbackSurvey,
+      const outcome = await migrateLegacySurveySetting({
+        legacyValue,
         getConfig: () => this.harness.getConfig(),
         setConfig: (patch) => this.harness.setConfig(patch),
         dropLegacy: removeLegacySurveySetting,
@@ -858,7 +859,13 @@ export class KimiTUI {
           this.showStatus(message, 'warning');
         },
       });
-      this.setAppState({ disableFeedbackSurvey });
+      this.setAppState({ disableFeedbackSurvey: outcome.value });
+      if (outcome.action === undefined) return;
+      this.track('survey_setting_migration', {
+        legacy: legacyValue,
+        configured: outcome.configured ?? 'absent',
+        action: outcome.action,
+      });
     } catch {}
   }
 
