@@ -77,6 +77,8 @@ You can pass a hint to tell the model what to prioritize when compressing:
 /compact Keep the discussion about database migrations
 ```
 
+Typing `/compact` while the agent is running joins the message queue and runs when its turn comes; a duplicate `/compact` is refused while one is already queued.
+
 ## Forking a session
 
 To explore a new direction without disrupting the current conversation, use `/fork`:
