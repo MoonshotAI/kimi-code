@@ -2,7 +2,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   handleReloadCommand,
@@ -16,13 +16,20 @@ import {
 } from '#/tui/commands/experimental-flags';
 import {
   createMarkdownOptions,
+  getMarkdownMermaidMode,
+  setMarkdownMermaidMode,
   setMarkdownRenderLatex,
 } from '#/tui/utils/markdown-options';
 
 const tempDirs: string[] = [];
 const originalKimiCodeHome = process.env['KIMI_CODE_HOME'];
 
+beforeEach(() => {
+  vi.stubEnv('KIMI_CODE_TUI_FULL_SCREEN', '');
+});
+
 afterEach(async () => {
+  vi.unstubAllEnvs();
   setExperimentalFeatures([]);
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
@@ -78,9 +85,11 @@ auto_install = false
 
     await handleReloadCommand(host);
 
-    expect(session.reloadSession).toHaveBeenCalledWith({
+    expect(host.harness.reloadSession).toHaveBeenCalledWith({
+      id: session.id,
       forcePluginSessionStartReminder: true,
     });
+    expect(session.reloadSession).not.toHaveBeenCalled();
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
       session,
       'Session reloaded.',
@@ -141,6 +150,27 @@ auto_install = false
     }
   });
 
+  it('applies the mermaid mode before theme application rebuilds Markdown', async () => {
+    await writeTuiConfig('[markdown]\nmermaid = "off"\n');
+    const host = makeHost();
+
+    let mermaidWhenThemeApplied: string | undefined;
+    const mutable = host as unknown as { applyTheme: unknown };
+    mutable.applyTheme = vi.fn(() => {
+      mermaidWhenThemeApplied = getMarkdownMermaidMode();
+    });
+
+    try {
+      await handleReloadTuiCommand(host);
+      expect(mermaidWhenThemeApplied).toBe('off');
+      expect(host.setAppState).toHaveBeenCalledWith(
+        expect.objectContaining({ markdown: { mermaid: 'off' } }),
+      );
+    } finally {
+      setMarkdownMermaidMode('final');
+    }
+  });
+
   it('refreshes workspace commands and lazy defaults on a session-less v2 reload', async () => {
     await writeTuiConfig('theme = "dark"\n');
     const host = makeHost();
@@ -148,7 +178,6 @@ auto_install = false
     const refreshPluginCommands = vi.fn(async () => {});
     const hydrateLazyConfigDefaults = vi.fn(async () => {});
     Object.assign(host, {
-      engineV2: true,
       refreshSkillCommands,
       refreshPluginCommands,
       hydrateLazyConfigDefaults,
@@ -167,6 +196,29 @@ auto_install = false
       'Runtime and TUI config reloaded; no active session.',
       'success',
     );
+  });
+
+  it('notices a required restart when tui_mode differs from the running UI mode', async () => {
+    await writeTuiConfig('tui_mode = "fullscreen"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.setAppState).toHaveBeenCalledWith(
+      expect.objectContaining({ tuiMode: 'fullscreen' }),
+    );
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'TUI mode takes effect after restarting Kimi Code.',
+    );
+  });
+
+  it('does not notice when tui_mode matches the running UI mode', async () => {
+    await writeTuiConfig('theme = "dark"\n');
+    const host = makeHost();
+
+    await handleReloadTuiCommand(host);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
   });
 });
 
@@ -195,6 +247,9 @@ function makeHost({
     editor: {
       setDisablePasteBurst: vi.fn(),
     },
+    ui: {
+      mode: 'regular' as const,
+    },
     theme: {
       palette: {
         success: '#00ff00',
@@ -205,6 +260,7 @@ function makeHost({
     state,
     session,
     harness: {
+      reloadSession: vi.fn(async () => session),
       getConfig: vi.fn(async () => ({
         models: {
           fresh: { provider: 'test', model: 'fresh-model', maxContextSize: 1000 },
@@ -225,13 +281,16 @@ function makeHost({
     refreshSlashCommandAutocomplete: vi.fn(),
     reloadCurrentSessionView: vi.fn(async () => {}),
     showStatus: vi.fn(),
+    showNotice: vi.fn(),
   } as unknown as SlashCommandHost & {
     readonly harness: {
+      readonly reloadSession: ReturnType<typeof vi.fn>;
       readonly getConfig: ReturnType<typeof vi.fn>;
       readonly getExperimentalFeatures: ReturnType<typeof vi.fn>;
     };
     readonly refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
     readonly reloadCurrentSessionView: ReturnType<typeof vi.fn>;
     readonly showStatus: ReturnType<typeof vi.fn>;
+    readonly showNotice: ReturnType<typeof vi.fn>;
   };
 }

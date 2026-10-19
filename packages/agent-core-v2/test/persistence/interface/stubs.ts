@@ -21,6 +21,7 @@ export function stubQueryStore(): IQueryStore {
     dropCollection: async (_c: string) => {},
     getCheckpoint: async (_s: string) => undefined as Checkpoint | undefined,
     setCheckpoint: async (_s: string, _c: Checkpoint) => {},
+    storeEpoch: () => 0,
     close: async () => {},
   };
 }

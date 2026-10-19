@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      sign-windows:
+        description: 'Whether to sign Windows builds with Azure Artifact Signing (requires AZURE_* secrets and AZURE_TRUSTED_SIGNING_* variables)'
+        required: false
+        type: boolean
+        default: false
     secrets:
       APPLE_CERTIFICATE_P12:
         required: false
@@ -28,6 +33,12 @@ on:
       APPLE_NOTARIZATION_KEY_ID:
         required: false
       APPLE_NOTARIZATION_ISSUER_ID:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
         required: false
 
 permissions:
@@ -96,6 +107,14 @@ jobs:
 
       - name: Build native executable (local profile)
         if: '!(runner.os == ''macOS'' && inputs.sign-macos)'
+        env:
+          KIMI_AZURE_TRUSTED_SIGNING: ${{ runner.os == 'Windows' && inputs.sign-windows && 'true' || 'false' }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ vars.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ vars.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: pnpm --filter @moonshot-ai/kimi-code run build:native:sea
 
       - name: Notarize macOS binary

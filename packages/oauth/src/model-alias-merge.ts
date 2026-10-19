@@ -22,6 +22,7 @@ export const CUSTOM_REGISTRY_MODEL_FIELDS: ReadonlySet<string> = new Set([
   'displayName',
   'supportEfforts',
   'defaultEffort',
+  'upgrade',
 ]);
 
 function cloneOverrides(

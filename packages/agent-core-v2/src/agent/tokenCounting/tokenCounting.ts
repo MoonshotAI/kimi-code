@@ -1,5 +1,5 @@
-import type { Message } from '#/kosong/contract/message';
-import type { Tool } from '#/kosong/contract/tool';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '#human/llm/message';
 
 export type TokenCountingStrategy = 'measured+estimated' | 'measured' | 'estimated';
 

@@ -7,9 +7,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { flushTelemetrySync, initializeTelemetry, shutdownTelemetry, track } from '../src';
+import {
+  flushTelemetrySync,
+  initializeTelemetry,
+  setTelemetryEnabled,
+  setTelemetryModel,
+  shutdownTelemetry,
+  track,
+} from '../src';
 import { isTelemetryDisabledByEnv } from '../src/bootstrap';
-import { TelemetryClient, resetDefaultTelemetryClientForTests } from '../src/client';
+import {
+  getDefaultTelemetryClient,
+  TelemetryClient,
+  resetDefaultTelemetryClientForTests,
+} from '../src/client';
 import { installCrashHandlersForClient, setCrashPhase, uninstallCrashHandlers } from '../src/crash';
 import { EventSink } from '../src/sink';
 import { SystemMetricsCollector } from '../src/systemMetrics';
@@ -23,7 +34,12 @@ import {
   applyServerPrefix,
   buildPayload,
 } from '../src/transport';
-import type { EnrichedTelemetryEvent, TelemetryEvent, TelemetryTransport } from '../src/types';
+import type {
+  EnrichedTelemetryEvent,
+  TelemetryEvent,
+  TelemetryProperties,
+  TelemetryTransport,
+} from '../src/types';
 
 const tempDirs: string[] = [];
 
@@ -147,14 +163,14 @@ describe('TelemetryClient', () => {
     });
   });
 
-  it('forwards directly to the attached sink and can be disabled', async () => {
+  it('forwards directly to the attached sink and stops after teardown', async () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
     client.attachSink(makeSink(transport));
 
-    client.track('before_disable');
-    client.disable();
-    client.track('after_disable');
+    client.track('before_teardown');
+    client.teardown();
+    client.track('after_teardown');
     await client.flush();
 
     expect(transport.sent).toHaveLength(0);
@@ -175,6 +191,62 @@ describe('TelemetryClient', () => {
     expect(event.properties['keep']).toBe(true);
   });
 
+  it('reports dropped non-primitive properties to the unexpected error handler', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    const onUnexpectedError = vi.fn();
+    client.setUnexpectedErrorHandler(onUnexpectedError);
+
+    const properties = { nested: { a: 1 }, list: [1, 2], keep: 1 } as unknown as TelemetryProperties;
+    client.track('bad_props', properties);
+    client.withContext({ sessionId: 'scoped' }).track('bad_props_scoped', properties);
+    await client.flush();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(4);
+    const first = onUnexpectedError.mock.calls[0]?.[0];
+    expect(first).toBeInstanceOf(Error);
+    expect(String(first)).toContain('"nested"');
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+    expect(transport.sent[0]?.[1]?.properties).toEqual({ keep: 1 });
+  });
+
+  it('reports drops for events queued before the handler is attached', async () => {
+    const client = new TelemetryClient();
+    const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
+    client.track('early_bad', properties);
+    (properties as Record<string, unknown>)['keep'] = 2;
+    (properties as Record<string, unknown>)['added'] = 'later';
+
+    const onUnexpectedError = vi.fn();
+    client.setUnexpectedErrorHandler(onUnexpectedError);
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    await client.flush();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(1);
+    expect(String(onUnexpectedError.mock.calls[0]?.[0])).toContain('"nested"');
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+  });
+
+  it('contains exceptions thrown by the unexpected error handler', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    client.setUnexpectedErrorHandler(() => {
+      throw new Error('handler blew up');
+    });
+
+    const properties = { nested: { a: 1 }, keep: 1 } as unknown as TelemetryProperties;
+    expect(() => client.track('bad_props', properties)).not.toThrow();
+    await client.flush();
+
+    expect(transport.sent[0]?.[0]?.properties).toEqual({ keep: 1 });
+    expect(consoleError).toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it('stops the previous system metrics collector when replacing it', () => {
     const client = new TelemetryClient();
     const first = { stop: vi.fn() };
@@ -182,7 +254,7 @@ describe('TelemetryClient', () => {
 
     client.setSystemMetricsCollector(first);
     client.setSystemMetricsCollector(second);
-    client.disable();
+    client.teardown();
 
     expect(first.stop).toHaveBeenCalledTimes(1);
     expect(second.stop).toHaveBeenCalledTimes(1);
@@ -231,6 +303,51 @@ describe('TelemetryClient', () => {
     expect(event?.timestamp).toBeGreaterThanOrEqual(before);
     expect(event?.timestamp).toBeLessThanOrEqual(Date.now() / 1000);
     expect(event?.properties).toEqual({});
+  });
+
+  it('drops buffered and incoming events while disabled, then resumes after re-enable', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    client.track('buffered');
+
+    client.setEnabled(false);
+    client.track('during');
+    client.setEnabled(true);
+    client.track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
+  });
+
+  it('tolerates repeated enable and disable calls', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    client.setEnabled(false);
+    client.setEnabled(false);
+    client.track('during');
+    client.setEnabled(true);
+    client.setEnabled(true);
+    client.track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
+  });
+
+  it('toggles the default client through the module-level setter', async () => {
+    const client = getDefaultTelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    setTelemetryEnabled(false);
+    track('during');
+    setTelemetryEnabled(true);
+    track('after');
+    await client.flush();
+
+    expect(transport.sent.flat().map((event) => event.event)).toEqual(['after']);
   });
 });
 
@@ -404,6 +521,27 @@ describe('EventSink', () => {
 
     expect(transport.retryCount).toBe(1);
   });
+
+  it('applies a reconciled model only to events accepted after setModel', () => {
+    const transport = new RecordingTransport();
+    const sink = makeSink(transport);
+    const event = (id: string): TelemetryEvent => ({
+      event_id: id,
+      device_id: 'dev',
+      session_id: 'ses',
+      event: 'test',
+      timestamp: 1,
+      properties: {},
+    });
+
+    sink.accept(event('e1'));
+    sink.setModel('reconciled-model');
+    sink.accept(event('e2'));
+    sink.flushSync();
+
+    expect(transport.saved[0]?.[0]?.context).toMatchObject({ model: 'kimi-k2' });
+    expect(transport.saved[0]?.[1]?.context).toMatchObject({ model: 'reconciled-model' });
+  });
 });
 
 describe('payload assembly', () => {
@@ -471,10 +609,16 @@ describe('payload assembly', () => {
     expect(() => buildPayload([arrayProperty], 'device-1')).toThrow(/property.list/);
   });
 
-  it('passes null primitive values through and leaves the input event untouched', () => {
+  it('drops null values from the payload and leaves the input event untouched', () => {
     const event = {
       ...sampleEvent('nullable'),
+      device_id: null,
+      session_id: null,
       properties: {
+        empty: null,
+      },
+      context: {
+        version: '1.2.3',
         empty: null,
       },
     };
@@ -485,8 +629,12 @@ describe('payload assembly', () => {
 
     expect(payload.events[0]).toMatchObject({
       event: 'kfc_nullable',
-      property_empty: null,
+      context_version: '1.2.3',
     });
+    expect(payload.events[0]).not.toHaveProperty('device_id');
+    expect(payload.events[0]).not.toHaveProperty('session_id');
+    expect(payload.events[0]).not.toHaveProperty('property_empty');
+    expect(payload.events[0]).not.toHaveProperty('context_empty');
     expect(event.properties).toBe(originalProperties);
     expect(event.context).toBe(originalContext);
     expect(event.event).toBe('nullable');
@@ -553,11 +701,12 @@ describe('AsyncTransport', () => {
 
   it('resolves a function endpoint per send, so an in-process switch needs no rebuild', async () => {
     const fetchImpl = vi.fn(async (_url: string | URL, _init?: RequestInit) =>
-      Promise.resolve(new Response('', { status: 200 })),
+      new Response('', { status: 200 }),
     );
-    let endpoint = 'https://cn.test/events';
+    let endpoint: string | undefined = 'https://cn.test/events';
+    const homeDir = await tempHome();
     const transport = new AsyncTransport({
-      homeDir: await tempHome(),
+      homeDir,
       deviceId: 'dev',
       endpoint: () => endpoint,
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -570,6 +719,11 @@ describe('AsyncTransport', () => {
     endpoint = 'https://global.test/events';
     await transport.send([sampleEvent()]);
     expect(fetchImpl.mock.calls[1]?.[0]).toBe('https://global.test/events');
+
+    endpoint = undefined;
+    await transport.send([sampleEvent('dropped')]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(() => statSync(join(homeDir, 'telemetry'))).toThrow();
   });
 
   it('retries anonymously on 401 with a token', async () => {
@@ -846,6 +1000,93 @@ describe('telemetry bootstrap', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it('starts paused and skips the disk replay when initiallyEnabled is false', async () => {
+    const homeDir = await tempHome();
+    const telemetryDir = join(homeDir, 'telemetry');
+    mkdirSync(telemetryDir, { recursive: true });
+    const spool = join(telemetryDir, 'failed_retry.jsonl');
+    writeFileSync(spool, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir,
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    track('dropped_while_paused');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(statSync(spool).isFile()).toBe(true);
+  });
+
+  it('drops events queued before initialization when bootstrap starts paused', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    track('queued_before_init');
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+    });
+    await shutdownTelemetry();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('resumes intake after a paused start without re-initialization', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      initiallyEnabled: false,
+      endpoint: 'https://mock.test/events',
+    });
+    track('dropped');
+    setTelemetryEnabled(true);
+    track('sent');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = requestInitFrom(fetchImpl);
+    const payload = JSON.parse(init.body as string) as { events: Array<{ event: string }> };
+    expect(payload.events[0]?.['event']).toBe('kfc_sent');
+  });
+
+  it('replays disk events on bootstrap by default', async () => {
+    const homeDir = await tempHome();
+    const telemetryDir = join(homeDir, 'telemetry');
+    mkdirSync(telemetryDir, { recursive: true });
+    const spool = join(telemetryDir, 'failed_default.jsonl');
+    writeFileSync(spool, `${JSON.stringify(sampleEvent('from_disk'))}\n`);
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir,
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      endpoint: 'https://mock.test/events',
+    });
+    await vi.waitFor(() => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+    await shutdownTelemetry();
+
+    expect(() => statSync(spool)).toThrow();
+  });
+
   it('queues singleton track calls before initialization, then flushes after bootstrap', async () => {
     const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
     vi.stubGlobal('fetch', fetchImpl);
@@ -857,6 +1098,7 @@ describe('telemetry bootstrap', () => {
       sessionId: 'ses',
       appName: 'kimi-code-cli',
       version: '1.2.3',
+      endpoint: 'https://mock.test/events',
     });
 
     await shutdownTelemetry();
@@ -888,6 +1130,56 @@ describe('telemetry bootstrap', () => {
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://mock.test/events');
+  });
+
+  it('wires onUnexpectedError to property sanitization on the singleton', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+    const onUnexpectedError = vi.fn();
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      onUnexpectedError,
+    });
+    track('bad_props', { nested: { a: 1 } } as unknown as TelemetryProperties);
+    await shutdownTelemetry();
+
+    expect(onUnexpectedError).toHaveBeenCalledTimes(1);
+    expect(String(onUnexpectedError.mock.calls[0]?.[0])).toContain('"nested"');
+  });
+
+  it('reconciles the singleton sink model for subsequently tracked events', async () => {
+    const fetchImpl = vi.fn(async () => new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    initializeTelemetry({
+      homeDir: await tempHome(),
+      deviceId: 'dev',
+      appName: 'kimi-code-cli',
+      version: '1.2.3',
+      model: 'model-a',
+      endpoint: 'https://mock.test/events',
+    });
+    track('first');
+    setTelemetryModel('model-b');
+    track('second');
+    // An unresolved (undefined) model leaves the sink untouched.
+    setTelemetryModel(undefined);
+    track('third');
+    await shutdownTelemetry();
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const init = requestInitFrom(fetchImpl);
+    const payload = JSON.parse(init.body as string) as {
+      events: Array<{ event: string; context_model?: string }>;
+    };
+    const byEvent = new Map(payload.events.map((event) => [event.event, event]));
+    expect(byEvent.get('kfc_first')?.context_model).toBe('model-a');
+    expect(byEvent.get('kfc_second')?.context_model).toBe('model-b');
+    expect(byEvent.get('kfc_third')?.context_model).toBe('model-b');
   });
 
   it('flushes the singleton synchronously to disk fallback', async () => {
@@ -1085,21 +1377,43 @@ describe('crash handler', () => {
     });
   });
 
-  it('ignores aborted-operation rejections while observing', () => {
+  it('ignores aborted-operation rejections in both observing and sole-listener modes', () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
     client.attachSink(makeSink(transport));
     installCrashHandlersForClient(client);
+    const abort = new DOMException('The operation was aborted.', 'AbortError');
     const owner = (): void => {};
     process.on('unhandledRejection', owner);
     try {
       (process.emit as (event: string, ...args: unknown[]) => boolean)(
         'unhandledRejection',
-        new DOMException('The operation was aborted.', 'AbortError'),
+        abort,
         Promise.resolve(),
       );
     } finally {
       process.off('unhandledRejection', owner);
+    }
+
+    expect(transport.saved).toHaveLength(0);
+
+    uninstallCrashHandlers();
+    // Drop every other listener so the crash handler is the sole one, as in
+    // print/server mode; an aborted-operation rejection must not be rethrown.
+    const others = process.listeners('unhandledRejection');
+    process.removeAllListeners('unhandledRejection');
+    installCrashHandlersForClient(client);
+    try {
+      (process.emit as (event: string, ...args: unknown[]) => boolean)(
+        'unhandledRejection',
+        abort,
+        Promise.resolve(),
+      );
+    } finally {
+      uninstallCrashHandlers();
+      for (const listener of others) {
+        process.on('unhandledRejection', listener as (...args: unknown[]) => void);
+      }
     }
 
     expect(transport.saved).toHaveLength(0);
@@ -1264,7 +1578,7 @@ function numberProperty(
 ): number {
   const value = properties[key];
   if (typeof value !== 'number' || !Number.isFinite(value)) {
-    throw new Error(`Expected property ${key} to be a finite number, got ${String(value)}`);
+    throw new TypeError(`Expected property ${key} to be a finite number, got ${String(value)}`);
   }
   return value;
 }

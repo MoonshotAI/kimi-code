@@ -2,6 +2,7 @@ import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-c
 import {
   KimiAuthFacade,
   loadRuntimeConfigSafe,
+  log,
   resolveConfigPath,
   resolveKimiHome,
   type KimiConfig,
@@ -61,6 +62,7 @@ export function initializeCliTelemetry(options: InitializeCliTelemetryOptions): 
     endpoint: () => currentKimiProfile().telemetryEndpoint,
     getAccessToken: async () =>
       (await options.harness.auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+    onUnexpectedError: (error) => log.warn('telemetry property dropped', { error: String(error) }),
   });
   if (options.bootstrap.firstLaunch) {
     options.harness.track('first_launch');
@@ -75,13 +77,8 @@ export interface InitializeServerTelemetryOptions {
  * Bootstrap telemetry for the `kimi web` host.
  *
  * Mirrors {@link initializeCliTelemetry}: mints the device id, reads config to
- * honor the `telemetry` toggle and pick up the default model, attaches the
- * sink with `ui_mode = "web"`, and returns a {@link TelemetryClient} the
- * caller hands to `startServer` via `coreProcessOptions.telemetry`. That wires
- * the same real client into `KimiCore`, so agent-core events emitted inside the
- * server process (`mcp_connected`, `session_load_failed`, plan-mode / cron
- * events, …) actually leave the process carrying the enriched context
- * (`app_name` / `version` / `ui_mode` / `model` / platform fields).
+ * honor the `telemetry` toggle and pick up the default model, and attaches the
+ * sink with `ui_mode = "web"`.
  *
  * The returned client wraps the `@moonshot-ai/kimi-telemetry` module
  * functions, so the module-level `track` / `withTelemetryContext` (used to
@@ -109,6 +106,7 @@ export function initializeServerTelemetry(
     model: config.defaultModel,
     endpoint: () => currentKimiProfile().telemetryEndpoint,
     getAccessToken: async () => (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
+    onUnexpectedError: (error) => log.warn('telemetry property dropped', { error: String(error) }),
   });
 
   return {

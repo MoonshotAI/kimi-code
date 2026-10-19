@@ -77,15 +77,18 @@ import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
 import type { StreamingUIController } from './streaming-ui';
+import type { SurveyController } from './survey-controller';
 import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
-import type {
-  AppState,
-  LivePaneState,
-  QueuedMessage,
-  ToolCallBlockData,
-  ToolResultBlockData,
-  TranscriptEntry,
+import { NotifyController } from './notify';
+import {
+  sumTokenUsage,
+  type AppState,
+  type LivePaneState,
+  type QueuedMessage,
+  type ToolCallBlockData,
+  type ToolResultBlockData,
+  type TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
 import { createGoal as startGoalCommand } from '../commands/goal';
@@ -113,19 +116,23 @@ export interface SessionEventHost {
   restoreEditor(): void;
   restoreInputText(text: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
+  moveTranscriptEntryToEnd(entry: TranscriptEntry): boolean;
   handleShellOutput(event: { commandId: string; update: { kind: string; text?: string } }): void;
   handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
   shiftQueuedMessage(): QueuedMessage | undefined;
+  steerQueuedMessagesIntoRunningTurn(): void;
   handleTurnStarted?(event: TurnStartedEvent): void;
   handleTurnEnded?(event: TurnEndedEvent): void;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
+  readonly surveyController: SurveyController;
 }
 
 export class SessionEventHandler {
+  readonly notifications: NotifyController;
   readonly subAgentEventHandler: SubAgentEventHandler;
   private readonly pluginUpdateNotifier: PluginUpdateNotifier;
 
@@ -133,9 +140,11 @@ export class SessionEventHandler {
     private readonly host: SessionEventHost,
     pluginUpdateNotifier?: PluginUpdateNotifier,
   ) {
+    this.notifications = new NotifyController(host.state);
     this.subAgentEventHandler = new SubAgentEventHandler(host, {
       backgroundTasks: this.backgroundTasks,
       backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
+      backgroundTaskTerminalEntries: this.backgroundTaskTerminalEntries,
       syncBackgroundAgentBadge: () => {
         this.syncBackgroundTaskBadge();
       },
@@ -154,8 +163,9 @@ export class SessionEventHandler {
   // Runtime state – owned by this handler, reset between sessions.
   backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
+  private backgroundTaskTerminalEntries: Map<string, TranscriptEntry> = new Map();
 
-  renderedSkillActivationIds: Set<string> = new Set();
+  seenSkillActivationIds: Set<string> = new Set();
   renderedPluginCommandActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
@@ -174,8 +184,10 @@ export class SessionEventHandler {
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
     this.backgroundTaskTranscriptedTerminal.clear();
+    this.backgroundTaskTerminalEntries.clear();
     this.subAgentEventHandler.resetRuntimeState();
-    this.renderedSkillActivationIds.clear();
+    this.notifications.reset();
+    this.seenSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
@@ -260,6 +272,7 @@ export class SessionEventHandler {
   }
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+    this.notifications.handleEvent(event);
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
@@ -294,10 +307,13 @@ export class SessionEventHandler {
       case 'compaction.blocked': break;
       case 'compaction.cancelled': this.handleCompactionCancel(event, sendQueued); break;
       case 'subagent.spawned':
+        this.host.surveyController.notifySubagentSpawned(event);
+        this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'subagent.started':
       case 'subagent.suspended':
       case 'subagent.completed':
       case 'subagent.failed':
+      case 'subagent.cancelled':
         this.subAgentEventHandler.handleLifecycleEvent(event); break;
       case 'background.task.started':
       case 'background.task.terminated':
@@ -325,6 +341,9 @@ export class SessionEventHandler {
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
+    }
+    if (event.origin?.kind === 'task') {
+      this.anchorTaskNotificationTurn(event.origin.taskId, event.origin.status);
     }
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();
@@ -610,6 +629,7 @@ export class SessionEventHandler {
 
   private handleToolCall(event: ToolCallStartedEvent): void {
     const { streamingUI } = this.host;
+    this.host.surveyController.notifyToolCallStarted(event.toolCallId, event.name);
     streamingUI.flushNow();
     const { turnId, step } = streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
@@ -658,6 +678,11 @@ export class SessionEventHandler {
   }
 
   private handleToolProgress(event: ToolProgressEvent): void {
+    // Input queued before the wait began would otherwise sit until the wait
+    // returns; steering it now ends the wait so the model reads it first.
+    if (this.host.streamingUI.markWaitForRunning(event.toolCallId)) {
+      this.host.steerQueuedMessagesIntoRunningTurn();
+    }
     const text = event.update.text;
     if (text === undefined || text.length === 0) return;
     const tc = this.host.streamingUI.getToolComponent(event.toolCallId);
@@ -673,6 +698,7 @@ export class SessionEventHandler {
 
   private handleToolResult(event: ToolResultEvent): void {
     const { streamingUI } = this.host;
+    this.host.surveyController.notifyToolCallEnded(event.toolCallId);
     streamingUI.flushNow();
     this.clearStepRetry();
     const resultData: ToolResultBlockData = {
@@ -711,6 +737,10 @@ export class SessionEventHandler {
       event.swarmMode === false &&
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
+    const shouldRenderTowerGoalExit =
+      event.towerMode === false &&
+      this.host.state.appState.towerMode &&
+      event.towerExitReason === 'mode-mutex';
     const patch: Partial<AppState> = {};
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
@@ -734,12 +764,21 @@ export class SessionEventHandler {
     }
     if (event.model !== undefined) patch.model = event.model;
     if (event.thinkingEffort !== undefined) patch.thinkingEffort = event.thinkingEffort;
+    if (event.usage?.total !== undefined) {
+      patch.cumulativeTokens = sumTokenUsage(event.usage.total);
+    }
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
       this.host.state.swarmModeEntry = undefined;
       if (shouldRenderSwarmEnded) {
         this.renderSwarmModeMarker('ended');
       }
+    }
+    if (shouldRenderTowerGoalExit) {
+      this.host.state.transcriptContainer.addChild(
+        new StatusMessageComponent('Tower mode ended — a goal was activated'),
+      );
+      this.host.state.ui.requestRender();
     }
   }
 
@@ -1071,8 +1110,9 @@ export class SessionEventHandler {
   }
 
   private handleSkillActivated(event: SkillActivatedEvent): void {
-    if (this.renderedSkillActivationIds.has(event.activationId)) return;
-    this.renderedSkillActivationIds.add(event.activationId);
+    if (this.seenSkillActivationIds.has(event.activationId)) return;
+    this.seenSkillActivationIds.add(event.activationId);
+    if (event.trigger === 'user-slash') return;
     this.host.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'skill_activation',
@@ -1130,6 +1170,7 @@ export class SessionEventHandler {
     // is expected). Cancellations do neither: the context was not cut.
     this.host.recordSessionActivity();
     this.host.noteCompactionFinished();
+    this.host.surveyController.notifyCompactionFinished();
     this.finishCompaction(sendQueued);
   }
 
@@ -1232,7 +1273,7 @@ export class SessionEventHandler {
       }
       if (!this.backgroundTaskTranscriptedTerminal.has(info.taskId)) {
         if (info.kind === 'process' || info.kind === 'question') {
-          this.appendBackgroundTaskEntry(info);
+          this.backgroundTaskTerminalEntries.set(info.taskId, this.appendBackgroundTaskEntry(info));
         }
         this.backgroundTaskTranscriptedTerminal.add(info.taskId);
       }
@@ -1247,7 +1288,7 @@ export class SessionEventHandler {
     this.host.tasksBrowserController.repaint();
   }
 
-  private appendBackgroundTaskEntry(info: BackgroundTaskInfo): void {
+  private appendBackgroundTaskEntry(info: BackgroundTaskInfo): TranscriptEntry {
     const status = formatBackgroundTaskTranscript(info);
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),
@@ -1259,6 +1300,57 @@ export class SessionEventHandler {
       backgroundAgentStatus: status,
     };
     this.host.appendTranscriptEntry(entry);
+    return entry;
+  }
+
+  /**
+   * Give a task-notification turn its own fold-segment boundary at turn start:
+   * move the task's asynchronously mounted terminal card down to the turn,
+   * or mount one now when none is mounted (e.g. it was trimmed). Without an
+   * anchor the turn's end-of-turn fold would extend into the previous turn's
+   * output and collapse its final answer into the step summary.
+   */
+  private anchorTaskNotificationTurn(
+    taskId: string,
+    status: BackgroundTaskInfo['status'],
+  ): void {
+    const mounted = this.backgroundTaskTerminalEntries.get(taskId);
+    if (mounted !== undefined && this.host.moveTranscriptEntryToEnd(mounted)) return;
+    const task = this.backgroundTasks.get(taskId);
+    if (task === undefined) return;
+    // An agent whose terminal lifecycle event landed before its task id was
+    // known (e.g. a tower worker that finished before registerTask) mounted
+    // its terminal card without registering it under the task id. Reuse that
+    // card instead of mounting a duplicate.
+    if (task.kind === 'agent') {
+      const orphaned = this.findTerminalBackgroundAgentCard(task.agentId, taskId);
+      if (orphaned !== undefined && this.host.moveTranscriptEntryToEnd(orphaned)) {
+        this.backgroundTaskTerminalEntries.set(taskId, orphaned);
+        return;
+      }
+    }
+    const entry = this.appendBackgroundTaskEntry({ ...task, status });
+    this.backgroundTaskTerminalEntries.set(taskId, entry);
+    this.backgroundTaskTranscriptedTerminal.add(taskId);
+  }
+
+  /** The agent's latest mounted terminal (non-`started`) background card. */
+  private findTerminalBackgroundAgentCard(
+    agentId: string | undefined,
+    taskId: string,
+  ): TranscriptEntry | undefined {
+    if (agentId === undefined) return undefined;
+    return this.host.state.transcriptEntries.findLast((entry) => {
+      const card = entry.backgroundAgentStatus;
+      if (card?.agentId !== agentId || card.phase === 'started') return false;
+      // A resumed background agent keeps its previous agentId, so the latest
+      // matching card can belong to an earlier run. Never reuse a card that
+      // is already registered under another task — mount our own instead.
+      for (const [registeredTaskId, registered] of this.backgroundTaskTerminalEntries) {
+        if (registered === entry && registeredTaskId !== taskId) return false;
+      }
+      return true;
+    });
   }
 
   private syncBackgroundTaskBadge(): void {

@@ -10,8 +10,8 @@ import {
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
-} from '#/kosong/contract/errors';
-import { translateProviderError } from '#/kosong/protocol/errors';
+} from '#/llm-adapter/contract/errors';
+import { translateProviderError } from '#/llm-adapter/protocol/errors';
 
 const NGINX_413_HTML =
   '413 <html>\r\n<head><title>413 Request Entity Too Large</title></head>\r\n' +

@@ -11,6 +11,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
+import { ILogService } from '#/_base/log/log';
 import { Event2 } from '#/app/event/event2';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -20,10 +21,11 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { defineState } from '#/state/state';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
+import { humanEventType } from '#/wire/human';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
-  attachTodoRuntime,
+  attachTodoService,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -76,21 +78,43 @@ async function makeDir(): Promise<string> {
   return dir;
 }
 
-function makeContainer(storage: IFileSystemStorageService, logKey: string) {
+interface CapturedLogEntry {
+  readonly level: string;
+  readonly message: string;
+  readonly payload?: unknown;
+}
+
+function captureLog(entries: CapturedLogEntry[]): ILogService {
+  const logger: ILogService = {
+    _serviceBrand: undefined,
+    level: 'debug',
+    error: (message, payload) => entries.push({ level: 'error', message, payload }),
+    warn: (message, payload) => entries.push({ level: 'warn', message, payload }),
+    info: () => {},
+    debug: () => {},
+    child: () => logger,
+    setLevel: () => {},
+    flush: async () => {},
+  };
+  return logger;
+}
+
+function makeContainer(storage: IFileSystemStorageService, logKey: string, logEntries?: CapturedLogEntry[]) {
   const store = new DisposableStore();
   disposables.push(store);
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
+  ix.stub(ILogService, captureLog(logEntries ?? []));
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   const log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
   const dispatcher = registerTestEventDispatcher(ix);
-  const runtimes = attachTodoRuntime(ix, dispatcher);
-  store.add({ dispose: () => { void runtimes.close(); } });
+  const todo = attachTodoService(ix);
+  store.add({ dispose: () => { todo.dispose(); } });
   const agentState = ix.get(IAgentStateService);
   agentState.contributeState(compatCounterKey);
   agentState.contributeState(compatTagsKey);
-  return { ix, dispatcher, agentState, runtimes, log };
+  return { ix, dispatcher, agentState, todo, log };
 }
 
 function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
@@ -140,9 +164,22 @@ describe('wire.jsonl round-trip', () => {
     }
     expect(await readRawLines(dir, KEY)).toEqual(records);
 
-    const replayTarget = makeContainer(storage, 'replay-target');
+    const replayLog: CapturedLogEntry[] = [];
+    const replayTarget = makeContainer(storage, 'replay-target', replayLog);
     const withUnknown: WireRecord[] = [
       ...records,
+      {
+        type: 'agent.message.appended',
+        kind: 'event',
+        message: { role: 'user', content: [{ type: 'text', text: 'machine mirror' }] },
+        time: 1700000000006,
+      },
+      {
+        type: 'human.agent.message.appended',
+        kind: 'event',
+        message: { role: 'user', content: [{ type: 'text', text: 'legacy machine mirror' }] },
+        time: 1700000000007,
+      },
       { type: 'compat.unknown.nope', foo: 1 },
     ];
     const unexpected: unknown[] = [];
@@ -158,7 +195,17 @@ describe('wire.jsonl round-trip', () => {
       resetUnexpectedErrorHandler();
     }
 
-    expect(unexpected).toHaveLength(1);
+    expect(unexpected).toHaveLength(0);
+    expect(replayLog.map((entry) => entry.message)).toEqual([
+      "Unknown wire record type 'compat.unknown.nope' skipped during restore",
+    ]);
+    expect(replayLog[0]?.payload).toMatchObject({
+      code: 'wire.unknown_record',
+      type: 'compat.unknown.nope',
+    });
+    expect(humanEventType('agent.turn.ended', 'agent')).toBe('turn.ended');
+    expect(humanEventType('human.agent.turn.ended', 'agent')).toBe('turn.ended');
+    expect(humanEventType('agent.switched', 'agent')).toBeUndefined();
     expect(replayTarget.agentState.get(compatCounterKey)).toEqual(
       live.agentState.get(compatCounterKey),
     );
@@ -193,7 +240,7 @@ describe('wire.jsonl round-trip', () => {
     await legacy.dispatcher.restore();
 
     expect(legacy.agentState.get(compatCounterKey)).toEqual({ value: 7 });
-    expect(legacy.runtimes.inspect()[0]?.state).toEqual([
+    expect(legacy.todo.get()).toEqual([
       { title: 'legacy todo', status: 'pending' },
     ]);
 

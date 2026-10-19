@@ -199,6 +199,21 @@ describe('SessionActivityHub', () => {
     expect(hub.store.get('s1')).toBeUndefined();
     expect(onListChanged).toHaveBeenCalledTimes(1);
 
+    instances[0]!.emitFrame({
+      type: 'event.session.work_changed',
+      session_id: 's2',
+      payload: { type: 'event.session.work_changed', busy: true },
+    });
+    expect(hub.store.get('s2')).toBeDefined();
+
+    instances[0]!.emitFrame({
+      type: 'event.session.deleted',
+      session_id: '__global__',
+      payload: { type: 'event.session.deleted', sessionId: 's2', workspace_id: 'wd_1' },
+    });
+    expect(hub.store.get('s2')).toBeUndefined();
+    expect(onListChanged).toHaveBeenCalledTimes(2);
+
     for (const type of [
       'event.workspace.created',
       'event.workspace.updated',
@@ -206,7 +221,7 @@ describe('SessionActivityHub', () => {
     ]) {
       instances[0]!.emitFrame({ type, session_id: '__global__', payload: {} });
     }
-    expect(onListChanged).toHaveBeenCalledTimes(4);
+    expect(onListChanged).toHaveBeenCalledTimes(5);
     hub.close();
   });
 });

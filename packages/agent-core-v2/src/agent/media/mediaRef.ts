@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 export type MediaKind = 'image' | 'video' | 'audio' | 'file';
 

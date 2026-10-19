@@ -12,7 +12,7 @@ import {
 import type { WireEntry } from '../../types';
 import { formatBytes } from '../shared/SizePreview';
 import { formatDuration, formatTokens } from '../../util/time';
-import { Pill } from '../shared/Pill';
+import { Pill, type PillTone } from '../shared/Pill';
 
 interface TimelineTabProps {
   sessionId: string;
@@ -54,7 +54,7 @@ export function TimelineTab({ sessionId }: TimelineTabProps) {
             {agents.length === 0 ? <option value={agentId}>{agentId}</option> : null}
             {agents.map((a) => (
               <option key={a.agentId} value={a.agentId}>
-                {a.agentId} ({a.type})
+                {a.agentId} ({a.type}{a.profileName ? ` · ${a.profileName}` : ''})
               </option>
             ))}
           </select>
@@ -243,12 +243,26 @@ function TurnCard({ turn }: { turn: TurnNode }) {
       >
         <span className="text-fg-3">{open ? '▾' : '▸'}</span>
         <Pill tone={turn.trigger === 'steer' ? 'turn' : 'conversation'} variant="outline">
-          turn {turn.index}{turn.trigger === 'steer' ? ' (steer)' : ''}
+          turn {turn.turnId ?? turn.index}{turn.trigger === 'steer' ? ' (steer)' : ''}
         </Pill>
         {turn.originKind && turn.originKind !== 'user' ? (
           <Pill tone="meta" variant="outline">{turn.originKind}</Pill>
         ) : null}
-        {turn.cancelled ? <Pill tone="warning">cancelled</Pill> : null}
+        {turn.outcome !== undefined ? (
+          <Pill tone={outcomeTone(turn.outcome)}>{turn.outcome}</Pill>
+        ) : turn.cancelled ? (
+          <Pill tone="warning">cancelled</Pill>
+        ) : null}
+        {turn.stopReason !== undefined ? (
+          <Pill
+            tone="warning"
+            variant="outline"
+            title={turn.stopReason}
+            className="max-w-64 truncate"
+          >
+            {turn.stopReason}
+          </Pill>
+        ) : null}
         {turn.toolErrorCount > 0 ? <Pill tone="error">{turn.toolErrorCount} err</Pill> : null}
         <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-fg-1" title={turn.promptText}>
           {turn.promptText || '(no prompt text)'}
@@ -279,6 +293,12 @@ function TurnCard({ turn }: { turn: TurnNode }) {
   );
 }
 
+function outcomeTone(outcome: NonNullable<TurnNode['outcome']>): PillTone {
+  if (outcome === 'completed') return 'success';
+  if (outcome === 'failed') return 'error';
+  return 'warning';
+}
+
 function StepRow({ step, turnDurationMs }: { step: StepNode; turnDurationMs?: number }) {
   const widthPct = turnDurationMs && step.durationMs ? Math.max(2, (step.durationMs / turnDurationMs) * 100) : 0;
   return (
@@ -307,9 +327,10 @@ function StepRow({ step, turnDurationMs }: { step: StepNode; turnDurationMs?: nu
         {step.llmServerDecodeMs !== undefined && step.llmClientConsumeMs !== undefined ? (
           <span
             className="text-fg-3 tabular"
-            title="decode window split (server awaiting parts + client processing parts)"
+            title="decode window split (server awaiting parts + client processing parts; busy = event loop busy with other work)"
           >
             decode {step.llmServerDecodeMs}+{step.llmClientConsumeMs}ms
+            {step.llmClientBlockedMs !== undefined ? ` (busy ${step.llmClientBlockedMs}ms)` : ''}
           </span>
         ) : null}
         {step.contextTokens !== undefined ? (

@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 
@@ -6,11 +6,12 @@ import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-cor
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { ErrorCode } from '../src/protocol/error-codes';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
+import { fakeModelCatalog } from './helpers/fakeModelCatalog';
 
 interface Envelope<T> {
   code: number;
@@ -36,45 +37,31 @@ describe('server-v2 /api/v1 fs routes', () => {
   let work: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-home-'));
-    work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-work-'));
-    const modelCatalog: IModelCatalog = {
-      _serviceBrand: undefined,
-      get: () => {
-        throw new Error('modelCatalog.get not exercised in this test');
-      },
-      getRequester: () => {
-        throw new Error('modelCatalog.getRequester not exercised in this test');
-      },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
-      },
-      ping: () => {
-        throw new Error('modelCatalog.ping not exercised in this test');
-      },
-      findByName: () => [],
-      listModels: async () => [],
-      listProviders: async () => [],
-      getProvider: async () => {
-        throw new Error('modelCatalog.getProvider not exercised in this test');
-      },
-      setDefaultModel: async () => {
-        throw new Error('modelCatalog.setDefaultModel not exercised in this test');
-      },
-    };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
       host: '127.0.0.1',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
-      seeds: [[IModelCatalog, modelCatalog]],
+      seeds: [[IModelCatalog, fakeModelCatalog()]],
     });
     base = `http://127.0.0.1:${server.port}`;
   });
 
+  beforeEach(async () => {
+    work = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-work-'));
+  });
+
   afterEach(async () => {
+    if (work !== undefined) {
+      await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      work = undefined;
+    }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -82,10 +69,6 @@ describe('server-v2 /api/v1 fs routes', () => {
     if (home !== undefined) {
       await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       home = undefined;
-    }
-    if (work !== undefined) {
-      await rm(work, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-      work = undefined;
     }
   });
 
@@ -218,9 +201,145 @@ describe('server-v2 /api/v1 fs routes', () => {
     const id = await createSession();
     const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {});
     expect(body.code).toBe(0);
-    const names = body.data.items.map((i) => i.name).sort();
+    const names = body.data.items.map((i) => i.name).toSorted();
     expect(names).toEqual(['a.txt', 'b.txt']);
     expect(body.data.truncated).toBe(false);
+  });
+
+  it('fs:list keeps gitignored paths hidden unless allowed via allow_ignored_globs', async () => {
+    await writeFile(join(work!, '.gitignore'), 'ignored-dir/\n.tmp/\n');
+    await mkdir(join(work!, 'ignored-dir'));
+    await mkdir(join(work!, '.tmp'));
+    await writeFile(join(work!, '.tmp/keep.txt'), '');
+    await writeFile(join(work!, 'visible.txt'), '');
+    const id = await createSession();
+
+    const filtered = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {});
+    const filteredNames = filtered.data.items.map((i) => i.name);
+    expect(filteredNames).not.toContain('ignored-dir');
+    expect(filteredNames).not.toContain('.tmp');
+    expect(filteredNames).toContain('visible.txt');
+
+    const allowed = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      show_hidden: true,
+      allow_ignored_globs: ['ignored-dir', '.tmp', '.tmp/**'],
+    });
+    const allowedNames = allowed.data.items.map((i) => i.name);
+    expect(allowedNames).toContain('ignored-dir');
+    expect(allowedNames).toContain('.tmp');
+    expect(allowedNames).toContain('visible.txt');
+
+    const children = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: '.tmp',
+      show_hidden: true,
+      allow_ignored_globs: ['.tmp', '.tmp/**'],
+    });
+    expect(children.data.items.map((i) => i.name)).toContain('keep.txt');
+  });
+
+  it('fs:list traverses ignored ancestor directories of allowed matches', async () => {
+    await writeFile(join(work!, '.gitignore'), 'ignored-dir/\n');
+    await mkdir(join(work!, 'ignored-dir/nested'), { recursive: true });
+    await writeFile(join(work!, 'ignored-dir/nested/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/drop.txt'), '');
+    await writeFile(join(work!, 'visible.txt'), '');
+    const id = await createSession();
+    const globs = ['ignored-dir/nested/keep.txt'];
+
+    const root = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: globs,
+    });
+    const rootNames = root.data.items.map((i) => i.name);
+    expect(rootNames).toContain('ignored-dir');
+    expect(rootNames).toContain('visible.txt');
+
+    const mid = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir',
+      allow_ignored_globs: globs,
+    });
+    expect(mid.data.items.map((i) => i.name)).toEqual(['nested']);
+
+    const leaf = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir/nested',
+      allow_ignored_globs: globs,
+    });
+    expect(leaf.data.items.map((i) => i.name)).toEqual(['keep.txt']);
+
+    const recursive = await postFs<{
+      items: FsEntryWire[];
+      truncated: boolean;
+      children_by_path?: Record<string, FsEntryWire[]>;
+    }>(id, 'list', { depth: 3, allow_ignored_globs: globs });
+    const descendants = Object.values(recursive.data.children_by_path ?? {})
+      .flat()
+      .map((i) => i.path);
+    expect(descendants).toContain('ignored-dir/nested');
+    expect(descendants).toContain('ignored-dir/nested/keep.txt');
+    expect(descendants).not.toContain('ignored-dir/drop.txt');
+  });
+
+  it('fs:list does not surface a non-directory prefix of an allowed glob', async () => {
+    await writeFile(join(work!, '.gitignore'), 'data.bin\n');
+    await writeFile(join(work!, 'data.bin'), '');
+    const id = await createSession();
+
+    const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: ['data.bin/keep.txt'],
+    });
+    expect(body.data.items.map((i) => i.name)).not.toContain('data.bin');
+  });
+
+  it('fs:list traverses ignored ancestors across wildcard glob segments', async () => {
+    await writeFile(join(work!, '.gitignore'), 'ignored-a/\nignored-b/\nignored-dir/\nother-dir/\n');
+    await mkdir(join(work!, 'ignored-a'), { recursive: true });
+    await mkdir(join(work!, 'ignored-b'), { recursive: true });
+    await mkdir(join(work!, 'ignored-dir/sub'), { recursive: true });
+    await mkdir(join(work!, 'other-dir'), { recursive: true });
+    await writeFile(join(work!, 'ignored-a/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-b/drop.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/sub/keep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/sub/notkeep.txt'), '');
+    await writeFile(join(work!, 'ignored-dir/drop.txt'), '');
+    await writeFile(join(work!, 'other-dir/drop.txt'), '');
+    const id = await createSession();
+
+    const wildcard = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: ['ignored-*/keep.txt'],
+    });
+    const wildcardNames = wildcard.data.items.map((i) => i.name);
+    expect(wildcardNames).toContain('ignored-a');
+    expect(wildcardNames).not.toContain('ignored-b');
+    expect(wildcardNames).not.toContain('other-dir');
+
+    const mid = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir',
+      allow_ignored_globs: ['ignored-dir/**/keep.txt'],
+    });
+    expect(mid.data.items.map((i) => i.name)).toEqual(['sub']);
+
+    const leaf = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      path: 'ignored-dir/sub',
+      allow_ignored_globs: ['ignored-dir/**/keep.txt'],
+    });
+    expect(leaf.data.items.map((i) => i.name)).toEqual(['keep.txt']);
+
+    const brace = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      allow_ignored_globs: ['{ignored-a/keep.txt,other}'],
+    });
+    const braceNames = brace.data.items.map((i) => i.name);
+    expect(braceNames).toContain('ignored-a');
+    expect(braceNames).not.toContain('ignored-b');
+  });
+
+  it('fs:list tolerates empty glob patterns', async () => {
+    await writeFile(join(work!, 'a.txt'), '');
+    const id = await createSession();
+    const body = await postFs<{ items: FsEntryWire[]; truncated: boolean }>(id, 'list', {
+      exclude_globs: [''],
+      allow_ignored_globs: [''],
+    });
+    expect(body.code).toBe(0);
+    expect(body.data.items.map((i) => i.name)).toContain('a.txt');
   });
 
   it('fs:mkdir creates a directory and rejects duplicates', async () => {
@@ -368,57 +487,6 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(read.data.content).toBe('through-link');
     } finally {
       await rm(link, { force: true });
-    }
-  });
-
-  it('GET fs/{path}:download streams the file and honors If-None-Match', async () => {
-    await writeFile(join(work!, 'a.txt'), 'download-me');
-    const id = await createSession();
-
-    const res = await fetch(`${base}/api/v1/sessions/${id}/fs/a.txt:download?runtime_id=local`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).toBe('download-me');
-    const etag = res.headers.get('etag');
-    expect(etag).toBeTruthy();
-
-    const cached = await fetch(`${base}/api/v1/sessions/${id}/fs/a.txt:download?runtime_id=local`, {
-      headers: authHeaders(server as RunningServer, { 'if-none-match': etag as string }),
-    } as never);
-    expect(cached.status).toBe(304);
-  });
-
-  it('GET fs/{path}:download defaults to the local runtime when runtime_id is omitted', async () => {
-    await writeFile(join(work!, 'b.txt'), 'compat-download');
-    const id = await createSession();
-
-    const res = await fetch(`${base}/api/v1/sessions/${id}/fs/b.txt:download`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('compat-download');
-  });
-
-  it('GET fs/{path}:download untracks the stream from the runtime generation after completion', async () => {
-    await writeFile(join(work!, 'c.txt'), 'tracked-download');
-    const id = await createSession();
-    const instance = server!.core.accessor.get(IWorkspaceInstanceManager).findByRoot(work!);
-    expect(instance).toBeDefined();
-    const generations = (instance!.runtimes as unknown as {
-      currentGenerations: Map<string, { resources: Set<unknown> }>;
-    }).currentGenerations;
-    const resources = generations.get('local')!.resources;
-    const baseline = resources.size;
-
-    for (let i = 0; i < 2; i += 1) {
-      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/c.txt:download?runtime_id=local`, {
-        headers: authHeaders(server as RunningServer),
-      } as never);
-      expect(res.status).toBe(200);
-      expect(await res.text()).toBe('tracked-download');
-      await vi.waitFor(() => expect(resources.size).toBe(baseline));
     }
   });
 
@@ -648,15 +716,21 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.code).toBe(0);
     expect(body.data.items.map((i) => i.path)).toContain('kappa.ts');
 
-    expect(await listWorkspaces()).toEqual([]);
-    expect(server!.core.accessor.get(IWorkspaceInstanceManager).list()).toEqual([]);
+    const workAliases = new Set([work!, await realpath(work!)]);
+    expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
+    expect(
+      server!.core.accessor
+        .get(IWorkspaceInstanceManager)
+        .list()
+        .some((w) => workAliases.has(w.root)),
+    ).toBe(false);
 
     const again = await postRootSuggest<{ items: SuggestItemWire[] }>({
       roots: [work],
       query: 'kappa',
     });
     expect(again.code).toBe(0);
-    expect(await listWorkspaces()).toEqual([]);
+    expect((await listWorkspaces()).some((w) => workAliases.has(w.root))).toBe(false);
   });
 
   it('fs:suggest matches the workspace route for the same single root', async () => {

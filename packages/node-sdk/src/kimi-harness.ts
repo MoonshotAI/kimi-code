@@ -1,11 +1,7 @@
-import type { Kaos } from '@moonshot-ai/kaos';
-import {
-  ErrorCodes,
-  KimiError,
-  ImageLimits,
-  withTelemetryContext,
-  type ExperimentalFeatureState,
-} from '@moonshot-ai/agent-core';
+import { ErrorCodes, KimiError } from '#/errors';
+import type { ExperimentalFeatureState } from '#/flag';
+import type { ImageLimits } from '#/image';
+import { withTelemetryContext } from '#/telemetry';
 
 import { capabilityRpc, Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
@@ -22,6 +18,8 @@ import type {
   ForkSessionInput,
   GenerateSessionTitleInput,
   GetConfigOptions,
+  ImportCustomRegistryOptions,
+  ImportCustomRegistryResult,
   GlobalMcpServerAuthStatus,
   KimiConfig,
   KimiConfigPatch,
@@ -39,9 +37,13 @@ import type {
   RenameSessionInput,
   ResumeSessionInput,
   ReloadSessionInput,
+  RefreshProviderModelsOptions,
+  RefreshProviderModelsResponse,
   SessionSummary,
   SessionSummaryPage,
   SkillSummary,
+  SuggestFilesInput,
+  SuggestFilesResult,
   TelemetryClient,
   TelemetryContextPatch,
   TelemetryProperties,
@@ -61,11 +63,13 @@ export interface KimiHarnessRuntimeOptions {
   readonly onClose: () => void | Promise<void>;
   readonly sessionStartedProperties?: TelemetryProperties;
   /**
-   * Owner-scoped [image] limits for prompt-ingestion compression in the
-   * client process (paste-time, ACP prompt conversion). In-process cores
-   * (SDKRpcClient) hand over their core's instance; daemon-client hosts
-   * leave it undefined and ingestion falls back to env/built-in defaults.
+   * Per-emission companion to `sessionStartedProperties`: evaluated at every
+   * `session_started` call, so values that can change over the process
+   * lifetime (e.g. experimental flag state) stay current. Its keys are
+   * engine-owned: they win over both the static and the per-call
+   * session-scoped properties, and lose only to the canonical harness fields.
    */
+  readonly sessionStartedDynamicProperties?: () => TelemetryProperties;
   readonly imageLimits?: ImageLimits | undefined;
 }
 
@@ -82,6 +86,7 @@ export class KimiHarness {
   private readonly ensureConfigFileImpl: () => Promise<void>;
   private readonly closeImpl: () => void | Promise<void>;
   private readonly sessionStartedProperties: TelemetryProperties;
+  private readonly sessionStartedDynamicProperties: (() => TelemetryProperties) | undefined;
 
   /**
    * Ingestion-side [image] limits owned by this harness's core; undefined for
@@ -102,6 +107,7 @@ export class KimiHarness {
     this.ensureConfigFileImpl = options.ensureConfigFile;
     this.closeImpl = options.onClose;
     this.sessionStartedProperties = options.sessionStartedProperties ?? {};
+    this.sessionStartedDynamicProperties = options.sessionStartedDynamicProperties;
     this.imageLimits = options.imageLimits;
   }
 
@@ -121,16 +127,21 @@ export class KimiHarness {
     this.telemetry.track(event, properties);
   }
 
+  trackWithContext(
+    event: string,
+    properties: TelemetryProperties | undefined,
+    context: TelemetryContextPatch,
+  ): void {
+    withTelemetryContext(this.telemetry, context).track(event, properties);
+  }
+
   setTelemetryContext(patch: TelemetryContextPatch): void {
     this.telemetry.setContext?.(patch);
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {
-    const { planMode, kaos, persistenceKaos, sessionStartedProperties, ...coreOptions } = options;
-    const summary =
-      kaos === undefined && persistenceKaos === undefined
-        ? await this.rpc.createSession(coreOptions)
-        : await this.rpc.createSessionWithKaos(coreOptions, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+    const { planMode, sessionStartedProperties, ...coreOptions } = stripLegacyKaosOptions(options);
+    const summary = await this.rpc.createSession(coreOptions);
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -155,18 +166,14 @@ export class KimiHarness {
     const id = normalizeSessionId(input.id);
     const active = this.activeSessions.get(id);
     const {
-      kaos,
-      persistenceKaos,
       sessionStartedProperties: _sessionStartedProperties,
       ...resumeInput
-    } = input;
+    } = stripLegacyKaosOptions(input);
     // A session whose close is in flight (`isClosed` but not yet unmapped)
     // is not a valid resume target — fall through and re-resume fresh, which
     // the engine serializes behind that close.
     if (active !== undefined && !active.isClosed) {
-      if (kaos !== undefined || persistenceKaos !== undefined) {
-        await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
-      } else if (input.agentProfile !== undefined) {
+      if (input.agentProfile !== undefined) {
         await this.rpc.resumeSession({ ...resumeInput, id });
       }
       return active;
@@ -174,7 +181,7 @@ export class KimiHarness {
 
     // Coalesce concurrent resumes of the same id onto one facade, keyed by
     // the full input so a caller with different options (dirs, replay,
-    // profile, kaos) never has them silently dropped; without this,
+    // profile) never has them silently dropped; without this,
     // parallel identical callers each build their own Session over the
     // shared engine handle, and one facade's close kills the engine handle
     // under the other.
@@ -191,11 +198,8 @@ export class KimiHarness {
   }
 
   private async doResumeSession(input: ResumeSessionInput, id: string): Promise<Session> {
-    const { kaos, persistenceKaos, sessionStartedProperties, ...resumeInput } = input;
-    const summary =
-      kaos === undefined && persistenceKaos === undefined
-        ? await this.rpc.resumeSession({ ...resumeInput, id })
-        : await this.rpc.resumeSessionWithKaos({ ...resumeInput, id }, kaos ?? persistenceKaos as Kaos, persistenceKaos);
+    const { sessionStartedProperties, ...resumeInput } = stripLegacyKaosOptions(input);
+    const summary = await this.rpc.resumeSession({ ...resumeInput, id });
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,
@@ -328,6 +332,15 @@ export class KimiHarness {
   }
 
   /**
+   * File suggestions for @ mention-style completion under `workDir`, no
+   * session required. `undefined` on the v1 engine, which has no equivalent
+   * capability; callers fall back to their own file search there.
+   */
+  async suggestFiles(workDir: string, input: SuggestFilesInput): Promise<SuggestFilesResult | undefined> {
+    return this.rpc.suggestFiles(workDir, input);
+  }
+
+  /**
    * App-global plugin command list, no session required. Empty on the v1
    * engine, which only exposes plugin commands through a live session.
    */
@@ -449,22 +462,16 @@ export class KimiHarness {
     return this.rpc.removeProvider(providerId);
   }
 
-  /**
-   * Whether several config sections can be persisted as ONE atomic write
-   * (see {@link replaceConfigSections}). False on the v1 harness.
-   */
-  supportsAtomicSectionReplace(): boolean {
-    return this.rpc.supportsAtomicSectionReplace();
+  async importCustomRegistry(
+    options: ImportCustomRegistryOptions,
+  ): Promise<ImportCustomRegistryResult> {
+    return this.rpc.importCustomRegistry(options);
   }
 
-  /**
-   * Replace several top-level config sections in ONE atomic write: a section
-   * mapped to `undefined` is cleared, absent sections are left untouched.
-   * Replace semantics (unlike {@link setConfig}'s deep-merge), so staged
-   * removals are expressed by the written record itself.
-   */
-  async replaceConfigSections(sections: Record<string, unknown>): Promise<void> {
-    return this.rpc.replaceConfigSections(sections);
+  async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
+    return this.rpc.refreshProviderModels(options);
   }
 
   /**
@@ -624,15 +631,15 @@ export class KimiHarness {
     withTelemetryContext(this.telemetry, { sessionId: eventSessionId }).track('session_started', {
       ...this.sessionStartedProperties,
       ...sessionScoped,
+      ...this.sessionStartedDynamicProperties?.(),
       // Canonical fields are owned by the harness and must win over any
       // caller-supplied sessionStartedProperties that happen to share a key.
-      // `client_id` is always null here: a single-process host has no
-      // per-connection client id (that concept only exists for daemon clients,
-      // see core-impl.ts). Kept as an explicit key so both producers share the
-      // same session_started schema.
-      client_id: null,
-      client_name: this.identity?.productName ?? null,
-      client_version: this.identity?.version ?? null,
+      // A single-process host has no per-connection client id, so `client_id`
+      // stays empty; empty strings (unlike null) survive payload flattening,
+      // keeping the client-attribution keys present on every row.
+      client_id: '',
+      client_name: this.identity?.productName ?? '',
+      client_version: this.identity?.version ?? '',
       ui_mode: this.uiMode,
       resumed,
     });
@@ -642,13 +649,20 @@ export class KimiHarness {
 const DEFAULT_SESSION_STARTED_UI_MODE = 'shell';
 
 function resumeCoalesceKey(id: string, input: ResumeSessionInput): string {
-  const { kaos, persistenceKaos, ...rest } = input;
-  return JSON.stringify({
-    ...rest,
-    id,
-    kaos: kaos !== undefined,
-    persistenceKaos: persistenceKaos !== undefined,
-  });
+  return JSON.stringify({ ...stripLegacyKaosOptions(input), id });
+}
+
+function stripLegacyKaosOptions<T extends object>(input: T): T {
+  // JavaScript hosts may still pass the removed kaos options; keep them out of
+  // forwarded RPC inputs and serialized keys — custom implementations can hold
+  // circular runtime handles.
+  const { kaos, persistenceKaos, ...rest } = input as T & {
+    kaos?: unknown;
+    persistenceKaos?: unknown;
+  };
+  void kaos;
+  void persistenceKaos;
+  return rest as T;
 }
 
 function normalizeSessionId(value: string): string {

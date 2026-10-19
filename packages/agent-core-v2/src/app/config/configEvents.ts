@@ -28,3 +28,44 @@ export class ConfigChanged extends Event2<{ readonly payload: ConfigChangedPaylo
 export interface ConfigChanged {
   readonly payload: ConfigChangedPayload;
 }
+
+export interface ProviderConfigResponse {
+  type: string;
+  base_url?: string;
+  default_model?: string;
+  has_api_key: boolean;
+}
+
+export interface ConfigResponse {
+  providers: Record<string, ProviderConfigResponse>;
+  default_provider?: string;
+  default_model?: string;
+  models?: Record<string, unknown>;
+  thinking?: unknown;
+  plan_mode?: boolean;
+  yolo?: boolean;
+  default_permission_mode?: string;
+  default_plan_mode?: boolean;
+  permission?: unknown;
+  hooks?: unknown[];
+  services?: unknown;
+  merge_all_available_skills?: boolean;
+  extra_skill_dirs?: string[];
+  loop_control?: unknown;
+  background?: unknown;
+  experimental?: Record<string, boolean>;
+  telemetry?: boolean;
+  raw?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface ConfigChangedEvent {
+  readonly type: 'event.config.changed';
+  readonly changedFields: string[];
+  readonly config: ConfigResponse;
+}
+
+export interface ConfigWarningEvent {
+  readonly type: 'event.config.warning';
+  readonly warnings: readonly ConfigWarningItem[];
+}

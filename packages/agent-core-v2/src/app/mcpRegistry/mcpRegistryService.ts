@@ -10,6 +10,7 @@ import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { readWorkspaceTrust } from '#/workspace/workspaceTrust/trustRecord';
+import { trustWorkspaceEnvTrusted } from '#/workspace/workspaceTrust/workspaceTrustService';
 
 import {
   IMcpRegistryService,
@@ -45,7 +46,10 @@ export class McpRegistryService implements IMcpRegistryService {
       }
     } else {
       const cwd = canonicalWorkspaceRoot(query.cwd);
-      if (!(await readWorkspaceTrust(this.docs, cwd))) {
+      const trusted =
+        (await readWorkspaceTrust(this.docs, cwd)) ||
+        trustWorkspaceEnvTrusted((name) => this.bootstrap.getEnv(name));
+      if (!trusted) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {
           const { name, ...config } = server;

@@ -40,12 +40,10 @@ describe('status panel report lines', () => {
         contextUsage: 0.25,
       },
       managedUsage: {
-        summary: null,
-        limits: [
+        rows: [
           {
-            window: { duration: 5, unit: 'hour' },
-            used: 8,
-            limit: 100,
+            name: '5h limit',
+            usedRatio: 0.08,
             resetAt: new Date(Date.now() + 3600_000).toISOString(),
           },
         ],
@@ -56,7 +54,7 @@ describe('status panel report lines', () => {
     expect(output).toContain('>_ Kimi Code (v1.2.3)');
     expect(output).toContain('Model        Kimi K2 (thinking high)');
     expect(output).toContain('Directory    /tmp/project');
-    expect(output).toContain('Permissions  auto');
+    expect(output).toContain('Permissions  Never Ask');
     expect(output).toContain('Plan mode    on');
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
@@ -140,8 +138,7 @@ describe('status panel report lines', () => {
       maxContextTokens: 0,
       availableModels: {},
       managedUsage: {
-        summary: null,
-        limits: [],
+        rows: [],
         extraUsage: {
           balanceCents: 15000,
           totalCents: 20000,

@@ -1,5 +1,5 @@
 import { createDecorator } from "#/_base/di/instantiation";
-import type { ApprovalResponse } from "#/session/approval/approval";
+import type { ApprovalResponse } from "#/agent/interaction/approval";
 
 export interface PermissionApprovalResultRecord {
   readonly turnId: number;

@@ -1,8 +1,9 @@
 import { ErrorCodes, Error2 } from '#/errors';
 import type { McpServerConfig } from './config-schema';
 import type { ILogger as Logger } from '#/_base/log/log';
-import type { Tool } from '#/kosong/contract/tool';
+import type { ToolDescription as Tool } from '#human/llm/message';
 import { HostProcessError, HostProcessErrorCode } from '#/os/interface/hostProcess';
+import { McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { abortable } from '#/_base/utils/abort';
 import { HttpMcpClient } from './client-http';
@@ -28,11 +29,13 @@ interface InternalEntry {
   readonly config: McpServerConfig;
   attemptId: number;
   status: McpServerStatus;
+  deferred: boolean;
   tools?: readonly Tool[];
   rawTools?: readonly MCPToolDefinition[];
   enabledNames?: ReadonlySet<string>;
   error?: string;
   client?: RuntimeMcpClient;
+  connectedAt?: number;
 }
 
 export type McpStatusListener = (entry: McpServerEntry) => void;
@@ -41,6 +44,7 @@ export interface McpConnectionView {
   readonly oauthService: McpOAuthService | undefined;
   list(): readonly McpServerEntry[];
   get(name: string): McpServerEntry | undefined;
+  deferredOf(name: string): boolean;
   resolved(
     name: string,
   ):
@@ -49,9 +53,11 @@ export interface McpConnectionView {
         tools: readonly Tool[];
         rawTools: readonly MCPToolDefinition[];
         enabledNames: ReadonlySet<string>;
+        deferred: boolean;
       }
     | undefined;
   getRemoteServerUrl(name: string): string | undefined;
+  markNeedsAuth(name: string, error: unknown, client?: MCPClient): Promise<boolean>;
   reconnect(name: string): Promise<void>;
   reconnectAndJoin(name: string): Promise<void>;
   waitForInitialLoad(signal?: AbortSignal): Promise<void>;
@@ -70,9 +76,10 @@ const defaultLog: Logger = {
   child: () => defaultLog,
 };
 
-export interface McpDefaultTimeouts {
+export interface McpDefaults {
   readonly startupTimeoutMs?: number;
   readonly toolTimeoutMs?: number;
+  readonly defaultDeferred?: boolean;
 }
 
 export interface McpConnectionManagerOptions {
@@ -84,7 +91,7 @@ export interface McpConnectionManagerOptions {
   readonly requireStdioRuntimeId?: boolean;
   readonly oauthService?: McpOAuthService;
   readonly log?: Logger;
-  readonly resolveDefaultTimeouts?: () => McpDefaultTimeouts;
+  readonly resolveDefaults?: () => McpDefaults;
   readonly resolveClientName?: () => string | undefined;
 }
 
@@ -132,8 +139,12 @@ export class McpConnectionManager implements McpConnectionView {
     return entry !== undefined ? toPublicEntry(entry) : undefined;
   }
 
-  configOf(name: string): McpServerConfig | undefined {
-    return this.entries.get(name)?.config;
+  deferredOf(name: string): boolean {
+    return this.entries.get(name)?.deferred ?? false;
+  }
+
+  private resolveDeferred(config: McpServerConfig): boolean {
+    return config.deferred ?? this.options.resolveDefaults?.().defaultDeferred ?? false;
   }
 
   resolved(
@@ -144,6 +155,7 @@ export class McpConnectionManager implements McpConnectionView {
         tools: readonly Tool[];
         rawTools: readonly MCPToolDefinition[];
         enabledNames: ReadonlySet<string>;
+        deferred: boolean;
       }
     | undefined {
     const entry = this.entries.get(name);
@@ -160,6 +172,7 @@ export class McpConnectionManager implements McpConnectionView {
       tools: entry.tools,
       rawTools: entry.rawTools,
       enabledNames: entry.enabledNames ?? new Set(entry.tools.map((t) => t.name)),
+      deferred: entry.deferred,
     };
   }
 
@@ -193,6 +206,7 @@ export class McpConnectionManager implements McpConnectionView {
       config,
       attemptId: 0,
       status: disabled ? 'disabled' : 'pending',
+      deferred: this.resolveDeferred(config),
     };
     this.entries.set(name, entry);
     this.emit(entry);
@@ -249,6 +263,7 @@ export class McpConnectionManager implements McpConnectionView {
         config,
         attemptId: 0,
         status: disabled ? 'disabled' : 'pending',
+        deferred: this.resolveDeferred(config),
       };
       this.entries.set(name, entry);
       this.emit(entry);
@@ -297,6 +312,48 @@ export class McpConnectionManager implements McpConnectionView {
     await this.reconnectAndJoin(name);
   }
 
+  async markNeedsAuth(name: string, error: unknown, client?: MCPClient): Promise<boolean> {
+    const entry = this.entries.get(name);
+    if (entry === undefined) return false;
+    if (entry.status !== 'connected' && entry.status !== 'needs-auth') return false;
+    if (!this.shouldMarkNeedsAuth(entry, error)) return false;
+    if (entry.status === 'needs-auth') return true;
+    if (client !== undefined && entry.client !== client) return false;
+    const attemptId = entry.attemptId;
+    const oauthService = this.oauthService;
+    const rejectedGrant =
+      oauthService !== undefined && isRemoteMcpConfig(entry.config)
+        ? await oauthService.peekRejectedGrant(name, entry.config.url, entry.connectedAt)
+        : undefined;
+    if (!this.isCurrent(entry, attemptId)) return false;
+    if (rejectedGrant?.concurrent === true) return false;
+    await this.closeClient(entry);
+    if (!this.isCurrent(entry, attemptId)) return false;
+    this.flipToNeedsAuth(entry);
+    if (rejectedGrant !== undefined && oauthService !== undefined && isRemoteMcpConfig(entry.config)) {
+      try {
+        await oauthService.invalidateTokensIfCurrent(name, entry.config.url, rejectedGrant.tokens);
+      } catch (invalidateError) {
+        this.log.warn('mcp oauth token invalidation failed', {
+          server: name,
+          reason:
+            invalidateError instanceof Error ? invalidateError.message : String(invalidateError),
+        });
+      }
+    }
+    if (!this.isCurrent(entry, attemptId)) return false;
+    this.emit(entry);
+    return true;
+  }
+
+  private flipToNeedsAuth(entry: InternalEntry): void {
+    entry.status = 'needs-auth';
+    entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+    entry.tools = undefined;
+    entry.enabledNames = undefined;
+    entry.rawTools = undefined;
+  }
+
   async shutdown(): Promise<void> {
     const entries = Array.from(this.entries.values());
     this.entries.clear();
@@ -305,9 +362,10 @@ export class McpConnectionManager implements McpConnectionView {
   }
 
   private async connectOne(entry: InternalEntry, attemptId: number): Promise<void> {
+    entry.deferred = this.resolveDeferred(entry.config);
     const timeoutMs =
       entry.config.startupTimeoutMs ??
-      this.options.resolveDefaultTimeouts?.().startupTimeoutMs ??
+      this.options.resolveDefaults?.().startupTimeoutMs ??
       DEFAULT_STARTUP_TIMEOUT_MS;
 
     let client: RuntimeMcpClient | undefined;
@@ -330,6 +388,7 @@ export class McpConnectionManager implements McpConnectionView {
       entry.rawTools = discovered.rawTools;
       entry.enabledNames = computeEnabledNames(entry.config, discovered.tools);
       entry.status = 'connected';
+      entry.connectedAt = this.oauthService?.now() ?? Date.now();
       this.watchForUnexpectedClose(entry, startupClient, attemptId);
     } catch (error) {
       if (!this.isCurrent(entry, attemptId)) {
@@ -339,15 +398,14 @@ export class McpConnectionManager implements McpConnectionView {
         return;
       }
       if (this.shouldMarkNeedsAuth(entry, error)) {
-        entry.status = 'needs-auth';
-        entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+        this.flipToNeedsAuth(entry);
       } else {
         entry.status = 'failed';
         entry.error = formatStartupError(error, client);
+        entry.tools = undefined;
+        entry.enabledNames = undefined;
+        entry.rawTools = undefined;
       }
-      entry.tools = undefined;
-      entry.enabledNames = undefined;
-      entry.rawTools = undefined;
       await this.closeClient(entry);
     }
     if (!this.isCurrent(entry, attemptId)) return;
@@ -384,7 +442,7 @@ export class McpConnectionManager implements McpConnectionView {
     startupTimeoutMs: number,
   ): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs =
-      config.toolTimeoutMs ?? this.options.resolveDefaultTimeouts?.().toolTimeoutMs;
+      config.toolTimeoutMs ?? this.options.resolveDefaults?.().toolTimeoutMs;
     const clientName = this.options.resolveClientName?.();
     if (config.transport === 'stdio') {
       const runtimeResolver = this.options.runtimeResolver;
@@ -523,6 +581,7 @@ function computeEnabledNames(config: McpServerConfig, tools: readonly Tool[]): S
 
 function isUnauthorizedLikeError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
+  if (error instanceof McpError) return false;
   if (error.name === 'UnauthorizedError') return true;
   const code = (error as { code?: unknown }).code;
   if (typeof code === 'number' && code === 401) return true;

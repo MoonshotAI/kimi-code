@@ -26,23 +26,13 @@
  * The tracker holds one lease per submission, binds it to the consuming turn
  * (explicitly at dispatch, by exact submission id when the turn echoes the
  * client-chosen prompt id, or heuristically when a matching-origin turn
- * starts), and releases it when that turn ends. The heuristic claims the
- * earliest unclaimed lease of the same origin; that is only sound because the
- * TUI serializes same-origin dispatches (one in-flight submission at a time,
- * see `beginSessionRequest`) and `turn.started` arrives in dispatch order.
+ * starts), and releases it when that turn ends.
  *
  * Exact binding: a lease created with a `submissionId` is registered in
  * `leasesBySubmissionId`, and the submission sends that id as the prompt id;
  * the consuming turn's `turn.started` echoes it as `promptId`, so
  * `handleTurnStarted` binds the exact lease instead of guessing. The
  * heuristic below remains the fallback for submissions without an id echo.
- *
- * INVARIANT: at most one unclaimed lease per origin at any moment — with two
- * or more, the heuristic cannot tell which submission the turn belongs to.
- * `handleTurnStarted` reports a violation through the `warn` effect and still
- * claims the earliest (a mis-claim only mis-times deletions, so it is not
- * worth failing the turn over). An exact `promptId` hit bypasses the
- * heuristic entirely, so it neither trips nor needs the invariant.
  *
  * Unclaimed leases are released at session close / shutdown, and every
  * in-flight cleanup is drainable via {@link drain}.
@@ -54,6 +44,8 @@
 
 import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/kimi-code-sdk';
 
+import { MAIN_AGENT_ID } from '../constant/kimi-tui';
+
 import type { QueuedMessage } from '../types';
 
 export type StagingLeaseOrigin = 'user' | 'skill_activation' | 'plugin_command';
@@ -62,6 +54,7 @@ export interface StagingLease {
   readonly mediaAttachmentIds: readonly number[];
   readonly paths: readonly string[];
   readonly origin: StagingLeaseOrigin;
+  readonly agentId: string;
   readonly submissionId?: string;
   turnId: string | undefined;
   released: boolean;
@@ -74,11 +67,6 @@ export interface StagingLeaseEffects {
   readonly releaseRetains: (mediaAttachmentIds: readonly number[]) => void;
   /** Delete staged files (daemon uploads + local cache copies); never rejects. */
   readonly deleteFiles: (fileIds: readonly string[], paths: readonly string[]) => Promise<void>;
-  /**
-   * Optional sink for invariant violations (see the INVARIANT note above).
-   * The tracker keeps operating; the warning exists to make a broken
-   * same-origin ordering assumption visible instead of mis-binding silently.
-   */
   readonly warn?: (message: string) => void;
 }
 
@@ -89,6 +77,10 @@ export class StagingLeaseTracker {
   private readonly leasesByTurn = new Map<string, Set<StagingLease>>();
   /** Leases carrying a client-chosen submission id, for exact `promptId` binding. */
   private readonly leasesBySubmissionId = new Map<string, StagingLease>();
+  /** Leases whose dispatch RPC has not settled yet (see {@link trackDispatch}). */
+  private readonly inFlight = new Set<StagingLease>();
+  /** In-flight leases whose turn already ended; released once the RPC settles. */
+  private readonly endedInFlight = new Set<StagingLease>();
   /**
    * Cache copies whose consuming turn already ended. Persisted history may
    * still reference their paths (skill/plugin args carry them as plain
@@ -103,6 +95,7 @@ export class StagingLeaseTracker {
     paths: readonly string[],
     origin: StagingLeaseOrigin,
     submissionId?: string,
+    agentId = MAIN_AGENT_ID,
   ): StagingLease | undefined {
     // `mediaAttachmentIds` multiplicity is the retain count this lease must
     // release: each extraction/rewrite retains once per unique id, so callers
@@ -114,6 +107,7 @@ export class StagingLeaseTracker {
       mediaAttachmentIds: [...mediaAttachmentIds],
       paths: [...paths],
       origin,
+      agentId,
       submissionId,
       turnId: undefined,
       released: false,
@@ -126,15 +120,16 @@ export class StagingLeaseTracker {
   bindToTurn(lease: StagingLease | undefined, turnId: string): void {
     if (lease === undefined || lease.released || lease.turnId !== undefined) return;
     lease.turnId = turnId;
-    let leases = this.leasesByTurn.get(turnId);
+    const key = `${lease.agentId}:${turnId}`;
+    let leases = this.leasesByTurn.get(key);
     if (leases === undefined) {
       leases = new Set<StagingLease>();
-      this.leasesByTurn.set(turnId, leases);
+      this.leasesByTurn.set(key, leases);
     }
     leases.add(lease);
   }
 
-  handleTurnStarted(event: TurnStartedEvent): void {
+  handleTurnStarted(event: TurnStartedEvent, agentId = MAIN_AGENT_ID): void {
     const kind = event.origin?.kind;
     if (kind !== 'user' && kind !== 'skill_activation' && kind !== 'plugin_command') return;
     if (event.promptId !== undefined) {
@@ -142,14 +137,15 @@ export class StagingLeaseTracker {
       // id — bind that lease directly and skip the origin heuristic (and its
       // ambiguity warning) entirely.
       const exact = this.leasesBySubmissionId.get(event.promptId);
-      if (exact !== undefined && exact.turnId === undefined) {
+      if (exact !== undefined && exact.turnId === undefined && exact.agentId === agentId) {
         this.bindToTurn(exact, String(event.turnId));
         return;
       }
     }
     const candidates = [...this.leases].filter(
       (candidate) =>
-        !candidate.released && candidate.turnId === undefined && candidate.origin === kind,
+        !candidate.released && candidate.turnId === undefined &&
+        candidate.origin === kind && candidate.agentId === agentId,
     );
     if (candidates.length > 1) {
       // INVARIANT violation: the earliest-unclaimed pick cannot tell
@@ -163,33 +159,55 @@ export class StagingLeaseTracker {
     this.bindToTurn(candidates[0], String(event.turnId));
   }
 
-  handleTurnEnded(event: TurnEndedEvent): void {
-    const turnId = String(event.turnId);
-    const leases = this.leasesByTurn.get(turnId);
+  handleTurnEnded(event: TurnEndedEvent, agentId = MAIN_AGENT_ID): void {
+    const key = `${agentId}:${String(event.turnId)}`;
+    const leases = this.leasesByTurn.get(key);
     if (leases === undefined) return;
-    for (const lease of leases) this.releaseConsumed(lease);
-    this.leasesByTurn.delete(turnId);
+    for (const lease of leases) {
+      if (this.inFlight.has(lease)) {
+        this.endedInFlight.add(lease);
+        continue;
+      }
+      this.releaseConsumed(lease);
+    }
+    if (this.leasesByTurn.get(key)?.size === 0) this.leasesByTurn.delete(key);
   }
 
   /**
    * Track a dispatch RPC carrying staged media. When it rejects, run
    * `onError` and release the lease — but only while no turn has claimed it:
-   * a bound lease is owned by the turn and released at turn end, whatever the
-   * RPC's later outcome.
+   * a bound lease is owned by the turn and released at turn end. A turn that
+   * ends while the RPC is still in flight leaves the lease alone until the RPC
+   * settles: success releases it as consumed, failure as never consumed —
+   * unless `onError` handed it back to raw ownership via {@link defer}, as a
+   * caller that requeues the failed input does.
    */
   trackDispatch(
     lease: StagingLease | undefined,
     request: Promise<unknown>,
     onError: (error: unknown) => void,
   ): void {
+    if (lease !== undefined) this.inFlight.add(lease);
     this.track(
-      request
-        .catch((error: unknown) => {
+      request.then(
+        () => {
+          this.settleInFlight(lease, true);
+        },
+        (error: unknown) => {
           onError(error);
           if (lease?.turnId === undefined) this.release(lease);
-        })
-        .then(() => undefined),
+          this.settleInFlight(lease, false);
+        },
+      ),
     );
+  }
+
+  private settleInFlight(lease: StagingLease | undefined, consumed: boolean): void {
+    if (lease === undefined) return;
+    this.inFlight.delete(lease);
+    if (!this.endedInFlight.delete(lease)) return;
+    if (consumed) this.releaseConsumed(lease);
+    else this.release(lease);
   }
 
   /**
@@ -292,9 +310,10 @@ export class StagingLeaseTracker {
     this.leases.delete(lease);
     if (lease.submissionId !== undefined) this.leasesBySubmissionId.delete(lease.submissionId);
     if (lease.turnId !== undefined) {
-      const leases = this.leasesByTurn.get(lease.turnId);
+      const key = `${lease.agentId}:${lease.turnId}`;
+      const leases = this.leasesByTurn.get(key);
       leases?.delete(lease);
-      if (leases?.size === 0) this.leasesByTurn.delete(lease.turnId);
+      if (leases?.size === 0) this.leasesByTurn.delete(key);
     }
   }
 

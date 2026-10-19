@@ -59,14 +59,15 @@ function recordingLogger(warnings: CapturedWarn[]): RecordingLogger {
   };
 }
 
-function sessionStartRuntime(input: {
+async function sessionStartRuntime(input: {
   readonly sessionStarts: readonly EnabledPluginSessionStart[];
   readonly skills: readonly SkillDefinition[];
   readonly history?: readonly ContextMessage[];
-}): {
+  readonly skipRestore?: boolean;
+}): Promise<{
   readonly ctx: ReturnType<typeof testAgent>;
   readonly warnings: readonly CapturedWarn[];
-} {
+}> {
   const warnings: CapturedWarn[] = [];
   const skills = new InMemorySkillCatalog();
   for (const skill of input.skills) {
@@ -77,6 +78,7 @@ function sessionStartRuntime(input: {
     skillServices(skills),
     logServices(recordingLogger(warnings)),
   );
+  if (input.skipRestore !== true) await ctx.restorePersisted();
   if (input.history !== undefined) {
     ctx.context.append(...input.history);
   }
@@ -84,7 +86,7 @@ function sessionStartRuntime(input: {
 }
 
 async function injectDynamic(ctx: ReturnType<typeof testAgent>): Promise<void> {
-  await ctx.restoreRuntimes();
+  await ctx.restorePersisted();
   await runWillBeginStepHooks(ctx.get(IAgentLoopService) as StubLoop, false);
 }
 
@@ -102,7 +104,7 @@ function pluginSessionStartMessages(ctx: ReturnType<typeof testAgent>) {
 
 describe('plugin session-start dynamic injection', () => {
   it('injects one <plugin_session_start> block per declared sessionStart on first call', async () => {
-    const { ctx } = sessionStartRuntime({
+    const { ctx } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [
         skill('using-superpowers', 'body of skill', {
@@ -128,7 +130,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('does not hard-code Superpowers guidance when the skill has no plugin instructions', async () => {
-    const { ctx } = sessionStartRuntime({
+    const { ctx } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
@@ -143,7 +145,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('does not re-inject on subsequent calls within the same session', async () => {
-    const { ctx } = sessionStartRuntime({
+    const { ctx } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
@@ -155,7 +157,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('does not re-inject when live-spliced history contains the current plugin sessionStart', async () => {
-    const { ctx } = sessionStartRuntime({
+    const { ctx } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
       history: [
@@ -174,9 +176,10 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('does not re-inject after wire replay restores the current plugin sessionStart', async () => {
-    const { ctx } = sessionStartRuntime({
+    const { ctx } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
+      skipRestore: true,
     });
 
     await ctx.restore([{
@@ -196,7 +199,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('skips a sessionStart whose skill is not registered and warns', async () => {
-    const { ctx, warnings } = sessionStartRuntime({
+    const { ctx, warnings } = await sessionStartRuntime({
       sessionStarts: [
         { pluginId: 'demo', skillName: 'missing' },
         { pluginId: 'superpowers', skillName: 'using-superpowers' },
@@ -218,7 +221,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('warns only once for a missing skill across repeated reconciliations', async () => {
-    const { ctx, warnings } = sessionStartRuntime({
+    const { ctx, warnings } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'demo', skillName: 'missing' }],
       skills: [],
     });
@@ -233,7 +236,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('emits nothing when no sessionStart declarations are present', async () => {
-    const { ctx } = sessionStartRuntime({ sessionStarts: [], skills: [] });
+    const { ctx } = await sessionStartRuntime({ sessionStarts: [], skills: [] });
 
     await injectDynamic(ctx);
 
@@ -241,7 +244,7 @@ describe('plugin session-start dynamic injection', () => {
   });
 
   it('resolves sessionStart skills by plugin identity when names collide', async () => {
-    const { ctx } = sessionStartRuntime({
+    const { ctx } = await sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [
         skill('using-superpowers', 'project body'),

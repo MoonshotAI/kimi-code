@@ -387,6 +387,19 @@ describe('buildExportMarkdown', () => {
 
   it('filters out internal messages', () => {
     const msgs: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          } as ContentPart,
+          { type: 'text', text: 'clean prompt' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
       userMsg('hello', { kind: 'user' }),
       userMsg('injected stuff', { kind: 'injection', variant: 'system-reminder' }),
       assistantMsg('response'),
@@ -399,6 +412,9 @@ describe('buildExportMarkdown', () => {
       now,
     });
     expect(md).not.toContain('injected stuff');
+    expect(md).not.toContain('hook_result');
+    expect(md).not.toContain('hook note');
+    expect(md).toContain('- **Topic**: clean prompt');
     expect(md).toContain('hello');
     expect(md).toContain('response');
   });

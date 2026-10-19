@@ -1000,17 +1000,10 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     get: (agentId: string) =>
       agents.some((agent) => agent.id === agentId) ? stubAgentContext(agentId, 1) : undefined,
     list: () => agents.map((agent) => stubAgentContext(agent.id, 1)),
-    resolve: () => {
-      throw new Error('unexpected resolve');
-    },
-    inspect: () => {
-      throw new Error('unexpected inspect');
-    },
     remove: async () => {},
     broadcastPermissionMode: () => {},
     handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
     adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
-    attachRuntimes: () => {},
   };
 }
 function testManifest(sessionId: string): ExportSessionManifest {

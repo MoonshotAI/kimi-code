@@ -53,6 +53,7 @@ export interface SearchWorkerHostOptions {
   readonly requestTimeoutMs?: number;
   readonly syncTimeoutMs?: number;
   readonly maxOldSpaceMb?: number;
+  readonly syncSessionCap?: number;
   readonly workerFactory?: (entry: { url: URL; data: SearchWorkerData; execArgv: string[] }) => Worker;
 }
 
@@ -326,6 +327,7 @@ export class SearchWorkerHost {
       bootSalt: randomUUID(),
       textBuildWorkerPath:
         textBuild.configured && textBuild.entry.kind === 'packaged' ? textBuild.entry.path : undefined,
+      syncSessionCap: this.options.syncSessionCap,
     };
     let worker: Worker;
     try {
@@ -440,7 +442,7 @@ export class SearchWorkerHost {
     this.reapPromise = this.reapLockFile(deadToken).finally(() => {
       this.reapPromise = null;
     });
-    this.failures = sessionMs > STABLE_SESSION_MS ? 1 : this.failures + 1;
+    this.failures = sessionMs > STABLE_SESSION_MS ? Math.max(1, this.failures - 1) : this.failures + 1;
     const backoff = Math.min(BACKOFF_BASE_MS * 2 ** (this.failures - 1), BACKOFF_CAP_MS);
     this.nextRetryAfter = Date.now() + backoff;
     this.log.warn('global search: worker exited unexpectedly; restart backed off', {

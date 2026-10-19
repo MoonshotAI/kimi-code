@@ -8,10 +8,10 @@ import {
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  managedUserInfoResultSchema,
   managedUsageResultSchema,
-  type ManagedUserInfoResult,
+  managedUserInfoResultSchema,
   type ManagedUsageResult,
+  type ManagedUserInfoResult,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -91,51 +91,43 @@ describe('server-v2 GET /api/v1/oauth/usage', () => {
     return managedUsageResultSchema.parse(body.data);
   }
 
-  it('maps the ok usage payload to the snake_case wire shape', async () => {
+  it('returns the ok quota payload in the camelCase domain shape', async () => {
     const getManagedUsage = vi.fn(async () => ({
       kind: 'ok' as const,
-      summary: {
-        name: 'Weekly limit',
-        window: { duration: 1, unit: 'week' as const },
-        used: 40,
-        limit: 1000,
-        resetAt: '2030-01-01T00:00:00.000Z',
-      },
-      limits: [
-        { name: '5h limit', window: { duration: 5, unit: 'hour' as const }, used: 1, limit: 100 },
-        { used: 2, limit: 50 },
-      ],
-      extraUsage: {
-        balanceCents: 500,
-        totalCents: 1000,
-        monthlyChargeLimitEnabled: true,
-        monthlyChargeLimitCents: 2000,
-        monthlyUsedCents: 1500,
-        currency: 'CNY',
+      quota: {
+        usages: {
+          limit5h: { usedRatio: 0.3, resetAt: '2030-01-01T00:00:00.000Z' },
+          monthTotal: { usedRatio: 0.4, resetAt: '2030-02-01T00:00:00.000Z' },
+          monthCode: { usedRatio: 0.25 },
+        },
+        extraUsage: {
+          balanceCents: 500,
+          totalCents: 1000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 2000,
+          monthlyUsedCents: 1500,
+          currency: 'CNY',
+        },
       },
     }));
     await boot([[IOAuthService, oauthStub(getManagedUsage)]] as unknown as ScopeSeed);
 
     expect(await getUsage()).toEqual({
       kind: 'ok',
-      summary: {
-        name: 'Weekly limit',
-        window: { duration: 1, unit: 'week' },
-        used: 40,
-        limit: 1000,
-        reset_at: '2030-01-01T00:00:00.000Z',
-      },
-      limits: [
-        { name: '5h limit', window: { duration: 5, unit: 'hour' }, used: 1, limit: 100 },
-        { used: 2, limit: 50 },
-      ],
-      extra_usage: {
-        balance_cents: 500,
-        total_cents: 1000,
-        monthly_charge_limit_enabled: true,
-        monthly_charge_limit_cents: 2000,
-        monthly_used_cents: 1500,
-        currency: 'CNY',
+      quota: {
+        usages: {
+          limit5h: { usedRatio: 0.3, resetAt: '2030-01-01T00:00:00.000Z' },
+          monthTotal: { usedRatio: 0.4, resetAt: '2030-02-01T00:00:00.000Z' },
+          monthCode: { usedRatio: 0.25 },
+        },
+        extraUsage: {
+          balanceCents: 500,
+          totalCents: 1000,
+          monthlyChargeLimitEnabled: true,
+          monthlyChargeLimitCents: 2000,
+          monthlyUsedCents: 1500,
+          currency: 'CNY',
+        },
       },
     });
   });

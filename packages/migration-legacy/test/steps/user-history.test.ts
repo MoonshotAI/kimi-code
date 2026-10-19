@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { migrateUserHistoryStep } from '../../src/steps/user-history.js';
+import { migratePlansStep } from '../../src/steps/plans.js';
 
 let src: string;
 let tgt: string;
@@ -48,5 +49,33 @@ describe('migrateUserHistoryStep', () => {
     await writeFile(join(tgt, 'user-history'), 'blocking file');
     const r = await migrateUserHistoryStep({ sourceHome: src, targetHome: tgt });
     expect(r).toEqual({ copied: 0, skippedExisting: 0 });
+  });
+});
+
+describe('migratePlansStep', () => {
+  it('copies legacy plan files as plain files and skips existing on re-run', async () => {
+    const plansSrc = await mkdtemp(join(tmpdir(), 'plans-src-'));
+    try {
+      await writeFile(join(plansSrc, 'hero-plan.md'), '# plan');
+      await writeFile(join(plansSrc, 'other-plan.md'), '# other');
+      const r = await migratePlansStep({ targetHome: tgt, plansSourceDir: plansSrc });
+      expect(r.copied).toBe(2);
+      expect(await readFile(join(tgt, 'plans', 'hero-plan.md'), 'utf-8')).toContain('# plan');
+
+      const second = await migratePlansStep({ targetHome: tgt, plansSourceDir: plansSrc });
+      expect(second.copied).toBe(0);
+      expect(second.skippedExisting).toBe(2);
+    } finally {
+      await rm(plansSrc, { recursive: true, force: true });
+    }
+  });
+
+  it('missing plans source dir: zero counters and no target dir created', async () => {
+    const r = await migratePlansStep({
+      targetHome: tgt,
+      plansSourceDir: join(tgt, 'does-not-exist'),
+    });
+    expect(r).toEqual({ copied: 0, skippedExisting: 0 });
+    expect(await readFile(join(tgt, 'plans', '.keep'), 'utf-8').catch(() => null)).toBeNull();
   });
 });

@@ -3,7 +3,7 @@ import { join } from 'pathe';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
@@ -13,8 +13,8 @@ import {
   userCancellationReason,
 } from '#/_base/utils/abort';
 import { setClampedTimeout } from '#/_base/utils/timer';
-import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
-import { IEventBus } from '#/app/event/eventBus';
+import { escapeXml, escapeXmlAttr, escapeXmlTags } from '#/_base/utils/xml-escape';
+import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { Error2, ErrorCodes } from '#/errors';
 import { z } from 'zod';
 import {
@@ -24,21 +24,24 @@ import {
 import '#/agent/contextMemory/conversationTime';
 import { IAgentConversationUndoParticipantRegistry } from '#/agent/contextMemory/conversationUndoParticipants';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentLoopService } from '#/agent/loop/loop';
-import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import type { TaskOrigin } from '#/agent/contextMemory/types';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
+import { IAgentLoopService, type LoopNotifyHandle } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { WAIT_FOR_FLAG_ID } from '#/agent/tools/task/task-wait/flag';
+import { IFlagService } from '#/app/flag/flag';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import {
   TERMINAL_STATUSES,
   type AgentTaskInfoBase,
   type AgentTaskSettlement,
 } from './types';
 import { renderNotificationXml } from './notificationXml';
+import { formatTaskWallTime } from './wallTime';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IConfigService } from '#/app/config/config';
@@ -165,12 +168,16 @@ const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
+const QUESTION_ANSWER_INLINE_BYTES = 16_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
 const TASK_RESUME_TERMINATION_VARIANT = 'task_resume_termination';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
   'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before.',
   'Do not start duplicates. Use TaskList to list them, TaskOutput for a non-blocking status/output snapshot, and TaskStop to cancel one — completion arrives via automatic notification.',
 ].join(' ');
+
+export const SUBAGENT_BACKGROUND_TASK_NOTICE =
+  'You are running as a subagent: ending your turn is your final hand-off to the parent agent, and completion notifications that arrive after it reach no one. Do not end your turn while a background task whose result you need is still running. Keep waiting for it with WaitFor, calling it again after a timeout if needed, or run the command in the foreground with a suitable timeout instead. Still use the waiting time for other useful work on your task when you can.';
 
 export function isAgentTaskTerminal(status: AgentTaskStatus): boolean {
   return TERMINAL_STATUSES.has(status);
@@ -184,24 +191,6 @@ function coerceTimeoutSettlement(
     return { ...settlement, status: 'timed_out' };
   }
   return settlement;
-}
-
-export class TaskNotificationStepRequest extends MessageStepRequest {
-  constructor(
-    message: ContextMessage,
-    private readonly onWillDeliver?: () => void,
-  ) {
-    super(message, {
-      kind: 'task_notification',
-      mergeable: true,
-      turnScoped: false,
-      admission: 'activeOrNewTurn',
-    });
-  }
-
-  override onWillMaterialize(): void {
-    this.onWillDeliver?.();
-  }
 }
 
 export const taskGhostsKey = defineState<Map<string, AgentTaskInfo>>(
@@ -225,8 +214,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   declare readonly _serviceBrand: undefined;
 
   private readonly tasks = new Map<string, ManagedTask>();
+  private exitSuppressionArmed = false;
   private readonly buildingNotificationKeys = new Set<string>();
-  private readonly pendingNotificationRequests = new Map<string, TaskNotificationStepRequest>();
+  private readonly pendingNotificationRequests = new Map<string, LoopNotifyHandle>();
   private readonly persistence: AgentTaskPersistence;
   private notificationRestoreQueue: Promise<void> = Promise.resolve();
 
@@ -240,13 +230,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
     @IEventBus private readonly eventBus: IEventBus,
+    @ISessionEventBus private readonly sessionEventBus: ISessionEventBus,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentConversationUndoParticipantRegistry
     undoParticipants: IAgentConversationUndoParticipantRegistry,
     @ILogService private readonly log: ILogService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IFlagService flags: IFlagService,
+    @IAgentToolRegistryService tools: IAgentToolRegistryService,
+    @IAgentToolPolicyService policy: IAgentToolPolicyService,
   ) {
     super();
     this.states.contributeState(taskKey);
@@ -294,12 +288,23 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       }),
     );
     this._register(
-      activateReminderWhenReady(agentLifecycle, this.scopeContext, (reminder) =>
-        reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
-          this.activeBackgroundTaskReminder(),
-        ),
+      this.reminder.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
+        this.activeBackgroundTaskReminder(),
       ),
     );
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      this._register(
+        this.reminder.register('subagent_background_task', ({ lastInjectedAt }) => {
+          if (
+            lastInjectedAt !== null ||
+            !flags.enabled(WAIT_FOR_FLAG_ID) ||
+            tools.resolve('WaitFor') === undefined ||
+            !policy.isToolActive('WaitFor')
+          ) return undefined;
+          return SUBAGENT_BACKGROUND_TASK_NOTICE;
+        }),
+      );
+    }
   }
 
   private get ghosts(): Map<string, AgentTaskInfo> {
@@ -522,7 +527,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   private async reconcileNotificationDeliveryAfterUndo(): Promise<void> {
     const restoredKeys = new Set(this.states.get(taskNotificationDeliveryKey));
     for (const [key, request] of this.pendingNotificationRequests) {
-      if (request.aborted) this.clearPendingNotification(key, request);
+      if (request.dropped) this.clearPendingNotification(key, request);
     }
     this.deliveredNotificationKeys.clear();
     for (const key of restoredKeys) this.deliveredNotificationKeys.add(key);
@@ -629,7 +634,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         notificationId: taskNotificationId(taskId, status),
       };
       const key = notificationKey(origin);
-      this.pendingNotificationRequests.get(key)?.abort();
+      this.pendingNotificationRequests.get(key)?.drop();
       this.markDeliveredNotification(origin);
       keys.push(key);
     }
@@ -800,14 +805,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return results.filter((info): info is AgentTaskInfo => info !== undefined);
   }
 
+  async suppressAllTerminalNotifications(): Promise<void> {
+    this.exitSuppressionArmed = true;
+    for (const [, request] of Array.from(this.pendingNotificationRequests)) {
+      request.drop();
+    }
+  }
+
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    await this.suppressAllTerminalNotifications();
     if (this.keepAliveOnExit()) return [];
-    const active = this.list(true);
-    await Promise.all(
-      active
-        .filter((task) => task.detached === true)
-        .map((task) => this.suppressTerminalNotification(task.taskId)),
-    );
     return this.stopAll(reason);
   }
 
@@ -842,6 +849,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private keepAliveOnExit(): boolean {
     return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
+  }
+
+  private lifecycleActive(): boolean {
+    return this.sessionEventBus.isAgentActive(this.scopeContext.agentContext);
+  }
+
+  private marksTerminalNotificationSuppressed(entry: ManagedTask): boolean {
+    return this.exitSuppressionArmed && !this.keepAliveOnExit() && this.isDetached(entry);
   }
 
   async wait(
@@ -1045,11 +1060,21 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.timeoutHandle = undefined;
     }
     const foregroundRelease = entry.foregroundRelease;
+    if (this.marksTerminalNotificationSuppressed(entry)) {
+      entry.terminalNotificationSuppressed = true;
+    }
     if (entry.outputPersistStarted) {
       await this.persistLive(entry);
     } else {
       entry.pendingOutput = [];
       entry.pendingOutputBytes = 0;
+    }
+    if (
+      this.marksTerminalNotificationSuppressed(entry) &&
+      entry.terminalNotificationSuppressed !== true
+    ) {
+      entry.terminalNotificationSuppressed = true;
+      await this.persistLive(entry);
     }
     this.fireTerminalEffects(entry);
     foregroundRelease?.resolve('terminal');
@@ -1076,9 +1101,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
-    void this.dispatcher.dispatch(
-      new TaskStarted({ agentId: this.scopeContext.agentId, info }),
-    );
+    if (this.lifecycleActive()) {
+      void this.dispatcher.dispatch(
+        new TaskStarted({ agentId: this.scopeContext.agentId, info }),
+      );
+    }
     this.telemetry.track2('background_task_created', {
       task_id: info.taskId,
       kind: info.kind === 'process' ? 'bash' : info.kind,
@@ -1086,9 +1113,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
-    void this.dispatcher.dispatch(
-      new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
-    );
+    if (this.lifecycleActive()) {
+      void this.dispatcher.dispatch(
+        new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
+      );
+    }
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
       kind: info.kind,
@@ -1098,34 +1127,27 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private async notifyAgentTask(info: AgentTaskInfo): Promise<void> {
+    if (!this.lifecycleActive()) return;
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
+    if (!this.lifecycleActive() || this.isTerminalNotificationSuppressed(info.taskId)) return;
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
-    const request = new TaskNotificationStepRequest(
-      {
+    const handle = this.loop.notify({
+      message: {
         role: 'user',
         content: [...context.content],
         toolCalls: [],
         origin: context.origin,
       },
-      () => this.fireNotificationHook(context.notification),
-    );
-    this.pendingNotificationRequests.set(key, request);
-    try {
-      const receipt = this.loop.enqueue(request);
-      void receipt.assigned
-        .then(({ step }) => step.result)
-        .then(
-          () => {
-            if (request.aborted) this.clearPendingNotification(key, request);
-          },
-          () => this.clearPendingNotification(key, request),
-        );
-    } catch (error) {
-      this.clearPendingNotification(key, request);
-      throw error;
-    }
+      turnScoped: false,
+      onConsume: () => {
+        this.pendingNotificationRequests.delete(key);
+        this.fireNotificationHook(context.notification);
+      },
+      onDrop: () => this.clearPendingNotification(key, handle),
+    });
+    this.pendingNotificationRequests.set(key, handle);
   }
 
   private restoreAgentTaskNotifications(): Promise<void> {
@@ -1160,16 +1182,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
     if (tasks.length === 0) return;
     const lines = tasks.map((info) => previousSessionTaskLine(info));
-    this.agentLifecycle
-      .resolve(this.scopeContext.agentContext, AgentReminder)
-      .notify(
-        [
-          'The user exited the application after your last turn, so your background tasks from the previous session lost contact:',
-          ...lines,
-          "Don't assume any of them completed; check current state (they may still be running), then re-run or resume only what you still need.",
-        ].join('\n'),
-        { variant: TASK_RESUME_TERMINATION_VARIANT },
-      );
+    this.reminder.notify(
+      [
+        'The user exited the application after your last turn, so your background tasks from the previous session lost contact:',
+        ...lines,
+        "Don't assume any of them completed; check current state (they may still be running), then re-run or resume only what you still need.",
+      ].join('\n'),
+      { variant: TASK_RESUME_TERMINATION_VARIANT },
+    );
     for (const info of tasks) {
       this.firePreviousSessionLostTaskNotificationHook(info);
       this.persistPreviousSessionReminderMarker(info);
@@ -1266,10 +1286,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     try {
       let output = emptyOutputSnapshot();
       try {
-        output = await this.getOutputSnapshot(info.taskId, 0);
-        if (!output.fullOutputAvailable) {
-          output = await this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
-        }
+        output = await this.notificationOutputSnapshot(info);
       } catch (error) {
         this.log.error('task notification output read failed; delivering without output', {
           taskId: info.taskId,
@@ -1281,10 +1298,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       if (this.deliveredNotificationKeys.has(key)) return undefined;
       if (this.hasDeliveredNotification(key)) return undefined;
       this.scheduledNotificationKeys.add(key);
-      const notification = buildAgentTaskNotification(
-        info,
-        agentTaskNotificationChildren(output),
-      );
+      const notification = buildAgentTaskNotification(info, output);
       const content = [
         {
           type: 'text',
@@ -1297,7 +1311,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
   }
 
+  private async notificationOutputSnapshot(info: AgentTaskInfo): Promise<AgentTaskOutputSnapshot> {
+    if (info.kind === 'question') {
+      return this.getOutputSnapshot(info.taskId, QUESTION_ANSWER_INLINE_BYTES);
+    }
+    const persisted = await this.getOutputSnapshot(info.taskId, 0);
+    if (persisted.fullOutputAvailable) return persisted;
+    return this.getOutputSnapshot(info.taskId, NOTIFICATION_FALLBACK_PREVIEW_BYTES);
+  }
+
   private fireNotificationHook(notification: AgentTaskNotification): void {
+    if (!this.lifecycleActive()) return;
     void this.dispatcher.dispatch(
       new TaskNotified({
         agentId: this.scopeContext.agentId,
@@ -1313,6 +1337,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private isTerminalNotificationSuppressed(taskId: string): boolean {
     return (
+      this.exitSuppressionArmed ||
       this.tasks.get(taskId)?.terminalNotificationSuppressed === true ||
       this.ghosts.get(taskId)?.terminalNotificationSuppressed === true
     );
@@ -1325,7 +1350,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.deliveredNotificationKeys.add(key);
   }
 
-  private clearPendingNotification(key: string, request: TaskNotificationStepRequest): void {
+  private clearPendingNotification(key: string, request: LoopNotifyHandle): void {
     if (this.pendingNotificationRequests.get(key) !== request) return;
     this.pendingNotificationRequests.delete(key);
     if (!this.deliveredNotificationKeys.has(key) && !this.hasDeliveredNotification(key)) {
@@ -1395,13 +1420,62 @@ function emptyOutputSnapshot(): AgentTaskOutputSnapshot {
 }
 
 function agentTaskNotificationChildren(
-  output: AgentTaskOutputSnapshot,
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
 ): readonly string[] | undefined {
+  if (output === undefined) return undefined;
+  if (inlinesQuestionAnswer(info, output)) {
+    return output.preview.length === 0 ? undefined : [renderAnswerBlock(output.preview)];
+  }
   if (output.fullOutputAvailable && output.outputPath !== undefined) {
     return [renderOutputFileBlock(output.outputPath, output.outputSizeBytes)];
   }
   if (output.preview.length === 0) return undefined;
   return [renderOutputPreviewBlock(output)];
+}
+
+function inlinesQuestionAnswer(info: AgentTaskInfo, output: AgentTaskOutputSnapshot): boolean {
+  return info.kind === 'question' && !output.truncated;
+}
+
+function renderAnswerBlock(answer: string): string {
+  return ['<answer>', escapeXmlTags(answer), '</answer>'].join('\n');
+}
+
+function questionNotificationText(
+  info: AgentTaskInfo,
+  output: AgentTaskOutputSnapshot | undefined,
+): { readonly title: string; readonly body: string } | undefined {
+  if (info.status !== 'completed' || output === undefined || !inlinesQuestionAnswer(info, output)) {
+    return undefined;
+  }
+  const outcome = questionOutcome(output.preview);
+  if (outcome === 'answered') {
+    return {
+      title: 'Background question answered',
+      body: `The user answered "${info.description}".`,
+    };
+  }
+  if (outcome === 'dismissed') {
+    return {
+      title: 'Background question dismissed',
+      body: `The user dismissed "${info.description}" without answering.`,
+    };
+  }
+  return undefined;
+}
+
+function questionOutcome(output: string): 'answered' | 'dismissed' | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(output);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return undefined;
+  const answers = (parsed as { readonly answers?: unknown }).answers;
+  if (typeof answers !== 'object' || answers === null || Array.isArray(answers)) return undefined;
+  return Object.keys(answers).length > 0 ? 'answered' : 'dismissed';
 }
 
 function renderOutputFileBlock(outputPath: string, outputSizeBytes: number): string {
@@ -1491,11 +1565,12 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
         : info.stopReason
           ? `${info.description} ${info.status === 'killed' ? 'was stopped' : info.status}. Reason: ${info.stopReason}`
           : `${info.description} ${info.status}.`;
+  const timed = `Wall time: ${formatTaskWallTime(info)}\n${baseLine}`;
 
-  if (info.kind !== 'agent') return baseLine;
-  if (info.status === 'completed') return baseLine;
+  if (info.kind !== 'agent') return timed;
+  if (info.status === 'completed') return timed;
   const agentId = info.agentId;
-  if (agentId === undefined || agentId === info.taskId) return baseLine;
+  if (agentId === undefined || agentId === info.taskId) return timed;
 
   const recovery = [
     '',
@@ -1505,13 +1580,14 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
     'The subagent retains its full prior context across the restart, but any in-flight tool call lost its result and may need to be redone.',
   ].join('\n');
 
-  return `${baseLine}${recovery}`;
+  return `${timed}${recovery}`;
 }
 
 function buildAgentTaskNotification(
   info: AgentTaskInfo,
-  children?: readonly string[],
+  output?: AgentTaskOutputSnapshot,
 ): AgentTaskNotification {
+  const question = questionNotificationText(info, output);
   return {
     id: taskNotificationId(info.taskId, info.status),
     category: 'task',
@@ -1519,10 +1595,10 @@ function buildAgentTaskNotification(
     source_kind: 'background_task',
     source_id: info.taskId,
     agent_id: info.kind === 'agent' ? info.agentId : undefined,
-    title: `Background ${info.kind} ${info.status}`,
+    title: question?.title ?? `Background ${info.kind} ${info.status}`,
     severity: info.status === 'completed' ? 'info' : 'warning',
-    body: buildAgentTaskNotificationBody(info),
-    children,
+    body: question?.body ?? buildAgentTaskNotificationBody(info),
+    children: agentTaskNotificationChildren(info, output),
   };
 }
 

@@ -7,6 +7,7 @@ export const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS
 
 const McpServerCommonFields = {
   enabled: z.boolean().optional(),
+  deferred: z.boolean().optional(),
   startupTimeoutMs: McpTimeoutMsSchema.optional(),
   toolTimeoutMs: McpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
@@ -19,7 +20,7 @@ export const McpServerStdioConfigSchema = z.object({
   args: z.array(z.string()).optional(),
   env: StringRecordSchema.optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
+  executor: z.enum(['local']).optional(),
   runtime_id: z.string().min(1).optional(),
   ...McpServerCommonFields,
 });

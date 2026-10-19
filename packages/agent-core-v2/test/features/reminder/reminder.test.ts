@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { contextMemoryKey } from '#/agent/contextMemory/contextOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { AgentReminder, type ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
-import type { AgentRuntimeDefinition } from '#/agent/runtime/agentRuntime';
+import { ReminderFeature } from '#/features/reminder/reminderFeature';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFeatureManager } from '#/app/feature/featureManager';
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -39,9 +39,9 @@ function lastText(context: IAgentContextMemoryService): string | undefined {
   return part?.type === 'text' ? part.text : undefined;
 }
 
-describe('ReminderRuntime', () => {
+describe('AgentReminderService', () => {
   let ctx: TestAgentContext;
-  let reminder: ReminderRuntime;
+  let reminder: IAgentReminderService;
   let context: IAgentContextMemoryService;
   let loop: StubLoop;
 
@@ -50,8 +50,7 @@ describe('ReminderRuntime', () => {
     context = ctx.get(IAgentContextMemoryService);
     loop = ctx.get(IAgentLoopService) as StubLoop;
     await ctx.restorePersisted();
-    await ctx.restoreRuntimes();
-    reminder = ctx.resolve(AgentReminder);
+    reminder = ctx.get(IAgentReminderService);
   });
 
   afterEach(async () => {
@@ -433,17 +432,10 @@ describe('ReminderRuntime', () => {
     expect(lastText(context)).toContain('surviving reminder');
   });
 
-  it('exposes an opaque frozen contract token', () => {
-    expect(Object.isFrozen(AgentReminder)).toBe(true);
-    expect(Object.keys(AgentReminder)).toEqual([]);
-    const forged = Object.freeze({}) as AgentRuntimeDefinition<ReminderRuntime>;
-    expect(() => ctx.resolve(forged)).toThrow('Unknown agent runtime definition');
-  });
-
   it('installs effects only after restore and only once', async () => {
     const local = createTestAgent();
     const localLoop = local.get(IAgentLoopService) as StubLoop;
-    const localReminder = local.resolve(AgentReminder);
+    const localReminder = local.get(IAgentReminderService);
     let calls = 0;
     localReminder.register('restore_test', () => {
       calls += 1;
@@ -454,8 +446,6 @@ describe('ReminderRuntime', () => {
     expect(calls).toBe(0);
 
     await local.restorePersisted();
-    await local.restoreRuntimes();
-    await local.restoreRuntimes();
     await runWillBeginStepHooks(localLoop, false);
     expect(calls).toBe(1);
 
@@ -477,6 +467,25 @@ describe('ReminderRuntime', () => {
     await runInjectionStep();
 
     expect(calls).toBe(1);
-    expect(() => ctx.resolve(AgentReminder)).toThrow('unavailable');
+    expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
+  });
+
+  it('resumes injection when the feature is re-provided after restore', async () => {
+    await ctx.get(IFeatureManager).unprovideUnit('reminder');
+    expect(() => ctx.get(IAgentReminderService)).toThrow("unknown service 'agentReminderService'");
+
+    ctx.get(IFeatureManager).provideUnit(ReminderFeature);
+
+    let calls = 0;
+    const revived = await vi.waitFor(() => ctx.get(IAgentReminderService));
+    revived.register('reprovide_test', () => {
+      calls += 1;
+      return undefined;
+    });
+    loop = ctx.get(IAgentLoopService) as StubLoop;
+    await vi.waitFor(async () => {
+      await runInjectionStep();
+      expect(calls).toBeGreaterThan(0);
+    });
   });
 });

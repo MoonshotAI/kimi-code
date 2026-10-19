@@ -3,6 +3,12 @@ import { z } from 'zod';
 
 import { AgentEvent2, type AgentDomainTrait } from '#/app/event/event2';
 import { defineState } from '#/state/state';
+import {
+  ContextApplyCompaction,
+  ContextClear,
+  type ContextApplyCompactionPayload,
+} from '#/agent/contextMemory/contextEvents';
+import type { WireLineRange } from '#/wire/record';
 
 import type { CompactionBeginData, CompactionResult, CompactionSource } from './types';
 
@@ -97,6 +103,22 @@ export class CompactionCompleted extends AgentEvent2<CompactionCompletedPayload>
 }
 export interface CompactionCompleted extends CompactionCompletedPayload {}
 
+export interface CompactionStartedEvent extends Omit<CompactionStartedPayload, 'agentId'> {
+  readonly type: 'compaction.started';
+}
+
+export interface CompactionBlockedEvent extends Omit<CompactionBlockedPayload, 'agentId'> {
+  readonly type: 'compaction.blocked';
+}
+
+export interface CompactionCancelledEvent {
+  readonly type: 'compaction.cancelled';
+}
+
+export interface CompactionCompletedEvent extends Omit<CompactionCompletedPayload, 'agentId'> {
+  readonly type: 'compaction.completed';
+}
+
 export const fullCompactionKey = defineState(
   'fullCompaction',
   (): CompactionState => ({ phase: 'idle' }),
@@ -123,3 +145,14 @@ export const fullCompactionKey = defineState(
       s.phase = 'idle';
     }
   });
+
+export const fullCompactionWireRangesKey = defineState<readonly WireLineRange[]>(
+  'fullCompaction.wireRanges',
+  () => [],
+)
+  .replayable({ schema: z.custom<readonly WireLineRange[]>() })
+  .on(ContextApplyCompaction, (s, e) => {
+    const wireLines = (e as unknown as ContextApplyCompactionPayload).wireLines;
+    return wireLines === undefined ? undefined : [...s, wireLines];
+  })
+  .on(ContextClear, (s) => (s.length === 0 ? undefined : []));

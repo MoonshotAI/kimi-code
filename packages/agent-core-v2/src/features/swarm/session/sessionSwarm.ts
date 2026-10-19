@@ -1,4 +1,4 @@
-import type { TokenUsage } from '#/kosong/contract/usage';
+import type { TokenUsage } from '#human/llm/usage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { SubagentSpawnPlan } from '#/session/subagent/spawn';
@@ -42,6 +42,7 @@ export interface SessionSwarmRunResult<T = unknown> {
   readonly state?: 'started' | 'not_started';
   readonly result?: string;
   readonly usage?: TokenUsage;
+  readonly stopReason?: string;
   readonly error?: string;
 }
 

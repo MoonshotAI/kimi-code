@@ -169,6 +169,7 @@ describe('built-in slash command registry', () => {
         'add-dir',
         'compact',
         'btw',
+        'desktop',
         'editor',
         'exit',
         'export-debug-zip',
@@ -195,6 +196,7 @@ describe('built-in slash command registry', () => {
         'usage',
         'version',
         'yolo',
+        'auto',
       ]),
     );
   });
@@ -209,18 +211,17 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(reloadTui!, '')).toBe('always');
   });
 
-  it('gates secondary-model behind the secondary-model experiment, always available', () => {
+  it('exposes secondary-model unconditionally, always available', () => {
     const command = findBuiltInSlashCommand('secondary-model');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('secondary-model');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 
-  it('gates tower behind the tower experiment and the v2 engine', () => {
+  it('gates tower behind the tower experiment', () => {
     const command = findBuiltInSlashCommand('tower');
     expect(command).toBeDefined();
     expect((command as KimiSlashCommand).experimentalFlag).toBe('tower');
-    expect((command as KimiSlashCommand).requiresEngineV2).toBe(true);
   });
 
   it('keeps every tower subcommand always available, including objectives', () => {
@@ -234,10 +235,10 @@ describe('built-in slash command registry', () => {
     expect(resolveSlashCommandAvailability(command!, 'Ship feature X')).toBe('always');
   });
 
-  it('gates remote-control behind the remote-control experiment, always available', () => {
+  it('registers remote-control as always available', () => {
     const command = findBuiltInSlashCommand('remote-control');
     expect(command).toBeDefined();
-    expect((command as KimiSlashCommand).experimentalFlag).toBe('remote-control');
+    expect((command as KimiSlashCommand).experimentalFlag).toBeUndefined();
     expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
   });
 

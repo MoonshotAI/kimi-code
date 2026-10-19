@@ -44,11 +44,10 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
   [Methods.GetRegisteredWorkDirs]: async (_, ctx): Promise<string[]> => {
     if (!ctx.workspaceRoot) return [];
     const sessions = await ctx.harness.listSessions();
+    const candidates = [ctx.workspaceRoot, ctx.workDir, ...sessions.map((session) => session.workDir)];
     return [
       ...new Set(
-        sessions
-          .map((session) => session.workDir)
-          .filter((workDir) => isInsideOrEqual(ctx.workspaceRoot!, workDir)),
+        candidates.filter((workDir): workDir is string => workDir !== null && isInsideOrEqual(ctx.workspaceRoot!, workDir)),
       ),
     ].toSorted();
   },

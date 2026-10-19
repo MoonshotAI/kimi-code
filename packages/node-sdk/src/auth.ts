@@ -5,7 +5,7 @@ import {
   writeConfigFile,
   type KimiConfig,
   type OAuthRef,
-} from '@moonshot-ai/agent-core';
+} from '#/config/index';
 import {
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,

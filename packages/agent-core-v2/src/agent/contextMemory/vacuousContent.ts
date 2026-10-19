@@ -1,4 +1,4 @@
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
 
 export function isVacuousContentPart(part: ContentPart): boolean {
   switch (part.type) {

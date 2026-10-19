@@ -34,7 +34,7 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 :::
 </div>
 
-### Common commands
+### Startup options
 
 | Option | Description |
 | --- | --- |
@@ -43,11 +43,22 @@ The `#token=` fragment is the access credential — don't share it. Stop the ser
 | `--no-open` | Don't open the browser when ready |
 | `--log-level <level>` | Enable server logs at the given level; off by default |
 
+### Common slash commands
+
+| Slash command | Description |
+| --- | --- |
+| `/new` | Start a new session |
+| `/goal` | Enter Goal mode and keep working toward the same objective across turns |
+| `/compact` | Compact the current session's context |
+| `/tower` | [Tower multi-agent collaboration](./tower.md) (experimental); `/tower <base-branch>` sets the base branch without sending an objective |
+| `/export` | Export the session content and troubleshooting logs as a ZIP |
+| `/remote-control` | Enable remote control to access the local web session remotely |
+
 ## Relationship with the CLI
 
 The web UI and the CLI share the same login state, configuration (`config.toml`), and session data.
 
-Note that the web UI supports only a subset of the CLI's slash commands — common ones like `/new`, `/goal`, and `/compact` all work. Everything else usually has a point-and-click equivalent in the UI (the settings page, the model picker, the account menu, the task panel).
+The web UI supports only a subset of the CLI's slash commands — see [Common slash commands](#common-slash-commands) above. Everything else usually has a point-and-click equivalent in the UI (the settings page, the model picker, the account menu, the task panel).
 
 How the two sides compare:
 
@@ -93,3 +104,4 @@ Make sure you started with `--host` (bare is fine), and use the LAN URL from the
 
 - [Server API](../reference/server-api.md) — REST / WebSocket APIs for scripts and third-party integrations (experimental)
 - [kimi command](../reference/kimi-command.md#kimi-web) — all `kimi web` command-line options
+- [Remote Control](./remote-control.md) — remotely view and take over local sessions from any device over the public internet

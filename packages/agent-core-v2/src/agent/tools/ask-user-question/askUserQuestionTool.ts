@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
@@ -14,13 +16,23 @@ import type {
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
-import { ISessionQuestionService } from '#/session/question/question';
+import {
+  INTERACTION_TAG_AGENT_ID,
+  INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
+  INTERACTION_TAG_TURN_ID,
+  isInteractionCancellation,
+  type InteractionTags,
+} from '#/human/interaction/interaction';
+import { interactions } from '#/human/interaction/facade';
 import type {
   QuestionAnswers,
   QuestionAnswerMethod,
+  QuestionRequest,
   QuestionResponse,
   QuestionResult,
-} from '#/session/question/question';
+} from '#/agent/interaction/question';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   AskUserQuestionInputSchema,
   AskUserQuestionInputSchemaWithBackground,
@@ -50,7 +62,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
   readonly name = 'AskUserQuestion' as const;
 
   constructor(
-    @ISessionQuestionService private readonly question: ISessionQuestionService,
+    @ISessionContext private readonly session: ISessionContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
@@ -140,13 +152,8 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
       isError: false,
       output:
         `task_id: ${taskId}\n` +
-        `description: ${description}\n` +
         `status: ${status}\n` +
-        `automatic_notification: true\n` +
-        'next_step: Continue your current work; the answer will arrive automatically when the user responds.\n' +
-        'next_step: Use TaskOutput with this task_id for a non-blocking status/answer snapshot.\n' +
-        'next_step: Use TaskStop only if the question should be cancelled.\n' +
-        'human_shell_hint: The pending question is also visible in the client UI.',
+        'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
     };
   }
 
@@ -160,22 +167,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId' | 'trace'>,
   ): Promise<ExecutableToolResult> {
     try {
-      const result = await this.question.request(
-        {
-          turnId,
-          toolCallId,
-          questions: args.questions.map((q) => ({
-            question: q.question,
-            header: q.header,
-            options: q.options.map((o) => ({
-              label: o.label,
-              description: o.description,
-            })),
-            multiSelect: q.multi_select,
-          })),
-        },
-        { signal, agentId: this.scopeContext.agentId },
-      );
+      const result = await this.requestQuestion(args, { toolCallId, turnId, signal });
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
@@ -208,6 +200,55 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
 
       return dismissedQuestionResult();
     }
+  }
+
+  private requestQuestion(
+    args: AskUserQuestionInput,
+    {
+      toolCallId,
+      signal,
+      turnId,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+  ): Promise<QuestionResult> {
+    const id = `question_${randomUUID()}`;
+    const tags: InteractionTags = {
+      [INTERACTION_TAG_AGENT_ID]: this.scopeContext.agentId,
+      [INTERACTION_TAG_SESSION_ID]: this.session.sessionId,
+      [INTERACTION_TAG_TOOL_CALL_ID]: toolCallId,
+    };
+    if (args.background !== true) tags[INTERACTION_TAG_TURN_ID] = turnId;
+    const pending = interactions
+      .request<QuestionRequest, unknown>({
+        id,
+        kind: 'question',
+        payload: {
+          turnId,
+          toolCallId,
+          questions: args.questions.map((q) => ({
+            question: q.question,
+            header: q.header,
+            options: q.options.map((o) => ({
+              label: o.label,
+              description: o.description,
+            })),
+            multiSelect: q.multi_select,
+          })),
+        },
+        tags,
+      })
+      .then((response) => (isInteractionCancellation(response) ? null : (response as QuestionResult)));
+    if (signal.aborted) {
+      interactions.respond(id, null);
+    } else {
+      const onAbort = (): void => {
+        interactions.respond(id, null);
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      void pending.finally(() => {
+        signal.removeEventListener('abort', onAbort);
+      });
+    }
+    return pending;
   }
 }
 

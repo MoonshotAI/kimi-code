@@ -50,7 +50,10 @@ const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
 describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
-    const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
+    const cut = computeUndoCut(
+      [user(USER_ORIGIN), user({ kind: 'user', inTurn: true }), assistant()],
+      1,
+    );
     expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });

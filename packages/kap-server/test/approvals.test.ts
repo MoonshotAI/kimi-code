@@ -2,8 +2,10 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { ISessionApprovalService, ensureMainAgent, getLiveSessionById } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { randomUUID } from 'node:crypto';
+
+import { ensureMainAgent, getLiveSessionById, interactions } from '@moonshot-ai/agent-core-v2';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -20,6 +22,7 @@ interface Envelope<T> {
 interface ApprovalWire {
   approval_id: string;
   session_id: string;
+  agent_id: string;
   turn_id?: number;
   tool_call_id: string;
   tool_name: string;
@@ -43,7 +46,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-approvals-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -55,7 +58,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     base = `http://127.0.0.1:${server.port}`;
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -103,11 +106,16 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   function enqueueApproval(sessionId: string, toolCallId: string): string {
     const handle = getLiveSessionById(server!.core.accessor, sessionId);
     expect(handle).toBeDefined();
-    const parked = handle!.accessor.get(ISessionApprovalService).enqueue({
-      toolCallId,
-      toolName: 'Bash',
-      action: 'run',
-      display: { kind: 'command', command: 'echo hi' },
+    const parked = interactions.enqueue({
+      id: `approval_${randomUUID()}`,
+      kind: 'approval',
+      payload: {
+        toolCallId,
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'echo hi' },
+      },
+      tags: { agentId: 'main', sessionId, toolCallId },
     });
     return parked.id;
   }
@@ -122,6 +130,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     const item = body.data.items[0]!;
     expect(item.approval_id).toBe(aid);
     expect(item.session_id).toBe(sid);
+    expect(item.agent_id).toBe('main');
     expect(item.tool_call_id).toBe('tc-1');
     expect(item.tool_name).toBe('Bash');
     expect(item.action).toBe('run');
@@ -174,7 +183,7 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     expect(first).not.toBe(second);
 
     const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
-    expect(body.data.items.map((i) => i.approval_id).sort()).toEqual([first, second].sort());
+    expect(body.data.items.map((i) => i.approval_id).toSorted()).toEqual([first, second].toSorted());
     expect(body.data.items.every((i) => i.tool_call_id === 'Bash_0')).toBe(true);
 
     for (const aid of [first, second]) {
@@ -188,5 +197,37 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/approvals?status=pending');
     expect(body.code).toBe(40401);
+  });
+
+  it('stamps the requesting agent onto wire approvals, defaulting to main', async () => {
+    const sid = await createSession();
+    interactions.enqueue({
+      id: `approval_${randomUUID()}`,
+      kind: 'approval',
+      payload: {
+        toolCallId: 'tc-sub',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'echo hi' },
+      },
+      tags: { agentId: 'agent-7', sessionId: sid, toolCallId: 'tc-sub' },
+    });
+    interactions.enqueue({
+      id: `approval_${randomUUID()}`,
+      kind: 'approval',
+      payload: {
+        toolCallId: 'tc-untagged',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'command', command: 'echo hi' },
+      },
+      tags: { sessionId: sid, toolCallId: 'tc-untagged' },
+    });
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
+    expect(body.code).toBe(0);
+    const byToolCall = new Map(body.data.items.map((i) => [i.tool_call_id, i.agent_id]));
+    expect(byToolCall.get('tc-sub')).toBe('agent-7');
+    expect(byToolCall.get('tc-untagged')).toBe('main');
   });
 });

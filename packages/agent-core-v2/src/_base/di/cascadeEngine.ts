@@ -121,6 +121,7 @@ export class CascadeTree {
   private _settleWaiters: Array<() => void> = [];
   private readonly _scopeSeq = new Map<object, number>();
   private _nextScopeSeq = 0;
+  private readonly _droppedScopes = new WeakSet<object>();
   private readonly _onDidAddEngine = new Emitter<CascadeEngine>();
   readonly onDidAddEngine: Event<CascadeEngine> = this._onDidAddEngine.event;
   private readonly _onDidRemoveEngine = new Emitter<CascadeEngine>();
@@ -162,10 +163,19 @@ export class CascadeTree {
   seqOf(scope: object): number {
     let seq = this._scopeSeq.get(scope);
     if (seq === undefined) {
+      if (this._droppedScopes.has(scope)) {
+        return -1;
+      }
       seq = this._nextScopeSeq++;
       this._scopeSeq.set(scope, seq);
     }
     return seq;
+  }
+
+  dropScope(scope: object): void {
+    this._droppedScopes.add(scope);
+    this._scopeSeq.delete(scope);
+    this._inFlight.deleteScope(scope);
   }
 
   addSettleWaiter(waiter: () => void): void {
@@ -192,6 +202,7 @@ export class CascadeEngine {
   private readonly _history: CascadeHistoryEntry[] = [];
   private _historySeq = 0;
   private _disposed = false;
+  private _activationSuspended = 0;
   private readonly _onDidChangeUnitState = new Emitter<UnitStateChange>();
   readonly onDidChangeUnitState: Event<UnitStateChange> = this._onDidChangeUnitState.event;
   private readonly _onDidCascade = new Emitter<CascadeHistoryEntry>();
@@ -303,6 +314,42 @@ export class CascadeEngine {
     });
   }
 
+  suspendActivation(): void {
+    this._activationSuspended++;
+  }
+
+  resumeActivation(): void {
+    if (this._activationSuspended === 0) {
+      return;
+    }
+    this._activationSuspended--;
+    if (this._activationSuspended > 0 || this._disposed) {
+      return;
+    }
+    const rebuilt: string[] = [];
+    const failed: string[] = [];
+    this._recheckTreeFixpoint(rebuilt, failed);
+  }
+
+  private _recheckTreeFixpoint(rebuilt: string[], failed: string[]): void {
+    const enginesInOrder = [...this._tree.engines]
+      .filter((engine) => !engine._disposed)
+      .toSorted((a, b) => a._scope.cascadeDepth - b._scope.cascadeDepth);
+    for (;;) {
+      let progress = false;
+      for (const engine of enginesInOrder) {
+        const before = rebuilt.length + failed.length;
+        engine._recheckForCascade(rebuilt, failed);
+        if (rebuilt.length + failed.length > before) {
+          progress = true;
+        }
+      }
+      if (!progress) {
+        break;
+      }
+    }
+  }
+
   resolveWhenAvailable<T>(
     token: ServiceIdentifier<any>,
     timeoutMs?: number,
@@ -345,6 +392,7 @@ export class CascadeEngine {
   dispose(): void {
     this._disposed = true;
     this._tree.removeEngine(this);
+    this._tree.dropScope(this._scope);
     this._units.clear();
     this._pendingIndex.clear();
     const remaining: QueuedRequest[] = [];
@@ -379,7 +427,7 @@ export class CascadeEngine {
   }
 
   _recheckForCascade(rebuilt: string[], failed: string[]): void {
-    if (this._disposed) {
+    if (this._disposed || this._activationSuspended > 0) {
       return;
     }
     this._recheckPending(rebuilt, failed);
@@ -557,22 +605,7 @@ export class CascadeEngine {
       for (const { engine, change } of changes) {
         engine._applyChangeForCascade(change);
       }
-      const enginesInOrder = [...this._tree.engines]
-        .filter((engine) => !engine._disposed)
-        .sort((a, b) => a._scope.cascadeDepth - b._scope.cascadeDepth);
-      for (;;) {
-        let progress = false;
-        for (const engine of enginesInOrder) {
-          const before = rebuilt.length + failed.length;
-          engine._recheckForCascade(rebuilt, failed);
-          if (rebuilt.length + failed.length > before) {
-            progress = true;
-          }
-        }
-        if (!progress) {
-          break;
-        }
-      }
+      this._recheckTreeFixpoint(rebuilt, failed);
       this._pushHistory({
         seq: ++this._historySeq,
         reason,

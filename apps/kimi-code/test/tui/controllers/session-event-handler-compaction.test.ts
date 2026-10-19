@@ -28,6 +28,8 @@ function makeHost() {
       setTurnId: vi.fn(),
       flushNow: vi.fn(),
       resetToolUi: vi.fn(),
+      clearNotifyPanel: vi.fn(),
+      markNotifyPanelEnded: vi.fn(),
       finalizeTurn: vi.fn(),
       hasActiveTurn: vi.fn(() => false),
       hasThinkingDraft: vi.fn(() => false),
@@ -59,6 +61,7 @@ function makeHost() {
     sendQueuedMessage: vi.fn(),
     shiftQueuedMessage: vi.fn(),
     btwPanelController: { routeEvent: vi.fn(() => false) },
+    surveyController: { notifyCompactionFinished: vi.fn() },
     tasksBrowserController: {},
   };
   return { host: host as any };

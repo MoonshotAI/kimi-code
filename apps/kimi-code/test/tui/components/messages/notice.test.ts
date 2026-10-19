@@ -23,6 +23,18 @@ describe('NoticeComponent', () => {
     expect(lines[1]).toContain('Plan mode: ON');
     expect(lines[2]).toContain('Plan will be created here: /tmp/plans/test-plan.md');
   });
+
+  it('indents every line of a multi-line detail, not just the first', () => {
+    const component = new NoticeMessageComponent('Title', 'First line.\nSecond line.');
+
+    const lines = component.render(120).map((line) => strip(line));
+    const titleColumn = lines.find((line) => line.includes('Title'))?.indexOf('Title');
+    const firstColumn = lines.find((line) => line.includes('First line.'))?.indexOf('First line.');
+    const secondColumn = lines.find((line) => line.includes('Second line.'))?.indexOf('Second line.');
+    expect(titleColumn).toBeDefined();
+    expect(firstColumn).toBe(titleColumn);
+    expect(secondColumn).toBe(titleColumn);
+  });
 });
 
 describe('CronMessageComponent', () => {

@@ -9,3 +9,11 @@ export function registerConfigServices(reg: ServiceRegistration): void {
   reg.definePartialInstance(IConfigService, {});
   reg.define(IAtomicTomlDocumentStore, TomlAtomicDocumentStore);
 }
+
+export function stubConfigService(sections: Record<string, unknown> = {}): IConfigService {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    get: (domain: string) => sections[domain],
+  } as unknown as IConfigService;
+}

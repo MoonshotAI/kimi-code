@@ -5,8 +5,14 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { PARENT_SESSION_ID_KEY, type SessionSummary } from './sessionIndex';
 import {
+  clearDirtyMarks,
+  dirtyMarkSessionIds,
+  listDirtyMarks,
+} from './sessionIndexDirtyJournal';
+import {
   PARENT_INDEX_NAME,
   SESSION_INDEX_MANIFEST,
+  SESSION_INDEX_SCHEMA_VERSION,
   recencyColumn,
   sessionCollection,
   sessionCountersCollection,
@@ -17,12 +23,17 @@ import {
   listSessionIds,
   listWorkspaceIds,
   mapBounded,
+  readSessionScanCache,
   readSessionSummary,
+  statSessionStateFile,
   summaryEquals,
+  writeSessionScanCache,
+  type SessionScanCacheEntry,
 } from './sessionIndexSource';
 
-const WRITE_CHUNK = 500;
+const WRITE_CHUNK = 4096;
 const SCAN_CONCURRENCY = 16;
+const STAT_CONCURRENCY = 64;
 const SHARED_SCAN_REUSE_MS = 30_000;
 
 export interface SessionIndexProjectorDeps {
@@ -47,6 +58,8 @@ export interface ReconcileResult {
 export interface AuthoritativeScan {
   readonly summaries: SessionSummary[];
   readonly counts: Map<string, { active: number; archived: number }>;
+  readonly sourceSessionCount: number;
+  readonly workspaceSignals?: Record<string, number>;
 }
 
 interface ScanSlot {
@@ -102,6 +115,7 @@ export class SessionIndexProjector {
     scan: Promise<AuthoritativeScan>,
   ): Promise<ProjectionResult> {
     const { queryStore, log } = this.deps;
+    const epoch = queryStore.storeEpoch();
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
     await queryStore.dropCollection(collection);
@@ -112,7 +126,7 @@ export class SessionIndexProjector {
       field: `custom.${PARENT_SESSION_ID_KEY}`,
     });
 
-    const { summaries, counts } = await scan;
+    const { summaries, counts, sourceSessionCount, workspaceSignals } = await scan;
     await this.batchChunks(
       summaries.map((summary) => ({
         kind: 'put' as const,
@@ -123,7 +137,16 @@ export class SessionIndexProjector {
       })),
     );
     await this.writeCounters(counters, counts);
-    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: generation });
+    await queryStore.setCheckpoint(
+      SESSION_INDEX_MANIFEST,
+      {
+        seq: generation,
+        sourceSessionCount,
+        schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
+        workspaceSignals,
+      },
+      epoch,
+    );
     log.info('session index generation published', {
       generation,
       sessions: summaries.length,
@@ -146,38 +169,124 @@ export class SessionIndexProjector {
   }
 
   async reconcile(generation: number): Promise<ReconcileResult> {
-    const { queryStore, log } = this.deps;
+    const { queryStore, docs, storage, log, sessionsScope } = this.deps;
+    const epoch = queryStore.storeEpoch();
     const collection = sessionCollection(generation);
     const counters = sessionCountersCollection(generation);
-    const { summaries, counts } = await this.scanAuthoritative();
-    const authoritativeIds = new Set(summaries.map((s) => s.id));
+    const marks = await listDirtyMarks(storage, sessionsScope);
+    const changed = dirtyMarkSessionIds(marks);
 
+    const workspaceIds = await listWorkspaceIds(storage, sessionsScope);
+    const authoritative = new Map<string, string>();
+    const workspaceSignals: Record<string, number> = {};
+    let signalsComplete = true;
+    for (const workspaceId of workspaceIds) {
+      const signal = await storage.mtime(sessionsScope, workspaceId);
+      if (signal === undefined) signalsComplete = false;
+      else workspaceSignals[workspaceId] = signal;
+      for (const sessionId of await listSessionIds(storage, sessionsScope, workspaceId)) {
+        authoritative.set(sessionId, workspaceId);
+      }
+    }
     const storedKeys = await queryStore.listKeys(collection);
-    const stored = await queryStore.getMany<SessionSummary>(
-      collection,
-      summaries.map((s) => s.id),
-    );
+    const stored = new Set(storedKeys);
+    for (const sessionId of authoritative.keys()) {
+      if (!stored.has(sessionId)) changed.add(sessionId);
+    }
+    for (const key of storedKeys) {
+      if (!authoritative.has(key)) changed.add(key);
+    }
 
+    const olds = await queryStore.getMany<SessionSummary>(collection, [...changed]);
     const upserts: WriteOp[] = [];
-    for (const summary of summaries) {
-      const existing = stored.get(summary.id);
+    const removals: WriteOp[] = [];
+    const applied = new Map<string, SessionSummary>();
+    const removed = new Set<string>();
+    await mapBounded([...changed], SCAN_CONCURRENCY, async (sessionId) => {
+      const workspaceId = authoritative.get(sessionId);
+      const summary =
+        workspaceId === undefined
+          ? undefined
+          : await readSessionSummary(docs, sessionsScope, workspaceId, sessionId);
+      if (summary === undefined) {
+        if (olds.get(sessionId) !== undefined) {
+          removals.push({ kind: 'delete', collection, key: sessionId });
+          removed.add(sessionId);
+        }
+        return;
+      }
+      applied.set(sessionId, summary);
+      const existing = olds.get(sessionId);
       if (existing === undefined || !summaryEquals(existing, summary)) {
         upserts.push({
           kind: 'put',
           collection,
-          key: summary.id,
+          key: sessionId,
           value: withRecencyField(generation, summary),
           columns: { [recencyColumn(generation)]: summary.updatedAt },
         });
       }
-    }
-    const removals: WriteOp[] = storedKeys
-      .filter((key) => !authoritativeIds.has(key))
-      .map((key) => ({ kind: 'delete' as const, collection, key }));
+    });
 
-    await this.batchChunks([...upserts, ...removals]);
-    await this.writeCounters(counters, counts);
-    const result = { sessions: summaries.length, upserted: upserts.length, removed: removals.length };
+    const deltas = new Map<string, { active: number; archived: number }>();
+    const bump = (workspaceId: string, field: 'active' | 'archived', by: number): void => {
+      const entry = deltas.get(workspaceId) ?? { active: 0, archived: 0 };
+      entry[field] += by;
+      deltas.set(workspaceId, entry);
+    };
+    for (const summary of applied.values()) {
+      const old = olds.get(summary.id);
+      if (old === undefined) {
+        bump(summary.workspaceId, summary.archived ? 'archived' : 'active', 1);
+      } else if (old.workspaceId !== summary.workspaceId) {
+        bump(old.workspaceId, old.archived ? 'archived' : 'active', -1);
+        bump(summary.workspaceId, summary.archived ? 'archived' : 'active', 1);
+      } else if (old.archived !== summary.archived) {
+        bump(summary.workspaceId, old.archived ? 'archived' : 'active', -1);
+        bump(summary.workspaceId, summary.archived ? 'archived' : 'active', 1);
+      }
+    }
+    for (const sessionId of removed) {
+      const old = olds.get(sessionId);
+      if (old !== undefined) bump(old.workspaceId, old.archived ? 'archived' : 'active', -1);
+    }
+    const current = await queryStore.getMany<SessionWorkspaceCounts>(counters, [...deltas.keys()]);
+    const counterOps: WriteOp[] = [...deltas.entries()].map(([workspaceId, delta]) => {
+      const base = current.get(workspaceId) ?? { active: 0, archived: 0 };
+      const value: SessionWorkspaceCounts = {
+        active: Math.max(0, base.active + delta.active),
+        archived: Math.max(0, base.archived + delta.archived),
+      };
+      return { kind: 'put', collection: counters, key: workspaceId, value };
+    });
+    const totals = new Map<string, number>();
+    for (const workspaceId of authoritative.values()) {
+      totals.set(workspaceId, (totals.get(workspaceId) ?? 0) + 1);
+    }
+    for (const key of await queryStore.listKeys(counters)) {
+      if (!totals.has(key)) counterOps.push({ kind: 'delete', collection: counters, key });
+    }
+
+    await this.batchChunks([...upserts, ...removals, ...counterOps]);
+    const manifest = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    if (manifest?.seq === generation) {
+      await queryStore.setCheckpoint(
+        SESSION_INDEX_MANIFEST,
+        {
+          seq: generation,
+          sourceSessionCount: authoritative.size,
+          schemaVersion: SESSION_INDEX_SCHEMA_VERSION,
+          workspaceSignals: signalsComplete ? workspaceSignals : undefined,
+        },
+        epoch,
+      );
+    }
+    await clearDirtyMarks(storage, sessionsScope, marks);
+    const result = {
+      sessions: authoritative.size,
+      upserted: upserts.length,
+      removed: removals.length,
+    };
     if (result.upserted > 0 || result.removed > 0) {
       log.info('session index reconciliation repaired drift', { generation, ...result });
     }
@@ -186,14 +295,49 @@ export class SessionIndexProjector {
 
   private async scanAuthoritative(): Promise<AuthoritativeScan> {
     const { storage, docs, sessionsScope } = this.deps;
+    const cache = await readSessionScanCache(storage, sessionsScope);
+    const nextCache = new Map<string, SessionScanCacheEntry>();
     const summaries: SessionSummary[] = [];
     const counts = new Map<string, { active: number; archived: number }>();
+    const workspaceSignals: Record<string, number> = {};
+    let signalsComplete = true;
+    let sourceSessionCount = 0;
     for (const workspaceId of await listWorkspaceIds(storage, sessionsScope)) {
+      const signal = await storage.mtime(sessionsScope, workspaceId);
+      if (signal === undefined) signalsComplete = false;
+      else workspaceSignals[workspaceId] = signal;
       const sessionIds = await listSessionIds(storage, sessionsScope, workspaceId);
-      const found = await mapBounded(sessionIds, SCAN_CONCURRENCY, (sessionId) =>
-        readSessionSummary(docs, sessionsScope, workspaceId, sessionId),
-      );
+      sourceSessionCount += sessionIds.length;
+      const checks = await mapBounded(sessionIds, STAT_CONCURRENCY, async (sessionId) => {
+        const cached = cache.get(sessionId);
+        const stat = await statSessionStateFile(storage, sessionsScope, workspaceId, sessionId);
+        if (stat === undefined) return undefined;
+        const hit =
+          cached !== undefined &&
+          cached.ws === workspaceId &&
+          cached.meta === stat.meta &&
+          cached.mtimeMs === stat.mtimeMs &&
+          cached.size === stat.size;
+        return { sessionId, stat, cached: hit ? cached : undefined };
+      });
       const entry = counts.get(workspaceId) ?? { active: 0, archived: 0 };
+      const found = await mapBounded(checks, SCAN_CONCURRENCY, async (check) => {
+        if (check === undefined) return undefined;
+        if (check.cached !== undefined) {
+          nextCache.set(check.sessionId, check.cached);
+          return check.cached.summary;
+        }
+        const summary = await readSessionSummary(docs, sessionsScope, workspaceId, check.sessionId);
+        if (summary === undefined) return undefined;
+        nextCache.set(check.sessionId, {
+          ws: workspaceId,
+          meta: check.stat.meta,
+          mtimeMs: check.stat.mtimeMs,
+          size: check.stat.size,
+          summary,
+        });
+        return summary;
+      });
       for (const summary of found) {
         summaries.push(summary);
         if (summary.archived) entry.archived += 1;
@@ -201,7 +345,17 @@ export class SessionIndexProjector {
       }
       counts.set(workspaceId, entry);
     }
-    return { summaries, counts };
+    try {
+      await writeSessionScanCache(storage, sessionsScope, nextCache);
+    } catch (error) {
+      this.deps.log.warn('session index scan cache write failed', { error: String(error) });
+    }
+    return {
+      summaries,
+      counts,
+      sourceSessionCount,
+      workspaceSignals: signalsComplete ? workspaceSignals : undefined,
+    };
   }
 
   private async writeCounters(

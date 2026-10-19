@@ -1,5 +1,5 @@
 import { Service } from '#/_base/di/service';
-import type { ReminderRuntime } from '#/features/reminder/reminderAgentRuntime';
+import type { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IFlagService } from '#/app/flag/flag';
@@ -15,7 +15,7 @@ const TOWER_MODE_EXIT_DISCLOSURE = 'exit';
 
 export class TowerModeInjection extends Service {
   constructor(
-    injector: ReminderRuntime,
+    injector: IAgentReminderService,
     @IAgentTowerService private readonly tower: IAgentTowerService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IFlagService private readonly flags: IFlagService,
@@ -60,7 +60,13 @@ function towerModeReminderVariant(
       assistantTurnsSince += 1;
       continue;
     }
-    if (message.role === 'user' && assistantTurnsSince >= 1) return 'full';
+    if (
+      message.role === 'user' &&
+      message.origin?.kind !== 'injection' &&
+      assistantTurnsSince >= 1
+    ) {
+      return 'full';
+    }
   }
   if (assistantTurnsSince >= TOWER_MODE_FULL_REFRESH_TURNS) return 'full';
   if (assistantTurnsSince >= TOWER_MODE_DEDUP_MIN_TURNS) return 'sparse';

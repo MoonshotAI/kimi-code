@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -124,6 +124,24 @@ describe('fetchClientConfig', () => {
       }),
     ).resolves.toBeUndefined();
   });
+
+  it('POSTs to a custom path when provided', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+
+    const result = await fetchClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      path: '/resource_configs',
+    });
+
+    expect(result).toEqual(CONFIG);
+    expect(fetchImpl).toHaveBeenCalledWith(
+      expect.stringContaining('/resource_configs'),
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ name: 'estimated_cache_duration' }),
+      }),
+    );
+  });
 });
 
 describe('getClientConfig', () => {
@@ -197,6 +215,40 @@ describe('getClientConfig', () => {
         cacheFile: null,
       }),
     ).resolves.toBeUndefined();
+  });
+
+  it('partitions the cache by path', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+    const now = Date.now();
+
+    await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now,
+      cacheFile: null,
+    });
+    const second = await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now,
+      cacheFile: null,
+      path: '/resource_configs',
+    });
+
+    expect(second).toEqual(CONFIG);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('peeks a custom-path entry only when the path matches', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+    const now = Date.now();
+    await getClientConfig('estimated_cache_duration', configSchema, {
+      fetchImpl: fetchImpl as typeof fetch,
+      now,
+      cacheFile: null,
+      path: '/resource_configs',
+    });
+
+    expect(peekClientConfig('estimated_cache_duration', configSchema, now, '/resource_configs')).toEqual(CONFIG);
+    expect(peekClientConfig('estimated_cache_duration', configSchema, now)).toBeUndefined();
   });
 });
 
@@ -353,6 +405,32 @@ describe('getClientConfig disk cache', () => {
     });
 
     expect(result).toEqual(CONFIG);
+  });
+
+  it('writes paths that sanitize alike to distinct cache files', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'client-configs-home-'));
+    vi.stubEnv('KIMI_CODE_HOME', home);
+    try {
+      const fetchImpl = vi.fn(async () => jsonResponse(ENVELOPE));
+      const now = Date.now();
+
+      await getClientConfig('estimated_cache_duration', configSchema, {
+        fetchImpl: fetchImpl as typeof fetch,
+        now,
+        path: '/client_configs',
+      });
+      await getClientConfig('estimated_cache_duration', configSchema, {
+        fetchImpl: fetchImpl as typeof fetch,
+        now,
+        path: '/client:configs',
+      });
+
+      const files = await readdir(join(home, 'cache', 'client-configs'));
+      expect(files.length).toBe(2);
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    }
   });
 });
 

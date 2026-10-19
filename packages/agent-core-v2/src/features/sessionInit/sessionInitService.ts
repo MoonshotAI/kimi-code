@@ -7,7 +7,7 @@ import { loadAgentsMdDetailed } from '#/agent/profile/context';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { agentContextOf } from '#/agent/scopeContext/scopeContext';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -21,6 +21,7 @@ import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './profile/init';
 const INIT_PROFILE_NAME = 'coder';
 const INIT_PARENT_TOOL_CALL_ID = 'generate-agents-md';
 const INIT_DESCRIPTION = 'Initialize AGENTS.md';
+const INIT_LABELS: Readonly<Record<string, string>> = { sessionInit: 'agents-md' };
 
 export class SessionInitService implements ISessionInitService {
   declare readonly _serviceBrand: undefined;
@@ -61,6 +62,7 @@ export class SessionInitService implements ISessionInitService {
           model: own.modelAlias,
           thinking: own.thinkingLevel,
         },
+        labels: INIT_LABELS,
       });
       const child = this.agentLifecycle.handleOf(childContext.agentId)!;
       child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
@@ -93,8 +95,8 @@ export class SessionInitService implements ISessionInitService {
       main.accessor
         .get(IAgentAgentsMdReminderService)
         .seedInjected(agentsMdPaths, this.sessionContext.cwd);
-      this.agentLifecycle
-        .resolve(agentContextOf(main), AgentReminder)
+      main.accessor
+        .get(IAgentReminderService)
         .notify(initCompletionReminder(agentsMd), { variant: 'init' });
       await main.accessor.get(IEventDispatcher).flush();
     } catch (error) {

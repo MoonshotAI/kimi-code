@@ -8,7 +8,7 @@ import { BuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource'
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
 
 import { stubFlag } from '../../../app/flag/stubs';
-import { StubConfigService } from '../../../kosong/stubs';
+import { StubConfigService } from '../../../stubs';
 
 const PRODUCT_SKILLS = [
   'mcp-config',

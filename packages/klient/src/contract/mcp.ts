@@ -13,6 +13,7 @@ export const mcpTimeoutMsSchema = z.number().int().min(1).max(2_147_483_647);
 
 const mcpServerCommonFields = {
   enabled: z.boolean().optional(),
+  deferred: z.boolean().optional(),
   startupTimeoutMs: mcpTimeoutMsSchema.optional(),
   toolTimeoutMs: mcpTimeoutMsSchema.optional(),
   enabledTools: z.array(z.string()).optional(),
@@ -26,7 +27,7 @@ export const mcpServerStdioConfigSchema = z.object({
   args: z.array(z.string()).optional(),
   env: stringRecordSchema.optional(),
   cwd: z.string().optional(),
-  executor: z.enum(['local', 'kaos']).optional(),
+  executor: z.enum(['local']).optional(),
   ...mcpServerCommonFields,
 });
 

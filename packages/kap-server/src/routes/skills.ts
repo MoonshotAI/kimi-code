@@ -1,12 +1,11 @@
 import {
   builtinProductSkillsEnabled,
   visibleBuiltinSkills,
-  AgentSkill,
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
-  IAgentLifecycleService,
   IAgentRuntimeBindingService,
+  IAgentSkillService,
   IBootstrapService,
   IConfigService,
   IFileService,
@@ -26,7 +25,6 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
-  ensureMainAgent,
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
@@ -36,6 +34,7 @@ import {
   type SkillDefinition,
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
+  IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -44,10 +43,10 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
-  assertPromptSessionMediaRefs,
   contentHasPathRefs,
   contentToCoreParts,
   resolvePromptMediaFiles,
+  resolvePromptSessionMediaRefs,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
@@ -250,45 +249,46 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           }
           await assertPromptFileRefs(attachments, core.accessor.get(IFileService));
           await assertPromptPathRefs(attachments);
-          await assertPromptSessionMediaRefs(
+          const resolvedSessionMedia = await resolvePromptSessionMediaRefs(
             attachments,
             resolved.handle.accessor.get(ISessionMediaStore),
           );
-          const telemetry = core.accessor.get(ITelemetryService).withContext({ sessionId: session_id });
+          const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
           const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
           preparedMedia = await resolvePromptMediaFiles(
-            attachments,
+            resolvedSessionMedia,
             core.accessor.get(IFileService),
             core.accessor.get(IBootstrapService).cacheDir,
             {
               telemetry,
+              providerType: (await ensureMainAgentHandle(resolved.handle)).accessor
+                .get(IAgentProfileService)
+                .getModelProviderType(),
               resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
               resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
             },
           );
           attachmentParts.push(...contentToCoreParts(preparedMedia.content));
         }
-        const context = await ensureMainAgent(resolved.handle);
+        const mainAgent = await ensureMainAgentHandle(resolved.handle);
         const promptAttachments =
           preparedMedia !== undefined && preparedMedia.attachments.length > 0
             ? preparedMedia.attachments
             : undefined;
-        await resolved.handle.accessor
-          .get(IAgentLifecycleService)
-          .resolve(context, AgentSkill)
-          .activate({
-            name: parsed.id,
-            args: req.body.args,
-            content: attachmentParts,
-            attachments: promptAttachments,
-          });
+        await mainAgent.accessor.get(IAgentSkillService).activate({
+          name: parsed.id,
+          args: req.body.args,
+          clientMetadata: req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)],
+          content: attachmentParts,
+          attachments: promptAttachments,
+        });
         await preparedMedia?.discard();
         preparedMedia = undefined;
         requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
-      } catch (err) {
+      } catch (error) {
         await preparedMedia?.discard();
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req.id, error);
       }
     },
   );
@@ -368,6 +368,7 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
     ...(disableModelInvocation !== undefined
       ? { disable_model_invocation: disableModelInvocation }
       : {}),
+    scopes: skill.scopes === undefined ? undefined : [...skill.scopes],
   };
 }
 

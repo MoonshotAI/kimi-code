@@ -3,14 +3,28 @@ import Ajv2019 from 'ajv/dist/2019';
 import Ajv2020 from 'ajv/dist/2020';
 import addFormats from 'ajv-formats';
 
-const DRAFT_07_AJV = new Ajv({ strict: false, allErrors: true });
-addFormats(DRAFT_07_AJV);
+type AnyAjv = Ajv | Ajv2019 | Ajv2020;
 
-const DRAFT_2019_AJV = new Ajv2019({ strict: false, allErrors: true });
-addFormats(DRAFT_2019_AJV);
+let draft07Ajv: Ajv | undefined;
+let draft2019Ajv: Ajv2019 | undefined;
+let draft2020Ajv: Ajv2020 | undefined;
 
-const DRAFT_2020_AJV = new Ajv2020({ strict: false, allErrors: true });
-addFormats(DRAFT_2020_AJV);
+function withFormats<T extends AnyAjv>(ajv: T): T {
+  addFormats(ajv);
+  return ajv;
+}
+
+function draft07(): Ajv {
+  return (draft07Ajv ??= withFormats(new Ajv({ strict: false, allErrors: true })));
+}
+
+function draft2019(): Ajv2019 {
+  return (draft2019Ajv ??= withFormats(new Ajv2019({ strict: false, allErrors: true })));
+}
+
+function draft2020(): Ajv2020 {
+  return (draft2020Ajv ??= withFormats(new Ajv2020({ strict: false, allErrors: true })));
+}
 
 const DRAFT_2019_KEYWORDS = new Set([
   'dependentRequired',
@@ -25,16 +39,16 @@ const DRAFT_2019_KEYWORDS = new Set([
 
 const DRAFT_2020_KEYWORDS = new Set(['prefixItems', '$dynamicAnchor', '$dynamicRef']);
 
-function ajvFor(schema: Record<string, unknown>): Ajv | Ajv2019 | Ajv2020 {
+function ajvFor(schema: Record<string, unknown>): AnyAjv {
   const $schema = schema['$schema'];
   if (typeof $schema === 'string') {
-    if ($schema.includes('2020-12')) return DRAFT_2020_AJV;
-    if ($schema.includes('2019-09')) return DRAFT_2019_AJV;
-    return DRAFT_07_AJV;
+    if ($schema.includes('2020-12')) return draft2020();
+    if ($schema.includes('2019-09')) return draft2019();
+    return draft07();
   }
-  if (containsSchemaKeyword(schema, DRAFT_2020_KEYWORDS)) return DRAFT_2020_AJV;
-  if (containsSchemaKeyword(schema, DRAFT_2019_KEYWORDS)) return DRAFT_2019_AJV;
-  return DRAFT_07_AJV;
+  if (containsSchemaKeyword(schema, DRAFT_2020_KEYWORDS)) return draft2020();
+  if (containsSchemaKeyword(schema, DRAFT_2019_KEYWORDS)) return draft2019();
+  return draft07();
 }
 
 function containsSchemaKeyword(value: unknown, keywords: ReadonlySet<string>): boolean {

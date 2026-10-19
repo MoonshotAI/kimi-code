@@ -1,8 +1,7 @@
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { IModelCatalog } from '#/kosong/model/catalog';
+import { IModelCatalog } from '#/llm-adapter/model/catalog';
 
 import { assertValidSubagentModelConfig } from './configSection';
 import { ISessionSubagentModelsValidationService } from './subagentModelsValidation';
@@ -14,10 +13,9 @@ export class SessionSubagentModelsValidationService
 
   constructor(
     @IConfigService config: IConfigService,
-    @IFlagService flags: IFlagService,
     @IModelCatalog modelCatalog: IModelCatalog,
   ) {
-    assertValidSubagentModelConfig(config, flags, modelCatalog);
+    assertValidSubagentModelConfig(config, modelCatalog);
   }
 }
 

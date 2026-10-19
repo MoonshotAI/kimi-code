@@ -18,20 +18,16 @@ import {
   ContextAppendMessage,
   ContextClear,
   ContextSpliced,
-  ContextUndo,
   type ContextSplicedPayload,
 } from './contextEvents';
-import {
-  computeUndoCut,
-  contextMemoryKey,
-  isFullyUndoable,
-  type UndoCut,
-} from './contextOps';
+import { contextMemoryKey } from './contextOps';
 import type { LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
 export class AgentContextMemoryService extends Disposable implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
+
+  private revision = 0;
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -53,6 +49,10 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   get(): readonly ContextMessage[] {
     return this.agentState.get(contextMemoryKey) as readonly ContextMessage[];
+  }
+
+  prefixRevision(): number {
+    return this.revision;
   }
 
   append(...messages: readonly ContextMessage[]): void {
@@ -99,23 +99,6 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     this.publishSplice({ start: 0, deleteCount, messages: [] });
   }
 
-  undo(count: number): UndoCut {
-    const history = this.get();
-    const cut = computeUndoCut(history, count);
-    if (isFullyUndoable(cut, count)) {
-      void this.dispatcher.dispatch(
-        new ContextUndo({ agentId: this.scopeContext.agentId, count }),
-      );
-      this.dispatchCutEvents(cut.cutIndex);
-      this.publishSplice({
-        start: cut.cutIndex,
-        deleteCount: history.length - cut.cutIndex,
-        messages: [],
-      });
-    }
-    return cut;
-  }
-
   applyCompaction(input: ContextCompactionInput): ContextCompactionResult {
     const history = this.get();
     const result = buildContextCompactionShape(history, input, this.tokenEstimateFns);
@@ -131,6 +114,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
         keptUserMessageCount: result.keptUserMessageCount,
         keptHeadUserMessageCount: result.keptHeadUserMessageCount,
         droppedCount: result.droppedCount,
+        wireLines: input.wireLines,
       }),
     );
     this.tokenCounting.rebase(this.scopeContext.agentContext, {
@@ -150,6 +134,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   }
 
   private publishSplice(input: Omit<ContextSplicedPayload, 'agentId'>): void {
+    if (input.deleteCount > 0) this.revision += 1;
     void this.dispatcher.dispatch(
       new ContextSpliced({ agentId: this.scopeContext.agentId, ...input }),
     );

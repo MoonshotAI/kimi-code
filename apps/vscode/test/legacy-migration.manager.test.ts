@@ -387,14 +387,24 @@ describe("legacy migration manager (discovery and migration coordination)", () =
 
     expect(discovery.prompt).toBeNull();
     expect(discovery.notices.oauthLoginsRequiringRelogin).toEqual([
-      { sourceHome: rig.sourceHome, name: "kimi-code.json" },
+      { sourceHome: rig.sourceHome, name: "kimi-code" },
     ]);
   });
 
   it("reports legacy MCP OAuth state as requiring reauthorization", async () => {
     const rig = await createRig();
+    await mkdir(rig.sourceHome, { recursive: true });
+    await writeFile(
+      join(rig.sourceHome, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          "example-server": { url: "https://example.test/mcp", auth: "oauth" },
+          plain: { command: "npx" },
+        },
+      }),
+    );
     await mkdir(join(rig.sourceHome, "mcp-oauth"), { recursive: true });
-    await writeFile(join(rig.sourceHome, "mcp-oauth", "example-server"), "{}");
+    await writeFile(join(rig.sourceHome, "mcp-oauth", "mangled-store-entry"), "{}");
 
     const discovery = await rig.manager.discover();
 
@@ -441,6 +451,7 @@ async function createRig(options: RigOptions = {}): Promise<{
     defaultSourceHome: sourceHome,
     workspaceRoot: options.workspaceRoot === undefined ? workspaceRoot : options.workspaceRoot,
     legacyEnvironmentVariables: options.legacyEnvironmentVariables,
+    plansSourceDir: join(root, "plans"),
   });
   return { root, sourceHome, targetHome, workspaceRoot, manager };
 }

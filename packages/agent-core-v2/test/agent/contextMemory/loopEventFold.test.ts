@@ -38,6 +38,7 @@ describe('loop-event fold parity', () => {
       toolCallId: m.toolCallId,
       isError: m.isError,
       note: m.note,
+      durationMs: m.durationMs,
     }));
   }
 
@@ -47,13 +48,26 @@ describe('loop-event fold parity', () => {
         {
           role: 'assistant',
           content: [{ type: 'text', text: 'I will call.' }],
-          toolCalls: [{ type: 'function', id: 'c1', name: 'Lookup', arguments: '{"q":"moon"}' }],
+          toolCalls: [{ type: 'function', id: 'c1', name: 'Bash', arguments: '{"q":"moon"}' }],
         },
         {
           role: 'tool',
           content: [{ type: 'text', text: 'lookup result' }],
           toolCalls: [],
           toolCallId: 'c1',
+          isError: false,
+          durationMs: 42,
+        },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'c2', name: 'Lookup', arguments: '{"q":"mars"}' }],
+        },
+        {
+          role: 'tool',
+          content: [{ type: 'text', text: 'other result' }],
+          toolCalls: [],
+          toolCallId: 'c2',
           isError: false,
         },
       ]),
@@ -71,15 +85,29 @@ describe('loop-event fold parity', () => {
           type: 'tool.call',
           stepUuid: 's1',
           toolCallId: 'c1',
-          name: 'Lookup',
+          name: 'Bash',
           args: { q: 'moon' },
         },
         {
           type: 'tool.result',
           toolCallId: 'c1',
-          result: { output: 'lookup result', isError: false },
+          result: { output: 'lookup result', isError: false, durationMs: 42 },
         },
         { type: 'step.end', uuid: 's1' },
+        { type: 'step.begin', uuid: 's2' },
+        {
+          type: 'tool.call',
+          stepUuid: 's2',
+          toolCallId: 'c2',
+          name: 'Lookup',
+          args: { q: 'mars' },
+        },
+        {
+          type: 'tool.result',
+          toolCallId: 'c2',
+          result: { output: 'other result', isError: false, durationMs: 7 },
+        },
+        { type: 'step.end', uuid: 's2' },
       ]),
     );
 

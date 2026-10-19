@@ -1,4 +1,4 @@
-import { pino, type Logger, type LoggerOptions } from 'pino';
+import { pino, type DestinationStream, type Logger, type LoggerOptions } from 'pino';
 
 export type ServerLogger = Logger;
 
@@ -6,6 +6,7 @@ export type ServerLogLevel = 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'tr
 
 export interface CreateLoggerOptions {
   level: ServerLogLevel;
+  stream?: DestinationStream;
 }
 
 export function createServerLogger(opts: CreateLoggerOptions): ServerLogger {
@@ -14,5 +15,5 @@ export function createServerLogger(opts: CreateLoggerOptions): ServerLogger {
     base: { name: 'kimi-server-v2' },
     timestamp: pino.stdTimeFunctions.isoTime,
   };
-  return pino(base);
+  return opts.stream === undefined ? pino(base) : pino(base, opts.stream);
 }

@@ -1,7 +1,7 @@
 // Aggregate every "something went wrong" signal from a wire timeline
 // into a flat list consumable by the Issues drawer. Pure — no React.
 //
-// Detection rules for the new agent-core wire protocol:
+// Detection rules for the engine's wire protocol:
 //   - tool.call without paired tool.result (orphan tool.call)
 //   - tool.result without preceding tool.call (orphan tool.result)
 //   - tool.result with isError (tool failed)
@@ -87,16 +87,18 @@ export function computeIssues(
             });
           }
           // Runtime failure / partial-output signals carried on the result.
+          // v1 persisted `truncated` / `message`; v2 persists `note` instead.
+          const result = ev.result as { truncated?: boolean; message?: string; note?: string };
           if (ev.result.isError === true) {
             out.push({
               severity: 'error',
               kind: 'tool_error',
               lineNo,
               summary: `${open?.name ?? 'tool'}#${ev.toolCallId.slice(-8)} returned an error`,
-              detail: ev.result.message,
+              detail: result.message ?? result.note,
             });
           }
-          if (ev.result.truncated === true) {
+          if (result.truncated === true) {
             out.push({
               severity: 'info',
               kind: 'tool_truncated',
@@ -108,8 +110,9 @@ export function computeIssues(
         } else if (ev.type === 'step.begin') {
           stepBeginByUuid.set(ev.uuid, {
             lineNo,
-            step: ev.step,
-            turnId: ev.turnId,
+            // `step` / `turnId` are optional on v2 loop events.
+            step: ev.step ?? -1,
+            turnId: ev.turnId ?? '',
           });
         } else if (ev.type === 'step.end') {
           stepBeginByUuid.delete(ev.uuid);

@@ -12,9 +12,9 @@ Do not invent limits. Do not call this for vague wording such as "spend some tim
 If the user gives a compound time, convert it to one supported unit before calling this tool.
 For example, "2 hours and 3 minutes" can be set as `value: 123, unit: "minutes"`.
 
-A time budget must be between 1 second and 24 hours — the tool rejects anything shorter or
-longer, telling the user it is not a reasonable goal budget. Turn and token budgets are not
-bounded this way; they must be positive and are rounded to the nearest whole number (minimum 1).
+A time budget must be at least 1 second and convert to a finite number of milliseconds.
+There is no upper duration limit. Turn and token budgets must be positive and are rounded
+to the nearest whole number (minimum 1).
 
 Supported units:
 

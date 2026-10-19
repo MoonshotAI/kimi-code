@@ -51,8 +51,14 @@ export {
   kimiRegionProfile,
   kimiRegionSchema,
   resolveKimiRegion,
+  resolveKimiRemoteControlAuth,
 } from './region';
-export type { KimiRegion, KimiRegionProfile, ResolveKimiRegionOptions } from './region';
+export type {
+  KimiRegion,
+  KimiRegionProfile,
+  KimiRemoteControlAuth,
+  ResolveKimiRegionOptions,
+} from './region';
 
 export {
   applyManagedApiKeyProviderModels,
@@ -107,20 +113,27 @@ export type {
 } from './managed-userinfo';
 
 export {
+  boosterWalletInfoSchema,
   fetchManagedUsage,
   formatDuration,
   isManagedKimiCode,
   isManagedKimiCodeBaseUrl,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
+  managedQuotaEntrySchema,
+  managedQuotaSchema,
+  managedQuotaUsagesSchema,
+  managedUsageResultSchema,
   parseManagedUsagePayload,
 } from './managed-usage';
 export type {
+  BoosterWalletInfo,
   FetchManagedUsageError,
   FetchManagedUsageResult,
-  ParsedManagedUsage,
-  UsageRow,
-  UsageWindow,
+  ManagedQuota,
+  ManagedQuotaEntry,
+  ManagedQuotaUsages,
+  ManagedUsageResult,
 } from './managed-usage';
 
 export { fetchChatTitle, kimiCodeToolsUrl } from './managed-tools';
@@ -173,24 +186,42 @@ export {
   applyCustomRegistryEntries,
   applyCustomRegistryProvider,
   capabilitiesFromCustomEntry,
+  credentialEnvHints,
   CustomRegistryApiError,
   CUSTOM_REGISTRY_DEFAULT_CAPABILITIES,
   CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT,
+  customRegistryReplacementKeys,
   fetchCustomRegistry,
+  removeCustomRegistryEntries,
   removeCustomRegistryProvider,
 } from './custom-registry';
 export type {
   CustomRegistryModelEntry,
   CustomRegistryProviderEntry,
   CustomRegistryProviderType,
+  CustomRegistryRemoval,
+  CustomRegistryReplacementKeys,
   CustomRegistrySource,
   FetchCustomRegistryOptions,
 } from './custom-registry';
 
+export {
+  apiKeyEnvMissingMessage,
+  credentialConflictMessage,
+  declaredProviderCredential,
+  reconcileProviderCredentialUpdate,
+} from './provider-credential';
+export type {
+  DeclaredProviderCredential,
+  ProviderCredentialReconciliation,
+  ProviderCredentialUpdate,
+  ProviderCredentialView,
+} from './provider-credential';
+
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';
 export type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   AuthProviderStatus,
   AuthStatus,
   BearerTokenProvider,

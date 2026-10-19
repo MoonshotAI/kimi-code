@@ -3,8 +3,8 @@ import { Error2 } from '#/_base/errors/errors';
 
 import type { ConfigEffectiveOverlay } from '#/app/config/config';
 import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
-import { CONFIG_INVALID_ERROR_CODE } from '#/kosong/contract/errors';
-import { resolveProviderEndpoint } from '#/kosong/provider/providerDefinition';
+import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
+import { resolveProviderEndpoint } from '#/llm-adapter/provider/provider-definition';
 
 import { ENV_MODEL_PROVIDER_KEY } from './configSection';
 

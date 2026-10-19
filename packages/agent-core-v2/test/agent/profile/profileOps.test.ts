@@ -15,11 +15,10 @@ import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMd
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
-import { IProtocolAdapterRegistry, type Protocol } from '#/kosong/protocol/protocol';
+import { IProviderDiscoveryService } from '#/app/kosongConfig/discovery';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { IProtocolAdapterRegistry, type Protocol } from '#/llm-adapter/protocol/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -37,7 +36,6 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
-import '#/kosong/provider/providers/kimi/kimi.contrib';
 
 import {
   registerTestAgentWire,
@@ -45,6 +43,7 @@ import {
   restoreTestEventDispatcher,
   testWireScope,
 } from '../../wire/stubs';
+import { stubProviderDiscovery, type StubProviderDiscovery } from '../../stubs';
 
 const SCOPE = 'wire';
 const KEY = 'profile-test';
@@ -52,8 +51,9 @@ const KEY = 'profile-test';
 function createTelemetryStub(): ITelemetryService {
   return {
     _serviceBrand: undefined,
-    track: () => undefined,
     track2: () => undefined,
+    setContext: () => undefined,
+    getContext: () => ({}),
   } as unknown as ITelemetryService;
 }
 
@@ -94,7 +94,6 @@ function createTestModel(
     alwaysThinking: false,
     providerType,
     providerName: 'kimi',
-    authProvider: { getAuth: async () => undefined },
   };
 }
 
@@ -109,7 +108,7 @@ function createModelCatalogStub(models: Readonly<Record<string, Model>> = {}): I
     getRequester: () => {
       throw new Error('not exercised');
     },
-    inspect: () => {
+    generate: () => {
       throw new Error('not exercised');
     },
     ping: () => {
@@ -186,6 +185,7 @@ let agentState: IAgentStateService;
 let svc: IAgentProfileService;
 let configValues: Record<string, unknown>;
 let modelCatalog: IModelCatalog;
+let discovery: StubProviderDiscovery;
 
 function buildHost(key: string): {
   ix: TestInstantiationService;
@@ -199,10 +199,6 @@ function buildHost(key: string): {
   host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   host.stub(ITelemetryService, createTelemetryStub());
   host.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-  host.stub(
-    IAgentTelemetryContextService,
-    new AgentTelemetryContextService(),
-  );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelCatalog, modelCatalog);
   host.stub(IProtocolAdapterRegistry, createProtocolRegistryStub());
@@ -246,6 +242,7 @@ function buildHost(key: string): {
     disabledTools: () => [],
     setDisabledTools: () => Promise.resolve(),
   });
+  host.stub(IProviderDiscoveryService, discovery);
   host.set(IAgentStateService, new AgentStateService());
   host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
   registerTestAgentWire(host, testWireScope(SCOPE, key), {
@@ -266,6 +263,7 @@ beforeEach(() => {
   disposables = new DisposableStore();
   configValues = {};
   modelCatalog = createModelCatalogStub();
+  discovery = stubProviderDiscovery();
   const host = buildHost(KEY);
   ix = host.ix;
   dispatcher = host.dispatcher;
@@ -502,6 +500,57 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(host.svc.getEffectiveThinkingLevel()).toBe('high');
   });
 
+  describe('when a refresh retires the default model', () => {
+    beforeEach(() => {
+      modelCatalog = createModelCatalogStub({
+        'acme/next': createTestModel({ id: 'next' }),
+        'acme/other': createTestModel({ id: 'other' }),
+      });
+    });
+
+    it('moves an agent bound to it onto the declared replacement, keeping the effort', () => {
+      const host = buildHost('profile-retired-live');
+      host.svc.update({
+        profileName: DEFAULT_AGENT_PROFILE_NAME,
+        modelAlias: 'acme/current',
+        thinkingLevel: 'high',
+      });
+
+      discovery.retire({ from: 'acme/current', to: 'acme/next' });
+
+      expect(host.svc.getModel()).toBe('acme/next');
+      expect(modelOf(host.agentState).thinkingLevel).toBe('high');
+    });
+
+    it('leaves an agent bound to another model alone', () => {
+      const host = buildHost('profile-retired-other');
+      host.svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME, modelAlias: 'acme/other' });
+
+      discovery.retire({ from: 'acme/current', to: 'acme/next' });
+
+      expect(host.svc.getModel()).toBe('acme/other');
+    });
+
+    it('moves an agent restored onto it after the refresh', async () => {
+      discovery.retired['acme/current'] = 'acme/next';
+      const host = buildHost('profile-retired-restore');
+
+      await restoreTestEventDispatcher(
+        host.dispatcher,
+        host.log,
+        testWireScope(SCOPE, 'profile-retired-restore'),
+        [{
+          type: 'config.update',
+          profileName: DEFAULT_AGENT_PROFILE_NAME,
+          modelAlias: 'acme/current',
+          thinkingEffort: 'high',
+        }],
+      );
+
+      expect(host.svc.getModel()).toBe('acme/next');
+    });
+  });
+
   it('rejects conflicting config.update thinking aliases during replay', async () => {
     const host = buildHost('profile-replay-conflicting-thinking-aliases');
 
@@ -534,6 +583,66 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       thinkingEffort: 'high',
       thinkingKeep: 'all',
     });
+  });
+
+  it('exposes the provider type of the bound model, or nothing before a model binds', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    const host = buildHost('profile-provider-type');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+    host.svc.update({ modelAlias: 'kimi-code' });
+    expect(host.svc.getModelProviderType()).toBe('kimi');
+    host.svc.update({ modelAlias: 'claude-code' });
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+    host.svc.update({ modelAlias: 'unknown-model' });
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+  });
+
+  it('resolves the provider type of another catalog model without rebinding', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    const host = buildHost('profile-provider-type-of-alias');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+    host.svc.update({ modelAlias: 'claude-code' });
+
+    expect(host.svc.getModelProviderType('kimi-code')).toBe('kimi');
+    expect(host.svc.getModelProviderType('missing-model')).toBeUndefined();
+    expect(host.svc.getModel()).toBe('claude-code');
+  });
+
+  it('falls back to the configured default model when nothing binds and no alias is given', () => {
+    modelCatalog = createModelCatalogStub({
+      'kimi-code': createTestModel({ providerType: 'kimi' }),
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    configValues['defaultModel'] = 'kimi-code';
+    const host = buildHost('profile-provider-type-default-fallback');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+
+    expect(host.svc.getModelProviderType()).toBe('kimi');
+    host.svc.update({ modelAlias: 'claude-code' });
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+    expect(host.svc.getModelProviderType('kimi-code')).toBe('kimi');
+  });
+
+  it('stays undefined when the configured default model resolves outside the kimi set or nowhere', () => {
+    modelCatalog = createModelCatalogStub({
+      'claude-code': createTestModel({ id: 'claude-code', protocol: 'anthropic' }),
+    });
+    configValues['defaultModel'] = 'claude-code';
+    const host = buildHost('profile-provider-type-default-outside');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+
+    expect(host.svc.getModelProviderType()).toBeUndefined();
+
+    configValues['defaultModel'] = 'missing-model';
+    expect(host.svc.getModelProviderType()).toBeUndefined();
   });
 
   it('uses the resolved Kimi effort instead of the configured default', () => {

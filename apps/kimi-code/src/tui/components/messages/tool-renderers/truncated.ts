@@ -3,6 +3,7 @@ import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
 
+import { outcomeRows } from './outcome';
 import type { ResultRenderer } from './types';
 import { PREVIEW_LINES } from './types';
 
@@ -31,6 +32,8 @@ export class TruncatedOutputComponent implements Component {
   private readonly indent: number;
   private readonly expandHint: boolean;
   private readonly tail: boolean;
+  /** Whether the last collapsed render cut rows; kept while expanded so the footer can still offer collapse. */
+  private truncatedAtLastRender = false;
 
   constructor(
     output: string,
@@ -76,10 +79,18 @@ export class TruncatedOutputComponent implements Component {
     return ' '.repeat(indentWidth) + currentTheme.dim(truncateToWidth(hint, hintWidth, '…'));
   }
 
+  /** Whether the collapsed preview last cut rows away, which ctrl+o reveals. */
+  wasTruncated(): boolean {
+    return this.truncatedAtLastRender;
+  }
+
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
+    // Collapsing swaps the hidden rows for a one-line hint, so a single
+    // hidden row would render at the same height as the full output.
+    this.truncatedAtLastRender = contentLines.length > this.maxLines + 1;
 
-    if (this.expanded || contentLines.length <= this.maxLines) {
+    if (this.expanded || contentLines.length <= this.maxLines + 1) {
       return contentLines;
     }
 
@@ -100,8 +111,13 @@ export class TruncatedOutputComponent implements Component {
   }
 }
 
+// Collapsed cards show the header plus the outcome rows: a successful result
+// is shown whole when short, otherwise contributes its first non-empty line,
+// and the rest waits for the global ctrl+o expand; errors always keep their
+// multi-line preview so a failure is never reduced to a single line.
 export const renderTruncated: ResultRenderer = (_toolCall, result, ctx) => {
   if (!result.output) return [];
+  if (!ctx.expanded && result.is_error !== true) return outcomeRows(result.output, 'first');
   return [
     new TruncatedOutputComponent(result.output, {
       expanded: ctx.expanded,

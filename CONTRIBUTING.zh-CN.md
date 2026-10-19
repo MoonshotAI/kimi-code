@@ -30,7 +30,7 @@ Kimi Code 对 CLI/TUI 行为、agent 工作流和公开 API 已有自己的主�
 - `apps/vis` — 会话调试可视化工具
 - `packages/node-sdk` — 公开 TypeScript SDK（`@moonshot-ai/kimi-code-sdk`）
 - `packages/agent-core-v2` — 当前的 agent 引擎（v2，DI Scope 架构）；`packages/agent-core` 为 v1，正在逐步废弃
-- `packages/klient`、`kap-server`、`protocol`、`transcript`、`kosong`、`kaos`、`oauth`、`telemetry` — 内部引擎包
+- `packages/klient`、`kap-server`、`protocol`、`transcript`、`kosong`、`oauth`、`telemetry` — 内部引擎包
 - `docs/` — VitePress 双语文档站
 
 完整项目地图见 [AGENTS.md](AGENTS.md)。
@@ -60,12 +60,12 @@ pnpm install
 
 | 类型     | 用途                                     | 示例                                   |
 |----------|------------------------------------------|----------------------------------------|
-| feat     | 新功能                                   | feat(agent-core): add tool dedup       |
+| feat     | 新功能                                   | feat(agent-core-v2): add tool dedup       |
 | fix      | bug 修复                                 | fix(tui): correct status bar alignment |
 | docs     | 仅文档                                   | docs: clarify install instructions     |
 | chore    | 工具 / 杂务                              | chore: bump dependencies               |
 | refactor | 无行为变更的内部重构                     | refactor(kosong): extract retry helper |
-| test     | 新增或改进测试                           | test(agent-core): cover skill resolver |
+| test     | 新增或改进测试                           | test(agent-core-v2): cover skill resolver |
 | ci       | CI / 构建流水线变更                      | ci: cache pnpm store                   |
 | build    | 构建系统 / 产物变更                      | build(native): add win32-arm64 target  |
 | perf     | 性能优化                                 | perf(session): batch event flushes     |

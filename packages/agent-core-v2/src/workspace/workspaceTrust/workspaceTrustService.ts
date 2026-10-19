@@ -1,12 +1,23 @@
 import { Disposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
+import { parseBooleanEnv } from '#/_base/utils/env';
 import { defineState } from '#/state/state';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
 import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
+
+export const TRUST_WORKSPACE_ENV = 'KIMI_CODE_TRUST_WORKSPACE';
+
+export function trustWorkspaceEnvTrusted(
+  getEnv: (name: string) => string | undefined,
+): boolean {
+  return parseBooleanEnv(getEnv(TRUST_WORKSPACE_ENV)) === true;
+}
 
 export const workspaceTrustTrustedKey = defineState<boolean>(
   'workspaceTrust.trusted',
@@ -18,6 +29,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
 
   readonly ready: Promise<void>;
   private readonly root: string;
+  private readonly envTrusted: boolean;
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
 
@@ -25,10 +37,13 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     @IWorkspaceContext workspace: IWorkspaceContext,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
     this.states.contributeState(workspaceTrustTrustedKey);
     this.root = workspace.cwd;
+    this.envTrusted = trustWorkspaceEnvTrusted((name) => bootstrap.getEnv(name));
     this.ready = this.initialize();
   }
 
@@ -41,12 +56,12 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
   }
 
   isTrusted(): boolean {
-    return this.trusted;
+    return this.envTrusted || this.trusted;
   }
 
   async get(): Promise<boolean> {
     await this.ready;
-    return this.trusted;
+    return this.isTrusted();
   }
 
   async trust(): Promise<void> {
@@ -54,6 +69,7 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     await writeWorkspaceTrust(this.docs, this.root, Date.now());
     this.trusted = true;
     this.changeEmitter.fire({ trusted: true });
+    this.telemetry.track2('workspace_trust_changed', { trusted: true });
   }
 
   async untrust(): Promise<void> {
@@ -61,9 +77,10 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
     await deleteWorkspaceTrust(this.docs, this.root);
     this.trusted = false;
     this.changeEmitter.fire({ trusted: false });
+    this.telemetry.track2('workspace_trust_changed', { trusted: false });
   }
 
   private async initialize(): Promise<void> {
-    this.trusted = await readWorkspaceTrust(this.docs, this.root);
+    this.trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
   }
 }

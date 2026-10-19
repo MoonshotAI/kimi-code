@@ -23,11 +23,6 @@ import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemet
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -95,13 +90,6 @@ describe('Workspace MCP initialization', () => {
           ready,
           get: (<T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T),
-        });
-        reg.definePartialInstance(IHostFsWatchService, {
-          watch: (): IHostFsWatchHandle => ({
-            ready: Promise.resolve(),
-            onDidChange: Event.None as Event<HostFsChange>,
-            dispose: () => {},
-          }),
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {

@@ -26,8 +26,7 @@ export class BlobStoreService implements IBlobStore {
   }
 
   async has(scope: string, key: string): Promise<boolean> {
-    const keys = await this.storage.list(scope, key);
-    return keys.includes(key);
+    return (await this.storage.size(scope, key)) !== undefined;
   }
 
   async delete(scope: string, key: string): Promise<void> {

@@ -15,15 +15,15 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  ErrorCode,
-  type FileMeta,
-  type Message,
-  type ModelCatalogItem,
-  type ProviderCatalogItem,
-  type Session,
-  type SessionStatusResponse,
-} from '@moonshot-ai/protocol';
+import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import type {
+  ModelCatalogItem,
+  ProviderCatalogItem,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
+import type { Message } from '@moonshot-ai/kap-server/protocol/message';
+import type { SessionStatusResponse } from '@moonshot-ai/kap-server/protocol/rest-session';
+import type { Session } from '@moonshot-ai/kap-server/protocol/session';
 
 import { DaemonClient, EnvelopeError } from '../harness/index.js';
 import { fetchWithReport } from '../harness/report.js';

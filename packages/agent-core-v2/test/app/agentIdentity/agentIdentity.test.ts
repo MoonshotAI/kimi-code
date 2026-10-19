@@ -16,7 +16,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { _clearScopedRegistryForTests, registerScopedService } from '#/_base/di/scope';
 
 import { stubBootstrap } from '../bootstrap/stubs';
-import { StubConfigService } from '../../kosong/stubs';
+import { StubConfigService } from '../../stubs';
 
 const hosts: Array<{ dispose(): void }> = [];
 

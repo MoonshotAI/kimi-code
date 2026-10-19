@@ -6,6 +6,7 @@ export {
   shouldSuppressMigration,
   type MigrationSuppressionInput,
 } from './marker.js';
+export { defaultPlansSourceDir } from './steps/plans.js';
 export { runMigration, type RunMigrationInput } from './run-migration.js';
 export {
   resolveMigrationScope,

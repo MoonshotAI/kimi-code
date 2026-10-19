@@ -10,6 +10,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -20,6 +21,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
@@ -30,6 +32,7 @@ import {
 } from '#/app/workspace/workspacePersistence';
 import { IWorkspaceAliases } from '#/app/workspaceAliases/workspaceAliases';
 import { WorkspaceAliasesService } from '#/app/workspaceAliases/workspaceAliasesService';
+import { stubBootstrap } from '../bootstrap/stubs';
 
 interface SessionIndexLine {
   readonly sessionId: string;
@@ -89,7 +92,14 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
+      stubPair(ILogService, {
+        error: () => {},
+        warn: () => {},
+        info: () => {},
+        debug: () => {},
+      } as unknown as ILogService),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {
@@ -289,7 +299,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const storage = new FileStorageService(homeDir);
     const persistence = new GatedPersistence(
-      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage)),
+      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), stubBootstrap(homeDir)),
     );
     const aliases = build(undefined, storage, persistence);
     const ws = (id: string, root: string): Workspace => ({

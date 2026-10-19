@@ -21,16 +21,24 @@ export interface RenameReplaceOptions {
   baseDelayMs?: number;
 }
 
-export async function renameReplace(src: string, dst: string, opts: RenameReplaceOptions = {}): Promise<void> {
-  if (process.platform !== 'win32') return fs.rename(src, dst);
+export async function retryEperm<T>(op: () => Promise<T>, opts: RenameReplaceOptions = {}): Promise<T> {
   const retries = opts.retries ?? 100;
   const base = opts.baseDelayMs ?? 20;
   for (let attempt = 0; ; attempt++) {
     try {
-      return await fs.rename(src, dst);
+      return await op();
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EPERM' || attempt >= retries) throw e;
       await sleep(base + Math.floor(Math.random() * (base + 10)));
     }
   }
+}
+
+export async function withWindowsEpermRetry<T>(op: () => Promise<T>, opts: RenameReplaceOptions = {}): Promise<T> {
+  if (process.platform !== 'win32') return op();
+  return retryEperm(op, opts);
+}
+
+export async function renameReplace(src: string, dst: string, opts: RenameReplaceOptions = {}): Promise<void> {
+  return withWindowsEpermRetry(() => fs.rename(src, dst), opts);
 }

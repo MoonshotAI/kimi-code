@@ -1,12 +1,8 @@
-import {
-  createRPC,
-  ErrorCodes,
-  KimiError,
-  parseConfigString,
-  resolveConfigPath,
-  type RPCMethods,
-} from '@moonshot-ai/agent-core';
+import { resolveConfigPath } from '@moonshot-ai/agent-core-v2';
 import { z } from 'zod';
+
+import { parseConfigString } from '#/config/index';
+import { ErrorCodes, KimiError } from '#/errors';
 
 export type KimiConfigValidationPathSegment = string | number;
 
@@ -30,19 +26,12 @@ export interface KimiConfigRpc {
   validateConfigToml(input: ValidateKimiConfigTomlInput): Promise<void>;
 }
 
-interface KimiConfigCoreRpc {
-  resolveConfigPath(input: ResolveKimiConfigPathInput): string;
-  validateConfigToml(input: ValidateKimiConfigTomlInput): void;
-}
-
-interface KimiConfigClientRpc {}
-
-class KimiConfigCoreRpcImpl implements KimiConfigCoreRpc {
-  resolveConfigPath(input: ResolveKimiConfigPathInput): string {
+export class KimiConfigRpcClient implements KimiConfigRpc {
+  async resolveConfigPath(input: ResolveKimiConfigPathInput = {}): Promise<string> {
     return resolveConfigPath(input);
   }
 
-  validateConfigToml(input: ValidateKimiConfigTomlInput): void {
+  async validateConfigToml(input: ValidateKimiConfigTomlInput): Promise<void> {
     try {
       parseConfigString(input.text, input.filePath);
     } catch (error) {
@@ -52,26 +41,6 @@ class KimiConfigCoreRpcImpl implements KimiConfigCoreRpc {
       }
       throw error;
     }
-  }
-}
-
-export class KimiConfigRpcClient implements KimiConfigRpc {
-  private readonly ready: Promise<RPCMethods<KimiConfigCoreRpc>>;
-
-  constructor() {
-    const [coreRpc, clientRpc] = createRPC<KimiConfigCoreRpc, KimiConfigClientRpc>();
-    void coreRpc(new KimiConfigCoreRpcImpl());
-    this.ready = clientRpc({});
-  }
-
-  async resolveConfigPath(input: ResolveKimiConfigPathInput = {}): Promise<string> {
-    const rpc = await this.ready;
-    return rpc.resolveConfigPath(input);
-  }
-
-  async validateConfigToml(input: ValidateKimiConfigTomlInput): Promise<void> {
-    const rpc = await this.ready;
-    await rpc.validateConfigToml(input);
   }
 }
 

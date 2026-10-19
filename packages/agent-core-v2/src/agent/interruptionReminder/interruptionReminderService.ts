@@ -2,12 +2,11 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { isUndoAnchor } from '#/agent/contextMemory/conversationTime';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { AgentReminder } from '#/features/reminder/reminderAgentRuntime';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -29,8 +28,7 @@ export class AgentInterruptionReminderService
   constructor(
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentLifecycleService agentLifecycle: IAgentLifecycleService,
-    @IAgentScopeContext scopeContext: IAgentScopeContext,
+    @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentStateService agentState: IAgentStateService,
   ) {
     super();
@@ -38,10 +36,12 @@ export class AgentInterruptionReminderService
     this._register(
       eventBus.subscribe(TurnEnded, (event) => {
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
-        const origin = lastComparableMessage(this.context.get())?.origin;
+        const history = this.context.get();
+        const origin = lastComparableMessage(history)?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-        agentLifecycle.resolve(scopeContext.agentContext, AgentReminder).notify(INTERRUPTION_REMINDER, {
+        this.reminder.notify(INTERRUPTION_REMINDER, {
           variant: INTERRUPTION_REMINDER_VARIANT,
+          ownerPromptId: history.findLast(isUndoAnchor)?.id,
         });
       }),
     );

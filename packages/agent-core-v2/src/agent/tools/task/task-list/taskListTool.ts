@@ -5,7 +5,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 
 import { IAgentTaskService } from '#/agent/task/task';
 import type { AgentTaskInfo } from '#/agent/task/task';
-import { formatPlainObject } from '#/agent/task/tools/format';
+import { formatTaskRecord } from '#/agent/task/tools/format';
 import { ITaskListTool, TaskListInputSchema, type TaskListInput } from './task-list';
 import TASK_LIST_DESCRIPTION from './task-list.md?raw';
 
@@ -13,7 +13,7 @@ export function formatTaskList(tasks: readonly AgentTaskInfo[], activeOnly: bool
   const label = activeOnly ? 'active_background_tasks' : 'background_tasks';
   const header = `${label}: ${String(tasks.length)}`;
   if (tasks.length === 0) return `${header}\nNo background tasks found.`;
-  return `${header}\n${tasks.map((task) => formatPlainObject(task)).join('\n---\n')}`;
+  return `${header}\n${tasks.map((task) => formatTaskRecord(task)).join('\n---\n')}`;
 }
 
 export class TaskListTool implements ITaskListTool {

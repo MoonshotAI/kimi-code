@@ -24,6 +24,7 @@ interface PendingTelemetryEvent extends TelemetryEvent {
     readonly deviceId?: boolean;
     readonly sessionId?: boolean;
   };
+  readonly droppedPropertyKeys?: readonly string[];
 }
 
 export class TelemetryClient {
@@ -33,10 +34,15 @@ export class TelemetryClient {
   private deviceId: string | null = null;
   private sessionId: string | null = null;
   private disabled = false;
+  private unexpectedErrorHandler: ((error: Error) => void) | null = null;
 
   setContext(input: TelemetryContextIds): void {
     if (input.deviceId !== undefined) this.deviceId = input.deviceId;
     if (input.sessionId !== undefined) this.sessionId = input.sessionId;
+  }
+
+  setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
+    this.unexpectedErrorHandler = handler;
   }
 
   withContext(input: TelemetryContextIds): TelemetryClient {
@@ -57,6 +63,7 @@ export class TelemetryClient {
     }
     this.sink = sink;
     for (const event of this.queue) {
+      reportDroppedProperties(event.droppedPropertyKeys ?? [], this.unexpectedErrorHandler);
       const record = toTelemetryEvent(event);
       if (record.device_id === null && event.contextOverrides?.deviceId !== true) {
         record.device_id = this.deviceId;
@@ -69,7 +76,7 @@ export class TelemetryClient {
     this.queue = [];
   }
 
-  disable(): void {
+  teardown(): void {
     this.disabled = true;
     this.queue = [];
     this.systemMetricsCollector?.stop();
@@ -81,8 +88,12 @@ export class TelemetryClient {
     }
   }
 
-  enable(): void {
-    this.disabled = false;
+  setEnabled(enabled: boolean): void {
+    this.disabled = !enabled;
+    if (!enabled) {
+      this.queue = [];
+      this.sink?.clearBuffer();
+    }
   }
 
   track(event: string, properties: TelemetryProperties = {}): void {
@@ -95,19 +106,22 @@ export class TelemetryClient {
     context: TelemetryContextIds,
   ): void {
     if (this.disabled) return;
+    const { properties: sanitized, droppedKeys } = sanitizeProperties(properties);
     const record: PendingTelemetryEvent = {
       event_id: randomUUID().replaceAll('-', ''),
       device_id: context.deviceId === undefined ? this.deviceId : context.deviceId,
       session_id: context.sessionId === undefined ? this.sessionId : context.sessionId,
       event,
       timestamp: Date.now() / 1000,
-      properties: sanitizeProperties(properties),
+      properties: sanitized,
+      droppedPropertyKeys: droppedKeys.length > 0 ? droppedKeys : undefined,
       contextOverrides: {
         deviceId: context.deviceId !== undefined,
         sessionId: context.sessionId !== undefined,
       },
     };
     if (this.sink !== null) {
+      reportDroppedProperties(droppedKeys, this.unexpectedErrorHandler);
       this.sink.accept(toTelemetryEvent(record));
       return;
     }
@@ -143,7 +157,6 @@ export class TelemetryClient {
     const timer = setTimeout(() => {
       controller.abort();
     }, options.timeoutMs);
-    timer.unref?.();
     try {
       await sink.flush(controller.signal);
     } catch {
@@ -162,6 +175,7 @@ export class TelemetryClient {
     this.deviceId = null;
     this.sessionId = null;
     this.disabled = false;
+    this.unexpectedErrorHandler = null;
   }
 }
 
@@ -177,6 +191,10 @@ class ScopedTelemetryClient extends TelemetryClient {
     this.parent.setContext(input);
   }
 
+  override setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
+    this.parent.setUnexpectedErrorHandler(handler);
+  }
+
   override withContext(input: TelemetryContextIds): TelemetryClient {
     return new ScopedTelemetryClient(this.parent, mergeContext(this.context, input));
   }
@@ -189,12 +207,12 @@ class ScopedTelemetryClient extends TelemetryClient {
     this.parent.attachSink(sink);
   }
 
-  override disable(): void {
-    this.parent.disable();
+  override teardown(): void {
+    this.parent.teardown();
   }
 
-  override enable(): void {
-    this.parent.enable();
+  override setEnabled(enabled: boolean): void {
+    this.parent.setEnabled(enabled);
   }
 
   override track(event: string, properties: TelemetryProperties = {}): void {
@@ -228,16 +246,16 @@ export function setContext(input: TelemetryContextIds): void {
   defaultClient.setContext(input);
 }
 
+export function setUnexpectedErrorHandler(handler: ((error: Error) => void) | null): void {
+  defaultClient.setUnexpectedErrorHandler(handler);
+}
+
 export function attachSink(sink: EventSink): void {
   defaultClient.attachSink(sink);
 }
 
-export function disable(): void {
-  defaultClient.disable();
-}
-
-export function enable(): void {
-  defaultClient.enable();
+export function setEnabled(enabled: boolean): void {
+  defaultClient.setEnabled(enabled);
 }
 
 export function track(event: string, properties: TelemetryProperties = {}): void {
@@ -286,12 +304,33 @@ function toTelemetryEvent(event: PendingTelemetryEvent): TelemetryEvent {
   };
 }
 
-function sanitizeProperties(input: TelemetryProperties): TelemetryProperties {
-  const out: TelemetryProperties = {};
-  for (const [key, value] of Object.entries(input)) {
-    if (isTelemetryPrimitive(value)) {
-      out[key] = value;
+function reportDroppedProperties(
+  keys: readonly string[],
+  onUnexpectedError: ((error: Error) => void) | null,
+): void {
+  for (const key of keys) {
+    try {
+      onUnexpectedError?.(
+        new Error(`telemetry property "${key}" is not a primitive and was dropped`),
+      );
+    } catch (handlerError) {
+      console.error('[unexpected] telemetry error handler threw', handlerError);
     }
   }
-  return out;
+}
+
+function sanitizeProperties(input: TelemetryProperties): {
+  readonly properties: TelemetryProperties;
+  readonly droppedKeys: string[];
+} {
+  const properties: TelemetryProperties = {};
+  const droppedKeys: string[] = [];
+  for (const [key, value] of Object.entries(input)) {
+    if (isTelemetryPrimitive(value)) {
+      properties[key] = value;
+    } else {
+      droppedKeys.push(key);
+    }
+  }
+  return { properties, droppedKeys };
 }

@@ -14,20 +14,18 @@
  *    a full REST refresh; nothing is resynced from the socket itself.
  *
  * Rendering is turn-granular (turn → step → frame) and typed entirely by the
- * transcript data model. Prompts/cancels go through the `IAgentPromptService`
- * / `IAgentLoopService` channels
- * over the debug RPC surface (`/api/v1/debug`); the running indicator
+ * transcript data model. Cancels go through the `IAgentLoopService` channel
+ * over the debug RPC surface (`/api/v1/debug`); interaction answers
+ * (approve/reject, answer/dismiss) go through the public REST endpoints
+ * (`src/interactions/api.ts`); the running indicator
  * derives from transcript state (`meta.activity` / running turns).
  */
 
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
-import { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
-import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import {
-  ISessionQuestionService,
   type QuestionItem,
   type QuestionRequest,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 import {
   EMPTY_AGENT_STATE,
   itemId,
@@ -60,6 +58,12 @@ import {
 
 import { AuditTrail } from '../audit/trail';
 import { useConnection } from '../connection';
+import {
+  answerQuestion,
+  decideApproval,
+  dismissQuestion,
+  type QuestionAnswerWire,
+} from '../interactions/api';
 import type { SearchHit } from '../search/api';
 import {
   fetchTranscriptAttachment,
@@ -366,7 +370,6 @@ export function ChatView({
   onOpenSearchHit?: ((hit: SearchHit) => void) | undefined;
 }) {
   const { klient, baseUrl, config } = useConnection();
-  const [input, setInput] = useState('');
   const [sendError, setSendError] = useState<unknown>(null);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<unknown>(null);
@@ -559,27 +562,10 @@ export function ChatView({
   );
   const latestTodo = [...state.todos.values()].at(-1);
 
-  const send = async () => {
-    if (sessionId === null || input.trim() === '' || running) return;
-    const text = input.trim();
-    setInput('');
-    setSendError(null);
-    try {
-      await klient
-        .session(sessionId)
-        .agent(agentId)
-        .service(IAgentPromptService)
-        .submit({ input: [{ type: 'text', text }] });
-      trail?.recordEvent('prompt', text, state);
-    } catch (error) {
-      setSendError(error);
-    }
-  };
-
   const cancel = async () => {
     if (sessionId === null) return;
     try {
-      await klient.session(sessionId).agent(agentId).service(IAgentLoopService).cancelFromUser();
+      await klient.session(sessionId).agent(agentId).service(IAgentLoopService).cancel(undefined);
       trail?.recordEvent('cancel', undefined, state);
     } catch (error) {
       setSendError(error);
@@ -649,7 +635,7 @@ export function ChatView({
           ) : null}
           {items.length === 0 && loadError === null ? (
             <div className="text-[12px] text-neutral-600 italic">
-              {loaded ? 'Empty transcript — send a prompt below.' : 'Loading transcript…'}
+              {loaded ? 'Empty transcript.' : 'Loading transcript…'}
             </div>
           ) : null}
           {latestTodo !== undefined && latestTodo.items.length > 0 ? (
@@ -708,27 +694,10 @@ export function ChatView({
               <ErrorLine error={sendError} />
             </div>
           ) : null}
-          <div className="flex gap-2">
-            <textarea
-              className="min-h-[40px] flex-1 resize-y rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-[13px] text-neutral-100 outline-none focus:border-sky-600"
-              placeholder="Send a prompt to the active agent… (Enter to send, Shift+Enter for newline)"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void send();
-                }
-              }}
-            />
-            <div className="flex flex-col gap-2">
-              <ActionButton onClick={() => void send()} disabled={running || input.trim() === ''}>
-                Send
-              </ActionButton>
-              <ActionButton onClick={() => void cancel()} danger disabled={!running}>
-                Cancel
-              </ActionButton>
-            </div>
+          <div className="flex justify-end">
+            <ActionButton onClick={() => void cancel()} danger disabled={!running}>
+              Cancel
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -1163,7 +1132,7 @@ function InteractionEntityView({
   interaction: TranscriptInteraction;
   nested?: boolean;
 }) {
-  const { klient } = useConnection();
+  const { baseUrl, config } = useConnection();
   const sessionId = useContext(SessionContext);
   const [busy, setBusy] = useState(false);
   const [respondError, setRespondError] = useState<unknown>(null);
@@ -1177,6 +1146,7 @@ function InteractionEntityView({
     interaction.interactionKind === 'question'
       ? (interaction.request as QuestionRequest | undefined)
       : undefined;
+  const api = { baseUrl, token: config.token, sessionId };
 
   const run = (fn: () => Promise<unknown>): void => {
     setBusy(true);
@@ -1191,12 +1161,7 @@ function InteractionEntityView({
   };
 
   const decide = (decision: 'approved' | 'rejected'): void => {
-    run(() =>
-      klient
-        .session(sessionId)
-        .service(ISessionApprovalService)
-        .decide(interaction.interactionId, { decision }),
-    );
+    run(() => decideApproval(api, interaction.interactionId, decision));
   };
 
   const toggleOption = (question: QuestionItem, label: string): void => {
@@ -1215,27 +1180,34 @@ function InteractionEntityView({
   };
 
   const submitAnswers = (): void => {
-    const answers: Record<string, string> = {};
-    for (const question of questionRequest?.questions ?? []) {
-      const parts = [...(selections[question.question] ?? [])];
+    const answers: Record<string, QuestionAnswerWire> = {};
+    for (const [index, question] of (questionRequest?.questions ?? []).entries()) {
+      const selected = selections[question.question] ?? [];
+      const optionIds = selected.flatMap((label) => {
+        const optionIndex = question.options.findIndex((option) => option.label === label);
+        return optionIndex < 0 ? [] : [`opt_${index}_${optionIndex}`];
+      });
       const other = (others[question.question] ?? '').trim();
-      if (other !== '') parts.push(other);
-      if (parts.length > 0) answers[question.question] = parts.join(', ');
+      if (other !== '' && optionIds.length > 0) {
+        answers[`q_${index}`] = { kind: 'multi_with_other', option_ids: optionIds, other_text: other };
+      } else if (other !== '') {
+        answers[`q_${index}`] = { kind: 'other', text: other };
+      } else if (optionIds.length > 1 || (question.multiSelect === true && optionIds.length > 0)) {
+        answers[`q_${index}`] = { kind: 'multi', option_ids: optionIds };
+      } else if (optionIds.length === 1) {
+        answers[`q_${index}`] = { kind: 'single', option_id: optionIds[0]! };
+      }
     }
-    // Mirror the TUI adapter: no answers at all resolves with null.
-    const result = Object.keys(answers).length > 0 ? { answers, method: 'enter' as const } : null;
-    run(() =>
-      klient
-        .session(sessionId)
-        .service(ISessionQuestionService)
-        .answer(interaction.interactionId, result),
-    );
+    // Mirror the TUI adapter: no answers at all dismisses the question.
+    if (Object.keys(answers).length === 0) {
+      dismiss();
+      return;
+    }
+    run(() => answerQuestion(api, interaction.interactionId, answers, 'enter'));
   };
 
   const dismiss = (): void => {
-    run(() =>
-      klient.session(sessionId).service(ISessionQuestionService).dismiss(interaction.interactionId),
-    );
+    run(() => dismissQuestion(api, interaction.interactionId));
   };
 
   return (

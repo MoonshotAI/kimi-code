@@ -8,7 +8,6 @@ import {
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
 export type AgentPhase =
@@ -18,16 +17,6 @@ export type AgentPhase =
       readonly turnId: number;
       readonly step: number;
       readonly stepId: string;
-      readonly since: number;
-    }
-  | {
-      readonly kind: 'streaming';
-      readonly turnId: number;
-      readonly step: number;
-      readonly stepId: string;
-      readonly stream: 'assistant' | 'thinking' | 'tool_call';
-      readonly toolCallId?: string;
-      readonly toolName?: string;
       readonly since: number;
     }
   | {
@@ -73,6 +62,51 @@ export type AgentPhase =
       readonly durationMs?: number;
       readonly at: number;
     };
+
+export interface LegacyActivityApproval {
+  readonly approvalId: string;
+  readonly toolCallId: string;
+  readonly since: number;
+}
+
+export interface LegacyActivityToolCall {
+  readonly toolCallId: string;
+  readonly name: string;
+  readonly since: number;
+}
+
+export interface LegacyActivityRetry {
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName?: string;
+  readonly statusCode?: number;
+}
+
+export interface LegacyActivityTurn {
+  readonly turnId: number;
+  readonly phase: 'running' | 'tool_call' | 'retrying';
+  readonly step: number;
+  readonly ending: boolean;
+  readonly endingReason?: 'aborted' | 'max_steps' | 'error';
+  readonly retry?: LegacyActivityRetry;
+  readonly pendingApprovals: readonly LegacyActivityApproval[];
+  readonly activeToolCalls: readonly LegacyActivityToolCall[];
+  readonly since: number;
+}
+
+export interface LegacyActivityLastTurn {
+  readonly turnId: number;
+  readonly reason: TurnEndReason;
+  readonly durationMs?: number;
+  readonly at: number;
+}
+
+export interface LegacyActivitySnapshot {
+  readonly turn?: LegacyActivityTurn;
+  readonly lastTurn?: LegacyActivityLastTurn;
+}
 
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
@@ -126,11 +160,11 @@ function defaultModelContextTokens(agent: IAgentScopeHandle): number | undefined
   }
 }
 
-export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined {
-  const { lifecycle, turn, lastTurn } = state;
+export function toLegacyPhase(state: LegacyActivitySnapshot): AgentPhase | undefined {
+  const { turn, lastTurn } = state;
 
-  if (turn === undefined && lifecycle === 'ready') {
-    if (lastTurn !== undefined && lifecycle === 'ready') {
+  if (turn === undefined) {
+    if (lastTurn !== undefined) {
       return {
         kind: 'ended',
         turnId: lastTurn.turnId,
@@ -142,71 +176,58 @@ export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined
     return { kind: 'idle' };
   }
 
-  if (lifecycle === 'ready' && turn !== undefined) {
-    if (turn.pendingApprovals.length > 0) {
-      const latest = turn.pendingApprovals[turn.pendingApprovals.length - 1]!;
+  if (turn.pendingApprovals.length > 0) {
+    const latest = turn.pendingApprovals[turn.pendingApprovals.length - 1]!;
+    return {
+      kind: 'awaiting_approval',
+      turnId: turn.turnId,
+      step: turn.step || undefined,
+      approval: { approvalId: latest.approvalId, toolCallId: latest.toolCallId },
+      since: latest.since,
+    };
+  }
+  if (turn.ending && turn.endingReason !== undefined) {
+    return {
+      kind: 'interrupted',
+      turnId: turn.turnId,
+      step: turn.step,
+      reason: turn.endingReason,
+      at: turn.since,
+    };
+  }
+  switch (turn.phase) {
+    case 'running':
       return {
-        kind: 'awaiting_approval',
-        turnId: turn.turnId,
-        step: turn.step || undefined,
-        approval: { approvalId: latest.approvalId, toolCallId: latest.toolCallId },
-        since: latest.since,
-      };
-    }
-    if (turn.ending && turn.endingReason !== undefined) {
-      return {
-        kind: 'interrupted',
+        kind: 'running',
         turnId: turn.turnId,
         step: turn.step,
-        reason: turn.endingReason,
-        at: turn.since,
+        stepId: '',
+        since: turn.since,
+      };
+    case 'retrying':
+      return {
+        kind: 'retrying',
+        turnId: turn.turnId,
+        step: turn.step,
+        stepId: '',
+        failedAttempt: turn.retry?.failedAttempt ?? 0,
+        nextAttempt: turn.retry?.nextAttempt ?? 0,
+        maxAttempts: turn.retry?.maxAttempts ?? 0,
+        delayMs: turn.retry?.delayMs ?? 0,
+        errorName: turn.retry?.errorName,
+        statusCode: turn.retry?.statusCode,
+        since: turn.since,
+      };
+    case 'tool_call': {
+      const latest = turn.activeToolCalls[turn.activeToolCalls.length - 1];
+      return {
+        kind: 'tool_call',
+        turnId: turn.turnId,
+        step: turn.step,
+        toolCallId: latest?.toolCallId ?? '',
+        name: latest?.name ?? '',
+        since: latest?.since ?? turn.since,
       };
     }
-    switch (turn.phase) {
-      case 'running':
-        return {
-          kind: 'running',
-          turnId: turn.turnId,
-          step: turn.step,
-          stepId: '',
-          since: turn.since,
-        };
-      case 'streaming':
-        return {
-          kind: 'streaming',
-          turnId: turn.turnId,
-          step: turn.step,
-          stepId: '',
-          stream: turn.stream ?? 'assistant',
-          since: turn.since,
-        };
-      case 'retrying':
-        return {
-          kind: 'retrying',
-          turnId: turn.turnId,
-          step: turn.step,
-          stepId: '',
-          failedAttempt: turn.retry?.failedAttempt ?? 0,
-          nextAttempt: turn.retry?.nextAttempt ?? 0,
-          maxAttempts: turn.retry?.maxAttempts ?? 0,
-          delayMs: turn.retry?.delayMs ?? 0,
-          errorName: turn.retry?.errorName,
-          statusCode: turn.retry?.statusCode,
-          since: turn.since,
-        };
-      case 'tool_call': {
-        const latest = turn.activeToolCalls[turn.activeToolCalls.length - 1];
-        return {
-          kind: 'tool_call',
-          turnId: turn.turnId,
-          step: turn.step,
-          toolCallId: latest?.toolCallId ?? '',
-          name: latest?.name ?? '',
-          since: latest?.since ?? turn.since,
-        };
-      }
-    }
   }
-
-  return undefined;
 }

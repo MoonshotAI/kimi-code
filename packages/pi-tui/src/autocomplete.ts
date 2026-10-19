@@ -127,6 +127,7 @@ async function walkDirectoryWithFd(
 	query: string,
 	maxResults: number,
 	signal: AbortSignal,
+	maxDepth?: number,
 ): Promise<Array<{ path: string; isDirectory: boolean }>> {
 	const args = [
 		"--base-directory",
@@ -146,6 +147,10 @@ async function walkDirectoryWithFd(
 		"--exclude",
 		".git/**",
 	];
+
+	if (maxDepth !== undefined) {
+		args.push("--max-depth", String(maxDepth));
+	}
 
 	if (toDisplayPath(query).includes("/")) {
 		args.push("--full-path");
@@ -740,6 +745,18 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return score;
 	}
 
+	private async getBaseDirSuggestions(
+		baseDir: string,
+		query: string,
+		signal: AbortSignal,
+	): Promise<Array<{ path: string; isDirectory: boolean }>> {
+		if (!this.fdPath || signal.aborted) {
+			return [];
+		}
+
+		return await walkDirectoryWithFd(baseDir, this.fdPath, query, 100, signal, 1);
+	}
+
 	// Fuzzy file search using fd (fast, respects .gitignore). Fans out across
 	// every search root (cwd + additional dirs) so `@` completion covers all
 	// roots while still pushing the query down to fd.
@@ -824,7 +841,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			const perRoot = await Promise.all(
 				targets.map(async (target) => {
-					const entries = await walkDirectoryWithFd(target.baseDir, fdPath, target.fdQuery, 100, options.signal);
+					const baseDirEntries = await this.getBaseDirSuggestions(target.baseDir, target.fdQuery, options.signal);
+					const recursiveEntries = await walkDirectoryWithFd(target.baseDir, fdPath, target.fdQuery, 100, options.signal);
+					const seenPaths = new Set(baseDirEntries.map((entry) => entry.path));
+					const entries = [
+						...baseDirEntries,
+						...recursiveEntries.filter((entry) => {
+							if (seenPaths.has(entry.path)) return false;
+							seenPaths.add(entry.path);
+							return true;
+						}),
+					];
 					return entries.map((entry) => ({ entry, target }));
 				}),
 			);
@@ -862,7 +889,20 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			}
 
 			const scored = [...bestByAbs.values()];
-			scored.sort((a, b) => b.score - a.score);
+			scored.sort((a, b) => {
+				const scoreDiff = b.score - a.score;
+				if (scoreDiff !== 0) return scoreDiff;
+
+				const aDepth = toDisplayPath(a.path).split("/").filter(Boolean).length;
+				const bDepth = toDisplayPath(b.path).split("/").filter(Boolean).length;
+				const depthDiff = aDepth - bDepth;
+				if (depthDiff !== 0) return depthDiff;
+
+				const lengthDiff = a.path.length - b.path.length;
+				if (lengthDiff !== 0) return lengthDiff;
+
+				return a.path.localeCompare(b.path);
+			});
 			const topEntries = scored.slice(0, 20);
 
 			const suggestions: AutocompleteItem[] = [];

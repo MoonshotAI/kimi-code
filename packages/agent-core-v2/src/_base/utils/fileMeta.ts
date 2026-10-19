@@ -65,6 +65,29 @@ export function guessMime(path: string, isBinary: boolean): string {
   return isBinary ? 'application/octet-stream' : 'text/plain';
 }
 
+const APPLICATION_TEXT_ALIASES: Readonly<Record<string, string>> = {
+  'application/javascript': 'text/javascript',
+  'application/x-javascript': 'text/javascript',
+  'application/ecmascript': 'text/javascript',
+  'application/yaml': 'text/yaml',
+  'application/x-yaml': 'text/yaml',
+  'application/sql': 'text/plain',
+  'application/graphql': 'text/plain',
+  'application/x-www-form-urlencoded': 'text/plain',
+};
+
+export function textExtensionForMime(mimeType: string): string | undefined {
+  const mime = mimeType.split(';')[0]!.trim().toLowerCase();
+  if (mime === 'application/json' || mime.endsWith('+json')) return '.json';
+  if (mime === 'application/xml' || mime.endsWith('+xml')) return '.xml';
+  if (mime.endsWith('+yaml')) return '.yaml';
+  if (mime === 'application/toml') return '.toml';
+  if (mime === 'text/csv') return '.csv';
+  const textMime = APPLICATION_TEXT_ALIASES[mime] ?? mime;
+  if (!textMime.startsWith('text/')) return undefined;
+  return Object.entries(EXT_TO_MIME).find(([, value]) => value === textMime)?.[0] ?? '.txt';
+}
+
 const EXT_TO_LANGUAGE: Readonly<Record<string, string>> = {
   '.ts': 'typescript',
   '.tsx': 'typescriptreact',

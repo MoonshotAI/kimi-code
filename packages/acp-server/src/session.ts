@@ -42,13 +42,13 @@ import type {
   SessionHandle,
   SkillSummary,
 } from '@moonshot-ai/klient';
+import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
 import type {
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
-  ToolInputDisplay,
   ToolProgressEvent,
-  ToolResultEvent,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
 import type { AcpClient } from './acp-client';
 import type { AcpTerminalCreatedEvent, IAcpConnection } from './acp-fs';
@@ -552,7 +552,7 @@ export class AcpSession {
   }
 
   /**
-   * Activate a skill through the engine (the agent's `AgentSkill` runtime
+   * Activate a skill through the engine (the agent's `IAgentSkillService`
    * behind the klient facade): the engine renders the skill prompt (content + args)
    * and drives it as a normal turn, so the turn events stream and settle
    * exactly like a plain prompt. Empty args go over as `undefined`, matching

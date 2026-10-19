@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { Event } from '@moonshot-ai/agent-core';
+import type { Event } from '#/index';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
@@ -17,8 +17,6 @@ import {
   ISessionTokenCountingService,
   ISessionUsageService,
   makeAgentScopeContext,
-  type InteractionRuntime,
-  type IAgentScopeHandle,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -68,16 +66,10 @@ class FakeAgentHandle {
 }
 
 function makeSession(agents: FakeAgentHandle[]): ISessionScopeHandle {
-  const interactions = {
-    onDidChangePending: () => ({ dispose: () => {} }),
-    onDidResolve: () => ({ dispose: () => {} }),
-    listPending: () => [],
-  } as unknown as InteractionRuntime;
   const lifecycle = {
     list: () => agents.map((agent) => agent.context),
     get: (agentId: string) => agents.find((agent) => agent.id === agentId)?.context,
     handleOf: (agentId: string) => agents.find((agent) => agent.id === agentId),
-    resolve: () => interactions,
     onDidCreate: () => ({ dispose: () => {} }),
     onDidClose: () => ({ dispose: () => {} }),
   };

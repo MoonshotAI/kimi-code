@@ -40,6 +40,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'turn.step.completed'>['llmClientConsumeMs']>().toEqualTypeOf<
       number | undefined
     >();
+    expectTypeOf<EventByType<'turn.step.completed'>['llmClientBlockedMs']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('narrows subagent lifecycle events by type', () => {
@@ -107,6 +110,7 @@ describe('Event public types', () => {
         case 'subagent.suspended':
         case 'subagent.completed':
         case 'subagent.failed':
+        case 'subagent.cancelled':
         case 'compaction.started':
         case 'compaction.blocked':
         case 'compaction.cancelled':

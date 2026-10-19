@@ -3,45 +3,63 @@
  * unwrap. All paths concatenate `baseUrl + apiPrefix + route`.
  */
 import type {
-  ApprovalResolveResult,
-  ApprovalResponse,
-  AuthSummary,
-  CloseTerminalResponse,
-  CompactSessionRequest,
-  CompactSessionResponse,
-  CreateTerminalRequest,
-  Envelope,
-  FileMeta,
-  ForkSessionRequest,
   FsBrowseResponse,
   FsHomeResponse,
-  ListTerminalsResponse,
-  ListModelsResponse,
-  ListPendingApprovalsResponse,
-  ListPendingQuestionsResponse,
-  ListProvidersResponse,
-  Message,
+} from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
+import type { AuthSummary } from '@moonshot-ai/agent-core-v2/app/authLegacy/authLegacy';
+import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import type { UpdateSessionProfileRequest as SessionUpdate } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
+import type {
   ProviderCatalogItem,
+  SetDefaultModelResponse,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
+import type { ApprovalResponse } from '@moonshot-ai/kap-server/protocol/approval';
+import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
+import type { Message } from '@moonshot-ai/kap-server/protocol/message';
+import type { QuestionResponse } from '@moonshot-ai/kap-server/protocol/question';
+import type {
+  ApprovalResolveResult,
+  ListPendingApprovalsResponse,
+} from '@moonshot-ai/kap-server/protocol/rest-approval';
+import type {
+  ListModelsResponse,
+  ListProvidersResponse,
+} from '@moonshot-ai/kap-server/protocol/rest-modelCatalog';
+import type {
   PromptAbortResponse,
   PromptListResponse,
   PromptSubmission,
   PromptSteerResult,
   PromptSubmitResult,
+} from '@moonshot-ai/kap-server/protocol/rest-prompt';
+import type {
+  ListPendingQuestionsResponse,
   QuestionResolveResult,
-  QuestionResponse,
+} from '@moonshot-ai/kap-server/protocol/rest-question';
+import type {
+  CompactSessionRequest,
+  CompactSessionResponse,
+  ForkSessionRequest,
   SessionAbortResponse,
-  SetDefaultModelResponse,
+  UndoSessionRequest,
+  UndoSessionResponse,
+} from '@moonshot-ai/kap-server/protocol/rest-session';
+import type {
+  CloseTerminalResponse,
+  CreateTerminalRequest,
+  ListTerminalsResponse,
+} from '@moonshot-ai/kap-server/protocol/rest-terminal';
+import type {
   Session,
   SessionChildCreate,
   SessionCreate,
-  SessionUpdate,
-  UndoSessionRequest,
-  UndoSessionResponse,
-  Terminal,
+} from '@moonshot-ai/kap-server/protocol/session';
+import type {
   Workspace,
   WorkspaceCreate,
   WorkspaceUpdate,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/kap-server/protocol/workspace';
 
 import { unwrap } from './envelope.js';
 import { fetchWithReport, recordReportEvent } from './report.js';

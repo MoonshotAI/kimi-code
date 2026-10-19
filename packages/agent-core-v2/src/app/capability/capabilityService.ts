@@ -10,7 +10,7 @@ import { ILogService } from '#/_base/log/log';
 import { Error2 } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IProviderService } from '#/kosong/provider/provider';
+import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 
 import { ICapabilityService } from './capability';

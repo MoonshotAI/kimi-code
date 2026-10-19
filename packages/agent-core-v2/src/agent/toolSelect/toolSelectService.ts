@@ -4,7 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import { IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import type { Tool } from '#/kosong/contract/tool';
+import type { ToolDescription as Tool } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -19,6 +19,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import {
   collectLoadedDynamicToolNames,
   foldAnnouncedToolNames,
+  isLoadableToolsAnnouncement,
   renderLoadableToolsAnnouncement,
   stripDynamicToolContext,
 } from './dynamicTools';
@@ -34,6 +35,8 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
   'toolSelect.pendingLoaded',
   () => new Set(),
 );
+
+const STOP_RETRY_THRESHOLD = 2;
 
 export class AgentToolSelectService extends Service implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
@@ -118,23 +121,89 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   load(names: readonly string[]): LoadToolsResult {
     const loadable = new Set(this.loadableToolNames());
-    const loaded = this.activeLoadedToolNames();
+    const loaded = this.loadedToolNames();
+    const registryInfos = this.toolRegistry.list();
+    this.resetFailuresIfToolsChanged(registryInfos);
     const toLoad: string[] = [];
     const alreadyAvailable: string[] = [];
+    const alreadyCallable: string[] = [];
+    const staleLoaded: string[] = [];
+    const policyDenied: string[] = [];
     const unknown: string[] = [];
     for (const name of new Set(names)) {
-      if (loaded.has(name)) {
-        alreadyAvailable.push(name);
+      const info = registryInfos.find((entry) => entry.name === name);
+      if (
+        this.toolPolicy.isToolDenied(name, info?.source) ||
+        (info !== undefined && !this.isToolActiveForSelection(info))
+      ) {
+        policyDenied.push(name);
       } else if (loadable.has(name)) {
-        toLoad.push(name);
+        if (loaded.has(name)) alreadyAvailable.push(name);
+        else toLoad.push(name);
+      } else if (this.isStaticCallable(name, registryInfos)) {
+        alreadyCallable.push(name);
+      } else if (loaded.has(name)) {
+        staleLoaded.push(name);
       } else {
         unknown.push(name);
       }
     }
+    const escalated: Record<string, number> = {};
+    const succeeded = toLoad.length > 0 || alreadyAvailable.length > 0 || alreadyCallable.length > 0;
+    this.consecutiveFailures = succeeded ? 0 : this.consecutiveFailures + 1;
+    for (const name of [...toLoad, ...alreadyAvailable, ...alreadyCallable]) {
+      this.failedSelectionAttempts.delete(name.toLowerCase());
+    }
+    const attemptsByKey = new Map<string, number>();
+    for (const name of [...staleLoaded, ...policyDenied, ...unknown]) {
+      const key = name.toLowerCase();
+      let attempts = attemptsByKey.get(key);
+      if (attempts === undefined) {
+        attempts = (this.failedSelectionAttempts.get(key) ?? 0) + 1;
+        this.failedSelectionAttempts.set(key, attempts);
+        attemptsByKey.set(key, attempts);
+      }
+      if (attempts >= STOP_RETRY_THRESHOLD) escalated[name] = attempts;
+    }
+    const suggestions: Record<string, readonly string[]> = {};
+    const suggestionPool = [...loadable];
+    for (const name of unknown) {
+      const candidates = suggestToolNames(name, suggestionPool);
+      if (candidates.length > 0) suggestions[name] = candidates;
+    }
     if (toLoad.length > 0) {
       for (const name of toLoad) this.pendingLoaded.add(name);
     }
-    return { toLoad, alreadyAvailable, unknown };
+    return {
+      toLoad,
+      alreadyAvailable,
+      alreadyCallable,
+      staleLoaded,
+      policyDenied,
+      unknown,
+      escalated,
+      consecutiveFailures: this.consecutiveFailures,
+      suggestions,
+      loadable: [...loadable].filter((name) => !loaded.has(name)),
+    };
+  }
+
+  private readonly failedSelectionAttempts = new Map<string, number>();
+
+  private consecutiveFailures = 0;
+  private selectionEnvironment: string | undefined;
+
+  private resetFailuresIfToolsChanged(registryInfos: readonly ToolInfo[]): void {
+    const environment = JSON.stringify([
+      this.toolPolicy.getPolicyFingerprint(),
+      registryInfos
+        .map((info) => [info.name, info.source, info.disclosure])
+        .toSorted((a, b) => a[0]!.localeCompare(b[0]!)),
+    ]);
+    if (environment === this.selectionEnvironment) return;
+    this.selectionEnvironment = environment;
+    this.consecutiveFailures = 0;
+    this.failedSelectionAttempts.clear();
   }
 
   drainPendingToolSchemas(): readonly Tool[] | undefined {
@@ -152,15 +221,24 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
 
   loadableToolsAnnouncement(): string | undefined {
     if (!this.enabled()) return undefined;
+    this.resetFailuresIfToolsChanged(this.toolRegistry.list());
     const loadable = this.loadableToolNames();
     const loadableSet = new Set(loadable);
-    const announced = foldAnnouncedToolNames(this.context.get());
+    const history = this.context.get();
+    const announced = foldAnnouncedToolNames(history);
     const added = loadable.filter((name) => !announced.has(name));
     const removed = [...announced]
       .filter((name) => !loadableSet.has(name))
       .toSorted((a, b) => a.localeCompare(b));
-    if (added.length === 0 && removed.length === 0) return undefined;
-    return renderLoadableToolsAnnouncement(added, removed);
+    if (added.length === 0 && removed.length === 0) {
+      if (loadable.length > 0) return undefined;
+      const lastAnnouncement = history.findLast(isLoadableToolsAnnouncement);
+      const emptyAnnouncement = renderLoadableToolsAnnouncement([], [], false);
+      if (lastAnnouncement?.content.some((part) =>
+        part.type === 'text' && part.text.includes(emptyAnnouncement),
+      )) return undefined;
+    }
+    return renderLoadableToolsAnnouncement(added, removed, loadable.length > 0);
   }
 
   private shouldIntercept(name: string): boolean {
@@ -237,7 +315,19 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
   }
 
   private isDynamicallyLoadable(info: ToolInfo): boolean {
-    return info.source === 'mcp' || info.disclosure === 'deferred';
+    return info.disclosure === 'deferred';
+  }
+
+  private isStaticCallable(name: string, registryInfos: readonly ToolInfo[]): boolean {
+    const info = registryInfos.find((entry) => entry.name === name);
+    if (info === undefined) return false;
+    return !this.isDynamicallyLoadable(info) && this.isToolActiveForSelection(info);
+  }
+
+  private isToolActiveForSelection(info: ToolInfo): boolean {
+    return info.name === SELECT_TOOLS_TOOL_NAME
+      ? this.toolPolicy.isToolActiveForDisclosure(info.name, info.source)
+      : this.toolPolicy.isToolActive(info.name, info.source);
   }
 
   private shapeActiveHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
@@ -312,6 +402,27 @@ function notLoadedToolOutput(name: string): string {
     `Tool "${name}" is available but not loaded. ` +
     `Call select_tools with ["${name}"] first, then call the tool.`
   );
+}
+
+function suggestToolNames(name: string, pool: readonly string[]): string[] {
+  const lower = name.toLowerCase();
+  const caseFix = pool.filter((candidate) => candidate.toLowerCase() === lower);
+  if (caseFix.length > 0) return caseFix.toSorted((a, b) => a.localeCompare(b)).slice(0, 3);
+  const matches = new Set<string>();
+  const stripped = lower.startsWith('mcp__') ? lower.slice('mcp__'.length) : lower;
+  if (stripped.length >= 3) {
+    for (const candidate of pool) {
+      if (candidate.toLowerCase().includes(stripped)) matches.add(candidate);
+    }
+  }
+  if (matches.size === 0) {
+    for (const candidate of pool) {
+      const segments = candidate.split('__');
+      const last = segments.at(-1)!.toLowerCase();
+      if (last.length >= 3 && lower.includes(last)) matches.add(candidate);
+    }
+  }
+  return [...matches].toSorted((a, b) => a.localeCompare(b)).slice(0, 3);
 }
 
 function inactiveLoadedToolOutput(name: string): string {

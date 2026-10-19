@@ -20,6 +20,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionInitService } from '#/features/sessionInit/sessionInit';
 import { SessionInitService } from '#/features/sessionInit/sessionInitService';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 
@@ -60,7 +61,6 @@ describe('SessionInitService', () => {
       },
       notifyAgentTaskStopped: vi.fn(),
       handleOf: vi.fn((agentId: string) => handles[agentId]),
-      resolve: vi.fn(() => ({ notify: appendReminder })),
       create: vi.fn(async () => stubAgentContext('agent-0', 1)),
       run: vi.fn(async (agent: AgentContext) => ({
         agentId: agent.agentId,
@@ -90,6 +90,7 @@ describe('SessionInitService', () => {
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentAgentsMdReminderService) return { seedInjected };
+          if (id === IAgentReminderService) return { notify: appendReminder };
           if (id === IEventDispatcher) {
             return {
               flush,
@@ -161,6 +162,7 @@ describe('SessionInitService', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
       binding: { profile: 'coder', model: 'mock-model', thinking: 'off' },
+      labels: { sessionInit: 'agents-md' },
     });
 
     expect(run).toHaveBeenCalledTimes(1);
@@ -211,7 +213,7 @@ describe('SessionInitService', () => {
     }));
     const svc = ix.get(ISessionInitService);
 
-    const error = await svc.generateAgentsMd().catch((e) => e);
+    const error = await svc.generateAgentsMd().catch((error) => error);
     expect(error).toBeInstanceOf(Error2);
     expect((error as Error2).code).toBe(ErrorCodes.SESSION_INIT_FAILED);
     expect((error as Error2).message).toContain('coder exploded');
@@ -224,7 +226,7 @@ describe('SessionInitService', () => {
     lifecycle.handleOf.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
-    const error = await svc.generateAgentsMd().catch((e) => e);
+    const error = await svc.generateAgentsMd().catch((error) => error);
     expect(error).toBeInstanceOf(Error2);
     expect((error as Error2).code).toBe(ErrorCodes.AGENT_NOT_FOUND);
   });
@@ -243,7 +245,7 @@ describe('SessionInitService', () => {
     await vi.waitFor(() => expect(run).toHaveBeenCalled());
     svc.cancelInit();
 
-    const error = await pending.catch((e) => e);
+    const error = await pending.catch((error) => error);
     expect(error).toBeInstanceOf(UserCancellationError);
     expect(events).not.toContainEqual(
       expect.objectContaining({ type: 'subagent.failed', subagentId: 'agent-0' }),

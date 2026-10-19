@@ -2,7 +2,6 @@ import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IEventBus } from '#/app/event/eventBus';
-import { AgentActivityUpdated } from '#/agent/activityView/activityView';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { TurnEnded, turnKey } from '#/agent/loop/turnOps';
 import { ContextUndone } from '#/agent/undo/undoService';
@@ -105,26 +104,36 @@ export class SessionOutcomeMirror extends Disposable implements ISessionOutcomeM
         this.write(undefined);
       }),
     );
-    subscription.add(
-      bus.subscribe(AgentActivityUpdated, (event) => {
-        if (this.turnStartedHere) return;
-        if (this.lastPersisted !== undefined) return;
-        const reason = event.lastTurn?.reason;
-        if (reason === 'completed' || reason === 'cancelled') {
-          this.write(reason, { touchUpdatedAt: false, turnId: event.lastTurn?.turnId });
-        } else if (reason === 'failed' || reason === 'blocked') {
-          this.write('failed', { touchUpdatedAt: false, turnId: event.lastTurn?.turnId });
-        }
-      }),
-    );
+    this.seedFromWire(agentStates);
+  }
+
+  private seedFromWire(agentStates: IAgentStateService | undefined): void {
+    if (agentStates === undefined || !agentStates.has(turnKey)) return;
+    const lastEnded = agentStates.get(turnKey).lastEnded;
+    if (lastEnded === undefined) return;
+    void this.metadataReady.then(() => {
+      if (this.turnStartedHere || this.lastPersisted !== undefined) return;
+      this.adoptLastEnded(lastEnded);
+    });
+  }
+
+  private adoptLastEnded(lastEnded: { turnId: number; reason: string }): void {
+    if (lastEnded.reason === 'completed' || lastEnded.reason === 'cancelled') {
+      this.write(lastEnded.reason, { touchUpdatedAt: false, turnId: lastEnded.turnId });
+      return;
+    }
+    this.write('failed', { touchUpdatedAt: false, turnId: lastEnded.turnId });
   }
 
   private async reconcileAfterRestore(agentStates: IAgentStateService): Promise<void> {
     await this.metadataReady;
-    if (this.lastPersisted === undefined) return;
     if (this.turnStartedHere) return;
     if (!agentStates.has(turnKey)) return;
     const lastEnded = agentStates.get(turnKey).lastEnded;
+    if (this.lastPersisted === undefined) {
+      if (lastEnded !== undefined) this.adoptLastEnded(lastEnded);
+      return;
+    }
     if (lastEnded === undefined) {
       this.write(undefined, { touchUpdatedAt: false });
       return;

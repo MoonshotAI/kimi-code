@@ -5,6 +5,7 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 
 import { IAgentTaskService } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
+import { formatTaskWallTime } from '#/agent/task/wallTime';
 import { ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
 
@@ -36,6 +37,7 @@ export class TaskStopTool implements ITaskStopTool {
         if (TERMINAL_STATUSES.has(info.status)) {
           return {
             output:
+              `Wall time: ${formatTaskWallTime(info)}\n` +
               `task_id: ${info.taskId}\n` +
               `status: ${info.status}\n` +
               `reason: ${terminalStopReason(info.stopReason)}`,
@@ -51,6 +53,7 @@ export class TaskStopTool implements ITaskStopTool {
 
         return {
           output:
+            `Wall time: ${formatTaskWallTime(result)}\n` +
             `task_id: ${result.taskId}\n` +
             `status: ${result.status}\n` +
             `reason: ${result.stopReason ?? reason}`,

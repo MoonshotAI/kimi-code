@@ -11,6 +11,7 @@ interface StubPluginServiceOptions {
   readonly sessionStarts: readonly EnabledPluginSessionStart[];
   readonly reloadEmitter?: Emitter<PluginReloadEvent>;
   readonly mutateEmitter?: Emitter<PluginMutationSummary>;
+  readonly enabledPluginIds?: readonly string[] | undefined;
 }
 
 export function stubPluginService(options: StubPluginServiceOptions): IPluginService {
@@ -37,5 +38,6 @@ export function stubPluginService(options: StubPluginServiceOptions): IPluginSer
     mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
+    enabledPluginIds: () => options.enabledPluginIds,
   };
 }

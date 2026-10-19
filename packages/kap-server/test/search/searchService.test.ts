@@ -1,27 +1,28 @@
 import { createHash } from 'node:crypto';
-import { appendFile, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import fs, { appendFile, chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
-import { monitorEventLoopDelay, performance, type IntervalHistogram } from 'node:perf_hooks';
+import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { Worker } from 'node:worker_threads';
 
 import type {
   IBootstrapService,
-  IFlagService,
+  IConfigService,
   ILogService,
   ISessionIndex,
   SessionSummary,
 } from '@moonshot-ai/agent-core-v2';
+import { DATABASE_SECTION } from '@moonshot-ai/agent-core-v2';
 import { MiniDb } from '@moonshot-ai/minidb';
 import { TranscriptStore, type TranscriptOperation } from '@moonshot-ai/transcript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SyncSessionInput } from '../../src/search/indexCore';
+import { SearchIndexCore, type SyncSessionInput } from '../../src/search/indexCore';
 import {
   GlobalSearchError,
   GlobalSearchService,
   InlineSearchBackend,
-  SEARCH_WORKER_FLAG_ID,
   drainGlobalSearchDisposals,
   type LiveTranscriptSource,
   type SearchBackend,
@@ -118,6 +119,12 @@ async function writeWire(
   return file;
 }
 
+async function writeTitle(home: string, sessionId: string, title: string): Promise<void> {
+  const dir = join(home, 'sessions', WS, sessionId);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, 'state.json'), JSON.stringify({ title }));
+}
+
 const noopLog = {
   error: () => {},
   warn: () => {},
@@ -125,20 +132,22 @@ const noopLog = {
   debug: () => {},
 } as unknown as ILogService;
 
-function makeFlags(workerEnabled: boolean): IFlagService {
+function makeConfig(searchEnabled: boolean, extra?: Record<string, unknown>): IConfigService {
   return {
-    enabled: (id: string) => id === SEARCH_WORKER_FLAG_ID && workerEnabled,
-  } as unknown as IFlagService;
+    ready: Promise.resolve(),
+    get: (domain: string) =>
+      domain === DATABASE_SECTION ? { search: searchEnabled, ...extra } : undefined,
+  } as unknown as IConfigService;
 }
 
 function makeService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(true));
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(true));
   service.syncDebounceMs = 0;
   return service;
 }
 
 function makeInlineService(home: string, index: ISessionIndex): GlobalSearchService {
-  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeFlags(false));
+  const service = new GlobalSearchService(index, makeBootstrap(home), noopLog, makeConfig(false));
   service.syncDebounceMs = 0;
   return service;
 }
@@ -185,6 +194,10 @@ function syncInput(homeDir: string, s: SessionSummary): SyncSessionInput {
 
 function syncNow(service: GlobalSearchService): Promise<void> {
   return (service as unknown as { ensureSyncStarted(): Promise<void> }).ensureSyncStarted();
+}
+
+function settleBackend(service: GlobalSearchService): Promise<unknown> {
+  return (service as unknown as { ensureBackend(): Promise<unknown> }).ensureBackend();
 }
 
 async function settleSync(service: GlobalSearchService): Promise<void> {
@@ -271,6 +284,7 @@ describe('GlobalSearchService', () => {
 
   it('indexes user and assistant text and finds Chinese and English terms', async () => {
     const s1 = summary('s1', '搜索重构讨论', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [
       userLine('帮我看看苹果怎么挑', T1),
       assistantLine('Here is the apple picking guide.', T2),
@@ -298,8 +312,310 @@ describe('GlobalSearchService', () => {
     expect(injected.items).toEqual([]);
   });
 
+  it.each([makeService, makeInlineService])('filters deleted sources before pagination without waiting for a writer sync (%#)', async (make) => {
+    const removed = summary('removed', 'needle title', T3);
+    await writeTitle(home!, removed.id, removed.title!);
+    const retained = summary('retained', 'retained', T1);
+    await writeWire(home!, removed.id, 'main', [userLine('needle deleted', T3)]);
+    await writeWire(home!, retained.id, 'main', [userLine('needle first', T1), userLine('needle second', T2)]);
+    const writer = track(make(home!, staticIndex([removed, retained])));
+    await writer.reindex();
+    const reader = track(make(home!, staticIndex([removed, retained])));
+    await settleSync(reader);
+    expect((await reader.status()).lifecycle.state).toBe('ready');
+    expect((await reader.search({ query: 'needle' })).indexState.state).toBe('readonly');
+    await rm(join(home!, 'sessions', WS, removed.id), { recursive: true });
+    for (const mode of ['terms', 'literal'] as const) {
+      const first = await reader.search({ query: 'needle', mode, sort: 'time_desc', pageSize: 1 });
+      expect(first.items).toHaveLength(1);
+      expect(first.items[0]?.sessionId).toBe(retained.id);
+      expect(first.hasMore).toBe(true);
+      const second = await reader.search({ query: 'needle', mode, sort: 'time_desc', pageSize: 1, pageToken: first.pageToken });
+      expect(second.items).toHaveLength(1);
+      expect(second.items[0]?.sessionId).toBe(retained.id);
+      expect(second.items[0]?.time).not.toBe(first.items[0]?.time);
+      expect(second.hasMore).toBe(false);
+    }
+  });
+
+  it.each([makeService, makeInlineService])('does not serve an old incarnation after the same directory is recreated (%#)', async (make) => {
+    const s1 = summary('s1', 'original title', T1);
+    await writeTitle(home!, s1.id, s1.title!);
+    await writeWire(home!, s1.id, 'main', [userLine('original secret', T1)]);
+    const writer = track(make(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(make(home!, staticIndex([s1])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'original' })).items.length).toBeGreaterThan(0);
+    await rm(join(home!, 'sessions', WS, s1.id), { recursive: true });
+    await writeWire(home!, s1.id, 'main', [userLine('replacement message', T2)]);
+    await writeTitle(home!, s1.id, 'replacement title');
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'replacement', role: 'user' })).items).toHaveLength(1);
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+    expect((await reader.search({ query: 'replacement', role: 'user' })).items[0]?.sessionTitle).toBe('replacement title');
+  });
+
+  it.each(['inode', 'birthtime', 'both'])('rejects matching stored identities with unavailable %s and recovers after reindexing', async (missing) => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('original secret', T1)]);
+    const dir = join(home!, 'sessions', WS, s1.id);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const info = await stat(dir, { bigint: true });
+    const ino = missing === 'birthtime' ? info.ino : 0n;
+    const birthtimeNs = missing === 'inode' ? info.birthtimeNs : 0n;
+    const identity = `${info.dev}:${ino}:${birthtimeNs}`;
+    const db = coreOf(writer).db!;
+    for (const row of db.query({ key: { prefix: 's1/' } })) {
+      await db.set(row.key, { ...row.value, sessionIdentity: identity });
+    }
+    await db.set('\0meta\\session\\s1', { kind: 'sessionMeta', dir, identity });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === dir && options?.bigint === true) {
+        return Object.assign(result, { ino, birthtimeNs });
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    try {
+      await settleSync(reader);
+      expect((await reader.search({ query: 'original' })).items).toEqual([]);
+      await rm(dir, { recursive: true });
+      await writeWire(home!, s1.id, 'main', [userLine('replacement message', T2)]);
+      expect((await reader.search({ query: 'original' })).items).toEqual([]);
+      await settleSync(writer);
+      await refreshNow(reader);
+      expect((await reader.search({ query: 'replacement' })).items).toEqual([]);
+      expect([...db.query({ key: { prefix: 's1/' } })]).toEqual([]);
+      expect(await writer.status()).toMatchObject({ sessions: 0, degraded: 'Skipped 1 session(s) during indexing' });
+      expect((await reader.search({ query: 'replacement' })).indexState).toMatchObject({
+        indexedSessions: 0, degraded: 'Skipped 1 session(s) during indexing',
+      });
+    } finally {
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'replacement' })).items).toHaveLength(1);
+    expect(await writer.status()).toMatchObject({ sessions: 1, degraded: undefined });
+    expect((await reader.search({ query: 'replacement' })).indexState.degraded).toBeUndefined();
+    expect((await reader.search({ query: 'original' })).items).toEqual([]);
+  });
+
+  it('keeps a query valid when readonly refresh replaces its handle during source validation', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === join(home!, 'sessions', WS, s1.id) && options?.bigint === true) {
+        enter();
+        await gate;
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      const searching = reader.search({ query: 'needle' });
+      await entered;
+      await coreOf(writer).db!.compact();
+      await refreshNow(reader);
+      release();
+      expect((await searching).items).toHaveLength(1);
+    } finally {
+      release();
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it.each(['resolve', 'reject'])('returns verified partial results when a source stat outlives the deadline and later %ss', async (outcome) => {
+    const slow = summary('slow', 'slow', T1);
+    const healthy = summary('healthy', 'healthy', T2);
+    await writeWire(home!, slow.id, 'main', [userLine('needle slow extra text', T1)]);
+    await writeWire(home!, healthy.id, 'main', [userLine('needle', T2)]);
+    const writer = track(makeInlineService(home!, staticIndex([slow, healthy])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([slow, healthy])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
+    let enter!: () => void;
+    let release!: () => void;
+    let finish!: () => void;
+    const entered = new Promise<void>((resolve) => { enter = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const finished = new Promise<void>((resolve) => { finish = resolve; });
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === join(home!, 'sessions', WS, slow.id) && options?.bigint === true) {
+        enter();
+        try {
+          await gate;
+          if (outcome === 'reject') throw Object.assign(new Error('disconnected source'), { code: 'EIO' });
+        } finally {
+          finish();
+        }
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    reader.queryDeadlineMs = 100;
+    let completed: Awaited<ReturnType<GlobalSearchService['search']>> | undefined;
+    const searching = reader.search({ query: 'needle', sort: 'time_desc' }).then((page) => { completed = page; });
+    try {
+      await entered;
+      await vi.advanceTimersByTimeAsync(100);
+      expect(completed).toMatchObject({ incomplete: 'deadline', items: [{ sessionId: healthy.id }] });
+      expect(completed?.items).toHaveLength(1);
+      release();
+      await finished;
+      await searching;
+      expect(completed?.items).toHaveLength(1);
+    } finally {
+      release();
+      await searching.catch(() => {});
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+      vi.useRealTimers();
+    }
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(2);
+  });
+
+  it('bounds outstanding source checks across timed-out searches and verifies fresh state after recovery', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    writer.syncDebounceMs = 60_000;
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    writer.queryDeadlineMs = 30;
+    reader.queryDeadlineMs = 30;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const dir = join(home!, 'sessions', WS, s1.id);
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      const result = await original(path, options);
+      if (path === dir && options?.bigint === true) {
+        calls++;
+        await gate;
+      }
+      return result;
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      expect(await reader.search({ query: 'needle' })).toMatchObject({ incomplete: 'deadline', items: [] });
+      const pages = await Promise.all(Array.from({ length: 8 }, (_, i) =>
+        (i % 2 === 0 ? reader : writer).search({ query: 'needle' })));
+      for (const page of pages) expect(page).toMatchObject({ incomplete: 'deadline', items: [] });
+      expect(calls).toBe(1);
+      await rm(dir, { recursive: true });
+      release();
+      expect((await reader.search({ query: 'needle' })).items).toEqual([]);
+    } finally {
+      release();
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+    expect((await writer.search({ query: 'needle' })).items).toEqual([]);
+  });
+
+  it('fails a query when its session source cannot be verified', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    const original = fs.stat.bind(fs);
+    const intercept = vi.spyOn(fs, 'stat').mockImplementation((async (path, options) => {
+      if (path === join(home!, 'sessions', WS, s1.id) && options?.bigint === true) {
+        throw Object.assign(new Error('source unavailable'), { code: 'EACCES' });
+      }
+      return original(path, options);
+    }) as typeof fs.stat);
+    syncBuiltinESMExports();
+    try {
+      await expect(reader.search({ query: 'needle' })).rejects.toMatchObject({ reason: 'index_unavailable' });
+    } finally {
+      intercept.mockRestore();
+      syncBuiltinESMExports();
+    }
+  });
+
+  it('updates the displayed title without rewriting unchanged message documents', async () => {
+    const s1 = summary('s1', 'stale summary', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle body', T1)]);
+    await writeTitle(home!, s1.id, 'original title');
+    const service = track(makeInlineService(home!, staticIndex([s1])));
+    await service.reindex();
+    expect((await service.search({ query: 'needle' })).items[0]?.sessionTitle).toBe('original title');
+    await writeTitle(home!, s1.id, 'renamed title');
+    await settleSync(service);
+    expect((await service.search({ query: 'needle' })).items[0]?.sessionTitle).toBe('renamed title');
+    expect((await service.search({ query: 'original', role: 'title' })).items).toEqual([]);
+  });
+
+  it.each([false, true])('keeps indexing healthy messages when primary title metadata is damaged (legacy=%s)', async (legacy) => {
+    const s1 = summary('s1', 'cached title', T1);
+    const wire = await writeWire(home!, s1.id, 'main', [userLine('needle initial', T1)]);
+    await writeTitle(home!, s1.id, 'original title');
+    const service = track(makeInlineService(home!, staticIndex([s1])));
+    await service.reindex();
+    await writeFile(join(home!, 'sessions', WS, s1.id, 'state.json'), '{broken');
+    if (legacy) {
+      const dir = join(home!, 'sessions', WS, s1.id, 'session-meta');
+      await mkdir(dir);
+      await writeFile(join(dir, 'state.json'), JSON.stringify({ title: 'legacy title' }));
+    }
+    await appendFile(wire, `${userLine('needle appended', T2)}\n`);
+    await settleSync(service);
+    const page = await service.search({ query: 'appended' });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]?.sessionTitle).toBe(legacy ? 'legacy title' : '');
+  });
+
+  it('rebuilds legacy indexed documents before trusting their session identity', async () => {
+    const s1 = summary('s1', 'one', T1);
+    await writeWire(home!, s1.id, 'main', [userLine('needle legacy', T1)]);
+    const writer = track(makeInlineService(home!, staticIndex([s1])));
+    await writer.reindex();
+    const db = coreOf(writer).db!;
+    for (const row of db.query({ key: { prefix: 's1/' } })) {
+      const { sessionIdentity: _identity, ...legacy } = row.value;
+      await db.set(row.key, legacy);
+    }
+    await db.set('\0meta\\session\\s1', { kind: 'sessionMeta' });
+    const reader = track(makeInlineService(home!, staticIndex([s1])));
+    await settleSync(reader);
+    expect((await reader.search({ query: 'needle' })).items).toEqual([]);
+    await settleSync(writer);
+    await refreshNow(reader);
+    expect((await reader.search({ query: 'needle' })).items).toHaveLength(1);
+  });
+
   it('hits session titles as title docs', async () => {
     const s1 = summary('s1', '季度总结报告', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [userLine('随便说点什么', T1)]);
     const service = track(makeService(home!, staticIndex([s1])));
     await service.reindex();
@@ -406,21 +722,9 @@ describe('GlobalSearchService', () => {
     );
   });
 
-  it('picks up appended wire lines on the next sync pass', async () => {
-    const s1 = summary('s1', 'incremental', T1);
-    const file = await writeWire(home!, 's1', 'main', [userLine('苹果 initial', T1)]);
-    const service = track(makeService(home!, staticIndex([s1])));
-    await service.reindex();
-
-    await appendFile(file, `${userLine('苹果 appended', T2)}\n`, 'utf8');
-    await settleSync(service);
-    const page = await service.search({ query: '苹果' });
-    expect(page.items.length).toBe(2);
-    expect(page.items.some((h) => h.snippet.includes('appended'))).toBe(true);
-  });
-
   it('reports indexState building before the first full sync and ready after', async () => {
     const s1 = summary('s1', 'state', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [userLine('苹果 state', T1)]);
 
     let release!: () => void;
@@ -502,6 +806,119 @@ describe('GlobalSearchService', () => {
     expect(page.items[0]?.role).toBe('user');
   });
 
+  it('sync rounds account truncation, session-local wire failures, and escalating storage failures', async () => {
+    const s1 = summary('s1', 'budget', T1);
+    const lines = [
+      userLine('苹果 head', T1),
+      userLine(`苹果 giant ${'x'.repeat(1_700_000)}`, T2),
+      userLine(`苹果 tail ${'y'.repeat(400_000)}`, T3),
+    ];
+    const s1Wire = await writeWire(home!, 's1', 'main', lines);
+    const s2 = summary('s2', 'wirefail', T1);
+    const s2Wire = await writeWire(home!, 's2', 'main', [userLine('苹果 unreachable', T1)]);
+    const core = new SearchIndexCore({
+      indexDir: join(home!, 'search-index'),
+      log: noopLog,
+      bootSalt: 'budget-test',
+    });
+    core.syncRoundBytes = 1 << 20;
+    const input = [syncInput(home!, s1), syncInput(home!, s2)];
+    const messageCount = (id: string): number =>
+      core.db?.query({ key: { prefix: `${id}/` }, project: ['kind'] }).filter((row) => row.value.kind === 'message')
+        .length ?? 0;
+    try {
+      const first = await core.sync(input);
+      expect(first.truncated).toBe(true);
+      expect(first.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(false);
+      expect(messageCount('s1')).toBe(2);
+      expect(messageCount('s2')).toBe(0);
+
+      const second = await core.sync(input);
+      expect(second.truncated).toBe(false);
+      expect(second.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(true);
+      expect(messageCount('s1')).toBe(3);
+      expect(messageCount('s2')).toBe(1);
+
+      core.syncRoundBytes = 64 << 20;
+      if (process.platform !== 'win32') {
+        await core.reindex();
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(input);
+          expect(outcome.failures).toBe(1);
+          expect(outcome.truncated).toBe(false);
+          expect(core.fullSyncDone).toBe(false);
+        }
+        const skipped = await core.sync(input);
+        expect(skipped.failures).toBe(0);
+        expect(core.fullSyncDone).toBe(true);
+        expect(messageCount('s2')).toBe(0);
+        expect(messageCount('s1')).toBe(3);
+        await chmod(s2Wire, 0o644);
+      }
+
+      await appendFile(s1Wire, `${userLine('苹果 extra', T3 + 1)}\n`, 'utf8');
+      (core.db as unknown as { batch: unknown }).batch = () =>
+        Promise.reject(new Error('injected io'));
+      for (let round = 0; round < 4; round++) {
+        await expect(core.sync(input)).rejects.toThrow('injected io');
+      }
+      const rebuilt = await core.sync(input);
+      expect(rebuilt.truncated).toBe(true);
+      expect(rebuilt.failures).toBe(0);
+      const converged = await core.sync(input);
+      expect(converged.truncated).toBe(false);
+      expect(converged.failures).toBe(0);
+      expect(core.fullSyncDone).toBe(true);
+      expect(messageCount('s1')).toBe(4);
+      expect(messageCount('s2')).toBe(1);
+
+      if (process.platform !== 'win32') {
+        await appendFile(s2Wire, `${userLine('苹果 cooled', T2)}\n`, 'utf8');
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(input);
+          expect(outcome.failures).toBe(1);
+        }
+        const skipped = await core.sync(input);
+        expect(skipped.failures).toBe(0);
+        expect(messageCount('s2')).toBe(1);
+
+        await chmod(s2Wire, 0o644);
+        const cooling = await core.sync(input);
+        expect(cooling.failures).toBe(0);
+        expect(messageCount('s2')).toBe(1);
+
+        const changedInput = [syncInput(home!, s1), { ...syncInput(home!, s2), updatedAt: T1 + 1 }];
+        const changed = await core.sync(changedInput);
+        expect(changed.failures).toBe(0);
+        expect(messageCount('s2')).toBe(2);
+
+        await appendFile(s2Wire, `${userLine('苹果 retried', T3)}\n`, 'utf8');
+        await chmod(s2Wire, 0o000);
+        for (let round = 0; round < 4; round++) {
+          const outcome = await core.sync(changedInput);
+          expect(outcome.failures).toBe(1);
+        }
+        const reskipped = await core.sync(changedInput);
+        expect(reskipped.failures).toBe(0);
+        expect(messageCount('s2')).toBe(2);
+
+        core.syncSkipCooldownMs = 0;
+        await chmod(s2Wire, 0o644);
+        const retried = await core.sync(changedInput);
+        expect(retried.failures).toBe(0);
+        expect(messageCount('s2')).toBe(3);
+      }
+    } finally {
+      await chmod(s2Wire, 0o644).catch(() => {});
+      core.beginClose();
+      await core.close();
+    }
+  });
+
   it('indexes legacy root and v2 agents layouts of one session without key collisions', async () => {
     const s1 = summary('s1', 'dual layout', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 from agents', T2)]);
@@ -552,6 +969,7 @@ describe('GlobalSearchService', () => {
 
   it('runs a second instance read-only and catches up from the WAL', async () => {
     const s1 = summary('s1', 'shared', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     const file = await writeWire(home!, 's1', 'main', [userLine('苹果 base', T1)]);
     const index = staticIndex([s1]);
 
@@ -801,6 +1219,7 @@ describe('GlobalSearchService', () => {
 
   it('assigns transcript step ids to assistant hits; user and title hits carry none', async () => {
     const s1 = summary('s1', '苹果 steps', T1);
+    await writeTitle(home!, s1.id, s1.title!);
     await writeWire(home!, 's1', 'main', [
       userLine('苹果 question', T1),
       stepBeginLine('u1', 1, T1 + 100),
@@ -1390,6 +1809,7 @@ describe('GlobalSearchService', () => {
       const s1 = summary('s1', 'heal', T1);
       await writeWire(home!, 's1', 'main', [userLine('苹果 heal', T1)]);
       const service = track(makeInlineService(home!, staticIndex([s1])));
+      await settleBackend(service);
 
       const core = coreOf(service);
       const origOpen = core.openSearchDb;
@@ -1730,7 +2150,7 @@ describe('GlobalSearchService', () => {
       });
       expect(page.source).toBe('live');
       expect(page.items.length).toBe(3);
-      expect(page.items.map((h) => h.role).sort()).toEqual(['assistant', 'title', 'user']);
+      expect(page.items.map((h) => h.role).toSorted()).toEqual(['assistant', 'title', 'user']);
 
       await expect(service.search({ query: '苹', mode: 'literal' })).rejects.toMatchObject({
         reason: 'invalid_query',
@@ -2026,6 +2446,7 @@ describe('GlobalSearchService', () => {
 
     it('returns identical literal results on both routes for equivalent data', async () => {
       const s1 = summary('s1', '无关标题', T1);
+    await writeTitle(home!, s1.id, s1.title!);
       await writeWire(home!, 's1', 'main', [
         userLine('帮我看看苹果怎么挑', T1),
         stepBeginLine('u1', 1, T1 + 100),
@@ -2091,7 +2512,7 @@ describe('GlobalSearchService', () => {
         makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
         makeBootstrap(home!),
         log,
-        makeFlags(false),
+        makeConfig(false),
       );
       service.syncDebounceMs = 0;
       track(service);
@@ -2136,7 +2557,7 @@ describe('GlobalSearchService', () => {
       await writer.reindex();
 
       const { log, warnings } = recordingLog();
-      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
+      const reader = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false));
       reader.syncDebounceMs = 0;
       track(reader);
       await syncNow(reader);
@@ -2171,7 +2592,7 @@ describe('GlobalSearchService', () => {
           makeSessionIndex(async () => ({ items: sessions, nextCursor: undefined })),
           makeBootstrap(root),
           noopLog,
-          makeFlags(false),
+          makeConfig(false),
         );
         service.syncDebounceMs = 0;
         track(service);
@@ -2276,7 +2697,12 @@ describe('search worker host (stage 4)', () => {
     expect(degraded.indexState.state).toBe('building');
     expect(degraded.indexState.degraded).toContain('worker');
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.waitFor(
+      async () => {
+        expect((await hostOf(service).status()).readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
     await settleSync(service);
     const page = await service.search({ query: '苹果' });
     expect(page.items.length).toBe(1);
@@ -2321,9 +2747,13 @@ describe('search worker host (stage 4)', () => {
     await opening;
     await waitForGone(lockPath());
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    const reopened = await host.ensureOpen();
-    expect(reopened.readOnly).toBe(false);
+    await vi.waitFor(
+      async () => {
+        const reopened = await host.ensureOpen();
+        expect(reopened.readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
   });
 
   it('recovers a read-only open caused by an orphaned same-pid lock', { timeout: 30_000 }, async () => {
@@ -2363,7 +2793,14 @@ describe('search worker host (stage 4)', () => {
 
     await host.ensureOpen();
     const sync = host.sync(inputs);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await vi.waitFor(
+      () => {
+        expect(
+          (host as unknown as { requests: Map<number, unknown> }).requests.size,
+        ).toBeGreaterThan(0);
+      },
+      { timeout: 10_000 },
+    );
     host.beginClose();
     const outcome = await sync;
     expect(outcome.noop).toBe(true);
@@ -2400,9 +2837,13 @@ describe('search worker host (stage 4)', () => {
     await expect(wedged).rejects.toThrow(/timed out/);
 
     gate = false;
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    const status = await host.status();
-    expect(status.readOnly).toBe(false);
+    await vi.waitFor(
+      async () => {
+        const status = await host.status();
+        expect(status.readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
   });
 
   it('rejects in-flight requests as disposed during a clean close', { timeout: 30_000 }, async () => {
@@ -2454,7 +2895,12 @@ describe('search worker host (stage 4)', () => {
     expect(page1.pageToken).toBeDefined();
 
     await hostOf(service).killWorkerForTest();
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.waitFor(
+      async () => {
+        expect((await hostOf(service).status()).readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
     await settleSync(service);
 
     await expect(
@@ -2746,6 +3192,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const s1 = summary('s1', 'open 失败', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 open-failure', T1)]);
     const service = track(makeInlineService(home!, staticIndex([s1])));
+    await settleBackend(service);
     const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
     core.openSearchDb = async () => {
       throw new Error('disk gone');
@@ -2773,7 +3220,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     await writeFile(join(home!, 'search-index', 'db.textindexes.json'), 'not json {{{', 'utf8');
 
     const { log, warnings } = recordingLog();
-    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeFlags(false));
+    const second = new GlobalSearchService(staticIndex([s1]), makeBootstrap(home!), log, makeConfig(false));
     track(second);
     second.syncDebounceMs = 0;
     await settleSync(second);
@@ -2824,6 +3271,7 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     const s1 = summary('s1', '单次打开', T1);
     await writeWire(home!, 's1', 'main', [userLine('苹果 single-open', T1)]);
     const service = track(makeInlineService(home!, staticIndex([s1])));
+    await settleBackend(service);
     const core = coreOf(service) as unknown as { openSearchDb(): Promise<unknown> };
     const originalOpen = core.openSearchDb.bind(core);
     let openCalls = 0;
@@ -2876,7 +3324,12 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(down.state).toBe('degraded');
     expect(down.detail).toContain('worker');
 
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    await vi.waitFor(
+      async () => {
+        expect((await hostOf(service).status()).readOnly).toBe(false);
+      },
+      { timeout: 10_000 },
+    );
     await settleSync(service);
     expect(service.lifecycleReport().state).toBe('ready');
     expect((await service.search({ query: '苹果' })).items.length).toBe(1);
@@ -2890,9 +3343,16 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(service.lifecycleReport().state).toBe('ready');
 
     await hostOf(service).killWorkerForTest();
-    await new Promise((resolve) => setTimeout(resolve, 700));
-
     const host = hostOf(service);
+    await vi.waitFor(
+      () => {
+        expect(
+          (host as unknown as { nextRetryAfter: number }).nextRetryAfter,
+        ).toBeLessThanOrEqual(Date.now());
+      },
+      { timeout: 10_000 },
+    );
+
     const respawn = syncNow(service);
     respawn.catch(() => {});
     await vi.waitFor(
@@ -2953,137 +3413,149 @@ describe('search lifecycle diagnostics (stage 5)', () => {
     expect(status.lifecycle.state).toBe('degraded');
     expect(status.degraded).toContain('worker');
   });
-});
 
-describe('baseline: synthetic corpus', () => {
-  let home: string | undefined;
-  const services: GlobalSearchService[] = [];
+  describe('search index storage maintenance', () => {
+    const cores: SearchIndexCore[] = [];
 
-  beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-kap-search-baseline-'));
-  });
+    afterEach(async () => {
+      for (const core of cores.splice(0)) await core.close();
+    });
 
-  afterEach(async () => {
-    for (const service of services.splice(0)) service.dispose();
-    await drainGlobalSearchDisposals();
-    if (home !== undefined) {
-      await rm(home, { recursive: true, force: true });
-      home = undefined;
+    function openCore(bootSalt: string): SearchIndexCore {
+      const core = new SearchIndexCore({
+        indexDir: join(home!, 'search-index'),
+        log: noopLog,
+        bootSalt,
+      });
+      cores.push(core);
+      return core;
     }
-  });
 
-  const TOPICS = ['compaction', 'walrus', 'snapshot', 'recovery', '索引', '持久化'];
-
-  async function writeCorpus(from: number, to: number): Promise<SessionSummary[]> {
-    const summaries: SessionSummary[] = [];
-    for (let i = from; i < to; i++) {
-      const id = `s${i}`;
-      summaries.push(summary(id, `session ${i} 索引讨论`, T1 + i));
-      const lines: string[] = [];
-      for (let j = 0; j < 8; j++) {
-        lines.push(userLine(`session ${i} message ${j} about ${TOPICS[(i + j) % TOPICS.length]!}`, T1 + i * 100 + j));
-        lines.push(assistantLine(`reply ${j} covering ${TOPICS[(i + 2 * j) % TOPICS.length]!}`, T1 + i * 100 + j + 1));
+    async function pathExists(path: string): Promise<boolean> {
+      try {
+        await stat(path);
+        return true;
+      } catch {
+        return false;
       }
-      await writeWire(home!, id, 'main', lines);
     }
-    return summaries;
-  }
 
-  async function medianMs(fn: () => Promise<unknown>, runs = 5): Promise<number> {
-    const times: number[] = [];
-    for (let r = 0; r < runs; r++) {
-      const t0 = performance.now();
-      await fn();
-      times.push(performance.now() - t0);
-    }
-    times.sort((a, b) => a - b);
-    return times[(times.length / 2) | 0]!;
-  }
+    it('removes interrupted text-build leftovers when opening the index as the writer', async () => {
+      const leftover = join(home!, 'search-index', 'db.text-body.postings.tmpbuild');
+      await mkdir(join(leftover, 'nested'), { recursive: true });
+      await writeFile(join(leftover, 'nested', 'junk.bin'), 'x', 'utf8');
 
-  it('indexing and search latency scale within a linear budget from 100 to 400 sessions', async () => {
-    const all: SessionSummary[] = [];
-    const service = makeService(home!, staticIndex(all));
-    services.push(service);
+      const core = openCore('writer');
+      await core.ensureOpen();
 
-    all.push(...(await writeCorpus(0, 100)));
-    const t0 = performance.now();
-    await service.reindex();
-    const index100 = performance.now() - t0;
-    const terms100 = await medianMs(() => service.search({ query: 'compaction' }));
-    const literal100 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
+      expect(core.db?.readOnly).toBe(false);
+      expect(await pathExists(leftover)).toBe(false);
+    });
 
-    all.push(...(await writeCorpus(100, 400)));
-    const t1 = performance.now();
-    await service.reindex();
-    const index400 = performance.now() - t1;
-    const terms400 = await medianMs(() => service.search({ query: 'compaction' }));
-    const literal400 = await medianMs(() => service.search({ query: 'message 3 about', mode: 'literal' }));
+    it('keeps leftovers when opening read-only and cleans them once the writer lock is held', async () => {
+      const writer = openCore('writer');
+      await writer.ensureOpen();
 
-    const hits = await service.search({ query: 'compaction' });
-    expect(hits.items.length).toBeGreaterThan(0);
-    expect((await service.search({ query: 'message 3 about', mode: 'literal' })).items.length).toBeGreaterThan(0);
+      const leftover = join(home!, 'search-index', 'db.text-tri.postings.tmpbuild');
+      await mkdir(leftover, { recursive: true });
 
-    console.log(
-      `[baseline] searchService ${JSON.stringify({
-        sessions: [100, 400],
-        reindexMs: [index100, index400],
-        termsMedianMs: [terms100, terms400],
-        literalMedianMs: [literal100, literal400],
-      })}`,
-    );
-    expect(index400).toBeLessThan(index100 * 10 + 2000);
-    expect(terms400).toBeLessThan(terms100 * 10 + 100);
-    expect(literal400).toBeLessThan(literal100 * 10 + 100);
-  }, 120_000);
+      const reader = openCore('reader');
+      await reader.ensureOpen();
+      expect(reader.db?.readOnly).toBe(true);
+      expect(await pathExists(leftover)).toBe(true);
+      await reader.close();
 
-  it('stage-4: deep keyset pages cost like the first page, with a bounded event-loop pause', async () => {
-    const all: SessionSummary[] = [];
-    const service = makeService(home!, staticIndex(all));
-    services.push(service);
-    all.push(...(await writeCorpus(0, 400)));
-    await service.reindex();
+      await writer.close();
+      const reopener = openCore('reopener');
+      await reopener.ensureOpen();
+      expect(reopener.db?.readOnly).toBe(false);
+      expect(await pathExists(leftover)).toBe(false);
+    });
 
-    const eld: IntervalHistogram = monitorEventLoopDelay();
-    eld.enable();
-    try {
-      const tokens: (string | undefined)[] = [undefined];
-      let page = await service.search({ query: 'message', sort: 'time_desc', pageSize: 20 });
-      for (let p = 1; p < 10; p++) {
-        tokens.push(page.pageToken);
-        page = await service.search({
-          query: 'message',
-          sort: 'time_desc',
-          pageSize: 20,
-          pageToken: page.pageToken,
-        });
+    it('skips re-reading session sources while the fingerprint says unchanged', async () => {
+      const s1 = summary('s1', 'cached title', T1);
+      await writeWire(home!, 's1', 'main', [userLine('needle stable', T1)]);
+      await writeTitle(home!, 's1', 'cached title');
+      const service = track(makeInlineService(home!, staticIndex([s1])));
+      await service.reindex();
+      expect((await service.search({ query: 'cached', role: 'title' })).items).toHaveLength(1);
+
+      const stateJson = join(home!, 'sessions', WS, 's1', 'state.json');
+      await chmod(stateJson, 0o000);
+      try {
+        await settleSync(service);
+        expect((await service.search({ query: 'cached', role: 'title' })).items).toHaveLength(1);
+
+        const moved = summary('s1', 'cached title', T2);
+        (service as unknown as { sessionIndex: ISessionIndex }).sessionIndex = staticIndex([moved]);
+        await settleSync(service);
+        expect((await service.search({ query: 'cached', role: 'title' })).items).toEqual([]);
+        expect((await service.search({ query: 'stable' })).items).toHaveLength(1);
+      } finally {
+        await chmod(stateJson, 0o644).catch(() => {});
       }
-      expect(page.items.length).toBe(20);
+    });
 
-      const page1Ms = await medianMs(() =>
-        service.search({ query: 'message', sort: 'time_desc', pageSize: 20 }),
-      );
-      const page10Ms = await medianMs(() =>
-        service.search({ query: 'message', sort: 'time_desc', pageSize: 20, pageToken: tokens[9] }),
-      );
-      const literalMs = await medianMs(() =>
-        service.search({ query: 'message 3 about', mode: 'literal' }),
-      );
+    it('picks up a newly appeared agent wire without waiting for session metadata to move', async () => {
+      const s1 = summary('s1', 't', T1);
+      await writeWire(home!, 's1', 'main', [userLine('needle mainline', T1)]);
+      const service = track(makeInlineService(home!, staticIndex([s1])));
+      await service.reindex();
 
-      const eldMaxMs = eld.max / 1e6;
-      const eldP99Ms = eld.percentile(99) / 1e6;
-      console.log(
-        `[baseline] stage4 ${JSON.stringify({
-          sessions: 400,
-          page1MedianMs: page1Ms,
-          page10MedianMs: page10Ms,
-          literalMedianMs: literalMs,
-          eventLoopDelayMs: { p99: eldP99Ms, max: eldMaxMs },
-        })}`,
+      await writeWire(home!, 's1', 'sub_1', [userLine('needle subagent', T2)]);
+      await settleSync(service);
+      expect((await service.search({ query: 'subagent' })).items).toHaveLength(1);
+    });
+
+    it('indexes mid-turn wire growth on the next pass even when the summary is unchanged', async () => {
+      const s1 = summary('s1', 't', T1);
+      const wire = await writeWire(home!, 's1', 'main', [userLine('needle first', T1)]);
+      const service = track(makeInlineService(home!, staticIndex([s1])));
+      await service.reindex();
+
+      await appendFile(wire, `${userLine('needle second', T2)}\n`, 'utf8');
+      await settleSync(service);
+      expect((await service.search({ query: 'second' })).items).toHaveLength(1);
+    });
+
+    it('syncs at most syncSessionCap fresh sessions per pass in recency order', async () => {
+      const ids = ['s1', 's2', 's3', 's4', 's5'];
+      const summaries = ids.map((id, i) => summary(id, '', T1 + i));
+      for (const [i, id] of ids.entries()) {
+        await writeWire(home!, id, 'main', [userLine(`needle doc${i}`, T1)]);
+      }
+      const service = track(makeInlineService(home!, staticIndex(summaries)));
+      service.syncDebounceMs = 60_000;
+      await settleBackend(service);
+      (coreOf(service) as unknown as { syncSessionCap: number }).syncSessionCap = 2;
+
+      await syncNow(service);
+      expect((await service.search({ query: 'doc0' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc1' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc2' })).items).toEqual([]);
+
+      await syncNow(service);
+      expect((await service.search({ query: 'doc2' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc3' })).items).toHaveLength(1);
+      expect((await service.search({ query: 'doc4' })).items).toEqual([]);
+
+      await syncNow(service);
+      expect((await service.search({ query: 'doc4' })).items).toHaveLength(1);
+      expect((await service.status()).sessions).toBe(5);
+    });
+
+    it('applies database search sync tuning from config', async () => {
+      const service = track(
+        new GlobalSearchService(
+          staticIndex([]),
+          makeBootstrap(home!),
+          noopLog,
+          makeConfig(false, { searchSyncSessionCap: 7, searchSyncDebounceMs: 12_345 }),
+        ),
       );
-      expect(page10Ms).toBeLessThan(page1Ms * 5 + 50);
-      expect(eldMaxMs).toBeLessThan(500);
-    } finally {
-      eld.disable();
-    }
-  }, 120_000);
+      await settleBackend(service);
+      expect(service.syncDebounceMs).toBe(12_345);
+      expect((coreOf(service) as unknown as { syncSessionCap: number }).syncSessionCap).toBe(7);
+    });
+  });
 });

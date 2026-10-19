@@ -138,9 +138,19 @@ describe('readMediaSummary renderer', () => {
   });
 
   it('falls back to truncated renderer when the output is not the media envelope', () => {
-    const out = strip(
+    // Collapsed: the fallback renderer's outcome row is the first output line.
+    const collapsed = strip(
       joinRender(
         readMediaSummary(call('ReadMediaFile'), result('"some plain string output"'), ctx),
+      ),
+    );
+    expect(collapsed).toBe('  "some plain string output"');
+    const out = strip(
+      joinRender(
+        readMediaSummary(call('ReadMediaFile'), result('"some plain string output"'), {
+          ...ctx,
+          expanded: true,
+        }),
       ),
     );
     expect(out).toContain('some plain string output');

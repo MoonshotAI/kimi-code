@@ -192,7 +192,7 @@ These endpoints drive the managed Kimi OAuth login lifecycle and expose account-
 | `GET /api/v1/oauth/login` | Poll the login flow state |
 | `DELETE /api/v1/oauth/login` | Cancel a pending login flow |
 | `POST /api/v1/oauth/logout` | Log out the managed provider |
-| `GET /api/v1/oauth/usage` | Plan usage and limits |
+| `GET /api/v1/oauth/usage` | Plan quota and booster wallet |
 | `GET /api/v1/oauth/userinfo` | Account profile |
 | `GET /api/v1/oauth/region` | Resolve the client region (`mainland-cn` / `global`) |
 
@@ -237,6 +237,8 @@ On success, `data` is `{ cancelled, status }`: `cancelled` is `true` only when a
 
 Logs out the managed provider: discards the stored OAuth credential, aborts any pending login flow, and removes the managed provider from the configuration. OAuth-managed providers reject manual edit and delete (see `PUT` / `DELETE /api/v1/providers/{provider_id}` below), so log out first to remove one.
 
+For the default Kimi provider (`managed:kimi-code`), logout also tears down this machine's Remote Control and clears cached Remote Control cloud sessions. When no tunnel is running or another process hosts it, logout first deactivates this machine's device and holds the machine lock so no process on this machine can start Remote Control again until the credential is discarded; a cleanup failure aborts the logout. When this server hosts the tunnel, the credential is discarded first and the tunnel is torn down right after the response is flushed, so a logout sent through the Remote Control link still receives its response. Logging out any other provider leaves Remote Control untouched.
+
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider` | body | string | Managed provider name. Default `managed:kimi-code` |
@@ -245,13 +247,13 @@ On success, `data` is `{ logged_out: true, provider }`.
 
 #### `GET /api/v1/oauth/usage`
 
-Plan usage and limits of the managed account, fetched live from the account service. An upstream failure does not fail the envelope — it comes back in-band with `kind: "error"`.
+Plan quota and booster wallet of the managed account, fetched live from the account service. An upstream failure does not fail the envelope — it comes back in-band with `kind: "error"`.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider` | query | string | Managed provider name. Default `managed:kimi-code` |
 
-On success, `data` is `{ kind: "ok", summary, limits, extra_usage }` or `{ kind: "error", message, status? }`, where `status` is the upstream HTTP status when one exists. In the `ok` shape, `summary` (nullable) is the primary quota row and `limits` lists every quota window; a row is `{ name?, window?, used, limit, reset_at? }` with `window` as `{ duration, unit }`, `unit` one of `minute` / `hour` / `day` / `week`. `extra_usage` (nullable) is the pay-as-you-go wallet: `{ balance_cents, total_cents, monthly_charge_limit_enabled, monthly_charge_limit_cents, monthly_used_cents, currency }`.
+On success, `data` is `{ kind: "ok", quota }` or `{ kind: "error", message, status? }`, where `status` is the upstream HTTP status when one exists. In the `ok` shape, `quota` is `{ usages, extraUsage }`: `usages` carries one `{ usedRatio, resetAt? }` entry per quota window the account has — `limit5h`, `limit7d`, `monthTotal`, `monthCode` — with `usedRatio` as a 0–1 float and `resetAt` as an RFC3339 reset timestamp, and clients render whichever entries are present; `extraUsage` (nullable) is the pay-as-you-go wallet: `{ balanceCents, totalCents, monthlyChargeLimitEnabled, monthlyChargeLimitCents, monthlyUsedCents, currency }`.
 
 #### `GET /api/v1/oauth/userinfo`
 
@@ -268,6 +270,63 @@ On success, `data` is `{ kind: "ok", userInfo }` or `{ kind: "error", message, s
 Resolves which Kimi region this client belongs to. The answer is derived locally, not probed over the network: an OAuth host pinned by environment or config wins first, then the configured OAuth key, then the region marker file in the home directory; the default is `mainland-cn`.
 
 On success, `data` is `{ region }` with `region` one of `mainland-cn` / `global`.
+
+### Remote Control
+
+These endpoints manage the machine-wide Remote Control tunnel (see the [Remote Control guide](../guides/remote-control.md)) and the account's device registry. The tunnel state is per machine; the device registry is per account and lives in the cloud, so device endpoints require a Kimi login and proxy the relay with a server-side session — OAuth credentials never reach the caller.
+
+#### `GET /api/v1/remote-control`
+
+Returns the current tunnel status. When the tunnel is off but another live process on this machine holds the single-instance lock, `data.conflict` carries that holder; the lock is re-inspected on every read, so a dead holder clears both `conflict` and the stored `error`.
+
+On success, `data` is `{ enabled, state, url?, device_id?, device_name?, error?, conflict? }` with `state` one of `off` / `starting` / `on` / `stopping` and `conflict` as `{ pid, local_origin, device_id, url, started_at }`.
+
+#### `POST /api/v1/remote-control`
+
+Starts or stops the tunnel.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `enabled` | body | boolean | `true` to start the tunnel, `false` to stop it |
+
+On success, `data` is the same status object as `GET /api/v1/remote-control`. Starting while another live process on this machine holds the single-instance lock fails with `REMOTE_CONTROL_ALREADY_RUNNING` (40928), with the lock holder in `details` in the same shape as `conflict`.
+
+#### `GET /api/v1/remote-control/devices`
+
+Lists the account's Remote Control devices from the cloud registry.
+
+On success, `data` is `{ devices, max_devices? }`. Each device is `{ device_id, alias, status, platform, client_version, local_base_url, created_at, updated_at, last_remote_access_at }` with `status` one of `online` / `offline`.
+
+#### `PATCH /api/v1/remote-control/devices/{id}`
+
+Renames a device.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+| `alias` | body | string | New display name, trimmed; 1–50 characters |
+
+Blank or over-long aliases fail with `VALIDATION_FAILED` before reaching the cloud. On success, `data` is `{ ok: true }`.
+
+#### `POST /api/v1/remote-control/devices/{id}/deactivate`
+
+Takes a device offline in the cloud registry. Offline devices stay listed and do not consume the plan's device quota; a device comes back the next time it turns on Remote Control. When the target is this machine, the local tunnel is stopped first (an in-flight start is cancelled); the request then holds the machine lock while deactivating, so a concurrent enable cannot re-register the device behind a successful response. A holder that does not stop in time fails the request with `INTERNAL_ERROR` instead of reporting success.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+
+On success, `data` is `{ ok: true }`.
+
+#### `DELETE /api/v1/remote-control/devices/{id}`
+
+Removes a device from the cloud registry: it disappears from the device list and its tunnel, if still connected, is disconnected. Deactivating keeps an offline device listed; deleting removes it entirely. When the target is this machine, the local tunnel is stopped first and the machine lock is held while deleting, so the device cannot re-register behind a successful response.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `id` | path | string | Device identifier |
+
+On success, `data` is `{ ok: true }`.
 
 ### Config
 
@@ -304,6 +363,7 @@ On success, `data` is the config object; its fields mirror the top-level domains
 | `secondary_model` | object | Secondary model pool for subagents |
 | `experimental` | object | Experimental flag id → enabled |
 | `telemetry` | boolean | Whether anonymous telemetry is enabled |
+| `auto_session_title` | boolean | Whether clients may automatically generate session titles |
 | `raw` | object | Raw parsed `config.toml` content, unmodeled fields included |
 
 #### `POST /api/v1/config`
@@ -336,6 +396,7 @@ The body is a partial config object — any subset of the response domains above
 | `secondary_model` | body | object | Secondary model pool for subagents |
 | `experimental` | body | object | Experimental flag id → enabled |
 | `telemetry` | body | boolean | Whether anonymous telemetry is enabled |
+| `auto_session_title` | body | boolean | Whether clients may automatically generate session titles |
 
 On success, `data` is the full updated config in the same shape as `GET /api/v1/config`.
 
@@ -361,7 +422,7 @@ These endpoints manage the two halves of model configuration — the [providers]
 
 Lists every configured model alias across all providers.
 
-On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support.
+On success, `data.items` is an array of `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort?, upgrade? }`: `model` is the alias id (`provider_id/model` for provider-managed aliases, otherwise the bare key), `provider` the owning provider id, `max_context_size` the context window in tokens, and `capabilities` / `support_efforts` / `default_effort` describe capability flags and Thinking-mode effort support. For custom-registry models, `upgrade` may contain `{ model, migration_markdown, retirement_at? }` to guide users toward a replacement model; placeholders in `migration_markdown` are already replaced with the model ids.
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
@@ -469,13 +530,13 @@ On success the server answers 204 with no body — the status line itself report
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases change, the server broadcasts the global `event.model_catalog.changed` event.
+Re-discovers one provider's model metadata from its upstream source and rewrites the provider's aliases. Providers with a static model source are reported `unchanged` without any network call. When at least one provider's aliases or managed model metadata changes, the server broadcasts the global `event.model_catalog.changed` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **Required.** Provider id |
 
-On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`.
+On success, `data` is a refresh report: `changed` is an array of `{ provider_id, provider_name, added, removed }` (added/removed alias counts), `unchanged` is an array of provider ids with no diff, and `failed` is an array of `{ provider, reason }`. When a refresh finds that the registry dropped the current default model and that model had declared an `upgrade` replacement, `data` also carries an optional `retired_default`: `{ from, to, from_display_name }` — the default model has been redirected to `to`, open sessions still bound to `from` have been moved to `to` as well, and `from_display_name` is the dropped model's display name for notices. The same field appears on the `event.model_catalog.changed` event.
 
 - `40001`: malformed or unsupported action suffix in the path
 - `40412`: provider not found
@@ -530,7 +591,7 @@ On success, `data` is `{ providers, models_imported }` — an array of provider 
 
 Browses the models.dev directory, proxied by the server with a 10-minute in-memory cache and a built-in snapshot fallback. Items keep the upstream directory order. Entries the server cannot import carry `rejected: true` with a machine-readable `reject_reason`; entries with `needs_base_url: true` require a base URL at import time.
 
-On success, `data.items` is an array of `{ id, name, wire_type, guessed, needs_base_url, rejected, reject_reason, env_key, models }`: `wire_type` is the resolved protocol (nullable, same enum as a provider `type`), `guessed` marks a heuristic resolution, `env_key` is the upstream's conventional API-key environment variable (nullable), and `models` is an array of `{ id, name?, max_context_size, capabilities?, reasoning }`.
+On success, `data.items` is an array of `{ id, name, wire_type, base_url, guessed, needs_base_url, rejected, reject_reason, env_key, models }`: `wire_type` is the resolved protocol (nullable, same enum as a provider `type`), `base_url` is the resolved endpoint (nullable; `null` for entries that need a base URL or were rejected), `guessed` marks a heuristic resolution, `env_key` is the upstream's conventional API-key environment variable (nullable), and `models` is an array of `{ id, name?, max_context_size, capabilities?, reasoning }`.
 
 - `50004`: the directory is unavailable (both the live fetch and the built-in snapshot failed)
 
@@ -553,7 +614,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 
 | Method and path | Description |
 | --- | --- |
-| `POST /api/v1/sessions` | Create a session (requires `workspace_id` or `metadata.cwd`) |
+| `POST /api/v1/sessions` | Create a session (requires `workspace_id`, `metadata.cwd`, or `default_workspace`) |
 | `GET /api/v1/sessions` | List sessions; cursor pagination with filters such as `busy` and `archived_only` |
 | `GET /api/v1/sessions/{session_id}` | Read one session |
 | `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
@@ -597,20 +658,22 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 
 #### `POST /api/v1/sessions`
 
-Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace) or from `metadata.cwd` (the workspace is registered on first use); passing both requires them to agree. Creation broadcasts the global `event.session.created` event.
+Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace), from `metadata.cwd` (the workspace is registered on first use), or from `default_workspace`; passing both `workspace_id` and `metadata.cwd` requires them to agree. Creation broadcasts the global `event.session.created` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
+| `workspace_id` | body | string | **Required** when neither `metadata.cwd` nor `default_workspace` is given. Registered workspace id; the session is created at that workspace's root |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when neither `workspace_id` nor `default_workspace` is given; with both given, it must equal the workspace root |
+| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `~/KimiCode/Default` unless [`default_workspace.path`](../configuration/config-files.md#default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with `workspace_id` or `metadata`, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
+- `40930`: the default workspace folder cannot be created or used. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), or `unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -687,7 +750,7 @@ On success, `data` is the updated [session object](#the-session-object).
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-Generates a title from the session's prompts through the managed provider's `chat_title` tool and applies it, broadcasting `session.meta.updated`. Generation requires the managed OAuth login and the `auto_session_title` experimental flag; without `force`, a session that already has a custom or generated title is reported unavailable instead of being overwritten.
+Generates a title from the session's prompts through the managed provider's `chat_title` tool and applies it, broadcasting `session.meta.updated`. Generation requires the managed OAuth login; without `force`, a session that already has a custom or generated title is reported unavailable instead of being overwritten.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -751,7 +814,7 @@ On success, `data` is `{ aborted: true }`.
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 
-Starts a "by the way" side conversation: forks the main agent into a child agent whose tool calls are disabled, so quick side questions run in isolation without touching the working context. Requires a usable model configuration.
+Starts a "by the way" side conversation: forks the main agent into a child agent whose tool calls are limited to the read-only tools `Read`, `Grep`, and `Glob`, so quick side questions run in isolation without touching the working context. Requires a usable model configuration.
 
 On success, `data` is `{ agent_id }` — the id of the new child agent.
 
@@ -766,6 +829,14 @@ On success, `data` is `{ archived: true }`.
 Un-archives the session and resumes it.
 
 On success, `data` is [the session object](#the-session-object) with `archived: false`.
+
+#### `POST /api/v1/sessions/{session_id}:reload`
+
+Reloads the session with the latest on-disk configuration: re-reads `config.toml` and plugins, reloads the workspace skill and subagent catalogs, then closes and resumes the session from disk. The main agent is also notified of external changes to AGENTS.md files, skills, and subagent profiles or models via system reminders.
+
+On success, `data` is [the session object](#the-session-object).
+
+- `40901`: the session has an active turn and cannot be reloaded
 
 #### `GET /api/v1/sessions/{session_id}/children`
 
@@ -1126,7 +1197,7 @@ Lists the session's pending approval requests — the permission prompts raised 
 | `session_id` | path | string | **Required.** Session id |
 | `status` | query | string | **Required.** Must be `pending` |
 
-On success, `data` is `{ items }` where each item is `{ approval_id, session_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`: `tool_name` / `action` / `tool_input_display` describe the call waiting for permission, and `expires_at` is 24 hours after `created_at`.
+On success, `data` is `{ items }` where each item is `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`: `agent_id` names the agent whose tool call is waiting for permission (`main` for the main agent); `tool_name` / `action` / `tool_input_display` describe the call waiting for permission, and `expires_at` is 24 hours after `created_at`.
 
 - `40001`: `status` missing or not `pending`
 - `40401`: session not found
@@ -1160,7 +1231,7 @@ Lists the session's pending questions.
 | `session_id` | path | string | **Required.** Session id |
 | `status` | query | string | **Required.** Must be `pending` |
 
-On success, `data` is `{ items }` where each item is `{ question_id, session_id, turn_id?, tool_call_id?, questions, created_at }`. `questions` holds 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`; `multi_select` allows several options, `allow_other` a free-text answer.
+On success, `data` is `{ items }` where each item is `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`. `agent_id` names the asking agent when known (`main` for the main agent). `questions` holds 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`; `multi_select` allows several options, `allow_other` a free-text answer.
 
 - `40001`: `status` missing or not `pending`
 - `40401`: session not found
@@ -1369,7 +1440,7 @@ On success, `data` is `{ restarting: true }`.
 
 ### Capabilities and plugins
 
-Capabilities are built-in features with layered readiness — detection steps plus a background install; the current build registers `kimi-cu` (Kimi Computer Use) and `kimi-webbridge` (Kimi WebBridge). Plugins are installed packages of skills, MCP servers, hooks, and commands. These endpoints report capability status and drive capability installs, and manage the plugin lifecycle from marketplace listing to removal.
+Capabilities are built-in features with layered readiness — detection steps plus a background install; the current build registers `kimi-cu` (Kimi Computer Use) and `kimi-webbridge` (Kimi Browser Extension). Plugins are installed packages of skills, MCP servers, hooks, and commands. These endpoints report capability status and drive capability installs, and manage the plugin lifecycle from marketplace listing to removal.
 
 | Method and path | Description |
 | --- | --- |
@@ -1564,6 +1635,7 @@ Workspaces are the registered project directories sessions live in. These endpoi
 | `GET /api/v1/workspaces/{workspace_id}/trust` | Read the trust state |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
+| `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
 
 #### The workspace object
 
@@ -1574,6 +1646,7 @@ Every endpoint that returns a workspace uses this wire shape. Registration and r
 | `id` | string | Workspace id, a `wd_<slug>_<hash12>` string derived from the root path |
 | `root` | string | Absolute path of the project directory |
 | `name` | string | Display name, 1–100 characters; defaults to the root's base name |
+| `is_default` | boolean | Whether the root is the current [default workspace](../configuration/config-files.md#default-workspace); computed on every response |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -1660,6 +1733,22 @@ On success, `data` is `{ trusted: false }`.
 
 - `40410`: workspace not found
 
+#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
+
+Adds an additional directory to the workspace, with the same semantics as the CLI `--add-dir` flag and the TUI `/add-dir` command. The path accepts absolute paths, relative paths (resolved against the workspace root), and `~` expansion.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **Required.** Workspace id |
+| `path` | body | string | **Required.** Directory to add |
+| `persist` | body | boolean | Defaults to `true`: appends to `workspace.additional_dir` in `<project root>/.kimi-code/local.toml`. With `false`, the directory only joins the in-memory ephemeral set shared by all sessions of the workspace |
+
+On success, `data` is `{ project_root, config_path, additional_dirs, persisted }`, where `additional_dirs` lists every additional directory (existing ones included) and `persisted` reports whether this call wrote to disk.
+
+- `40001`: validation failure (`details` lists each field), or an engine-side config validation error such as a corrupted project local config
+- `40409`: `path` does not exist or is not a directory
+- `40410`: workspace not found
+
 ### File system
 
 In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{action}` with JSON bodies; actions are `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`. Every action body also accepts an optional `runtime_id` (string, default `local`) selecting the runtime that executes the operation; `open`, `open-in`, and `reveal` only work on the `local` runtime. In addition:
@@ -1687,6 +1776,7 @@ Lists the entries of a session workspace directory, optionally recursing into su
 | `show_hidden` | body | boolean | Include dotfiles. Default `false` |
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
 | `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored (e.g. `.tmp`). Ignored ancestor directories of a match are kept so the match stays reachable. Allowing dot-paths also requires `show_hidden: true` |
 | `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | Attach each entry's git status. Default `false` |
 
@@ -2348,7 +2438,6 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 | `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `watch_fs_add` / `watch_fs_remove` | `{ session_id, paths, recursive? }` | Subscribe to / unsubscribe from file-change notifications (`event.fs.changed`) |
 | `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
 
 ### Events
@@ -2368,7 +2457,7 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 | Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
 | Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
 
-Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
+Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, is_default, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 

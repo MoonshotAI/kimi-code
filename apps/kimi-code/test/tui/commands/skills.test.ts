@@ -102,4 +102,15 @@ describe('skill slash commands', () => {
     expect(built.commands.map((command) => command.name)).toEqual(['outer.inner']);
     expect(built.commandMap.get('outer.inner')).toBe('outer.inner');
   });
+
+  it('filters skills restricted to other scopes', () => {
+    const built = buildSkillSlashCommands([
+      skill('custom-theme', 'inline', { source: 'builtin', scopes: ['tui'] }),
+      skill('web-helper', 'inline', { source: 'builtin', scopes: ['web'] }),
+      skill('write-goal', 'inline', { source: 'builtin' }),
+    ]);
+
+    expect(built.commands.map((command) => command.name)).toEqual(['custom-theme', 'write-goal']);
+    expect(built.commandMap.has('web-helper')).toBe(false);
+  });
 });

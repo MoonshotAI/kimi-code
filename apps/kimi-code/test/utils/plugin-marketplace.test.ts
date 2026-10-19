@@ -17,7 +17,7 @@ import {
   type PluginMarketplaceEntry,
 } from '#/utils/plugin-marketplace';
 
-const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
+const REPO_ROOT = join(import.meta.dirname, '../../../..');
 
 describe('computeUpdateStatus', () => {
   it('reports not-installed when the plugin is absent', () => {
@@ -141,7 +141,7 @@ describe('loadPluginMarketplace', () => {
     },
     {
       id: 'kimi-webbridge',
-      displayName: 'Kimi WebBridge',
+      displayName: 'Kimi Browser Extension',
       description: 'fake wb',
       tier: 'official' as const,
       source: 'capability:kimi-webbridge',
@@ -175,7 +175,7 @@ describe('loadPluginMarketplace', () => {
           {
             id: 'kimi-webbridge',
             tier: 'official',
-            displayName: 'Kimi WebBridge',
+            displayName: 'Kimi Browser Extension',
             version: '1.12.0',
             source: './kimi-webbridge',
           },
@@ -484,7 +484,7 @@ describe('loadPluginMarketplace', () => {
           {
             id: 'kimi-webbridge',
             type: 'guide',
-            displayName: 'Kimi WebBridge',
+            displayName: 'Kimi Browser Extension',
             source: './kimi-webbridge',
             installSkill: 'install',
             removeSkill: 'remove',

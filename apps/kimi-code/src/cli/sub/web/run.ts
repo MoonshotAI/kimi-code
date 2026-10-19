@@ -16,11 +16,12 @@ import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command, Option } from 'commander';
 
-import { CLI_SHUTDOWN_TIMEOUT_MS, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
+import { CLI_MSH_PLATFORM, CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT, WEB_USER_AGENT_SUFFIX } from '#/constant/app';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { persistedKimiOAuthRef } from '#/utils/region';
 import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
@@ -32,6 +33,7 @@ import {
 } from '../../version';
 import {
   accessUrlLines,
+  browserOpenOrigin,
   buildOpenableUrl,
   isLoopbackHost,
   splitTokenFragment,
@@ -40,8 +42,6 @@ import { type NetworkAddress } from './networks';
 import {
   formatRemoteControlOutput,
   formatRemoteControlStatus,
-  isRemoteControlEnabled,
-  REMOTE_CONTROL_FLAG_ENV,
   startRemoteControl,
   type RemoteControlHandle,
   type RemoteControlOptions,
@@ -77,9 +77,14 @@ export interface WebCliOptions extends ServerCliOptions {
   remoteControl?: boolean;
 }
 
+export interface ForegroundControls {
+  /** Ask the foreground runner to shut the server down and exit (like SIGINT). */
+  requestShutdown(reason: string): void;
+}
+
 export interface StartForegroundHooks {
   /** Fires once the server is listening, before the foreground runner blocks. */
-  onReady?: (origin: string) => void | Promise<void>;
+  onReady?: (origin: string, controls?: ForegroundControls) => void | Promise<void>;
   onShutdown?: (reason: string) => void | Promise<void>;
 }
 
@@ -171,10 +176,8 @@ export function buildWebCommand(
     withServerOptions.addOption(
       new Option(
         '--rc, --remote-control',
-        'Expose the web UI through Kimi Remote Control (experimental).',
-      )
-        .default(false)
-        .hideHelp(!isRemoteControlEnabled()),
+        'Expose the web UI through Kimi Remote Control.',
+      ).default(false),
     );
   }
   return withServerOptions
@@ -196,11 +199,6 @@ export async function handleWebCommand(
   deps: WebCommandDeps = DEFAULT_WEB_COMMAND_DEPS,
 ): Promise<void> {
   const parsed = parseServerOptions(opts);
-  if (opts.remoteControl === true && !isRemoteControlEnabled()) {
-    throw new Error(
-      `--remote-control is experimental: set ${REMOTE_CONTROL_FLAG_ENV}=1 (or KIMI_CODE_EXPERIMENTAL_FLAG=1) to enable it.`,
-    );
-  }
   if (opts.remoteControl === true && parsed.dangerousBypassAuth) {
     throw new Error('--remote-control cannot be combined with --dangerous-bypass-auth.');
   }
@@ -210,7 +208,7 @@ export async function handleWebCommand(
   const run = deps.startServerForeground ?? startServerForeground;
   let remoteControl: RemoteControlHandle | undefined;
   await run(parsed, {
-    onReady: async (origin) => {
+    onReady: async (origin, controls) => {
       // Resolve the persistent token only once the server is up: a fresh
       // server writes `server.token` on first boot, so reading it beforehand
       // would miss first-time starts and the browser would hit the auth gate.
@@ -222,6 +220,7 @@ export async function handleWebCommand(
       if (opts.remoteControl === true) {
         if (token === undefined) throw new Error('Unable to read the local server token.');
         const dataDir = getDataDir();
+        const persisted = persistedKimiOAuthRef();
         let outputReady = false;
         const pendingStatuses: string[] = [];
         const onStatus = (status: RemoteControlStatus): void => {
@@ -233,14 +232,32 @@ export async function handleWebCommand(
           homeDir: dataDir,
           localOrigin: origin,
           localServerToken: token,
+          clientVersion: `${CLI_USER_AGENT_PRODUCT}/${getVersion()}`,
+          urlSource: CLI_MSH_PLATFORM,
+          configuredOAuthKey: persisted?.key,
+          configuredOAuthHost: persisted?.oauthHost,
           stderr: deps.stderr,
           onStatus,
         });
+        void remoteControl.closed.then(
+          (reason) => {
+            if (reason === 'user_requested') {
+              controls?.requestShutdown('remote_control_user_requested');
+            }
+          },
+          (error) => {
+            deps.stderr.write(
+              `Remote Control lock release failed: ${error instanceof Error ? error.message : String(error)}\n`,
+            );
+            controls?.requestShutdown('remote_control_closed');
+          },
+        );
         const qrCode = await generateRemoteControlQr(remoteControl.url, dataDir);
         deps.stdout.write(
           formatRemoteControlOutput({
             url: remoteControl.url,
             localOrigin: origin,
+            localServerToken: token,
             deviceName: remoteControl.deviceName,
             qrCode: qrCode.terminal,
             pngPath: qrCode.pngPath,
@@ -261,7 +278,8 @@ export async function handleWebCommand(
           : formatReadyLine(origin, token, parsed.dangerousBypassAuth),
       );
       if (opts.open === true) {
-        deps.openUrl(token !== undefined ? buildWebUrl(origin, token) : origin);
+        const openOrigin = browserOpenOrigin(origin);
+        deps.openUrl(token !== undefined ? buildWebUrl(openOrigin, token) : openOrigin);
       }
     },
     onShutdown: async () => {
@@ -414,13 +432,15 @@ async function runServerInProcess(
   running.logger.info({ address: running.address }, 'server ready');
 
   try {
-    await hooks.onReady?.(running.address);
+    await hooks.onReady?.(running.address, {
+      requestShutdown: (reason) => void shutdown(reason),
+    });
   } catch (error) {
     try {
       await hooks.onShutdown?.('startup_failed');
     } finally {
       await running.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
     }
     throw error;
   }
@@ -482,7 +502,7 @@ export function formatReadyBanner(
     return frag === '' ? url(base) : url(base) + dim(frag);
   };
 
-  const port = Number(new URL(origin).port);
+  const port = Number(origin.slice(origin.lastIndexOf(':') + 1));
   // Borderless header: the Kimi sprite (the little mascot with eyes) sits next
   // to the title, keeping the brand without the enclosing box.
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;

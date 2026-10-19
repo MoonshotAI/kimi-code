@@ -3,12 +3,12 @@ import {
   buildImageCompressionCaption,
   compressBase64ForModel,
   type ContentPart,
-  gateImageFormatParts,
   type McpServerConfig,
   parseImageDataUrl,
   persistOriginalImage,
 } from '@moonshot-ai/agent-core-v2';
-import type { ToolInputDisplay, ToolResultEvent } from '@moonshot-ai/protocol';
+import type { ToolResultEvent } from '@moonshot-ai/agent-core-v2/events';
+import type { ToolInputDisplay } from '@moonshot-ai/agent-core-v2/tool/toolInputDisplay';
 
 import { log } from './log';
 import { isHideOutputMarker } from './marker';
@@ -83,18 +83,19 @@ export function acpBlocksToContentParts(blocks: readonly ContentBlock[]): readon
  * (`resolvePromptMediaFiles`). Best effort: a part that cannot be compressed
  * is passed through unchanged.
  *
- * This is NOT duplicated by the engine: agent-core-v2's prompt pipeline
+ * Compression is NOT duplicated by the engine: agent-core-v2's prompt pipeline
  * (`agent/prompt/promptService.ts`) only *extracts* pre-existing compression
  * captions from user text (rerouting them to system reminders) — it never
- * gates or compresses images at the prompt entry, so the edge ingestion point
- * owns the step.
+ * compresses images at the prompt entry, so the edge ingestion point owns
+ * that step.
  *
- * The format gate (`gateImageFormatParts`) runs first: parts whose MIME is
- * outside the provider-accepted set are never forwarded — the part is
- * dropped and a text notice stands in, so one unsupported image cannot
- * poison the session history; accepted MIME aliases (`image/jpg`,
- * case/whitespace variants) are rewritten to the canonical form strict
- * provider whitelists require.
+ * Format gating is deliberately left to the engine: the accepted image
+ * formats depend on the provider the agent is bound to, which this edge does
+ * not know. The engine's prompt pipeline gates every image part against that
+ * provider's set (dropping rejected parts for a text notice and rewriting
+ * accepted MIME aliases to their canonical form) before anything reaches the
+ * session history, so parts in formats we cannot re-encode pass through here
+ * untouched.
  *
  * Compression is never silent: a re-encoded image gains a caption text part
  * immediately before it stating what the original was, and the original bytes
@@ -117,7 +118,7 @@ export async function compressPromptImageParts(
   } = {},
 ): Promise<ContentPart[]> {
   const out: ContentPart[] = [];
-  for (const part of gateImageFormatParts(parts)) {
+  for (const part of parts) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {

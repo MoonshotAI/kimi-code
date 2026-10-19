@@ -1,12 +1,17 @@
 import {
   ErrorCodes,
+  IAgentChangeNotifierService,
   IAgentContextMemoryService,
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
   IAgentLifecycleService,
   IAgentLoopService,
+  IAgentPluginService,
   IAuthSummaryService,
+  IConfigService,
+  IPluginService,
+  ISessionAgentProfileCatalog,
   ISessionActivityView,
   ISessionBtwService,
   ISessionContext,
@@ -18,20 +23,27 @@ import {
   SessionCreated,
   IWorkspaceAliases,
   ISessionManager,
+  IDefaultWorkspace,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
+  closeSessionById,
   getLiveSessionById,
   programForSession,
+  resolveSubagentModelPool,
   resumeSessionById,
   setSessionArchived,
   isError2,
   Error2,
   type ContextMessage,
+  type DefaultWorkspaceUnavailableError,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type Scope,
   type SessionSummary,
+  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { defaultWorkspaceUnavailableDataSchema } from '../protocol/default-workspace';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -41,6 +53,7 @@ import {
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
+  deleteSessionResponseSchema,
   forkSessionRequestSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
@@ -166,7 +179,15 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export interface SessionsRoutesDeps {
+  readonly sessionEventCursor: (sessionId: string) => Promise<{ seq: number; epoch: string }>;
+}
+
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  deps: SessionsRoutesDeps,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -177,15 +198,34 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE]: {
+          dataSchema: defaultWorkspaceUnavailableDataSchema,
+        },
       },
-      description: 'Create a new session',
+      description:
+        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the home folder) and cannot be combined with workspace_id or metadata.',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const body = req.body;
       const callerCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
       const workspaceId = body.workspace_id;
-      if (workspaceId === undefined && callerCwd === undefined) {
+      const useDefault = body.default_workspace === true;
+      if (useDefault && (workspaceId !== undefined || body.metadata !== undefined)) {
+        reply.send(
+          buildValidationEnvelope(
+            [
+              {
+                path: 'default_workspace',
+                message: 'default_workspace cannot be combined with workspace_id or metadata',
+              },
+            ],
+            req.id,
+          ),
+        );
+        return;
+      }
+      if (!useDefault && workspaceId === undefined && callerCwd === undefined) {
         reply.send(
           buildValidationEnvelope(
             [{ path: 'metadata.cwd', message: 'either workspace_id or metadata.cwd is required' }],
@@ -196,7 +236,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
       }
 
       const registry = core.accessor.get(IWorkspaceService);
-      let workDir: string;
+      let workDir: string | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -225,10 +265,11 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
         workDir = workspace.root;
       } else {
-        workDir = callerCwd as string;
+        workDir = callerCwd;
       }
 
       try {
+        workDir ??= await core.accessor.get(IDefaultWorkspace).ensure();
         const touched = await registry.createOrTouch(workDir);
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: touched.id,
@@ -403,6 +444,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     },
     async (req, reply) => {
       const { session_id } = req.params;
+      const cursor = await deps.sessionEventCursor(session_id);
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
       if (summary === undefined) {
         reply.send(
@@ -423,7 +465,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         return;
       }
       reply.send(
-        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
+        okEnvelope(
+          toWireSession(summary, cwd, resolveSessionFacts(core, session_id), cursor.seq),
+          req.id,
+        ),
       );
     },
   );
@@ -594,6 +639,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
+          deleteSessionResponseSchema,
         ]),
       },
       errors: {
@@ -711,16 +757,14 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         if (childHandler === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const handle = await core.accessor.get(ISessionManager).createChild({
+        const meta = await core.accessor.get(ISessionManager).createChild({
           sourceSessionId: session_id,
           title: req.body.title,
           metadata: req.body.metadata,
         });
-        const meta = await handle.accessor.get(ISessionMetadata).read();
-        const ctx = handle.accessor.get(ISessionContext);
         const session = toWireSession(
-          { ...meta, workspaceId: ctx.workspaceId },
-          ctx.cwd,
+          { ...meta, workspaceId: childHandler.workspaceId },
+          meta.cwd ?? '',
           resolveSessionFacts(core, meta.id),
         );
         core.accessor.get(IEventService).publish(
@@ -844,7 +888,16 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
   );
 }
 
-type SessionAction = 'fork' | 'compact' | 'undo' | 'abort' | 'btw' | 'restore' | 'archive';
+type SessionAction =
+  | 'fork'
+  | 'compact'
+  | 'undo'
+  | 'abort'
+  | 'btw'
+  | 'restore'
+  | 'archive'
+  | 'delete'
+  | 'reload';
 
 interface SessionActionExtra {
   readonly core: Scope;
@@ -865,6 +918,8 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   btw: { handle: btwSessionAction },
   restore: { handle: restoreSessionAction },
   archive: { handle: archiveSessionAction },
+  delete: { handle: deleteSessionAction },
+  reload: { handle: reloadSessionAction },
 };
 
 async function forkSessionAction(
@@ -875,16 +930,14 @@ async function forkSessionAction(
   if (forkHandler === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const handle = await core.accessor.get(ISessionManager).fork({
+  const meta = await core.accessor.get(ISessionManager).fork({
     sourceSessionId: id,
     title: body.title,
     metadata: body.metadata,
   });
-  const meta = await handle.accessor.get(ISessionMetadata).read();
-  const sessionCtx = handle.accessor.get(ISessionContext);
   const session = toWireSession(
-    { ...meta, workspaceId: sessionCtx.workspaceId },
-    sessionCtx.cwd,
+    { ...meta, workspaceId: forkHandler.workspaceId },
+    meta.cwd ?? '',
     resolveSessionFacts(core, meta.id),
   );
   core.accessor
@@ -936,7 +989,7 @@ async function undoSessionAction(
 async function abortSessionAction(ctx: SessionActionCtx): Promise<void> {
   const { core, req, reply, id } = ctx;
   const agent = await resolveMainAgent(core, id);
-  agent.accessor.get(IAgentLoopService).cancelFromUser();
+  agent.accessor.get(IAgentLoopService).cancel();
   requestLog(req)?.info({ session_id: id, action: 'abort' }, 'session action completed');
   reply.send(okEnvelope({ aborted: true }, req.id));
 }
@@ -982,6 +1035,128 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
   reply.send(okEnvelope({ archived: true }, req.id));
 }
 
+async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  await core.accessor.get(ISessionManager).delete(id);
+  requestLog(req)?.info({ session_id: id, action: 'delete' }, 'session action completed');
+  reply.send(okEnvelope({ deleted: true }, req.id));
+}
+
+async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  const live = getLiveSessionById(core.accessor, id);
+  const indexEntry =
+    live === undefined ? await core.accessor.get(ISessionIndex).get(id) : undefined;
+  if (live !== undefined) {
+    const agentLifecycle = live.accessor.get(IAgentLifecycleService);
+    for (const agent of agentLifecycle.list()) {
+      const agentHandle = agentLifecycle.handleOf(agent.agentId);
+      if (agentHandle === undefined) continue;
+      if (agentHandle.accessor.get(IAgentLoopService).snapshot().state === 'running') {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while a turn is running`,
+          { details: { sessionId: id } },
+        );
+      }
+      if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) {
+        throw new Error2(
+          ErrorCodes.SESSION_BUSY,
+          `Session "${id}" cannot be reloaded while compaction is running`,
+          { details: { sessionId: id } },
+        );
+      }
+    }
+  } else if (indexEntry === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const workspaceId =
+    live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
+  let previousSubagentNames: readonly string[] | undefined;
+  let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
+  let staleNotifier: IAgentChangeNotifierService | undefined;
+  if (live !== undefined) {
+    const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+    if (main !== undefined) {
+      previousSubagentNames = main.accessor
+        .get(ISessionAgentProfileCatalog)
+        .list()
+        .map((profile) => profile.name);
+      const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
+      previousModelPool =
+        pool === undefined
+          ? null
+          : { defaultModel: pool.defaultModel, models: { ...pool.models } };
+      staleNotifier = main.accessor.get(IAgentChangeNotifierService);
+      staleNotifier.mute();
+    }
+  }
+  try {
+    await core.accessor.get(IConfigService).reload();
+    await core.accessor.get(IPluginService).reloadPlugins();
+    await refreshWorkspaceCatalogs(core, workspaceId, id);
+  } catch (error) {
+    if (staleNotifier !== undefined) {
+      staleNotifier.unmute();
+      await Promise.all([
+        staleNotifier.notifyAgentsMdChanges(),
+        staleNotifier.notifySkillChanges(),
+        staleNotifier.notifySubagentChanges({}),
+      ]).catch(() => undefined);
+    }
+    throw error;
+  }
+  if (live !== undefined) {
+    await closeSessionById(core.accessor, id);
+  }
+  const handle = await resumeSessionById(core.accessor, id);
+  if (handle === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+  await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+  if (main !== undefined) {
+    const notifier = main.accessor.get(IAgentChangeNotifierService);
+    await notifier.notifyAgentsMdChanges();
+    await notifier.notifySkillChanges();
+    await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+  }
+  const meta = await handle.accessor.get(ISessionMetadata).read();
+  const sessionCtx = handle.accessor.get(ISessionContext);
+  const session = toWireSession(
+    { ...meta, workspaceId: sessionCtx.workspaceId },
+    sessionCtx.cwd,
+    resolveSessionFacts(core, meta.id),
+  );
+  requestLog(req)?.info({ session_id: id, action: 'reload' }, 'session action completed');
+  reply.send(okEnvelope(session, req.id));
+}
+
+async function refreshWorkspaceCatalogs(
+  core: Scope,
+  workspaceId: string | undefined,
+  excludedSessionId: string,
+): Promise<void> {
+  if (workspaceId !== undefined) {
+    const target = core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (target !== undefined) {
+      await target.program.instructions.reload();
+      await target.program.skills.reload();
+      await target.program.agentProfiles.reload().catch(() => undefined);
+      await target.program.userAgentProfiles.reload().catch(() => undefined);
+    }
+  }
+  const sessions = core.accessor.get(ISessionManager).list();
+  await Promise.all(
+    sessions.map(async (session) => {
+      if (session.id === excludedSessionId) return;
+      const main = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+      if (main === undefined) return;
+      await main.accessor.get(IAgentPluginService).refreshSessionStart();
+    }),
+  );
+}
+
 export interface SessionWireFields {
   readonly id: string;
   readonly workspaceId: string;
@@ -999,6 +1174,7 @@ export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
   facts: SessionFacts,
+  lastSeq?: number,
 ): Session {
   return {
     id: fields.id,
@@ -1020,7 +1196,7 @@ export function toWireSession(
     usage: emptySessionUsage(),
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
+    last_seq: lastSeq ?? 0,
   };
 }
 
@@ -1137,6 +1313,16 @@ function sendMappedError(
   const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
+      case ErrorCodes.DEFAULT_WORKSPACE_UNAVAILABLE: {
+        const { path, reason } = (err as DefaultWorkspaceUnavailableError).details;
+        reply.send({
+          code: ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE,
+          msg: err.message,
+          data: { path, reason },
+          request_id: requestId,
+        });
+        return;
+      }
       case 'session.not_found':
       case 'agent.not_found':
         reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));

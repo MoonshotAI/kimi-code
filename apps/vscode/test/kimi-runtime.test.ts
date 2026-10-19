@@ -20,19 +20,17 @@ import type {
   SessionSummary,
   ThinkingEffort,
 } from "@moonshot-ai/kimi-code-sdk";
+import { setTelemetryContext, track, withTelemetryContext } from "@moonshot-ai/kimi-telemetry";
 import { describe, expect, it, vi } from "vitest";
 
 import { Events } from "../shared/bridge";
 import { KimiRuntime, type OpenSessionOptions } from "../src/runtime/kimi-runtime";
 
 const sdkFactories = vi.hoisted(() => {
-  const v1Harness = { homeDir: "/tmp/kimi-runtime-v1-home", close: vi.fn(async () => undefined) };
-  const v2Harness = { homeDir: "/tmp/kimi-runtime-v2-home", close: vi.fn(async () => undefined) };
+  const harness = { homeDir: "/tmp/kimi-runtime-home", close: vi.fn(async () => undefined) };
   return {
-    v1Harness,
-    v2Harness,
-    createKimiHarness: vi.fn(() => v1Harness),
-    createKimiHarnessV2: vi.fn(() => v2Harness),
+    harness,
+    createKimiHarness: vi.fn(() => harness),
   };
 });
 
@@ -41,7 +39,6 @@ vi.mock("@moonshot-ai/kimi-code-sdk", async (importOriginal) => {
   return {
     ...original,
     createKimiHarness: sdkFactories.createKimiHarness,
-    createKimiHarnessV2: sdkFactories.createKimiHarnessV2,
   };
 });
 
@@ -266,15 +263,15 @@ function createRuntime(
 }
 
 describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
-  it("creates the v2 harness by default and the v1 harness for rollback", async () => {
-    const defaults = new KimiRuntime({
+  it("creates the harness through the SDK factory when none is injected", async () => {
+    const runtime = new KimiRuntime({
       version: "0.6.0",
       broadcast: () => undefined,
       captureBaseline: () => undefined,
       log: () => undefined,
     });
-    expect(sdkFactories.createKimiHarnessV2).toHaveBeenCalledOnce();
-    expect(sdkFactories.createKimiHarnessV2).toHaveBeenCalledWith({
+    expect(sdkFactories.createKimiHarness).toHaveBeenCalledOnce();
+    expect(sdkFactories.createKimiHarness).toHaveBeenCalledWith({
       homeDir: undefined,
       identity: {
         productName: "kimi-code-vscode",
@@ -282,21 +279,14 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
         platform: "kimi_code_vscode",
       },
       uiMode: "vscode",
+      telemetry: {
+        track,
+        withContext: withTelemetryContext,
+        setContext: setTelemetryContext,
+      },
     });
-    expect(sdkFactories.createKimiHarness).not.toHaveBeenCalled();
-    expect(defaults.harness).toBe(sdkFactories.v2Harness as unknown as KimiHarness);
-    await defaults.dispose();
-
-    const rollback = new KimiRuntime({
-      version: "0.6.0",
-      useAgentCoreV1: true,
-      broadcast: () => undefined,
-      captureBaseline: () => undefined,
-      log: () => undefined,
-    });
-    expect(sdkFactories.createKimiHarness).toHaveBeenCalledOnce();
-    expect(rollback.harness).toBe(sdkFactories.v1Harness as unknown as KimiHarness);
-    await rollback.dispose();
+    expect(runtime.harness).toBe(sdkFactories.harness as unknown as KimiHarness);
+    await runtime.dispose();
   });
 
   it("forwards the requested settings when creating an SDK session", async () => {

@@ -15,19 +15,26 @@ import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IFlagService } from '#/app/flag/flag';
+import { IConfigService } from '#/app/config/config';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   ISessionIndex,
   ISessionIndexMirror,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
-import { recencyColumn, sessionCollection } from '#/app/sessionIndex/sessionIndexModel';
+import {
+  SESSION_INDEX_MANIFEST,
+  recencyColumn,
+  sessionCollection,
+} from '#/app/sessionIndex/sessionIndexModel';
+import { markSessionDirty } from '#/app/sessionIndex/sessionIndexDirtyJournal';
 import { FileSessionIndex } from '#/app/sessionIndex/sessionIndexService';
 import {
   drainSessionIndexMirror,
   SessionIndexMirror,
 } from '#/app/sessionIndex/sessionIndexMirrorService';
 import { drainQueryStoreDisposals, MiniDbQueryStore } from '#/persistence/backends/minidb/miniDbQueryStore';
+import { DATABASE_SECTION } from '#/persistence/configSection';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -43,7 +50,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import { stubSessionIndexMirror } from './stubs';
 import { stubBootstrap } from '../bootstrap/stubs';
-import { stubFlag } from '../flag/stubs';
+import { stubConfigService } from '../config/stubs';
 import { stubLog } from '../../_base/log/stubs';
 import { stubQueryStore } from '../../persistence/interface/stubs';
 
@@ -51,7 +58,7 @@ const WORK_DIR = '/home/user/repo';
 
 function canonicalIds(summaries: readonly SessionSummary[]): string[] {
   return [...summaries]
-    .sort((a, b) => (a.updatedAt !== b.updatedAt ? b.updatedAt - a.updatedAt : a.id < b.id ? 1 : -1))
+    .toSorted((a, b) => (a.updatedAt !== b.updatedAt ? b.updatedAt - a.updatedAt : a.id < b.id ? 1 : -1))
     .map((s) => s.id);
 }
 
@@ -81,15 +88,17 @@ describe('FileSessionIndex (legacy)', () => {
     await fsp.rm(homeDir, { recursive: true, force: true });
   });
 
-  function build(): ISessionIndex {
-    const fileStorage = new FileStorageService(homeDir);
+  function build(
+    fileStorage: FileStorageService = new FileStorageService(homeDir),
+  ): ISessionIndex {
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IQueryStore, stubQueryStore()),
       stubPair(ISessionIndexMirror, stubSessionIndexMirror()),
-      stubPair(IFlagService, stubFlag(false)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: false } })),
+      stubPair(ITelemetryService, noopTelemetryService),
       stubPair(ILogService, stubLog()),
     ]);
     disposeHost = () => {
@@ -214,19 +223,6 @@ describe('FileSessionIndex (legacy)', () => {
     expect(await store.count({ workspaceIds: ['wd_unknown'] })).toBe(0);
   });
 
-  it('listRecent merges a workspace-id set into one recency-ordered page', async () => {
-    const otherId = encodeWorkDirKey('/home/user/other');
-    await seedSession('a1', { createdAt: 1, updatedAt: 1 });
-    await seedSession('a3', { createdAt: 3, updatedAt: 3 });
-    await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
-    await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
-
-    const store = build();
-    const page = await store.listRecent({ workspaceIds: [workspaceId, otherId] });
-    expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
-    expect(page.items[0]?.workspaceId).toBe(otherId);
-  });
-
   it('listRecent applies limit after the cross-bucket merge', async () => {
     const otherId = encodeWorkDirKey('/home/user/other');
     await seedSession('a1', { createdAt: 1, updatedAt: 1 });
@@ -296,6 +292,51 @@ describe('FileSessionIndex (legacy)', () => {
     expect(unknown.items).toEqual([]);
     expect(unknown.nextCursor).toBeUndefined();
   });
+
+  class CountingStorage extends FileStorageService {
+    listCalls = 0;
+    override async list(scope: string, prefix?: string): Promise<readonly string[]> {
+      this.listCalls += 1;
+      return super.list(scope, prefix);
+    }
+  }
+
+  it('get resolves through the session_index mapping without enumerating session directories', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('decoy', { title: 'decoy' });
+    await seedSession('target', { title: 'mapped' }, otherId);
+    const fileStorage = new CountingStorage(homeDir);
+    await fileStorage.write(
+      '',
+      'session_index.jsonl',
+      new TextEncoder().encode(
+        `${JSON.stringify({ sessionId: 'target', sessionDir: join(homeDir, 'sessions', otherId, 'target'), workDir: '/home/user/other' })}\n`,
+      ),
+    );
+
+    const store = build(fileStorage);
+    const summary = await store.get('target');
+    expect(summary?.title).toBe('mapped');
+    expect(fileStorage.listCalls).toBe(0);
+  });
+
+  it('get falls back to probing workspace directories when the mapping is missing or stale', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('moved', { title: 'real' }, otherId);
+    const fileStorage = new CountingStorage(homeDir);
+    const store = build(fileStorage);
+    expect((await store.get('moved'))?.title).toBe('real');
+
+    await fileStorage.write(
+      '',
+      'session_index.jsonl',
+      new TextEncoder().encode(
+        `${JSON.stringify({ sessionId: 'moved', sessionDir: join(homeDir, 'sessions', 'wd_gone_1234567890ab', 'moved'), workDir: '/gone' })}\n`,
+      ),
+    );
+    expect((await store.get('moved'))?.title).toBe('real');
+    expect(await store.get('missing')).toBeUndefined();
+  });
 });
 
 describe('FileSessionIndex (read model)', () => {
@@ -350,7 +391,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -507,6 +549,22 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.get('active')).toMatchObject({ id: 'active', title: 'hello' });
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(2);
+  });
+
+  it('prepare skips stray files and state-less directories instead of failing the projection', async () => {
+    await seedSession('active', { title: 'hello', createdAt: 1, updatedAt: 2 });
+    await fsp.writeFile(join(sessionsDir, 'workspace.json'), '{}');
+    await fsp.writeFile(join(sessionsDir, workspaceId, 'workspace.json'), '{}');
+    await fsp.writeFile(join(sessionsDir, workspaceId, '.DS_Store'), 'junk');
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'no-state'), { recursive: true });
+
+    const store = build();
+    const status = await store.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['active']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(1);
   });
 
   it('serves warm reads without touching the session directories', async () => {
@@ -740,7 +798,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -785,16 +844,17 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId], includeArchived: true })).toBe(3);
   });
 
-  it('a crashed initial projection falls back to disk and recovers on retry', async () => {
+  it('a crashed or rebuilt mid-flight projection falls back to disk and recovers on retry', async () => {
     await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
     await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
 
     class FlakyQueryStore extends MiniDbQueryStore {
       failNextBatch = false;
+      failure: Error = new Error('injected projection crash');
       override async batch(ops: readonly WriteOp[]): Promise<void> {
         if (this.failNextBatch) {
           this.failNextBatch = false;
-          throw new Error('injected projection crash');
+          throw this.failure;
         }
         return super.batch(ops);
       }
@@ -812,7 +872,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -838,6 +899,20 @@ describe('FileSessionIndex (read model)', () => {
     expect(recovered).toEqual({ state: 'ready', generation: 1, degradedCount: 1 });
     const warm = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['b', 'a']);
+
+    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const db = await internal.dbPromise;
+    db.batch = () =>
+      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    await store.reprojectNow();
+    expect(store.status().state).toBe('degraded');
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toBeUndefined();
+
+    const rebuilt = await store.prepare();
+    expect(rebuilt.state).toBe('ready');
+    const after = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(after.items.map((s) => s.id)).toEqual(['b', 'a']);
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(2);
   });
 
   it('a crashed re-projection keeps readers on the previous generation', async () => {
@@ -868,7 +943,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -927,6 +1003,7 @@ describe('FileSessionIndex (read model)', () => {
     expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
 
     await seedSession('keep', { title: 'after', createdAt: 1, updatedAt: 4 });
+    await markSessionDirty(new FileStorageService(homeDir), 'sessions', 'keep');
     await fsp.rm(join(sessionsDir, workspaceId, 'gone'), { recursive: true, force: true });
     await store.reconcileNow();
 
@@ -956,7 +1033,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1015,7 +1093,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1073,7 +1152,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1148,7 +1228,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1166,12 +1247,12 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
     const second = await store.listRecent({ workspaceIds: [workspaceId] });
     expect(second.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
-    expect(docs.gets).toBe(10);
+    expect(docs.gets).toBe(6);
 
     (queryStore as GatedQueryStore).release();
     const status = await preparing;
     expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
-    expect(docs.gets).toBe(10);
+    expect(docs.gets).toBe(6);
   });
 
   it('status() walks the read-model lifecycle and stays diagnosable through degradation', async () => {
@@ -1215,7 +1296,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1261,6 +1343,8 @@ describe('FileSessionIndex (read model)', () => {
     const first = build();
     await first.prepare();
     expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const published = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(published).toMatchObject({ seq: 1, sourceSessionCount: 3 });
     disposeHost?.();
     disposeHost = undefined;
     await drainSessionIndexMirror();
@@ -1280,7 +1364,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1295,6 +1380,299 @@ describe('FileSessionIndex (read model)', () => {
     const warm = await second.listRecent({ workspaceIds: [workspaceId] });
     expect(warm.items.map((s) => s.id)).toEqual(['a', 'b', 'c']);
     expect(docs.gets).toBe(0);
+  });
+
+  it('reconciles the current generation on the next startup when the session directories changed externally', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+
+    const first = build();
+    await first.prepare();
+    expect(first.status()).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+
+    const second = build();
+    const status = await second.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 1, degradedCount: 0 });
+    const page = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['c', 'b', 'a']);
+
+    const disposeSecond = disposeHost ?? (() => undefined);
+    disposeSecond();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    await seedSession('d', { title: 'd', createdAt: 4, updatedAt: 5 });
+    const third = build();
+    expect(await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST)).toMatchObject({ seq: 1 });
+    const internal = queryStore as unknown as { dbPromise: Promise<{ batch: unknown }> };
+    const db = await internal.dbPromise;
+    db.batch = () =>
+      Promise.reject(Object.assign(new Error('poisoned'), { code: 'WAL_POISONED' }));
+    const degraded = await third.prepare();
+    expect(degraded.state).toBe('degraded');
+    expect(degraded.reason).toBe('prepare failed');
+
+    const recovered = await third.prepare();
+    expect(recovered.state).toBe('ready');
+    const republished = await third.listRecent({ workspaceIds: [workspaceId] });
+    expect(republished.items.map((s) => s.id)).toEqual(['d', 'c', 'b', 'a']);
+  });
+
+  it('the periodic tick skips reconciliation while the session directories are unchanged', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    const store = build();
+    await store.prepare();
+    const internals = store as unknown as {
+      projector: { reconcile(generation: number): Promise<unknown> };
+      tick(): Promise<void>;
+    };
+    let reconciles = 0;
+    const original = internals.projector.reconcile.bind(internals.projector);
+    internals.projector.reconcile = async (generation: number) => {
+      reconciles += 1;
+      return original(generation);
+    };
+
+    await internals.tick();
+    expect(reconciles).toBe(0);
+
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await internals.tick();
+    expect(reconciles).toBe(1);
+
+    await fsp.rm(join(sessionsDir, workspaceId, 'b'), { recursive: true, force: true });
+    await internals.tick();
+    expect(reconciles).toBe(2);
+    const remaining = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(remaining.items.map((s) => s.id)).toEqual(['a']);
+
+    await internals.tick();
+    expect(reconciles).toBe(2);
+
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'ghost'), { recursive: true });
+    await internals.tick();
+    expect(reconciles).toBe(3);
+    const withoutGhost = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(withoutGhost.items.map((s) => s.id)).toEqual(['a']);
+    await internals.tick();
+    expect(reconciles).toBe(3);
+
+    await seedSession('a', { title: 'a-renamed', createdAt: 1, updatedAt: 4 });
+    await internals.tick();
+    expect(reconciles).toBe(3);
+    expect((await store.get('a'))?.title).toBe('a');
+
+    await markSessionDirty(new FileStorageService(homeDir), 'sessions', 'a');
+    await internals.tick();
+    expect(reconciles).toBe(4);
+    expect((await store.get('a'))?.title).toBe('a-renamed');
+    expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
+    await internals.tick();
+    expect(reconciles).toBe(4);
+  });
+
+  it('the periodic tick compares workspace directory mtimes instead of enumerating sessions', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    const fileStorage = new CountingStorage(homeDir);
+    const store = build(fileStorage);
+    await store.prepare();
+    const internals = store as unknown as {
+      projector: { reconcile(generation: number): Promise<unknown> };
+      tick(): Promise<void>;
+    };
+    let reconciles = 0;
+    const original = internals.projector.reconcile.bind(internals.projector);
+    internals.projector.reconcile = async (generation: number) => {
+      reconciles += 1;
+      return original(generation);
+    };
+
+    fileStorage.listCalls = 0;
+    await internals.tick();
+    expect(reconciles).toBe(0);
+    expect(fileStorage.listCalls).toBe(2);
+
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await internals.tick();
+    expect(reconciles).toBe(1);
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['b', 'a']);
+
+    await fsp.rm(join(sessionsDir, workspaceId, 'b'), { recursive: true, force: true });
+    await internals.tick();
+    expect(reconciles).toBe(2);
+    const remaining = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(remaining.items.map((s) => s.id)).toEqual(['a']);
+
+    fileStorage.listCalls = 0;
+    await internals.tick();
+    expect(reconciles).toBe(2);
+    expect(fileStorage.listCalls).toBe(2);
+  });
+
+  it('re-projects when the published checkpoint predates the current schema version', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+
+    const first = build();
+    await first.prepare();
+    await queryStore.setCheckpoint(SESSION_INDEX_MANIFEST, { seq: 1 });
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+
+    const second = build();
+    const status = await second.prepare();
+    expect(status).toEqual({ state: 'ready', generation: 2, degradedCount: 0 });
+    const page = await second.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('reconciliation reads only the journaled sessions and refreshes the checkpoint', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    await store.prepare();
+    expect(docs.gets).toBe(6);
+    docs.gets = 0;
+
+    await seedSession('a', { title: 'a2', createdAt: 1, updatedAt: 5 });
+    await markSessionDirty(fileStorage, 'sessions', 'a');
+    await store.reconcileNow();
+
+    expect(docs.gets).toBe(2);
+    expect((await store.get('a'))?.title).toBe('a2');
+    expect(await store.listRecent({ workspaceIds: [workspaceId] })).toMatchObject({
+      items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
+    });
+    const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 2 });
+    expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
+  });
+
+  it('re-projection only re-reads new or changed state.json files', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 3 });
+    await seedSession('c', { title: 'c', createdAt: 3, updatedAt: 4 });
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const fileStorage = new FileStorageService(homeDir);
+    const docs = new CountingDocs(fileStorage);
+    const host = createScopedTestHost([
+      stubPair(IFileSystemStorageService, fileStorage),
+      stubPair(IAtomicDocumentStore, docs),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(ILogService, stubLog()),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
+    ]);
+    disposeHost = () => {
+      host.dispose();
+    };
+    queryStore = host.app.accessor.get(IQueryStore);
+    mirror = host.app.accessor.get(ISessionIndexMirror);
+    const store = host.app.accessor.get(ISessionIndex) as FileSessionIndex;
+
+    await store.prepare();
+    expect(docs.gets).toBe(6);
+    docs.gets = 0;
+
+    await seedSession('b', { title: 'b2', createdAt: 2, updatedAt: 5 });
+    await seedSession('d', { title: 'd', createdAt: 4, updatedAt: 6 });
+    await fsp.rm(join(sessionsDir, workspaceId, 'c'), { recursive: true, force: true });
+    await store.reprojectNow();
+
+    expect(docs.gets).toBe(4);
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['d', 'b', 'a']);
+    expect(page.items[1]?.title).toBe('b2');
+    expect(await store.count({ workspaceIds: [workspaceId] })).toBe(3);
+  });
+
+  it('a cold restart with a persisted scan cache re-projects without reading any state.json', async () => {
+    await seedSession('a', { title: 'a', createdAt: 1, updatedAt: 3 });
+    await seedSession('b', { title: 'b', createdAt: 2, updatedAt: 2 });
+
+    class CountingDocs extends JsonAtomicDocumentStore {
+      gets = 0;
+      override async get<T>(scope: string, key: string): Promise<T | undefined> {
+        this.gets += 1;
+        return super.get<T>(scope, key);
+      }
+    }
+    const buildWithDocs = (): { store: FileSessionIndex; docs: CountingDocs } => {
+      const fileStorage = new FileStorageService(homeDir);
+      const docs = new CountingDocs(fileStorage);
+      const host = createScopedTestHost([
+        stubPair(IFileSystemStorageService, fileStorage),
+        stubPair(IAtomicDocumentStore, docs),
+        stubPair(IBootstrapService, stubBootstrap(homeDir)),
+        stubPair(ILogService, stubLog()),
+        stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+        stubPair(ITelemetryService, noopTelemetryService),
+      ]);
+      disposeHost = () => {
+        host.dispose();
+      };
+      queryStore = host.app.accessor.get(IQueryStore);
+      mirror = host.app.accessor.get(ISessionIndexMirror);
+      return { store: host.app.accessor.get(ISessionIndex) as FileSessionIndex, docs };
+    };
+
+    const first = buildWithDocs();
+    await first.store.prepare();
+    expect(first.docs.gets).toBe(4);
+    disposeHost?.();
+    disposeHost = undefined;
+    await drainSessionIndexMirror();
+    await drainQueryStoreDisposals();
+    await fsp.rm(join(homeDir, 'cache', 'query-store'), { recursive: true, force: true });
+
+    const second = buildWithDocs();
+    const status = await second.store.prepare();
+    expect(status.state).toBe('ready');
+    expect(second.docs.gets).toBe(0);
+    const page = await second.store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['a', 'b']);
+    expect(await second.store.count({ workspaceIds: [workspaceId] })).toBe(2);
   });
 
   it('the resume-startup sequence pays one scan: point lookup, projection, then warm lists', async () => {
@@ -1316,7 +1694,8 @@ describe('FileSessionIndex (read model)', () => {
       stubPair(IAtomicDocumentStore, docs),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(ILogService, stubLog()),
-      stubPair(IFlagService, stubFlag(true)),
+      stubPair(IConfigService, stubConfigService({ [DATABASE_SECTION]: { base: true } })),
+      stubPair(ITelemetryService, noopTelemetryService),
     ]);
     disposeHost = () => {
       host.dispose();
@@ -1372,9 +1751,9 @@ describe('FileSessionIndex (read model)', () => {
     const collection = sessionCollection(1);
 
     const seedRows = async (from: number, to: number): Promise<void> => {
-      for (let start = from; start < to; start += 500) {
+      for (let start = from; start < to; start += 5_000) {
         const ops = [];
-        for (let i = start; i < Math.min(start + 500, to); i++) {
+        for (let i = start; i < Math.min(start + 5_000, to); i++) {
           ops.push({
             kind: 'put' as const,
             collection,

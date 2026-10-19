@@ -78,6 +78,8 @@ export class AgentSwarmProgressEstimator {
   private readonly workloadSpreadFactor: number;
   private readonly unfinishedProgressCap: number;
   private readonly maxBoostGain: number;
+  private samplesVersion = 0;
+  private priorCache: { readonly version: number; readonly prior: EstimatePrior | undefined } | undefined;
 
   constructor(options: AgentSwarmProgressEstimatorOptions = {}) {
     this.rateWindowMs = positiveOrDefault(options.rateWindowMs, DEFAULT_RATE_WINDOW_MS);
@@ -102,7 +104,10 @@ export class AgentSwarmProgressEstimator {
   removeMissingMembers(memberKeys: readonly string[]): void {
     const live = new Set(memberKeys);
     for (const memberKey of this.members.keys()) {
-      if (!live.has(memberKey)) this.members.delete(memberKey);
+      if (!live.has(memberKey)) {
+        this.members.delete(memberKey);
+        this.samplesVersion += 1;
+      }
     }
   }
 
@@ -115,6 +120,7 @@ export class AgentSwarmProgressEstimator {
     }
     delete state.terminalAtMs;
     delete state.terminalKind;
+    this.samplesVersion += 1;
   }
 
   markQueued(memberKey: string, nowMs: number): void {
@@ -141,6 +147,7 @@ export class AgentSwarmProgressEstimator {
     state.displayTicks = Math.max(state.displayTicks + 1, state.rawTicks);
     delete state.terminalAtMs;
     delete state.terminalKind;
+    this.samplesVersion += 1;
     return { accepted: true, rawTicks: state.rawTicks };
   }
 
@@ -254,6 +261,7 @@ export class AgentSwarmProgressEstimator {
     state.terminalKind = terminalKind;
     state.displayTicks = Math.max(state.displayTicks, state.rawTicks);
     delete state.lastTargetTicks;
+    this.samplesVersion += 1;
   }
 
   private startWork(state: MemberProgressState, nowMs: number): void {
@@ -291,6 +299,17 @@ export class AgentSwarmProgressEstimator {
   }
 
   private buildPrior(): EstimatePrior | undefined {
+    const cache = this.priorCache;
+    if (cache !== undefined && cache.version === this.samplesVersion) return cache.prior;
+    // The prior depends only on completed members' terminal samples, so it is
+    // reused across every estimate until a mutation bumps the sample version
+    // instead of being rebuilt per running cell per frame.
+    const prior = this.computePrior();
+    this.priorCache = { version: this.samplesVersion, prior };
+    return prior;
+  }
+
+  private computePrior(): EstimatePrior | undefined {
     const samples = this.completedSamples();
     if (samples.length === 0) return undefined;
     return {

@@ -192,7 +192,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/oauth/login` | 轮询登录流程状态 |
 | `DELETE /api/v1/oauth/login` | 取消进行中的登录流程 |
 | `POST /api/v1/oauth/logout` | 登出托管供应商 |
-| `GET /api/v1/oauth/usage` | 套餐用量与限额 |
+| `GET /api/v1/oauth/usage` | 套餐额度与加油包 |
 | `GET /api/v1/oauth/userinfo` | 账号资料 |
 | `GET /api/v1/oauth/region` | 解析客户端所属区域（`mainland-cn` / `global`） |
 
@@ -237,6 +237,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 登出托管供应商：丢弃已存储的 OAuth 凭据、中止进行中的登录流程，并把托管供应商从配置中移除。OAuth 托管的供应商拒绝手动编辑与删除（见下文 `PUT` / `DELETE /api/v1/providers/{provider_id}`），因此要移除它需先登出。
 
+对默认 Kimi 供应商（`managed:kimi-code`），登出还会拆除本机的远程控制并清除缓存的远程控制云端会话。当没有隧道运行或隧道由本机其他进程持有时，登出会先把本机设备下线并持有本机锁，确保凭据被丢弃之前本机任何进程都无法再次开启远程控制；清理失败会中止登出。当隧道由本服务持有时，先丢弃凭据，隧道在响应发出后随即拆除，因此通过远程控制链接发起的登出仍能收到响应。登出其他供应商不影响远程控制。
+
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `provider` | body | string | 托管供应商名称。默认 `managed:kimi-code` |
@@ -245,13 +247,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/oauth/usage`
 
-托管账号的套餐用量与限额，实时取自账号服务。上游失败不会让信封失败——它以 `kind: "error"` 的形式带内返回。
+托管账号的套餐额度与加油包，实时取自账号服务。上游失败不会让信封失败——它以 `kind: "error"` 的形式带内返回。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `provider` | query | string | 托管供应商名称。默认 `managed:kimi-code` |
 
-成功时 `data` 为 `{ kind: "ok", summary, limits, extra_usage }` 或 `{ kind: "error", message, status? }`，其中 `status` 为上游 HTTP 状态码（如存在）。在 `ok` 形态中，`summary`（可空）是主配额行，`limits` 列出每个配额窗口；一行的结构为 `{ name?, window?, used, limit, reset_at? }`，其中 `window` 为 `{ duration, unit }`，`unit` 为 `minute` / `hour` / `day` / `week` 之一。`extra_usage`（可空）是按量付费钱包：`{ balance_cents, total_cents, monthly_charge_limit_enabled, monthly_charge_limit_cents, monthly_used_cents, currency }`。
+成功时 `data` 为 `{ kind: "ok", quota }` 或 `{ kind: "error", message, status? }`，其中 `status` 为上游 HTTP 状态码（如存在）。在 `ok` 形态中，`quota` 为 `{ usages, extraUsage }`：`usages` 按窗口携带 `{ usedRatio, resetAt? }` 条目——`limit5h`、`limit7d`、`monthTotal`、`monthCode`——其中 `usedRatio` 为 0–1 浮点数，`resetAt` 为 RFC3339 重置时间，客户端按实际下发的条目渲染；`extraUsage`（可空）是按量付费钱包：`{ balanceCents, totalCents, monthlyChargeLimitEnabled, monthlyChargeLimitCents, monthlyUsedCents, currency }`。
 
 #### `GET /api/v1/oauth/userinfo`
 
@@ -268,6 +270,63 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 解析该客户端所属的 Kimi 区域。结果在本地推导，不经网络探测：优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 home 目录中的区域标记文件；默认为 `mainland-cn`。
 
 成功时 `data` 为 `{ region }`，`region` 为 `mainland-cn` / `global` 之一。
+
+### 远程控制
+
+这组端点管理机器级的远程控制隧道（见 [远程控制指南](../guides/remote-control.md)）和账号的设备注册表。隧道状态按机器区分；设备注册表按账号区分、保存在云端，因此设备端点需要 Kimi 登录，并由服务端持会话代理到 relay——OAuth 凭据不会暴露给调用方。
+
+#### `GET /api/v1/remote-control`
+
+返回当前隧道状态。当隧道处于关闭状态、但本机另一个存活进程持有单实例锁时，`data.conflict` 携带该持有者信息；每次读取都会重新检查锁，持有者进程退出后 `conflict` 与已存的 `error` 会一并清除。
+
+成功时 `data` 为 `{ enabled, state, url?, device_id?, device_name?, error?, conflict? }`，其中 `state` 为 `off` / `starting` / `on` / `stopping` 之一，`conflict` 为 `{ pid, local_origin, device_id, url, started_at }`。
+
+#### `POST /api/v1/remote-control`
+
+开启或关闭隧道。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `enabled` | body | boolean | `true` 开启隧道，`false` 关闭隧道 |
+
+成功时 `data` 与 `GET /api/v1/remote-control` 的状态对象相同。当本机另一个存活进程持有单实例锁时，开启会失败并返回 `REMOTE_CONTROL_ALREADY_RUNNING`（40928），`details` 中携带与 `conflict` 相同结构的锁持有者信息。
+
+#### `GET /api/v1/remote-control/devices`
+
+从云端注册表列出账号的远程控制设备。
+
+成功时 `data` 为 `{ devices, max_devices? }`。每个设备为 `{ device_id, alias, status, platform, client_version, local_base_url, created_at, updated_at, last_remote_access_at }`，其中 `status` 为 `online` / `offline` 之一。
+
+#### `PATCH /api/v1/remote-control/devices/{id}`
+
+重命名设备。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `id` | path | string | 设备标识 |
+| `alias` | body | string | 新的显示名称，去除首尾空白；1–50 个字符 |
+
+名称为空或超长时，在到达云端之前即返回 `VALIDATION_FAILED`。成功时 `data` 为 `{ ok: true }`。
+
+#### `POST /api/v1/remote-control/devices/{id}/deactivate`
+
+在云端注册表把设备置为离线。离线设备保留在列表中，且不占用套餐的设备额度；该设备下次开启远程控制时恢复在线。当目标设备是本机时，先停止本地隧道（启动中的开启会被取消）；随后请求持有本机锁完成下线，确保并发的开启无法在成功响应背后重新注册设备。持有者未在限定时间内停止时，请求以 `INTERNAL_ERROR` 失败，而不是报告成功。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `id` | path | string | 设备标识 |
+
+成功时 `data` 为 `{ ok: true }`。
+
+#### `DELETE /api/v1/remote-control/devices/{id}`
+
+把设备从云端注册表移除：设备从列表中消失，仍在连接的隧道会被断开。下线只是把设备置为离线并保留在列表中；删除则把它整个移除。当目标设备是本机时，先停止本地隧道并持有本机锁完成删除，确保设备无法在成功响应背后重新注册。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `id` | path | string | 设备标识 |
+
+成功时 `data` 为 `{ ok: true }`。
 
 ### 配置
 
@@ -304,6 +363,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `secondary_model` | object | subagent 的次级模型池 |
 | `experimental` | object | 实验开关 id → 是否启用 |
 | `telemetry` | boolean | 是否启用匿名遥测 |
+| `auto_session_title` | boolean | 是否允许客户端自动生成会话标题 |
 | `raw` | object | 原始解析的 `config.toml` 内容，包含未建模字段 |
 
 #### `POST /api/v1/config`
@@ -336,6 +396,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `secondary_model` | body | object | subagent 的次级模型池 |
 | `experimental` | body | object | 实验开关 id → 是否启用 |
 | `telemetry` | body | boolean | 是否启用匿名遥测 |
+| `auto_session_title` | body | boolean | 是否允许客户端自动生成会话标题 |
 
 成功时 `data` 为完整的更新后配置，形态与 `GET /api/v1/config` 相同。
 
@@ -361,7 +422,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 列出所有供应商下已配置的模型别名。
 
-成功时 `data.items` 为 `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort? }` 数组：`model` 是别名 id（供应商管理的别名为 `provider_id/model`，否则为裸键），`provider` 是所属供应商 id，`max_context_size` 是以 token 计的上下文窗口，`capabilities` / `support_efforts` / `default_effort` 描述能力标志与 Thinking 模式的 effort 支持。
+成功时 `data.items` 为 `{ provider, model, display_name?, max_context_size, capabilities?, support_efforts?, default_effort?, upgrade? }` 数组：`model` 是别名 id（供应商管理的别名为 `provider_id/model`，否则为裸键），`provider` 是所属供应商 id，`max_context_size` 是以 token 计的上下文窗口，`capabilities` / `support_efforts` / `default_effort` 描述能力标志与 Thinking 模式的 effort 支持。对于自定义 registry 模型，`upgrade` 可以包含 `{ model, migration_markdown, retirement_at? }`，用于引导用户切换到替代模型；`migration_markdown` 中的占位符已替换为模型 ID。
 
 #### `POST /api/v1/models/{model_id}:set_default`
 
@@ -469,13 +530,13 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/providers/{provider_id}:refresh`
 
-从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不经任何网络调用直接报告 `unchanged`。至少一个供应商的别名发生变化时，服务会广播全局 `event.model_catalog.changed` 事件。
+从上游来源重新发现单个供应商的模型元数据，并重写该供应商的别名。模型来源为静态的供应商不经任何网络调用直接报告 `unchanged`。至少一个供应商的别名或托管模型元数据发生变化时，服务会广播全局 `event.model_catalog.changed` 事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `provider_id` | path | string | **必填。** 供应商 id |
 
-成功时 `data` 为刷新报告：`changed` 是 `{ provider_id, provider_name, added, removed }`（新增 / 移除的别名数）的数组，`unchanged` 是无差异的供应商 id 数组，`failed` 是 `{ provider, reason }` 的数组。
+成功时 `data` 为刷新报告：`changed` 是 `{ provider_id, provider_name, added, removed }`（新增 / 移除的别名数）的数组，`unchanged` 是无差异的供应商 id 数组，`failed` 是 `{ provider, reason }` 的数组。当刷新发现 registry 移除了当前默认模型、且该模型此前声明过 `upgrade` 替代模型时，`data` 还带可选的 `retired_default`：`{ from, to, from_display_name }`——默认模型已被重定向为 `to`，仍绑定 `from` 的已打开会话也已切换到 `to`，`from_display_name` 是被移除模型的显示名，供提示使用。同一字段也会出现在 `event.model_catalog.changed` 事件中。
 
 - `40001`：路径中的动作后缀非法或不支持
 - `40412`：供应商不存在
@@ -530,7 +591,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 浏览 models.dev 目录，由服务端代理，带 10 分钟内存缓存与内置快照兜底。条目保持上游目录顺序。服务无法导入的条目携带 `rejected: true` 与机器可读的 `reject_reason`；`needs_base_url: true` 的条目在导入时要求提供 base URL。
 
-成功时 `data.items` 为 `{ id, name, wire_type, guessed, needs_base_url, rejected, reject_reason, env_key, models }` 数组：`wire_type` 是解析出的协议（可空，枚举与供应商 `type` 相同），`guessed` 标记启发式解析，`env_key` 是上游约定的 API 密钥环境变量（可空），`models` 是 `{ id, name?, max_context_size, capabilities?, reasoning }` 的数组。
+成功时 `data.items` 为 `{ id, name, wire_type, base_url, guessed, needs_base_url, rejected, reject_reason, env_key, models }` 数组：`wire_type` 是解析出的协议（可空，枚举与供应商 `type` 相同），`base_url` 是解析出的端点（可空；`needs_base_url` 或被拒绝的条目为 null），`guessed` 标记启发式解析，`env_key` 是上游约定的 API 密钥环境变量（可空），`models` 是 `{ id, name?, max_context_size, capabilities?, reasoning }` 的数组。
 
 - `50004`：目录不可用（在线拉取与内置快照均失败）
 
@@ -553,7 +614,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/sessions` | 创建会话（需 `workspace_id` 或 `metadata.cwd`） |
+| `POST /api/v1/sessions` | 创建会话（需 `workspace_id`、`metadata.cwd` 或 `default_workspace`） |
 | `GET /api/v1/sessions` | 列出会话，游标分页，支持 `busy` / `archived_only` 等过滤 |
 | `GET /api/v1/sessions/{session_id}` | 读取单个会话 |
 | `GET /api/v1/sessions/{session_id}/profile` | 读取会话档案 |
@@ -597,20 +658,22 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/sessions`
 
-创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。创建时会广播全局 `event.session.created` 事件。
+创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）、`metadata.cwd`（首次使用时注册该工作区）或 `default_workspace`；`workspace_id` 与 `metadata.cwd` 同时提供时必须一致。创建时会广播全局 `event.session.created` 事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录 |
+| `workspace_id` | body | string | 未提供 `metadata.cwd` 和 `default_workspace` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
+| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 和 `default_workspace` 时**必填**；与 `workspace_id` 同时提供时必须等于工作区根目录 |
+| `default_workspace` | body | boolean | 为 `true` 时会话创建于默认工作区——未设置 [`default_workspace.path`](../configuration/config-files.md#default-workspace) 时为 `~/KimiCode/Default`——目录按需创建并注册为普通工作区。不能与 `workspace_id` 或 `metadata` 同时提供 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
 | `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
+- `40001`：`workspace_id`、`metadata.cwd`、`default_workspace` 都未提供，`default_workspace` 与 `workspace_id` 或 `metadata` 同时提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
+- `40930`：默认工作区目录无法创建或使用。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（上级目录或盘符不可用）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -687,7 +750,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}/title/generate`
 
-通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录和 `auto_session_title` 实验开关；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
+通过托管供应商的 `chat_title` 工具根据会话的提示词生成标题并应用，同时广播 `session.meta.updated`。生成需要托管 OAuth 登录；未提供 `force` 时，已有自定义标题或已生成标题的会话会上报为不可用，而不会被覆盖。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -751,7 +814,7 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 
 #### `POST /api/v1/sessions/{session_id}:btw`
 
-开启一个 `"by the way"` 旁路对话：把 main agent fork 成一个禁用工具调用的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文。需要可用的模型配置。
+开启一个 `"by the way"` 旁路对话：把 main agent fork 成一个仅可使用只读工具（`Read`、`Grep`、`Glob`）的子 Agent，让快速的临时问题在隔离环境中运行，不触碰工作上下文。需要可用的模型配置。
 
 成功时，`data` 为 `{ agent_id }`——新子 Agent 的 id。
 
@@ -766,6 +829,14 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 取消会话的归档状态并恢复它。
 
 成功时，`data` 为 `archived: false` 的 [session 对象](#session-对象)。
+
+#### `POST /api/v1/sessions/{session_id}:reload`
+
+以磁盘上的最新配置重新加载会话：重读 `config.toml` 与插件，重载工作区的 Skill 与 subagent 目录，然后关闭并从磁盘恢复会话。同时会通过系统提醒（system-reminder）把 AGENTS.md、Skill、subagent 及模型的外部变更告知 main agent。
+
+成功时，`data` 为 [session 对象](#session-对象)。
+
+- `40901`：会话有正在运行的轮次，无法重新加载
 
 #### `GET /api/v1/sessions/{session_id}/children`
 
@@ -1126,7 +1197,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `status` | query | string | **必填。** 必须为 `pending` |
 
-成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
+成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`agent_id` 是发起审批的 agent id（主 agent 为 `main`）；`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
 
 - `40001`：`status` 缺失或不是 `pending`
 - `40401`：会话不存在
@@ -1160,7 +1231,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `status` | query | string | **必填。** 必须为 `pending` |
 
-成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, turn_id?, tool_call_id?, questions, created_at }`。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
+成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`。`agent_id?` 是发起提问的 agent id（已知时；主 agent 为 `main`）。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
 
 - `40001`：`status` 缺失或不是 `pending`
 - `40401`：会话不存在
@@ -1369,7 +1440,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 能力与插件
 
-能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi WebBridge）。插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点报告能力状态、驱动能力安装，并管理插件从市场列表到移除的整个生命周期。
+能力是带有分层就绪状态的内置特性——由检测步骤加后台安装组成；当前版本注册了 `kimi-cu`（Kimi Computer Use）与 `kimi-webbridge`（Kimi Browser Extension）。插件是已安装的技能、MCP 服务、hook 与命令的打包集合。这组端点报告能力状态、驱动能力安装，并管理插件从市场列表到移除的整个生命周期。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1564,6 +1635,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
+| `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
 
 #### workspace 对象
 
@@ -1574,6 +1646,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `id` | string | 工作区 id，由根路径派生的 `wd_<slug>_<hash12>` 字符串 |
 | `root` | string | 项目目录的绝对路径 |
 | `name` | string | 显示名，1–100 个字符；默认取根目录的基名 |
+| `is_default` | boolean | 根目录是否为当前的[默认工作区](../configuration/config-files.md#default-workspace)；每次响应时计算 |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
@@ -1660,6 +1733,22 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 
 - `40410`：工作区不存在
 
+#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
+
+为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **必填。** 工作区 id |
+| `path` | body | string | **必填。** 要添加的目录 |
+| `persist` | body | boolean | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
+
+成功时 `data` 为 `{ project_root, config_path, additional_dirs, persisted }`，其中 `additional_dirs` 是全部附加目录（含既有目录），`persisted` 表示本次是否写盘。
+
+- `40001`：校验失败（`details` 逐字段说明），或项目本地配置损坏等引擎校验错误
+- `40409`：`path` 不存在或不是目录
+- `40410`：工作区不存在
+
 ### 文件系统
 
 会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。每个动作的请求体还接受可选的 `runtime_id`（string，默认 `local`），用于选择执行操作的运行时；`open`、`open-in` 与 `reveal` 仅在 `local` 运行时上可用。另有：
@@ -1687,6 +1776,7 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `show_hidden` | body | boolean | 包含点文件。默认 `false` |
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
 | `exclude_globs` | body | string[] | 额外要跳过的 glob |
+| `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob（如 `.tmp`）。命中项被忽略的祖先目录会自动保留以保证可达。放行点开头路径还需同时传 `show_hidden: true` |
 | `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | 附带每个条目的 git 状态。默认 `false` |
 
@@ -2348,7 +2438,6 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `unsubscribe` | `{ session_ids }` | 取消会话订阅 |
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅转录流（唯一的转录订阅通道），`transcript` 按 agent 指定粒度 |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 表示整个会话 |
-| `watch_fs_add` / `watch_fs_remove` | `{ session_id, paths, recursive? }` | 订阅 / 取消文件变更通知（`event.fs.changed`） |
 | `client_hello` | `{ client_id }` | 握手帧，其余字段为遗留兼容 |
 
 ### 事件
@@ -2368,7 +2457,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
 
-有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
+有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, is_default, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
 

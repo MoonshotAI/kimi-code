@@ -1,10 +1,11 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve, win32 } from "node:path";
 
 import {
   detectMigration,
   runMigration,
+  defaultPlansSourceDir,
   shouldSuppressMigration,
   type MigrationPlan,
   type MigrationReport,
@@ -53,6 +54,7 @@ export interface LegacyMigrationSourcePreview {
   readonly hasMcp: boolean;
   readonly hasUserHistory: boolean;
   readonly hasSkills: boolean;
+  readonly hasPlans: boolean;
   readonly totalSessions: number;
   readonly sessionIssues: number;
 }
@@ -80,6 +82,8 @@ export interface LegacyMigrationManagerOptions {
   readonly targetHome: string;
   /** Defaults to the legacy kimi-cli home (`~/.kimi`). Injectable for isolated tests. */
   readonly defaultSourceHome?: string;
+  /** Defaults to the legacy kimi-cli plans dir (`~/.kimi/plans`). Injectable for isolated tests. */
+  readonly plansSourceDir?: string;
   /** First workspace root. Used only to resolve a relative legacy KIMI_SHARE_DIR. */
   readonly workspaceRoot?: string | null;
   /** The removed `kimi.environmentVariables` VS Code setting, read once for migration. */
@@ -104,6 +108,7 @@ export interface LegacyMigrationTotals {
   readonly mcpServers: number;
   readonly userHistoryEntries: number;
   readonly skills: number;
+  readonly planFiles: number;
   readonly sessions: number;
   readonly alreadyMigratedSessions: number;
   readonly skippedItems: number;
@@ -133,7 +138,6 @@ export interface LegacyMigrationRunResult {
 interface InspectedSource {
   readonly preview: LegacyMigrationSourcePreview;
   readonly plan: MigrationPlan;
-  readonly legacyMcpJsonValid: boolean;
 }
 
 interface InspectionResult {
@@ -158,6 +162,7 @@ export class LegacyMigrationManager {
   private readonly defaultSourceHome: string;
   private readonly workspaceRoot: string | null;
   private readonly legacyEnvironmentVariables: unknown;
+  private readonly plansSourceDir: string;
 
   constructor(options: LegacyMigrationManagerOptions) {
     if (options.targetHome.trim().length === 0) {
@@ -170,6 +175,7 @@ export class LegacyMigrationManager {
         ? null
         : resolve(options.workspaceRoot);
     this.legacyEnvironmentVariables = options.legacyEnvironmentVariables;
+    this.plansSourceDir = options.plansSourceDir ?? defaultPlansSourceDir();
   }
 
   /** Detect first-launch work without changing the source or target. */
@@ -224,6 +230,7 @@ export class LegacyMigrationManager {
           scope: FULL_MIGRATION_SCOPE,
           source: source.preview.sourceHome,
           target: this.targetHome,
+          plansSourceDir: this.plansSourceDir,
         });
         const failures = failuresFromReport(source, report);
         sourceResults.push({
@@ -292,7 +299,10 @@ export class LegacyMigrationManager {
 
       let plan: MigrationPlan;
       try {
-        plan = await detectMigration({ sourcePath: candidate.sourceHome });
+        plan = await detectMigration({
+          sourcePath: candidate.sourceHome,
+          plansSourcePath: this.plansSourceDir,
+        });
       } catch (error) {
         warnings.push({
           code: "detection-failed",
@@ -312,7 +322,7 @@ export class LegacyMigrationManager {
         })),
       );
 
-      const hasSkills = await directoryHasEntries(join(candidate.sourceHome, "skills"));
+      const hasSkills = plan.hasSkills;
       const sessionScanFailures = plan.sessionScanFailures ?? [];
       warnings.push(
         ...sessionScanFailures.map((failure) => ({
@@ -328,6 +338,7 @@ export class LegacyMigrationManager {
         hasMcp: plan.hasMcp,
         hasUserHistory: plan.hasUserHistory,
         hasSkills,
+        hasPlans: plan.hasPlans,
         totalSessions: plan.totalSessions,
         sessionIssues: sessionScanFailures.length,
       };
@@ -347,7 +358,6 @@ export class LegacyMigrationManager {
       pending.push({
         preview,
         plan,
-        legacyMcpJsonValid: await isLegacyMcpJsonValid(plan, candidate.sourceHome),
       });
     }
 
@@ -472,33 +482,13 @@ function isMissingError(error: unknown): boolean {
   );
 }
 
-async function directoryHasEntries(path: string): Promise<boolean> {
-  try {
-    return (await readdir(path)).length > 0;
-  } catch {
-    return false;
-  }
-}
-
-async function isLegacyMcpJsonValid(
-  plan: MigrationPlan,
-  sourceHome: string,
-): Promise<boolean> {
-  if (!plan.hasMcp) return true;
-  try {
-    JSON.parse(await readFile(join(sourceHome, "mcp.json"), "utf-8"));
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function hasMigratableData(source: LegacyMigrationSourcePreview): boolean {
   return (
     source.hasConfig ||
     source.hasMcp ||
     source.hasUserHistory ||
     source.hasSkills ||
+    source.hasPlans ||
     source.totalSessions > 0 ||
     source.sessionIssues > 0
   );
@@ -509,15 +499,15 @@ function failuresFromReport(
   report: MigrationReport,
 ): LegacyMigrationFailure[] {
   const failures: LegacyMigrationFailure[] = [];
-  if (source.plan.hasConfig && !report.summary.config.migrated) {
+  if (report.summary.config.sourceUnreadable) {
     failures.push({
       code: "legacy-config-unreadable",
       sourceHome: source.preview.sourceHome,
       item: "config.toml",
-      message: "The legacy config.toml could not be read or parsed; review it manually.",
+      message: "The legacy config could not be read or parsed; review it manually.",
     });
   }
-  if (source.plan.hasMcp && !source.legacyMcpJsonValid) {
+  if (report.summary.mcp.sourceUnreadable) {
     failures.push({
       code: "legacy-mcp-unreadable",
       sourceHome: source.preview.sourceHome,
@@ -550,6 +540,7 @@ function aggregateTotals(sources: readonly LegacyMigrationSourceResult[]): Legac
   let mcpServers = 0;
   let userHistoryEntries = 0;
   let skills = 0;
+  let planFiles = 0;
   let sessions = 0;
   let alreadyMigratedSessions = 0;
   let skippedItems = 0;
@@ -564,6 +555,7 @@ function aggregateTotals(sources: readonly LegacyMigrationSourceResult[]): Legac
     mcpServers += summary.mcp.mergedServers.length;
     userHistoryEntries += summary.userHistory.copied;
     skills += summary.skills.copied;
+    planFiles += summary.plans.copied;
     sessions += summary.sessions.sessionsMigrated;
     alreadyMigratedSessions += summary.sessions.sessionsAlreadyMigrated;
     skippedItems +=
@@ -583,6 +575,7 @@ function aggregateTotals(sources: readonly LegacyMigrationSourceResult[]): Legac
     mcpServers,
     userHistoryEntries,
     skills,
+    planFiles,
     sessions,
     alreadyMigratedSessions,
     skippedItems,
@@ -676,7 +669,7 @@ function runMessage(
   if (status === "failed") {
     return "Legacy migration failed. Fix the reported path or data error, then retry from the command palette.";
   }
-  const migrated = `${totals.configFiles} config, ${totals.mcpServers} MCP server(s), ${totals.userHistoryEntries} history item(s), ${totals.skills} skill(s), and ${totals.sessions} session(s)`;
+  const migrated = `${totals.configFiles} config, ${totals.mcpServers} MCP server(s), ${totals.userHistoryEntries} history item(s), ${totals.skills} skill(s), ${totals.planFiles} plan file(s), and ${totals.sessions} session(s)`;
   if (status === "partial") {
     return `Legacy migration completed with ${totals.failures} failure(s): ${migrated}. Review the details and retry from the command palette.`;
   }

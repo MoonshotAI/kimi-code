@@ -7,19 +7,18 @@
  * wire).
  */
 
-import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
   ApprovalRequest,
   ApprovalResponse,
-} from '@moonshot-ai/agent-core-v2/session/approval/approval';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/approval';
 import type {
   Interaction,
   InteractionKind,
-} from '@moonshot-ai/agent-core-v2/features/interaction/interaction';
+} from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import type {
   QuestionRequest,
   QuestionResult,
-} from '@moonshot-ai/agent-core-v2/session/question/question';
+} from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 import type {
   AgentMeta,
   SessionMeta,
@@ -33,7 +32,7 @@ import type { ScopedCaller } from './global.js';
 
 export type { ScopedCaller } from './global.js';
 
-/** What `sessionLifecycleService.create/fork/createChild` leaves on the wire. */
+/** What `sessionLifecycleService.create` and `sessionManager.restore` leave on the wire. */
 interface HandleWire {
   readonly id: string;
 }
@@ -75,10 +74,9 @@ export interface SessionSkillsFacade {
 }
 
 /**
- * Derived session lifecycle phase. The engine retired its `sessionActivity`
- * service (#1751) — busy is now derived from agent activity views — so the
- * facade composes the phase from the pending interaction lists and each
- * agent's `agentActivityView`, keeping the retired service's precedence.
+ * Derived session lifecycle phase. The facade reads the engine's session
+ * activity view (busy + pending interaction) and maps it onto the v1
+ * precedence: pending approvals and questions first, then busy, then idle.
  */
 export type SessionStatus = 'running' | 'idle' | 'awaiting_approval' | 'awaiting_question';
 
@@ -125,10 +123,9 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     method: 'fork' | 'createChild',
     input: { title?: string; metadata?: Record<string, unknown> } = {},
   ): Promise<SessionMeta> => {
-    const handle = (await call({}, 'sessionManager', method, [
+    return call({}, 'sessionManager', method, [
       { sourceSessionId: sessionId, title: input.title, metadata: input.metadata },
-    ])) as HandleWire;
-    return call({ sessionId: handle.id }, 'sessionMetadata', 'read', []) as Promise<SessionMeta>;
+    ]) as Promise<SessionMeta>;
   };
 
   return {
@@ -142,29 +139,13 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     setArchived: (archived) =>
       call(scope, 'sessionMetadata', 'setArchived', [archived]) as Promise<void>,
     status: async () => {
-      const pending = (kind: 'approval' | 'question') =>
-        call(scope, 'sessionInteractionService', 'listPending', [kind]) as Promise<
-          readonly unknown[]
-        >;
-      if ((await pending('approval')).length > 0) return 'awaiting_approval';
-      if ((await pending('question')).length > 0) return 'awaiting_question';
-      const meta = await read();
-      for (const agentId of Object.keys(meta.agents ?? {})) {
-        try {
-          const state = (await call(
-            { sessionId, agentId },
-            'agentActivityView',
-            'state',
-            [],
-          )) as AgentActivityState;
-          if (state.turn !== undefined || state.background.length > 0) return 'running';
-        } catch {
-          // Agents stay registered after their live handle is gone; the scope
-          // probe fails for a dead agent, so treat it as not active — the same
-          // view the retired service had from iterating live handles only.
-        }
-      }
-      return 'idle';
+      const activity = (await call(scope, 'sessionActivityView', 'state', [])) as {
+        readonly busy: boolean;
+        readonly pendingInteraction: 'none' | 'approval' | 'question';
+      };
+      if (activity.pendingInteraction === 'approval') return 'awaiting_approval';
+      if (activity.pendingInteraction === 'question') return 'awaiting_question';
+      return activity.busy ? 'running' : 'idle';
     },
     close: () => call({}, 'sessionManager', 'close', [sessionId]) as Promise<void>,
     archive: () => call({}, 'sessionManager', 'archive', [sessionId]) as Promise<void>,

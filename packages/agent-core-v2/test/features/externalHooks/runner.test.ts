@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { buildHookSpawnOptions, runHook } from '#/features/externalHooks/internal/runHook';
+import { renderUserPromptHookResult } from '#/features/externalHooks/internal/userPrompt';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 
 const hostProcess = new HostProcessService();
@@ -55,6 +56,43 @@ describe('runHook process runner', () => {
     expect(emptyHookSpecificOutput.action).toBe('allow');
     expect(emptyHookSpecificOutput.message).toBeUndefined();
     expect(emptyHookSpecificOutput.structuredOutput).toBe(true);
+
+    expect(renderUserPromptHookResult([emptyObject, emptyHookSpecificOutput])).toBeUndefined();
+
+    const continueOnly = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write(JSON.stringify({ continue: true }));'),
+      {},
+      { timeout: 5 },
+    );
+    expect(renderUserPromptHookResult([continueOnly])).toBeUndefined();
+
+    const plainText = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write("hook note");'),
+      {},
+      { timeout: 5 },
+    );
+    const secondNote = await runHook(
+      hostProcess,
+      nodeCommand('process.stdout.write("second note");'),
+      {},
+      { timeout: 5 },
+    );
+    const rendered = renderUserPromptHookResult([plainText, secondNote]);
+    expect(rendered?.messages).toEqual(['hook note', 'second note']);
+    expect(rendered?.parts).toEqual([
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
+      {
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nsecond note\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      },
+    ]);
   });
 
   it('returns block when the hook exits 2 and captures stderr as the reason', async () => {

@@ -7,12 +7,12 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/kosong/model/model';
-import { ModelService } from '#/kosong/model/modelService';
-import { type ProviderConfig } from '#/kosong/provider/provider';
-import { ProviderService } from '#/kosong/provider/providerService';
+import { type ModelRecord } from '#/llm-adapter/model/model';
+import { ModelService } from '#/llm-adapter/model/model-service';
+import { type ProviderConfig } from '#/llm-adapter/provider/provider';
+import { ProviderService } from '#/llm-adapter/provider/provider-service';
 
-import { StubConfigService } from '../../kosong/stubs';
+import { StubConfigService } from '../../stubs';
 import { KosongConfigService } from '#/app/kosongConfig/kosongConfigService';
 
 function stubLogService(): ILogService & { warnings: Array<{ message: string; payload?: LogPayload }> } {

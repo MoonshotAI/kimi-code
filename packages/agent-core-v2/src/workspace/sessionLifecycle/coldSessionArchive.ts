@@ -71,8 +71,8 @@ export async function setSessionArchived(
   archived: boolean,
 ): Promise<ColdSessionArchiveOutcome> {
   const manager = accessor.get(ISessionManager);
+  await manager.whenResumeSettled(sessionId).catch(() => undefined);
   return manager.withLifecycleSerialization(sessionId, async (unguarded) => {
-    await manager.whenResumeSettled(sessionId).catch(() => undefined);
     const live = getLiveSessionById(accessor, sessionId);
     if (live !== undefined) {
       if (archived) await unguarded.archive();

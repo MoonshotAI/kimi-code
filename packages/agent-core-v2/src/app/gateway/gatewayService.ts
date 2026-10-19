@@ -9,7 +9,6 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import { Error2, ErrorCodes } from '#/errors';
 import { ILogService } from '#/_base/log/log';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentLoopService } from '#/agent/loop/loop';
 
 import { IRestGateway, IWSGateway } from './gateway';
@@ -48,32 +47,35 @@ export class RestGateway implements IRestGateway {
     agentId: string,
     input: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
-    const handle = await this.agent(sessionId, agentId).accessor.get(IAgentPromptService).enqueue({
-      message: {
-        role: 'user',
-        content: [{ type: 'text', text: input }],
-        toolCalls: [],
-        origin: { kind: 'user' },
-      },
+    const loop = this.agent(sessionId, agentId).accessor.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: input }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
     });
-    const turn = await handle.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+    const turn = await loop.promptHandle(id)?.launched;
+    if (turn === undefined) return undefined;
+    await turn.ready.catch(() => undefined);
+    return turn.id === undefined ? undefined : { turn_id: turn.id };
   }
   async steer(
     sessionId: string,
     agentId: string,
     content: string,
   ): Promise<{ readonly turn_id: number } | undefined> {
-    const service = this.agent(sessionId, agentId).accessor.get(IAgentPromptService);
-    const queued = await service.enqueue({ message: {
-      role: 'user',
-      content: [{ type: 'text', text: content }],
-      toolCalls: [],
-      origin: { kind: 'user' },
-    } });
-    const [steered] = await service.steer([queued.id]);
-    const turn = await steered?.launched;
-    return turn === undefined ? undefined : { turn_id: turn.id };
+    const service = this.agent(sessionId, agentId).accessor.get(IAgentLoopService);
+    const status = service.snapshot();
+    const { id } = service.submit(
+      {
+        message: { role: 'user', content: [{ type: 'text', text: content }] },
+        meta: { origin: { kind: 'user' }, tracked: true },
+      },
+      { steerIfActive: true },
+    );
+    if (status.state === 'running' && status.activePromptId === undefined) return undefined;
+    const turn = await service.promptHandle(id)?.launched;
+    if (turn === undefined) return undefined;
+    await turn.ready.catch(() => undefined);
+    return turn.id === undefined ? undefined : { turn_id: turn.id };
   }
   cancel(sessionId: string, agentId: string, reason?: string): Promise<void> {
     this.agent(sessionId, agentId).accessor.get(IAgentLoopService).cancel(undefined, reason);

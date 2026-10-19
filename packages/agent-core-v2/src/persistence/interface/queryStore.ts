@@ -66,6 +66,16 @@ export type WriteOp =
 
 export interface Checkpoint {
   readonly seq: number;
+  readonly sourceSessionCount?: number;
+  readonly schemaVersion?: number;
+  readonly workspaceSignals?: Record<string, number>;
+}
+
+export class QueryStoreRebuiltError extends Error {
+  constructor() {
+    super('the query-store was rebuilt while the operation was in flight');
+    this.name = 'QueryStoreRebuiltError';
+  }
 }
 
 export interface ColumnBounds {
@@ -102,7 +112,8 @@ export interface IQueryStore {
   listKeys(collection: string): Promise<readonly string[]>;
   dropCollection(collection: string): Promise<void>;
   getCheckpoint(source: string): Promise<Checkpoint | undefined>;
-  setCheckpoint(source: string, checkpoint: Checkpoint): Promise<void>;
+  setCheckpoint(source: string, checkpoint: Checkpoint, expectedStoreEpoch?: number): Promise<void>;
+  storeEpoch(): number;
   close(): Promise<void>;
 }
 

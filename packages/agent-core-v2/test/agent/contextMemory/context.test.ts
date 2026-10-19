@@ -1,13 +1,15 @@
-import type { Message, ToolCall } from '#/kosong/contract/message';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { estimateTokens, estimateTokensForMessages } from '#/kosong/contract/tokens';
+import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import {
   buildContextCompactionShape,
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   selectCompactionUserMessages,
+  selectRecentUserMessages,
   type TokenEstimate,
 } from '#/agent/contextMemory/compactionHandoff';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -30,12 +32,13 @@ describe('Agent context', () => {
   let profile: IAgentProfileService;
   let wire: IWireService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     ctx = createTestAgent();
     context = ctx.get(IAgentContextMemoryService);
     tokenCounting = ctx.tokenCounting;
     profile = ctx.get(IAgentProfileService);
     wire = ctx.get(IWireService);
+    await ctx.restorePersisted();
   });
 
   afterEach(async () => {
@@ -644,7 +647,7 @@ describe('Agent context', () => {
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
-  it('removes injection messages inside the undone turn', async () => {
+  it('keeps un-owned injection messages from the undone turn in the rebuilt context', async () => {
     ctx.appendUserTurn('earlier question');
     ctx.appendUserTurn('do the work');
     context.append(
@@ -670,10 +673,15 @@ describe('Agent context', () => {
         content: [{ type: 'text', text: 'earlier question' }],
         origin: { kind: 'user' },
       }),
+      expect.objectContaining({
+        role: 'user',
+        content: [{ type: 'text', text: 'Plan mode is active' }],
+        origin: { kind: 'injection', variant: 'plan_mode' },
+      }),
     ]);
   });
 
-  it('removes the prompt-owned image compression reminder when undoing its prompt', async () => {
+  it('keeps the image compression caption inline and removes it with its prompt on undo', async () => {
     profile.update({ activeToolNames: [] });
     const caption = buildImageCompressionCaption({
       original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },
@@ -688,13 +696,10 @@ describe('Agent context', () => {
 
     expect(context.get()).toMatchObject([
       {
-        origin: {
-          kind: 'injection',
-          variant: 'image_compression',
-          ownerPromptId: expect.any(String),
-        },
+        origin: { kind: 'user' },
+        id: expect.any(String),
+        content: [{ type: 'text', text: `inspect this image ${caption}` }],
       },
-      { origin: { kind: 'user' }, id: expect.any(String) },
       { role: 'assistant' },
     ]);
 
@@ -771,6 +776,26 @@ describe('Agent context', () => {
       expect(zeroed.tail).toHaveLength(messages.length);
 
       expect(selectCompactionUserMessages(messages).elided).toBe(true);
+
+      const hooked: ContextMessage = {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+            meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+          },
+          { type: 'text', text: 'x'.repeat(4000) },
+        ],
+        toolCalls: [],
+      };
+      const truncated = selectRecentUserMessages([hooked], 10);
+      expect(truncated[0]?.content[0]).toMatchObject({
+        type: 'text',
+        text: '<hook_result hook_event="UserPromptSubmit">\nhook note\n</hook_result>',
+        meta: { contentType: 'text/xml', source: 'user prompt submit hook' },
+      });
+      expect(truncated[0]?.content).toHaveLength(2);
     });
 
     it('falls back to a zero tokensAfter', () => {
@@ -787,8 +812,9 @@ describe('Agent context', () => {
       );
 
       expect(shape.tokensAfter).toBe(0);
-      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user']);
+      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user', 'user']);
       expect(shape.messages[1]?.origin?.kind).toBe('compaction_summary');
+      expect(shape.messages[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_continuation' });
     });
 
     it('prefers the measured summary output tokens over the text estimate', () => {

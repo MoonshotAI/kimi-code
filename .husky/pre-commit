@@ -1,0 +1,4 @@
+set -e
+
+node scripts/check-no-comments.mjs
+pnpm lint-staged

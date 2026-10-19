@@ -57,6 +57,32 @@ describe('MCP timeout contract validation', () => {
     });
   });
 
+  it('session creation options preserve the per-server deferred field', () => {
+    const parsed = createSessionOptionsSchema.safeParse({
+      workDir: '/tmp/example',
+      mcpServers: {
+        stdioExample: { transport: 'stdio', command: 'node', deferred: false },
+        httpExample: { transport: 'http', url: 'https://example.com/mcp', deferred: true },
+        sseExample: { transport: 'sse', url: 'https://example.com/sse' },
+      },
+    });
+    expect(parsed.success).toBe(true);
+    expect(parsed.data?.mcpServers?.['stdioExample']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      deferred: false,
+    });
+    expect(parsed.data?.mcpServers?.['httpExample']).toEqual({
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      deferred: true,
+    });
+    expect(parsed.data?.mcpServers?.['sseExample']).toEqual({
+      transport: 'sse',
+      url: 'https://example.com/sse',
+    });
+  });
+
   it('session creation options reject malformed mcpServers entries', () => {
     const parsed = createSessionOptionsSchema.safeParse({
       workDir: '/tmp/example',

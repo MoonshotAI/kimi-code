@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { Writable } from 'node:stream';
 
 import { pino, type Logger } from 'pino';
-import { afterEach, assert, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, assert, describe, expect, it } from 'vitest';
 
 import { extractEnvelopeCode } from '../src/requestLogging';
 import { type RunningServer, startServer } from '../src/start';
@@ -36,8 +36,16 @@ function parseEntries(lines: string[]): Record<string, unknown>[] {
 describe('requestLogging', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
+  let lines: string[];
 
-  afterEach(async () => {
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-request-log-'));
+    const captured = captureLogger();
+    lines = captured.lines;
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logger: captured.logger });
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -49,11 +57,7 @@ describe('requestLogging', () => {
   });
 
   it('logs the envelope code instead of the HTTP status code', async () => {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-request-log-'));
-    const { logger, lines } = captureLogger();
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logger });
-
-    const res = await fetch(`http://127.0.0.1:${String(server.port)}/api/v1/healthz`);
+    const res = await fetch(`http://127.0.0.1:${String(server!.port)}/api/v1/healthz`);
     expect(res.status).toBe(200);
     expect(((await res.json()) as { code: number }).code).toBe(0);
 

@@ -1,3 +1,5 @@
+import type { TowerExitReason } from '#/features/tower/tower';
+
 import type { TelemetryPrimitive } from './telemetry';
 
 export interface TelemetryEventMeta {
@@ -8,6 +10,12 @@ export interface TelemetryEventMeta {
 
 export interface AgentTelemetryEventContext {
   agent_id: string;
+}
+
+export interface WirePlanRevisionMigratedEvent {
+  record_type: 'plan.revision';
+  legacy_field: 'path';
+  migration_outcome: 'migrated' | 'skipped';
 }
 
 export const agentTelemetryContextProperties: {
@@ -52,6 +60,7 @@ export interface TurnStartedEvent {
   provider_type?: string;
   protocol?: string;
   thinking_effort?: string;
+  enabled_plugins?: string;
 }
 
 export interface TurnInterruptedEvent {
@@ -70,10 +79,12 @@ export interface TurnEndedEvent {
   reason: 'completed' | 'cancelled' | 'failed';
   duration_ms: number;
   mode: 'agent' | 'plan';
+  error_type?: string;
   provider_type?: string;
   protocol?: string;
   thinking_effort?: string;
   trace_id?: string;
+  enabled_plugins?: string;
 }
 
 export interface PromptCacheProbeEvent {
@@ -85,6 +96,10 @@ export interface PromptCacheProbeEvent {
   input_cache_read: number;
   input_cache_creation: number;
   output_tokens: number;
+  tools_match?: boolean;
+  system_prompt_match?: boolean;
+  parent_input_tokens?: number;
+  parent_request_gap_ms?: number;
 }
 
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
@@ -192,6 +207,37 @@ export interface PlanEnterResolvedEvent {
   outcome: 'auto_approved';
 }
 
+export interface TowerModeEnterEvent {
+  outcome: 'entered' | 'rejected';
+  reason?: 'not-main-agent' | 'experiment-off' | 'feature-not-assembled' | 'owned-by-live-session';
+}
+
+export interface TowerModeExitEvent {
+  reason: TowerExitReason;
+}
+
+export interface SwarmModeTransitionEvent {
+  trigger: 'manual' | 'task' | 'tool';
+}
+
+export interface ExternalHookResolvedEvent {
+  event: string;
+  action: 'allow' | 'block';
+  matched_count: number;
+  failed_count: number;
+}
+
+export interface RemoteControlToggleEvent {
+  enabled: boolean;
+  outcome: 'ok' | 'already_running' | 'rejected' | 'error';
+}
+
+export interface PluginToggleEvent {
+  plugin_id: string;
+  enabled: boolean;
+  enabled_plugins?: string;
+}
+
 export interface CompactionFinishedEvent {
   turn_id?: number;
   source: 'manual' | 'auto';
@@ -247,7 +293,7 @@ export interface BackgroundTaskCompletedEvent {
 }
 
 export interface WaitForCompletedEvent {
-  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted';
+  outcome: 'completed' | 'timed_out' | 'task_not_found' | 'aborted' | 'interrupted';
   timeout_ms: number;
   waited_ms: number;
   has_task_id: boolean;
@@ -335,11 +381,54 @@ export interface ToolCallTurnRepeatEvent {
   trace_id?: string;
 }
 
+export interface ToolCallRepeatHandoffEvent {
+  turn_id?: number;
+  outcome: 'text' | 'vetoed';
+}
+
 export interface AgentsMdReminderShownEvent {
   turn_id: number;
   tool_name: string;
   reminded_count: number;
   trace_id?: string;
+}
+
+export interface NotifyUserNudgeShownEvent {
+  turn_id?: number;
+  rounds_since_notify: number;
+  nudge_index: number;
+}
+
+export interface NotifyUserSentEvent {
+  turn_id: number;
+  rounds_since_notify: number;
+  after_nudge: boolean;
+  title_chars: number;
+  message_chars: number;
+  displayed: boolean;
+}
+
+export interface TodoListWrittenEvent {
+  turn_id: number;
+  item_count: number;
+  open_count: number;
+  steps_since_write?: number;
+  after_reminder: boolean;
+}
+
+export interface TodoReminderShownEvent {
+  turn_id?: number;
+  steps_since_write: number;
+  item_count: number;
+  open_count: number;
+}
+
+export interface TodoTurnEndedEvent {
+  turn_id: number;
+  reason: 'completed' | 'cancelled' | 'failed' | 'blocked';
+  item_count: number;
+  open_count: number;
+  updated_in_turn: boolean;
 }
 
 export interface GrepToolRgFallbackEvent {
@@ -368,6 +457,7 @@ export interface SubagentCreatedEvent {
   parent_agent_id: string;
   parent_tool_call_id: string;
   model?: string;
+  model_source?: 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
 }
 
 export interface McpConnectedEvent {
@@ -454,6 +544,7 @@ export interface VideoUploadEvent {
 
 export interface SessionStartedEvent {
   resumed: boolean;
+  experimental_flags: string;
 }
 
 export interface SessionLoadFailedEvent {
@@ -473,7 +564,92 @@ export interface ExitEvent {
   duration_ms: number;
 }
 
+export interface OauthLoginFinishedEvent {
+  provider: string;
+  status: 'authenticated' | 'cancelled' | 'expired' | 'denied';
+  duration_ms: number;
+}
+
+export interface OauthModelsRefreshFinishedEvent {
+  changed_count: number;
+  unchanged_count: number;
+  failed_count: number;
+}
+
+export interface AuthEnsureReadyFailedEvent {
+  reason: 'provisioning_required' | 'model_not_resolved' | 'token_missing' | 'unexpected';
+  has_model_override: boolean;
+}
+
+export interface ShellCommandFinishedEvent {
+  duration_ms: number;
+  is_error: boolean;
+  backgrounded: boolean;
+}
+
+export interface AgentCreateFailedEvent {
+  agent_id: string;
+  stage: string;
+  error_type: string;
+}
+
+export interface SessionEndedEvent {
+  reason: 'exit' | 'archive';
+}
+
+export interface WebFetchFallbackEvent {
+  error_type: string;
+  used_api_key: boolean;
+}
+
+export interface MediaResolveFallbackEvent {
+  kind: 'image' | 'video';
+  reason: 'unsupported' | 'read_failed' | 'upload_failed' | 'invalid';
+  model?: string;
+}
+
+export interface LlmRequestProjectionFallbackEvent {
+  projection: 'media-degraded' | 'media-stripped' | 'strict';
+  error_type: string;
+  model?: string;
+  turn_id?: number;
+}
+
+export interface SessionIndexDegradedEvent {
+  reason: string;
+  degraded_count: number;
+  error_type?: string;
+}
+
+export interface SessionIndexProjectedEvent {
+  duration_ms: number;
+  session_count: number;
+  generation: number;
+}
+
+export interface SessionIndexMirrorGiveUpEvent {
+  pending_count: number;
+  consecutive_failures: number;
+}
+
+export interface WorkspaceTrustChangedEvent {
+  trusted: boolean;
+}
+
+export interface WorkspaceTrustReadFailedEvent {
+  error_type: string;
+}
+
 export const telemetryEventDefinitions = {
+  wire_plan_revision_migrated: defineAgentTelemetryEvent<WirePlanRevisionMigratedEvent>({
+    owner: 'kimi-code',
+    comment: 'A legacy plan revision wire record is normalized during restore.',
+    properties: {
+      record_type: 'Wire record type',
+      legacy_field: 'Legacy field name',
+      migration_outcome: 'Migration outcome',
+    },
+  }),
   turn_started: defineAgentTelemetryEvent<TurnStartedEvent>({
     owner: 'kimi-code',
     comment: 'A turn starts running.',
@@ -483,6 +659,8 @@ export const telemetryEventDefinitions = {
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       thinking_effort: 'Effective thinking effort the turn runs with',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn starts; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   turn_interrupted: defineAgentTelemetryEvent<TurnInterruptedEvent>({
@@ -508,17 +686,20 @@ export const telemetryEventDefinitions = {
       reason: 'How the turn ended',
       duration_ms: 'Turn wall-clock time in milliseconds',
       mode: 'Agent mode the turn ran in',
+      error_type: 'Classified error category when reason is failed',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       thinking_effort: 'Effective thinking effort the turn ran with',
       trace_id:
         'Trace id of the most recent LLM request in this turn; absent for non-Kimi protocols',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins when the turn ends; empty string for a known empty set, absent when no plugin snapshot is available',
     },
   }),
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
     owner: 'kimi-code',
     comment:
-      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage.',
+      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage and how its prefix compares with the last turn request the parent agent completed before the fork.',
     properties: {
       source: 'Why a cache hit was expected for this request',
       turn_id: 'Per-agent turn index of the probed request',
@@ -528,6 +709,14 @@ export const telemetryEventDefinitions = {
       input_cache_read: 'Cache-read input tokens of the probed request',
       input_cache_creation: 'Cache-creation input tokens of the probed request',
       output_tokens: 'Output tokens of the probed request',
+      tools_match:
+        "Whether the provider-visible tool table hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+      system_prompt_match:
+        "Whether the system prompt hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+      parent_input_tokens:
+        "Total input tokens of the parent's last completed turn request before the fork, i.e. the prefix this request could read from the cache; absent when there is none, or the parent's context was rewritten (undo, compaction) after it",
+      parent_request_gap_ms:
+        "Milliseconds from the parent's last completed turn request finishing to the probed request starting; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({
@@ -662,6 +851,64 @@ export const telemetryEventDefinitions = {
     comment: 'A request to enter plan mode is resolved.',
     properties: {
       outcome: 'How the request was resolved',
+    },
+  }),
+  tower_mode_enter: defineAgentTelemetryEvent<TowerModeEnterEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to enter tower mode resolves.',
+    properties: {
+      outcome: 'Whether tower mode was entered or the request was rejected',
+      reason: 'Why the request was rejected; omitted when tower mode was entered',
+    },
+  }),
+  tower_mode_exit: defineAgentTelemetryEvent<TowerModeExitEvent>({
+    owner: 'kimi-code',
+    comment: 'Tower mode is exited.',
+    properties: {
+      reason:
+        'Why tower mode was exited: the user turned it off, another session took the tower over, or a foreign tower was reconciled away',
+    },
+  }),
+  swarm_mode_entered: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is entered.',
+    properties: {
+      trigger: 'What triggered swarm mode',
+    },
+  }),
+  swarm_mode_exited: defineAgentTelemetryEvent<SwarmModeTransitionEvent>({
+    owner: 'kimi-code',
+    comment: 'Swarm mode is exited.',
+    properties: {
+      trigger: 'What originally triggered the swarm mode being exited',
+    },
+  }),
+  external_hook_resolved: defineTelemetryEvent<ExternalHookResolvedEvent>({
+    owner: 'kimi-code',
+    comment: 'An external hook trigger finishes running its matched hooks.',
+    properties: {
+      event: 'Hook event type (e.g. PreToolUse, UserPromptSubmit, Stop)',
+      action: 'Whether the trigger resolved to allow or block',
+      matched_count: 'Number of hooks that ran for the trigger',
+      failed_count: 'Number of hooks that failed (timeout, spawn error, or a non-zero exit code other than 2)',
+    },
+  }),
+  remote_control_toggle: defineTelemetryEvent<RemoteControlToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'A request to toggle the Remote Control tunnel resolves.',
+    properties: {
+      enabled: 'Whether the request was to enable or disable the tunnel',
+      outcome: 'How the request resolved',
+    },
+  }),
+  plugin_toggle: defineTelemetryEvent<PluginToggleEvent>({
+    owner: 'kimi-code',
+    comment: 'An installed plugin is enabled or disabled.',
+    properties: {
+      plugin_id: 'Id of the toggled plugin',
+      enabled: 'Whether the plugin is enabled after the toggle',
+      enabled_plugins:
+        'Comma-separated sorted ids of enabled, loaded plugins after the toggle commits; empty string for a known empty set',
     },
   }),
   compaction_finished: defineAgentTelemetryEvent<CompactionFinishedEvent>({
@@ -861,15 +1108,76 @@ export const telemetryEventDefinitions = {
         'Trace id of the LLM request that produced the repeated tool call; absent for non-Kimi protocols',
     },
   }),
+  tool_call_repeat_handoff: defineAgentTelemetryEvent<ToolCallRepeatHandoffEvent>({
+    owner: 'kimi-code',
+    comment: 'The text-only handoff step that follows a repeat-breaker force stop finished.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      outcome: 'Whether the model answered in text or its tool calls were vetoed',
+    },
+  }),
   agents_md_reminder_shown: defineAgentTelemetryEvent<AgentsMdReminderShownEvent>({
     owner: 'kimi-code',
-    comment: 'An AGENTS.md discovery reminder is appended to a tool result.',
+    comment: 'An AGENTS.md discovery reminder is queued for context injection after a tool call.',
     properties: {
       turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
-      tool_name: 'Registered tool name whose result carried the reminder',
+      tool_name: 'Registered tool name whose execution discovered the file',
       reminded_count: 'Number of AGENTS.md paths listed in the reminder',
       trace_id:
         'Trace id of the LLM request that produced the tool call; absent for non-Kimi protocols',
+    },
+  }),
+  notify_user_nudge_shown: defineAgentTelemetryEvent<NotifyUserNudgeShownEvent>({
+    owner: 'kimi-code',
+    comment: 'A reminder asking the agent to post a NotifyUser update is queued for context injection.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      rounds_since_notify: 'Tool-call rounds (assistant steps with tool calls) since the turn started or the last NotifyUser call',
+      nudge_index: 'Position of this reminder within the current silent stretch; 1 for the first, higher when earlier reminders went unanswered',
+    },
+  }),
+  notify_user_sent: defineAgentTelemetryEvent<NotifyUserSentEvent>({
+    owner: 'kimi-code',
+    comment: 'The agent posted a NotifyUser progress update.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      rounds_since_notify: 'Tool-call rounds (assistant steps with tool calls) before this update since the turn started or the previous NotifyUser call',
+      after_nudge: 'Whether a NotifyUser reminder was injected since the turn started or the previous NotifyUser call',
+      title_chars: 'Length of the update title in UTF-16 code units; the title text itself is not recorded',
+      message_chars: 'Length of the update message in UTF-16 code units; the message text itself is not recorded',
+      displayed: 'Whether the update was shown to the user; false when the feature was turned off mid-session or the host cannot display updates',
+    },
+  }),
+  todo_list_written: defineAgentTelemetryEvent<TodoListWrittenEvent>({
+    owner: 'kimi-code',
+    comment: 'The agent replaced or cleared its todo list through the TodoList tool.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      item_count: 'Number of items in the list after the write; 0 when the list was cleared',
+      open_count: 'Number of items still pending or in_progress after the write',
+      steps_since_write: 'Assistant steps between the previous TodoList write in context and this one; omitted when no earlier write is in context',
+      after_reminder: 'Whether a stale todo list reminder was injected since the previous TodoList write',
+    },
+  }),
+  todo_reminder_shown: defineAgentTelemetryEvent<TodoReminderShownEvent>({
+    owner: 'kimi-code',
+    comment: 'A reminder that the todo list still has open items and has not been updated recently is queued for context injection.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
+      steps_since_write: 'Assistant steps since the last TodoList write in context',
+      item_count: 'Number of items in the list',
+      open_count: 'Number of items still pending or in_progress',
+    },
+  }),
+  todo_turn_ended: defineAgentTelemetryEvent<TodoTurnEndedEvent>({
+    owner: 'kimi-code',
+    comment: 'A main-agent turn ended while the todo list was non-empty or had changed during the turn.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      reason: 'How the turn ended',
+      item_count: 'Number of items in the list when the turn ended; 0 when the list was cleared during the turn',
+      open_count: 'Number of items still pending or in_progress when the turn ended',
+      updated_in_turn: 'Whether the list changed during this turn',
     },
   }),
   grep_tool_rg_fallback: defineAgentTelemetryEvent<GrepToolRgFallbackEvent>({
@@ -909,6 +1217,8 @@ export const telemetryEventDefinitions = {
       parent_agent_id: 'Parent (caller) agent id',
       parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
       model: 'Model alias the subagent binds to (secondary-model choice or inherited caller model); omitted when no binding was resolved',
+      model_source:
+        "How the bound model was chosen: 'forced' = [secondary_model].force, 'primary_override' = explicit \"primary\" request, 'inherited' = caller's own model (no pool or fork), 'secondary_pool' = [secondary_model.models] pool pick; omitted when no binding resolution happened (e.g. resume)",
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({
@@ -1008,7 +1318,11 @@ export const telemetryEventDefinitions = {
   session_started: defineTelemetryEvent<SessionStartedEvent>({
     owner: 'kimi-code',
     comment: 'A session becomes active (created, forked, or resumed).',
-    properties: { resumed: 'Whether the session was resumed from disk' },
+    properties: {
+      resumed: 'Whether the session was resumed from disk',
+      experimental_flags:
+        'Sorted comma-separated ids of enabled experimental flags, empty when none are enabled',
+    },
   }),
   session_load_failed: defineTelemetryEvent<SessionLoadFailedEvent>({
     owner: 'kimi-code',
@@ -1034,6 +1348,118 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A CLI run exits.',
     properties: { duration_ms: 'Run wall-clock time in milliseconds' },
+  }),
+  oauth_login_finished: defineTelemetryEvent<OauthLoginFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'An OAuth login flow reaches a terminal status.',
+    properties: {
+      provider: 'OAuth provider name',
+      status: 'Terminal status of the login flow',
+      duration_ms: 'Login flow wall-clock time in milliseconds',
+    },
+  }),
+  oauth_models_refresh_finished: defineTelemetryEvent<OauthModelsRefreshFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'A refresh of the managed OAuth provider model catalog finishes.',
+    properties: {
+      changed_count: 'Number of models added or updated by the refresh',
+      unchanged_count: 'Number of models left unchanged',
+      failed_count: 'Number of models that failed to refresh',
+    },
+  }),
+  auth_ensure_ready_failed: defineTelemetryEvent<AuthEnsureReadyFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'Auth readiness check fails before a turn can start.',
+    properties: {
+      reason: 'Why auth is not ready',
+      has_model_override: 'Whether a model override is configured',
+    },
+  }),
+  shell_command_finished: defineAgentTelemetryEvent<ShellCommandFinishedEvent>({
+    owner: 'kimi-code',
+    comment: 'A shell command execution finishes; this path bypasses the tool executor.',
+    properties: {
+      duration_ms: 'Execution wall-clock time in milliseconds',
+      is_error: 'Whether the execution ended with an error',
+      backgrounded: 'Whether the command was sent to the background',
+    },
+  }),
+  agent_create_failed: defineTelemetryEvent<AgentCreateFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'Agent scope creation fails partway through.',
+    properties: {
+      agent_id: 'Id of the agent whose creation failed',
+      stage: 'Creation stage the failure occurred in',
+      error_type: 'Classified error category',
+    },
+  }),
+  session_ended: defineTelemetryEvent<SessionEndedEvent>({
+    owner: 'kimi-code',
+    comment: 'A session is closed or archived.',
+    properties: { reason: 'How the session ended' },
+  }),
+  web_fetch_fallback: defineTelemetryEvent<WebFetchFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'The managed fetch-url provider fails and the call silently falls back to the local fetcher.',
+    properties: {
+      error_type: 'Classified error category of the managed fetch failure',
+      used_api_key: 'Whether a managed access token was obtained before the failure',
+    },
+  }),
+  media_resolve_fallback: defineAgentTelemetryEvent<MediaResolveFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'A media part is silently degraded or replaced while resolving model input.',
+    properties: {
+      kind: 'Media kind being resolved',
+      reason: 'Why the media could not be resolved as-is',
+      model: 'Model the media was resolved for',
+    },
+  }),
+  llm_request_projection_fallback: defineAgentTelemetryEvent<LlmRequestProjectionFallbackEvent>({
+    owner: 'kimi-code',
+    comment: 'A rejected LLM request is retried with a degraded context projection.',
+    properties: {
+      projection: 'Projection policy the request is degraded to',
+      error_type: 'Classified error category of the rejection',
+      model: 'Model that rejected the request',
+      turn_id: 'Per-agent turn index; pair with agent_id to locate a turn within a session',
+    },
+  }),
+  session_index_degraded: defineTelemetryEvent<SessionIndexDegradedEvent>({
+    owner: 'kimi-code',
+    comment: 'The session index read model degrades to the authoritative directory scan.',
+    properties: {
+      reason: 'Why the read model degraded',
+      degraded_count: 'How many times the read model has degraded so far',
+      error_type: 'Classified error category when degradation was caused by an error',
+    },
+  }),
+  session_index_projected: defineTelemetryEvent<SessionIndexProjectedEvent>({
+    owner: 'kimi-code',
+    comment: 'The session index finishes projecting the sessions directory into the read model.',
+    properties: {
+      duration_ms: 'Projection wall-clock time in milliseconds',
+      session_count: 'Number of sessions projected',
+      generation: 'Read model generation after this projection',
+    },
+  }),
+  session_index_mirror_give_up: defineTelemetryEvent<SessionIndexMirrorGiveUpEvent>({
+    owner: 'kimi-code',
+    comment: 'The session index mirror stops retrying after consecutive write failures.',
+    properties: {
+      pending_count: 'Number of queued mirror writes left pending',
+      consecutive_failures: 'Number of consecutive write failures that triggered the give-up',
+    },
+  }),
+  workspace_trust_changed: defineTelemetryEvent<WorkspaceTrustChangedEvent>({
+    owner: 'kimi-code',
+    comment: 'A workspace is trusted or untrusted.',
+    properties: { trusted: 'Whether the workspace is now trusted' },
+  }),
+  workspace_trust_read_failed: defineTelemetryEvent<WorkspaceTrustReadFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'Reading the workspace trust record fails and the workspace silently falls back to untrusted.',
+    properties: { error_type: 'Classified error category' },
   }),
 } as const;
 

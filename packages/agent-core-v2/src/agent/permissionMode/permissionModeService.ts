@@ -3,8 +3,10 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { parseBooleanEnv } from '#/_base/utils/env';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
-import { activateReminderWhenReady } from '#/features/reminder/internal/reminderActivation';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -12,6 +14,7 @@ import {
   MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentPermissionModeService, type PermissionModeChangedContext } from './permissionMode';
 import {
@@ -19,6 +22,8 @@ import {
   permissionModeKey,
   PermissionSetMode,
 } from './permissionModeOps';
+
+export const PERMISSION_MODE_REMINDER_ENV = 'KIMI_CODE_PERMISSION_MODE_REMINDER';
 
 export class AgentPermissionModeService extends Service implements IAgentPermissionModeService {
   declare readonly _serviceBrand: undefined;
@@ -30,17 +35,17 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @IAgentReminderService reminder: IAgentReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
     super();
     this.agentState.contributeState(permissionModeKey);
     this.agentState.contributeState(permissionModeConfiguredKey);
-    this._register(
-      activateReminderWhenReady(this.agentLifecycle, this.scopeContext, (reminder) =>
-        new PermissionModeInjection(this, reminder, this.agentState),
-      ),
-    );
+    if (parseBooleanEnv(bootstrap.getEnv(PERMISSION_MODE_REMINDER_ENV)) !== false) {
+      this._register(new PermissionModeInjection(this, reminder, this.agentState));
+    }
   }
 
   get mode(): PermissionMode {
@@ -53,6 +58,9 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     if (!changed && this.agentState.get(permissionModeConfiguredKey)) return;
     void this.dispatcher.dispatch(
       new PermissionSetMode({ agentId: this.scopeContext.agentId, mode }),
+    );
+    void this.dispatcher.dispatch(
+      new AgentStatusUpdated({ agentId: this.scopeContext.agentId, permission: mode }),
     );
     if (changed) this._onDidChangeMode.fire({ mode, previousMode });
   }

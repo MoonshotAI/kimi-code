@@ -3,8 +3,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import type { GoalBudgetLimits, GoalSnapshot } from '#/features/goal/types';
 
 import DESCRIPTION from './set-goal-budget.md?raw';
@@ -15,7 +14,6 @@ import {
 } from './set-goal-budget';
 
 const MIN_REASONABLE_TIME_BUDGET_MS = 1_000;
-const MAX_REASONABLE_TIME_BUDGET_MS = 24 * 60 * 60 * 1000;
 
 export class SetGoalBudgetTool implements ISetGoalBudgetTool {
   declare readonly _serviceBrand: undefined;
@@ -23,14 +21,10 @@ export class SetGoalBudgetTool implements ISetGoalBudgetTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SetGoalBudgetToolInputSchema);
 
-  private readonly goal: GoalRuntime;
-
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentGoalService private readonly goal: IAgentGoalService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
-  ) {
-    this.goal = manager.resolve(scopeContext.agentContext, AgentGoal);
-  }
+  ) {}
 
   resolveExecution(args: SetGoalBudgetToolInput): ToolExecution {
     const denied = mainAgentOnlyExecution(this.scopeContext, GOAL_MAIN_AGENT_ONLY);
@@ -123,7 +117,7 @@ function budgetLimitsFromInput(input: SetGoalBudgetToolInput): GoalBudgetLimits 
       const wallClockBudgetMs = Math.round(toMilliseconds(input.value, input.unit));
       if (
         wallClockBudgetMs < MIN_REASONABLE_TIME_BUDGET_MS ||
-        wallClockBudgetMs > MAX_REASONABLE_TIME_BUDGET_MS
+        !Number.isFinite(wallClockBudgetMs)
       ) {
         return null;
       }

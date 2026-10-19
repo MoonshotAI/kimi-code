@@ -10,9 +10,9 @@ import {
   MODELS_SECTION,
   PROVIDERS_SECTION,
 } from '#/app/kosongConfig/configSection';
-import { resolveModelForReady } from '#/kosong/model/modelAuth';
-import type { ModelRecord } from '#/kosong/model/model';
-import type { ProviderConfig } from '#/kosong/provider/provider';
+import { resolveModelForReady } from '#/llm-adapter/model/model-auth';
+import type { ModelRecord } from '#/llm-adapter/model/model';
+import type { ProviderConfig } from '#/llm-adapter/provider/provider';
 
 import { IAuthLegacyService } from './authLegacy';
 

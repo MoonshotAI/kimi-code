@@ -6,7 +6,6 @@ import {
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { createTerminalRequestSchema } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -15,14 +14,11 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
 import {
   closeTerminalResponseSchema,
+  createTerminalRequestSchema,
   getTerminalResponseSchema,
   listTerminalsResponseSchema,
 } from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
-
-const createTerminalCompatRequestSchema = createTerminalRequestSchema.extend({
-  runtime_id: z.string().min(1).optional(),
-});
 
 interface TerminalsRouteHost {
   get(
@@ -102,7 +98,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       method: 'POST',
       path: '/sessions/{session_id}/terminals',
       params: sessionIdParamSchema,
-      body: createTerminalCompatRequestSchema,
+      body: createTerminalRequestSchema,
       success: { data: getTerminalResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },

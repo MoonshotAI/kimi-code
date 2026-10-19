@@ -28,7 +28,6 @@ function runtime(
   return Object.assign(value, {
     fs: capabilities.includes('fs') ? {} : undefined,
     process: capabilities.includes('process') ? {} : undefined,
-    watch: capabilities.includes('watch') ? {} : undefined,
     terminal: capabilities.includes('terminal') ? {} : undefined,
   });
 }

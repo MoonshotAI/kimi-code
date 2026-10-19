@@ -1,10 +1,7 @@
-import {
-  ErrorCodes,
-  KimiError,
-  type AgentContextData,
-  type KimiErrorCode,
-  type SwarmModeTrigger,
-} from '@moonshot-ai/agent-core';
+import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
+
+import type { AgentContextData } from '#/context';
+import { ErrorCodes, KimiError, type KimiErrorCode } from '#/errors';
 
 import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
@@ -150,22 +147,17 @@ export class Session {
     });
   }
 
-  /**
-   * Submit one prompt with one or more skill activations bundled into the
-   * same user message: the skills are validated up front (an unknown name
-   * rejects the whole submission), rendered ahead of the prompt in the same
-   * turn, and the bundle undoes as a single anchor. Requires the
-   * agent-core-v2 engine.
-   */
   async promptWithSkills(
     input: string | PromptInput,
     skills: readonly PromptSkillActivation[],
+    options?: { readonly steerIfActive?: boolean },
   ): Promise<void> {
     this.ensureOpen();
     await this.rpc.promptWithSkills({
       sessionId: this.id,
       input: normalizePromptInput(input),
       skills,
+      steerIfActive: options?.steerIfActive,
     });
   }
 
@@ -341,7 +333,7 @@ export class Session {
     }
   }
 
-  async setTowerMode(enabled: boolean): Promise<void> {
+  async setTowerMode(enabled: boolean, base?: string): Promise<void> {
     this.ensureOpen();
     if (typeof enabled !== 'boolean') {
       throw new KimiError(
@@ -349,7 +341,18 @@ export class Session {
         'Session tower mode must be a boolean',
       );
     }
-    await this.rpc.setTowerMode({ sessionId: this.id, enabled });
+    if (base !== undefined && typeof base !== 'string') {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        'Session tower mode base must be a string',
+      );
+    }
+    await this.rpc.setTowerMode({ sessionId: this.id, enabled, base });
+  }
+
+  async getTowerStatus(): Promise<string> {
+    this.ensureOpen();
+    return this.rpc.getTowerStatus({ sessionId: this.id });
   }
 
   async getPlan(): Promise<SessionPlan> {

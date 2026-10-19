@@ -20,7 +20,7 @@ import {
   IWorkspaceService,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 

@@ -8,16 +8,16 @@ import { type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/sco
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { ContextMessage } from '#/agent/contextMemory/types';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { IRestGateway } from '#/app/gateway/gateway';
 import { RestGateway } from '#/app/gateway/gatewayService';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
 import { ILogService } from '#/_base/log/log';
-import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { ISessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { createHooks } from '#/hooks';
+import type { UserEntry } from '#human/agent/turn';
 import { stubLog } from '../../_base/log/stubs';
 import { stubLoopWithHooks, type StubLoop } from '../../agent/loop/stubs';
 
@@ -51,27 +51,12 @@ describe('RestGateway', () => {
     ix = disposables.add(new TestInstantiationService());
     promptCalls = [];
     turnService = stubLoopWithHooks({ hasActiveTurn: true });
-
-    const promptService: IAgentPromptService = {
-      _serviceBrand: undefined,
-      enqueue: ({ message }: { message: ContextMessage }) => { promptCalls.push(message); return Promise.resolve({ id: 'p', launched: Promise.resolve(undefined) } as never); },
-      submit: () => Promise.resolve(undefined),
-      submitSteer: () => Promise.resolve(undefined),
-      steer: () => Promise.resolve([]),
-      list: () => ({ active: undefined, pending: [] }),
-      abort: () => true,
-      drain: () => Promise.resolve(),
-      inject: () => Promise.resolve(undefined),
-      retry: () => Promise.resolve(undefined),
-      clear: () => {},
-      hooks: createHooks(['onBeforeSubmitPrompt']) as IAgentPromptService['hooks'],
-    };
+    turnService.submit = (input: UserEntry) => { promptCalls.push({ ...input.message, toolCalls: [], origin: input.meta?.origin as PromptOrigin | undefined }); return { id: 'p' }; };
 
     const agentHandle: IAgentScopeHandle = {
       id: 'main',
       kind: LifecycleScope.Agent,
       accessor: makeAccessor([
-        [IAgentPromptService, promptService],
         [IAgentLoopService, turnService],
       ]),
       dispose: () => {},
@@ -87,17 +72,10 @@ describe('RestGateway', () => {
       fork: () => Promise.resolve(agentContext),
       get: (agentId: string) => (agentId === 'main' ? agentContext : undefined),
       list: () => [agentContext],
-      resolve: () => {
-        throw new Error('not supported in this test');
-      },
-      inspect: () => {
-        throw new Error('not supported in this test');
-      },
       remove: () => Promise.resolve(),
       broadcastPermissionMode: () => {},
       handleOf: (agentId: string) => (agentId === 'main' ? agentHandle : undefined),
       adopt: () => agentContext,
-      attachRuntimes: () => {},
     };
     const sessionHandle: ISessionScopeHandle = {
       id: 's1',
@@ -106,6 +84,12 @@ describe('RestGateway', () => {
       dispose: () => {},
     };
 
+    const sessionMeta: SessionMeta = {
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+    };
     const sessionLifecycle: ISessionLifecycleService = {
       _serviceBrand: undefined,
       onWillCreateSession: () => ({ dispose: () => {} }),
@@ -122,8 +106,8 @@ describe('RestGateway', () => {
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
       delete: () => Promise.resolve(),
-      fork: () => Promise.resolve(sessionHandle),
-      createChild: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionMeta),
+      createChild: () => Promise.resolve(sessionMeta),
     };
     const handlerHandle = {
       id: 'wd_stub',
@@ -141,7 +125,7 @@ describe('RestGateway', () => {
       archive: () => Promise.resolve(),
       restore: () => Promise.resolve(sessionHandle),
       delete: () => Promise.resolve(),
-      fork: () => Promise.resolve(sessionHandle),
+      fork: () => Promise.resolve(sessionMeta),
     });
     ix.stub(ILogService, stubLog());
     ix.set(IRestGateway, new SyncDescriptor(RestGateway));

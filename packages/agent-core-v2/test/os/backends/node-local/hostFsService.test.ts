@@ -52,3 +52,24 @@ describe('HostFileSystem stat / lstat', () => {
     expect((await fs.lstat(link)).isSymbolicLink).toBe(true);
   });
 });
+
+describe('HostFileSystem streamed UTF-8 lines', () => {
+  it('preserves Unicode across chunks, CRLF, and a BOM after the first line', async () => {
+    const path = join(dir, 'unicode.txt');
+    const first = 'a'.repeat(65_531) + '🙂é\r\n';
+    const second = '\uFEFFsecond\n';
+    await writeFile(path, '\uFEFF' + first + second + 'last');
+    const lines: string[] = [];
+    for await (const line of fs.readLines(path)) lines.push(line);
+    expect(lines).toEqual([first, second, 'last']);
+  });
+
+  it('rejects malformed UTF-8 rather than replacing bytes in strict mode', async () => {
+    const path = join(dir, 'invalid.txt');
+    await writeFile(path, Buffer.from([0x61, 0x0a, 0xc3]));
+    const read = async () => {
+      for await (const _line of fs.readLines(path, { errors: 'strict' })) {}
+    };
+    await expect(read()).rejects.toThrow();
+  });
+});

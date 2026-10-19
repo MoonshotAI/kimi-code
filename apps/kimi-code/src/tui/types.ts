@@ -6,19 +6,21 @@ import type {
   ProviderConfig,
   PromptPart,
   ThinkingEffort,
+  TokenUsage,
   ToolInputDisplay,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
+import type { MarkdownConfig, NotificationsConfig, StatusLineConfig, TuiMode, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
+import type { MediaAttachment, VideoAttachment } from './utils/image-attachment-store';
 
 export type BannerDisplay = 'always' | 'once' | 'cooldown';
 
 export interface BannerState {
   key: string;
   tag: string | null;
-  mainText: string;
+  mainText: string | null;
   subText: string | null;
   display: BannerDisplay;
   ttlHours?: number;
@@ -61,6 +63,7 @@ export interface AppState {
   contextUsage: number;
   contextTokens: number;
   maxContextTokens: number;
+  cumulativeTokens?: number;
   isCompacting: boolean;
   isReplaying: boolean;
   streamingPhase: 'idle' | 'waiting' | 'thinking' | 'composing' | 'shell';
@@ -68,6 +71,7 @@ export interface AppState {
   /** Pending step retry backoff (fed by `turn.step.retrying`); null when no retry is in flight. */
   stepRetry: StepRetryState | null;
   theme: ThemeName;
+  tuiMode?: TuiMode;
   version: string;
   editorCommand: string | null;
   /** Mirrors the TUI config toggle; defaults to false when absent from older fixtures. */
@@ -76,10 +80,14 @@ export interface AppState {
   renderLatex?: boolean;
   /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
   cacheExpiryHint?: boolean;
+  disableFeedbackSurvey?: boolean;
+  /** Mirrors the TUI config toggle; defaults to true when absent from older fixtures. */
+  autoSessionTitle?: boolean;
   notifications: NotificationsConfig;
   upgrade: UpgradePreferences;
   /** Footer status line customization from tui.toml; absent means the default layout. */
   statusLine?: StatusLineConfig;
+  markdown?: MarkdownConfig;
   availableModels: Record<string, ModelAlias>;
   availableProviders: Record<string, ProviderConfig>;
   sessionTitle: string | null;
@@ -88,6 +96,10 @@ export interface AppState {
   mcpServersSummary: string | null;
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
+}
+
+export function sumTokenUsage(total: TokenUsage): number {
+  return total.inputOther + total.output + total.inputCacheRead + total.inputCacheCreation;
 }
 
 export interface StepRetryState {
@@ -153,18 +165,25 @@ export interface BackgroundAgentMetadata {
   readonly parentToolCallId: string;
   readonly agentName?: string;
   readonly description?: string;
+  /** Background task id carried on the spawn event (Agent tool only); lets the
+   *  terminal card register before `background.task.started` syncs. */
+  readonly taskId?: string;
   /** Display name of the model the agent is bound to (resolved at spawn). */
   readonly model?: string;
   /** Thinking effort, set only for concrete levels (boolean on/off hidden). */
   readonly effort?: string;
 }
 
-export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed';
+export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed';
 
 export interface BackgroundAgentStatusData {
   readonly phase: BackgroundAgentStatusPhase;
   readonly headline: string;
   readonly detail?: string;
+  /** Subagent behind a background-agent card; lets the task-notification
+   *  anchor reuse a terminal card that was mounted before its task id was
+   *  known (e.g. a tower worker that finished before `registerTask`). */
+  readonly agentId?: string;
 }
 
 export interface CompactionTranscriptData {
@@ -225,7 +244,7 @@ export interface TranscriptEntry {
   modelText?: boolean;
   color?: ColorToken;
   detail?: string;
-  /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` replaces the sparkles marker). */
+  /** Optional override for the leading bullet of a 'user' message entry. An empty string suppresses the bullet entirely (used by shell-command echoes so `$` takes the bullet's place). */
   bullet?: string;
   toolCallData?: ToolCallBlockData;
   backgroundAgentStatus?: BackgroundAgentStatusData;
@@ -233,6 +252,7 @@ export interface TranscriptEntry {
   cronData?: CronTranscriptData;
   goalData?: GoalTranscriptData;
   imageAttachmentIds?: readonly number[];
+  skillNames?: readonly string[];
   skillActivationId?: string;
   skillName?: string;
   skillArgs?: string;
@@ -257,12 +277,15 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
+export interface PreparedSkillActivations {
+  skills: Array<{ name: string; args?: string }>;
+  mediaAttachmentIds: number[];
+  stagingPaths: string[];
+  cachedVideos: VideoAttachment[];
+}
+
 export interface InlineSkillActivation {
   readonly skillName: string;
-  /**
-   * Skill arguments. Only set for a leading `/skill:<name> args` command that
-   * is combined with further inline skills; inline tokens carry no args.
-   */
   readonly args?: string;
 }
 
@@ -272,15 +295,8 @@ export interface QueuedMessage {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
-  /** `bash` for a `!` shell command queued while another command is running;
-   *  `skill` for a slash-skill activation queued while the session is busy;
-   *  undefined (=`prompt`) for a normal message. */
-  readonly mode?: 'prompt' | 'bash' | 'skill';
-  /** Set when mode === 'skill': the skill to activate when the item drains.
-   *  `text` then holds the display/recall string (`/name args`). */
-  readonly skillName?: string;
-  /** Set when mode === 'skill': the raw (media-rewritten) args to activate with. */
-  readonly skillArgs?: string;
+  readonly mediaSnapshots?: readonly MediaAttachment[];
+  readonly mode?: 'prompt' | 'bash';
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
@@ -296,6 +312,8 @@ export interface SteerInputItem {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
+  readonly mediaSnapshots?: readonly MediaAttachment[];
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 export const INITIAL_LIVE_PANE: LivePaneState = {

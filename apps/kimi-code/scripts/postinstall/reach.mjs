@@ -28,31 +28,12 @@
 
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { delimiter, dirname, join, sep } from 'node:path';
+import { delimiter, dirname, join } from 'node:path';
+
+import { executableCandidates, pathFlavor } from './platform.mjs';
 
 const LEGACY_BIN = 'kimi';
 const IS_WINDOWS = process.platform === 'win32';
-
-/**
- * Expand a basename like `kimi` into the set of filenames the OS
- * would actually match on PATH.
- *
- * On POSIX: just `['kimi']`.
- *
- * On Windows: `['kimi', 'kimi.exe', 'kimi.cmd', …]` — every
- * extension in `PATHEXT`. Without this, our PATH walk would miss
- * the typical `kimi.exe` shim produced by `uv tool install` on
- * Windows.
- */
-export function executableCandidates(basename) {
-  if (!IS_WINDOWS) return [basename];
-  const pathext = (process.env['PATHEXT'] ?? '.EXE;.CMD;.BAT;.COM')
-    .toLowerCase()
-    .split(';')
-    .map((e) => e.trim())
-    .filter(Boolean);
-  return [basename, ...pathext.map((ext) => basename + ext)];
-}
 
 /**
  * Identify which package manager ran us. `npm_config_user_agent` is
@@ -223,7 +204,7 @@ export async function ownPackageRoot(startDir) {
   return null;
 }
 
-async function isExecutableFile(filePath) {
+async function isExecutableFile(filePath, platform) {
   try {
     const info = await fs.stat(filePath);
     if (!info.isFile()) return false;
@@ -231,7 +212,7 @@ async function isExecutableFile(filePath) {
     // existence + a recognized extension is what PATHEXT-style lookup
     // checks. Callers only pass us candidates that already match an
     // extension in `executableCandidates()`, so "is a file" suffices.
-    if (IS_WINDOWS) return true;
+    if (platform === 'win32') return true;
     return (info.mode & 0o111) !== 0;
   } catch {
     return false;
@@ -304,20 +285,22 @@ export async function findFirstResolvableKimi(
   pathString,
   actionableShimPaths,
   allDetectedShimPaths,
+  platform = process.platform,
 ) {
   if (!ownRoot || !pathString) return { kind: 'none' };
-  const ownPrefix = ownRoot + sep;
-  const candidates = executableCandidates(LEGACY_BIN);
+  const { delimiter: flavorDelimiter, join: flavorJoin, sep: flavorSep } = pathFlavor(platform);
+  const ownPrefix = ownRoot + flavorSep;
+  const candidates = executableCandidates(LEGACY_BIN, platform);
   const skipSet = new Set(actionableShimPaths ?? []);
   const knownLegacySet = new Set(allDetectedShimPaths ?? []);
   const seenDirs = new Set();
-  for (const dir of pathString.split(delimiter)) {
+  for (const dir of pathString.split(flavorDelimiter)) {
     if (!dir || seenDirs.has(dir)) continue;
     seenDirs.add(dir);
     for (const name of candidates) {
-      const shim = join(dir, name);
+      const shim = flavorJoin(dir, name);
       if (skipSet.has(shim)) continue;
-      if (!(await isExecutableFile(shim))) continue;
+      if (!(await isExecutableFile(shim, platform))) continue;
       const kind = await classifyShim(shim, ownRoot, ownPrefix);
       if (kind === 'unreadable') continue;
       if (kind === 'own') return { kind: 'own' };

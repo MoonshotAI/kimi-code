@@ -1,13 +1,21 @@
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IAgentTowerService } from '#/features/tower/tower';
-import { TowerProtocolError } from '#/features/tower/protocol/index';
+import {
+  TowerProtocolError,
+  type TowerReanchorMissionDigest,
+} from '#/features/tower/protocol/index';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool, TOWER_MAIN_AGENT_ONLY } from '../support';
+import {
+  newTowerStore,
+  runTowerTool,
+  TOWER_MAIN_AGENT_ONLY,
+  TOWER_MODE_USER_ENABLED_ONLY,
+} from '../support';
 import DESCRIPTION from './init.md?raw';
 import { ITowerInitTool, TowerInitToolInputSchema, type TowerInitToolInput } from './init';
 
@@ -31,6 +39,12 @@ export class TowerInitTool implements ITowerInitTool {
         output: TOWER_MAIN_AGENT_ONLY,
       };
     }
+    if (!this.tower.isActive) {
+      return {
+        isError: true,
+        output: TOWER_MODE_USER_ENABLED_ONLY,
+      };
+    }
     return {
       description: 'Initializing tower workspace',
       approvalRule: this.name,
@@ -51,18 +65,18 @@ export class TowerInitTool implements ITowerInitTool {
             );
           }
           const result = await store.init(this.sessionContext.sessionId, args.base);
-          await this.tower.enter();
           return {
             output: [
               result.created
                 ? 'tower workspace initialized'
                 : 'tower workspace already initialized — existing state preserved',
               `base branch: ${result.base}`,
-              ...(result.ignoredBase !== undefined
+              ...(result.rebasedFrom !== undefined
                 ? [
-                    `requested base "${result.ignoredBase}" ignored — the existing workspace already records base "${result.base}"; tear it down first to rebase the tower`,
+                    `base re-anchored from "${result.rebasedFrom}" to "${result.base}" — open missions now evaluate against "${result.base}"`,
                   ]
                 : []),
+              ...(result.rebaseDigest?.missions.map(reanchorMissionLine) ?? []),
               ...(result.checkout !== result.base
                 ? [
                     result.checkout === 'HEAD'
@@ -84,10 +98,22 @@ export class TowerInitTool implements ITowerInitTool {
                 : []),
               '',
               'Tower mode is active and the tower tool set is enabled.',
-              'Next: split the work with TowerPlan (one mission per disjoint file scope), then TowerSpawn a worker per mission. Assign reviewers for their branches, and merge with TowerMerge only after a clean review.',
+              'Next: split the work with TowerPlan (one mission per disjoint file scope), then TowerSpawn a worker per mission. Assign independent reviewers for their branches, and merge with TowerMerge only after a clean review with merge verdict "merge".',
             ].join('\n'),
           };
         }),
     };
+  }
+}
+
+function reanchorMissionLine(mission: TowerReanchorMissionDigest): string {
+  const prefix = `mission ${mission.id} (${mission.branch}): ${mission.relation}`;
+  switch (mission.relation) {
+    case 'up-to-date':
+      return `${prefix} — the branch already contains the new base tip; no rebase is required by this re-anchor`;
+    case 'stale':
+      return `${prefix} — the new base is not an ancestor of this branch tip; run TowerRebase(mission="${mission.id}") before merging`;
+    case 'no-branch':
+      return `${prefix} — no branch exists yet; spawn first, then evaluate its relation before merging`;
   }
 }

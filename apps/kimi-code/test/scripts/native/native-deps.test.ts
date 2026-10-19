@@ -60,18 +60,20 @@ describe('resolveTargetDeps', () => {
     const linuxPiTui = resolveTargetDeps('linux-arm64').find(
       (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
-    expect(linuxPiTui?.nativeFileRelatives).toEqual([]);
+    expect(linuxPiTui?.nativeFileRelatives).toEqual([
+      'native/linux/prebuilds/linux-arm64/linux-platform-x11.node',
+    ]);
     const macPiTui = resolveTargetDeps('darwin-x64').find(
       (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
     expect(macPiTui?.nativeFileRelatives).toEqual([
-      'native/darwin/prebuilds/darwin-x64/darwin-modifiers.node',
+      'native/darwin/prebuilds/darwin-x64/darwin-platform.node',
     ]);
     const winArmPiTui = resolveTargetDeps('win32-arm64').find(
       (d) => d.resolvedName === '@moonshot-ai/pi-tui',
     );
     expect(winArmPiTui?.nativeFileRelatives).toEqual([
-      'native/win32/prebuilds/win32-arm64/win32-console-mode.node',
+      'native/win32/prebuilds/win32-arm64/win32-platform.node',
     ]);
   });
 

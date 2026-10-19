@@ -1,12 +1,10 @@
 import {
-  effectiveModelAlias,
   PRIMARY_SUBAGENT_MODEL_CHOICE,
   SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
   type Session,
-  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
@@ -15,18 +13,28 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
+import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
+import { SurveyPreferenceSelectorComponent } from '../components/dialogs/survey-preference-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
+import { TuiModeSelectorComponent } from '../components/dialogs/tui-mode-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
-import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
+import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { thinkingEffortToConfig } from '../utils/thinking-config';
+import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
+import {
+  effectiveModelForHost,
+  hasConversationHistory,
+  MODEL_SWITCH_CACHE_WARNING,
+  performModelSwitch,
+} from '../utils/model-switch';
+import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
 import type { SlashCommandHost } from './dispatch';
@@ -37,40 +45,24 @@ import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
-const MODEL_SWITCH_CACHE_WARNING =
-  'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 const EFFORT_SWITCH_CACHE_WARNING =
   'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
-
-/** True once the conversation has at least one user message: a switch from
- * then on resends the accumulated context, losing the cache. Shell-command
- * echoes are also 'user' transcript entries but carry an empty `bullet`, so
- * they're excluded. */
-function hasConversationHistory(host: SlashCommandHost): boolean {
-  return host.state.transcriptEntries.some(
-    (entry) => entry.kind === 'user' && entry.bullet !== '',
-  );
-}
 
 export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConfig {
   return {
     theme: host.state.appState.theme,
+    tuiMode: host.state.appState.tuiMode,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
+    disableFeedbackSurvey:
+      host.state.appState.disableFeedbackSurvey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
+    markdown: host.state.appState.markdown ?? DEFAULT_MARKDOWN_CONFIG,
   };
-}
-
-export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
-  const providerType = host.state.appState.availableProviders[model.provider]?.type;
-  // Flat models (no named provider, e.g. inline base_url served by a v2
-  // backend) have no provider entry to look up; their own protocol declaration
-  // plays the provider-identity role, mirroring the resolver.
-  return effectiveModelAlias(model, providerType ?? model.protocol);
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -122,98 +114,6 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to set plan mode: ${msg}`);
-  }
-}
-
-export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined && !host.engineV2) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-  // v2 session-less: the chosen mode is recorded in appState and passed to the
-  // lazy-created session; apply the runtime permission only when one exists.
-
-  const subcmd = args.trim().toLowerCase();
-  const currentMode = host.state.appState.permissionMode;
-
-  if (subcmd === 'on') {
-    if (currentMode === 'yolo') {
-      host.showNotice('YOLO mode is already on');
-      return;
-    }
-    await session?.setPermission('yolo');
-    host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
-    return;
-  }
-
-  if (subcmd === 'off') {
-    if (currentMode !== 'yolo') {
-      host.showNotice('YOLO mode is already off');
-      return;
-    }
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
-    return;
-  }
-
-  // toggle
-  if (currentMode === 'yolo') {
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
-  } else {
-    await session?.setPermission('yolo');
-    host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'Tool actions auto-approved; the agent may still ask you questions.');
-  }
-}
-
-export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined && !host.engineV2) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-  // v2 session-less: the chosen mode is recorded in appState and passed to the
-  // lazy-created session; apply the runtime permission only when one exists.
-
-  const subcmd = args.trim().toLowerCase();
-  const currentMode = host.state.appState.permissionMode;
-
-  if (subcmd === 'on') {
-    if (currentMode === 'auto') {
-      host.showNotice('Auto mode is already on');
-      return;
-    }
-    await session?.setPermission('auto');
-    host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
-    return;
-  }
-
-  if (subcmd === 'off') {
-    if (currentMode !== 'auto') {
-      host.showNotice('Auto mode is already off');
-      return;
-    }
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
-    return;
-  }
-
-  // toggle
-  if (currentMode === 'auto') {
-    await session?.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
-  } else {
-    await session?.setPermission('auto');
-    host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'All actions auto-approved; the agent will not ask you questions.');
   }
 }
 
@@ -326,7 +226,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
       'warning',
     );
   }
-  await performModelSwitch(host, alias, arg, true);
+  await performModelSwitch(host, alias, arg, 'model');
 }
 
 function showEffortPicker(
@@ -344,11 +244,11 @@ function showEffortPicker(
       warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, effort, true);
+        void performModelSwitch(host, alias, effort, 'model');
       },
       onSessionOnlySelect: (effort) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, effort, false);
+        void performModelSwitch(host, alias, effort, 'session');
       },
       onCancel: () => {
         host.restoreEditor();
@@ -470,150 +370,17 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, true);
+        void performModelSwitch(host, alias, thinking, 'model');
       },
       onSessionOnlySelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, false);
+        void performModelSwitch(host, alias, thinking, 'session');
       },
       onCancel: () => {
         host.restoreEditor();
       },
     }),
   );
-}
-
-async function performModelSwitch(
-  host: SlashCommandHost,
-  alias: string,
-  effort: ThinkingEffort,
-  persist: boolean,
-): Promise<void> {
-  let session = host.session;
-  if (session === undefined && host.engineV2) {
-    // A first prompt may still be inside lazy creation: wait it out so the
-    // switch lands on the new session instead of being overwritten by its
-    // assembly.
-    await host.waitForLazyCreation();
-    session = host.session;
-  }
-  if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
-    return;
-  }
-
-  const prevModel = host.state.appState.model;
-  const prevEffort = host.state.appState.thinkingEffort;
-  const modelChanged = alias !== prevModel;
-  const effortChanged = effort !== prevEffort;
-  const runtimeChanged = modelChanged || effortChanged;
-  let effectiveAlias = alias;
-  let effectiveEffort = effort;
-
-  try {
-    if (session === undefined && runtimeChanged) {
-      await host.authFlow.activateModelAfterLogin(alias, effort);
-    } else if (session !== undefined) {
-      if (alias !== prevModel) {
-        await session.setModel(alias);
-      }
-      if (effort !== prevEffort) {
-        await session.setThinking(effort);
-      }
-      const status = await session.getStatus();
-      effectiveAlias = status.model ?? alias;
-      effectiveEffort = status.thinkingEffort;
-    }
-  } catch (error) {
-    const msg = formatErrorMessage(error);
-    host.showError(`Failed to switch model: ${msg}`);
-    return;
-  }
-
-  if (session === undefined) {
-    effectiveAlias = host.state.appState.model;
-    effectiveEffort = host.state.appState.thinkingEffort;
-  }
-  const effectiveModelChanged = effectiveAlias !== prevModel;
-  const effectiveEffortChanged = effectiveEffort !== prevEffort;
-  const displayName = modelDisplayName(
-    effectiveAlias,
-    host.state.appState.availableModels[effectiveAlias],
-  );
-  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
-  if (session === undefined && runtimeChanged) {
-    if (effectiveModelChanged) {
-      host.track('model_switch', { model: effectiveAlias });
-    }
-    if (effectiveEffortChanged) {
-      host.track('thinking_toggle', {
-        enabled: effectiveEffort !== 'off',
-        effort: effectiveEffort,
-        from: prevEffort,
-      });
-    }
-  }
-
-  let persisted = false;
-  if (persist) {
-    try {
-      persisted = await persistModelSelection(
-        host,
-        effectiveAlias,
-        effectiveEffort,
-        effectiveEffortChanged,
-      );
-    } catch (error) {
-      const msg = formatErrorMessage(error);
-      host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
-      return;
-    }
-  }
-
-  let status: string;
-  if (effectiveModelChanged) {
-    status = persist
-      ? `Switched to ${displayName} with thinking ${effectiveEffort}.`
-      : `Switched to ${displayName} with thinking ${effectiveEffort} for this session only.`;
-  } else if (effectiveEffortChanged) {
-    status = persist
-      ? `Thinking set to ${effectiveEffort}.`
-      : `Thinking set to ${effectiveEffort} for this session only.`;
-  } else if (persist && persisted) {
-    status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
-  } else {
-    status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
-  }
-  host.showStatus(status, 'success');
-}
-
-async function persistModelSelection(
-  host: SlashCommandHost,
-  alias: string,
-  effort: ThinkingEffort,
-  effortChanged: boolean,
-): Promise<boolean> {
-  const config = await host.harness.getConfig({ reload: true });
-  const model = host.state.appState.availableModels[alias];
-  const full = thinkingEffortToConfig(
-    effort,
-    model === undefined ? undefined : effectiveModelForHost(host, model),
-  );
-  // Re-confirming the effort shown when the picker opened is not an explicit
-  // choice — persist the model but leave the stored effort preference alone.
-  const patch = effortChanged ? full : { enabled: full.enabled };
-  if (
-    config.defaultModel === alias &&
-    config.thinking?.enabled === patch.enabled &&
-    (!effortChanged || config.thinking?.effort === patch.effort)
-  ) {
-    return false;
-  }
-  await host.harness.setConfig({
-    defaultModel: alias,
-    thinking: patch,
-  });
-  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -734,10 +501,11 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   host.showStatus(`Theme set to "${theme}"${detail}.`);
 }
 
-export function showPermissionPicker(host: SlashCommandHost): void {
+export function showPermissionPicker(host: SlashCommandHost, initialMode?: PermissionMode): void {
   host.mountEditorReplacement(
     new PermissionSelectorComponent({
       currentValue: host.state.appState.permissionMode,
+      initialValue: initialMode,
       onSelect: (value) => {
         host.restoreEditor();
         void applyPermissionChoice(host, value);
@@ -798,14 +566,22 @@ export async function applyExperimentalFeatureChanges(
     setExperimentalFeatures(features);
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
-    if (host.session !== undefined) {
-      await host.session.reloadSession();
+    if (host.session !== undefined && changes.some((change) => change.id !== 'notify_user')) {
+      const reloadedSession = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
-        host.session,
+        reloadedSession,
         'Experimental features updated. Session reloaded.',
       );
     } else {
       host.showStatus('Experimental features updated.', 'success');
+    }
+    if (
+      host.session !== undefined &&
+      changes.some((change) => change.id === 'notify_user' && change.enabled)
+    ) {
+      host.showNotice(
+        'Start a new session to use Updates if this session was created with the feature disabled.',
+      );
     }
     if (changes.some((change) => change.id === 'tower')) {
       // TowerFeature assembles its tool/profile contributions once at App
@@ -813,7 +589,14 @@ export async function applyExperimentalFeatureChanges(
       // them; only the mode machinery (enter/injection/guards) reacts live.
       host.showNotice('Tower mode takes effect after restarting Kimi Code.');
     }
-    host.track('experimental_features_apply', { changed: changes.length });
+    host.track('experimental_features_apply', {
+      changed: changes.length,
+      flags: features
+        .filter((feature) => feature.enabled)
+        .map((feature) => feature.id)
+        .toSorted()
+        .join(','),
+    });
   } catch (error) {
     host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
   }
@@ -878,16 +661,13 @@ export async function applyUpdatePreferenceChoice(
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
   if (mode === host.state.appState.permissionMode) {
-    host.showStatus(`Permission mode unchanged: ${mode}.`);
+    host.showStatus(`Permission mode unchanged: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}.`);
     return;
   }
 
   try {
     if (host.session !== undefined) {
       await host.session.setPermission(mode);
-    } else if (!host.engineV2) {
-      host.showError(NO_ACTIVE_SESSION_MESSAGE);
-      return;
     }
     // v2 session-less: the chosen mode is recorded in appState and passed to
     // the lazy-created session.
@@ -898,7 +678,172 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(`Permission mode: ${mode}`);
+  host.showNotice(`Permission mode: ${PERMISSION_MODE_DISPLAY_NAMES[mode]}`);
+  if (mode !== 'manual') {
+    host.showStatus(PERMISSION_MODE_DESCRIPTIONS[mode], 'warning');
+  }
+}
+
+export function showSurveyPreferencePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new SurveyPreferenceSelectorComponent({
+      currentValue: host.state.appState.disableFeedbackSurvey !== true,
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applySurveyPreferenceChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type SurveyPreferenceHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'disableFeedbackSurvey'
+    >;
+  };
+  setAppState(
+    patch: Pick<SlashCommandHost['state']['appState'], 'disableFeedbackSurvey'>,
+  ): void;
+  showStatus(msg: string, color?: string): void;
+};
+
+export async function applySurveyPreferenceChoice(
+  host: SurveyPreferenceHost,
+  enabled: boolean,
+): Promise<void> {
+  const disableFeedbackSurvey = !enabled;
+  if (disableFeedbackSurvey === (host.state.appState.disableFeedbackSurvey === true)) {
+    host.showStatus(`Feedback survey already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      disableFeedbackSurvey,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save session rating setting: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  host.setAppState({ disableFeedbackSurvey });
+  host.showStatus(`Feedback survey ${enabled ? 'enabled' : 'disabled'}.`);
+}
+
+export function showMermaidPreferencePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new MermaidPreferenceSelectorComponent({
+      currentValue: host.state.appState.markdown?.mermaid !== 'off',
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyMermaidPreferenceChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type MermaidPreferenceHost = {
+  readonly state: {
+    readonly appState: Pick<
+      SlashCommandHost['state']['appState'],
+      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'markdown'
+    >;
+    readonly transcriptContainer: { invalidate(): void };
+    readonly ui: { requestRender(force?: boolean): void };
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'markdown'>): void;
+  showStatus(msg: string, color?: string): void;
+};
+
+export async function applyMermaidPreferenceChoice(
+  host: MermaidPreferenceHost,
+  enabled: boolean,
+): Promise<void> {
+  const mermaid: MermaidRenderMode = enabled ? 'final' : 'off';
+  if (mermaid === (host.state.appState.markdown?.mermaid ?? DEFAULT_MARKDOWN_CONFIG.mermaid)) {
+    host.showStatus(`Mermaid diagrams already ${enabled ? 'enabled' : 'disabled'}.`);
+    return;
+  }
+
+  const markdown: MarkdownConfig = { mermaid };
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      markdown,
+    });
+  } catch (error) {
+    host.showStatus(
+      `Failed to save mermaid diagram setting: ${formatErrorMessage(error)}`,
+      'error',
+    );
+    return;
+  }
+
+  setMarkdownMermaidMode(mermaid);
+  host.setAppState({ markdown });
+  host.state.transcriptContainer.invalidate();
+  host.state.ui.requestRender(true);
+  host.showStatus(`Mermaid diagrams ${enabled ? 'enabled' : 'disabled'}.`);
+}
+
+export function showTuiModePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new TuiModeSelectorComponent({
+      currentValue: host.state.appState.tuiMode ?? 'regular',
+      onSelect: (value) => {
+        host.restoreEditor();
+        void applyTuiModeChoice(host, value);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+type TuiModeHost = {
+  readonly state: {
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>;
+    readonly ui: Pick<SlashCommandHost['state']['ui'], 'mode'>;
+  };
+  setAppState(patch: Pick<SlashCommandHost['state']['appState'], 'tuiMode'>): void;
+  showStatus(msg: string, color?: string): void;
+  showNotice(msg: string): void;
+};
+
+export async function applyTuiModeChoice(host: TuiModeHost, tuiMode: TuiMode): Promise<void> {
+  if (tuiMode === (host.state.appState.tuiMode ?? 'regular')) {
+    host.showStatus(`TUI mode already ${tuiMode}.`);
+    return;
+  }
+
+  try {
+    await saveTuiConfig({
+      ...currentTuiConfig(host as unknown as SlashCommandHost),
+      tuiMode,
+    });
+  } catch (error) {
+    host.showStatus(`Failed to save TUI mode: ${formatErrorMessage(error)}`, 'error');
+    return;
+  }
+
+  host.setAppState({ tuiMode });
+  host.showStatus(`TUI mode set to ${tuiMode}.`, 'success');
+  if (tuiMode !== host.state.ui.mode) {
+    host.showNotice(TUI_MODE_RESTART_NOTICE);
+  }
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -920,7 +865,10 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
+    case 'tuiMode': showTuiModePicker(host); return;
+    case 'mermaid': showMermaidPreferencePicker(host); return;
     case 'editor': showEditorPicker(host); return;
+    case 'survey': showSurveyPreferencePicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;

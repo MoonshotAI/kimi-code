@@ -127,6 +127,17 @@ describe('SubagentRosterTracker', () => {
     });
   });
 
+  it('marks cancellations with the cancelled phase and status', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-1'));
+    t.apply(SID, ev({ type: 'subagent.cancelled', subagentId: 'agent-1' }));
+    expect(t.get(SID)[0]).toMatchObject({
+      subagent_phase: 'cancelled',
+      status: 'cancelled',
+    });
+    expect(t.get(SID)[0]?.completed_at).toBeDefined();
+  });
+
   it('clears the roster on the next MAIN turn.started, not on any turn.ended', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));

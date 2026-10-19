@@ -43,17 +43,18 @@ export function parseDaemonFileRefFileId(url: string): string | undefined {
 export interface MediaRefPart {
   readonly type: string;
   readonly text?: string;
-  readonly imageUrl?: { readonly url?: string };
-  readonly videoUrl?: { readonly url?: string };
+  readonly imageUrl?: { readonly url?: string; readonly name?: string };
+  readonly videoUrl?: { readonly url?: string; readonly name?: string };
 }
 
 export function daemonFileRefFromPairingPart(
   part: MediaRefPart,
-): { readonly kind: 'image' | 'video'; readonly ref: DaemonFileRef } | undefined {
+): { readonly kind: 'image' | 'video'; readonly ref: DaemonFileRef; readonly name?: string } | undefined {
   if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
-  const url = part.type === 'image_url' ? part.imageUrl?.url : part.videoUrl?.url;
+  const media = part.type === 'image_url' ? part.imageUrl : part.videoUrl;
+  const url = media?.url;
   if (typeof url !== 'string') return undefined;
   const ref = parseDaemonFileRef(url);
   if (ref === undefined) return undefined;
-  return { kind: part.type === 'image_url' ? 'image' : 'video', ref };
+  return { kind: part.type === 'image_url' ? 'image' : 'video', ref, name: media?.name };
 }

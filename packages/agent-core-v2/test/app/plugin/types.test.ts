@@ -9,14 +9,22 @@ describe('plugin/types', () => {
       expect(PLUGIN_NAME_REGEX.test('tool_1')).toBe(true);
     });
 
-    it('rejects names starting with a dash or underscore', () => {
-      expect(PLUGIN_NAME_REGEX.test('-bad')).toBe(false);
-      expect(PLUGIN_NAME_REGEX.test('_bad')).toBe(false);
+    it('accepts uppercase, leading dash or underscore, dotted segments, and @ suffixes', () => {
+      expect(PLUGIN_NAME_REGEX.test('My-Plugin')).toBe(true);
+      expect(PLUGIN_NAME_REGEX.test('-lead')).toBe(true);
+      expect(PLUGIN_NAME_REGEX.test('_lead')).toBe(true);
+      expect(PLUGIN_NAME_REGEX.test('lark.docs')).toBe(true);
+      expect(PLUGIN_NAME_REGEX.test('name@beta')).toBe(true);
     });
 
-    it('rejects uppercase and empty names', () => {
-      expect(PLUGIN_NAME_REGEX.test('Bad')).toBe(false);
+    it('rejects empty names and names with illegal characters or empty segments', () => {
       expect(PLUGIN_NAME_REGEX.test('')).toBe(false);
+      expect(PLUGIN_NAME_REGEX.test('bad name')).toBe(false);
+      expect(PLUGIN_NAME_REGEX.test('.lead')).toBe(false);
+      expect(PLUGIN_NAME_REGEX.test('trail.')).toBe(false);
+      expect(PLUGIN_NAME_REGEX.test('a..b')).toBe(false);
+      expect(PLUGIN_NAME_REGEX.test('a@b@c')).toBe(false);
+      expect(PLUGIN_NAME_REGEX.test('name@1.0')).toBe(false);
     });
   });
 

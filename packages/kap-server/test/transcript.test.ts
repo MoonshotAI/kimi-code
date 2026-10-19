@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,18 +7,17 @@ import {
   IAgentLifecycleService,
   IWireService,
   IEventBus,
-  ISessionQuestionService,
   closeSessionById,
-  enqueueSessionInteraction,
   getLiveSessionById,
-  respondSessionInteraction,
+  interactions,
   resumeSessionById,
   IModelCatalog,
+  ISessionIndex,
   type ContextMessage,
   type Event2,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -124,7 +123,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
   let base: string;
   let seeds: ScopeSeed | undefined;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-transcript-'));
     const modelCatalog: IModelCatalog = {
       _serviceBrand: undefined,
@@ -134,8 +133,8 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       getRequester: () => {
         throw new Error('modelCatalog.getRequester not exercised in this test');
       },
-      inspect: () => {
-        throw new Error('modelCatalog.inspect not exercised in this test');
+      generate: () => {
+        throw new Error('modelCatalog.generate not exercised in this test');
       },
       ping: () => {
         throw new Error('modelCatalog.ping not exercised in this test');
@@ -166,7 +165,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     base = `http://127.0.0.1:${server.port}`;
   }
 
-  afterEach(async () => {
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -294,8 +293,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    interactions.enqueue({
       id: 'apr-1',
       kind: 'approval',
       payload: {
@@ -304,7 +302,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'run',
         display: { kind: 'command', command: 'ls' },
       },
-      origin: { agentId: 'main', turnId: 1 },
+      tags: { agentId: 'main', sessionId: id, turnId: 1 },
     });
 
     let { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
@@ -318,7 +316,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-1', { decision: 'approved' });
+    interactions.respond('apr-1', { decision: 'approved' });
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
     expect(body.data.pending_interactions).toEqual([]);
     expect(body.data.interactions).toContainEqual(
@@ -353,6 +351,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         userMessageId: 'p2',
         status: 'queued',
         content: [{ type: 'text', text: 'second' }],
+        clientMetadata: [{ display_text: 'Second display', kimi_code_composer: { version: 1 } }],
         createdAt: '2026-01-01T00:00:01.000Z',
       }),
     );
@@ -366,7 +365,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         content: [{ type: 'text', text: 'first' }],
       }),
     );
-    expect(body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'p2', status: 'queued' }));
+    expect(body.data.prompts).toContainEqual(expect.objectContaining({ promptId: 'p2', status: 'queued', clientMetadata: [{ display_text: 'Second display', kimi_code_composer: { version: 1 } }] }));
 
     bus.publish(serverEvent({ type: 'prompt.started', promptId: 'p2' }));
     ({ body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`));
@@ -598,12 +597,11 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
     ]);
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    interactions.enqueue({
       id: 'apr-1',
       kind: 'approval',
       payload: { toolCallId: 'call_9', toolName: 'Bash', action: 'run' },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', sessionId: id, turnId: 0 },
     });
 
     const { body } = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
@@ -617,7 +615,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-1', { decision: 'approved' });
+    interactions.respond('apr-1', { decision: 'approved' });
     const after = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     const turnAfter = after.body.data.items.find(
       (item): item is TurnContract => item.kind === 'turn' && item.turnId === 't0',
@@ -657,16 +655,16 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       );
     await sub.accessor.get(IWireService).flush();
 
-    const questions = session!.accessor.get(ISessionQuestionService);
-    const pending = questions.request(
-      {
-        id: 'call_q',
+    const pending = interactions.request({
+      id: 'call_q',
+      kind: 'question',
+      payload: {
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick?', options: [{ label: 'A' }] }],
       },
-      { agentId: 'sub-1' },
-    );
+      tags: { agentId: 'sub-1', sessionId: id, turnId: 0, toolCallId: 'call_q' },
+    });
 
     const mainBody = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(mainBody.body.data.pending_interactions).toEqual([]);
@@ -682,7 +680,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    questions.dismiss('call_q');
+    interactions.respond('call_q', null);
     await pending;
   });
 
@@ -810,16 +808,16 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    const questions = session!.accessor.get(ISessionQuestionService);
-    const pending = questions.request(
-      {
-        id: 'call_q',
+    const pending = interactions.request({
+      id: 'call_q',
+      kind: 'question',
+      payload: {
         turnId: 0,
         toolCallId: 'call_q',
         questions: [{ question: 'Pick one?', options: [{ label: 'A' }, { label: 'B' }] }],
       },
-      { agentId: 'sub-1' },
-    );
+      tags: { agentId: 'sub-1', sessionId: id, turnId: 0, toolCallId: 'call_q' },
+    });
 
     const subBody = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
     expect(subBody.body.data.pending_interactions).toEqual(['call_q']);
@@ -835,7 +833,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const mainBody = await getJson<TranscriptContract>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
     expect(mainBody.body.data.pending_interactions).toEqual([]);
 
-    questions.dismiss('call_q');
+    interactions.respond('call_q', null);
     await pending;
   });
 
@@ -1069,6 +1067,41 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
 
     expect(byAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual(['scan the repo']);
 
+    const summary = await server!.core.accessor.get(ISessionIndex).get(id);
+    const subWirePath = join(
+      home as string,
+      'sessions',
+      summary!.workspaceId,
+      id,
+      'agents',
+      'sub-1',
+      'wire.jsonl',
+    );
+    await appendFile(
+      subWirePath,
+      `${JSON.stringify({
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'scan again' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: 1000,
+      })}\n`,
+    );
+    const warm = await getJson<UserMessagesContract>(
+      `/api/v1/sessions/${id}/transcript/user-messages`,
+    );
+    const warmByAgent = new Map(warm.body.data.agents.map((a) => [a.agent_id, a]));
+    expect(warmByAgent.get('sub-1')!.messages.map((m) => m.prompt)).toEqual([
+      'scan the repo',
+      'scan again',
+    ]);
+    expect(warmByAgent.get('main')!.messages.map((m) => m.prompt)).toEqual(
+      main.messages.map((m) => m.prompt),
+    );
+
     const single = await getJson<UserMessagesContract>(
       `/api/v1/sessions/${id}/transcript/user-messages?agent_id=main`,
     );
@@ -1178,8 +1211,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       path: '/tmp/plans/foo.md',
       options: [{ label: 'Approach A', description: 'fast' }],
     };
-    const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    interactions.enqueue({
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1188,9 +1220,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'Presenting plan and exiting plan mode',
         display: planDisplay,
       },
-      origin: { agentId: 'main', turnId: 1 },
+      tags: { agentId: 'main', sessionId: id, turnId: 1 },
     });
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
+    interactions.respond('apr-plan', { decision: 'approved', selectedLabel: 'Approach A' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main&tool_call_id=call_plan`,
@@ -1307,8 +1339,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
     ]);
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    interactions.enqueue({
       id: 'apr-plan',
       kind: 'approval',
       payload: {
@@ -1317,14 +1348,16 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'Presenting plan and exiting plan mode',
         display: { kind: 'plan_review', plan: '# Draft Plan', path: '/tmp/plans/foo.md' },
       },
-      origin: { agentId: 'main', turnId: 0 },
+      tags: { agentId: 'main', sessionId: id, turnId: 0 },
     });
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-plan', {
+    interactions.respond('apr-plan', {
       decision: 'rejected',
       selectedLabel: 'Revise',
       feedback: 'split it up',
     });
-    const agent = session!.accessor.get(IAgentLifecycleService).handleOf('main');
+    const agent = getLiveSessionById(server!.core.accessor, id)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main');
     await agent!.accessor.get(IWireService).flush();
 
     await server!.close();
@@ -1413,8 +1446,7 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       }),
     );
 
-    const session = getLiveSessionById(server!.core.accessor, id);
-    enqueueSessionInteraction(session!.accessor.get(IAgentLifecycleService), {
+    interactions.enqueue({
       id: 'apr-final',
       kind: 'approval',
       payload: {
@@ -1423,9 +1455,9 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
         action: 'Presenting plan and exiting plan mode',
         display: { kind: 'plan_review', plan: '# Final', path: '/tmp/plans/foo.md' },
       },
-      origin: { agentId: 'main', turnId: 1 },
+      tags: { agentId: 'main', sessionId: id, turnId: 1 },
     });
-    respondSessionInteraction(session!.accessor.get(IAgentLifecycleService), 'apr-final', { decision: 'approved' });
+    interactions.respond('apr-final', { decision: 'approved' });
 
     const { body } = await getJson<PlanContract>(
       `/api/v1/sessions/${id}/transcript/plan?agent_id=main`,

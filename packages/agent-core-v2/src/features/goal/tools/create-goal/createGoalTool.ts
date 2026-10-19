@@ -6,8 +6,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { GOAL_MAIN_AGENT_ONLY, mainAgentOnlyExecution } from '#/agent/tools/mainAgentOnly';
 import { type ToolExecution } from '#/tool/toolContract';
 
-import { AgentGoal, type GoalRuntime } from '#/features/goal/goalAgentRuntime';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentGoalService } from '#/features/goal/goalService';
 import { goalForModel } from '#/features/goal/tools/serialize';
 
 import DESCRIPTION from './create-goal.md?raw';
@@ -23,15 +22,11 @@ export class CreateGoalTool implements ICreateGoalTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(CreateGoalToolInputSchema);
 
-  private readonly goal: GoalRuntime;
-
   constructor(
-    @IAgentLifecycleService manager: IAgentLifecycleService,
+    @IAgentGoalService private readonly goal: IAgentGoalService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
-  ) {
-    this.goal = manager.resolve(scopeContext.agentContext, AgentGoal);
-  }
+  ) {}
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
     const denied = mainAgentOnlyExecution(this.scopeContext, GOAL_MAIN_AGENT_ONLY);

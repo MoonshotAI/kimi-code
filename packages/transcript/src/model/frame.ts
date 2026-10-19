@@ -7,15 +7,43 @@ export type FrameRef = {
   readonly frameId: FrameId;
 };
 
-export interface TextFrame {
+export interface TranscriptSkillActivation {
+  readonly skillName: string;
+  readonly skillArgs?: string;
+}
+
+export type TranscriptUserOrigin = {
+  readonly kind: 'user';
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+  readonly skillActivations?: readonly TranscriptSkillActivation[];
+} | {
+  readonly kind: 'skill_activation';
+  readonly trigger: 'user-slash';
+  readonly skillName: string;
+  readonly skillArgs?: string;
+  readonly clientMetadata?: readonly Readonly<Record<string, unknown>>[];
+};
+
+interface TextFrameBase {
   readonly kind: 'text';
   readonly frameId: FrameId;
-  readonly role: 'assistant' | 'user';
   readonly text: string;
   readonly attachmentIds?: readonly AttachmentId[];
   readonly taskId?: TaskId;
   readonly promptIds?: readonly string[];
 }
+
+export interface AssistantTextFrame extends TextFrameBase {
+  readonly role: 'assistant';
+  readonly origin?: never;
+}
+
+export interface UserTextFrame extends TextFrameBase {
+  readonly role: 'user';
+  readonly origin?: TranscriptUserOrigin;
+}
+
+export type TextFrame = AssistantTextFrame | UserTextFrame;
 
 export interface ThinkingFrame {
   readonly kind: 'thinking';

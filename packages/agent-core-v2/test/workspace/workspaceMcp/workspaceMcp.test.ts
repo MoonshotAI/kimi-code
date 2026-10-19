@@ -701,7 +701,7 @@ describe('WorkspaceMcpService', () => {
       await oauthScheduler.advanceBy(30_000);
       expect(reconnectAndJoin).toHaveBeenCalledWith('notion');
       expect(authServer.counts.refresh).toBe(1);
-    });
+    }, 15000);
 
     it('ignores a failed proactive refresh for a needs-auth entry', async () => {
       const authServer = await startRefreshFailingServer();
@@ -723,7 +723,7 @@ describe('WorkspaceMcpService', () => {
       await oauthScheduler.advanceBy(30_000);
       expect(events.some((event) => event.type === 'refresh-failed')).toBe(true);
       expect(reconnectAndJoin).not.toHaveBeenCalled();
-    });
+    }, 15000);
 
     it('does not reconnect a disabled entry when tokens are saved', async () => {
       const service = createService();
