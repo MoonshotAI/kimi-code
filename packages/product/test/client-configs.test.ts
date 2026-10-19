@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { z } from 'zod';
 
-import { ClientConfigClient } from '#/clientConfigs/clientConfigs';
+import { ClientConfigClient } from '#/client-configs/node/client-configs';
 
 let region: KimiRegion = 'mainland-cn';
 let baseUrlOverride: string | undefined;

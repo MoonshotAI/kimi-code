@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { KIMI_REGION_PROFILES, type KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { z } from 'zod';
 
-import { readJsonFile, writeJsonFile } from '#/jsonFile';
+import { readJsonFile, writeJsonFile } from '#/shared/node/json-file';
 
 export const CLIENT_CONFIGS_PATH = '/client_configs';
 export const RESOURCE_CONFIGS_PATH = '/resource_configs';

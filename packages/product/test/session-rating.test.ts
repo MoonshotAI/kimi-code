@@ -7,14 +7,16 @@ import {
   type ResumedAgentSeed,
   type SessionFact,
   type SessionRatingMount,
-} from '#/sessionRating/engine';
-import type { RatingOffer, RatingReport, RatingResponse } from '#/sessionRating/types';
-import { SessionRatingLedger } from '#/sessionRating/ledger';
+} from '#/session-rating/node/engine';
+import type { RatingOffer, RatingReport, RatingResponse } from '#/session-rating/common/types';
+import { SessionRatingLedger } from '#/session-rating/node/ledger';
 import {
   DEFAULT_SURVEY_POPUP_PAYLOAD,
-  SurveyPopupConfigFeed,
   type SurveyPopupPayload,
-} from '#/sessionRating/surveyPopupConfig';
+} from '#/session-rating/common/survey-popup-config';
+import {
+  SurveyPopupConfigFeed,
+} from '#/session-rating/node/survey-popup-config-feed';
 
 const USER_ORIGIN: PromptOrigin = { kind: 'user' };
 const SYSTEM_ORIGIN: PromptOrigin = { kind: 'system_trigger', name: 'background-task' };

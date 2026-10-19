@@ -8,7 +8,7 @@ import {
   RATING_COOLDOWN_FILE_NAME,
   ratingCooldownFile,
   type RatingCooldownStore,
-} from '#/sessionRating/cooldownStore';
+} from '#/session-rating/node/cooldown-store';
 
 describe('ratingCooldownFile', () => {
   let dir: string;

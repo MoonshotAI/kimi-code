@@ -18,13 +18,17 @@
     "#/*": "./src/*.ts"
   },
   "exports": {
-    ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+    "./client-configs/node": {
+      "types": "./src/client-configs/node/index.ts",
+      "default": "./src/client-configs/node/index.ts"
     },
-    "./core": {
-      "types": "./src/core.ts",
-      "default": "./src/core.ts"
+    "./session-rating": {
+      "types": "./src/session-rating/common/index.ts",
+      "default": "./src/session-rating/common/index.ts"
+    },
+    "./session-rating/node": {
+      "types": "./src/session-rating/node/index.ts",
+      "default": "./src/session-rating/node/index.ts"
     }
   },
   "scripts": {

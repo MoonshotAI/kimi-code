@@ -4,17 +4,19 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ClientConfigClient } from '#/clientConfigs/clientConfigs';
+import { ClientConfigClient } from '#/client-configs/node/client-configs';
 import {
   cloudSurveyPopupConfigFeed,
-  DEFAULT_SURVEY_POPUP_CONFIG,
-  DEFAULT_SURVEY_POPUP_PAYLOAD,
   getSurveyPopupConfig,
   peekSurveyPopupConfig,
   resetSurveyPopupConfigCache,
+} from '#/session-rating/node/survey-popup-config-feed';
+import {
+  DEFAULT_SURVEY_POPUP_CONFIG,
+  DEFAULT_SURVEY_POPUP_PAYLOAD,
   resolveSurveyPopupConfig,
   type SurveyPopupPayload,
-} from '#/sessionRating/surveyPopupConfig';
+} from '#/session-rating/common/survey-popup-config';
 
 const client = new ClientConfigClient({
   region: () => 'mainland-cn',

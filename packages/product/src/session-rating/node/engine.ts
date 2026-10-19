@@ -2,25 +2,25 @@ import { randomUUID } from 'node:crypto';
 
 import { isUserTurnOrigin, type PromptOrigin } from '@moonshot-ai/agent-core-v2';
 
-import type { RatingCooldownStore } from './cooldownStore';
+import type { RatingCooldownStore } from './cooldown-store';
 import {
   buildSurveyEventProperties,
   SURVEY_EVENT_NAMES,
   type SurveyEventEnvironmentFields,
-} from './eventProperties';
+} from './event-properties';
 import {
   evaluateSurveyGate,
   type LongContextArmGateInput,
   type SessionArmGateInput,
-} from './gates';
+} from '../common/gates';
 import { kfcModelIdOf, type RatingModelRoute } from './kfc';
 import { SessionRatingLedger, type RatingTracker } from './ledger';
-import type { RatingOffer, SurveyAppearance, SurveyKind } from './types';
+import type { RatingOffer, SurveyAppearance, SurveyKind } from '../common/types';
 import {
   resolveSurveyPopupConfig,
   type SurveyPopupConfig,
   type SurveyPopupPayload,
-} from './surveyPopupConfig';
+} from '../common/survey-popup-config';
 
 const SESSION_RATING_IDLE_MS = 2000;
 const SESSION_INIT_PARENT_TOOL_CALL_ID = 'generate-agents-md';

@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import { writeJsonFileSync } from '#/jsonFile';
+import { writeJsonFileSync } from '#/shared/node/json-file';
 
 export const RATING_COOLDOWN_FILE_NAME = 'feedback-survey-state.json';
 

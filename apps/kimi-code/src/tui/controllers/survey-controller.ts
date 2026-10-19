@@ -6,12 +6,11 @@ import {
   type RatingConfigFeed,
   type RatingCooldownStore,
   type RatingEnvironment,
-  type RatingResponse,
-  type RatingOffer,
   SessionRatingLedger,
   type ResumedAgentSeed,
   type SessionRatingMount,
-} from '@moonshot-ai/kimi-code-product';
+} from '@moonshot-ai/kimi-code-product/session-rating/node';
+import type { RatingOffer, RatingResponse } from '@moonshot-ai/kimi-code-product/session-rating';
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
 import { Key, matchesKey, Spacer } from '@moonshot-ai/pi-tui';
 

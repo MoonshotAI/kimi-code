@@ -1,4 +1,4 @@
-import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/core';
+import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';

@@ -1,5 +1,5 @@
 import { IBootstrapService, type Scope } from '@moonshot-ai/agent-core-v2';
-import { SESSION_RATING_PREVIEW_ENV, SessionRatingHost } from '@moonshot-ai/kimi-code-product/core';
+import { SESSION_RATING_PREVIEW_ENV, SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import type { ServerLogger } from './pinoLoggerService';
 import { isEnvFlagEnabled, isServerTelemetryDisabled } from './telemetry';
 

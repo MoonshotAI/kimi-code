@@ -4,18 +4,18 @@ import {
   buildSurveyEventProperties,
   SURVEY_EVENT_NAMES,
   type SurveyEventEnvironmentFields,
-} from '#/sessionRating/eventProperties';
+} from '#/session-rating/node/event-properties';
 import {
   evaluateLongContextArm,
   evaluateSurveyGate,
   type LongContextArmGateInput,
   type SessionArmGateInput,
   type SurveyGateInput,
-} from '#/sessionRating/gates';
+} from '#/session-rating/common/gates';
 import {
   DEFAULT_SURVEY_POPUP_CONFIG,
   type SurveyPopupConfig,
-} from '#/sessionRating/surveyPopupConfig';
+} from '#/session-rating/common/survey-popup-config';
 
 const CONFIG = DEFAULT_SURVEY_POPUP_CONFIG;
 

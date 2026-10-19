@@ -1,7 +1,7 @@
 import type { FeedbackSurveyEvent } from '@moonshot-ai/agent-core-v2';
 
-import type { SurveyEventName } from './eventProperties';
-import type { RatingReport, RatingTrackContext } from './types';
+import type { SurveyEventName } from './event-properties';
+import type { RatingReport, RatingTrackContext } from '../common/types';
 
 export const RATING_REPORT_RETENTION_MS = 10 * 60 * 1000;
 export const RATING_REPORT_CAPACITY = 1024;

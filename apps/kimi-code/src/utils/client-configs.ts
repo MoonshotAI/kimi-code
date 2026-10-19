@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { ClientConfigClient } from '@moonshot-ai/kimi-code-product';
+import { ClientConfigClient } from '@moonshot-ai/kimi-code-product/client-configs/node';
 
 import { getCacheDir } from '#/utils/paths';
 import { currentKimiRegion } from '#/utils/region';

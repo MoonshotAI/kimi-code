@@ -38,24 +38,26 @@ import {
   ToolResultEvent,
 } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 
-import { ClientConfigClient } from '#/clientConfigs/clientConfigs';
+import { ClientConfigClient } from '#/client-configs/node/client-configs';
 import {
   mountSessionRating,
   type RatingConfigFeed,
   type RatingEnvironment,
   type ResumedAgentSeed,
   type SessionRatingMount,
-} from '#/sessionRating/engine';
-import type { SurveyEventName } from '#/sessionRating/eventProperties';
-import { SessionRatingLedger } from '#/sessionRating/ledger';
-import type { RatingOffer, RatingReport } from '#/sessionRating/types';
-import { ratingCooldownFile, type RatingCooldownStore } from '#/sessionRating/cooldownStore';
+} from '#/session-rating/node/engine';
+import type { SurveyEventName } from '#/session-rating/node/event-properties';
+import { SessionRatingLedger } from '#/session-rating/node/ledger';
+import type { RatingOffer, RatingReport } from '#/session-rating/common/types';
+import { ratingCooldownFile, type RatingCooldownStore } from '#/session-rating/node/cooldown-store';
 import {
   cloudSurveyPopupConfigFeed,
-  DEFAULT_SURVEY_POPUP_PAYLOAD,
   SurveyPopupConfigFeed,
+} from '#/session-rating/node/survey-popup-config-feed';
+import {
+  DEFAULT_SURVEY_POPUP_PAYLOAD,
   type SurveyPopupPayload,
-} from '#/sessionRating/surveyPopupConfig';
+} from '#/session-rating/common/survey-popup-config';
 
 export const SESSION_RATING_PREVIEW_ENV = 'KIMI_CODE_SESSION_RATING_PREVIEW';
 

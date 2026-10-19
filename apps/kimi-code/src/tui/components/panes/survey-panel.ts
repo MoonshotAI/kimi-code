@@ -1,4 +1,4 @@
-import type { RatingResponse } from '@moonshot-ai/kimi-code-product';
+import type { RatingResponse } from '@moonshot-ai/kimi-code-product/session-rating';
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@moonshot-ai/pi-tui';
 

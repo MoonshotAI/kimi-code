@@ -1,10 +1,10 @@
 import type { FeedbackSurveyEvent } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it } from 'vitest';
 
-import { mountSessionRating, type RatingEnvironment } from '#/sessionRating/engine';
-import { RATING_REPORT_RETENTION_MS, SessionRatingLedger } from '#/sessionRating/ledger';
-import { DEFAULT_SURVEY_POPUP_PAYLOAD } from '#/sessionRating/surveyPopupConfig';
-import type { RatingReport } from '#/sessionRating/types';
+import { mountSessionRating, type RatingEnvironment } from '#/session-rating/node/engine';
+import { RATING_REPORT_RETENTION_MS, SessionRatingLedger } from '#/session-rating/node/ledger';
+import { DEFAULT_SURVEY_POPUP_PAYLOAD } from '#/session-rating/common/survey-popup-config';
+import type { RatingReport } from '#/session-rating/common/types';
 
 function fixture() {
   let now = 0;

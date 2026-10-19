@@ -3,7 +3,7 @@ import {
   DEFAULT_SURVEY_POPUP_PAYLOAD,
   SurveyPopupConfigFeed,
   type SurveyPopupPayload,
-} from '@moonshot-ai/kimi-code-product';
+} from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';

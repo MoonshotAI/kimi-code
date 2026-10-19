@@ -3,7 +3,7 @@ import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
-import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/core';
+import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
