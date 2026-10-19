@@ -664,7 +664,7 @@ Creates a session and returns it. The target directory comes from `workspace_id`
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | **Required** when neither `metadata.cwd` nor `default_workspace` is given. Registered workspace id; the session is created at that workspace's root |
 | `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when neither `workspace_id` nor `default_workspace` is given; with both given, it must equal the workspace root |
-| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `<Documents>/KimiCode/Default` unless [`default_workspace.path`](../configuration/config-files.md#default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
+| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `~/KimiCode/Default` unless [`default_workspace.path`](../configuration/config-files.md#default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
 
@@ -673,7 +673,7 @@ On success, `data` is [the session object](#the-session-object) of the new sessi
 - `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with `workspace_id` or `metadata`, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
-- `40930`: the default workspace folder cannot be created or used. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), `documents_unavailable` (the system Documents folder cannot be located), or `unknown`
+- `40930`: the default workspace folder cannot be created or used. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), or `unknown`
 
 #### `GET /api/v1/sessions`
 

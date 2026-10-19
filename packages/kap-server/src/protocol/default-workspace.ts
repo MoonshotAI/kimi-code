@@ -7,11 +7,10 @@ export const defaultWorkspaceUnavailableReasonSchema = z.enum([
   'no_space',
   'read_only',
   'invalid_path',
-  'documents_unavailable',
   'unknown',
 ]);
 
 export const defaultWorkspaceUnavailableDataSchema = z.object({
-  path: z.string().nullable(),
+  path: z.string(),
   reason: defaultWorkspaceUnavailableReasonSchema,
 });

@@ -664,7 +664,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | --- | --- | --- | --- |
 | `workspace_id` | body | string | 未提供 `metadata.cwd` 和 `default_workspace` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
 | `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 和 `default_workspace` 时**必填**；与 `workspace_id` 同时提供时必须等于工作区根目录 |
-| `default_workspace` | body | boolean | 为 `true` 时会话创建于默认工作区——未设置 [`default_workspace.path`](../configuration/config-files.md#default-workspace) 时为 `<文稿目录>/KimiCode/Default`——目录按需创建并注册为普通工作区。不能与 `workspace_id` 或 `metadata` 同时提供 |
+| `default_workspace` | body | boolean | 为 `true` 时会话创建于默认工作区——未设置 [`default_workspace.path`](../configuration/config-files.md#default-workspace) 时为 `~/KimiCode/Default`——目录按需创建并注册为普通工作区。不能与 `workspace_id` 或 `metadata` 同时提供 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
 | `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
 
@@ -673,7 +673,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 - `40001`：`workspace_id`、`metadata.cwd`、`default_workspace` 都未提供，`default_workspace` 与 `workspace_id` 或 `metadata` 同时提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
-- `40930`：默认工作区目录无法创建或使用。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（上级目录或盘符不可用）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`documents_unavailable`（无法定位系统文稿目录）、`unknown`
+- `40930`：默认工作区目录无法创建或使用。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（上级目录或盘符不可用）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`unknown`
 
 #### `GET /api/v1/sessions`
 
