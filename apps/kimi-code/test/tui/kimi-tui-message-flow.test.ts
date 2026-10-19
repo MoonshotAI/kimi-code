@@ -5115,23 +5115,21 @@ command = "vim"
     ]);
   });
 
-  it('auto-steers messages ahead of a queued /compact in tower mode', async () => {
+  it('auto-steers messages ahead of a queued /compact when a WaitFor starts', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
-    driver.state.appState.towerMode = true;
-    driver.streamingUI.setTurnId('1');
-    driver.state.queuedMessages = [
-      { text: 'msg1', agentId: 'main' },
-      { text: '/compact foo', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
-      { text: 'msg2', agentId: 'main' },
-    ];
+    driver.handleUserInput('msg1');
+    driver.handleUserInput('/compact foo');
+    driver.handleUserInput('msg2');
+    expect(driver.state.queuedMessages).toHaveLength(3);
 
-    driver.steerQueuedMessagesIntoRunningTurn();
-    await new Promise((resolve) => setImmediate(resolve));
+    startWaitFor(driver);
 
     expect(session.steer).toHaveBeenCalledTimes(1);
     expect(session.steer).toHaveBeenCalledWith('msg1');
-    expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
+    });
   });
 
   it('omits the steer hint when only /compact items are queued', async () => {
