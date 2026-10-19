@@ -640,6 +640,24 @@ describe('server-v2 /api/v1/debug RPC', () => {
     expect(body.msg).toBe(`agent does-not-exist not found in session ${id}`);
   });
 
+  it('rebuilds a previously registered agent on agent-scope dispatch', async () => {
+    const id = await createSession(home as string);
+    await createSubagent(id, 'sub-rebuild');
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    await lifecycle.remove(lifecycle.get('sub-rebuild')!);
+    expect(lifecycle.handleOf('sub-rebuild')).toBeUndefined();
+
+    const { body } = await call<{ workspaceId: string; runtimeId: string }>(
+      'POST',
+      rpc('agent', IAgentRuntimeBindingService, 'get', { sid: id, aid: 'sub-rebuild' }),
+    );
+    expect(body.code).toBe(0);
+    expect(body.data.runtimeId).toBe('local');
+    expect(lifecycle.handleOf('sub-rebuild')).toBeDefined();
+  });
+
   it('routes core / session / agent scopes by channel name', async () => {
     const cwd = home as string;
     await createSession(cwd);

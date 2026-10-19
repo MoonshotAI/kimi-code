@@ -25,7 +25,7 @@ import { profileKey } from '#/agent/profile/profileOps';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { withSubagentProfile } from '#/session/agentLifecycle/subagentMetadata';
 import {
   agentContextOf,
@@ -332,7 +332,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       stage = 'seal';
       await handle.accessor.get(IWireService).seal();
       stage = 'register';
-      await this.sessionMetadata.registerAgent(agentId, {
+      const meta: AgentMeta = {
         homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
         parentAgentId: agentId === 'main' ? undefined : 'main',
@@ -341,10 +341,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
           opts.labels,
           agentId === 'main' ? undefined : opts.binding?.profile,
         ),
-      });
+      };
+      await this.sessionMetadata.registerAgent(agentId, meta);
       this.onDidCreateEmitter.fire(agent);
       didCreate = true;
-      this.onDidCreateScopeEmitter.fire({ context: agent, handle });
+      this.onDidCreateScopeEmitter.fire({ context: agent, handle, meta });
       stage = 'restore';
       await handle.accessor.get(IEventDispatcher).restore();
       attachInteractionAgent(agentId, this.ctx.sessionId, handle.accessor.get(IEventDispatcher));

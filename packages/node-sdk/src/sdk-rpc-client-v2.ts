@@ -143,6 +143,7 @@ import {
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
+  ensureAgent,
   agentContextOf,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
@@ -1719,8 +1720,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   // reached through the live session handle. Every override requires a live
   // session (v1's `requireSession`) and resolves the target agent from
   // `interactiveAgentId`: the main agent materializes on first use with the
-  // default profile bound (v1's eager equivalent); any other agent must
-  // already exist (v1's `AGENT_NOT_FOUND`).
+  // default profile bound (v1's eager equivalent); any other agent is lazily
+  // rebuilt from its persisted session metadata when the live scope is gone
+  // (session reload), falling back to v1's `AGENT_NOT_FOUND` only when the
+  // agent was never registered.
   // -----------------------------------------------------------------------
 
   /**
@@ -1769,7 +1772,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const session = this.requireLiveSession(sessionId);
     const agentId = this.interactiveAgentId;
     if (agentId === MAIN_AGENT_ID) return this.materializeMainAgent(session);
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+    const agent = await ensureAgent(session, agentId);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }

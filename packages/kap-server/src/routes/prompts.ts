@@ -2,7 +2,7 @@ import { join } from 'node:path';
 
 import {
   IBootstrapService,
-  IAgentLifecycleService,
+  ensureAgent,
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -106,7 +106,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
-      : session.accessor.get(IAgentLifecycleService).handleOf(agentId);
+      : await ensureAgent(session, agentId);
   if (agent === undefined) {
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
