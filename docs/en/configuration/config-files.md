@@ -104,7 +104,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `builtin_product_skills` | `boolean` | `true` | Whether the built-in skills that document Kimi Code itself are offered to the model |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `auto_session_title` | `boolean` | `true` | Whether clients may automatically generate session titles; disabled only when explicitly set to `false` |
-| `disable_feedback_survey` | `boolean` | `false` | Turn off the occasional session rating prompt in the CLI and the desktop app; changes apply without a restart. Earlier releases kept this key in `tui.toml`, and the CLI moves it here on startup |
+| `disable_feedback_survey` | `boolean` | `false` | Turn off the occasional session rating prompt in the CLI and the desktop app |
 | [`providers`](#providers) | `table` | `{}` | API provider table |
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |

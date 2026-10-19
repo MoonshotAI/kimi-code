@@ -104,7 +104,7 @@ timeout = 5
 | `builtin_product_skills` | `boolean` | `true` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `auto_session_title` | `boolean` | `true` | 是否允许客户端自动生成会话标题；显式设为 `false` 时关闭 |
-| `disable_feedback_survey` | `boolean` | `false` | 关闭 CLI 和桌面端偶尔出现的会话评分提示，修改后无需重启。早期版本把这个键放在 `tui.toml`，CLI 启动时会把它迁移到这里 |
+| `disable_feedback_survey` | `boolean` | `false` | 关闭 CLI 和桌面端偶尔出现的会话评分提示 |
 | [`providers`](#providers) | `table` | `{}` | API 供应商表 |
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
