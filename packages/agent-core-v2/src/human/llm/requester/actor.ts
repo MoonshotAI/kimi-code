@@ -12,6 +12,7 @@ import type {
   LlmRequester,
 } from './requester';
 import type { LlmRecoveryRecord } from './recovery';
+import { createStreamIdleWatchdog, type StreamIdleWatchdog } from './streamIdleWatchdog';
 import { resolveLlmStreamIdleTimeoutMs } from './timeout';
 
 export interface LlmInput {
@@ -61,70 +62,13 @@ const IDLE_WATCHDOG_TERMINAL_EVENTS: ReadonlySet<LlmRequestEvent['type']> = new 
   'llm.failed.remote',
 ]);
 
-function watchStreamIdle(
-  idleTimeoutMs: number,
-  input: LlmInput,
-  sendBack: (event: LlmEvent) => void,
-): {
-  signal: AbortSignal;
-  onEvent: (event: LlmRequestEvent) => void;
-  isTimedOut: () => boolean;
-  dispose: () => void;
-} {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  const clear = () => {
-    if (timer !== undefined) clearTimeout(timer);
-    timer = undefined;
-  };
-  const arm = () => {
-    clear();
-    timer = setTimeout(() => {
-      timedOut = true;
-      sendBack({
-        type: 'llm.failed.remote',
-        error: {
-          kind: 'timeout',
-          message: `LLM request stalled: no stream events for ${idleTimeoutMs}ms; aborted the attempt to retry`,
-        },
-      });
-      controller.abort();
-    }, idleTimeoutMs);
-    timer.unref?.();
-  };
-  const relayAbort = () => {
-    controller.abort(input.signal.reason);
-  };
-  if (input.signal.aborted) {
-    controller.abort(input.signal.reason);
-  } else {
-    input.signal.addEventListener('abort', relayAbort, { once: true });
-  }
-  arm();
-  return {
-    signal: controller.signal,
-    onEvent: (event) => {
-      if (timedOut) return;
-      if (IDLE_WATCHDOG_TERMINAL_EVENTS.has(event.type)) clear();
-      else arm();
-      sendBack(event);
-    },
-    isTimedOut: () => timedOut,
-    dispose: () => {
-      clear();
-      input.signal.removeEventListener('abort', relayAbort);
-    },
-  };
-}
-
 export function createRequestActor(
   requester: LlmRequester,
   messageResolvers: readonly MessageResolver[] = [],
 ) {
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
-      let watchdog: ReturnType<typeof watchStreamIdle> | undefined;
+      let watchdog: StreamIdleWatchdog | undefined;
       try {
         const idleTimeoutMs = resolveLlmStreamIdleTimeoutMs();
         const credential = input.config.credentialProvider?.resolve();
@@ -147,20 +91,41 @@ export function createRequestActor(
         watchdog =
           idleTimeoutMs === undefined
             ? undefined
-            : watchStreamIdle(idleTimeoutMs, input, sendBack);
+            : createStreamIdleWatchdog({
+                idleTimeoutMs,
+                upstream: input.signal,
+                onIdle: () => {
+                  sendBack({
+                    type: 'llm.failed.remote',
+                    error: {
+                      kind: 'timeout',
+                      message: `LLM request stalled: no stream events for ${idleTimeoutMs}ms; aborted the attempt to retry`,
+                    },
+                  });
+                },
+              });
+        const active = watchdog;
         await requester.generate(
           config,
           { ...input.content, messages },
-          watchdog === undefined
+          active === undefined
             ? { signal: input.signal, onEvent: sendBack }
-            : { signal: watchdog.signal, onEvent: watchdog.onEvent },
+            : {
+                signal: active.signal,
+                onEvent: (event) => {
+                  if (active.triggered) return;
+                  if (IDLE_WATCHDOG_TERMINAL_EVENTS.has(event.type)) active.cancel();
+                  else active.reset();
+                  sendBack(event);
+                },
+              },
         );
       } catch (error) {
-        if (watchdog?.isTimedOut() === true) return;
+        if (watchdog?.triggered === true) return;
         if (isAbortError(error) || input.signal.aborted) return;
         sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error), rawError: error });
       } finally {
-        watchdog?.dispose();
+        watchdog?.cancel();
       }
     })();
   });

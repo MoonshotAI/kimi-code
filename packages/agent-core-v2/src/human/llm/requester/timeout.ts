@@ -25,6 +25,7 @@ export function resolveLlmHeadersTimeoutMs(env: Env = process.env): number | und
 export function resolveLlmStreamIdleTimeoutMs(env: Env = process.env): number | undefined {
   const raw = env[LLM_STREAM_IDLE_TIMEOUT_ENV];
   if (raw === undefined || raw.trim() === '') return DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
+  if (raw.trim().toLowerCase() === 'off') return undefined;
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0 || value > MAX_TIMEOUT_MS) {
     throw new Error(
