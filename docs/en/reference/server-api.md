@@ -626,7 +626,6 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/children` | List child sessions |
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
 | `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
-| `POST /api/v1/sessions/{session_id}/rating` | Evaluate or report a session rating |
 | `GET /api/v1/sessions/{session_id}/goal` | Current goal snapshot (`null` when none) |
 | `GET /api/v1/sessions/{session_id}/warnings` | Session-level warnings |
 | `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
@@ -880,25 +879,6 @@ Realtime status rollup of the main agent; reading it resumes the session if it i
 On success, `data` is `{ busy, model?, thinking_level, permission, plan_mode, swarm_mode, context_tokens, max_context_tokens?, context_usage? }`: `busy` reports an active turn, `model` / `thinking_level` / `permission` are the effective agent settings, `plan_mode` / `swarm_mode` are the mode flags, and `context_tokens` with `max_context_tokens` and `context_usage` (0–1) describe context-window consumption.
 
 - `40401`: session not found
-
-#### `POST /api/v1/sessions/{session_id}/rating`
-
-Evaluates whether to offer a session rating, or reports a displayed rating and its outcome. Selection, undo, and display timing belong to the client.
-
-| `op` | Required body fields | Success `data` |
-| --- | --- | --- |
-| `evaluate` | `turn_id` | `{ appearance: { id, survey } }` or `{ appearance: null }` |
-| `shown` | `appearance_id` | `null` |
-| `respond` | `appearance_id`, `response` | `null` |
-| `abandon` | `appearance_id` | `null` |
-
-- `turn_id` is the main agent's latest completed transcript turn id. A stale id, a running turn, an unloaded session, or an ineligible evaluation returns no offer. Evaluation does not load a session.
-- `survey` is `session` or `long_context`. An offer consumes its evaluation slot and commits cooldown accounting, but does not record a display.
-- Send `shown` once the client displays the rating. Send `respond` only after the client commits the answer. `response` is `bad`, `fine`, `good`, or `dismissed`. Send `abandon` when a displayed rating ends without an answer.
-- Reports bind to both the session id and appearance id. While the report snapshot remains available, the first settlement wins. Repeated, unknown, expired, or wrong-session reports succeed without another event. If settlement arrives before `shown`, the server records the display before the outcome.
-- New turns and session unloads do not settle a rating. Report snapshots can survive session unload for a bounded time, but not server restart. This is not a durable delivery guarantee.
-- There is no rating-view restoration endpoint or rating WebSocket event.
-- `40001`: invalid operation or body fields.
 
 #### `GET /api/v1/sessions/{session_id}/goal`
 
