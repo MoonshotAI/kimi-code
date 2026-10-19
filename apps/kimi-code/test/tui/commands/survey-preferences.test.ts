@@ -77,8 +77,25 @@ describe('legacy survey setting migration', () => {
   it('moves a tui.toml opt-out into config.toml and drops it from tui.toml', async () => {
     const migration = deps(true, undefined);
 
-    await expect(migrateLegacySurveySetting(migration)).resolves.toBe(true);
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: true,
+      configured: undefined,
+      action: 'written',
+    });
     expect(migration.setConfig).toHaveBeenCalledWith({ disableFeedbackSurvey: true });
+    expect(migration.dropLegacy).toHaveBeenCalledTimes(1);
+    expect(migration.warn).not.toHaveBeenCalled();
+  });
+
+  it('drops a default-valued legacy setting without writing config.toml', async () => {
+    const migration = deps(false, undefined);
+
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: false,
+      configured: undefined,
+      action: 'dropped_default',
+    });
+    expect(migration.setConfig).not.toHaveBeenCalled();
     expect(migration.dropLegacy).toHaveBeenCalledTimes(1);
     expect(migration.warn).not.toHaveBeenCalled();
   });
@@ -86,7 +103,23 @@ describe('legacy survey setting migration', () => {
   it('keeps the config.toml value and still drops the stale tui.toml copy', async () => {
     const migration = deps(true, false);
 
-    await expect(migrateLegacySurveySetting(migration)).resolves.toBe(false);
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: false,
+      configured: false,
+      action: 'kept_existing',
+    });
+    expect(migration.setConfig).not.toHaveBeenCalled();
+    expect(migration.dropLegacy).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the config.toml value when the legacy copy holds the default', async () => {
+    const migration = deps(false, true);
+
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: true,
+      configured: true,
+      action: 'kept_existing',
+    });
     expect(migration.setConfig).not.toHaveBeenCalled();
     expect(migration.dropLegacy).toHaveBeenCalledTimes(1);
   });
@@ -94,7 +127,10 @@ describe('legacy survey setting migration', () => {
   it('reads config.toml alone when tui.toml has no legacy value', async () => {
     const migration = deps(undefined, true);
 
-    await expect(migrateLegacySurveySetting(migration)).resolves.toBe(true);
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: true,
+      configured: true,
+    });
     expect(migration.setConfig).not.toHaveBeenCalled();
     expect(migration.dropLegacy).not.toHaveBeenCalled();
   });
@@ -103,7 +139,11 @@ describe('legacy survey setting migration', () => {
     const migration = deps(true, undefined);
     migration.setConfig.mockRejectedValueOnce(new Error('read-only'));
 
-    await expect(migrateLegacySurveySetting(migration)).resolves.toBe(true);
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: true,
+      configured: undefined,
+      action: 'write_failed',
+    });
     expect(migration.dropLegacy).not.toHaveBeenCalled();
     expect(migration.warn).toHaveBeenCalledWith(
       '[tui.toml] could not move disable_feedback_survey to config.toml; retrying on next start',
@@ -118,7 +158,11 @@ describe('legacy survey setting migration', () => {
       const migration = deps((await loadTuiConfig(filePath)).disableFeedbackSurvey, undefined);
       migration.setConfig.mockRejectedValueOnce(new Error('read-only'));
       migration.dropLegacy.mockImplementation(() => removeLegacySurveySetting(filePath));
-      await expect(migrateLegacySurveySetting(migration)).resolves.toBe(true);
+      await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+        value: true,
+        configured: undefined,
+        action: 'write_failed',
+      });
       await saveTuiConfig({
         ...await loadTuiConfig(filePath), disableFeedbackSurvey: undefined, theme: 'light',
       }, filePath);
@@ -127,7 +171,11 @@ describe('legacy survey setting migration', () => {
       });
       const retry = deps((await loadTuiConfig(filePath)).disableFeedbackSurvey, undefined);
       retry.dropLegacy.mockImplementation(() => removeLegacySurveySetting(filePath));
-      await expect(migrateLegacySurveySetting(retry)).resolves.toBe(true);
+      await expect(migrateLegacySurveySetting(retry)).resolves.toEqual({
+        value: true,
+        configured: undefined,
+        action: 'written',
+      });
       expect(retry.setConfig).toHaveBeenCalledWith({ disableFeedbackSurvey: true });
       const saved = await loadTuiConfig(filePath);
       expect(saved).toMatchObject({ autoSessionTitle: false, theme: 'light' });
@@ -141,9 +189,14 @@ describe('legacy survey setting migration', () => {
     const migration = deps(false, undefined);
     migration.dropLegacy.mockRejectedValueOnce(new Error('read-only'));
 
-    await expect(migrateLegacySurveySetting(migration)).resolves.toBe(false);
+    await expect(migrateLegacySurveySetting(migration)).resolves.toEqual({
+      value: false,
+      configured: undefined,
+      action: 'dropped_default',
+    });
+    expect(migration.setConfig).not.toHaveBeenCalled();
     expect(migration.warn).toHaveBeenCalledWith(
-      '[tui.toml] could not remove disable_feedback_survey after moving it to config.toml',
+      '[tui.toml] could not remove disable_feedback_survey; retrying on next start',
     );
   });
 });
