@@ -1874,11 +1874,27 @@ export class KimiTUI {
         this.drainOneQueuedMessage();
         return;
       }
-      void session.compact({ instruction: item.compactInstruction }).catch((error: unknown) => {
-        // The fire races other clients holding the engine queue
-        // (COMPACTION_UNABLE): requeue at the head with a bounded retry.
-        // A session switch (/new) clears the queue — do not resurrect the
-        // item into the new session's queue.
+      // Wait out a competing turn/compaction before refiring: draining while
+      // busy would burn the retry budget on the same race. A session switch
+      // (/new) clears the queue — do not resurrect the item into it.
+      const retryWhenIdle = (): void => {
+        setTimeout(() => {
+          if (this.session !== session) return;
+          if (
+            this.state.appState.streamingPhase !== 'idle' ||
+            this.state.appState.isCompacting ||
+            this.deferUserMessages ||
+            this.steeringQueuedMessages.size > 0
+          ) {
+            retryWhenIdle();
+            return;
+          }
+          this.drainOneQueuedMessage();
+        }, 1000);
+      };
+      // The fire races other clients holding the engine queue
+      // (COMPACTION_UNABLE): requeue at the head with a bounded retry.
+      const retryOrDrop = (error: unknown): void => {
         if (this.session !== session) return;
         const retries = (item.compactRetries ?? 0) + 1;
         if (retries >= 3) {
@@ -1888,25 +1904,19 @@ export class KimiTUI {
         }
         this.state.queuedMessages.unshift({ ...item, compactRetries: retries });
         this.updateQueueDisplay();
-        // Wait out the competing turn before refiring: draining while busy
-        // would burn the retry budget on the same COMPACTION_UNABLE race.
-        const retryWhenIdle = (): void => {
-          setTimeout(() => {
-            if (this.session !== session) return;
-            if (
-              this.state.appState.streamingPhase !== 'idle' ||
-              this.state.appState.isCompacting ||
-              this.deferUserMessages ||
-              this.steeringQueuedMessages.size > 0
-            ) {
-              retryWhenIdle();
-              return;
-            }
-            this.drainOneQueuedMessage();
-          }, 1000);
-        };
         retryWhenIdle();
-      });
+      };
+      // A compaction from another client may already be running by the time
+      // the fire lands: the engine's begin() then silently no-ops (the SDK
+      // returns void, so this is undetectable after the fact), dropping the
+      // item. Requeue without firing — no attempt was made, no retry spent.
+      if (this.state.appState.isCompacting) {
+        this.state.queuedMessages.unshift(item);
+        this.updateQueueDisplay();
+        retryWhenIdle();
+        return;
+      }
+      void session.compact({ instruction: item.compactInstruction }).catch(retryOrDrop);
       return;
     }
     if (item.mode === 'bash') {

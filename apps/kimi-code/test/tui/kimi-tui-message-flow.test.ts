@@ -5000,6 +5000,38 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).not.toContain('Cannot /compact');
   });
 
+  it('restores the input when a second /compact is refused during lazy session creation', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/compact');
+    driver.handleUserInput('/compact');
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+      expect(stripSgr(renderTranscript(driver))).toContain('A /compact is already queued.');
+    });
+    expect(driver.state.editor.getText()).toBe('/compact');
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({ mode: 'compact', text: '/compact' }),
+    ]);
+    expect(lazySession.compact).not.toHaveBeenCalled();
+  });
+
   it('skips a queued /compact when an auto compaction completed while it waited', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -5177,6 +5209,33 @@ command = "vim"
       driver.state.appState.streamingPhase = 'idle';
       await vi.advanceTimersByTimeAsync(1000);
       expect(session.compact).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requeues a queued /compact without firing when another compaction is already running', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, session } = await makeDriver();
+      driver.state.queuedMessages = [
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+      ];
+      driver.state.appState.isCompacting = true;
+
+      driver.sendQueuedMessage(session, driver.state.queuedMessages.shift()!);
+
+      expect(session.compact).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toEqual([
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+      ]);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(session.compact).not.toHaveBeenCalled();
+
+      driver.state.appState.isCompacting = false;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session.compact).toHaveBeenCalledWith({ instruction: undefined });
     } finally {
       vi.useRealTimers();
     }

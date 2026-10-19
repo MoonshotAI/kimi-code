@@ -377,7 +377,11 @@ async function handleBuiltInSlashCommand(
       // submitted before the session existed joins the queue when the
       // awaited creation lands on a running turn.
       if (name === 'compact' && busyReason === 'streaming' && !host.state.appState.isCompacting) {
-        if (!host.enqueueCompactCommand(args)) host.showError('A /compact is already queued.');
+        if (!host.enqueueCompactCommand(args)) {
+          host.showError('A /compact is already queued.');
+          // Same restore as the adjacent blocked path, guarded the same way.
+          if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
+        }
         return;
       }
       host.showError(slashBusyMessage(name, busyReason));
