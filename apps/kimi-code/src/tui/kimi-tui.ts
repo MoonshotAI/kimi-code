@@ -1904,6 +1904,7 @@ export class KimiTUI {
         }
         this.state.queuedMessages.unshift({ ...item, compactRetries: retries });
         this.updateQueueDisplay();
+        this.state.ui.requestRender();
         retryWhenIdle();
       };
       // A compaction from another client may already be running by the time
@@ -1913,6 +1914,7 @@ export class KimiTUI {
       if (this.state.appState.isCompacting) {
         this.state.queuedMessages.unshift(item);
         this.updateQueueDisplay();
+        this.state.ui.requestRender();
         retryWhenIdle();
         return;
       }

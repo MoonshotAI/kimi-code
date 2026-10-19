@@ -5173,6 +5173,9 @@ command = "vim"
       ];
 
       driver.sendQueuedMessage(session, driver.state.queuedMessages.shift()!);
+      await vi.advanceTimersByTimeAsync(0);
+      const requeuedPane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+      expect(requeuedPane).toContain('/compact');
       await vi.advanceTimersByTimeAsync(1000);
       await vi.advanceTimersByTimeAsync(1000);
       await vi.advanceTimersByTimeAsync(1000);
