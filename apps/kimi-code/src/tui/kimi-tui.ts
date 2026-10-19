@@ -80,11 +80,11 @@ import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
+import { ChoicePickerComponent } from './components/dialogs/choice-picker';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
 import { SessionPickerComponent, type SessionRow } from './components/dialogs/session-picker';
-import { SessionOccupiedDialogComponent } from './components/dialogs/session-occupied-dialog';
 import { TrustPromptComponent, type TrustPromptChoice } from './components/dialogs/trust-prompt';
 import {
   FileMentionProvider,
@@ -2125,8 +2125,13 @@ export class KimiTUI {
         restore();
       };
       this.mountEditorReplacement(
-        new SessionOccupiedDialogComponent({
-          message: formatErrorMessage(error),
+        new ChoicePickerComponent({
+          title: formatErrorMessage(error),
+          options: [
+            { value: 'retry', label: 'Retry', description: 'send again now' },
+            { value: 'cancel', label: 'Cancel', description: 'get your message back' },
+          ],
+          spaceSelect: false,
           onSelect: (action) => {
             if (action === 'retry') {
               this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });

@@ -746,70 +746,7 @@ describe('SessionMetadata', () => {
   });
 
   describe('applyPromptMetadataUpdate', () => {
-    it('keeps a custom title written by another client while recording lastPrompt', async () => {
-      const meta = ix.get(ISessionMetadata);
-      const locks = ix.get(ISessionLockService);
-      const store = ix.get(IAtomicDocumentStore);
-      await meta.ready;
-
-      locks.endRun('s1');
-      const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
-      await store.set(META_SCOPE, 'state.json', {
-        ...current!,
-        title: 'theirs',
-        titleKind: 'custom',
-        isCustomTitle: true,
-        updatedAt: Date.now(),
-      });
-
-      const { eventService, published } = recordSessionMetaUpdates();
-      await applyPromptMetadataUpdate(
-        { metadata: meta, eventService, sessionId: 's1' },
-        'hello from web',
-      );
-
-      const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
-      expect(persisted).toMatchObject({
-        title: 'theirs',
-        titleKind: 'custom',
-        lastPrompt: 'hello from web',
-      });
-      expect(published).toHaveLength(1);
-      expect(published[0]?.payload.title).toBeUndefined();
-      expect(published[0]?.payload.patch).toEqual({
-        title: undefined,
-        isCustomTitle: undefined,
-        lastPrompt: 'hello from web',
-      });
-    });
-
-    it('derives a replaceable title from the prompt while the session is untitled', async () => {
-      const meta = ix.get(ISessionMetadata);
-      const store = ix.get(IAtomicDocumentStore);
-      await meta.ready;
-
-      const { eventService, published } = recordSessionMetaUpdates();
-      await applyPromptMetadataUpdate(
-        { metadata: meta, eventService, sessionId: 's1' },
-        'hello from web',
-      );
-
-      const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
-      expect(persisted).toMatchObject({
-        title: 'hello from web',
-        titleKind: 'replaceable',
-        lastPrompt: 'hello from web',
-      });
-      expect(published).toHaveLength(1);
-      expect(published[0]?.payload.title).toBe('hello from web');
-      expect(published[0]?.payload.patch).toEqual({
-        title: 'hello from web',
-        isCustomTitle: false,
-        lastPrompt: 'hello from web',
-      });
-    });
-
-    it('publishes events whose title matches what was actually written', async () => {
+    it('derives a title and preserves a later custom title from another client', async () => {
       const meta = ix.get(ISessionMetadata);
       const locks = ix.get(ISessionLockService);
       const store = ix.get(IAtomicDocumentStore);
@@ -820,6 +757,11 @@ describe('SessionMetadata', () => {
         { metadata: meta, eventService, sessionId: 's1' },
         'first prompt',
       );
+      expect(await store.get<SessionMeta>(META_SCOPE, 'state.json')).toMatchObject({
+        title: 'first prompt',
+        titleKind: 'replaceable',
+        lastPrompt: 'first prompt',
+      });
 
       locks.endRun('s1');
       const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
@@ -830,18 +772,28 @@ describe('SessionMetadata', () => {
         isCustomTitle: true,
         updatedAt: Date.now(),
       });
-
       await applyPromptMetadataUpdate(
         { metadata: meta, eventService, sessionId: 's1' },
         'second prompt',
       );
 
-      const persisted = await store.get<SessionMeta>(META_SCOPE, 'state.json');
-      expect(persisted).toMatchObject({ title: 'renamed elsewhere', lastPrompt: 'second prompt' });
-      expect(published).toHaveLength(2);
-      expect(published[0]?.payload.title).toBe('first prompt');
-      expect(published[1]?.payload.title).toBeUndefined();
-      expect(published[1]?.payload.patch.isCustomTitle).toBeUndefined();
+      expect(await store.get<SessionMeta>(META_SCOPE, 'state.json')).toMatchObject({
+        title: 'renamed elsewhere',
+        titleKind: 'custom',
+        lastPrompt: 'second prompt',
+      });
+      expect(
+        published.map((event) => ({ title: event.payload.title, patch: event.payload.patch })),
+      ).toEqual([
+        {
+          title: 'first prompt',
+          patch: { title: 'first prompt', isCustomTitle: false, lastPrompt: 'first prompt' },
+        },
+        {
+          title: undefined,
+          patch: { title: undefined, isCustomTitle: undefined, lastPrompt: 'second prompt' },
+        },
+      ]);
     });
   });
 });

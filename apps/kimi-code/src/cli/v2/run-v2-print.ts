@@ -323,12 +323,6 @@ export async function runV2Print(
       };
       flushWires = () => flushSessionWires(reloaded.session, reloaded.agent);
     };
-    const conflictOf = (error: unknown): 'occupied' | 'stale' | undefined => {
-      if (!isError2(error)) return undefined;
-      if (error.code === ErrorCodes.SESSION_OCCUPIED) return 'occupied';
-      if (error.code === ErrorCodes.SESSION_STALE) return 'stale';
-      return undefined;
-    };
     const runTurnOnce = async (): Promise<void> => {
       if (goalCreate !== undefined) {
         await ensureNativeGoal(resolved.agent, goalCreate, resolved.goalModel);
@@ -345,33 +339,26 @@ export async function runV2Print(
         await runNativeTurn(app, resolved.session, resolved.agent, opts.prompt!, outputFormat, stdout, stderr);
       }
     };
-    try {
-      preflightSessionRun(app, resolved.session);
-    } catch (error) {
-      if (conflictOf(error) === 'occupied') {
-        reportSessionOccupied(error as Error2, outputFormat, stdout, stderr);
-        return;
-      }
-      if (conflictOf(error) === undefined) throw error;
-      await reloadAfterStale();
-    }
-    try {
-      await runTurnOnce();
-    } catch (error) {
-      if (conflictOf(error) === 'occupied') {
-        reportSessionOccupied(error as Error2, outputFormat, stdout, stderr);
-        return;
-      }
-      if (conflictOf(error) === undefined) throw error;
-      await reloadAfterStale();
+    let preflight = true;
+    let runAttempts = 0;
+    for (;;) {
       try {
+        if (preflight) {
+          preflight = false;
+          preflightSessionRun(app, resolved.session);
+        }
+        runAttempts++;
         await runTurnOnce();
-      } catch (retryError) {
-        if (conflictOf(retryError) === 'occupied') {
-          reportSessionOccupied(retryError as Error2, outputFormat, stdout, stderr);
+        break;
+      } catch (error) {
+        if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
+          reportSessionOccupied(error, outputFormat, stdout, stderr);
           return;
         }
-        throw retryError;
+        if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE || runAttempts > 1) {
+          throw error;
+        }
+        await reloadAfterStale();
       }
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
