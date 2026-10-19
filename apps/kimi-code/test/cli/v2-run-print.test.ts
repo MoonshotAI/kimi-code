@@ -360,6 +360,27 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
+  it('does not wait for a cron fire while the goal is paused', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices } = makeFakeHarness();
+    const goal = agentServices.get(IAgentGoalService) as { getGoal: ReturnType<typeof vi.fn> };
+    goal.getGoal.mockReturnValue({ goal: { status: 'paused' } });
+    const cron = agentServices.get(IAgentCronService) as {
+      getNextFireTime: ReturnType<typeof vi.fn>;
+    };
+    const oneHourMs = 60 * 60 * 1000;
+    cron.getNextFireTime.mockReturnValue(Date.now() + oneHourMs);
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    expect(app.dispose).toHaveBeenCalled();
+    expect(stderr.text()).not.toContain('cron');
+  });
+
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
     const stdout = writer();
     const stderr = writer();
