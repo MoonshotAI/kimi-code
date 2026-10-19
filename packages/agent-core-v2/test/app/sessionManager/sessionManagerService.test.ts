@@ -3,7 +3,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { Emitter, Event } from '#/_base/event';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
+import type { ServicesAccessor } from '#/_base/di/instantiation';
+import { Error2 } from '#/_base/errors/errors';
+import { ISessionManager } from '#/app/sessionManager/sessionManager';
+import { reloadOnStale } from '#/app/sessionManager/sessionLookup';
 import { SessionManager } from '#/app/sessionManager/sessionManagerService';
+import { ErrorCodes } from '#/errors';
 import { Program } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -689,5 +694,74 @@ describe('SessionManager controller retirement', () => {
     expect(controllers[1]!.dispose).toHaveBeenCalledTimes(1);
     program.dispose();
     await registry.dispose();
+  });
+});
+
+describe('reloadOnStale', () => {
+  function staleAccessor(): {
+    readonly accessor: ServicesAccessor;
+    readonly order: string[];
+    readonly reloaded: ISessionScopeHandle;
+  } {
+    const order: string[] = [];
+    const reloaded = { id: 'session-1' } as unknown as ISessionScopeHandle;
+    const manager = {
+      close: async () => {
+        order.push('close');
+      },
+      resume: async () => {
+        order.push('resume');
+        return reloaded;
+      },
+    };
+    const accessor = {
+      get: (id: unknown) => {
+        if (id === ISessionManager) return manager;
+        throw new Error('unexpected service');
+      },
+    } as unknown as ServicesAccessor;
+    return { accessor, order, reloaded };
+  }
+
+  it('reloads the session and retries once after a stale rejection', async () => {
+    const { accessor, order, reloaded } = staleAccessor();
+    const run = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(new Error2(ErrorCodes.SESSION_STALE, 'stale'))
+      .mockResolvedValue('done');
+    const onReloaded = vi.fn(async (session: ISessionScopeHandle) => {
+      order.push(`reloaded:${session === reloaded}`);
+    });
+
+    await expect(reloadOnStale(accessor, 'session-1', run, { onReloaded })).resolves.toBe('done');
+
+    expect(order).toEqual(['close', 'resume', 'reloaded:true']);
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('reloads but rethrows the stale rejection when retry is off', async () => {
+    const { accessor, order } = staleAccessor();
+    const stale = new Error2(ErrorCodes.SESSION_STALE, 'stale');
+    const run = vi.fn(async () => {
+      throw stale;
+    });
+
+    await expect(reloadOnStale(accessor, 'session-1', run, { retry: false })).rejects.toBe(stale);
+
+    expect(order).toEqual(['close', 'resume']);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes other failures through without reloading', async () => {
+    const { accessor, order } = staleAccessor();
+    const occupied = new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+
+    await expect(
+      reloadOnStale(accessor, 'session-1', async () => {
+        throw occupied;
+      }),
+    ).rejects.toBe(occupied);
+
+    expect(order).toEqual([]);
   });
 });

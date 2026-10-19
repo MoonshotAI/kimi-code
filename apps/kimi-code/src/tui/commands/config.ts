@@ -27,11 +27,7 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import {
-  isSessionOccupiedError,
-  isSessionStaleError,
-  reloadSessionAfterStale,
-} from '../utils/session-lock-errors';
+import { isSessionOccupiedError } from '../utils/session-lock-errors';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
   effectiveModelForHost,
@@ -132,19 +128,8 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
   try {
     await session.compact({ instruction: customInstruction });
   } catch (error) {
-    if (isSessionOccupiedError(error)) {
-      host.showError(formatErrorMessage(error));
-      return;
-    }
-    if (isSessionStaleError(error)) {
-      await reloadSessionAfterStale(
-        host,
-        session.id,
-        'Loaded updates from another client. Review and run /compact again.',
-      );
-      return;
-    }
-    throw error;
+    if (!isSessionOccupiedError(error)) throw error;
+    host.showError(formatErrorMessage(error));
   }
 }
 

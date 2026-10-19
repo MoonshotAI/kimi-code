@@ -40,9 +40,9 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
   bootstrap,
-  closeSessionById,
   createCloudAppender,
   ensureMainAgent,
+  reloadOnStale,
   ErrorCodes,
   isError2,
   resumeSessionById,
@@ -82,6 +82,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -292,7 +293,12 @@ export async function runV2Print(
     }
 
     let resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
-    restorePermission = resolved.restorePermission;
+    const { previousPermissionMode } = resolved;
+    if (previousPermissionMode !== undefined) {
+      restorePermission = async () => {
+        resolved.agent.accessor.get(IAgentPermissionModeService).setMode(previousPermissionMode);
+      };
+    }
     quiesceAgents = async () => {
       releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
     };
@@ -307,14 +313,6 @@ export async function runV2Print(
     }
 
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
-    const reloadAfterStale = async (): Promise<void> => {
-      stderr.write(
-        `Session "${resolved.session.id}" was updated by another client; reloading.\n`,
-      );
-      await closeSessionById(app.accessor, resolved.session.id);
-      resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
-      restorePermission = resolved.restorePermission;
-    };
     const runTurnOnce = async (): Promise<void> => {
       if (goalCreate !== undefined) {
         await ensureNativeGoal(resolved.agent, goalCreate, resolved.goalModel);
@@ -332,17 +330,24 @@ export async function runV2Print(
       }
     };
     try {
-      for (let staleReloads = 0; ; staleReloads++) {
-        try {
+      await reloadOnStale(
+        app.accessor,
+        resolved.session.id,
+        async () => {
           resolved.session.accessor.get(ISessionRunGate).begin();
           await runTurnOnce();
-          break;
-        } catch (error) {
-          const stale = isError2(error) && error.code === ErrorCodes.SESSION_STALE;
-          if (!stale || staleReloads >= PRINT_MAX_STALE_RELOADS) throw error;
-          await reloadAfterStale();
-        }
-      }
+        },
+        {
+          onReloaded: async (session) => {
+            stderr.write(`Session "${session.id}" was updated by another client; reloaded it.\n`);
+            const agentContext = await ensureMainAgent(session);
+            const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+            if (opts.model !== undefined) await agent.accessor.get(IAgentProfileService).setModel(opts.model);
+            agent.accessor.get(IAgentPermissionModeService).setMode('auto');
+            resolved = { ...resolved, session, agent };
+          },
+        },
+      );
     } catch (error) {
       if (!isError2(error) || error.code !== ErrorCodes.SESSION_OCCUPIED) throw error;
       reportSessionOccupied(error, outputFormat, stdout, stderr);
@@ -361,7 +366,7 @@ export async function runV2Print(
 interface ResolvedNativeSession {
   readonly session: ISessionScopeHandle;
   readonly agent: IAgentScopeHandle;
-  readonly restorePermission: () => Promise<void>;
+  readonly previousPermissionMode?: PermissionMode;
   readonly telemetryModel: string | undefined;
   readonly goalModel: string | undefined;
 }
@@ -428,17 +433,11 @@ async function resolveNativeSession(
     return session;
   };
 
-  const forceAuto = (
-    agent: IAgentScopeHandle,
-  ): { readonly restorePermission: () => Promise<void> } => {
+  const forceAuto = (agent: IAgentScopeHandle): PermissionMode => {
     const permissionMode = agent.accessor.get(IAgentPermissionModeService);
     const previous = permissionMode.mode;
     permissionMode.setMode('auto');
-    return {
-      restorePermission: async () => {
-        permissionMode.setMode(previous);
-      },
-    };
+    return previous;
   };
 
   if (opts.session !== undefined) {
@@ -459,11 +458,11 @@ async function resolveNativeSession(
     const profile = agent.accessor.get(IAgentProfileService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
-    const { restorePermission } = forceAuto(agent);
+    const previousPermissionMode = forceAuto(agent);
     return {
       session,
       agent,
-      restorePermission,
+      previousPermissionMode,
       telemetryModel: configuredModel(opts.model, currentModel, defaultModel),
       goalModel: configuredModel(opts.model, currentModel),
     };
@@ -479,11 +478,11 @@ async function resolveNativeSession(
       const profile = agent.accessor.get(IAgentProfileService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
-      const { restorePermission } = forceAuto(agent);
+      const previousPermissionMode = forceAuto(agent);
       return {
         session,
         agent,
-        restorePermission,
+        previousPermissionMode,
         telemetryModel: configuredModel(opts.model, currentModel, defaultModel),
         goalModel: configuredModel(opts.model, currentModel),
       };
@@ -506,7 +505,6 @@ async function resolveNativeSession(
   return {
     session,
     agent,
-    restorePermission: async () => {},
     telemetryModel: model,
     goalModel: model,
   };
@@ -662,7 +660,6 @@ async function runNativeTurn(
 }
 
 const PRINT_EXIT_SESSION_OCCUPIED = 4;
-const PRINT_MAX_STALE_RELOADS = 2;
 
 function reportSessionOccupied(
   error: Error2,

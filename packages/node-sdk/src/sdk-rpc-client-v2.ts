@@ -144,6 +144,7 @@ import {
   ensureKimiHome,
   ensureMainAgent,
   ensureAgent,
+  reloadOnStale,
   agentContextOf,
   IAgentChangeNotifierService,
   IAgentContextMemoryService,
@@ -993,6 +994,30 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       return await action();
     } finally {
       await closeSessionById(this.engineAccessor, sessionId);
+    }
+  }
+
+  /**
+   * Runs a call that may start a session run. When another client updated the
+   * session (`session.stale`), the engine reloads it from disk, this client
+   * re-wires it and lets the host refresh through the stale-reload handler,
+   * then the call is retried once (or rejected again when `retry` is false).
+   */
+  private async withStaleReload<T>(
+    sessionId: string,
+    run: () => Promise<T>,
+    retry = true,
+  ): Promise<T> {
+    try {
+      return await reloadOnStale(this.engineAccessor, sessionId, run, {
+        retry,
+        onReloaded: async (handle) => {
+          this.wireSession(handle);
+          await this.notifyStaleReload(sessionId, await this.resumedSessionSummary(handle));
+        },
+      });
+    } catch (error) {
+      throw restateEngineError(error);
     }
   }
 
@@ -1999,7 +2024,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * `compaction.unable` on an empty history or an active turn.
    */
   override async compact(input: SessionIdRpcInput & CompactOptions): Promise<void> {
-    await restate(async () => {
+    await this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentScope(input.sessionId);
       agent.accessor.get(IAgentFullCompactionService).begin({
         source: 'manual',
@@ -2036,10 +2061,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
-    await restate(async () => {
-      const agent = await this.agentScope(input.sessionId);
-      await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
-    });
+    await this.withStaleReload(
+      input.sessionId,
+      async () => {
+        const agent = await this.agentScope(input.sessionId);
+        await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
+      },
+      false,
+    );
   }
 
   /**
@@ -2099,7 +2128,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * where v2 queues it FIFO.
    */
   override async prompt(input: SessionPromptRpcInput): Promise<void> {
-    await restate(async () => {
+    await this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
       await agent.prompt({
         input: input.input,
@@ -2115,7 +2144,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * anchor. v2-only: the base class rejects this method on the v1 engine.
    */
   override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
-    await restate(async () => {
+    await this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
       await agent.promptWithSkills({
         input: input.input,
@@ -2132,7 +2161,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * title/lastPrompt are updated like a prompt's.
    */
   override async steer(input: SessionPromptRpcInput): Promise<void> {
-    await restate(async () => {
+    await this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentFacade(input.sessionId);
       await agent.steer({ input: input.input });
     });
@@ -2193,7 +2222,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * v1 drops the activation while a turn runs where v2 queues it.
    */
   override async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
-    await restate(async () => {
+    await this.withStaleReload(input.sessionId, async () => {
       const agent = await this.agentScope(input.sessionId);
       await agent.accessor.get(IAgentPluginCommandService).activate({
         pluginId: input.pluginId,
@@ -2924,18 +2953,6 @@ function restateEngineError(error: unknown): unknown {
     details: error.details as Record<string, unknown> | undefined,
     cause: error.cause,
   });
-}
-
-/**
- * Run an engine-backed call, restating any thrown `Error2` via
- * `restateEngineError` — the method-level counterpart to `mcpManagement`.
- */
-async function restate<T>(call: () => Promise<T>): Promise<T> {
-  try {
-    return await call();
-  } catch (error) {
-    throw restateEngineError(error);
-  }
 }
 
 /**

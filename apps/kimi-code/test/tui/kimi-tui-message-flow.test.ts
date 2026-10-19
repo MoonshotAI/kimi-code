@@ -230,6 +230,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setStaleReloadHandler: vi.fn(),
     setModel: vi.fn(async (alias: string) => {
       model = alias;
     }),
@@ -958,102 +959,62 @@ describe('KimiTUI message flow', () => {
     ]);
   });
 
-  it('keeps input typed during a stale reload while resending the original message (v2 engine)', async () => {
-    const reloaded = makeSession({ id: 'ses-1' });
-    let finishReload!: (value: unknown) => void;
+  it('refreshes the view through the stale-reload handler while the prompt stays in flight (v2 engine)', async () => {
+    let staleReload!: () => Promise<void>;
+    let releasePrompt!: () => void;
     const session = makeSession({
       id: 'ses-1',
-      prompt: vi.fn(async () => {
-        throw new KimiError(
-          ErrorCodes.SESSION_STALE,
-          'Session "ses-1" was updated by another client; reload it before continuing',
-        );
+      setStaleReloadHandler: vi.fn((handler: () => Promise<void>) => {
+        staleReload = handler;
       }),
-    });
-    const { driver, harness } = await makeDriver(session, {
-      reloadSession: vi.fn(
+      prompt: vi.fn(
         () =>
-          new Promise((resolve) => {
-            finishReload = resolve;
+          new Promise<void>((resolve) => {
+            releasePrompt = resolve;
           }),
       ),
     });
+    const { driver, harness } = await makeDriver(session, { reloadSession: vi.fn() });
 
     driver.handleUserInput('original message');
     await vi.waitFor(() => {
-      expect(harness.reloadSession).toHaveBeenCalled();
+      expect(session.prompt).toHaveBeenCalledTimes(1);
     });
-    expect(driver.state.appState.streamingPhase).not.toBe('idle');
-
+    driver.handleUserInput('queued while reloading');
     driver.state.editor.setText('typed during reload');
-    finishReload(reloaded);
 
-    await vi.waitFor(() => {
-      expect(reloaded.prompt).toHaveBeenCalled();
-    });
-    expect(reloaded.prompt.mock.calls[0]?.[0]).toBe('original message');
+    await staleReload();
+
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toMatchObject([
+      { content: 'original message' },
+    ]);
+    expect(driver.state.queuedMessages).toMatchObject([{ text: 'queued while reloading' }]);
     expect(driver.state.editor.getText()).toBe('typed during reload');
+    expect(harness.reloadSession).not.toHaveBeenCalled();
+    expect(session.close).not.toHaveBeenCalled();
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    releasePrompt();
   });
 
-  it('sends messages queued during a stale reload to the reloaded session (v2 engine)', async () => {
-    const reloaded = makeSession({ id: 'ses-1' });
-    let finishReload!: (value: unknown) => void;
+  it('asks to rerun /undo after the SDK reloaded a stale session (v2 engine)', async () => {
     const session = makeSession({
       id: 'ses-1',
-      prompt: vi.fn(async () => {
+      undoHistory: vi.fn(async () => {
         throw new KimiError(ErrorCodes.SESSION_STALE, 'stale');
       }),
     });
-    const { driver, harness } = await makeDriver(session, {
-      reloadSession: vi.fn(
-        () =>
-          new Promise((resolve) => {
-            finishReload = resolve;
-          }),
-      ),
-    });
+    const { driver, harness } = await makeDriver(session, { reloadSession: vi.fn() });
 
-    driver.handleUserInput('original message');
-    await vi.waitFor(() => {
-      expect(harness.reloadSession).toHaveBeenCalled();
-    });
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
 
-    driver.handleUserInput('queued while reloading');
     await vi.waitFor(() => {
-      expect(driver.state.queuedMessages).toHaveLength(1);
+      expect(stripSgr(renderTranscript(driver))).toContain('run /undo again');
     });
-    expect(session.prompt).toHaveBeenCalledTimes(1);
-
-    finishReload(reloaded);
-    await vi.waitFor(() => {
-      expect(reloaded.prompt).toHaveBeenCalled();
-    });
-    expect(reloaded.prompt.mock.calls[0]?.[0]).toBe('original message');
-    expect(driver.state.queuedMessages).toHaveLength(1);
-    expect(driver.state.editor.getText()).toBe('');
-  });
-
-  it('does not close the active session when a stale reload returns the same session object (v2 engine)', async () => {
-    const session = makeSession({
-      id: 'ses-1',
-      prompt: vi
-        .fn()
-        .mockRejectedValueOnce(new KimiError(ErrorCodes.SESSION_STALE, 'stale'))
-        .mockResolvedValue(undefined),
-    });
-    const { driver, harness } = await makeDriver(session, {
-      reloadSession: vi.fn(async () => session),
-    });
-
-    driver.handleUserInput('original message');
-    await vi.waitFor(() => {
-      expect(harness.reloadSession).toHaveBeenCalled();
-    });
-    await vi.waitFor(() => {
-      expect(session.prompt).toHaveBeenCalledTimes(2);
-    });
-    expect(session.prompt.mock.calls[1]?.[0]).toBe('original message');
-    expect(session.close).not.toHaveBeenCalled();
+    expect(harness.reloadSession).not.toHaveBeenCalled();
   });
 
   it.each([

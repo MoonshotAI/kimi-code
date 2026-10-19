@@ -387,12 +387,13 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
-  it('preserves stale reloads and occupied handling across retries', async () => {
+  it('reloads a stale session in place, retries once, and still reports occupied', async () => {
     const stdout = writer();
     const stderr = writer();
     const { app, agentServices, sessionServices, appServices } = makeFakeHarness();
     const sessions = appServices.get(ISessionManager) as {
       create: ReturnType<typeof vi.fn>;
+      resume: ReturnType<typeof vi.fn>;
       close: ReturnType<typeof vi.fn>;
     };
     sessions.close = vi.fn(async () => {});
@@ -407,13 +408,9 @@ describe('runV2Print', () => {
       throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
     });
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
-    loop.submit
-      .mockImplementationOnce(() => {
-        throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
-      })
-      .mockImplementationOnce(() => {
-        throw new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
-      });
+    loop.submit.mockImplementationOnce(() => {
+      throw new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+    });
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
@@ -421,10 +418,12 @@ describe('runV2Print', () => {
     try {
       await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-      expect(sessions.create).toHaveBeenCalledTimes(3);
-      expect(sessions.close).toHaveBeenCalledTimes(2);
-      expect(loop.submit).toHaveBeenCalledTimes(2);
+      expect(sessions.create).toHaveBeenCalledTimes(1);
+      expect(sessions.close).toHaveBeenCalledTimes(1);
+      expect(sessions.resume).toHaveBeenCalledTimes(1);
+      expect(loop.submit).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(4);
+      expect(stderr.text()).toContain('was updated by another client; reloaded it');
       expect(stderr.text()).toContain('occupied');
     } finally {
       process.exitCode = previousExitCode;

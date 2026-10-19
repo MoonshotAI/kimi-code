@@ -270,23 +270,38 @@ describe('server-v2 /api/v1 skills', () => {
       expect(body.code).toBe(40415);
     });
 
-    it.each([
-      [ErrorCodes.SESSION_OCCUPIED, 40931],
-      [ErrorCodes.SESSION_STALE, 40932],
-    ])('maps skill activation conflict %s', async (code, expected) => {
+    it('maps an occupied skill activation to 40931', async () => {
       const id = await createSession();
       await createMainAgent(id);
       const handle = getLiveSessionById(server!.core.accessor, id)!;
       const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
       const activate = vi
         .spyOn(agent.accessor.get(IAgentSkillService), 'activate')
-        .mockRejectedValue(new Error2(code, 'conflict'));
+        .mockRejectedValue(new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied'));
 
       const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`);
 
       expect(result.status).toBe(200);
-      expect(result.body.code).toBe(expected);
+      expect(result.body.code).toBe(40931);
       activate.mockRestore();
+    });
+
+    it('reloads a stale session and retries the activation', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const handle = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const activate = vi
+        .spyOn(agent.accessor.get(IAgentSkillService), 'activate')
+        .mockRejectedValue(new Error2(ErrorCodes.SESSION_STALE, 'stale'));
+
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`);
+
+      expect(result.body.code).toBe(0);
+      expect(activate).toHaveBeenCalledTimes(1);
+      const reloaded = getLiveSessionById(server!.core.accessor, id);
+      expect(reloaded).toBeDefined();
+      expect(reloaded).not.toBe(handle);
     });
 
     it('returns 40401 for an unknown session', async () => {

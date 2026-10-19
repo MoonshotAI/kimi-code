@@ -333,10 +333,6 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         details: { sessionId: 'ses_lock', holder: { clientIdentity: 'other-client' } },
         cause: lockCause,
       });
-      const stale = new Error2('session.stale', 'modified by another client', {
-        details: { sessionId: 'ses_lock' },
-      });
-
       const captureRejection = async (promise: Promise<unknown>): Promise<unknown> => {
         try {
           await promise;
@@ -399,19 +395,15 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
         },
       ];
       for (const { name, rejectWith, call } of entryPoints) {
-        for (const engineError of [occupied, stale]) {
-          rejectWith(engineError);
-          const error = await captureRejection(call());
-          expect(isKimiError(error), name).toBe(true);
-          expect(error, name).toMatchObject({
-            code: engineError.code,
-            message: engineError.message,
-            details: engineError.details,
-          });
-          if (engineError === occupied) {
-            expect((error as { cause?: unknown }).cause, name).toBe(lockCause);
-          }
-        }
+        rejectWith(occupied);
+        const error = await captureRejection(call());
+        expect(isKimiError(error), name).toBe(true);
+        expect(error, name).toMatchObject({
+          code: occupied.code,
+          message: occupied.message,
+          details: occupied.details,
+        });
+        expect((error as { cause?: unknown }).cause, name).toBe(lockCause);
       }
 
       // Non-Error2 failures (DI resolution bugs, aborts) pass through untouched.
@@ -420,6 +412,48 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(
         await captureRejection(client.undoHistory({ sessionId: 'ses_lock', count: 1 })),
       ).toBe(plain);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('reloads a stale session, runs the stale-reload handler, then retries or rethrows', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const mainOf = async () => {
+      await client.getSessionWarnings({ sessionId: 'ses_stale' });
+      return getLiveSessionById(client.engineAccessor, 'ses_stale')!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!;
+    };
+    const stale = () => new Error2('session.stale', 'modified by another client');
+    try {
+      await client.createSession({ id: 'ses_stale', workDir });
+      const handler = vi.fn(async (_summary: unknown) => {});
+      client.setStaleReloadHandler('ses_stale', handler);
+
+      const before = getLiveSessionById(client.engineAccessor, 'ses_stale');
+      vi.spyOn((await mainOf()).accessor.get(IAgentConversationUndoService), 'undo')
+        .mockRejectedValueOnce(stale());
+      await expect(client.undoHistory({ sessionId: 'ses_stale', count: 1 })).rejects.toMatchObject({
+        code: 'session.stale',
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0]?.[0]).toMatchObject({ id: 'ses_stale' });
+      expect(getLiveSessionById(client.engineAccessor, 'ses_stale')).not.toBe(before);
+
+      const begin = vi
+        .spyOn((await mainOf()).accessor.get(IAgentFullCompactionService), 'begin')
+        .mockImplementationOnce(() => {
+          throw stale();
+        });
+      await expect(client.compact({ sessionId: 'ses_stale' })).rejects.toMatchObject({
+        code: 'compaction.unable',
+      });
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledTimes(2);
     } finally {
       await client.close();
     }

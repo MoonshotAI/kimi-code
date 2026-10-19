@@ -161,11 +161,7 @@ export interface SlashCommandHost {
   /** True while a `/new` replacement is assembling; idle checks must treat it as busy. */
   readonly sessionReplacementInFlight: boolean;
   switchToSession(session: Session, message: string): Promise<void>;
-  reloadCurrentSessionView(
-    session: Session,
-    message: string,
-    options?: { readonly replayHistory?: boolean },
-  ): Promise<void>;
+  reloadCurrentSessionView(session: Session, message: string): Promise<void>;
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;

@@ -30,6 +30,7 @@ import {
   getLiveSessionById,
   programForSession,
   resolveSubagentModelPool,
+  reloadOnStale,
   resumeSessionById,
   setSessionArchived,
   Error2,
@@ -79,7 +80,6 @@ import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
 import { sendMappedError, sessionConflictErrors } from './sessionErrors';
-import { reloadIfStale } from './sessionReload';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -958,15 +958,12 @@ async function compactSessionAction(
   ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  const agent = await resolveMainAgent(core, id);
-  try {
+  await reloadOnStale(core.accessor, id, async () => {
+    const agent = await resolveMainAgent(core, id);
     agent.accessor
       .get(IAgentFullCompactionService)
       .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
-  } catch (error) {
-    await reloadIfStale(core, id, req, error);
-    throw error;
-  }
+  });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
 }
@@ -976,12 +973,12 @@ async function undoSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  try {
-    await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
-  } catch (error) {
-    await reloadIfStale(core, id, req, error);
-    throw error;
-  }
+  await reloadOnStale(
+    core.accessor,
+    id,
+    () => agent.accessor.get(IAgentConversationUndoService).undo(body.count),
+    { retry: false },
+  );
   const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const legacy = core.accessor.get(ISessionLegacyService);

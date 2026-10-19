@@ -22,11 +22,7 @@ import { UserMessageComponent } from '../components/messages/user-message';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
-import {
-  isSessionOccupiedError,
-  isSessionStaleError,
-  reloadSessionAfterStale,
-} from '../utils/session-lock-errors';
+import { isSessionOccupiedError, isSessionStaleError } from '../utils/session-lock-errors';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
@@ -112,11 +108,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       return false;
     }
     if (isSessionStaleError(error)) {
-      await reloadSessionAfterStale(
-        host,
-        session.id,
-        'Loaded updates from another client. Review and run /undo again.',
-      );
+      host.showStatus('Loaded updates from another client. Review and run /undo again.', 'warning');
       return false;
     }
     const message = formatErrorMessage(error);
