@@ -9,7 +9,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 
 import type { MermaidRenderMode } from '#/tui/utils/markdown-options';
@@ -245,10 +245,19 @@ export async function saveTuiConfig(
 }
 
 export async function removeLegacySurveySetting(filePath: string = getTuiConfigPath()): Promise<void> {
-  const config = parseToml(await readFile(filePath, 'utf-8'));
-  if (!('disable_feedback_survey' in config)) return;
-  delete config['disable_feedback_survey'];
-  await writeFile(filePath, stringifyToml(config), 'utf-8');
+  const lines = (await readFile(filePath, 'utf-8')).split('\n');
+  let inTable = false;
+  let removed = false;
+  const kept = lines.filter((line) => {
+    if (/^\s*\[/.test(line)) inTable = true;
+    if (!inTable && /^\s*disable_feedback_survey\s*=/.test(line)) {
+      removed = true;
+      return false;
+    }
+    return true;
+  });
+  if (!removed) return;
+  await writeFile(filePath, kept.join('\n'), 'utf-8');
 }
 
 export function normalizeTuiConfig(

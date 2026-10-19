@@ -234,6 +234,37 @@ command = "   "
     expect(readFileSync(filePath, 'utf-8')).not.toContain('disable_feedback_survey');
   });
 
+  it('removes the survey setting line without disturbing comments or tables', async () => {
+    writeFileSync(filePath, [
+      '# ~/.kimi-code/tui.toml',
+      '# Client preferences for kimi-code.',
+      'theme = "dark" # "auto" | "dark" | "light"',
+      '# my own note',
+      'disable_feedback_survey = true',
+      '# disable_feedback_survey = false',
+      '',
+      '[custom]',
+      'disable_feedback_survey = true',
+      'value = 42',
+      '',
+    ].join('\n'));
+
+    await removeLegacySurveySetting(filePath);
+
+    expect(readFileSync(filePath, 'utf-8')).toBe([
+      '# ~/.kimi-code/tui.toml',
+      '# Client preferences for kimi-code.',
+      'theme = "dark" # "auto" | "dark" | "light"',
+      '# my own note',
+      '# disable_feedback_survey = false',
+      '',
+      '[custom]',
+      'disable_feedback_survey = true',
+      'value = 42',
+      '',
+    ].join('\n'));
+  });
+
   it('round-trips an auto_session_title opt-out', async () => {
     await saveTuiConfig(
       { ...DEFAULT_TUI_CONFIG, autoSessionTitle: false },
