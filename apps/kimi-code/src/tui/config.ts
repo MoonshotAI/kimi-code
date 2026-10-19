@@ -250,7 +250,7 @@ export async function removeLegacySurveySetting(filePath: string = getTuiConfigP
   let removed = false;
   const kept = lines.filter((line) => {
     if (/^\s*\[/.test(line)) inTable = true;
-    if (!inTable && /^\s*disable_feedback_survey\s*=/.test(line)) {
+    if (!inTable && /^\s*["']?disable_feedback_survey["']?\s*=/.test(line)) {
       removed = true;
       return false;
     }

@@ -265,6 +265,14 @@ command = "   "
     ].join('\n'));
   });
 
+  it('removes a quoted spelling of the survey setting key', async () => {
+    writeFileSync(filePath, '"disable_feedback_survey" = true\ntheme = "dark"\n');
+
+    await removeLegacySurveySetting(filePath);
+
+    expect(readFileSync(filePath, 'utf-8')).toBe('theme = "dark"\n');
+  });
+
   it('round-trips an auto_session_title opt-out', async () => {
     await saveTuiConfig(
       { ...DEFAULT_TUI_CONFIG, autoSessionTitle: false },
