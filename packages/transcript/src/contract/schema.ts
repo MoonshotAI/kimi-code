@@ -192,6 +192,7 @@ export const transcriptTurnSchema = z.object({
   usage: transcriptUsageSchema.optional(),
   durationMs: z.number().optional(),
   error: z.string().optional(),
+  wedged: z.boolean().optional(),
 });
 
 export const transcriptMarkerSchema = z.object({
