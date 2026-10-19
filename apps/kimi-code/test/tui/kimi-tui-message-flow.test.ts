@@ -4952,6 +4952,24 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('/compact');
   });
 
+  it('keeps /compact blocked while a compaction holds the turn', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.appState.isCompacting = true;
+    driver.state.appState.streamingPhase = 'waiting';
+    harness.track.mockClear();
+
+    driver.handleUserInput('/compact');
+
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+      reason: 'blocked',
+      command: 'compact',
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('Cannot /compact while compacting');
+    expect(driver.state.editor.getText()).toBe('/compact');
+  });
+
   it('skips a queued /compact when an auto compaction completed while it waited', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -5004,19 +5022,34 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
-  it('does not steer queued /compact items into a running turn on Ctrl-S', async () => {
+  it('steers only the messages ahead of a queued /compact on Ctrl-S', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
     driver.streamingUI.setTurnId('1');
-    driver.handleUserInput('/compact steer me not');
-    driver.handleUserInput('plain note');
+    driver.handleUserInput('msg1');
+    driver.handleUserInput('/compact foo');
+    driver.handleUserInput('msg2');
 
     driver.state.editor.onCtrlS?.();
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(session.steer).toHaveBeenCalledWith('plain note');
+    expect(session.steer).toHaveBeenCalledTimes(1);
+    expect(session.steer).toHaveBeenCalledWith('msg1');
+    expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
+  });
+
+  it('steers nothing on Ctrl-S when only /compact items are queued', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('/compact');
+
+    driver.state.editor.onCtrlS?.();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.steer).not.toHaveBeenCalled();
     expect(driver.state.queuedMessages).toEqual([
-      expect.objectContaining({ mode: 'compact', text: '/compact steer me not' }),
+      expect.objectContaining({ mode: 'compact', text: '/compact' }),
     ]);
   });
 
@@ -5068,6 +5101,34 @@ command = "vim"
       expect(session.prompt).toHaveBeenCalledWith('next', { promptId: undefined });
       expect(driver.state.queuedMessages).toEqual([]);
       expect(stripSgr(renderTranscript(driver))).toContain('Failed to run queued /compact');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for idle before retrying a failed queued /compact fire', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession({
+        compact: vi.fn(async () => {
+          throw new Error('COMPACTION_UNABLE');
+        }),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.queuedMessages = [
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+      ];
+
+      driver.sendQueuedMessage(session, driver.state.queuedMessages.shift()!);
+      expect(session.compact).toHaveBeenCalledTimes(1);
+
+      driver.state.appState.streamingPhase = 'waiting';
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(session.compact).toHaveBeenCalledTimes(1);
+
+      driver.state.appState.streamingPhase = 'idle';
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session.compact).toHaveBeenCalledTimes(2);
     } finally {
       vi.useRealTimers();
     }

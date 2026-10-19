@@ -1888,9 +1888,24 @@ export class KimiTUI {
         }
         this.state.queuedMessages.unshift({ ...item, compactRetries: retries });
         this.updateQueueDisplay();
-        setTimeout(() => {
-          this.drainOneQueuedMessage();
-        }, 1000);
+        // Wait out the competing turn before refiring: draining while busy
+        // would burn the retry budget on the same COMPACTION_UNABLE race.
+        const retryWhenIdle = (): void => {
+          setTimeout(() => {
+            if (this.session !== session) return;
+            if (
+              this.state.appState.streamingPhase !== 'idle' ||
+              this.state.appState.isCompacting ||
+              this.deferUserMessages ||
+              this.steeringQueuedMessages.size > 0
+            ) {
+              retryWhenIdle();
+              return;
+            }
+            this.drainOneQueuedMessage();
+          }, 1000);
+        };
+        retryWhenIdle();
       });
       return;
     }
@@ -2133,10 +2148,14 @@ export class KimiTUI {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
     if (manual ? !this.canManuallySteer() : !this.canSteerQueueIntoRunningTurn()) return;
+    // A queued /compact is a FIFO barrier for manual steering: messages
+    // behind it must wait for the compaction, not jump into the
+    // pre-compaction context.
+    const firstCompact = this.state.queuedMessages.findIndex((message) => message.mode === 'compact');
     const batch = manual
-      ? this.state.queuedMessages.filter(
-          (message) => message.mode !== 'bash' && message.mode !== 'compact',
-        )
+      ? this.state.queuedMessages
+          .slice(0, firstCompact === -1 ? this.state.queuedMessages.length : firstCompact)
+          .filter((message) => message.mode !== 'bash')
       : [...this.state.queuedMessages];
     if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
     const pending = [...batch];

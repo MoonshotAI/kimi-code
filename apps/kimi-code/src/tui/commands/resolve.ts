@@ -72,7 +72,9 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
       busyReason !== undefined &&
       resolveSlashCommandAvailability(command, parsed.args) === 'idle-only'
     ) {
-      if (command.name === 'compact' && busyReason === 'streaming') {
+      // A live compaction also sets streamingPhase, and busyReason reports
+      // 'streaming' first — compacting must stay blocked, not enqueue.
+      if (command.name === 'compact' && busyReason === 'streaming' && !options.isCompacting) {
         return {
           kind: 'builtin',
           command,
@@ -84,7 +86,7 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
       return {
         kind: 'blocked',
         commandName: parsed.name,
-        reason: busyReason,
+        reason: command.name === 'compact' && options.isCompacting ? 'compacting' : busyReason,
       };
     }
     return {
