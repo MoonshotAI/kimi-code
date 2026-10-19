@@ -1,6 +1,4 @@
-import type { FeedbackSurveyEvent } from '@moonshot-ai/agent-core-v2';
-
-import type { SurveyEventName } from './event-properties';
+import type { SurveyEventName, SurveyEventProperties } from './event-properties';
 import type { RatingReport, RatingTrackContext } from '../common/types';
 
 export const RATING_REPORT_RETENTION_MS = 10 * 60 * 1000;
@@ -8,14 +6,14 @@ export const RATING_REPORT_CAPACITY = 1024;
 
 export type RatingTracker = (
   event: SurveyEventName,
-  properties: FeedbackSurveyEvent,
+  properties: SurveyEventProperties,
   context: RatingTrackContext,
 ) => void;
 
 export interface RatingRegistration {
   readonly mount: symbol;
   readonly event: SurveyEventName;
-  readonly properties: FeedbackSurveyEvent;
+  readonly properties: SurveyEventProperties;
   readonly context: RatingTrackContext;
   readonly track: RatingTracker;
 }
@@ -91,7 +89,7 @@ export class SessionRatingLedger {
     this.entries.clear();
   }
 
-  private track(entry: Entry, properties: FeedbackSurveyEvent): void {
+  private track(entry: Entry, properties: SurveyEventProperties): void {
     try {
       const { event, context, track } = entry.registration;
       track(event, properties, context);

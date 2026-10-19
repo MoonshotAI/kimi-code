@@ -278,7 +278,6 @@ describe('conversation-time checkpoint registration', () => {
   const CHECKPOINT_EXEMPT_STATES: ReadonlySet<string> = new Set([
     'goalForkNotice',
     'turn',
-    'userTurnTally',
     'fullCompaction.wireRanges',
   ]);
   const CONTEXT_OWNER_STATE = 'contextMemory';

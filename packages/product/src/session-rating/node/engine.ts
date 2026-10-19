@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { isUserTurnOrigin, type PromptOrigin } from '@moonshot-ai/agent-core-v2';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2';
+
+import { isSurveyTurnOrigin } from './survey-turns';
 
 import type { RatingCooldownStore } from './cooldown-store';
 import {
@@ -144,7 +146,7 @@ class SessionRatingMountImpl implements SessionRatingMount {
     if (this.ended) return;
     switch (fact.kind) {
       case 'turn-started':
-        this.turnStarted(isUserTurnOrigin(fact.origin) === true);
+        this.turnStarted(isSurveyTurnOrigin(fact.origin) === true);
         return;
       case 'turn-ended':
         this.turnEnded(fact.traceId);

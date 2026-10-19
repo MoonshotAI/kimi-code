@@ -5,11 +5,12 @@ import {
   FOLD_RELEVANT_WIRE_TYPES,
   foldWireRecords,
   isRealUserInput,
-  isUserTurnOrigin,
   type AgentReplayRecord as V2AgentReplayRecord,
   type ContextMessage as V2ContextMessage,
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
+
+import { SurveyTurnCounter } from '@moonshot-ai/kimi-code-product/session-rating/node';
 
 import type { ContextMessage } from '#/context';
 import {
@@ -47,7 +48,7 @@ export async function foldAgentWireReplay(
 
 async function foldAgentWireReplayFull(wirePath: string): Promise<FoldedAgentReplay> {
   try {
-    const userTurns = new UserTurnCounter();
+    const userTurns = new SurveyTurnCounter();
     const records = parseWireRecords(await readFile(wirePath, 'utf-8'), userTurns);
     if (records.length === 0) return { ...EMPTY_FOLD, userTurnCount: userTurns.count };
     const folded = foldWireRecords(records);
@@ -77,7 +78,7 @@ function mapReplayRecord(record: V2AgentReplayRecord): AgentReplayRecord {
   return record as unknown as AgentReplayRecord;
 }
 
-function parseWireRecords(content: string, userTurns: UserTurnCounter): WireRecord[] {
+function parseWireRecords(content: string, userTurns: SurveyTurnCounter): WireRecord[] {
   const lines = content.split('\n');
   const records: WireRecord[] = [];
   for (const [index, rawLine] of lines.entries()) {
@@ -117,52 +118,13 @@ const HEAD_TYPE_PREFIXES = [...CARRYOVER_TYPE_PREFIXES, 'turn.prompt', 'context.
 const HEAD_HEADER_BYTES =
   TYPE_PREFIX.length + Math.max(...HEAD_TYPE_PREFIXES.map((prefix) => prefix.length));
 
-class UserTurnCounter {
-  private total = 0;
-  private reliable = true;
-  private firstPromptStart = Infinity;
-  private firstUserMessageStart = Infinity;
-
-  get count(): number | undefined {
-    return this.reliable && this.firstUserMessageStart >= this.firstPromptStart
-      ? this.total
-      : undefined;
-  }
-
-  invalidate(): void {
-    this.reliable = false;
-  }
-
-  observeLine(bytes: Buffer, start: number): void {
-    const line = decodeLine(bytes);
-    if (line.length === 0) return;
-    try {
-      this.observe(JSON.parse(line) as WireRecord, start);
-    } catch {
-      this.invalidate();
-    }
-  }
-
-  observe(record: WireRecord, start: number): void {
-    if (record === null || typeof record !== 'object') {
-      this.invalidate();
-      return;
-    }
-    if (record['type'] === 'context.append_message') {
-      const message = record['message'] as V2ContextMessage | undefined;
-      if (
-        message?.role === 'user' &&
-        (message.origin === undefined || message.origin === null || isRealUserInput(message))
-      ) {
-        this.firstUserMessageStart = Math.min(this.firstUserMessageStart, start);
-      }
-      return;
-    }
-    if (record['type'] !== 'turn.prompt') return;
-    this.firstPromptStart = Math.min(this.firstPromptStart, start);
-    const userOrigin = isUserTurnOrigin(record['origin']);
-    if (userOrigin === undefined) this.invalidate();
-    else if (userOrigin) this.total += 1;
+function observeSurveyLine(counter: SurveyTurnCounter, bytes: Buffer, start: number): void {
+  const line = decodeLine(bytes);
+  if (line.length === 0) return;
+  try {
+    counter.observe(JSON.parse(line), start);
+  } catch {
+    counter.invalidate();
   }
 }
 
@@ -236,7 +198,7 @@ class WireReplayScan {
   private readonly windowLines: ScannedRecord[] = [];
   private readonly seeds: ScannedRecord[] = [];
   private readonly legacyCompactionStarts: number[] = [];
-  private readonly userTurns = new UserTurnCounter();
+  private readonly userTurns = new SurveyTurnCounter();
 
   constructor(private readonly turnLimit: number) {
     this.mode = turnLimit > 0 ? 'boundary' : 'head';
@@ -332,11 +294,11 @@ class WireReplayScan {
       sniffed === 'turn.prompt' ||
       (sniffed === undefined && !hasRelevantMarkerBytes(joined))
     ) {
-      this.userTurns.observeLine(joined, start);
+      observeSurveyLine(this.userTurns, joined, start);
       return;
     }
     if (sniffed !== undefined && !FOLD_RELEVANT_WIRE_TYPES.has(sniffed)) {
-      if (tolerate) this.userTurns.observeLine(joined, start);
+      if (tolerate) observeSurveyLine(this.userTurns, joined, start);
       return;
     }
     const record = parseJsonLine(decodeLine(joined), tolerate);
@@ -465,7 +427,7 @@ class WireReplayScan {
             ? Buffer.concat([view.subarray(lineStart, lineEnd), tailFragment])
             : view.subarray(lineStart, lineEnd);
         if (!selected) {
-          this.userTurns.observeLine(bytes, dataFileStart + lineStart);
+          observeSurveyLine(this.userTurns, bytes, dataFileStart + lineStart);
           if (lastLine) return;
           lineStart = lineEnd + 1;
           continue;
@@ -496,7 +458,8 @@ class WireReplayScan {
         tailFragment.length > 0 &&
         lineEnd - lineStart < HEAD_HEADER_BYTES
       ) {
-        this.userTurns.observeLine(
+        observeSurveyLine(
+          this.userTurns,
           Buffer.concat([view.subarray(lineStart, lineEnd), tailFragment]),
           dataFileStart + lineStart,
         );

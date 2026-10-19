@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   buildSurveyEventProperties,
   SURVEY_EVENT_NAMES,
+  surveyEventDefinitions,
   type SurveyEventEnvironmentFields,
 } from '#/session-rating/node/event-properties';
 import {
@@ -419,6 +420,22 @@ describe('evaluateSurveyGate (arbitration)', () => {
 });
 
 describe('buildSurveyEventProperties', () => {
+  it('retains documented survey event and property names', () => {
+    expect(Object.keys(surveyEventDefinitions).toSorted()).toEqual([
+      'feedback_survey', 'long_context_survey',
+    ]);
+    const namePattern = /^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$/;
+    for (const [name, { meta }] of Object.entries(surveyEventDefinitions)) {
+      expect(name).toMatch(namePattern);
+      expect(meta.owner.length, `${name}: owner`).toBeGreaterThan(0);
+      expect(meta.comment.length, `${name}: comment`).toBeGreaterThan(0);
+      for (const [property, description] of Object.entries(meta.properties)) {
+        expect(property, `${name}.${property}`).toMatch(namePattern);
+        expect(description.length, `${name}.${property}: description`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it('maps survey kinds to the wire event names', () => {
     expect(SURVEY_EVENT_NAMES).toEqual({
       session: 'feedback_survey',

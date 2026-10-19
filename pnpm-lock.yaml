@@ -786,6 +786,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/kimi-code-product':
+        specifier: workspace:^
+        version: link:../product
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient

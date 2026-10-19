@@ -7,25 +7,22 @@ import {
   IAgentLoopService,
   IAgentPermissionModeService,
   IAgentProfileService,
-  IAgentStateService,
   IBootstrapService,
   IConfigService,
   IEventBus,
+  IEventDispatcher,
   IModelCatalog,
   IOAuthService,
   IOAuthToolkit,
-  isUserTurnOrigin,
   ISessionManager,
   ISessionMetadata,
   ISessionTokenCountingService,
   ISessionUsageService,
   ITelemetryService,
   MAIN_AGENT_ID,
-  readSessionUserTurnCount,
   CompactionCompleted,
   SubagentSpawned,
   type AgentMeta,
-  type FeedbackSurveyEvent,
   type IAgentScopeHandle,
   type IDisposable,
   type ISessionScopeHandle,
@@ -46,7 +43,8 @@ import {
   type ResumedAgentSeed,
   type SessionRatingMount,
 } from '#/session-rating/node/engine';
-import type { SurveyEventName } from '#/session-rating/node/event-properties';
+import type { SurveyEventName, SurveyEventProperties } from '#/session-rating/node/event-properties';
+import { isSurveyTurnOrigin, mountSurveyTurnCounter, type MountedSurveyTurnCounter } from '#/session-rating/node/survey-turns';
 import { SessionRatingLedger } from '#/session-rating/node/ledger';
 import type { RatingOffer, RatingReport } from '#/session-rating/common/types';
 import { ratingCooldownFile, type RatingCooldownStore } from '#/session-rating/node/cooldown-store';
@@ -151,12 +149,21 @@ export class SessionRatingHost implements IDisposable {
       this.cooldown = ratingCooldownFile(bootstrap.homeDir);
     }
     const manager = core.accessor.get(ISessionManager);
+    const creating = manager.onWillCreateSession?.((event) => {
+      event.onDidCreateScope((handle) => {
+        this.mountSession(event.sessionId, handle);
+      });
+      event.onSessionDispose(() => {
+        this.unmountSession(event.sessionId);
+      });
+    });
     const created = manager.onDidCreateSession?.((event) => {
       this.mountSession(event.sessionId, event.handle);
     });
     const closing = manager.onWillCloseSession?.((event) => {
       this.unmountSession(event.sessionId);
     });
+    if (creating !== undefined) this.subscriptions.push(creating);
     if (created !== undefined) this.subscriptions.push(created);
     if (closing !== undefined) this.subscriptions.push(closing);
     for (const handle of manager.list()) this.mountSession(handle.id, handle);
@@ -185,6 +192,7 @@ export class SessionRatingHost implements IDisposable {
     const telemetry = handle.accessor.get(ITelemetryService).withContext({});
     const agents = handle.accessor.get(IAgentLifecycleService);
     let mainAgent: IAgentScopeHandle | undefined;
+    let surveyTurns: MountedSurveyTurnCounter | undefined;
     let mainAgentEvents: IDisposable | undefined;
     let userTurnsObserved = 0;
     let resumedAgents: Readonly<Record<string, ResumedAgentSeed>> | undefined;
@@ -197,7 +205,7 @@ export class SessionRatingHost implements IDisposable {
       .catch(() => undefined);
     const mount = mountSessionRating({
       environment: () => ({
-        ...readEnvironment(sessionId, mainAgent, userTurnsObserved),
+        ...readEnvironment(sessionId, mainAgent, userTurnsObserved, surveyTurns?.count),
         telemetryDisabled: this.options.telemetryDisabled(),
         ratingDisabled: this.settings.get('disableFeedbackSurvey') === true,
         resumedAgents,
@@ -212,10 +220,16 @@ export class SessionRatingHost implements IDisposable {
     const attach = (agent: IAgentScopeHandle): void => {
       mainAgentEvents?.dispose();
       mainAgent = agent;
+      const counter = mountSurveyTurnCounter(agent.accessor.get(IEventDispatcher));
+      surveyTurns = counter;
+      void counter.whenAttached.catch((error: unknown) => {
+        this.options.log?.('session rating history unavailable', { error: String(error) });
+      });
       const bus = agent.accessor.get(IEventBus);
       const subscriptions = [
+        counter,
         bus.subscribe(TurnStarted, (event) => {
-          if (isUserTurnOrigin(event.origin) === true) userTurnsObserved += 1;
+          if (isSurveyTurnOrigin(event.origin) === true) userTurnsObserved += 1;
           mount.observe({ kind: 'turn-started', origin: event.origin });
         }),
         bus.subscribe(TurnEnded, (event) => {
@@ -252,16 +266,15 @@ export class SessionRatingHost implements IDisposable {
     const existing = agents.handleOf(MAIN_AGENT_ID);
     if (existing !== undefined) attach(existing);
     const disposables: IDisposable[] = [
-      agents.onDidCreate((context) => {
-        if (context.agentId !== MAIN_AGENT_ID) return;
-        const agent = agents.handleOf(MAIN_AGENT_ID);
-        if (agent !== undefined) attach(agent);
+      agents.onDidCreateScope(({ context, handle: agent }) => {
+        if (context.agentId === MAIN_AGENT_ID) attach(agent);
       }),
       agents.onDidClose((context) => {
         if (context.agentId !== MAIN_AGENT_ID) return;
         mainAgentEvents?.dispose();
         mainAgentEvents = undefined;
         mainAgent = undefined;
+        surveyTurns = undefined;
       }),
       { dispose: () => mainAgentEvents?.dispose() },
     ];
@@ -279,13 +292,13 @@ export class SessionRatingHost implements IDisposable {
   private track(
     telemetry: ITelemetryService,
     event: SurveyEventName,
-    properties: FeedbackSurveyEvent,
+    properties: SurveyEventProperties,
   ): void {
     if (this.preview) {
       this.options.log?.('session rating preview event', { event, ...properties });
       return;
     }
-    telemetry.track2(event, properties);
+    telemetry.track(event, { ...properties });
   }
 }
 
@@ -317,6 +330,7 @@ function readEnvironment(
   sessionId: string,
   agent: IAgentScopeHandle | undefined,
   userTurnsObserved: number,
+  sessionUserTurns: number | undefined,
 ): Omit<RatingEnvironment, 'telemetryDisabled' | 'ratingDisabled'> {
   if (agent === undefined) {
     return {
@@ -334,7 +348,6 @@ function readEnvironment(
   const profile = agent.accessor.get(IAgentProfileService);
   const alias = profile.getModel();
   const total = agent.accessor.get(ISessionUsageService).status(context).total;
-  const sessionUserTurns = readSessionUserTurnCount(agent.accessor.get(IAgentStateService));
   return {
     sessionId,
     currentModel: alias,

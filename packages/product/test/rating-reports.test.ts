@@ -1,7 +1,7 @@
-import type { FeedbackSurveyEvent } from '@moonshot-ai/agent-core-v2';
 import { describe, expect, it } from 'vitest';
 
 import { mountSessionRating, type RatingEnvironment } from '#/session-rating/node/engine';
+import type { SurveyEventProperties } from '#/session-rating/node/event-properties';
 import { RATING_REPORT_RETENTION_MS, SessionRatingLedger } from '#/session-rating/node/ledger';
 import { DEFAULT_SURVEY_POPUP_PAYLOAD } from '#/session-rating/common/survey-popup-config';
 import type { RatingReport } from '#/session-rating/common/types';
@@ -11,7 +11,7 @@ function fixture() {
   let id = 0;
   let disabled = false;
   let cooldown: number | undefined;
-  const events: { sessionId: string; properties: FeedbackSurveyEvent }[] = [];
+  const events: { sessionId: string; properties: SurveyEventProperties }[] = [];
   const ledger = new SessionRatingLedger({ telemetryDisabled: () => disabled, now: () => now });
   const environment: RatingEnvironment = {
     sessionId: 'session-a', currentModel: 'example-model',

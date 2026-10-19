@@ -101,7 +101,6 @@ import {
   type TurnInterruptReason,
 } from './turnEvents';
 import { TurnCancel, TurnEnded, turnKey, TurnPrompt, TurnSteer } from './turnOps';
-import { userTurnTallyKey } from './userTurnTally';
 import {
   attachMachineEngine,
   EMPTY_MACHINE_PROMPT,
@@ -173,7 +172,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   ) {
     super();
     this.states.contributeState(turnKey);
-    this.states.contributeState(userTurnTallyKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
     this.toolExecutor.hooks.onDidExecuteTool.register('prompt-service-delivery', async (ctx, next) => {
