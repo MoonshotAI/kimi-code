@@ -1,15 +1,3 @@
-/**
- * Working-directory identity helpers.
- *
- * `slugifyWorkDirName` turns a directory name into a safe, bounded token;
- * `encodeWorkDirKey` derives the stable, opaque `workspaceId` for a working
- * directory (`wd_<slug>_<hash>`). The `workspaceId` is the backend-neutral
- * identity used to group sessions and to key the workspace registry; backends
- * never expose the raw working-directory path. `workspaceRootKey` is the
- * comparison-only companion: it answers "is this the same directory?" without
- * changing the id that was already minted for it.
- */
-
 import { createHash } from 'node:crypto';
 
 const MAX_WORKDIR_SLUG_LENGTH = 40;

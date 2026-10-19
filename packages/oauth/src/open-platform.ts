@@ -163,16 +163,30 @@ export function applyOpenPlatformConfig(
     /** Concrete thinking effort to persist (e.g. 'low'/'high'/'max'). Omit
      * for boolean models, where thinking is simply enabled with no effort. */
     readonly effort?: string;
-    readonly apiKey: string;
+    /** The credential to persist: an inline key, or `apiKeyEnv` to keep the
+     * env declaration instead of leaking the resolved secret into config.toml. */
+    readonly credential: { readonly apiKey: string } | { readonly apiKeyEnv: string };
   },
 ): ApplyOpenPlatformResult {
   const providerKey = options.platform.id;
   const modelKey = `${providerKey}/${options.selectedModel.id}`;
 
+  // Merge onto the existing record so hand-written fields (customHeaders, the
+  // env sub-table, …) survive a refresh; credential fields always get replace
+  // semantics — never a merge that could resurrect a conflicting second source.
+  const existing = config.providers[providerKey];
+  const {
+    apiKey: _droppedKey,
+    apiKeyEnv: _droppedEnv,
+    oauth: _droppedOAuth,
+    source: _droppedSource,
+    ...preserved
+  } = (existing ?? {}) as Record<string, unknown>;
   config.providers[providerKey] = {
+    ...preserved,
     type: 'kimi',
     baseUrl: options.platform.baseUrl,
-    apiKey: options.apiKey,
+    ...options.credential,
   };
 
   const existingModels = config.models ?? {};

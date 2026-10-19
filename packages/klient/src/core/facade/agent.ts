@@ -12,15 +12,15 @@ import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/comm
 import type { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/agent/runtimeBinding/runtimeBinding';
-import type { IAgentPromptService } from '@moonshot-ai/agent-core-v2/agent/prompt/prompt';
-import type { IAgentTokenCountingService } from '@moonshot-ai/agent-core-v2/agent/tokenCounting/tokenCounting';
+
+import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
-import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/agent/skill/skill';
+import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
-import type { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
+import type { ISessionUsageService } from '@moonshot-ai/agent-core-v2/session/usage/sessionUsage';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 
 import type { ScopeRef } from '../channel.js';
@@ -28,15 +28,16 @@ import type { ScopedCaller } from './session.js';
 
 // Wire-type aliases derived through the engine service interfaces (keeps
 // klient free of protocol-package imports).
-export type PromptLaunchResult = Awaited<ReturnType<IAgentPromptService['submit']>>;
+export type PromptLaunchResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').PromptLaunchResult | undefined;
 export type PromptWithSkillsInput = Parameters<IAgentSkillService['promptWithSkills']>[0];
+export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
 export type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 export type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 export type ThinkingLevel = ReturnType<IAgentProfileService['getEffectiveThinkingLevel']>;
-export type UsageStatus = Awaited<ReturnType<IAgentUsageService['status']>>;
+export type UsageStatus = Awaited<ReturnType<ISessionUsageService['status']>>;
 export type AgentContextData = {
   history: ReturnType<IAgentContextMemoryService['get']>;
-  tokenCount: ReturnType<IAgentTokenCountingService['statusSize']>;
+  tokenCount: ReturnType<ISessionTokenCountingService['statusSize']>;
 };
 export type AgentCommandInfo = Awaited<ReturnType<IAgentCommandService['list']>>[number];
 export type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
@@ -45,16 +46,20 @@ export type AgentTaskInfo = Awaited<ReturnType<IAgentTaskService['list']>>[numbe
 export type McpServerEntry = ReturnType<IAgentMcpService['list']>[number];
 
 export interface AgentFacade {
-  prompt(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
+  prompt(input: {
+    input: readonly ContentPart[];
+    promptId?: string;
+  }): Promise<PromptLaunchResult>;
   /**
    * Submit one prompt with one or more skill activations bundled into the
    * same user message: the skills are validated up front (an unknown name or
    * an empty list rejects the whole submission), rendered ahead of the
    * caller's parts in the same turn, and the bundle undoes as a single
-   * anchor. Resolves with the launched turn id, or `undefined` when the
-   * submission queued behind a running turn.
+   * anchor. Resolves with the submitted bundle's queue identity (`prompt_id`
+   * / `created_at` / `state`), plus `turn_id` once launched — `state` is
+   * `queued` when the submission queued behind a running turn.
    */
-  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptLaunchResult>;
+  promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   /**
    * Activate a skill as a user-slash activation: the engine renders the skill
@@ -103,7 +108,7 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     prompt: (input) =>
       call(scope, 'agentPromptService', 'submit', [input]) as Promise<PromptLaunchResult>,
     promptWithSkills: (input) =>
-      call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptLaunchResult>,
+      call(scope, 'agentSkillService', 'promptWithSkills', [input]) as Promise<PromptWithSkillsResult>,
     steer: (input) =>
       call(scope, 'agentPromptService', 'submitSteer', [input]) as Promise<PromptLaunchResult>,
     activateSkill: (input) =>

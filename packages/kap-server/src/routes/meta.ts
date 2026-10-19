@@ -1,26 +1,7 @@
-/**
- * `GET /meta` route handler.
- *
- * Returns `server_version`, the declared `capabilities` map, a per-process
- * `server_id` (ULID minted at boot), and `started_at`.
- *
- * **Capabilities**: the wire schema (`metaCapabilitiesSchema`) only permits the
- * literal `true` for each capability, so this mirrors the v1 response exactly to
- * keep the interface unchanged. server-v2 v0.1 does not yet back every
- * capability (no WebSocket / file upload / fs query / mcp / terminal); clients
- * must treat unbacked capabilities as not-yet-available until the corresponding
- * routes are wired.
- *
- * **No DI for the static fields**: pure server-self info; that part of the
- * payload is frozen at registration time. `experimental_flags` is the
- * exception — flag state flips live when the `[experimental]` config section
- * changes, so it is resolved per request through the injected getter.
- */
-
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { metaResponseSchema } from '../protocol/rest-meta';
-import type { MetaResponse } from '../protocol/rest-meta';
+import type { MetaFeature, MetaResponse } from '../protocol/rest-meta';
 
 interface RouteHost {
   get(
@@ -37,18 +18,10 @@ export interface MetaRouteOptions {
   readonly serverVersion: string;
   readonly serverId: string;
   readonly startedAt: string;
-  /**
-   * Whether the server was started with `--dangerous-bypass-auth`. Surfaced so
-   * the web UI can skip the token prompt and connect without a credential.
-   */
   readonly dangerousBypassAuth: boolean;
-  /**
-   * Resolves the effective experimental-flag map (flag id → enabled) at
-   * request time. Backed by `IFlagService.snapshot()` in production; tests may
-   * stub it. May return a promise — the handler awaits it, so flag state
-   * always reflects the fully loaded config (never pre-load defaults).
-   */
+  readonly webTitle?: string;
   readonly getExperimentalFlags: () => Record<string, boolean> | Promise<Record<string, boolean>>;
+  readonly getFeatures: () => MetaFeature[] | Promise<MetaFeature[]>;
 }
 
 export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void {
@@ -67,6 +40,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
     open_in_apps: [],
     dangerous_bypass_auth: opts.dangerousBypassAuth,
     backend: 'v2' as const,
+    web_title: opts.webTitle,
   });
 
   const route = defineRoute(
@@ -81,6 +55,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       const data: MetaResponse = {
         ...staticData,
         experimental_flags: await opts.getExperimentalFlags(),
+        features: await opts.getFeatures(),
       };
       reply.send(okEnvelope(data, req.id));
     },

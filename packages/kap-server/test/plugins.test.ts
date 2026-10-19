@@ -1,25 +1,9 @@
-/**
- * `/api/v1` plugins routes — wire contract:
- *   - GET  /plugins                         → installed list (empty → 1 after install)
- *   - POST /plugins {source}                → installs (local path), returns summary
- *   - POST /plugins/{id}:disable / :enable  → toggles enabled
- *   - POST /plugins/{id}:remove             → removes
- *   - POST bare id / bogus action           → 40001
- *   - POST unknown id :remove               → 40419
- *   - POST relative / nonexistent source    → 40001 / 40409 (never 50001)
- *   - GET  /plugins/marketplace             → catalog merged with live install state
- *   - GET  /plugins/marketplace unreachable → 50001
- *
- * The marketplace catalog is served by a stubbed global fetch; installs use
- * local-path sources in temp dirs (no network).
- */
-
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { WebSocket } from 'ws';
 
@@ -43,7 +27,6 @@ const CATALOG = {
       id: 'demo-plugin',
       tier: 'official',
       displayName: 'Demo Plugin',
-      // A `v`-prefixed catalog version still drives the update check.
       version: 'v2.0.0',
       source: 'https://cdn.example.test/demo.zip',
     },
@@ -53,51 +36,39 @@ const CATALOG = {
       source: 'https://github.com/example/third',
     },
     {
-      // Catalog-relative source (the production CDN catalog's shape).
       id: 'relative-plugin',
       displayName: 'Relative',
       source: './plugins/relative.zip',
     },
     {
-      // Legacy `url` alias (accepted by the CLI parser); a blank `source`
-      // must not shadow the alias.
       id: 'alias-plugin',
       displayName: 'Alias',
       source: '   ',
       url: './plugins/alias.zip',
     },
     {
-      // A blank tier reads as missing (third-party), not a validation error.
       id: 'blank-tier-plugin',
       displayName: 'Blank Tier',
       tier: '  ',
       source: 'https://example.test/bt.zip',
     },
     {
-      // A non-string version reads as missing, so the GitHub release-tag
-      // source supplies it.
       id: 'gh-plugin',
       displayName: 'GH Plugin',
       version: 2,
       source: 'https://github.com/example/gh/releases/tag/v2.0.0',
     },
     {
-      // A capability's wiring plugin — the response marks it so clients
-      // route the install through the capability surface.
       id: 'kimi-webbridge',
-      displayName: 'Kimi WebBridge',
+      displayName: 'Kimi Browser Extension',
       source: 'https://cdn.example.test/kimi-webbridge.zip',
     },
     {
-      // kimi-cu joins install state through the platform wiring id too
-      // ('kimi-cu-win' on Windows x64).
       id: 'kimi-cu',
       displayName: 'Kimi Computer Use',
       source: 'https://cdn.example.test/kimi-cu.zip',
     },
     {
-      // CLI metadata aliases: name / shortDescription / websiteURL.
-      // The padded id trims before the install-state join.
       id: '  meta-alias-plugin  ',
       name: 'Meta Alias',
       shortDescription: 'Aliased metadata',
@@ -112,10 +83,28 @@ describe('server-v2 /api/v1 plugins', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
+  let custom = false;
   const createdDirs: string[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-plugins-'));
+    await bootDefault();
+  });
+
+  async function bootDefault(): Promise<void> {
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home!,
+      logLevel: 'silent',
+      pluginMarketplaceUrl: CATALOG_URL,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+    custom = false;
+  }
+
+  beforeEach(async () => {
     const realFetch = globalThis.fetch;
     vi.stubGlobal(
       'fetch',
@@ -123,7 +112,6 @@ describe('server-v2 /api/v1 plugins', () => {
         if (url === CATALOG_URL) {
           return new Response(JSON.stringify(CATALOG), { status: 200 });
         }
-        // Latest-release lookups for bare GitHub repo sources.
         if (url === 'https://github.com/example/third/releases/latest') {
           return new Response(null, {
             status: 302,
@@ -136,26 +124,25 @@ describe('server-v2 /api/v1 plugins', () => {
         return realFetch(url as never, init);
       }),
     );
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      pluginMarketplaceUrl: CATALOG_URL,
-    });
-    base = `http://127.0.0.1:${server.port}`;
   });
 
   afterEach(async () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    if (server !== undefined) {
-      await server.close();
+    if (custom) {
+      await server?.close();
       server = undefined;
+      await bootDefault();
     }
     for (const dir of createdDirs.splice(0)) {
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  afterAll(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
     }
     if (home !== undefined) {
       await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 } as never);
@@ -171,7 +158,6 @@ describe('server-v2 /api/v1 plugins', () => {
     const res = await fetch(`${base}${path}`, {
       method,
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
-      // A JSON content-type with an empty body is rejected by Fastify.
       body: method === 'POST' ? JSON.stringify(body ?? {}) : undefined,
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
@@ -240,7 +226,7 @@ describe('server-v2 /api/v1 plugins', () => {
       await new Promise<void>((resolve, reject) => {
         ws.once('message', () => {
           resolve();
-        }); // server_hello
+        });
         ws.once('error', reject);
       });
       ws.on('message', (data: Buffer) => {
@@ -264,15 +250,12 @@ describe('server-v2 /api/v1 plugins', () => {
   });
 
   it('maps client-fixable install input errors to 4xx, never 50001', async () => {
-    // Relative source: the domain rejects non-absolute local paths.
     const relative = await call('POST', '/api/v1/plugins', { source: 'relative/dir' });
     expect(relative.body.code).toBe(40001);
-    // Absolute but nonexistent path.
     const missing = await call('POST', '/api/v1/plugins', {
       source: join(home!, 'no-such-plugin-dir'),
     });
     expect(missing.body.code).toBe(40409);
-    // Existing directory without a valid manifest → plugin.load_failed.
     const noManifest = await mkdtemp(join(tmpdir(), 'kimi-no-manifest-'));
     createdDirs.push(noManifest);
     const unloadable = await call('POST', '/api/v1/plugins', { source: noManifest });
@@ -307,35 +290,24 @@ describe('server-v2 /api/v1 plugins', () => {
       ['meta-alias-plugin', 'third-party'],
     ]);
     expect(before.body.data.entries[0]?.installed).toBeUndefined();
-    // Catalog-relative sources resolve against the catalog URL.
     const relative = before.body.data.entries.find((e) => e.id === 'relative-plugin');
     expect(relative?.source).toBe('http://marketplace.test/plugins/relative.zip');
-    // The legacy `url` alias is accepted and resolved the same way.
     const alias = before.body.data.entries.find((e) => e.id === 'alias-plugin');
     expect(alias?.source).toBe('http://marketplace.test/plugins/alias.zip');
-    // Version derived from the GitHub release-tag source.
     expect(before.body.data.entries.find((e) => e.id === 'gh-plugin')?.version).toBe('2.0.0');
-    // Bare GitHub repo source: latest release tag resolved through the
-    // /releases/latest redirect.
     expect(before.body.data.entries.find((e) => e.id === 'third-party-plugin')?.version).toBe(
       '3.1.0',
     );
-    // A custom catalog never gets capability markers (same-id forks stay
-    // plain plugins) — markers only apply to the default catalog.
     expect(
       before.body.data.entries.find((e) => e.id === 'kimi-webbridge')?.capabilityId,
     ).toBeUndefined();
-    // And no built-in injection either.
     expect(before.body.data.entries.some((e) => e.source.startsWith('capability:'))).toBe(false);
-    // CLI metadata aliases map onto the wire fields.
     const meta = before.body.data.entries.find((e) => e.id === 'meta-alias-plugin');
     expect(meta?.displayName).toBe('Meta Alias');
     expect(meta?.description).toBe('Aliased metadata');
     expect(meta?.homepage).toBe('https://example.test/meta');
-    // Keywords filter to non-blank strings instead of failing the catalog.
     expect(meta?.keywords).toEqual(['web', 'tools']);
 
-    // Install an older version than the catalog → updateAvailable.
     const source = await makePluginDir('demo-plugin', '1.0.0');
     await call('POST', '/api/v1/plugins', { source });
 
@@ -350,7 +322,6 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(demo?.installed).toEqual({ version: '1.0.0', enabled: true });
     expect(demo?.updateAvailable).toBe(true);
 
-    // A version derived from the GitHub tag source drives updateAvailable too.
     const ghSource = await makePluginDir('gh-plugin', '1.5.0');
     await call('POST', '/api/v1/plugins', { source: ghSource });
     const afterGh = await call<{
@@ -400,8 +371,6 @@ describe('server-v2 /api/v1 plugins', () => {
   });
 
   it('treats the dev marketplace server as the default catalog', async () => {
-    // scripts/dev.mjs serves the repo catalog and marks itself; capability
-    // markers apply as if no env were set.
     await server?.close();
     vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', CATALOG_URL);
     vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER', '1');
@@ -413,6 +382,7 @@ describe('server-v2 /api/v1 plugins', () => {
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{ entries: { id: string; capabilityId?: string }[] }>(
       'GET',
@@ -423,8 +393,6 @@ describe('server-v2 /api/v1 plugins', () => {
       'kimi-webbridge',
     );
 
-    // kimi-cu row assertions: on unsupported platforms the row is hidden
-    // entirely (never marked, never offered).
     const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
     const after0 = await call<{
       entries: { id: string; capabilityId?: string; installed?: { version?: string } }[];
@@ -434,8 +402,6 @@ describe('server-v2 /api/v1 plugins', () => {
       return;
     }
 
-    // A plugin installed under the Windows wiring id still marks the
-    // kimi-cu row installed (the join follows the capability's plugin ids).
     const winSource = await makePluginDir('kimi-cu-win', '0.5.4');
     await call('POST', '/api/v1/plugins', { source: winSource });
     const after = await call<{
@@ -445,8 +411,6 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(cu?.capabilityId).toBe('kimi-cu');
     expect(cu?.installed?.version).toBe('0.5.4');
 
-    // With BOTH records present, the platform-canonical wiring plugin wins
-    // (on macOS that is the bare kimi-cu id, so this stale record shows).
     const staleSource = await makePluginDir('kimi-cu', '0.1.0');
     await call('POST', '/api/v1/plugins', { source: staleSource });
     const both = await call<{
@@ -456,6 +420,8 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(both.body.data.entries.find((e) => e.id === 'kimi-cu')?.installed?.version).toBe(
       expected,
     );
+    await call('POST', '/api/v1/plugins/kimi-cu-win:remove');
+    await call('POST', '/api/v1/plugins/kimi-cu:remove');
   });
 
   it('maps an unreachable marketplace to 50001', async () => {
@@ -475,7 +441,6 @@ describe('server-v2 /api/v1 plugins', () => {
   });
 
   it('reads a local marketplace catalog from disk (plain path or file://)', async () => {
-    // Restart with a file-based catalog — the same env the CLI accepts.
     await server?.close();
     const catalogDir = await mkdtemp(join(tmpdir(), 'kimi-local-catalog-'));
     createdDirs.push(catalogDir);
@@ -485,7 +450,6 @@ describe('server-v2 /api/v1 plugins', () => {
       JSON.stringify({
         plugins: [
           { id: 'local-plugin', source: './zips/local.zip' },
-          // Portable absolute file URL (drive-rooted on Windows).
           { id: 'file-url-plugin', source: pathToFileURL(fileUrlPluginPath).href },
         ],
       }),
@@ -499,6 +463,7 @@ describe('server-v2 /api/v1 plugins', () => {
       pluginMarketplaceUrl: join(catalogDir, 'marketplace.json'),
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{ entries: { id: string; source: string }[] }>(
       'GET',
@@ -510,14 +475,12 @@ describe('server-v2 /api/v1 plugins', () => {
         id: 'local-plugin',
         tier: 'third-party',
         displayName: 'local-plugin',
-        // Relative sources resolve against the catalog file's directory.
         source: join(catalogDir, 'zips', 'local.zip'),
       },
       {
         id: 'file-url-plugin',
         tier: 'third-party',
         displayName: 'file-url-plugin',
-        // file:// sources convert to plain absolute paths (installable).
         source: fileUrlPluginPath,
       },
     ]);
@@ -538,8 +501,6 @@ describe('server-v2 /api/v1 plugins', () => {
         return realFetch(url as never, init);
       }),
     );
-    // No pluginMarketplaceUrl / env: the default production catalog is
-    // unreachable and the repo checkout's own catalog takes over (CLI parity).
     vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', undefined as unknown as string);
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -549,6 +510,7 @@ describe('server-v2 /api/v1 plugins', () => {
       logLevel: 'silent',
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{
       entries: {
@@ -561,16 +523,10 @@ describe('server-v2 /api/v1 plugins', () => {
     }>('GET', '/api/v1/plugins/marketplace');
     expect(body.code).toBe(0);
     const datasource = body.data.entries.find((e) => e.id === 'kimi-datasource');
-    // Relative sources resolve against the fallback file, not the failed URL.
     expect(datasource?.source.startsWith('http')).toBe(false);
     expect(datasource?.source.endsWith(join('plugins', 'official', 'kimi-datasource'))).toBe(true);
-    // The default catalog (even served from the checkout fallback) marks
-    // capability wiring rows.
     const webbridge = body.data.entries.find((e) => e.id === 'kimi-webbridge');
     expect(webbridge?.capabilityId).toBe('kimi-webbridge');
-    // Capabilities the catalog does not carry are injected as built-in rows
-    // where supported (kimi-cu is not in the checked-in catalog, and is
-    // supported on macOS / Windows x64 only).
     const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
     const cu = body.data.entries.find((e) => e.id === 'kimi-cu');
     if (!cuSupported) {
@@ -582,7 +538,6 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(cu?.source).toBe('capability:kimi-cu');
     expect(cu?.displayName).toBe('Kimi Computer Use');
 
-    // Injected rows join install state like catalog rows.
     const cuSource = await makePluginDir('kimi-cu', '0.5.8');
     await call('POST', '/api/v1/plugins', { source: cuSource });
     const after = await call<{
@@ -603,12 +558,10 @@ describe('server-v2 /api/v1 plugins', () => {
       JSON.stringify({
         plugins: [
           { id: 'tilde-plugin', source: 'https://example.test/t.zip' },
-          // Home-relative entry source expands against the stubbed HOME.
           { id: 'tilde-entry-plugin', source: '~/plugins/t.zip' },
         ],
       }),
     );
-    // os.homedir() reads HOME on POSIX and USERPROFILE on Windows.
     vi.stubEnv('HOME', fakeHome);
     vi.stubEnv('USERPROFILE', fakeHome);
     server = await startServer({
@@ -620,6 +573,7 @@ describe('server-v2 /api/v1 plugins', () => {
       pluginMarketplaceUrl: '~/marketplace.json',
     });
     base = `http://127.0.0.1:${server.port}`;
+    custom = true;
 
     const { body } = await call<{ entries: { id: string; source: string }[] }>(
       'GET',

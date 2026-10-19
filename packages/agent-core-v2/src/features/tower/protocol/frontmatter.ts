@@ -1,18 +1,9 @@
-/**
- * `tower` domain (protocol) — minimal YAML-frontmatter codec for tower comms
- * files.
- *
- * Tower files carry a flat string→string map between `---` fences, one
- * `key: value` per line. The store is the only writer, so values are
- * guaranteed single-line (enforced here); parsing accepts exactly what
- * `renderFrontmatter` produces.
- */
-
 const FENCE = '---';
 
-export function renderFrontmatter(fields: Readonly<Record<string, string>>): string {
+export function renderFrontmatter(fields: Readonly<Record<string, string | undefined>>): string {
   const lines = [FENCE];
   for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
     if (/[\r\n]/.test(value)) {
       throw new Error(`frontmatter value for "${key}" must be single-line`);
     }

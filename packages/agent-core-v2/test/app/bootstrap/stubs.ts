@@ -1,11 +1,3 @@
-/**
- * `bootstrap` test stubs — shared `IBootstrapService` stub for unit tests.
- *
- * Lives under `test/` (not `src/`) so test-support code stays out of the
- * production tree. Import from a relative path (`./stubs` or
- * `../bootstrap/stubs`).
- */
-
 import type { ServiceRegistration } from '#/_base/di/test';
 import {
   IBootstrapService,
@@ -24,6 +16,7 @@ export function stubBootstrap(
   homeDir = '/tmp/kimi-home',
   env: NodeJS.ProcessEnv = {},
   args: HostArgsInput = {},
+  osHomeDir = '/home/test',
 ): IBootstrapService {
   const scopes: Record<PersistenceScopeName, string> = {
     config: '',
@@ -33,14 +26,13 @@ export function stubBootstrap(
     logs: 'logs',
     cache: 'cache',
     credentials: 'credentials',
-    cron: 'cron',
   };
   return {
     _serviceBrand: undefined,
     platform: 'linux',
     arch: 'x64',
     cwd: '/tmp',
-    osHomeDir: '/home/test',
+    osHomeDir,
     homeDir,
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',

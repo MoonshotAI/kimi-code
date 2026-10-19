@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
+import { castDraft } from 'immer';
+
 import {
   computeUndoCut,
-  contextUndo,
+  contextMemoryKey,
   isFullyUndoable,
 } from '#/agent/contextMemory/contextOps';
+import { ContextUndo } from '#/agent/contextMemory/contextEvents';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { expandedStateFolds, type FoldContext } from '#/state/state';
 
 function text(value: string): { type: 'text'; text: string } {
   return { type: 'text', text: value };
@@ -46,7 +50,10 @@ const USER_ORIGIN: ContextMessage['origin'] = { kind: 'user' };
 
 describe('computeUndoCut', () => {
   it('finds the cut for the last real user prompt', () => {
-    const cut = computeUndoCut([user(USER_ORIGIN), assistant()], 1);
+    const cut = computeUndoCut(
+      [user(USER_ORIGIN), user({ kind: 'user', inTurn: true }), assistant()],
+      1,
+    );
     expect(cut).toEqual({ cutIndex: 0, removedCount: 1, stoppedAtCompaction: false });
     expect(isFullyUndoable(cut, 1)).toBe(true);
   });
@@ -98,6 +105,20 @@ describe('computeUndoCut', () => {
 });
 
 describe('contextUndo op', () => {
+  const foldContext: FoldContext = {
+    silent: false,
+    checkpoint: () => {},
+    clearCheckpoints: () => {},
+    undoToCheckpoint: () => {},
+    emit: () => {},
+  };
+
+  function applyContextUndo(state: ContextMessage[], count: number): ContextMessage[] {
+    const fold = expandedStateFolds(contextMemoryKey).get(ContextUndo)!;
+    const result = fold(castDraft(state), new ContextUndo({ agentId: 'main', count }), foldContext);
+    return result === undefined ? state : result;
+  }
+
   it('slices the history at the cut point, dropping post-cut injections too', () => {
     const state = [
       user(USER_ORIGIN),
@@ -106,20 +127,20 @@ describe('contextUndo op', () => {
       injection(),
       assistant(),
     ];
-    const next = contextUndo.apply(state, { count: 1 });
+    const next = applyContextUndo(state, 1);
     expect(next).toEqual([user(USER_ORIGIN), assistant()]);
   });
 
   it('returns the same reference when not fully undoable', () => {
     const state = [user(USER_ORIGIN), compaction(), assistant()];
-    expect(contextUndo.apply(state, { count: 1 })).toBe(state);
+    expect(applyContextUndo(state, 1)).toBe(state);
   });
 
   it.each([0, 0.5, Number.MAX_SAFE_INTEGER + 1])(
     'returns the same reference for invalid count %s',
     (count) => {
       const state = [user(USER_ORIGIN), assistant()];
-      expect(contextUndo.apply(state, { count })).toBe(state);
+      expect(applyContextUndo(state, count)).toBe(state);
     },
   );
 });

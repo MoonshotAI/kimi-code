@@ -20,8 +20,8 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--model <model>` | `-m` | Specify a model alias for this launch. When omitted, new sessions use `default_model` from the config file |
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
-| `--yolo` | `-y` | Auto-approve regular tool calls, skipping approval requests |
-| `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
+| `--yolo` | `-y` | Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask |
+| `--auto` | | Start in Never Ask mode: never interrupts you; everything runs and is decided automatically |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 | `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
@@ -43,7 +43,7 @@ The following combinations are rejected at startup:
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
 
-When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to auto permission mode.
+When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to Never Ask mode.
 
 ## Common Usage
 
@@ -157,7 +157,7 @@ kimi acp
 
 Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
 
-When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Local server and API](../guides/server.md); for the protocol details, see the [Server API](./server-api.md) reference.
+When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document. For an end-to-end walkthrough of driving sessions over the API, see [Server API: Drive a session over the API](./server-api.md#drive-a-session-over-the-api); for the protocol details, see the [Server API](./server-api.md) reference.
 
 ```sh
 kimi web                 # run the server in the foreground and open the browser
@@ -175,6 +175,7 @@ Multiple instances can share one home directory: each registers itself under `~/
 | `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
+| `--web-title <title>` | Custom browser tab title for the web UI; defaults to the workspace directory name |
 | `--no-open` | Do not open the browser once the server is ready |
 
 `kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
@@ -194,6 +195,29 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 #### `kimi web rotate-token`
 
 Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
+
+### `kimi app`
+
+Open Kimi Code desktop and start a new chat in the current directory or a specified directory:
+
+```sh
+kimi app
+kimi app ~/project
+```
+
+This requires an installed desktop version that supports opening workspaces from the CLI. Relative paths are resolved from the current directory. An existing workspace opens a new draft instead of restoring its previous session.
+
+If the system reports that it cannot open the app, the command suggests `kimi install-desktop`, which opens the download page. This command does not download or install the desktop app automatically.
+
+### `kimi install-desktop`
+
+Print the Kimi Code desktop app page and open it in the default browser, so you can download and install the desktop app without leaving the terminal. The URL follows the active region: `https://www.kimi.com/code` on the mainland region, `https://www.kimi.ai/code` on the global region.
+
+```sh
+kimi install-desktop
+```
+
+This subcommand has no flags. The former name, `kimi install-app`, still works as a hidden alias. The same page is also reachable from the TUI with the `/desktop` (alias `/install-desktop`) slash command.
 
 ### `kimi doctor`
 
@@ -265,10 +289,10 @@ For full migration instructions, see [Migrating from kimi-cli](../guides/migrati
 Immediately check for the latest version and display an update prompt; exits after you make a selection. `kimi update` is an alias for this command.
 
 ```sh
-kimi upgrade
+kimi upgrade [-y]
 ```
 
-For global npm, pnpm, yarn, bun, and macOS / Linux native installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. When the current installation method cannot be upgraded automatically (e.g., Windows native installation), the manual update command is printed instead.
+For global npm, pnpm, yarn, and bun installations, `kimi upgrade` shows update options; selecting `Install update now` runs the corresponding foreground install command. For native installations (including Windows), it downloads and verifies the new binary in the foreground and swaps it in on the next start. When the current installation method cannot be upgraded automatically, the manual update command is printed instead. Pass `-y, --yes` to skip the confirmation prompt and install the update directly.
 
 ### `kimi vis`
 
@@ -308,18 +332,21 @@ Five actions are available:
 
 #### `kimi provider add <url>`
 
-Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup.
+Bulk-import all providers from a custom registry (`api.json`). The command fetches the registry, creates a `[providers.<id>]` and `[models.<alias>]` entry for each item, and writes `source` metadata so the TUI refreshes providers and models from the same registry URL automatically on next startup. When a registry entry declares the `env` field, the command prints a hint naming the declared variable — set `api_key_env` in `config.toml` to use it; see [Providers and models](../configuration/providers.md).
 
 | Parameter / Option | Description |
 | --- | --- |
 | `<url>` | Registry URL |
-| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; required |
+| `--api-key <key>` | Bearer token for accessing the registry. Falls back to the `KIMI_REGISTRY_API_KEY` environment variable if not provided; optional — omit both for public registries |
 
 ```sh
 kimi provider add https://registry.example.com/v1/models/api.json --api-key YOUR_KEY
 
 # Or via environment variable (suitable for CI / .envrc)
 KIMI_REGISTRY_API_KEY=YOUR_KEY kimi provider add https://registry.example.com/v1/models/api.json
+
+# Public registry: no key needed
+kimi provider add https://registry.example.com/v1/models/api.json
 ```
 
 If a provider ID already exists, it is removed and re-created. The default model is not set automatically; you can select one later with `-m` or `/model` in the TUI.

@@ -1,14 +1,5 @@
-/**
- * Scenario: append-log file persistence and agent wire migration rewrites.
- *
- * Resolves real append-log and Agent wire services by interface over file or
- * in-memory storage. Controlled storage promises expose rewrite durability
- * without wall-clock waits. Run with `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/wire/persistence.test.ts`.
- */
-
 import { randomBytes } from 'node:crypto';
-import { mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
@@ -25,10 +16,11 @@ import {
   type WireRecord,
 } from '#/index';
 import { IWireService } from '#/wire/wire';
+import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
-import { registerTestAgentWire } from './stubs';
+import { noopLogger, registerTestAgentWire } from './stubs';
 
 const cleanups: string[] = [];
 const disposables: DisposableStore[] = [];
@@ -66,28 +58,47 @@ function createAppendLogHarness(storage: IFileSystemStorageService): IAppendLogS
   return ix.get(IAppendLogStore);
 }
 
-function createAgentWireHarness(log: IAppendLogStore): IWireService {
+function createAgentWireHarness(
+  log: IAppendLogStore,
+  storage?: IFileSystemStorageService,
+): IWireService {
   const disposable = new DisposableStore();
   disposables.push(disposable);
 
   const ix = disposable.add(new TestInstantiationService());
-  return registerTestAgentWire(ix, SCOPE, { log });
+  return registerTestAgentWire(ix, SCOPE, {
+    log,
+    storage,
+    logger: noopLogger,
+    telemetry: noopTelemetryService,
+  });
 }
 
 async function createFileAppendLogHarness(): Promise<{
   readonly dir: string;
   readonly log: IAppendLogStore;
+  readonly storage: IFileSystemStorageService;
 }> {
   const dir = await makeDir('wire-jsonl-test');
+  const storage = new FileStorageService(dir);
   return {
     dir,
-    log: createAppendLogHarness(new FileStorageService(dir)),
+    log: createAppendLogHarness(storage),
+    storage,
   };
 }
 
 async function collect<R>(log: IAppendLogStore, scope = SCOPE, key = KEY): Promise<R[]> {
   const records: R[] = [];
   for await (const record of log.read<R>(scope, key)) {
+    records.push(record);
+  }
+  return records;
+}
+
+async function drainJournal(svc: IWireService): Promise<WireRecord[]> {
+  const records: WireRecord[] = [];
+  for await (const record of svc.readJournal()) {
     records.push(record);
   }
   return records;
@@ -331,12 +342,12 @@ describe('WireService seal', () => {
     expect(lines).toHaveLength(1);
   });
 
-  it('restore after seal keeps the sealed log untouched', async () => {
+  it('journal read after seal keeps the sealed log untouched', async () => {
     const { dir, log } = await createFileAppendLogHarness();
     const svc = createAgentWireHarness(log);
 
     await svc.seal();
-    await svc.restore();
+    await drainJournal(svc);
     await log.close();
 
     const lines = await readLines(join(dir, SCOPE, KEY));
@@ -365,7 +376,7 @@ describe('WireService migration rewrite', () => {
     return log;
   }
 
-  it('restore resolves only after the migration rewrite is durable', async () => {
+  it('journal read resolves only after the migration rewrite is durable', async () => {
     const storage = new InMemoryStorageService();
     const log = await seedLegacyLog(storage);
     let markWriteStarted!: () => void;
@@ -384,15 +395,15 @@ describe('WireService migration rewrite', () => {
     };
 
     const svc = createAgentWireHarness(log);
-    let restored = false;
-    const restorePromise = svc.restore().then(() => {
-      restored = true;
+    let drained = false;
+    const journalPromise = drainJournal(svc).then(() => {
+      drained = true;
     });
     await writeStarted;
-    expect(restored).toBe(false);
+    expect(drained).toBe(false);
 
     releaseWrite();
-    await restorePromise;
+    await journalPromise;
 
     const records = await collect<WireRecord>(log);
     expect(records[0]).toMatchObject({
@@ -401,7 +412,7 @@ describe('WireService migration rewrite', () => {
     });
   });
 
-  it('restore propagates a migration rewrite failure', async () => {
+  it('journal read propagates a migration rewrite failure', async () => {
     const storage = new InMemoryStorageService();
     const log = await seedLegacyLog(storage);
     storage.write = async () => {
@@ -410,6 +421,61 @@ describe('WireService migration rewrite', () => {
 
     const svc = createAgentWireHarness(log);
 
-    await expect(svc.restore()).rejects.toThrow('disk full');
+    await expect(drainJournal(svc)).rejects.toThrow('disk full');
+  });
+});
+
+describe('WireService corruption repair on disk', () => {
+  async function seedCorruptJournal(dir: string, raw: string): Promise<void> {
+    await mkdir(join(dir, SCOPE), { recursive: true });
+    await writeFile(join(dir, SCOPE, KEY), raw);
+  }
+
+  it('restores from the valid prefix and heals the file with a byte-identical backup', async () => {
+    const { dir, log, storage } = await createFileAppendLogHarness();
+    const metadata = JSON.stringify({
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    });
+    const kept = JSON.stringify({ type: 'wire.test.kept', time: 2 });
+    const raw = `${metadata}\n${kept}\nGARBAGE\n${JSON.stringify({ type: 'wire.test.dropped', time: 3 })}\n`;
+    await seedCorruptJournal(dir, raw);
+    const svc = createAgentWireHarness(log, storage);
+
+    const yielded = await drainJournal(svc);
+    await log.close();
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.kept', time: 2 },
+    ]);
+    expect(await readFile(join(dir, SCOPE, KEY), 'utf8')).toBe(`${metadata}\n${kept}\n`);
+    expect(await readFile(join(dir, SCOPE, `${KEY}.bak`), 'utf8')).toBe(raw);
+  });
+
+  it('heals a torn final line left by a disk-full crash', async () => {
+    const { dir, log, storage } = await createFileAppendLogHarness();
+    const metadata = JSON.stringify({
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    });
+    const kept = JSON.stringify({ type: 'wire.test.kept', time: 2 });
+    const torn = JSON.stringify({ type: 'wire.test.torn', time: 3 }).slice(0, 12);
+    await seedCorruptJournal(dir, `${metadata}\n${kept}\n${torn}`);
+    const svc = createAgentWireHarness(log, storage);
+
+    const yielded = await drainJournal(svc);
+    await log.close();
+
+    expect(yielded).toEqual([
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'wire.test.kept', time: 2 },
+    ]);
+    expect(await readFile(join(dir, SCOPE, KEY), 'utf8')).toBe(`${metadata}\n${kept}\n`);
+    expect(await readFile(join(dir, SCOPE, `${KEY}.bak`), 'utf8')).toBe(
+      `${metadata}\n${kept}\n${torn}`,
+    );
   });
 });

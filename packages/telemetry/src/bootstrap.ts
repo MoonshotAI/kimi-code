@@ -9,6 +9,7 @@ const TRUE_ENV_VALUES = new Set(['1', 'true', 't', 'yes', 'y']);
 
 export interface TelemetryBootstrapOptions {
   readonly enabled?: boolean;
+  readonly initiallyEnabled?: boolean;
   readonly homeDir: string;
   readonly deviceId: string;
   readonly sessionId?: string;
@@ -20,6 +21,18 @@ export interface TelemetryBootstrapOptions {
   readonly terminal?: string;
   readonly locale?: string;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
+  /**
+   * Invoked when a tracked property is dropped for not being a primitive.
+   * Telemetry stays silent by default; hosts wire this to their logger.
+   */
+  readonly onUnexpectedError?: (error: Error) => void;
+  /**
+   * Region-aware endpoint derived by the composition root (this package stays
+   * dependency-free). A resolver is invoked per flush so an in-process region
+   * switch takes effect without re-initialization; an absent endpoint skips
+   * the send instead of falling back to another region's host.
+   */
+  readonly endpoint?: string | (() => string | undefined);
 }
 
 export function isTelemetryDisabledByEnv(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -35,12 +48,14 @@ export function shouldEnableTelemetry(
 
 export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
   const client = getDefaultTelemetryClient();
+  client.setUnexpectedErrorHandler(options.onUnexpectedError ?? null);
   if (!shouldEnableTelemetry({ enabled: options.enabled })) {
-    client.disable();
+    client.teardown();
     return;
   }
 
-  client.enable();
+  const intakeEnabled = options.initiallyEnabled !== false;
+  client.setEnabled(intakeEnabled);
   client.setContext({
     deviceId: options.deviceId,
     sessionId: options.sessionId,
@@ -49,6 +64,7 @@ export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
   const transport = new AsyncTransport({
     homeDir: options.homeDir,
     deviceId: options.deviceId,
+    endpoint: options.endpoint,
     getAccessToken: options.getAccessToken,
   });
   const sink = new EventSink({
@@ -71,5 +87,5 @@ export function initializeTelemetry(options: TelemetryBootstrapOptions): void {
   client.setSystemMetricsCollector(systemMetricsCollector);
   systemMetricsCollector.start();
 
-  void sink.retryDiskEvents().catch(() => {});
+  if (intakeEnabled) void sink.retryDiskEvents().catch(() => {});
 }

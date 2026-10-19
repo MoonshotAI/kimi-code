@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { getLiveSessionById, IAgentLifecycleService, IEventBus } from '@moonshot-ai/agent-core-v2';
+import { ToolProgress } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { mapPromptLaunchError } from '../src/session';
@@ -505,21 +506,25 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     const wireId = (create.params as { update?: { toolCallId?: string } }).update?.toolCallId;
     const turnId = Number(wireId?.split(':')[0]);
     const session = getLiveSessionById(c.server.core.accessor, created.sessionId);
-    const agentHandle = session?.accessor.get(IAgentLifecycleService).get('main');
+    const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
     const bus = agentHandle?.accessor.get(IEventBus);
     expect(bus).toBeDefined();
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'stdout', text: 'raw-stdout-bytes' },
-    });
-    bus!.publish({
-      type: 'tool.progress',
-      turnId,
-      toolCallId: 'call_1',
-      update: { kind: 'status', text: 'Still working…' },
-    });
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'stdout', text: 'raw-stdout-bytes' },
+      }),
+    );
+    bus!.publish(
+      new ToolProgress({
+        agentId: 'main',
+        turnId,
+        toolCallId: 'call_1',
+        update: { kind: 'status', text: 'Still working…' },
+      }),
+    );
 
     const result = (await promptPromise) as { stopReason: string };
     expect(result.stopReason).toBe('end_turn');
@@ -986,7 +991,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     expect(JSON.stringify(secondCall)).toContain('hello_from_terminal');
   }, 30_000);
 
-  it('rejects Bash without falling back when the client does not advertise terminal capability', async () => {
+  it('falls back to local execution when the client does not advertise the capability', async () => {
     const c = await boot({});
     const terminals = fakeTerminalClient(c, 'should_not_be_used\n');
     scriptBashTurn('echo hello_from_bash');
@@ -994,7 +999,7 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     const { stopReason } = await runPrompt(c);
     expect(stopReason).toBe('end_turn');
 
-    // No terminal reverse-RPC at all — behavior identical to today.
+    // No terminal reverse-RPC at all — the command ran locally.
     expect(terminals).toHaveLength(0);
     const terminalRpcs = c.received.filter(
       (m) => typeof m.method === 'string' && m.method.startsWith('terminal/'),
@@ -1004,7 +1009,6 @@ describe('acp-server terminal reverse-RPC (clientCapabilities.terminal)', () => 
     // The tool card carries the textual output, exactly as before.
     const completed = toolCallUpdates(c).find((u) => u.status === 'completed');
     const text = completed?.content?.map((entry) => entry.content?.text ?? '').join('\n') ?? '';
-    expect(text).not.toContain('hello_from_bash');
-    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('ACP terminal capability is unavailable');
+    expect(text).toContain('hello_from_bash');
   }, 30_000);
 });

@@ -1,52 +1,3 @@
-/**
- * `/tools` + `/mcp/servers*` REST routes — server-v2 port.
- *
- * 3 endpoints (REST.md §3.8), mirroring the v1 server's wire contract
- * (`packages/server/src/routes/tools.ts`):
- *
- *   GET  /tools                                  query: {session_id?}    data: {tools: ToolDescriptor[]}
- *   GET  /mcp/servers                            -                       data: {servers: McpServer[]}
- *   POST /mcp/servers/{mcp_server_id}:restart    body: empty             data: {restarting: true}
- *
- * **Thin wrapper over Agent-scoped services**: `IAgentToolRegistryService.list` /
- * `IAgentToolPolicyService.isToolActive` / `IAgentMcpService.list` /
- * `IAgentMcpService.reconnect` are already exposed on the
- * RPC dispatcher (`/api/v1/debug`). These
- * REST routes borrow them by interface and project their v2 models into the
- * protocol's `ToolDescriptor` / `McpServer` shapes.
- *
- * **Resolution**: v1 serves these from a global singleton that falls back to
- * the most-recent session. v2 has no global tool/MCP state — both services are
- * Agent-scoped — so we reproduce the fallback: `core` → `ISessionIndex` (pick
- * the newest session by `createdAt`, or the explicit `session_id`) →
- * the live handler registry → `IAgentLifecycleService` (the `main` agent) →
- * the service. When no session is live, or the main agent does not exist yet
- * (server-v2 gap G10), the GET endpoints answer an empty list and `:restart`
- * answers `40408`, exactly like v1.
- *
- * **Model projection**:
- *   - Tool `source`: `user`→`skill` (wire name), `builtin`/`mcp` pass through.
- *   - Tool `input_schema`: always `null`, matching v1 (`packages/server`'s
- *     `ToolInfo` carries no JSON schema). v2's registry does expose
- *     `parameters`, but we keep byte-for-byte wire parity with v1.
- *   - Tool `mcp_server_id`: parsed from the qualified name `mcp__<server>__<tool>`
- *     (v2's double-underscore form, not v1's `mcp:<server>:<tool>` colon form).
- *   - Tool `active`: effective availability from `IAgentToolPolicyService.isToolActive`
- *     (bound profile policy ∩ global `[tools]` config ∩ session denylist).
- *     Deliberate v2 extension beyond the v1 wire shape — v1 had no tool gates.
- *   - MCP `status`: `pending`→`connecting`, `connected`→`connected`,
- *     `failed`/`needs-auth`→`error`, `disabled`/`removed`→`disconnected`.
- *   - MCP `last_error`: carried from `entry.error` when non-empty.
- *
- * **Error mapping**:
- *   - `:restart` of an unknown / unreachable server → `40408 mcp.server_not_found`.
- *   - malformed `{tail}` (bad action, bare id) → `40001 validation.failed`.
- *   - other errors → 50001 via the global `installErrorHandler`.
- *
- * **Anti-corruption**: route resolves `IAgentToolRegistryService` / `IAgentMcpService` via the
- * accessor; no SDK imports.
- */
-
 import {
   ErrorCodes,
   IAgentMcpService,
@@ -73,11 +24,9 @@ import {
 import type { McpServer, ToolDescriptor } from '../protocol/tool';
 import { parseActionSuffix } from './action-suffix';
 
-/** v2 MCP tool-name prefix / separator (see `mcp/tool-naming.ts`). */
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
 
-/** One entry from the agent's MCP server list (type not re-exported publicly). */
 type McpEntry = ReturnType<IAgentMcpService['list']>[number];
 
 interface ToolsRouteHost {
@@ -100,7 +49,6 @@ interface ToolsRouteHost {
 }
 
 export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
-  // GET /tools ----------------------------------------------------------
   const listToolsRoute = defineRoute(
     {
       method: 'GET',
@@ -130,7 +78,6 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
     listToolsRoute.handler as Parameters<ToolsRouteHost['get']>[2],
   );
 
-  // GET /mcp/servers ----------------------------------------------------
   const listMcpServersRoute = defineRoute(
     {
       method: 'GET',
@@ -154,7 +101,6 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
     listMcpServersRoute.handler as Parameters<ToolsRouteHost['get']>[2],
   );
 
-  // POST /mcp/servers/{mcp_server_id}:restart ---------------------------
   const restartMcpServerRoute = defineRoute(
     {
       method: 'POST',
@@ -179,7 +125,6 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
         return;
       }
       if (parsed.kind === 'bare') {
-        // No bare form for /mcp/servers/{id} — only :restart.
         reply.send(
           errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, req.id),
         );
@@ -192,8 +137,6 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
         return;
       }
       const mcp = agent.accessor.get(IAgentMcpService);
-      // Pre-check existence so a missing/idle connection manager (where
-      // `reconnect` is a no-op) still reports 40408 for unknown servers.
       if (!mcp.list().some((entry) => entry.name === parsed.id)) {
         reply.send(mcpServerNotFound(parsed.id, req.id));
         return;
@@ -213,12 +156,6 @@ export function registerToolsRoutes(app: ToolsRouteHost, core: Scope): void {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Resolution — walk core → newest session → main agent. Returns `undefined`
-// when no session is live or the main agent has not been created yet (gap G10);
-// callers translate that into an empty list (GETs) or 40408 (restart).
-// ---------------------------------------------------------------------------
-
 async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined) {
   const sid = sessionId ?? (await mostRecentSessionId(core));
   if (sid === undefined) return undefined;
@@ -227,7 +164,6 @@ async function resolveEffectiveAgent(core: Scope, sessionId: string | undefined)
   return ensureMainAgent(session);
 }
 
-/** Pick the most-recently-created session id, mirroring v1's fallback. */
 async function mostRecentSessionId(core: Scope): Promise<string | undefined> {
   const page = await core.accessor.get(ISessionIndex).listRecent({});
   const [first, ...rest] = page.items;
@@ -238,10 +174,6 @@ async function mostRecentSessionId(core: Scope): Promise<string | undefined> {
   }
   return newest.id;
 }
-
-// ---------------------------------------------------------------------------
-// Projection — v2 models → protocol wire shapes (see module header).
-// ---------------------------------------------------------------------------
 
 function mapToolSource(source: ToolSource): ToolDescriptor['source'] {
   switch (source) {
@@ -254,7 +186,6 @@ function mapToolSource(source: ToolSource): ToolDescriptor['source'] {
   }
 }
 
-/** Extract the MCP server id from a qualified `mcp__<server>__<tool>` name. */
 function parseMcpServerId(toolName: string): string | undefined {
   if (!toolName.startsWith(MCP_NAME_PREFIX)) return undefined;
   const rest = toolName.slice(MCP_NAME_PREFIX.length);
@@ -310,10 +241,6 @@ function toProtocolMcpServer(entry: McpEntry): McpServer {
   return base;
 }
 
-// ---------------------------------------------------------------------------
-// Error envelopes
-// ---------------------------------------------------------------------------
-
 function mcpServerNotFound(serverId: string, requestId: string): unknown {
   return errEnvelope(
     ErrorCode.MCP_SERVER_NOT_FOUND,
@@ -322,11 +249,6 @@ function mcpServerNotFound(serverId: string, requestId: string): unknown {
   );
 }
 
-/**
- * Map a thrown error to the right envelope. `reconnect` surfaces an unknown
- * server as a coded `Error2`; everything else propagates to the global
- * `installErrorHandler` (→ 50001). See module header for the table.
- */
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
   requestId: string,

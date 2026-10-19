@@ -49,6 +49,8 @@ const mocks = vi.hoisted(() => {
     },
     KimiHarness: vi.fn(),
     createKimiHarness: vi.fn(),
+    maybeRelaunch: vi.fn(async () => false),
+    runUpdateDownloadCommand: vi.fn(async () => 0),
   };
 });
 
@@ -122,6 +124,14 @@ vi.mock('../../src/cli/update/preflight', () => ({
   runUpdatePreflight: mocks.runUpdatePreflight,
 }));
 
+vi.mock('../../src/cli/update/native-swap', () => ({
+  maybeRelaunchWithStagedNativeUpdate: mocks.maybeRelaunch,
+}));
+
+vi.mock('../../src/cli/sub/update-download', () => ({
+  runUpdateDownloadCommand: mocks.runUpdateDownloadCommand,
+}));
+
 vi.mock('../../src/cli/run-shell', () => ({
   runShell: mocks.runShell,
 }));
@@ -170,6 +180,14 @@ async function waitForAssertion(assertion: () => void): Promise<void> {
   throw lastError;
 }
 
+/** main() now boots asynchronously (after the staged-swap check resolves). */
+async function waitForProgramArgs(): Promise<unknown[]> {
+  await waitForAssertion(() => {
+    expect(mocks.createProgram).toHaveBeenCalled();
+  });
+  return mocks.createProgram.mock.calls[0] as unknown as unknown[];
+}
+
 async function runHandleMainCommand(opts: CLIOptions): Promise<number | null> {
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
     throw new ExitCalled(Number(code ?? 0));
@@ -187,12 +205,12 @@ async function runHandleMainCommand(opts: CLIOptions): Promise<number | null> {
   }
 }
 
-async function runHandleUpgradeCommand(): Promise<number> {
+async function runHandleUpgradeCommand(yes = false): Promise<number> {
   const exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null) => {
     throw new ExitCalled(Number(code ?? 0));
   });
   try {
-    await handleUpgradeCommand('0.0.1-alpha.2');
+    await handleUpgradeCommand('0.0.1-alpha.2', yes);
     throw new Error('expected process.exit');
   } catch (error) {
     if (error instanceof ExitCalled) {
@@ -294,7 +312,7 @@ describe('main entry command handling', () => {
     mocks.finalizeHeadlessRun.mockResolvedValue(void 0);
 
     main();
-    const programArgs = mocks.createProgram.mock.calls[0] as unknown as unknown[];
+    const programArgs = await waitForProgramArgs();
     const mainAction = programArgs[1] as (opts: CLIOptions) => void;
     mainAction(opts);
 
@@ -319,7 +337,7 @@ describe('main entry command handling', () => {
 
     try {
       main();
-      const programArgs = mocks.createProgram.mock.calls[0] as unknown as unknown[];
+      const programArgs = await waitForProgramArgs();
       const mainAction = programArgs[1] as (opts: CLIOptions) => void;
       mainAction(opts);
 
@@ -349,14 +367,44 @@ describe('main entry command handling', () => {
     expect(runShell).toHaveBeenCalledWith(opts, '0.0.1-alpha.2');
   });
 
-  it('installs crash handlers before parsing CLI arguments', () => {
+  it('installs crash handlers before parsing CLI arguments', async () => {
     main();
 
     expect(mocks.installCrashHandlers).toHaveBeenCalledTimes(1);
-    expect(mocks.installCrashHandlers.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.createProgram.mock.invocationCallOrder[0]!,
-    );
-    expect(mocks.parse).toHaveBeenCalledWith(process.argv);
+    await waitForAssertion(() => {
+      expect(mocks.installCrashHandlers.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.createProgram.mock.invocationCallOrder[0]!,
+      );
+      expect(mocks.parse).toHaveBeenCalledWith(process.argv);
+    });
+  });
+
+  it('runs the staged-swap check before bootstrap and skips startup when it relaunches', async () => {
+    mocks.maybeRelaunch.mockResolvedValueOnce(true);
+
+    main();
+
+    await waitForAssertion(() => {
+      expect(mocks.maybeRelaunch).toHaveBeenCalledTimes(1);
+    });
+    // Relaunched → the parent must sit on the child, never bootstrap.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mocks.createProgram).not.toHaveBeenCalled();
+  });
+
+  it('passes the runtime context to the staged-swap check', async () => {
+    main();
+
+    await waitForAssertion(() => {
+      expect(mocks.maybeRelaunch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          exePath: process.execPath,
+          argv: process.argv,
+          currentVersion: '0.0.1-alpha.2',
+          isNative: false,
+        }),
+      );
+    });
   });
 
   it('sets the process title during startup', () => {
@@ -416,6 +464,7 @@ describe('main entry command handling', () => {
     expect(mocks.handleUpgrade).toHaveBeenCalledWith('0.0.1-alpha.2', {
       track: mocks.track,
       logger: mocks.log,
+      yes: false,
     });
     expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 3000 });
     expect(mocks.harness.close).toHaveBeenCalledTimes(1);

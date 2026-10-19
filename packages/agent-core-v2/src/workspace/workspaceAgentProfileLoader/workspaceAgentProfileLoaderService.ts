@@ -1,17 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IWorkspaceAgentProfileLoader` implementation.
- *
- * Discovers the workspace's agent files (`.kimi-code/agents`, `.agents/agents`
- * under the project root, resolved through `workspaceContext` and `hostFs`)
- * and contributes them via the shared loader skeleton. `${base_prompt}` is
- * backed by the user loader's effective default profile. Watches the project
- * agent-root candidates through `hostFsWatch` (watched whether or not they
- * exist yet) and reloads debounced, so a project agent-file change
- * re-contributes this record only. Bound at Workspace scope: the scan is
- * per handler and the record dies with it.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
@@ -26,8 +12,8 @@ import { profilesFromDiscovery } from './internal/agentProfileFromFile';
 import { projectAgentRootCandidates, projectAgentRoots } from '#/workspace/workspaceAgentProfileLoader/internal/agentRoots';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import { IHostFsWatchService } from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import { watchCandidates } from '#human/utils/watch';
 
 import { IWorkspaceAgentProfileLoader } from './workspaceAgentProfileLoader';
 
@@ -50,7 +36,6 @@ export class WorkspaceAgentProfileLoaderService
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService log: ILogService,
     @IUserAgentProfileLoader private readonly user: IUserAgentProfileLoader,
-    @IHostFsWatchService private readonly fsWatch: IHostFsWatchService,
     registry?: IAgentProfileRegistry,
   ) {
     super(log, registry);
@@ -79,7 +64,7 @@ export class WorkspaceAgentProfileLoaderService
       this.workspace.cwd,
       (message) => this.log.warn(message),
     );
-    const handle = this.fsWatch.watch(projectRoot, {
+    const handle = watchCandidates(projectRoot, candidates, {
       ignored: subtreeWatchFilter(projectRoot, candidates),
     });
     this._register(handle);

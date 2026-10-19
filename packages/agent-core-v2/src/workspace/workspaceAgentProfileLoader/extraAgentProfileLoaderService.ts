@@ -1,13 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IExtraAgentProfileLoader` implementation.
- *
- * Resolves the configured `extraAgentDirs` through `configService`,
- * `workspaceContext`, `bootstrap`, and `hostFs`, reporting skipped files
- * through `log`. Reloads when the `extraAgentDirs` config section changes.
- * Bound at Workspace scope.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import { discoverAgentFiles } from '#/workspace/workspaceAgentProfileLoader/internal/agentFileDiscovery';
 import { AgentProfileLoaderBase } from '#/workspace/workspaceAgentProfileLoader/internal/agentProfileLoader';

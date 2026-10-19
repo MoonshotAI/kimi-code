@@ -1,21 +1,3 @@
-/**
- * `tools` domain — `WebSearchTool` implementation (the `WebSearch` tool).
- *
- * Resolves the host-injected `WebSearchProvider` from the App-scope
- * `IWebSearchProviderService` (`auth` domain) per invocation — the activation
- * gate checks presence alone, and the provider (which embeds the frozen
- * identity headers) only composes once a call needs it, so tool construction
- * during a fast bootstrap cannot race the identity freeze and a mid-session
- * login or config edit reaches the next call. The tool only activates when a
- * provider is configured, because there is no local search backend; results
- * render through `ToolResultBuilder`, and provider errors classify into
- * model-readable output.
- *
- * Registered via the module-level `registerAgentToolService(IWebSearchTool,
- * WebSearchTool)` at the bottom of this file — the same "import = register"
- * pattern used by every agent tool. Bound at Agent scope.
- */
-
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -24,7 +6,7 @@ import {
   type ExecutableToolResult,
   type ToolExecution,
 } from '#/tool/toolContract';
-import { ToolResultBuilder } from '#/tool/result-builder';
+import { ToolOutputAccumulator } from '#/tool/output-accumulator';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 
@@ -34,7 +16,6 @@ import {
   type WebSearchInput,
 } from './web-search';
 import DESCRIPTION from './web-search.md?raw';
-
 
 export class WebSearchTool implements IWebSearchTool {
   declare readonly _serviceBrand: undefined;
@@ -71,7 +52,7 @@ export class WebSearchTool implements IWebSearchTool {
     }
     try {
       const results = await provider.search(args.query, { toolCallId, signal });
-      const builder = new ToolResultBuilder({ maxLineLength: null });
+      const builder = new ToolOutputAccumulator();
 
       if (results.length === 0) {
         builder.write('No search results found.');
@@ -104,7 +85,6 @@ export class WebSearchTool implements IWebSearchTool {
     }
   }
 }
-
 
 function classifySearchError(error: unknown): string {
   const name = error instanceof Error ? error.name : '';

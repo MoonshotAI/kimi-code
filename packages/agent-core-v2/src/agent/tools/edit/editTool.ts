@@ -1,24 +1,3 @@
-/**
- * `tools` domain — `EditTool` implementation, the Agent entry for exact
- * string replacement in a text file.
- *
- * Agent-scope adapter over the App-scope {@link IFileEditService} capability.
- * Keeps only the Agent-facing responsibilities: path resolution, the file
- * access declaration, the diff display, the approval rule, the no-op
- * pre-check, and mapping the domain-neutral `FileEditResult` into an
- * `ExecutableToolResult`. The actual read/edit/write is delegated to
- * {@link IFileEditService} (os-backed adapter over `IHostFileSystem`), which
- * runs the pure `TextModel` / `EditService` logic.
- *
- * Path semantics (home expansion, path class) come from the
- * `hostEnvironment` domain; the workspace and skill roots come from
- * `ISessionWorkspaceContext` / `ISessionSkillCatalog`.
- *
- * Ported from v1.
- * Bound at Agent scope; self-registers via `registerAgentToolService(...)` at module
- * load.
- */
-
 import {
   resolvePathAccessPath,
   type WorkspaceConfig,
@@ -30,7 +9,7 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { Runtime } from '#/runtime/runtime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,

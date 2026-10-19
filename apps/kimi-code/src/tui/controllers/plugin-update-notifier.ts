@@ -1,6 +1,6 @@
 import type { PluginSummary } from '@moonshot-ai/kimi-code-sdk';
 
-import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
+import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import {
   computeUpdateStatus,
   loadPluginMarketplace,
@@ -34,7 +34,7 @@ export interface PluginUpdateNotifierDeps {
 const MCP_TOOL_NAME_PREFIX = 'mcp__';
 const PLUGIN_MCP_TOOL_NAME_PREFIX = `${MCP_TOOL_NAME_PREFIX}plugin-`;
 // Plugin MCP servers run under the runtime name `plugin-<id>:<server>`
-// (pluginMcpRuntimeName in packages/agent-core/src/plugin/manager.ts).
+// (pluginMcpRuntimeName in packages/agent-core-v2/src/app/plugin/manager.ts).
 const PLUGIN_MCP_RUNTIME_NAME = /^plugin-([a-z0-9][a-z0-9_-]{0,63}):/;
 
 /** Cheap name check for plugin-provided MCP tools (`mcp__plugin-…`). */
@@ -43,7 +43,7 @@ export function isPluginMcpToolName(toolName: string): boolean {
 }
 
 /**
- * Mirror of sanitizeMcpNamePart in packages/agent-core/src/mcp/tool-naming.ts.
+ * Mirror of sanitizeMcpNamePart in packages/agent-core-v2/src/mcpCore/tool-naming.ts.
  * MCP tool names on the wire carry the sanitized server name; the collapse
  * step guarantees the `__` separator never appears inside a name part.
  */
@@ -166,7 +166,7 @@ export class PluginUpdateNotifier {
       // Only the default official catalog can back an "Official Marketplace"
       // notice — a custom catalog (KIMI_CODE_PLUGIN_MARKETPLACE_URL) may
       // advertise anything under any id.
-      if (marketplace.source !== KIMI_CODE_PLUGIN_MARKETPLACE_URL) return;
+      if (marketplace.source !== kimiCodePluginMarketplaceUrl()) return;
       const entry = marketplace.plugins.find((plugin) => plugin.id === pluginId);
       if (entry === undefined) return;
       const installed = (await session.listPlugins()).find((plugin) => plugin.id === pluginId);

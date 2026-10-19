@@ -1,38 +1,35 @@
-/**
- * `/oauth/*` REST routes.
- *
- *   POST   /oauth/login     start a device-code flow → OAuthFlowStart
- *   GET    /oauth/login     poll current flow state  → OAuthFlowSnapshot | null
- *   DELETE /oauth/login     cancel pending flow       → { cancelled, status }
- *   POST   /oauth/logout    logout                    → { logged_out, provider }
- *   GET    /oauth/userinfo  managed-account profile   → ManagedUserInfoResult
- *
- * Backed by the v2 `IOAuthService` (Core scope), which already returns the
- * protocol wire types, so the handlers only swap the v1 accessor
- * (`ix.invokeFunction`) for the v2 one (`core.accessor.get`).
- */
-
 import { IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
-  managedUserInfoResultSchema,
   managedUsageResultSchema,
+  managedUserInfoResultSchema,
   oauthFlowSnapshotSchema,
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
-  type ManagedUsageResult,
-  type UsageRow,
+  oauthRegionResultSchema,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
+import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
+import {
+  inspectRemoteControlLock,
+  type RemoteControlDeviceClient,
+  type RemoteControlManager,
+} from '@moonshot-ai/remote-control';
 import { z } from 'zod';
 
-import { okEnvelope } from '../envelope';
+import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   oauthLoginQuerySchema,
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
 } from '../protocol/rest-oauth';
+import {
+  acquireRemoteControlStartGate,
+  REMOTE_CONTROL_LOGOUT_GATE_ORIGIN,
+  waitForLockRelease,
+} from './remoteControl';
 
 interface RouteHost {
   get(
@@ -66,8 +63,15 @@ const oauthFlowSnapshotOrNullSchema = z.union([
   z.null(),
 ]);
 
-export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
-  // POST /oauth/login — start device flow ----------------------------------
+const LOGOUT_TUNNEL_TEARDOWN_DELAY_MS = 250;
+
+export function registerOAuthRoutes(
+  app: RouteHost,
+  core: Scope,
+  remoteControl: RemoteControlManager,
+  remoteControlDevices: Pick<RemoteControlDeviceClient, 'clear' | 'deactivateDevice'>,
+  homeDir: string,
+): void {
   const loginStartRoute = defineRoute(
     {
       method: 'POST',
@@ -78,7 +82,9 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
       tags: ['auth'],
     },
     async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).startLogin(req.body.provider);
+      const result = await core.accessor
+        .get(IOAuthService)
+        .startLogin(req.body.provider, { region: req.body.region });
       requestLog(req)?.info({ provider: req.body.provider, action: 'login' }, 'oauth login started');
       reply.send(okEnvelope(result, req.id));
     },
@@ -89,7 +95,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     loginStartRoute.handler as Parameters<RouteHost['post']>[2],
   );
 
-  // GET /oauth/login — poll current flow state -----------------------------
   const loginPollRoute = defineRoute(
     {
       method: 'GET',
@@ -110,7 +115,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     loginPollRoute.handler as Parameters<RouteHost['get']>[2],
   );
 
-  // DELETE /oauth/login — cancel pending flow ------------------------------
   const loginCancelRoute = defineRoute(
     {
       method: 'DELETE',
@@ -135,20 +139,120 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     loginCancelRoute.handler as Parameters<RouteHost['delete']>[2],
   );
 
-  // POST /oauth/logout -----------------------------------------------------
+  let kimiLogoutQueue: Promise<void> = Promise.resolve();
+
   const logoutRoute = defineRoute(
     {
       method: 'POST',
       path: '/oauth/logout',
       body: oauthLogoutRequestSchema,
       success: { data: oauthLogoutResponseSchema },
+      errors: { [ErrorCode.INTERNAL_ERROR]: {} },
       description: 'Logout the managed OAuth provider',
       tags: ['auth'],
-    },
-    async (req, reply) => {
-      const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
-      requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
-      reply.send(okEnvelope(result, req.id));
+    },    async (req, reply) => {
+      const provider = req.body.provider ?? KIMI_CODE_PROVIDER_NAME;
+      if (provider !== KIMI_CODE_PROVIDER_NAME) {
+        const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+        requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
+        reply.send(okEnvelope(result, req.id));
+        return;
+      }
+      const serialized = kimiLogoutQueue.then(async () => {
+        try {
+          const status = remoteControl.status();
+          if (status.state === 'on') {
+            remoteControlDevices.clear();
+            const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+            remoteControlDevices.clear();
+            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
+            reply.send(okEnvelope(result, req.id));
+            void (async () => {
+              await new Promise((resolve) => {
+                setTimeout(resolve, LOGOUT_TUNNEL_TEARDOWN_DELAY_MS);
+              });
+              for (let attempt = 0; ; attempt += 1) {
+                try {
+                  await remoteControl.disable();
+                  return;
+                } catch (error) {
+                  if (attempt >= 2) {
+                    requestLog(req)?.error(
+                      { err: error },
+                      'remote-control teardown after logout failed',
+                    );
+                    return;
+                  }
+                  requestLog(req)?.warn(
+                    { err: error },
+                    'remote-control teardown after logout failed; retrying',
+                  );
+                  await new Promise((resolve) => {
+                    setTimeout(resolve, 1000 * (attempt + 1));
+                  });
+                }
+              }
+            })();
+            return;
+          }
+          if (status.state !== 'off') {
+            await remoteControl.disable();
+          } else {
+            const holder = await inspectRemoteControlLock(homeDir);
+            if (holder !== undefined) {
+              if (holder.localOrigin !== REMOTE_CONTROL_LOGOUT_GATE_ORIGIN) {
+                await remoteControlDevices.deactivateDevice(holder.deviceId);
+              }
+              await waitForLockRelease(homeDir);
+            }
+          }
+          const gate = await acquireRemoteControlStartGate(homeDir, remoteControlDevices);
+          const releaseGate = async (): Promise<void> => {
+            for (let attempt = 0; ; attempt += 1) {
+              try {
+                await gate.release();
+                return;
+              } catch (error) {
+                if (attempt >= 2) {
+                  requestLog(req)?.error(
+                    { err: error },
+                    'remote-control start gate release failed',
+                  );
+                  return;
+                }
+                await new Promise((resolve) => {
+                  setTimeout(resolve, 200);
+                });
+              }
+            }
+          };
+          try {
+            remoteControlDevices.clear();
+            const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+            remoteControlDevices.clear();
+            await releaseGate();
+            requestLog(req)?.info({ provider, action: 'logout' }, 'oauth logout');
+            reply.send(okEnvelope(result, req.id));
+          } catch (error) {
+            await releaseGate();
+            throw error;
+          }
+        } catch (error) {
+          requestLog(req)?.error({ err: error }, 'remote-control cleanup around logout failed');
+          reply.send(
+            errEnvelope(
+              ErrorCode.INTERNAL_ERROR,
+              error instanceof Error ? error.message : String(error),
+              req.id,
+            ),
+          );
+        }
+      });
+      kimiLogoutQueue = serialized.then(
+        () => undefined,
+        () => undefined,
+      );
+      await serialized;
     },
   );
   app.post(
@@ -157,7 +261,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     logoutRoute.handler as Parameters<RouteHost['post']>[2],
   );
 
-  // GET /oauth/usage — managed-account plan usage (limits + booster wallet) ---
   const usageRoute = defineRoute(
     {
       method: 'GET',
@@ -169,7 +272,7 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const result = await core.accessor.get(IOAuthService).getManagedUsage(req.query.provider);
-      reply.send(okEnvelope(toWireUsage(result), req.id));
+      reply.send(okEnvelope(result, req.id));
     },
   );
   app.get(
@@ -178,7 +281,6 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     usageRoute.handler as Parameters<RouteHost['get']>[2],
   );
 
-  // GET /oauth/userinfo — managed-account profile ------------------------------
   const userInfoRoute = defineRoute(
     {
       method: 'GET',
@@ -198,46 +300,23 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     userInfoRoute.options,
     userInfoRoute.handler as Parameters<RouteHost['get']>[2],
   );
-}
 
-/** Domain (camelCase) → wire (snake_case) mapping for the usage payload. */
-function toWireUsage(result: ManagedUsageDomainResult): ManagedUsageResult {
-  if (result.kind === 'error') {
-    return { kind: 'error', message: result.message, status: result.status };
-  }
-  return {
-    kind: 'ok',
-    summary: result.summary === null ? null : toWireUsageRow(result.summary),
-    limits: result.limits.map(toWireUsageRow),
-    extra_usage:
-      result.extraUsage === null
-        ? null
-        : {
-            balance_cents: result.extraUsage.balanceCents,
-            total_cents: result.extraUsage.totalCents,
-            monthly_charge_limit_enabled: result.extraUsage.monthlyChargeLimitEnabled,
-            monthly_charge_limit_cents: result.extraUsage.monthlyChargeLimitCents,
-            monthly_used_cents: result.extraUsage.monthlyUsedCents,
-            currency: result.extraUsage.currency,
-          },
-  };
-}
-
-type ManagedUsageDomainResult = Awaited<ReturnType<IOAuthService['getManagedUsage']>>;
-type DomainUsageRow = {
-  name?: string;
-  window?: { duration: number; unit: 'minute' | 'hour' | 'day' | 'week' };
-  used: number;
-  limit: number;
-  resetAt?: string;
-};
-
-function toWireUsageRow(row: DomainUsageRow): UsageRow {
-  return {
-    name: row.name,
-    window: row.window,
-    used: row.used,
-    limit: row.limit,
-    reset_at: row.resetAt,
-  };
+  const regionRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/oauth/region',
+      success: { data: oauthRegionResultSchema },
+      description: 'Resolve the client region (mainland-cn/global)',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const region = core.accessor.get(IOAuthService).getRegion();
+      reply.send(okEnvelope({ region }, req.id));
+    },
+  );
+  app.get(
+    regionRoute.path,
+    regionRoute.options,
+    regionRoute.handler as Parameters<RouteHost['get']>[2],
+  );
 }

@@ -1,107 +1,7 @@
-/**
- * `subagent` domain — subagent config-section schemas, env binding, and
- * timeout / model resolution.
- *
- * Owns two on-disk sections:
- *
- * - `[subagent]` — `timeout_ms`, together with the `KIMI_SUBAGENT_TIMEOUT_MS`
- *   env override (precedence: env > config.toml > 2h default). While the env
- *   var is set, `stripEnvBoundFields` restores the env-free raw value before
- *   persistence, so the override never leaks into `config.toml`. Per-run
- *   timeouts resolve through `resolveSubagentTimeoutMs`, and the timeout
- *   message renders with `formatSubagentTimeoutDescription`.
- *
- * - `[secondary_model]` — the subagent model pool: `default_model` names the
- *   fallback model and the `[secondary_model.models]` table maps alias →
- *   description. A `default_model` without a `[secondary_model.models]` table
- *   stands on its own as an implicit single-entry pool (empty description) —
- *   the minimal "secondary model" configuration. As a compatibility fallback
- *   for the v1 engine's recipe, a lone legacy `model` key (likewise without a
- *   pool table) forms the same implicit single-entry pool, ranked below
- *   `default_model`; the recipe's patch fields (`default_effort`, ...) have
- *   no pool counterpart and are ignored by pool resolution — but the schema
- *   still declares them so validation never strips them and config
- *   reads/writes round-trip losslessly for the v1 engine, and `model` never
- *   substitutes for
- *   the pool table's required `default_model`. `force = true` instead
- *   removes the choice entirely: every spawn binds the resolved default
- *   (`default_model` ?? `model`), the tools hide the `model` parameter
- *   exactly like the no-pool case, and combining
- *   it with a `[secondary_model.models]` table is rejected — the table's only
- *   purpose is offering the main agent a choice.
- *
- * When a pool is configured (and not forced), newly spawned subagents
- * bind to the pool's default model unless the parent model picks a pool alias
- * — or `primary` (`PRIMARY_SUBAGENT_MODEL_CHOICE`), the always-available
- * symbolic choice binding the caller's own model and thinking level — per
- * spawn via the `Agent` / `AgentSwarm` tool `model` parameter. Pool bindings
- * carry no explicit thinking level, so the subagent resolves thinking
- * naturally (global thinking config → the bound model's default effort)
- * rather than inheriting the caller's level. Without a pool, spawning
- * behavior is unchanged (subagents inherit the caller's model) and the tools
- * strip the no-op `model` parameter from their advertised schemas via
- * `stripSubagentModelParameter`, so the concept never enters the prompt and a
- * stray `model` argument is rejected instead of silently inheriting; the
- * strip returns a shallow copy and never mutates the input, so callers can
- * keep both schema variants as shared constants. `force = true` shares this
- * hidden-parameter surface (see `exposesSubagentModelChoice`) while binding
- * every spawn to the resolved default in `resolveSubagentBinding`. The whole
- * pool is gated behind the `secondary-model` experimental flag (`flag.ts`):
- * while the experiment is off the section is inert — the tools strip the
- * `model` parameter, spawns bind the caller's model, and validation is
- * skipped.
- *
- * Spawn bindings resolve through `resolveSubagentBinding`: a forced
- * configuration short-circuits to the resolved default before anything else, and
- * any explicit request — `primary` included — throws (defensive; the tools
- * strip the parameter); `primary`
- * short-circuits to the caller's own model+thinking; with no pool a stray
- * non-`primary` request throws (defensive — the tools strip the parameter);
- * with a pool the request must be a pool alias, an omitted request falls back
- * to `default_model`, and anything else throws `CONFIG_INVALID` listing the
- * available choices so the parent model can retry. The tools advertise the
- * pool via `buildSubagentModelDescriptions`: the default model leads with a
- * `[default]` marker, the remaining aliases follow in config order, and the
- * caller's own alias is listed like any other pool entry (marked
- * `[main model]`) — pool alias bindings carry no thinking, so the trailing
- * `primary` line stays distinct from it: it binds the caller's model WITH the
- * caller's current thinking level, and names the alias in parentheses when
- * the caller is in the pool. An empty-string description renders a bare
- * `- alias` line. Spawn failures are wrapped by `wrapSubagentModelError`:
- * when the bound model is not the caller's own and the catalog failed on
- * exactly that alias, the parent model gets guidance toward
- * `[secondary_model.models]` instead of a bare resolution error.
- * Cross-field validation is NOT part of the schema — it is enforced as
- * `Error2(CONFIG_INVALID)` by `assertValidSubagentModelConfig` (run before
- * session materialization by the session lifecycle, with the Session-scope
- * validation service in `subagentModelsValidationService.ts` as backstop),
- * which checks the `force` rules (a default — `default_model` or the legacy
- * `model` fallback — required, a
- * `[secondary_model.models]` table rejected) and delegates the pool checks to
- * `assertValidSubagentModelPool`: the default must be present and name a
- * pool key, every pool key must resolve through the model catalog, and the
- * reserved `primary` alias is rejected outright — as a pool key it would be
- * unreachable (explicit requests short-circuit to the caller's model) and
- * would render a self-contradictory description. `resolveSubagentBinding`
- * repeats the reserved-key and force-rule checks so a pool broken by a
- * runtime config edit fails loudly at spawn instead of binding the wrong
- * model; any other malformation the startup checks missed surfaces as the
- * spawn-time errors above. Writes that rewrite the `[models]` table
- * (provider removal/replace at the edge, background catalog refreshes)
- * fold the pool through `cascadeSubagentModelPool` into the same atomic
- * write — renamed aliases are repointed, dropped aliases filtered, and the
- * whole section cleared when its effective default dangles (an emptied pool
- * table folds into the implicit single-entry form — a default naming no
- * pool key would fail validation) — so the startup
- * validation never meets a pool orphaned by a write it did not see.
- * Self-registered at module load via `registerConfigSection`.
- */
-
 import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { isPlainObject } from '#/app/config/toml';
-import type { IFlagService } from '#/app/flag/flag';
 import {
   type EnvBindings,
   envBindings,
@@ -109,9 +9,15 @@ import {
   type IConfigService,
 } from '#/app/config/config';
 import { registerConfigSection } from '#/app/config/configSectionContributions';
-import type { IModelCatalog } from '#/kosong/model/catalog';
-
-import { SECONDARY_MODEL_FLAG_ID } from './flag';
+import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
+import type { IModelCatalog, Model } from '#/llm-adapter/model/catalog';
+import {
+  declaredDefaultEffortForModel,
+  modelSupportsThinking,
+  modelSupportsThinkingEffort,
+  normalizeRequestedThinkingEffort,
+  type ThinkingConfig,
+} from '#/llm-adapter/model/thinking';
 
 export const SUBAGENT_SECTION = 'subagent';
 export const SECONDARY_MODEL_SECTION = 'secondaryModel';
@@ -205,8 +111,7 @@ export function isSubagentModelForced(config: IConfigService): boolean {
   return config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION)?.force === true;
 }
 
-export function exposesSubagentModelChoice(config: IConfigService, flags: IFlagService): boolean {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return false;
+export function exposesSubagentModelChoice(config: IConfigService): boolean {
   if (isSubagentModelForced(config)) return false;
   return resolveSubagentModelPool(config) !== undefined;
 }
@@ -257,10 +162,8 @@ export function assertValidSubagentModelPool(
 
 export function assertValidSubagentModelConfig(
   config: IConfigService,
-  flags: IFlagService,
   modelCatalog: IModelCatalog,
 ): void {
-  if (!flags.enabled(SECONDARY_MODEL_FLAG_ID)) return;
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.force === true) {
     if (section.models !== undefined) {
@@ -276,51 +179,74 @@ export function assertValidSubagentModelConfig(
   }
   const pool = resolveSubagentModelPool(config);
   if (pool !== undefined) assertValidSubagentModelPool(pool, modelCatalog);
+  assertValidSubagentDefaultEffort(section, pool, modelCatalog);
 }
 
-export function cascadeSubagentModelPool(
+function assertValidSubagentDefaultEffort(
   section: SecondaryModelConfig | undefined,
-  survivingModels: Record<string, unknown>,
-  renamedAliases: ReadonlyMap<string, string> = new Map(),
-): SecondaryModelConfig | null | undefined {
-  if (section === undefined) return undefined;
-  const remap = (alias: string): string => renamedAliases.get(alias) ?? alias;
-  const nextDefault = section.defaultModel === undefined ? undefined : remap(section.defaultModel);
-  const nextLegacyDefault = section.model === undefined ? undefined : remap(section.model);
-  const effectiveDefault = nextDefault ?? nextLegacyDefault;
-  if (effectiveDefault !== undefined && !(effectiveDefault in survivingModels)) return null;
-
-  let changed = nextDefault !== section.defaultModel || nextLegacyDefault !== section.model;
-  let nextPool: Record<string, string> | undefined;
-  if (section.models !== undefined) {
-    nextPool = {};
-    for (const [alias, description] of Object.entries(section.models)) {
-      const key = remap(alias);
-      if (!(key in survivingModels)) {
-        changed = true;
-        continue;
-      }
-      if (key !== alias) changed = true;
-      nextPool[key] = description;
+  pool: SubagentModelPool | undefined,
+  modelCatalog: IModelCatalog,
+): void {
+  const effort =
+    section?.defaultEffort === undefined
+      ? undefined
+      : normalizeRequestedThinkingEffort(section.defaultEffort);
+  if (effort === undefined || pool === undefined) return;
+  for (const alias of Object.keys(pool.models)) {
+    const model = modelCatalog.get(alias);
+    if (effort === 'off' && model.alwaysThinking === true) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
     }
-    if (Object.keys(nextPool).length === 0) {
-      nextPool = undefined;
-      changed = true;
+    if (modelSupportsThinkingEffort(effort, model, true)) continue;
+    if (!modelSupportsThinking(model)) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `[secondary_model].default_effort "${effort}" is set but model "${alias}" does not support thinking.`,
+        {
+          details: {
+            section: SECONDARY_MODEL_SECTION,
+            field: 'defaultEffort',
+            model: alias,
+            effort,
+          },
+        },
+      );
     }
+    throw new Error2(
+      ErrorCodes.CONFIG_INVALID,
+      `[secondary_model].default_effort "${effort}" is not supported by model "${alias}". Supported efforts: ${model.supportEfforts?.join(', ')}.`,
+      {
+        details: {
+          section: SECONDARY_MODEL_SECTION,
+          field: 'defaultEffort',
+          model: alias,
+          effort,
+        },
+      },
+    );
   }
-  if (!changed) return undefined;
-  return { ...section, defaultModel: nextDefault, model: nextLegacyDefault, models: nextPool };
 }
+
+export type SubagentModelSource = 'forced' | 'primary_override' | 'inherited' | 'secondary_pool';
 
 export function resolveSubagentBinding(
   config: IConfigService,
-  flags: IFlagService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
-): { model: string; thinking?: string } {
-  const enabled = flags.enabled(SECONDARY_MODEL_FLAG_ID);
+): { model: string; thinking?: string; modelSource: SubagentModelSource } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
-  if (enabled && section?.force === true) {
+  if (section?.force === true) {
     if (section.models !== undefined) {
       throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_FORCE_EXCLUDES_MODELS_MESSAGE, {
         details: { section: SECONDARY_MODEL_SECTION, field: 'force' },
@@ -339,12 +265,12 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: forcedModel };
+    return { model: forcedModel, thinking: section.defaultEffort, modelSource: 'forced' };
   }
   if (requested === PRIMARY_SUBAGENT_MODEL_CHOICE) {
-    return { model: own.modelAlias, thinking: own.thinkingLevel };
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'primary_override' };
   }
-  const pool = enabled ? resolveSubagentModelPool(config) : undefined;
+  const pool = resolveSubagentModelPool(config);
   if (pool === undefined) {
     if (requested !== undefined) {
       throw new Error2(
@@ -353,7 +279,7 @@ export function resolveSubagentBinding(
         { details: { model: requested } },
       );
     }
-    return { model: own.modelAlias, thinking: own.thinkingLevel };
+    return { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' };
   }
   if (Object.hasOwn(pool.models, PRIMARY_SUBAGENT_MODEL_CHOICE)) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE, {
@@ -378,39 +304,57 @@ export function resolveSubagentBinding(
       { details: { model: choice, availableModels: available } },
     );
   }
-  return { model: choice };
+  return { model: choice, thinking: section?.defaultEffort, modelSource: 'secondary_pool' };
+}
+
+export function resolveSubagentThinking(
+  config: IConfigService,
+  model: Model | undefined,
+  explicit: string | undefined,
+): string | undefined {
+  if (explicit !== undefined) return explicit;
+  if (config.get<ThinkingConfig>(THINKING_SECTION)?.enabled === false) return undefined;
+  return declaredDefaultEffortForModel(model);
 }
 
 export function buildSubagentModelDescriptions(
   config: IConfigService,
-  flags: IFlagService,
   callerModelAlias: string | undefined,
 ): string | undefined {
-  if (!exposesSubagentModelChoice(config, flags)) return undefined;
+  if (!exposesSubagentModelChoice(config)) return undefined;
   const pool = resolveSubagentModelPool(config)!;
   const lines = ['Available models (pass via model):'];
   const defaultModel = pool.defaultModel;
-  const markersFor = (alias: string): string => {
-    const markers: string[] = [];
-    if (alias === defaultModel) markers.push('[default]');
-    if (alias === callerModelAlias) markers.push('[main model]');
-    return markers.length === 0 ? '' : ` ${markers.join(' ')}`;
-  };
-  if (defaultModel !== undefined && Object.hasOwn(pool.models, defaultModel)) {
-    lines.push(
-      formatPoolLine(`${defaultModel}${markersFor(defaultModel)}`, pool.models[defaultModel]!),
-    );
+  for (const alias of orderedPoolAliases(pool)) {
+    const marker = alias === defaultModel ? ' [default]' : '';
+    lines.push(formatPoolLine(`${alias}${marker}`, pool.models[alias]!));
   }
-  for (const [alias, description] of Object.entries(pool.models)) {
-    if (alias === defaultModel) continue;
-    lines.push(formatPoolLine(`${alias}${markersFor(alias)}`, description));
-  }
-  const callerInPool =
-    callerModelAlias !== undefined && Object.hasOwn(pool.models, callerModelAlias);
+  const primaryLabel =
+    callerModelAlias === undefined
+      ? PRIMARY_SUBAGENT_MODEL_CHOICE
+      : `${PRIMARY_SUBAGENT_MODEL_CHOICE} (= ${callerModelAlias})`;
   lines.push(
-    `- ${PRIMARY_SUBAGENT_MODEL_CHOICE}${callerInPool ? ` (${callerModelAlias})` : ''}: the main model you are running on, bound with your current thinking level; use it for hard, quality-sensitive subagent tasks`,
+    `- ${primaryLabel}: your current model and thinking level`,
   );
+  lines.push("Pool entries don't inherit your thinking level.");
   return lines.join('\n');
+}
+
+export function buildSubagentModelSummary(config: IConfigService): string | undefined {
+  if (!exposesSubagentModelChoice(config)) return undefined;
+  const pool = resolveSubagentModelPool(config)!;
+  const labels = orderedPoolAliases(pool).map((alias) =>
+    alias === pool.defaultModel ? `${alias} [default]` : alias,
+  );
+  labels.push(`${PRIMARY_SUBAGENT_MODEL_CHOICE} (your current model and thinking level)`);
+  return `Available models (pass via model): ${labels.join(', ')}.`;
+}
+
+function orderedPoolAliases(pool: SubagentModelPool): string[] {
+  const aliases = Object.keys(pool.models);
+  const defaultModel = pool.defaultModel;
+  if (defaultModel === undefined || !Object.hasOwn(pool.models, defaultModel)) return aliases;
+  return [defaultModel, ...aliases.filter((alias) => alias !== defaultModel)];
 }
 
 function formatPoolLine(label: string, description: string): string {
@@ -428,6 +372,21 @@ export function stripSubagentModelParameter(
   const required = parameters['required'];
   if (Array.isArray(required) && required.includes('model')) {
     next['required'] = required.filter((entry) => entry !== 'model');
+  }
+  return next;
+}
+
+export function stripSubagentForkParameter(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (!isPlainObject(properties) || !('fork' in properties)) return parameters;
+  const nextProperties = { ...properties };
+  delete nextProperties['fork'];
+  const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
+  const required = parameters['required'];
+  if (Array.isArray(required) && required.includes('fork')) {
+    next['required'] = required.filter((entry) => entry !== 'fork');
   }
   return next;
 }

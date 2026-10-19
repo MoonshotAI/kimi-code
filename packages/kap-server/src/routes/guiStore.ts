@@ -1,7 +1,3 @@
-/**
- * `/api/v1/gui/store/*` routes — server-backed localStorage mirror.
- */
-
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';

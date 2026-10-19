@@ -1,16 +1,3 @@
-/**
- * AgentTranscript — the L1 store for one agent.
- *
- * Contract (identical on server and client):
- *   - server: core events → ops → `apply` → `onChange` → L3 → WS
- *   - client: REST frames → `receive`; WS ops → `apply`; `onChange` → UI
- *
- * `getItems()` is a self-consistent snapshot at any moment: states held here
- * are always whole (text blocks carry their full text so far); deltas exist
- * only as ops in transit. Snapshots are copy-on-write, so a previously
- * returned array/object is never mutated by later applies.
- */
-
 import type { AgentId, AttachmentId, InteractionId, PromptId, TaskId, TodoId, TurnId } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptInteraction } from '../model/interaction';
@@ -45,16 +32,10 @@ export class AgentTranscript {
 
   constructor(readonly agentId: AgentId) {}
 
-  /** Full load == applying a reset: there is no second seeding path. */
   receive(ops: readonly TranscriptOperation[]): AppliedOps {
     return this.apply(ops);
   }
 
-  /**
-   * The single convergence path. Returns the accepted ops plus a gap signal
-   * when an `append` could not land (the caller's policy decides to ignore or
-   * re-snapshot). Emits exactly one `onChange` batch when anything changed.
-   */
   apply(ops: readonly TranscriptOperation[]): AppliedOps {
     const accepted: TranscriptOperation[] = [];
     let gap: AppliedOps['gap'];
@@ -81,8 +62,6 @@ export class AgentTranscript {
     this.#listeners.add(listener);
     return { dispose: () => void this.#listeners.delete(listener) };
   }
-
-  // -------------------------------------------------------------- reads
 
   getItems(): readonly TranscriptItem[] {
     return this.#state.items;
@@ -147,7 +126,6 @@ export class AgentTranscript {
     return this.#state.hasMoreOlder;
   }
 
-  /** Materialize current state (optionally windowed to the newest turns). */
   snapshot(window?: { tailTurns: number }): AgentTranscriptSnapshot {
     let items = this.#state.items;
     let hasMoreOlder = this.#state.hasMoreOlder;
@@ -163,7 +141,6 @@ export class AgentTranscript {
             if (seen <= skip) continue;
             kept.push(entry);
           } else if (seen > skip) {
-            // Non-turn items between skipped turns belong to skipped segments.
             kept.push(entry);
           }
         }

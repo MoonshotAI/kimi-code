@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ITowerMissionTool` contract (the `TowerMission` tool).
- *
- * Public contract of the mission reader/patcher: called with only an id it
- * returns the rendered mission view; with patch fields it applies them
- * through the store (workers may only patch their own mission; ownership
- * assignment stays with the tower). Exports the model-facing
- * `TowerMissionToolInputSchema` / `TowerMissionToolInput` and the
- * `ITowerMissionTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -18,9 +7,11 @@ export const TowerMissionToolInputSchema = z
   .object({
     id: z.string().describe('Mission id (e.g. "M1")'),
     status: z
-      .enum(['planned', 'active', 'completed', 'blocked', 'paused', 'merged'])
+      .enum(['planned', 'active', 'completed', 'blocked', 'paused', 'merged', 'abandoned'])
       .optional()
-      .describe('New lifecycle status'),
+      .describe(
+        'New lifecycle status. Workers may update only their own mission. "abandoned" is tower-only and gives the mission up without merging. "merged" cannot be set here; only TowerMerge records it after the merge gate succeeds. Merged and abandoned are terminal and cannot be reopened by a generic patch.',
+      ),
     note: z.string().optional().describe('Append a decision-log note'),
     blocker: z.string().optional().describe('Report a blocker (also sets status to blocked)'),
     clear_blockers: z.boolean().optional().describe('Clear all recorded blockers'),
@@ -28,6 +19,16 @@ export const TowerMissionToolInputSchema = z
       .string()
       .optional()
       .describe('Mark the first open task containing this text as done'),
+    task_drop: z
+      .string()
+      .optional()
+      .describe(
+        'Mark the first open task containing this text as dropped — the escape hatch for legitimately descoped tasks; requires task_drop_reason and is recorded in the mission notes and the activity log',
+      ),
+    task_drop_reason: z
+      .string()
+      .optional()
+      .describe('Mandatory with task_drop: why the task is legitimately descoped'),
     scope: z
       .array(z.string())
       .optional()

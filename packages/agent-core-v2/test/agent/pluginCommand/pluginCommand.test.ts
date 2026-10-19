@@ -1,14 +1,3 @@
-/**
- * Scenario: `IAgentPluginCommandService.activate` drives a user-slash plugin
- * command into the prompt pipeline.
- *
- * Pins the activation flow: definition lookup (unknown commands reject with
- * `request.invalid`), argument expansion, the `plugin_command.activated`
- * domain event, the enqueued user message, and the main-agent prompt-metadata
- * update. Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/pluginCommand/pluginCommand.test.ts`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IEventBus } from '#/app/event/eventBus';
@@ -19,7 +8,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import {
   IAgentPluginCommandService,
-  type PluginCommandActivatedEvent,
+  PluginCommandActivated,
 } from '#/agent/pluginCommand/pluginCommand';
 
 import { appService, createTestAgent, type TestAgentContext } from '../../harness';
@@ -53,8 +42,10 @@ function pluginServiceStub(commands: readonly PluginCommandDef[]): IPluginServic
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
+    mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
+    enabledPluginIds: () => undefined,
   };
 }
 
@@ -79,10 +70,10 @@ describe('AgentPluginCommandService', () => {
     ctx = agentWithDeployCommand();
     ctx.mockNextResponse({ type: 'text', text: 'deployed' });
 
-    const events: PluginCommandActivatedEvent[] = [];
+    const events: PluginCommandActivated[] = [];
     const sub = ctx
       .get(IEventBus)
-      .subscribe('plugin_command.activated', (event) => events.push(event));
+      .subscribe(PluginCommandActivated, (event) => events.push(event));
 
     await ctx
       .get(IAgentPluginCommandService)

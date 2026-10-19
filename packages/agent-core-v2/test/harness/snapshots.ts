@@ -1,5 +1,5 @@
-import type { Message } from '#/kosong/contract/message';
-import type { Tool as LLMTool } from '#/kosong/contract/tool';
+import type { Message } from '#/llm-adapter/contract/message';
+import type { Tool as LLMTool } from '#/llm-adapter/contract/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
@@ -234,10 +234,13 @@ function formatText(text: string): string {
   if (isPlanModeReminder(text)) {
     return '<plan-mode-reminder>';
   }
-  if (text.includes('first-person handoff note')) {
+  if (isDateReminder(text)) {
+    return '<date-reminder>';
+  }
+  if (text.includes('You are about to run out of context.')) {
     return '<compaction-instruction>';
   }
-  return JSON.stringify(text);
+  return JSON.stringify(normalizeWallTime(text));
 }
 
 function formatToolCall(call: Message['toolCalls'][number]): string {
@@ -263,13 +266,14 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
     if (isAutoModeEnterReminder(value)) return '<auto-mode-enter-reminder>';
     if (isAutoModeExitReminder(value)) return '<auto-mode-exit-reminder>';
     if (isPlanModeReminder(value)) return '<plan-mode-reminder>';
+    if (isDateReminder(value)) return '<date-reminder>';
     const interactionKind = interactionIdKind(value);
     if (interactionKind !== undefined) {
       return labelFor(value, labels.interactionLabels, interactionKind);
     }
     if (isUuid(value)) return labelFor(value, labels.uuidLabels, 'uuid');
     if (isMessageId(value)) return labelFor(value, labels.msgLabels, 'msg');
-    return value;
+    return normalizeWallTime(value);
   }
 
   if (Array.isArray(value)) {
@@ -294,11 +298,13 @@ function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabel
   ) {
     return '<time>';
   }
-  if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt') && typeof value === 'string') return '<time>';
+  if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt' || key === 'createdAt') && typeof value === 'string') return '<time>';
   if (key === 'protocol_version' && value === WIRE_PROTOCOL_VERSION) {
     return '<protocol-version>';
   }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';
+  if (key === 'localDate' && typeof value === 'string') return '<date>';
+  if (key === 'timeZone' && typeof value === 'string') return '<time-zone>';
   return normalizeValue(value, labels);
 }
 
@@ -342,6 +348,10 @@ function labelFor(value: string, labels: Map<string, string>, kind: string): str
   return label;
 }
 
+function normalizeWallTime(value: string): string {
+  return value.replaceAll(/Wall time: \d+\.\d{3} seconds/g, 'Wall time: <duration> seconds');
+}
+
 function isVolatileDurationKey(key: string): boolean {
   return (
     key === 'llmFirstTokenLatencyMs' ||
@@ -350,6 +360,7 @@ function isVolatileDurationKey(key: string): boolean {
     key === 'llmServerFirstTokenMs' ||
     key === 'llmServerDecodeMs' ||
     key === 'llmClientConsumeMs' ||
+    key === 'llmClientBlockedMs' ||
     key === 'durationMs'
   );
 }
@@ -367,4 +378,11 @@ function isAutoModeEnterReminder(value: string): boolean {
 
 function isAutoModeExitReminder(value: string): boolean {
   return value.includes('Auto permission mode is no longer active.');
+}
+
+function isDateReminder(value: string): boolean {
+  return (
+    value.includes('The current date is restated in a reminder whenever it changes') ||
+    value.includes('Rely on this reminder over any earlier date statement')
+  );
 }

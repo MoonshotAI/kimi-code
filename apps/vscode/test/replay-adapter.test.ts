@@ -397,6 +397,21 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
         }),
       ),
       record(message("user", [{ type: "text", text: "Visible prompt" }], { origin: { kind: "user" } }), 2),
+      record(
+        message(
+          "user",
+          [
+            {
+              type: "text",
+              text: '<hook_result hook_event="UserPromptSubmit">\nmerged hook note\n</hook_result>',
+              meta: { contentType: "text/xml", source: "user prompt submit hook" },
+            } as ContentPart,
+            { type: "text", text: "Merged prompt" },
+          ],
+          { origin: { kind: "user" } },
+        ),
+        3,
+      ),
     ]);
 
     expect(events.filter((event) => event.type === "TurnBegin")).toEqual([
@@ -405,7 +420,25 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
         payload: { user_input: [{ type: "text", text: "Visible prompt" }] },
         _sessionId: "session-1",
       },
+      {
+        type: "TurnBegin",
+        payload: { user_input: [{ type: "text", text: "Merged prompt" }] },
+        _sessionId: "session-1",
+      },
     ]);
+    const hookIndex = events.findIndex(
+      (event) => event.type === "ContentPart" && JSON.stringify(event).includes("merged hook note"),
+    );
+    expect(events[hookIndex - 1]).toEqual({
+      type: "StepBegin",
+      payload: { n: 1 },
+      _sessionId: "session-1",
+    });
+    expect(events[hookIndex]).toEqual({
+      type: "ContentPart",
+      payload: { type: "text", text: "merged hook note" },
+      _sessionId: "session-1",
+    });
   });
 
   it("restores a user-invoked skill as its original slash command", () => {
@@ -426,6 +459,64 @@ describe("replay adapter (renders the public SDK resume state for the Webview)",
     expect(events).toContainEqual({
       type: "TurnBegin",
       payload: { user_input: [{ type: "text", text: "/skill:review focus on errors" }] },
+      _sessionId: "session-1",
+    });
+  });
+
+  it.each([
+    { input: "/skill:review src/app.ts", skills: [{ skillName: "review", skillArgs: "src/app.ts" }] },
+    { input: "Review /skill:review src/app.ts", skills: [{ skillName: "review", skillArgs: "" }] },
+    {
+      input: "/skill:review /skill:security src/app.ts",
+      skills: [{ skillName: "review", skillArgs: "" }, { skillName: "security", skillArgs: "" }],
+    },
+    { input: "/skill:review /skill:review src/app.ts", skills: [{ skillName: "review", skillArgs: "" }] },
+  ].flatMap((fixture) => [
+    { ...fixture, format: "marked" },
+    { ...fixture, format: "legacy" },
+  ]))("restores bundled skill input and media without expanded instructions ($input, $format)", ({ input, skills, format }) => {
+    const skillActivations = skills.map((skill, index) => ({
+      ...skill,
+      activationId: `activation-${index + 1}`,
+      trigger: "user-slash" as const,
+    }));
+    const content: ContentPart[] = skillActivations.map((activation) => ({
+      type: "text",
+      text: `<skill name="${activation.skillName}">Skill instructions.</skill>`,
+      meta: format === "marked"
+        ? { source: "skill activation", activationId: activation.activationId }
+        : undefined,
+    }));
+    content.push(
+      { type: "text", text: input },
+      { type: "image_url", imageUrl: { url: "file:///workspace/a.png", id: "image-1" } },
+      { type: "video_url", videoUrl: { url: "file:///workspace/a.mp4", id: "video-1" } },
+    );
+    const origin = { kind: "user" as const, skillActivations };
+    const events = replay([record(message("user", content, { origin }))]);
+
+    expect(events).toContainEqual({
+      type: "TurnBegin",
+      payload: {
+        user_input: [
+          { type: "text", text: input },
+          { type: "image_url", image_url: { url: "file:///workspace/a.png", id: "image-1" } },
+          { type: "video_url", video_url: { url: "file:///workspace/a.mp4", id: "video-1" } },
+        ],
+      },
+      _sessionId: "session-1",
+    });
+  });
+
+  it("keeps user-authored skill XML without activation metadata", () => {
+    const input = '<skill name="review">Keep this quoted text.</skill>';
+    const events = replay([
+      record(message("user", [{ type: "text", text: input }], { origin: { kind: "user" } })),
+    ]);
+
+    expect(events).toContainEqual({
+      type: "TurnBegin",
+      payload: { user_input: [{ type: "text", text: input }] },
       _sessionId: "session-1",
     });
   });

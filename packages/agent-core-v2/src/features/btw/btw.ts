@@ -1,28 +1,22 @@
-/**
- * `btw` domain — side-question ("by the way") child agent contract.
- *
- * A `btw` agent is a lightweight fork of the main agent used for a side-channel
- * conversation: it inherits the parent's profile and context, but all tool calls
- * are disabled and a side-channel system reminder is appended so it answers with
- * text only. Follow-up turns reuse the same child agent.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
+export const BTW_READONLY_TOOLS = new Set(['Read', 'Grep', 'Glob']);
+
 export const TOOL_CALL_DISABLED_MESSAGE =
-  'Tool calls are disabled for side questions. Answer with text only.';
+  'Only the read-only tools Read, Grep, and Glob are available for side questions. Other tool calls are disabled.';
 
 export const SIDE_QUESTION_SYSTEM_REMINDER = `
-This is a side-channel conversation with the user. You should answer user questions directly based on what you already know.
+This is a side-channel conversation with the user. You should answer user questions directly.
 
 IMPORTANT:
 - You are a separate, lightweight instance.
 - The main agent continues independently; do not reference being interrupted.
-- Do not call any tools. All tool calls are disabled and will be rejected.
-  Even though tool definitions are visible in this request, they exist only
-  for technical reasons (prompt cache). You must not use them.
-- Respond only with text based on what you already know from the conversation
-  and this side-channel conversation.
+- You may use the read-only tools Read, Grep, and Glob to inspect files when
+  the answer depends on current file contents. All other tools are disabled
+  and will be rejected, even though their definitions are visible in this
+  request (they exist only for technical reasons — prompt cache).
+- Prefer answering from what you already know from the conversation and this
+  side-channel conversation; reach for the read-only tools only when needed.
 - Follow-up turns may happen in this side-channel conversation.
 - If you do not know the answer, say so directly.
 `.trim();

@@ -1,8 +1,9 @@
 /**
  * `sessionManager` — App-scope session lifecycle after the Workspace-domain
  * split. It creates, resumes, closes, archives, restores, deletes, and forks
- * sessions through the App-owned manager; the engine returns scope handles and
- * the wire keeps their serializable `{ id, kind }` fields.
+ * sessions through the App-owned manager; create/resume/restore return scope
+ * handles on the wire (`{ id, kind }`), fork/createChild return the forked
+ * session's metadata directly.
  */
 
 import { z } from 'zod';
@@ -10,6 +11,7 @@ import { z } from 'zod';
 import { maybe, noResult } from '../helpers.js';
 import { mcpServerConfigSchema } from '../mcp.js';
 import type { ServiceContract } from '../types.js';
+import { sessionMetaSchema } from './metadata.js';
 
 export const createSessionOptionsSchema = z.object({
   sessionId: z.string().optional(),
@@ -63,6 +65,6 @@ export const sessionManagerContract = {
     output: maybe(handleWireSchema),
   },
   delete: { input: z.tuple([z.string()]), output: noResult },
-  fork: { input: z.tuple([forkSessionOptionsSchema]), output: handleWireSchema },
-  createChild: { input: z.tuple([createChildSessionOptionsSchema]), output: handleWireSchema },
+  fork: { input: z.tuple([forkSessionOptionsSchema]), output: sessionMetaSchema },
+  createChild: { input: z.tuple([createChildSessionOptionsSchema]), output: sessionMetaSchema },
 } satisfies ServiceContract;

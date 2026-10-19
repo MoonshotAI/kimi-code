@@ -1,15 +1,3 @@
-/**
- * `git` domain — `IGitService` implementation.
- *
- * Runs `git status` / `git diff` (and `gh pr view`) against a repository on
- * the local disk, and discovers the enclosing git work tree of a directory
- * (`findWorkTree`). Process spawning goes through the App-scope
- * `IHostProcessService`, and the single path-existence probe in `diff` goes
- * through `IHostFileSystem`; no Node platform API is imported directly. Bound
- * at App scope — it owns no Session dependency, so the caller supplies an
- * absolute `cwd` and already-confined repo-relative paths.
- */
-
 import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -46,7 +34,7 @@ export class GitService implements IGitService {
       throw this.gitUnavailable(cwd, inside.stderr.trim() || `git rev-parse exit ${inside.exitCode}`);
     }
 
-    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch'], cwd);
+    const porc = await this.runCommand('git', ['status', '--porcelain=v1', '--branch', '-z'], cwd);
     if (porc.exitCode !== 0) {
       throw this.gitUnavailable(cwd, porc.stderr.trim() || `git status exit ${porc.exitCode}`);
     }
@@ -54,8 +42,8 @@ export class GitService implements IGitService {
     const result = parsePorcelain(porc.stdout, pathFilter);
 
     const dirty = porc.stdout
-      .split('\n')
-      .some((line) => line.length > 0 && !line.startsWith('## '));
+      .split('\0')
+      .some((record) => record.length > 0 && !record.startsWith('## '));
     if (dirty) {
       const head = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
       if (head.exitCode === 0) {

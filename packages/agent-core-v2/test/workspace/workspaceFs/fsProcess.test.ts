@@ -1,3 +1,4 @@
+import { listenerCount, type EventEmitter } from 'node:events';
 import { Readable, Writable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
@@ -75,5 +76,11 @@ describe('runCommand', () => {
     controller.abort();
     await promise;
     expect(killed).toBe(true);
+  });
+
+  it('removes the abort listener once the command completes', async () => {
+    const controller = new AbortController();
+    await runCommand(fakeRunner(fakeProcess()), ['echo'], { signal: controller.signal });
+    expect(listenerCount(controller.signal as unknown as EventEmitter, 'abort')).toBe(0);
   });
 });

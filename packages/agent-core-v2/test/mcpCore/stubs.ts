@@ -5,10 +5,14 @@ import type { AddressInfo } from 'node:net';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
 import { z } from 'zod';
 
+import type { ToolDescription as KosongTool } from '#human/llm/message';
 import type { McpOAuthStore } from '#/mcpCore/oauth/store';
+import type {
+  McpOAuthScheduledTask,
+  McpOAuthScheduler,
+} from '#/mcpCore/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/mcpCore/types';
 import type {
   ExecutableTool,
@@ -20,7 +24,8 @@ import type {
 export const fixturesDir = new URL('./fixtures/', import.meta.url).pathname;
 export const stdioFixture = new URL('./fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
 export const cwdStdioFixture = new URL('./fixtures/cwd-stdio-server.mjs', import.meta.url).pathname;
-export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url).pathname;
+export const slowStdioFixture = new URL('./fixtures/slow-stdio-server.mjs', import.meta.url)
+  .pathname;
 export const slowToolStdioFixture = new URL(
   './fixtures/slow-tool-stdio-server.mjs',
   import.meta.url,
@@ -50,7 +55,46 @@ export function createMemoryMcpOAuthStore(): McpOAuthStore {
     async remove(key: string): Promise<void> {
       data.delete(key);
     },
+    async list(prefix?: string): Promise<readonly string[]> {
+      const keys = [...data.keys()];
+      return prefix === undefined ? keys : keys.filter((key) => key.startsWith(prefix));
+    },
   };
+}
+
+export class ManualMcpOAuthScheduler implements McpOAuthScheduler {
+  private current: number;
+  private sequence = 0;
+  private readonly tasks = new Map<
+    number,
+    { readonly due: number; readonly task: () => void | Promise<void> }
+  >();
+
+  constructor(now = Date.now()) {
+    this.current = now;
+  }
+
+  now(): number {
+    return this.current;
+  }
+
+  schedule(delayMs: number, task: () => void | Promise<void>): McpOAuthScheduledTask {
+    const id = this.sequence++;
+    this.tasks.set(id, { due: this.current + delayMs, task });
+    return { cancel: () => this.tasks.delete(id) };
+  }
+
+  async advanceBy(deltaMs: number): Promise<void> {
+    this.current += deltaMs;
+    while (true) {
+      const next = [...this.tasks]
+        .filter(([, task]) => task.due <= this.current)
+        .toSorted((left, right) => left[1].due - right[1].due || left[0] - right[0])[0];
+      if (next === undefined) return;
+      this.tasks.delete(next[0]);
+      await next[1].task();
+    }
+  }
 }
 
 export function fakeMcpClient(
@@ -145,6 +189,74 @@ export async function startInProcessHttpMcpServer(opts?: {
   };
 }
 
+export async function startAnonymousDiscoveryHttpMcpServer(opts?: {
+  tokenEndpoint?: 'invalid_grant';
+}): Promise<{
+  url: string;
+  origin: string;
+  close: () => Promise<void>;
+}> {
+  const mcpServer = new McpServer({ name: 'mock-http-anon-discovery', version: '0.0.1' });
+  mcpServer.registerTool(
+    'echo',
+    { description: 'Echoes text', inputSchema: { text: z.string() } },
+    ({ text }) => ({ content: [{ type: 'text', text }] }),
+  );
+
+  const transport = new StreamableHTTPServerTransport({
+    sessionIdGenerator: () => randomUUID(),
+  });
+  await mcpServer.connect(transport);
+
+  const httpServer: Server = createServer((req, res) => {
+    if (opts?.tokenEndpoint === 'invalid_grant' && req.method === 'POST' && req.url === '/token') {
+      res.writeHead(400, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'invalid_grant' }));
+      return;
+    }
+    if (req.method !== 'POST') {
+      void transport.handleRequest(req, res);
+      return;
+    }
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      let body: unknown;
+      try {
+        body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch {
+        body = undefined;
+      }
+      const messages = Array.isArray(body) ? body : [body];
+      const isToolCall = messages.some(
+        (message) =>
+          typeof message === 'object' &&
+          message !== null &&
+          (message as { method?: unknown }).method === 'tools/call',
+      );
+      if (!isToolCall) {
+        void transport.handleRequest(req, res, body);
+        return;
+      }
+      res.writeHead(401, {
+        'content-type': 'application/json',
+        'www-authenticate':
+          'Bearer realm="mcp", resource_metadata="http://x/.well-known/oauth-protected-resource"',
+      });
+      res.end(JSON.stringify({ error: 'unauthorized' }));
+    });
+  });
+
+  await listen(httpServer);
+  const port = (httpServer.address() as AddressInfo).port;
+
+  return {
+    url: `http://127.0.0.1:${port}/mcp`,
+    origin: `http://127.0.0.1:${port}`,
+    close: () => closeServer(httpServer),
+  };
+}
+
 export async function startInProcessSseMcpServer(opts?: {
   authToken?: string;
 }): Promise<{ url: string; close: () => Promise<void> }> {
@@ -217,6 +329,8 @@ export function closeServer(server: Server): Promise<void> {
   });
 }
 
-function isPromiseLike(value: ToolExecution | Promise<ToolExecution>): value is Promise<ToolExecution> {
+function isPromiseLike(
+  value: ToolExecution | Promise<ToolExecution>,
+): value is Promise<ToolExecution> {
   return typeof (value as Promise<ToolExecution>).then === 'function';
 }

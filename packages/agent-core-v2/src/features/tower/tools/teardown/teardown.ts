@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `ITowerTeardownTool` contract (the `TowerTeardown` tool).
- *
- * Public contract of the tower session ender: removes mission worktrees
- * (dirty ones are kept unless force), exits tower mode, and reports what
- * happened. The comms directory stays on disk as the audit trail. Exports
- * the model-facing `TowerTeardownToolInputSchema` /
- * `TowerTeardownToolInput` and the `ITowerTeardownTool` DI decorator. Bound
- * at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -19,7 +8,21 @@ export const TowerTeardownToolInputSchema = z
     force: z
       .boolean()
       .optional()
-      .describe('Remove worktrees even when they contain uncommitted changes'),
+      .describe(
+        'Remove worktrees even when they contain uncommitted changes — a worktree whose roster agent is still running is kept regardless',
+      ),
+    exclude: z
+      .array(z.string())
+      .optional()
+      .describe(
+        'Worktree names to keep — they are skipped and reported, whatever their state',
+      ),
+    dry_run: z
+      .boolean()
+      .optional()
+      .describe(
+        'Print the would-remove / would-keep list with reasons without changing anything on disk or in state',
+      ),
   })
   .strict();
 

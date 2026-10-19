@@ -19,6 +19,7 @@ import {
   promptLaunchResultSchema,
   promptPayloadSchema,
   promptWithSkillsPayloadSchema,
+  promptWithSkillsResultSchema,
   runShellCommandPayloadSchema,
   runtimeBindingSchema,
   setModelResultSchema,
@@ -42,7 +43,7 @@ export const agentSkillContract = {
   activate: { input: z.tuple([activateSkillPayloadSchema]), output: promptLaunchResultSchema },
   promptWithSkills: {
     input: z.tuple([promptWithSkillsPayloadSchema]),
-    output: maybe(promptLaunchResultSchema),
+    output: promptWithSkillsResultSchema,
   },
 } satisfies ServiceContract;
 

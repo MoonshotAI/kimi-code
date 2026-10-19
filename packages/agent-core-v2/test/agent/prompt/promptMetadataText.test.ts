@@ -1,16 +1,3 @@
-/**
- * promptMetadataText — the session title / lastPrompt text derived from
- * prompt content parts.
- *
- * Tests pin:
- *   - media parts render as `[image]` / `[video]` / `[audio]` placeholders
- *   - an inline image-compression caption (harness metadata placed next to
- *     the image by prompt ingestion) never leaks into titles/lastPrompt,
- *     whether it is a standalone text part or merged into the user's text
- *   - prompt metadata updates retain the latest sanitized prompt and derive
- *     the easy title
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
@@ -33,6 +20,18 @@ const CAPTION = buildImageCompressionCaption({
 });
 
 describe('promptMetadataTextFromContentParts', () => {
+  it('uses explicit display text without exposing serialized evidence and keeps redaction', () => {
+    expect(promptMetadataTextFromContentParts([{ type: 'text', text: '<browser_capture>internal evidence</browser_capture>' }], [{ display_text: 'Save button · Rename it\npassword=example-secret' }])).toBe('Save button · Rename it password=[redacted]');
+  });
+
+  it('joins complete display records in order and does not drop an input with missing metadata', () => {
+    const parts = [{ type: 'text' as const, text: 'complete fallback' }];
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'one' }, { display_text: 'two' }])).toBe('one two');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'one' }, {}])).toBe('complete fallback');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 3 }])).toBe('complete fallback');
+    expect(promptMetadataTextFromContentParts(parts, [{ display_text: 'x'.repeat(5_000) }])?.length).toBeLessThanOrEqual(4_000);
+  });
+
   it('renders text and media placeholders', () => {
     const text = promptMetadataTextFromContentParts([
       { type: 'text', text: 'look at this' },
@@ -57,6 +56,25 @@ describe('promptMetadataTextFromContentParts', () => {
     expect(text).toBe('能展示但是没有快捷键提示 [image]');
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
+  });
+
+  it('keeps an upload <image path> tag out of the metadata text', () => {
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: 'what is this?' },
+      { type: 'text', text: '<image path="/Users/alice/cache/f_123.png"></image>' },
+      { type: 'image_url', imageUrl: { url: 'kimi-file://f_123?path=%2FUsers%2Falice%2Fcache%2Ff_123.png' } },
+    ]);
+    expect(text).toBe('what is this? [image]');
+    expect(text).not.toContain('/Users/alice');
+  });
+
+  it('keeps a bare <image path> tag out of the metadata text', () => {
+    const text = promptMetadataTextFromContentParts([
+      { type: 'text', text: '<image path="/cache/f_123.png">' },
+      { type: 'text', text: 'describe it' },
+    ]);
+    expect(text).toBe('describe it');
+    expect(text).not.toContain('/cache');
   });
 });
 

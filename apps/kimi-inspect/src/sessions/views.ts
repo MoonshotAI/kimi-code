@@ -1,7 +1,7 @@
 /**
- * Preset table views for the session panel. Each view is a named combination
+ * Preset tree views for the session panel. Each view is a named combination
  * of the `/api/v2/sessions` query conditions (status filter / archived mode /
- * git opt-in) plus a client-side presentation tweak (workspace grouping).
+ * git opt-in) applied on top of the endpoint's workspace-grouped projection.
  * Views are fixed in code — there is no user-defined view editor.
  */
 
@@ -14,10 +14,8 @@ export interface SessionView {
   readonly statuses?: readonly V2ActivityStatus[];
   /** Maps to `meta.archived`; default server-side is 'false'. */
   readonly archived?: 'true' | 'false' | 'all';
-  /** Adds `include=git` (branch / pull_request columns). */
+  /** Adds `include=git` (branch / pull_request details on session rows). */
   readonly includeGit?: boolean;
-  /** Group the loaded rows under per-workspace headers client-side. */
-  readonly groupByWorkspace?: boolean;
 }
 
 export const SESSION_VIEWS: readonly SessionView[] = [
@@ -31,7 +29,6 @@ export const SESSION_VIEWS: readonly SessionView[] = [
     statuses: ['running', 'approval', 'question', 'failed'],
   },
   { id: 'archived', label: 'Archived', archived: 'true' },
-  { id: 'workspace', label: 'By workspace', groupByWorkspace: true },
   { id: 'git', label: 'Git', includeGit: true },
 ];
 

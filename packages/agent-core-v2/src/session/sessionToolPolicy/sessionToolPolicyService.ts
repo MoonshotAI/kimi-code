@@ -1,18 +1,8 @@
-/**
- * `sessionToolPolicy` domain — persisted session tool-policy service.
- *
- * Stores the client-managed denylist as one atomic document below the session
- * scope and serializes replacements. A successful replacement awaits all
- * registered Agent prompt refreshes before returning. The plain-data state
- * (`state`) is registered into `sessionState` (`ISessionStateService`) and
- * read/written through it. Bound at Session scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { AsyncEmitter, type Event } from '#/_base/event';
-import { defineState } from '#/_base/state/stateRegistry';
+import { defineState } from '#/state/state';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -32,7 +22,6 @@ export const sessionToolPolicyStateKey = defineState<SessionToolPolicyState>('se
 
 const STATE_KEY = 'state.json';
 
-// NOTE: stays Disposable — its own 'state' collides with the Fiber
 export class SessionToolPolicyService extends Disposable implements ISessionToolPolicy {
   declare readonly _serviceBrand: undefined;
   readonly ready: Promise<void>;
@@ -50,7 +39,7 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
   ) {
     super();
-    this.states.register(sessionToolPolicyStateKey);
+    this.states.contributeState(sessionToolPolicyStateKey);
     this.scope = sessionContext.scope('tool-policy');
     this.onDidChange = this.changeEmitter.event;
     this.ready = this.load();

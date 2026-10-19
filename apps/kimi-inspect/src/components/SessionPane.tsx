@@ -1,10 +1,10 @@
 /**
- * Session pane — the column right next to the session-list sidebar in the
- * chat view. Hosts everything session-scoped: the pending-interactions card
+ * Session pane — everything session-scoped: the pending-interactions card
  * and the session Service panels under the `Services` tab, plus a `State`
  * tab reading the session's registered plain-data state through
  * `ISessionStateService.snapshot()` (every key a Session Service registered
- * into the session-state container, JSON-safe). The Service panels are
+ * into the session-state container, JSON-safe). Rendered as the `Session`
+ * tab of the chat view's right dock (`RightPanel`). The Service panels are
  * fetch-on-demand (no Service-event push channel exists); the State tab
  * instead auto-loads on mount and polls once a second, so it stays live
  * without a Refresh button.
@@ -48,7 +48,7 @@ export function SessionPane({ sessionId, ready }: { sessionId: string | null; re
   const blocked = sessionId === null || !ready;
 
   return (
-    <div className="flex h-full w-[420px] shrink-0 flex-col border-l border-neutral-800 bg-neutral-900/30">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       <div className="flex border-b border-neutral-800 text-[11px]">
         {(['services', 'state'] as const).map((t) => (
           <button

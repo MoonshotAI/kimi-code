@@ -3,7 +3,7 @@
  * the per-domain contracts in `agent/services.ts` and pinned against the
  * engine types by `test/contract-parity.ts`. `PromptPayload.input` mirrors the
  * `PromptPart` subset of `ContentPart` (text / image_url / video_url) from
- * `agent-core-v2/kosong/contract/message.ts`. Task wire shapes mirror the
+ * `agent-core-v2/llm-adapter/contract/message.ts`. Task wire shapes mirror the
  * `TaskInfo` union in `protocol/src/events.ts`.
  */
 
@@ -39,6 +39,9 @@ export const emptyPayloadSchema = z.object({});
 
 export const promptPayloadSchema = z.object({
   input: z.array(promptPartSchema),
+  // Mirrors `PromptPayload.promptId` in the engine (client-chosen prompt
+  // record id, echoed on the consuming turn's `turn.started`).
+  promptId: z.string().min(1).optional(),
 });
 
 /** Same shape as `PromptSkillActivation` in the engine. */
@@ -50,6 +53,15 @@ export const promptSkillActivationSchema = z.object({
 /** Same shape as `PromptWithSkillsInput` in the engine. */
 export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
+  steerIfActive: z.boolean().optional(),
+});
+
+/** Same shape as `PromptWithSkillsResult` in the engine. */
+export const promptWithSkillsResultSchema = z.object({
+  turn_id: z.number().optional(),
+  prompt_id: z.string(),
+  created_at: z.string(),
+  state: z.enum(['running', 'queued', 'blocked']),
 });
 
 /** Same shape as `SteerPayload` in the engine. */

@@ -1,16 +1,18 @@
 import { join } from 'node:path';
 
-import { kimiCodeBaseUrl } from '@moonshot-ai/kimi-code-oauth';
 import { z } from 'zod';
 
 import { getCacheDir } from '#/utils/paths';
 import { readJsonFile, writeJsonFile } from '#/utils/persistence';
+import { currentKimiProfile, currentKimiRegion } from '#/utils/region';
 
 /**
- * Generic client for the public client-configs endpoint:
- * `POST {kimiCodeBaseUrl}/client_configs {"name": "<config name>"}` returns
+ * Generic client for the public named-config endpoints:
+ * `POST {baseUrl}{path} {"name": "<config name>"}` returns
  * `{ name, config: <payload> }`, where the payload shape is config-specific
- * and validated by the caller-supplied schema.
+ * and validated by the caller-supplied schema. The path defaults to the
+ * client-configs endpoint (`/client_configs`); `/resource_configs` speaks the
+ * same protocol and is selectable per call.
  *
  * Each named config is cached for a day, in two layers: an in-process map
  * (the only layer the synchronous peek can see) and a JSON file under the
@@ -20,12 +22,29 @@ import { readJsonFile, writeJsonFile } from '#/utils/persistence';
  * degrade quietly.
  */
 const CLIENT_CONFIGS_PATH = '/client_configs';
+export const RESOURCE_CONFIGS_PATH = '/resource_configs';
 
 /** Cache validity per config name: 1 day. */
 const CONFIG_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 5000;
 
+/** The endpoint's API base: the env override keeps winning (custom/internal
+    envs); otherwise the active region profile, so a global login's token is
+    not sent to the mainland-China deployment. */
+function clientConfigsBaseUrl(): string {
+  return (process.env['KIMI_CODE_BASE_URL'] ?? currentKimiProfile().baseUrl).replace(/\/+$/, '');
+}
+
+/** Cache entries are partitioned by region and path so a login switch never
+    serves the other deployment's cached config, and same-named configs on
+    different endpoints never collide. */
+function cacheKeyFor(name: string, path?: string): string {
+  return `${currentKimiRegion()}:${path ?? CLIENT_CONFIGS_PATH}:${name}`;
+}
+
 export interface ClientConfigFetchOptions {
+  /** Endpoint path; defaults to `/client_configs`. */
+  readonly path?: string;
   /** Managed OAuth token; sent as Bearer when present. The endpoint is
    *  public, so anonymous fetches work too. */
   readonly accessToken?: string;
@@ -49,7 +68,9 @@ const cacheFileEnvelopeSchema = z.object({
 function cacheFileFor(name: string, options: ClientConfigFetchOptions): string | undefined {
   if (options.cacheFile === null) return undefined;
   if (options.cacheFile !== undefined) return options.cacheFile;
-  return join(getCacheDir(), 'client-configs', `${name.replaceAll(/[^a-zA-Z0-9_-]/g, '_')}.json`);
+  // encodeURIComponent keeps the mapping collision-free: a lossy sanitize
+  // would fold distinct keys (e.g. '/a/b' vs '/a:b') onto one file.
+  return join(getCacheDir(), 'client-configs', `${encodeURIComponent(cacheKeyFor(name, options.path))}.json`);
 }
 
 /** Fresh disk entry, or undefined when missing/stale/invalid. */
@@ -96,7 +117,8 @@ export async function getClientConfig<S extends z.ZodType>(
   options: ClientConfigFetchOptions = {},
 ): Promise<z.infer<S> | undefined> {
   const now = options.now ?? Date.now();
-  const hit = cache.get(name);
+  const key = cacheKeyFor(name, options.path);
+  const hit = cache.get(key);
   if (hit !== undefined && now - hit.fetchedAt < CONFIG_CACHE_TTL_MS) {
     return hit.data as z.infer<S>;
   }
@@ -106,13 +128,13 @@ export async function getClientConfig<S extends z.ZodType>(
     if (diskHit !== undefined) {
       // Warm the in-process layer with the original fetch time, so the entry
       // still expires a day after it was actually fetched.
-      cache.set(name, diskHit);
+      cache.set(key, diskHit);
       return diskHit.data;
     }
   }
   const data = await fetchClientConfig(name, schema, options);
   if (data === undefined) return undefined;
-  cache.set(name, { fetchedAt: now, data });
+  cache.set(key, { fetchedAt: now, data });
   if (file !== undefined) await writeDiskCache(file, data, now);
   return data;
 }
@@ -135,8 +157,9 @@ export function peekClientConfig<S extends z.ZodType>(
   name: string,
   schema: S,
   now: number = Date.now(),
+  path?: string,
 ): z.infer<S> | undefined {
-  const hit = cache.get(name);
+  const hit = cache.get(cacheKeyFor(name, path));
   if (hit === undefined || now - hit.fetchedAt >= CONFIG_CACHE_TTL_MS) return undefined;
   const parsed = schema.safeParse(hit.data);
   return parsed.success ? (parsed.data as z.infer<S>) : undefined;
@@ -156,7 +179,7 @@ export async function fetchClientConfig<S extends z.ZodType>(
     headers['authorization'] = `Bearer ${options.accessToken}`;
   }
   try {
-    const response = await fetchFn(`${kimiCodeBaseUrl()}${CLIENT_CONFIGS_PATH}`, {
+    const response = await fetchFn(`${clientConfigsBaseUrl()}${options.path ?? CLIENT_CONFIGS_PATH}`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ name }),
@@ -178,10 +201,10 @@ export async function fetchClientConfig<S extends z.ZodType>(
  * Test hook: drop one or all in-process cached configs. Disk files in tests
  * are isolated via the `cacheFile` option.
  */
-export function resetClientConfigCache(name?: string): void {
+export function resetClientConfigCache(name?: string, path?: string): void {
   if (name === undefined) {
     cache.clear();
   } else {
-    cache.delete(name);
+    cache.delete(cacheKeyFor(name, path));
   }
 }

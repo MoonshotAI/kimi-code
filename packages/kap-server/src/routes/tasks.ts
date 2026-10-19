@@ -1,43 +1,3 @@
-/**
- * `/sessions/{session_id}/tasks*` REST routes — server-v2 port.
- *
- * Implements the v1 `/api/v1/sessions/{sid}/tasks` wire contract on top of
- * `agent-core-v2` (REST.md §3.7):
- *
- *   GET  /sessions/{session_id}/tasks                 query: {status?}        data: {items[]}
- *   GET  /sessions/{session_id}/tasks/{task_id}       query: {with_output?,
- *                                                               output_bytes?} data: Task
- *   POST /sessions/{session_id}/tasks/{task_id}:cancel body: empty            data: {cancelled:true}
- *
- * **Thin wrapper over `IAgentTaskService`**: the main agent's
- * `IAgentTaskService` is already exposed at Agent scope (`tasks:*` in the RPC
- * action map). These REST routes borrow it by interface and project its
- * `AgentTaskInfo` (camelCase + ms timestamps + agent-core literal sets)
- * into the protocol's `Task` shape (snake_case + ISO + spec literal
- * sets) — the same field/literal mapping v1 performs in
- * `packages/agent-core/src/services/task/task.ts`.
- *
- * **Resolution**: `core` → `ISessionIndex` (existence, → 40401) →
- * the live handler registry (live session handle) → `IAgentLifecycleService`
- * (the `main` agent) → `IAgentTaskService`. When the session is not live or
- * has no main agent yet (server-v2 gap G10 — the main agent is not created on
- * session creation), there is no task service: `list` returns an empty page
- * and `get`/`cancel` answer `40406`.
- *
- * **Error mapping**:
- *   - unknown session            → `40401` (session.not_found)
- *   - unknown task               → `40406` (task.not_found)
- *   - cancelling a terminal task → `40904` (task.already_finished) with custom
- *     `data:{cancelled:false}` + `details.current_status` for the idempotent
- *     cancellation shape.
- *   - invalid query / `:action`  → `40001` (validation.failed, via defineRoute
- *     or `parseActionSuffix`).
- *
- * **Action suffix**: `:cancel` uses the shared `parseActionSuffix` helper
- * because Fastify cannot disambiguate `/:task_id` from `/:task_id:cancel` on
- * the same Trie prefix.
- */
-
 import {
   IAgentTaskService,
   ISessionIndex,
@@ -48,6 +8,7 @@ import {
 import { ErrorCode } from '../protocol/error-codes';
 import {
   cancelTaskResultSchema,
+  detachTaskResultSchema,
   getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
@@ -62,7 +23,6 @@ import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 
-/** Default cap (bytes) for the opt-in output preview on GET-by-id. */
 const DEFAULT_TASK_OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 interface TasksRouteHost {
@@ -84,8 +44,6 @@ interface TasksRouteHost {
   ): unknown;
 }
 
-// --- Params -----------------------------------------------------------------
-
 const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
@@ -97,10 +55,7 @@ const sessionAndTaskIdParamSchema = z.object({
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-// --- Registration -----------------------------------------------------------
-
 export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
-  // GET /sessions/{session_id}/tasks ------------------------------------
   const listRoute = defineRoute(
     {
       method: 'GET',
@@ -123,8 +78,6 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      // `list(false)` = include terminal (ghost) tasks, matching v1 which
-      // lists everything and filters by wire status in-memory.
       const all = (resolved.tasks?.list(false) ?? []).map((info) =>
         toWireTask(session_id, info),
       );
@@ -136,7 +89,6 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
   );
   app.get(listRoute.path, listRoute.options, listRoute.handler as Parameters<TasksRouteHost['get']>[2]);
 
-  // GET /sessions/{session_id}/tasks/{task_id} --------------------------
   const getRoute = defineRoute(
     {
       method: 'GET',
@@ -176,7 +128,6 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
             output = { preview, bytes: Buffer.byteLength(preview, 'utf-8') };
           }
         } catch {
-          // Output may not be available yet; fall back to task metadata only.
         }
       }
 
@@ -185,16 +136,11 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<TasksRouteHost['get']>[2]);
 
-  // POST /sessions/{session_id}/tasks/{task_id}:cancel ------------------
-  //
-  // Fastify routes the GET `/:task_id` and the POST `/:tail` against the
-  // same Trie prefix. A `/:task_id:cancel`-style path would collide, so we
-  // capture `:tail` and demand the `:cancel` suffix via the shared parser.
-  const cancelRoute = defineRoute(
+  const taskActionRoute = defineRoute(
     {
       method: 'POST',
       path: '/sessions/{session_id}/tasks/{tail}',
-      success: { data: cancelTaskResultSchema },
+      success: { data: z.union([cancelTaskResultSchema, detachTaskResultSchema]) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -204,9 +150,9 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
           detailsSchema: z.object({ current_status: z.string() }),
         },
       },
-      description: 'Cancel a task',
+      description: 'Run a task action',
       tags: ['tasks'],
-      operationId: 'cancelTask',
+      operationId: 'runTaskAction',
     },
     async (req, reply) => {
       const { session_id, tail } = req.params as {
@@ -215,7 +161,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
       };
       const parsed = parseActionSuffix({
         tail,
-        allowedActions: ['cancel'] as const,
+        allowedActions: ['cancel', 'detach'] as const,
         resourceLabel: 'task',
       });
       if (parsed.kind === 'invalid') {
@@ -223,8 +169,6 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
       if (parsed.kind === 'bare') {
-        // POST without `:cancel` is not a defined action; the bare GET form
-        // serves `/.../tasks/{tid}`.
         reply.send(
           errEnvelope(ErrorCode.VALIDATION_FAILED, `unsupported action: ${tail}`, req.id),
         );
@@ -242,34 +186,35 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      // Pre-fetch so we can distinguish 40406 (not found) from 40904 (already
-      // finished) deterministically — `IAgentTaskService.stop` does not
-      // surface this distinction on its own.
       const found = resolved.tasks?.getTask(task_id);
       if (found === undefined) {
         reply.send(taskNotFound(session_id, task_id, req.id));
         return;
       }
-      const wireStatus = toWireTask(session_id, found).status;
-      if (isTerminalStatus(wireStatus)) {
-        reply.send(taskAlreadyFinished(session_id, task_id, wireStatus, req.id));
+
+      if (parsed.action === 'cancel') {
+        const wireStatus = toWireTask(session_id, found).status;
+        if (isTerminalStatus(wireStatus)) {
+          reply.send(taskAlreadyFinished(session_id, task_id, wireStatus, req.id));
+          return;
+        }
+
+        await resolved.tasks?.stopByUser(task_id);
+        requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
+        reply.send(okEnvelope({ cancelled: true as const }, req.id));
         return;
       }
 
-      await resolved.tasks?.stopByUser(task_id);
-      requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
-      reply.send(okEnvelope({ cancelled: true as const }, req.id));
+      const detached = found.status === 'running' && found.detached === false;
+      const info = resolved.tasks?.detach(task_id) ?? found;
+      if (detached) {
+        requestLog(req)?.info({ session_id, task_id }, 'task detached');
+      }
+      reply.send(okEnvelope({ detached, status: mapStatus(info.status) }, req.id));
     },
   );
-  app.post(cancelRoute.path, cancelRoute.options, cancelRoute.handler as Parameters<TasksRouteHost['post']>[2]);
+  app.post(taskActionRoute.path, taskActionRoute.options, taskActionRoute.handler as Parameters<TasksRouteHost['post']>[2]);
 }
-
-// ---------------------------------------------------------------------------
-// Resolution — walk core → session → main agent → `IAgentTaskService`.
-// Returns `{kind:'not_found'}` when the session does not exist (→ 40401). A
-// missing live session / main agent yields `{kind:'resolved', tasks: undefined}`
-// (gap G10), which `list` treats as empty and `get`/`cancel` treat as 40406.
-// ---------------------------------------------------------------------------
 
 type ResolvedTasks =
   | { readonly kind: 'not_found' }
@@ -286,24 +231,6 @@ async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTa
   return { kind: 'resolved', tasks };
 }
 
-// ---------------------------------------------------------------------------
-// Wire mapping — pure projection from `AgentTaskInfo` (agent-core literal
-// sets + ms timestamps) to the protocol `Task` (spec literal sets +
-// ISO timestamps). Mirrors v1's `toProtocolTask` / `mapKind` / `mapStatus` so
-// the REST contract is byte-for-byte compatible.
-//
-//   kind:    process   → bash
-//            agent     → subagent
-//            question  → tool
-//
-//   status:  running   → running
-//            completed → completed
-//            failed    → failed
-//            timed_out → failed       (lossy — stopReason carries the hint)
-//            killed    → cancelled
-//            lost      → failed       (lossy)
-// ---------------------------------------------------------------------------
-
 function mapKind(k: AgentTaskInfo['kind']): TaskKind {
   switch (k) {
     case 'process':
@@ -311,8 +238,6 @@ function mapKind(k: AgentTaskInfo['kind']): TaskKind {
     case 'agent':
       return 'subagent';
     case 'question':
-      // SCHEMAS §7 has no 'question' literal; question tasks are
-      // tool-spawned flows, so 'tool' is the closest spec literal.
       return 'tool';
   }
 }
@@ -326,7 +251,6 @@ function mapStatus(s: AgentTaskInfo['status']): TaskStatus {
     case 'failed':
       return 'failed';
     case 'timed_out':
-      // SCHEMAS §7 has no 'timed_out' literal; collapse to 'failed'.
       return 'failed';
     case 'killed':
       return 'cancelled';
@@ -358,10 +282,9 @@ function toWireTask(
     kind: mapKind(info.kind),
     description: info.description,
     status,
-    // Agent-core has no separate creation stamp; synthesize from startedAt —
-    // running tasks usually start immediately after creation.
     created_at: createdIso,
     started_at: createdIso,
+    run_in_background: info.detached ?? true,
   };
   if (info.endedAt !== null && info.endedAt !== undefined) {
     base.completed_at = new Date(info.endedAt).toISOString();
@@ -381,7 +304,10 @@ function toWireTask(
   if (info.kind === 'agent' && info.subagentType !== undefined) {
     base.subagent_type = info.subagentType;
   }
-  if (info.kind === 'agent' && info.parentToolCallId !== undefined) {
+  if (
+    (info.kind === 'agent' || info.kind === 'process') &&
+    info.parentToolCallId !== undefined
+  ) {
     base.parent_tool_call_id = info.parentToolCallId;
   }
   if (output !== undefined) {
@@ -390,10 +316,6 @@ function toWireTask(
   }
   return base;
 }
-
-// ---------------------------------------------------------------------------
-// Error envelopes
-// ---------------------------------------------------------------------------
 
 function sessionNotFound(sid: string, requestId: string): unknown {
   return errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${sid} does not exist`, requestId);
@@ -407,11 +329,6 @@ function taskNotFound(sid: string, tid: string, requestId: string): unknown {
   );
 }
 
-/**
- * `40904` idempotent cancellation shape — REST.md §3.7 mandates
- * `data:{cancelled:false}` + `details.current_status` (mirrors the 40903 /
- * 40902 precedent).
- */
 function taskAlreadyFinished(
   sid: string,
   tid: string,

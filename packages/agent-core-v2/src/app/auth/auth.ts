@@ -1,28 +1,19 @@
-/**
- * `auth` domain (cross-cutting) — app-scope OAuth + auth summary contracts.
- *
- * Defines the public contracts of authentication: the `AuthStatus` model, the
- * `IOAuthService` used to drive device-code login / logout / flow inspection,
- * to resolve a per-provider `BearerTokenProvider`, and to refresh a managed
- * OAuth provider's server-side model configuration, the `IOAuthToolkit`
- * device-code client that `IOAuthService` delegates the OAuth protocol to, and
- * the `IAuthSummaryService` used to summarize auth state and provide the
- * prompt auth-readiness gate. App-scoped — shared across the application.
- */
-
+import { apiKeyEnvMissingMessage } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 import type {
-  AuthManagedUserInfoResult,
   AuthManagedUsageResult,
+  AuthManagedUserInfoResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,
   KimiOAuthLogoutResult,
   KimiOAuthTokenRef,
+  KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
-import type { OAuthRef } from '#/kosong/provider/provider';
+import { CONFIG_INVALID_ERROR_CODE } from '#/llm-adapter/contract/errors';
+import type { OAuthRef } from '#/llm-adapter/provider/provider';
 
 import { AuthErrors } from './errors';
 import type {
@@ -38,10 +29,14 @@ export interface AuthStatus {
   readonly provider?: string;
 }
 
+export interface OAuthLoginOptions {
+  readonly region?: KimiRegion;
+}
+
 export interface IOAuthService {
   readonly _serviceBrand: undefined;
 
-  startLogin(provider?: string): Promise<OAuthFlowStart>;
+  startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   getFlow(provider?: string): OAuthFlowSnapshot | undefined;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
@@ -51,6 +46,7 @@ export interface IOAuthService {
   getManagedUserInfo(provider?: string): Promise<AuthManagedUserInfoResult>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
+  getRegion(): KimiRegion;
 }
 
 export const IOAuthService: ServiceIdentifier<IOAuthService> =
@@ -107,6 +103,19 @@ export class AuthTokenMissingError extends Error2 {
       AuthErrors.codes.AUTH_TOKEN_MISSING,
       `provider ${providerId} has no credential configured`,
       { details: { provider_id: providerId }, name: 'AuthTokenMissingError' },
+    );
+    this.providerId = providerId;
+  }
+}
+
+export class AuthCredentialEnvMissingError extends Error2 {
+  readonly providerId: string;
+
+  constructor(providerId: string, envName: string) {
+    super(
+      CONFIG_INVALID_ERROR_CODE,
+      apiKeyEnvMissingMessage(providerId, envName),
+      { details: { provider_id: providerId }, name: 'AuthCredentialEnvMissingError' },
     );
     this.providerId = providerId;
   }

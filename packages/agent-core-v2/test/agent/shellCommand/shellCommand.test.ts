@@ -90,7 +90,12 @@ describe('AgentShellCommandService', () => {
 
     await shell.run({ command: 'echo hello', commandId: 'cmd-1' });
     expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
-      { type: 'shell.completed', commandId: 'cmd-1', isError: false, taskId: expect.any(String) },
+      expect.objectContaining({
+        type: 'shell.completed',
+        commandId: 'cmd-1',
+        isError: false,
+        taskId: expect.any(String),
+      }),
     ]);
   });
 
@@ -101,7 +106,12 @@ describe('AgentShellCommandService', () => {
 
     await shell.run({ command: 'false', commandId: 'cmd-2' });
     expect(events.filter((e) => e.type === 'shell.completed')).toEqual([
-      { type: 'shell.completed', commandId: 'cmd-2', isError: true, taskId: expect.any(String) },
+      expect.objectContaining({
+        type: 'shell.completed',
+        commandId: 'cmd-2',
+        isError: true,
+        taskId: expect.any(String),
+      }),
     ]);
   });
 

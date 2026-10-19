@@ -1,18 +1,3 @@
-/**
- * `workspaceDirs` domain — Workspace-scoped additional-directory set
- * contract.
- *
- * Defines `IWorkspaceDirs`, the handler-level owner of the workspace's
- * `{root, additionalDirs[]}` set: at handler materialization it loads the
- * project-local `.kimi-code/local.toml` set; afterwards `addDir` mutations
- * (persisted appends or session-caller in-memory unions) and fs watch on
- * `local.toml` (cross-process edits) refresh the set, fanning the change
- * out to every session of the handler through the `ISessionWorkspaceInfo`
- * seed (`sessionInfo()`). The set is shared by all sessions of the
- * workspace and persisted entries survive restarts; non-persisted entries
- * live in handler memory only. Bound at Workspace scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 

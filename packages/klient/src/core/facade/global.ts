@@ -21,21 +21,35 @@ import type {
   ConfigInspectValue,
   ConfigTarget,
 } from '@moonshot-ai/agent-core-v2/app/config/config';
-import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/kosong/provider/provider';
+import type { ProviderConfig } from '@moonshot-ai/agent-core-v2/llm-adapter/provider/provider';
 import type {
   AuthStatus,
   IOAuthService,
+  OAuthLoginOptions,
 } from '@moonshot-ai/agent-core-v2/app/auth/auth';
 import type { ExperimentalFeatureState } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type {
   FsBrowseResponse,
   FsHomeResponse,
 } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
-import type { ModelRecord } from '@moonshot-ai/agent-core-v2/kosong/model/model';
-import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
+import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
+import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
+import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 
 import type { McpServerConfig } from '../../contract/mcp.js';
+import type { CallOptions } from '../channel.js';
+import type {
+  GlobalMcpServerConfig,
+  McpManagedServer,
+  McpServerAuthBeginResult,
+  McpServerAuthStatus,
+  McpServerInspection,
+  McpServerLocator,
+  McpServerTestResult,
+  McpServerTestTarget,
+} from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 import type { AnonymousProviderInput, GenerateEvent, GenerateInput, GenerateParams, ProviderInput } from './kosong-types.js';
 import type {
   PluginCommandDef,
@@ -47,7 +61,12 @@ import type {
 import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
 /** Low-level caller the klient factory builds: routes + validates one service call. */
-export type Caller = (service: string, method: string, args: unknown[]) => Promise<unknown>;
+export type Caller = (
+  service: string,
+  method: string,
+  args: unknown[],
+  options?: CallOptions,
+) => Promise<unknown>;
 
 /** Scoped variant — the factory's real signature; global methods bind the core scope. */
 export type ScopedCaller = (
@@ -55,6 +74,7 @@ export type ScopedCaller = (
   service: string,
   method: string,
   args: unknown[],
+  options?: CallOptions,
 ) => Promise<unknown>;
 
 /** Streaming variant of `ScopedCaller` — returns a validated `AsyncIterable`. */
@@ -66,12 +86,12 @@ export type ScopedStreamCaller = (
 ) => AsyncIterable<unknown>;
 
 // ---------------------------------------------------------------------------
-// Wire-type aliases for shapes the engine sources from `@moonshot-ai/protocol`
-// (not a direct klient dependency) — derived through the service interfaces.
+// Wire-type aliases for engine-sourced shapes (not direct klient
+// dependencies) — derived through the service interfaces.
 // ---------------------------------------------------------------------------
 
 export type RefreshProviderModelsResponse = Awaited<
-  ReturnType<IOAuthService['refreshOAuthProviderModels']>
+  ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 export type OAuthFlowStart = Awaited<ReturnType<IOAuthService['startLogin']>>;
 export type OAuthFlowSnapshot = NonNullable<Awaited<ReturnType<IOAuthService['getFlow']>>>;
@@ -91,6 +111,13 @@ export type RefreshProviderModelsOptions = NonNullable<
 
 /** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
 export type ConfigTargetLiteral = `${ConfigTarget}`;
+
+export type ImportCustomRegistryOptions = Parameters<
+  IModelsDevImportService['importCustomRegistry']
+>[0];
+export type ImportCustomRegistryResult = Awaited<
+  ReturnType<IModelsDevImportService['importCustomRegistry']>
+>;
 
 // ---------------------------------------------------------------------------
 // Facade interfaces
@@ -155,6 +182,7 @@ export interface GlobalKosongFacade {
   addProvider(config: AnonymousProviderInput): Promise<void>;
   removeProvider(id: string): Promise<void>;
   refreshProviders(opts?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
+  importCustomRegistry(options: ImportCustomRegistryOptions): Promise<ImportCustomRegistryResult>;
 
   // -- Model ------------------------------------------------------------
   listModels(): Promise<readonly ModelCatalogItem[]>;
@@ -178,7 +206,7 @@ export interface GlobalAuthFacade {
    * model usage does not depend on the OAuth-only {@link summarize} view.
    */
   ensureReady(modelOverride?: string): Promise<void>;
-  startLogin(provider?: string): Promise<OAuthFlowStart>;
+  startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   flow(provider?: string): Promise<OAuthFlowSnapshot | undefined>;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
@@ -221,6 +249,74 @@ export interface GlobalHostFsFacade {
   home(): Promise<FsHomeResponse>;
 }
 
+/**
+ * The unified MCP management plane (engine `IMcpManagementService`, App
+ * scope): CRUD on the user-level `mcp.json`, a connection test probe, the
+ * locator-addressed inspection catalog, the auth-status surface, and the
+ * locator-addressed OAuth flow operations.
+ */
+export interface GlobalMcpFacade {
+  list(input?: { cwd?: string }): Promise<readonly McpManagedServer[]>;
+  get(input: { name: string; cwd?: string }): Promise<McpManagedServer>;
+  /** Add a user-level entry; a same-named read-only entry rejects. Returns the refreshed list. */
+  add(input: {
+    server: GlobalMcpServerConfig;
+    cwd?: string;
+  }): Promise<readonly McpManagedServer[]>;
+  /** Replace a user-level entry; read-only entries reject. Returns the refreshed list. */
+  update(input: {
+    server: GlobalMcpServerConfig;
+    cwd?: string;
+  }): Promise<readonly McpManagedServer[]>;
+  /** Remove a user-level entry; read-only entries reject. Returns the refreshed list. */
+  remove(input: { name: string; cwd?: string }): Promise<readonly McpManagedServer[]>;
+  /** Probe a real connection: a registry `name`, or an inline `server` config as-is. */
+  test(input: McpServerTestTarget): Promise<McpServerTestResult>;
+  /** The locator-addressed catalog plus a batched real-connection probe of OAuth candidates. */
+  inspect(input?: {
+    targets?: readonly McpServerLocator[];
+    cwd?: string;
+  }): Promise<readonly McpServerInspection[]>;
+  /** Per-server OAuth state; omitted `verify` detects implicit OAuth, `false` stays offline. */
+  authStatuses(input?: {
+    cwd?: string;
+    verify?: boolean;
+  }): Promise<readonly McpServerAuthStatus[]>;
+  /** Resolve a legacy name-only auth target to its unambiguous locator. */
+  resolveByName(input: { name: string; cwd?: string }): Promise<McpServerLocator>;
+  beginAuth(input: {
+    locator: McpServerLocator;
+    cwd?: string;
+  }): Promise<McpServerAuthBeginResult>;
+  completeAuth(input: { flowId: string; timeoutMs?: number }): Promise<void>;
+  cancelAuth(input: { flowId: string }): Promise<void>;
+  resetAuth(input: { locator: McpServerLocator; cwd?: string }): Promise<void>;
+}
+
+/** One downloaded upload: its metadata plus the buffered bytes. */
+export interface FileDownload {
+  readonly meta: FileMeta;
+  readonly data: Uint8Array;
+}
+
+export interface GlobalFilesFacade {
+  /**
+   * Upload buffered bytes to the daemon's file store. Bytes cross the wire
+   * base64-encoded (JSON cannot carry them), so very large uploads pay one
+   * encode here and one decode in the dispatcher.
+   */
+  save(input: {
+    data: Uint8Array;
+    filename: string;
+    name?: string;
+    mimeType?: string;
+    expiresInSec?: number;
+  }): Promise<FileMeta>;
+  /** Download one upload back into memory. */
+  get(fileId: string): Promise<FileDownload>;
+  delete(fileId: string): Promise<void>;
+}
+
 /** Aggregated host/environment snapshot (`bootstrapService` properties). */
 export interface KlientEnvInfo {
   readonly platform: string;
@@ -247,6 +343,8 @@ export interface GlobalFacade {
   readonly plugins: GlobalPluginsFacade;
   readonly capabilities: GlobalCapabilitiesFacade;
   readonly hostFs: GlobalHostFsFacade;
+  readonly files: GlobalFilesFacade;
+  readonly mcp: GlobalMcpFacade;
   env(): Promise<KlientEnvInfo>;
 }
 
@@ -270,8 +368,18 @@ const ENV_SCALAR_PROPERTIES = [
   'logsDir',
 ] as const;
 
+// The IPC transport enforces a per-call deadline (default 30s) that would
+// truncate the completeAuth long poll: the engine waits up to
+// `DEFAULT_AUTH_TIMEOUT_MS` for the browser callback when the caller omits
+// `timeoutMs` (agent-core-v2 `mcpManagementService.ts`), and the
+// authorization-code exchange afterwards is itself bounded at 30s per grant
+// request (agent-core-v2 `mcpCore/oauth/service.ts`). The per-call deadline
+// below covers both, so IPC behaves like the timeout-free memory transport.
+const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
+const AUTH_COMPLETION_MARGIN_MS = 30_000;
+
 export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStreamCaller): GlobalFacade {
-  const call: Caller = (service, method, args) => scoped({}, service, method, args);
+  const call: Caller = (service, method, args, options) => scoped({}, service, method, args, options);
   const streamCall = (service: string, method: string, args: unknown[]) =>
     scopedStream({}, service, method, args);
   // The bootstrap snapshot is frozen at process start, so the aggregated
@@ -287,7 +395,7 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       const scalars = Object.fromEntries(
         ENV_SCALAR_PROPERTIES.map((prop, index) => [prop, values[index]]),
       );
-      const identity = values[values.length - 1] as { version: string };
+      const identity = values.at(-1) as { version: string };
       return { ...scalars, clientVersion: identity.version } as unknown as KlientEnvInfo;
     });
     return envPromise;
@@ -349,6 +457,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
     },
 
     kosong: {
+      importCustomRegistry: (options) =>
+        call('modelsDevImport', 'importCustomRegistry', [options]) as Promise<ImportCustomRegistryResult>,
       listProviders: () =>
         call('modelResolver', 'listProviders', []) as Promise<
           readonly ProviderCatalogItem[]
@@ -415,8 +525,8 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       summarize: () => call('authSummaryService', 'summarize', []) as Promise<readonly AuthStatus[]>,
       ensureReady: (modelOverride) =>
         call('authSummaryService', 'ensureReady', [modelOverride]) as Promise<void>,
-      startLogin: (provider) =>
-        call('oauthService', 'startLogin', [provider]) as Promise<OAuthFlowStart>,
+      startLogin: (provider, options) =>
+        call('oauthService', 'startLogin', [provider, options]) as Promise<OAuthFlowStart>,
       flow: (provider) =>
         call('oauthService', 'getFlow', [provider]) as Promise<OAuthFlowSnapshot | undefined>,
       cancelLogin: (provider) =>
@@ -463,6 +573,92 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       browse: (absPath) =>
         call('hostFolderBrowser', 'browse', [absPath]) as Promise<FsBrowseResponse>,
       home: () => call('hostFolderBrowser', 'home', []) as Promise<FsHomeResponse>,
+    },
+
+    files: {
+      save: ({ data, filename, name, mimeType, expiresInSec }) =>
+        call('fileService', 'save', [
+          Buffer.from(data).toString('base64'),
+          filename,
+          { name, mimeType, expiresInSec },
+        ]) as Promise<FileMeta>,
+      get: async (fileId) => {
+        const wire = (await call('fileService', 'get', [fileId])) as {
+          meta: FileMeta;
+          data: string;
+        };
+        return { meta: wire.meta, data: Buffer.from(wire.data, 'base64') };
+      },
+      delete: (fileId) => call('fileService', 'delete', [fileId]) as Promise<void>,
+    },
+
+    mcp: {
+      list: (input) =>
+        call('mcpManagementService', 'listServers', [
+          input === undefined ? undefined : { cwd: input.cwd },
+        ]) as Promise<readonly McpManagedServer[]>,
+      get: ({ name, cwd }) =>
+        call('mcpManagementService', 'getServer', [
+          name,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<McpManagedServer>,
+      add: ({ server, cwd }) =>
+        call('mcpManagementService', 'addServer', [
+          server,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<
+          readonly McpManagedServer[]
+        >,
+      update: ({ server, cwd }) =>
+        call('mcpManagementService', 'updateServer', [
+          server,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<
+          readonly McpManagedServer[]
+        >,
+      remove: ({ name, cwd }) =>
+        call('mcpManagementService', 'removeServer', [
+          name,
+          cwd === undefined ? undefined : { cwd },
+        ]) as Promise<
+          readonly McpManagedServer[]
+        >,
+      test: (target) =>
+        call('mcpManagementService', 'testServer', [target]) as Promise<McpServerTestResult>,
+      inspect: (input) =>
+        call('mcpManagementService', 'inspectServers', [
+          input?.targets,
+          input === undefined ? undefined : { cwd: input.cwd },
+        ]) as Promise<
+          readonly McpServerInspection[]
+        >,
+      authStatuses: (input) =>
+        call('mcpManagementService', 'listAuthStatuses', [
+          input === undefined ? undefined : { cwd: input.cwd, verify: input.verify },
+        ]) as Promise<readonly McpServerAuthStatus[]>,
+      resolveByName: ({ name, cwd }) =>
+        call('mcpManagementService', 'resolveServerByName', [name, { cwd }]) as Promise<
+          McpServerLocator
+        >,
+      beginAuth: ({ locator, cwd }) =>
+        call('mcpManagementService', 'beginServerAuth', [
+          locator,
+          { cwd },
+        ]) as Promise<McpServerAuthBeginResult>,
+      completeAuth: ({ flowId, timeoutMs }) =>
+        call('mcpManagementService', 'completeServerAuth', [{ flowId, timeoutMs }], {
+          // Clamp to Node's 32-bit timer ceiling: `timeoutMs` may legally be
+          // the contract max (2**31 - 1), and adding the margin would
+          // overflow setTimeout into a ~1ms deadline.
+          timeoutMs: Math.min(
+            (timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS) + AUTH_COMPLETION_MARGIN_MS,
+            2 ** 31 - 1,
+          ),
+        }) as Promise<void>,
+      cancelAuth: ({ flowId }) =>
+        call('mcpManagementService', 'cancelServerAuth', [{ flowId }]) as Promise<void>,
+      resetAuth: ({ locator, cwd }) =>
+        call('mcpManagementService', 'resetServerAuth', [locator, { cwd }]) as Promise<void>,
     },
 
     env,

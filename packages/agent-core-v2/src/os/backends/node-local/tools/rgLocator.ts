@@ -1,13 +1,3 @@
-/**
- * `fileTools` domain — shared ripgrep (`rg`) binary locator.
- *
- * Resolves the `rg` command, preferring a file found on
- * PATH, then the vendor hook, then the app cache, and finally bootstrapping a
- * pinned ripgrep archive into `<KIMI_CODE_HOME|~/.kimi-code>/bin` when the
- * caller permits it. File lookup intentionally avoids spawning `rg --version`
- * so tool resolution has the same observable shape as v1.
- */
-
 import { createHash } from 'node:crypto';
 import { createWriteStream, existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rename, rm, stat } from 'node:fs/promises';
@@ -15,6 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
+import { kimiRegionProfile, resolveKimiRegion } from '@moonshot-ai/kimi-code-oauth';
 import { extract as extractTar } from 'tar';
 import { type Entry, fromBuffer as yauzlFromBuffer } from 'yauzl';
 import { basename, join } from 'pathe';
@@ -23,7 +14,6 @@ import { abortable } from '#/_base/utils/abort';
 import { ErrorCodes, Error2 } from '#/errors';
 
 const RG_VERSION = '15.0.0';
-const RG_BASE_URL = 'https://code.kimi.com/kimi-code/rg';
 const DOWNLOAD_TIMEOUT_MS = 600_000;
 const RG_ARCHIVE_SHA256: Record<string, string> = {
   'ripgrep-15.0.0-aarch64-apple-darwin.tar.gz':
@@ -73,6 +63,10 @@ function getShareDir(): string {
 
 export function getShareBinRgPath(): string {
   return join(getShareDir(), 'bin', rgBinaryName());
+}
+
+function rgBaseUrl(): string {
+  return `${kimiRegionProfile(resolveKimiRegion()).cdnBase}/rg`;
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -200,7 +194,7 @@ async function downloadAndInstallRg(shareDir: string): Promise<string> {
       { details: { archiveName } },
     );
   }
-  const url = `${RG_BASE_URL}/${archiveName}`;
+  const url = `${rgBaseUrl()}/${archiveName}`;
 
   const binDir = join(shareDir, 'bin');
   await mkdir(binDir, { recursive: true });

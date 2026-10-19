@@ -1,52 +1,33 @@
-/**
- * `sessionSwarm` domain — `ISessionSwarmService` implementation.
- *
- * Runs a batch of agents on behalf of a caller agent: builds an
- * `AgentRunBatchLauncher` on top of the `agentLifecycle` primitives
- * (`create({ binding })`, `run`), drives the internal `AgentRunBatch`
- * scheduler, and tracks one `AbortController` per caller so `cancel` can abort
- * every in-flight run. The caller ↔ child association is this domain's own
- * business data: requester-side display facts (`subagent.spawned` wire signals
- * carrying the swarm's tool-call context, `subagent.suspended` when a task is
- * requeued after a provider rate limit) are emitted from this layer; the
- * lifecycle registry itself stays flat. Spawn tasks may carry a concrete
- * `binding` resolved by the caller; without
- * one, spawns inherit the caller agent's model and thinking level. Spawn
- * bindings are resolved through the model catalog before lifecycle allocation.
- * Resumed agents keep the model recorded in their own wire journal — with
- * per-subagent models there is no "child follows the parent's current model"
- * invariant to enforce. Bound at Session scope — contributed into every
- * Session scope by `SwarmFeature` (`features/swarm/swarmFeature`).
- */
-
-import type { TokenUsage } from '#/kosong/contract/usage';
-import { IModelCatalog } from '#/kosong/model/catalog';
+/* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import type { TokenUsage } from '#human/llm/usage';
 import { Error2, ErrorCodes } from '#/errors';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IEventBus } from '#/app/event/eventBus';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { Event2 } from '#/app/event/event2';
+import { agentContextOf } from '#/agent/scopeContext/scopeContext';
+import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitingClose';
 import {
   isSubagentMeta,
+  labelsFromAgentMeta,
   subagentLabels,
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
-import { ISessionSubagentService } from '#/session/subagent/subagent';
-import { wrapSubagentModelError } from '#/session/subagent/configSection';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import {
+  classifyRunTermination,
+  emitAgentRunSpawned,
+  mirrorAgentRun,
+  SubagentCancelled,
+  SubagentFailed,
+} from '#/session/subagent/mirrorAgentRun';
+import { type AgentRunHandle, ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
-import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { ILogService } from '#/_base/log/log';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import {
   ISessionSwarmService,
@@ -63,19 +44,24 @@ import {
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
 
-export interface SubagentSuspendedEvent {
-  readonly type: 'subagent.suspended';
+export interface SubagentSuspendedPayload {
   readonly subagentId: string;
   readonly reason: string;
 }
 
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'subagent.suspended': SubagentSuspendedEvent;
-  }
+export class SubagentSuspended extends Event2<SubagentSuspendedPayload> {
+  static override readonly type = 'subagent.suspended';
+  static override readonly observable = true;
+}
+export interface SubagentSuspended extends SubagentSuspendedPayload {}
+
+export interface SubagentSuspendedEvent extends SubagentSuspendedPayload {
+  readonly type: 'subagent.suspended';
 }
 
 const RESUMED_PROFILE_FALLBACK = 'subagent';
+
+type TerminalizeSubagent = (agentId: string, event: Event2) => void;
 
 export class SessionSwarmService implements ISessionSwarmService {
   declare readonly _serviceBrand: undefined;
@@ -83,14 +69,9 @@ export class SessionSwarmService implements ISessionSwarmService {
   private readonly inFlight = new Map<string, AbortController>();
 
   constructor(
-    @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
-    @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
-    @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
-    @ILogService private readonly log: ILogService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
   ) {}
 
   async getSwarmItem(args: {
@@ -112,25 +93,45 @@ export class SessionSwarmService implements ISessionSwarmService {
       if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
       return { ...task, signal: controller.signal };
     });
+    const terminalized = new Set<string>();
+    const terminalize: TerminalizeSubagent = (agentId, event) => {
+      if (terminalized.has(agentId)) return;
+      terminalized.add(agentId);
+      this.dispatchSubagentEvent(callerAgentId, event);
+    };
     const launcher: AgentRunBatchLauncher = {
-      spawn: (options) => this.spawnAttempt(callerAgentId, options),
-      resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
-      retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
+      spawn: (options) => this.spawnAttempt(callerAgentId, options, terminalize),
+      resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false, terminalize),
+      retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true, terminalize),
       suspended: (event) => {
-        const caller = this.lifecycle.get(callerAgentId);
-        caller?.accessor.get(IEventBus)?.publish({
-          type: 'subagent.suspended',
-          subagentId: event.agentId,
-          reason: event.reason,
-        });
+        this.dispatchSubagentEvent(
+          callerAgentId,
+          new SubagentSuspended({
+            subagentId: event.agentId,
+            reason: event.reason,
+          }),
+        );
+      },
+      abandoned: (event) => {
+        terminalize(
+          event.agentId,
+          event.outcome === 'failed'
+            ? new SubagentFailed({
+                subagentId: event.agentId,
+                error: event.error ?? 'Provider rate limit',
+              })
+            : new SubagentCancelled({ subagentId: event.agentId }),
+        );
       },
     };
     const maxConcurrency = resolveSwarmMaxConcurrency();
     const promise = new AgentRunBatch(launcher, linkedTasks, { maxConcurrency }).run();
-    void promise.finally(() => {
-      for (const unlink of unlinks) unlink();
-      if (this.inFlight.get(callerAgentId) === controller) this.inFlight.delete(callerAgentId);
-    });
+    void promise
+      .finally(() => {
+        for (const unlink of unlinks) unlink();
+        if (this.inFlight.get(callerAgentId) === controller) this.inFlight.delete(callerAgentId);
+      })
+      .catch(() => {});
     return promise;
   }
 
@@ -138,76 +139,48 @@ export class SessionSwarmService implements ISessionSwarmService {
     this.inFlight.get(callerAgentId)?.abort();
   }
 
+  private dispatchSubagentEvent(callerAgentId: string, event: Event2): void {
+    const caller = this.agentLifecycle.handleOf(callerAgentId);
+    void caller?.accessor.get(IEventDispatcher)?.dispatch(event);
+  }
+
   private async spawnAttempt(
     callerAgentId: string,
     options: AgentSpawnAttemptOptions,
+    terminalize: TerminalizeSubagent,
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
-    await this.catalog.ready;
-    const profile = this.catalog.get(options.profileName);
-    if (profile === undefined) {
-      throw new Error2(ErrorCodes.PROFILE_UNKNOWN, `Unknown agent type: "${options.profileName}"`, {
-        details: { profileName: options.profileName },
-      });
-    }
-    const callerData = caller.accessor.get(IAgentProfileService).data();
-    const callerRuntime = caller.accessor.get(IAgentRuntimeBindingService).current;
-    if (callerData.modelAlias === undefined) {
-      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
-        details: { agentId: callerAgentId },
-      });
-    }
-    const binding = options.binding ?? {
-      model: callerData.modelAlias,
-      thinking: callerData.thinkingLevel,
-    };
-    let child: IAgentScopeHandle;
-    try {
-      this.modelCatalog.get(binding.model);
-      child = await this.lifecycle.create({
-        binding: {
-          profile: profile.name,
-          model: binding.model,
-          thinking: binding.thinking,
-        },
-        labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
-        runtimeId: callerRuntime.runtimeId,
-      });
-    } catch (error) {
-      throw wrapSubagentModelError(error, binding.model, callerData.modelAlias);
-    }
-    child.accessor
-      .get(IAgentPermissionModeService)
-      .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
-    child.accessor
-      .get(IAgentUserToolService)
-      .inheritUserTools(caller.accessor.get(IAgentUserToolService));
-    emitAgentRunSpawned(caller, child.id, {
-      profileName: options.profileName,
+    const { plan } = options;
+    const spawned = await this.subagents.spawn({
+      callerAgentId,
+      plan,
+      labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
+      prompt: options.prompt,
+    });
+    emitAgentRunSpawned(caller, spawned.agentId, {
+      profileName: plan.profileName,
       parentToolCallId: options.parentToolCallId,
       parentToolCallUuid: options.parentToolCallUuid,
       description: options.description,
       swarmIndex: options.swarmIndex,
       runInBackground: options.runInBackground,
-      model: binding.model,
+      fork: plan.fork,
+      model: plan.model,
+      modelSource: plan.modelSource,
     });
-    const lease = this.runtimeResolver.acquire(callerRuntime, ['process']);
-    let promptText: string;
-    try {
-      const view = new RuntimeWorkspaceView(lease.runtime, { workDir: this.sessionContext.cwd });
-      promptText = await applyProfilePromptPrefix(profile, options.prompt, {
-        cwd: view.workDir,
-        process: lease.runtime.process!,
-        log: this.log,
-      });
-    } finally {
-      lease.dispose();
-    }
-    return this.observe(caller, child.id, options.profileName, {
-      kind: 'prompt',
-      prompt: promptText,
-    }, options);
+    const child = this.requireHandle(spawned.agentId, 'Agent instance');
+    return this.observe(
+      caller,
+      child,
+      plan.profileName,
+      {
+        kind: 'prompt',
+        prompt: spawned.promptText,
+      },
+      options,
+      terminalize,
+    );
   }
 
   private async resumeAttempt(
@@ -215,11 +188,14 @@ export class SessionSwarmService implements ISessionSwarmService {
     agentId: string,
     options: AgentRunAttemptOptions,
     retryTurn: boolean,
+    terminalize: TerminalizeSubagent,
   ): Promise<AgentRunAttemptHandle> {
     options.signal.throwIfAborted();
-    await this.requireOwnedSubagent(callerAgentId, agentId);
+    const meta = await this.requireOwnedSubagent(callerAgentId, agentId);
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
-    const child = this.requireHandle(agentId, 'Agent instance');
+    const child =
+      this.agentLifecycle.handleOf(agentId) ??
+      (await this.rebuildSubagent(agentId, meta, caller, options.signal));
     this.requireIdleSubagent(agentId, child);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
@@ -238,35 +214,48 @@ export class SessionSwarmService implements ISessionSwarmService {
     const request = retryTurn
       ? ({ kind: 'retry' } as const)
       : ({ kind: 'prompt', prompt: options.prompt } as const);
-    return this.observe(caller, child.id, profileName, request, options);
+    return this.observe(caller, child, profileName, request, options, terminalize);
   }
 
   private async observe(
     caller: IAgentScopeHandle,
-    agentId: string,
+    child: IAgentScopeHandle,
     profileName: string,
     request: { kind: 'prompt'; prompt: string } | { kind: 'retry' },
     options: AgentRunAttemptOptions,
+    terminalize: TerminalizeSubagent,
   ): Promise<AgentRunAttemptHandle> {
-    const run = await this.subagents.run(agentId, request, {
-      signal: options.signal,
-      onReady: options.onReady,
-    });
+    const agentId = child.id;
+    let run: AgentRunHandle;
+    try {
+      run = await this.subagents.run(agentContextOf(child), request, {
+        signal: options.signal,
+        onReady: options.onReady,
+      });
+    } catch (error) {
+      terminalize(agentId, runStartTerminalEvent(agentId, error, options.signal));
+      throw error;
+    }
     const mirrored = mirrorAgentRun(caller, run, {
       profileName,
       prompt: request.kind === 'prompt' ? request.prompt : undefined,
       suppressRateLimitFailureEvent: options.suppressRateLimitFailureEvent,
       signal: options.signal,
+      terminalize,
     });
     return {
       agentId,
       profileName,
-      completion: mirrored.then((r) => ({ result: r.summary, usage: r.usage })),
+      completion: mirrored.then((r) => ({
+        result: r.summary,
+        usage: r.usage,
+        stopReason: r.stopReason,
+      })),
     };
   }
 
   private requireHandle(agentId: string, label: string): IAgentScopeHandle {
-    const handle = this.lifecycle.get(agentId);
+    const handle = this.agentLifecycle.handleOf(agentId);
     if (handle === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `${label} "${agentId}" does not exist`, {
         details: { agentId },
@@ -276,7 +265,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {
-    if (child.accessor.get(IAgentLoopService).status().state === 'running') {
+    if (child.accessor.get(IAgentLoopService).snapshot().state === 'running') {
       throw new Error2(
         ErrorCodes.AGENT_ALREADY_RUNNING,
         `Agent instance "${agentId}" is already running and cannot run concurrently`,
@@ -285,9 +274,34 @@ export class SessionSwarmService implements ISessionSwarmService {
     }
   }
 
-  private async requireOwnedSubagent(callerAgentId: string, agentId: string): Promise<void> {
+  private async rebuildSubagent(
+    agentId: string,
+    meta: AgentMeta,
+    caller: IAgentScopeHandle,
+    signal: AbortSignal,
+  ): Promise<IAgentScopeHandle> {
+    await createAgentAwaitingClose(
+      this.agentLifecycle,
+      { agentId, labels: labelsFromAgentMeta(meta), forkedFrom: meta.forkedFrom },
+      signal,
+    );
+    const rebuilt = this.agentLifecycle.handleOf(agentId);
+    if (rebuilt === undefined) {
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `Agent instance "${agentId}" does not exist`, {
+        details: { agentId },
+      });
+    }
+    if (!hasPinnedPermissionMode(rebuilt.accessor.get(IAgentProfileService).data().profileName)) {
+      rebuilt.accessor
+        .get(IAgentPermissionModeService)
+        .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
+    }
+    return rebuilt;
+  }
+
+  private async requireOwnedSubagent(callerAgentId: string, agentId: string): Promise<AgentMeta> {
     const meta = await this.agentMeta(agentId);
-    if (!isSubagentMeta(meta)) {
+    if (meta === undefined || !isSubagentMeta(meta)) {
       throw new Error2(ErrorCodes.AGENT_NOT_A_SUBAGENT, `Agent instance "${agentId}" is not a subagent`, {
         details: { agentId },
       });
@@ -299,6 +313,7 @@ export class SessionSwarmService implements ISessionSwarmService {
         { details: { agentId, callerAgentId } },
       );
     }
+    return meta;
   }
 
   private async agentMeta(agentId: string): Promise<AgentMeta | undefined> {
@@ -308,3 +323,13 @@ export class SessionSwarmService implements ISessionSwarmService {
 }
 
 export type _AgentRunUsage = TokenUsage;
+
+function runStartTerminalEvent(agentId: string, error: unknown, signal: AbortSignal): Event2 {
+  if (classifyRunTermination(error, signal) === 'cancelled') {
+    return new SubagentCancelled({ subagentId: agentId });
+  }
+  return new SubagentFailed({
+    subagentId: agentId,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}

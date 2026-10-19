@@ -1,15 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IPluginAgentProfileLoader` implementation.
- *
- * Discovers agent profiles contributed by enabled plugins (roots from the
- * App-scope `plugins.pluginAgentRoots()`) and contributes them via the shared
- * loader skeleton. Reloads when plugins reload; install / enable / remove
- * mutations deliberately do not re-contribute — those take effect on the next
- * explicit reload. Bound at Workspace scope: agent-file discovery lives in
- * the workspace layer alongside every other source.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';

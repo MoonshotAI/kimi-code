@@ -1,12 +1,3 @@
-/**
- * `tools` domain — `ITowerInboxTool` contract (the `TowerInbox` tool).
- *
- * Public contract of the tower inbox reader: messages addressed to the
- * caller (or broadcast), newest first; the tower sees every message. Exports
- * the model-facing `TowerInboxToolInputSchema` / `TowerInboxToolInput` and
- * the `ITowerInboxTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -20,6 +11,10 @@ export const TowerInboxToolInputSchema = z
       .positive()
       .optional()
       .describe('Max messages to return (default 20), newest first'),
+    include_read: z
+      .boolean()
+      .optional()
+      .describe('Include previously acknowledged messages for history lookup; only returned messages are acknowledged'),
   })
   .strict();
 

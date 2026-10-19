@@ -1,7 +1,3 @@
-/**
- * WebSocket bearer-token subprotocol helpers.
- */
-
 export const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
 
 export function extractWsBearerToken(protocolHeader: string | undefined): string | null {

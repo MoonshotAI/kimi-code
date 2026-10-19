@@ -3,8 +3,11 @@ import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 export type SettingsSelection =
   | 'model'
   | 'theme'
+  | 'tuiMode'
+  | 'mermaid'
   | 'editor'
   | 'permission'
+  | 'survey'
   | 'experiments'
   | 'upgrade'
   | 'usage';
@@ -26,9 +29,24 @@ const SETTINGS_OPTIONS: readonly ChoiceOption[] = [
     description: 'Change the terminal UI theme.',
   },
   {
+    value: 'tuiMode',
+    label: 'TUI mode',
+    description: 'Choose the regular or fullscreen layout.',
+  },
+  {
+    value: 'mermaid',
+    label: 'Mermaid diagrams',
+    description: 'Draw mermaid code blocks as diagrams, or keep them as source.',
+  },
+  {
     value: 'editor',
     label: 'Editor',
     description: 'Set the external editor command.',
+  },
+  {
+    value: 'survey',
+    label: 'Feedback survey',
+    description: 'Turn the occasional session rating prompt on or off.',
   },
   {
     value: 'experiments',
@@ -51,8 +69,11 @@ function isSettingsSelection(value: string): value is SettingsSelection {
   return (
     value === 'model' ||
     value === 'theme' ||
+    value === 'tuiMode' ||
+    value === 'mermaid' ||
     value === 'editor' ||
     value === 'permission' ||
+    value === 'survey' ||
     value === 'experiments' ||
     value === 'upgrade' ||
     value === 'usage'

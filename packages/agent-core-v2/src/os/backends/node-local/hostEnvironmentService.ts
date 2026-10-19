@@ -1,18 +1,3 @@
-/**
- * `hostEnvironment` domain — `IHostEnvironment` implementation.
- *
- * Kicks off the OS / shell probe (`probeHostEnvironmentFromNode`) and the
- * login-shell PATH enrichment (`applyLoginShellPathFromNode`) at construction
- * time; the sync fields become populated once `ready` resolves. Reads before
- * `ready` throws with a clear message so misuse fails loudly instead of
- * returning stale zeros. A failed probe is translated at this boundary — a
- * missing Git Bash on Windows becomes `HostProcessError`
- * (`shell.git_bash_not_found`) — and surfaces identically from `ready` and
- * from sync field reads, while an internal no-op handler keeps the rejection
- * from ever becoming an unhandledRejection during App-scope construction.
- * Bound at App scope.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

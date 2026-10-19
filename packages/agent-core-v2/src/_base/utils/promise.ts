@@ -1,11 +1,3 @@
-/**
- * Timeout outcome promise — resolves with a fixed value after a delay.
- *
- * The timer goes through `setClampedTimeout`, so huge ("effectively
- * unbounded") timeouts still mean a long wait instead of overflowing into an
- * immediate fire.
- */
-
 import { setClampedTimeout } from './timer';
 
 const NEVER = new Promise<never>(() => {});

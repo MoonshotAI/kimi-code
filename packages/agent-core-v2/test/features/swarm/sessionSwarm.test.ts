@@ -1,5 +1,5 @@
 import { createControlledPromise } from '@antfu/utils';
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -7,18 +7,17 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
+import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { userCancellationReason } from '#/_base/utils/abort';
+import { Error2, ErrorCodes } from '#/errors';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
-import { IConfigService } from '#/app/config/config';
-import { IFlagService } from '#/app/flag/flag';
-import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
-import { APIProviderRateLimitError } from '#/kosong/contract/errors';
-import { IModelCatalog, type Model } from '#/kosong/model/catalog';
+import { IEventBus } from '#/app/event/eventBus';
+import type { Event2 } from '#/app/event/event2';
+import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
@@ -27,22 +26,25 @@ import {
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { createHooks } from '#/hooks';
 import {
+  type AgentRunHandle,
   type AgentTaskHooks,
   ISessionSubagentService,
 } from '#/session/subagent/subagent';
-import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
+import {
+  type SpawnSubagentOptions,
+  type SubagentSpawnPlanInput,
+} from '#/session/subagent/spawn';
 import {
   ISessionMetadata,
   type AgentMeta,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
-import { ILogService } from '#/_base/log/log';
-import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
-import { FakeRuntime } from '#/runtime/fakeRuntime';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentRuntimeBindingService } from '#/agent/runtimeBinding/runtimeBinding';
 import {
   AgentRunBatch,
   resolveSwarmMaxConcurrency,
+  type AgentRunAbandonedEvent,
   type AgentRunAttemptHandle,
   type AgentRunAttemptOptions,
   type AgentRunBatchLauncher,
@@ -52,13 +54,9 @@ import {
   type QueuedAgentRunTask,
 } from '#/features/swarm/session/agentRunBatch';
 import { ISessionSwarmService, type SessionSwarmSpawnTask, type SessionSwarmTask } from '#/features/swarm/session/sessionSwarm';
-import { Error2 } from '#/_base/errors/errors';
-import { ConfigErrors } from '#/app/config/errors';
 import { SessionSwarmService } from '#/features/swarm/session/sessionSwarmService';
 
-import { stubLog } from '../../_base/log/stubs';
-import { stubFlag } from '../../app/flag/stubs';
-import { StubConfigService } from '../../kosong/stubs';
+import { stubAgentContext } from '../../agent/agentContext/stubs';
 
 describe('resolveSwarmMaxConcurrency', () => {
   it('returns undefined when the variable is unset', () => {
@@ -623,8 +621,6 @@ describe('AgentRunBatch scheduling contract', () => {
 
       await vi.advanceTimersByTimeAsync(0);
       attempts[0]!.markReady();
-      // Print mode fills the subagent timeout with 0 = unbounded; it must not
-      // arm an immediate abort.
       await vi.advanceTimersByTimeAsync(60_000);
 
       attempts[0]!.outcome.resolve({
@@ -752,6 +748,208 @@ describe('AgentRunBatch scheduling contract', () => {
   });
 });
 
+describe('AgentRunBatch abandoned callback', () => {
+  it('user cancellation abandons rate-limit-suspended agents without touching active or completed ones', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 4 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(4);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      const results = await running;
+
+      expect(results.map((result) => ({ data: result.task.data, status: result.status }))).toEqual([
+        { data: 1, status: 'aborted' },
+        { data: 2, status: 'completed' },
+        { data: 3, status: 'aborted' },
+        { data: 4, status: 'aborted' },
+      ]);
+      expect(onAbandoned).toHaveBeenCalledTimes(1);
+      expect(onAbandoned).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent-1', task: expect.objectContaining({ data: 1 }) }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('abandons rate-limit-suspended agents when the batch aborts without a user-cancellation reason', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 3 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+      void running.catch(() => {});
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort();
+      await expect(running).rejects.toThrow();
+      expect(onAbandoned).toHaveBeenCalledTimes(1);
+      expect(onAbandoned).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'agent-1' }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('abandons with a failed outcome when the final rate-limited task is terminalized instead of requeued', async () => {
+    vi.useFakeTimers();
+    try {
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({
+        task: attempts[0]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'done 1',
+      });
+      attempts[1]!.outcome.resolve({
+        type: 'rate_limited',
+        agentId: 'agent-2',
+        error: 'Rate limited',
+      });
+
+      await expect(running).resolves.toMatchObject([
+        { status: 'completed' },
+        { status: 'failed' },
+      ]);
+      expect(onAbandoned).toHaveBeenCalledTimes(1);
+      expect(onAbandoned).toHaveBeenCalledWith(
+        expect.objectContaining({
+          agentId: 'agent-2',
+          outcome: 'failed',
+          error: 'Rate limited',
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('abandons a rate-limited task that is relaunched but not yet ready when the batch is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: controller.signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-1');
+      expect(attempts[2]!.ready).toBeFalsy();
+
+      controller.abort(userCancellationReason());
+      await running;
+
+      expect(onAbandoned).toHaveBeenCalledWith(
+        expect.objectContaining({ agentId: 'agent-1', outcome: 'cancelled' }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not abandon agents when a rate-limited task retries successfully', async () => {
+    vi.useFakeTimers();
+    try {
+      const onAbandoned = vi.fn();
+      const { runBatch, attempts } = createMockAgentRunBatchRunner({ onAbandoned });
+      const running = runBatch(
+        Array.from({ length: 2 }, (_, index) => queuedAgentRunTask(index + 1)),
+        { signal: new AbortController().signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(3);
+      expect(attempts[2]!.retryAgentId).toBe('agent-1');
+
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'recovered 1',
+      });
+      await expect(running).resolves.toMatchObject([
+        { task: { data: 1 }, agentId: 'agent-1', status: 'completed' },
+        { task: { data: 2 }, agentId: 'agent-2', status: 'completed' },
+      ]);
+      expect(onAbandoned).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe('AgentRunBatch max concurrency cap', () => {
   it('caps in-flight tasks at maxConcurrency during the normal phase', async () => {
     vi.useFakeTimers();
@@ -846,6 +1044,7 @@ describe('AgentRunBatch swarm item forwarding', () => {
       description: 'Review #1 (subagent)',
       swarmItem,
       runInBackground: false,
+      plan: { profileName: 'subagent', model: 'mock-model', thinking: 'off', fork: false },
     };
   }
 
@@ -879,10 +1078,9 @@ describe('SessionSwarmService metadata compatibility', () => {
   let handles: Map<string, IAgentScopeHandle>;
   let lifecycle: IAgentLifecycleService;
   let subagents: ISessionSubagentService;
-  let createAgent: ReturnType<typeof vi.fn>;
+  let spawnAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
-  let resolverAcquire: Mock<(binding: unknown, required: unknown) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -891,33 +1089,13 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
-    subagents = subagentStub();
-    createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
+    subagents = subagentStub(handles, lifecycle, eventBus);
+    spawnAgent = subagents.spawn as ReturnType<typeof vi.fn>;
     runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
     ix.stub(IAgentLifecycleService, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
-    ix.stub(ISessionAgentProfileCatalog, {
-      _serviceBrand: undefined,
-      ready: Promise.resolve(),
-      get: (name: string) =>
-        name === 'coder'
-          ? normalizeAgentProfile({ name: 'coder', tools: [], systemPrompt: () => '' })
-          : undefined,
-      getDefault: () => normalizeAgentProfile({ name: 'agent', tools: [], systemPrompt: () => '' }),
-      list: () => [],
-    });
-    ix.stub(
-      ISessionContext,
-      makeSessionContext({
-        sessionId: 's1',
-        workspaceId: 'w1',
-        sessionDir: '/tmp/kimi/s1',
-        sessionScope: 'sessions/w1/s1',
-        cwd: '/repo',
-      }),
-    );
     ix.stub(ISessionMetadata, {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
@@ -936,38 +1114,6 @@ describe('SessionSwarmService metadata compatibility', () => {
         agents[agentId] = meta;
       },
     });
-    resolverAcquire = vi.fn();
-    ix.stub(IRuntimeResolver, {
-      _serviceBrand: undefined,
-      acquire: (binding: unknown, required: unknown) => {
-        resolverAcquire(binding, required);
-        const runtime = new FakeRuntime({ workspaceId: 'w1', runtimeId: 'local', generation: 'g1' });
-        Object.assign(runtime, {
-          process: { spawn: async () => { throw new Error('unexpected process exec'); } },
-        });
-        return {
-          runtime,
-          track: <T,>(resource: T): T => resource,
-          dispose: () => {},
-        };
-      },
-    });
-    ix.stub(ILogService, stubLog());
-    ix.stub(IConfigService, new StubConfigService({}));
-    ix.stub(IFlagService, stubFlag(() => false));
-    ix.stub(IModelCatalog, {
-      _serviceBrand: undefined,
-      get: (alias: string) => {
-        if (alias === 'provider/bad') {
-          throw new Error2(
-            ConfigErrors.codes.CONFIG_INVALID,
-            'Model "provider/bad" is not configured in config.toml.',
-            { details: { model: 'provider/bad' } },
-          );
-        }
-        return { id: alias } as Model;
-      },
-    } as IModelCatalog);
     ix.set(ISessionSwarmService, new SyncDescriptor(SessionSwarmService));
   });
 
@@ -1040,7 +1186,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).toEqual({ parentAgentId: 'main', swarmItem: 'src/labels.ts', custom: 'kept' });
   });
 
-  it('persists caller ownership and swarm item labels on spawned children', async () => {
+  it('forwards caller ownership and swarm item labels to the subagent spawn', async () => {
     const service = ix.get(ISessionSwarmService);
 
     await expect(
@@ -1056,79 +1202,12 @@ describe('SessionSwarmService metadata compatibility', () => {
       },
     ]);
 
-    expect(createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        binding: {
-          profile: 'coder',
-          model: 'kimi-test',
-          thinking: 'medium',
-        },
-        labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
-      }),
-    );
-  });
-
-  it('inherits the caller runtime binding on spawned children', async () => {
-    handles.set(
-      'main',
-      agentHandle('main', lifecycle, eventBus, {}, new Map([
-        [IAgentRuntimeBindingService, {
-          _serviceBrand: undefined,
-          current: { workspaceId: 'w1', runtimeId: 'acp:s1' },
-          switch: () => {},
-          onDidChange: Event.None,
-        }],
-      ])),
-    );
-    const service = ix.get(ISessionSwarmService);
-
-    await service.run({
+    expect(spawnAgent).toHaveBeenCalledWith({
       callerAgentId: 'main',
-      tasks: [spawnSessionTask('src/a.ts')],
+      plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium', fork: false },
+      labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+      prompt: 'Review the file',
     });
-
-    expect(createAgent).toHaveBeenCalledWith(
-      expect.objectContaining({ runtimeId: 'acp:s1' }),
-    );
-    expect(resolverAcquire).toHaveBeenCalledWith(
-      { workspaceId: 'w1', runtimeId: 'acp:s1' },
-      ['process'],
-    );
-  });
-
-  it('inherits parent user tools on spawned children', async () => {
-    const parentUserTools = userToolServiceStub();
-    const childUserTools = userToolServiceStub();
-    handles.set(
-      'main',
-      agentHandle('main', lifecycle, eventBus, {}, new Map([
-        [IAgentUserToolService, parentUserTools],
-      ])),
-    );
-    createAgent.mockImplementationOnce((opts: CreateAgentOptions = {}) => {
-      const id = opts.agentId ?? 'agent-new';
-      const handle = agentHandle(
-        id,
-        lifecycle,
-        eventBus,
-        {
-          profileName: opts.binding?.profile ?? 'coder',
-          modelAlias: opts.binding?.model ?? 'kimi-test',
-          thinkingLevel: opts.binding?.thinking ?? 'medium',
-        },
-        new Map([[IAgentUserToolService, childUserTools]]),
-      );
-      handles.set(id, handle);
-      return handle;
-    });
-    const service = ix.get(ISessionSwarmService);
-
-    await service.run({
-      callerAgentId: 'main',
-      tasks: [spawnSessionTask('src/a.ts')],
-    });
-
-    expect(childUserTools.inheritUserTools).toHaveBeenCalledWith(parentUserTools);
   });
 
   it('keeps v1 resume ownership errors inside the per-subagent result', async () => {
@@ -1181,18 +1260,18 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     );
     expect(runAgent).toHaveBeenCalledWith(
-      'agent-existing',
+      expect.objectContaining({ agentId: 'agent-existing' }),
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
-  it('prefers the spawn task binding over the caller model', async () => {
+  it('prefers the spawn task plan over the caller model', async () => {
     const service = ix.get(ISessionSwarmService);
     const spawnTask: SessionSwarmSpawnTask = {
       ...spawnSessionTask('src/a.ts'),
       kind: 'spawn',
-      binding: { model: 'provider/pool', thinking: 'low' },
+      plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low', fork: false },
     };
 
     await expect(
@@ -1202,13 +1281,9 @@ describe('SessionSwarmService metadata compatibility', () => {
       }),
     ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-new' }]);
 
-    expect(createAgent).toHaveBeenCalledWith(
+    expect(spawnAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        binding: {
-          profile: 'coder',
-          model: 'provider/pool',
-          thinking: 'low',
-        },
+        plan: { profileName: 'coder', model: 'provider/pool', thinking: 'low', fork: false },
       }),
     );
     expect(eventBus.publish).toHaveBeenCalledWith(
@@ -1216,31 +1291,27 @@ describe('SessionSwarmService metadata compatibility', () => {
         type: 'subagent.spawned',
         subagentId: 'agent-new',
         model: 'provider/pool',
-        thinkingEffort: 'low',
       }),
     );
   });
 
-  it('points at the [secondary_model.models] config when a spawn task binding is invalid', async () => {
+  it('returns a failed per-task result when the subagent spawn rejects', async () => {
+    spawnAgent.mockRejectedValueOnce(new Error('spawn boom'));
     const service = ix.get(ISessionSwarmService);
-    const spawnTask: SessionSwarmSpawnTask = {
-      ...spawnSessionTask('src/a.ts'),
-      kind: 'spawn',
-      binding: { model: 'provider/bad', thinking: 'low' },
-    };
 
     await expect(
       service.run({
         callerAgentId: 'main',
-        tasks: [spawnTask],
+        tasks: [spawnSessionTask('src/a.ts')],
       }),
     ).resolves.toMatchObject([
       {
         status: 'failed',
-        error: expect.stringContaining('comes from [secondary_model.models]'),
+        state: 'not_started',
+        error: 'spawn boom',
       },
     ]);
-    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
   });
 
   it('does not emit spawned again when a rate-limited child retries', async () => {
@@ -1256,13 +1327,14 @@ describe('SessionSwarmService metadata compatibility', () => {
       handles.set('agent-blocker', agentHandle('agent-blocker', lifecycle, eventBus));
       const rateLimited = createControlledPromise<{ summary: string }>();
       const blocker = createControlledPromise<{ summary: string }>();
-      const published: DomainEvent[] = [];
-      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
         published.push(event);
       });
       let retryRuns = 0;
-      runAgent.mockImplementation((agentId, request, options) => {
+      runAgent.mockImplementation((agent, request, options) => {
         options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
         if (agentId === 'agent-retry') {
           retryRuns += 1;
           return {
@@ -1292,16 +1364,612 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect(
         published
           .filter((event) => event.type === 'subagent.spawned')
-          .map((event) => event.subagentId),
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId),
       ).toEqual(['agent-retry', 'agent-blocker']);
       expect(
         runAgent.mock.calls
-          .filter(([agentId]) => agentId === 'agent-retry')
+          .filter(([agent]) => (agent as AgentContext).agentId === 'agent-retry')
           .map(([, request]) => request),
       ).toEqual([{ kind: 'prompt', prompt: 'Continue' }, { kind: 'retry' }]);
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('emits subagent.cancelled (not subagent.failed) when a running child aborts', async () => {
+    agents['agent-abort'] = {
+      labels: { parentAgentId: 'main' },
+    };
+    handles.set('agent-abort', agentHandle('agent-abort', lifecycle, eventBus));
+    const published: Event2[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+      published.push(event);
+    });
+    runAgent.mockImplementation((agent) => {
+      const agentId = (agent as AgentContext).agentId;
+      return {
+        agentId,
+        turn: {} as never,
+        completion: Promise.reject(userCancellationReason()),
+      };
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-abort')],
+      }),
+    ).resolves.toMatchObject([{ status: 'failed', agentId: 'agent-abort' }]);
+
+    expect(
+      published
+        .filter((event) => event.type === 'subagent.cancelled')
+        .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId),
+    ).toEqual(['agent-abort']);
+    expect(published.some((event) => event.type === 'subagent.failed')).toBe(false);
+  });
+
+  it('emits neither subagent.cancelled nor subagent.failed on the rate-limit requeue path', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-rl'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      agents['agent-peer'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
+      handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const peer = createControlledPromise<{ summary: string }>();
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      let rlRuns = 0;
+      runAgent.mockImplementation((agent, request, options) => {
+        options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
+        if (agentId === 'agent-rl') {
+          rlRuns += 1;
+          return {
+            agentId,
+            turn: {} as never,
+            completion:
+              rlRuns === 1 ? rateLimited : Promise.resolve({ summary: 'recovered summary' }),
+          };
+        }
+        return { agentId, turn: {} as never, completion: peer };
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-rl'), resumeSessionTask('agent-peer')],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      peer.resolve({ summary: 'peer summary' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expect(running).resolves.toMatchObject([
+        { status: 'completed', agentId: 'agent-rl' },
+        { status: 'completed', agentId: 'agent-peer' },
+      ]);
+
+      expect(published.filter((event) => event.type === 'subagent.suspended')).toHaveLength(1);
+      expect(published.some((event) => event.type === 'subagent.cancelled')).toBe(false);
+      expect(published.some((event) => event.type === 'subagent.failed')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled for a rate-limit-suspended child when the batch is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-rl'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      agents['agent-peer'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
+      handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const peer = createControlledPromise<{ summary: string }>();
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      runAgent.mockImplementation((agent, request, options) => {
+        options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
+        if (agentId === 'agent-rl') {
+          return { agentId, turn: {} as never, completion: rateLimited };
+        }
+        return { agentId, turn: {} as never, completion: peer };
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [
+          { ...resumeSessionTask('agent-rl'), signal: controller.signal },
+          resumeSessionTask('agent-peer'),
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      peer.resolve({ summary: 'peer summary' });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([
+        { status: 'aborted', agentId: 'agent-rl' },
+        { status: 'completed', agentId: 'agent-peer' },
+      ]);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.suspended')).toEqual(['agent-rl']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-rl']);
+      expect(subagentIdsOf('subagent.completed')).toEqual(['agent-peer']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled exactly once when a starting retry is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-rl'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      agents['agent-peer'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-rl', agentHandle('agent-rl', lifecycle, eventBus));
+      handles.set('agent-peer', agentHandle('agent-peer', lifecycle, eventBus));
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const peer = createControlledPromise<{ summary: string }>();
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      let rlRuns = 0;
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        if (agentId === 'agent-rl') {
+          rlRuns += 1;
+          if (rlRuns === 1) {
+            options?.onReady?.();
+            return { agentId, turn: {} as never, completion: rateLimited };
+          }
+          return new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }) as unknown as AgentRunHandle;
+        }
+        options?.onReady?.();
+        return { agentId, turn: {} as never, completion: peer };
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [
+          { ...resumeSessionTask('agent-rl'), signal: controller.signal },
+          resumeSessionTask('agent-peer'),
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      peer.resolve({ summary: 'peer summary' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(rlRuns).toBe(2);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([
+        { status: 'aborted', agentId: 'agent-rl' },
+        { status: 'completed', agentId: 'agent-peer' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.suspended')).toEqual(['agent-rl']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-rl']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled exactly once when a child with an installed mirror is cancelled before ready', async () => {
+    vi.useFakeTimers();
+    try {
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        return {
+          agentId,
+          turn: {} as never,
+          completion: new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        };
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([{ status: 'aborted' }]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.spawned')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled when cancellation arrives during the start hook', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-hook'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-hook', agentHandle('agent-hook', lifecycle, eventBus));
+      handles.set(
+        'main',
+        agentHandle('main', lifecycle, eventBus, {}, new Map([[ISessionSubagentService, subagents]])),
+      );
+      subagents.hooks.onWillStartAgentTask.register(
+        'test-hook',
+        async (hookContext) => {
+          await new Promise((_, reject) => {
+            hookContext.signal.addEventListener(
+              'abort',
+              () => {
+                reject(hookContext.signal.reason);
+              },
+              { once: true },
+            );
+          });
+        },
+      );
+      runAgent.mockImplementation((agent, _request, options) => {
+        options?.onReady?.();
+        const agentId = (agent as AgentContext).agentId;
+        return {
+          agentId,
+          turn: {} as never,
+          completion: new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        };
+      });
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...resumeSessionTask('agent-hook'), signal: controller.signal }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([
+        { status: 'aborted', agentId: 'agent-hook' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.spawned')).toEqual(['agent-hook']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-hook']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled exactly once when a not-ready attempt is cancelled during the start hook', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-hook'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-hook', agentHandle('agent-hook', lifecycle, eventBus));
+      handles.set(
+        'main',
+        agentHandle('main', lifecycle, eventBus, {}, new Map([[ISessionSubagentService, subagents]])),
+      );
+      subagents.hooks.onWillStartAgentTask.register(
+        'test-hook',
+        async (hookContext) => {
+          await new Promise((_, reject) => {
+            hookContext.signal.addEventListener(
+              'abort',
+              () => {
+                reject(hookContext.signal.reason);
+              },
+              { once: true },
+            );
+          });
+        },
+      );
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        return {
+          agentId,
+          turn: {} as never,
+          completion: new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        };
+      });
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...resumeSessionTask('agent-hook'), signal: controller.signal }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([
+        { status: 'aborted', agentId: 'agent-hook' },
+      ]);
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-hook']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled for a child whose spawn finishes after the batch is cancelled', async () => {
+    vi.useFakeTimers();
+    try {
+      const spawnDeferred = createControlledPromise<{
+        readonly agentId: string;
+        readonly profileName: string;
+        readonly model: string;
+        readonly promptText: string;
+      }>();
+      handles.set(
+        'agent-new',
+        agentHandle('agent-new', lifecycle, eventBus, {
+          profileName: 'coder',
+          modelAlias: 'kimi-test',
+        }),
+      );
+      spawnAgent.mockReturnValueOnce(spawnDeferred);
+      runAgent.mockImplementationOnce((agent: AgentContext, _request: unknown, options) => {
+        options?.signal.throwIfAborted();
+        return {
+          agentId: agent.agentId,
+          turn: {} as never,
+          completion: Promise.resolve({ summary: 'late summary' }),
+        };
+      });
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      const service = ix.get(ISessionSwarmService);
+      const controller = new AbortController();
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(spawnAgent).toHaveBeenCalledTimes(1);
+
+      controller.abort(userCancellationReason());
+      await expect(running).resolves.toMatchObject([{ status: 'aborted', state: 'not_started' }]);
+      expect(published.some((event) => event.type === 'subagent.spawned')).toBe(false);
+
+      spawnDeferred.resolve({
+        agentId: 'agent-new',
+        profileName: 'coder',
+        model: 'kimi-test',
+        promptText: 'Review the file',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const subagentIdsOf = (type: string) =>
+        published
+          .filter((event) => event.type === type)
+          .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId);
+      expect(subagentIdsOf('subagent.spawned')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.cancelled')).toEqual(['agent-new']);
+      expect(subagentIdsOf('subagent.failed')).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.failed when the child run cannot start', async () => {
+    runAgent.mockRejectedValueOnce(new Error('enqueue boom'));
+    const published: Event2[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+      published.push(event);
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [spawnSessionTask('src/a.ts')],
+      }),
+    ).resolves.toMatchObject([
+      { status: 'failed', state: 'not_started', error: 'enqueue boom' },
+    ]);
+
+    const failedEvents = published.filter((event) => event.type === 'subagent.failed');
+    expect(failedEvents).toHaveLength(1);
+    expect(failedEvents[0]).toMatchObject({ subagentId: 'agent-new', error: 'enqueue boom' });
+    expect(published.some((event) => event.type === 'subagent.cancelled')).toBe(false);
+  });
+
+  it('emits subagent.failed (not subagent.cancelled) when a child times out', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-slow'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      handles.set('agent-slow', agentHandle('agent-slow', lifecycle, eventBus));
+      runAgent.mockImplementation((agent, _request, options) => {
+        const agentId = (agent as AgentContext).agentId;
+        return {
+          agentId,
+          turn: {} as never,
+          completion: new Promise((_, reject) => {
+            options?.signal.addEventListener(
+              'abort',
+              () => {
+                reject(options.signal.reason);
+              },
+              { once: true },
+            );
+          }),
+        };
+      });
+      const published: Event2[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+        published.push(event);
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...resumeSessionTask('agent-slow'), timeout: 1000 }],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      await expect(running).resolves.toMatchObject([
+        { status: 'failed', agentId: 'agent-slow', error: 'Subagent timed out.' },
+      ]);
+      const failedEvents = published.filter((event) => event.type === 'subagent.failed');
+      expect(failedEvents).toHaveLength(1);
+      expect(failedEvents[0]).toMatchObject({
+        subagentId: 'agent-slow',
+        error: 'Subagent timed out.',
+      });
+      expect(published.some((event) => event.type === 'subagent.cancelled')).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('emits subagent.cancelled (not subagent.failed) when the child is aborted with a plain non-error reason', async () => {
+    agents['agent-managed'] = {
+      labels: { parentAgentId: 'main' },
+    };
+    handles.set('agent-managed', agentHandle('agent-managed', lifecycle, eventBus));
+    const published: Event2[] = [];
+    (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: Event2) => {
+      published.push(event);
+    });
+    runAgent.mockImplementation((agent, _request, options) => {
+      options?.onReady?.();
+      return {
+        agentId: (agent as AgentContext).agentId,
+        turn: {} as never,
+        completion: new Promise((_, reject) => {
+          options?.signal.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal.reason);
+            },
+            { once: true },
+          );
+        }),
+      };
+    });
+    const taskSignal = new AbortController();
+    const service = ix.get(ISessionSwarmService);
+    const running = service.run({
+      callerAgentId: 'main',
+      tasks: [{ ...resumeSessionTask('agent-managed'), signal: taskSignal.signal }],
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    taskSignal.abort('Timed out');
+    await expect(running).rejects.toBe('Timed out');
+
+    expect(
+      published
+        .filter((event) => event.type === 'subagent.cancelled')
+        .map((event) => (event as Event2 & { readonly subagentId: string }).subagentId),
+    ).toEqual(['agent-managed']);
+    expect(published.some((event) => event.type === 'subagent.failed')).toBe(false);
   });
 
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
@@ -1315,7 +1983,7 @@ describe('SessionSwarmService metadata compatibility', () => {
           IAgentLoopService,
           {
             _serviceBrand: undefined,
-            status: () => ({ state: 'running', activeTurnId: 1, pendingTurnIds: [], hasPendingRequests: true }),
+            snapshot: () => ({ state: 'running' }),
           },
         ],
       ])),
@@ -1340,6 +2008,90 @@ describe('SessionSwarmService metadata compatibility', () => {
       expect.objectContaining({ type: 'subagent.spawned' }),
     );
   });
+
+  it('rebuilds a missing child scope from session metadata before resuming', async () => {
+    agents['agent-old'] = {
+      labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+    };
+    const service = ix.get(ISessionSwarmService);
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-old')],
+      }),
+    ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-old' }]);
+
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'agent-old',
+        labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+      }),
+    );
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-old' }),
+      { kind: 'prompt', prompt: 'Continue' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('rebuilds a child scope whose previous remove is still in flight', async () => {
+    agents['agent-old'] = {
+      labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+    };
+    vi.mocked(lifecycle.create).mockRejectedValueOnce(
+      new Error2(ErrorCodes.AGENT_ALREADY_EXISTS, 'Agent "agent-old" already exists', {
+        details: { agentId: 'agent-old' },
+      }),
+    );
+    const service = ix.get(ISessionSwarmService);
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-old')],
+      }),
+    ).resolves.toMatchObject([{ status: 'completed', agentId: 'agent-old' }]);
+
+    expect(lifecycle.create).toHaveBeenCalledTimes(2);
+    expect(runAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-old' }),
+      { kind: 'prompt', prompt: 'Continue' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it('does not produce an unhandled rejection when the batch fails with a non-user abort', async () => {
+    agents['agent-a'] = { labels: { parentAgentId: 'main' } };
+    handles.set('agent-a', agentHandle('agent-a', lifecycle, eventBus));
+    const blocker = createControlledPromise<{ summary: string }>();
+    runAgent.mockImplementation((agent, request, options) => {
+      options?.onReady?.();
+      return {
+        agentId: (agent as AgentContext).agentId,
+        turn: {} as never,
+        completion: blocker,
+      };
+    });
+    const rejections: unknown[] = [];
+    const listener = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', listener);
+    try {
+      const service = ix.get(ISessionSwarmService);
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-a')],
+      });
+      service.cancel({ callerAgentId: 'main' });
+      await expect(running).rejects.toThrow();
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', listener);
+    }
+  });
 });
 
 function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
@@ -1353,6 +2105,7 @@ function spawnSessionTask(swarmItem?: string): SessionSwarmSpawnTask {
     swarmIndex: 1,
     swarmItem,
     runInBackground: false,
+    plan: { profileName: 'coder', model: 'kimi-test', thinking: 'medium', fork: false },
   };
 }
 
@@ -1377,11 +2130,13 @@ function lifecycleStub(
   const lifecycle = {
     _serviceBrand: undefined,
     onDidCreate: Event.None,
-    onDidDispose: Event.None,
+    onDidCreateScope: Event.None,
+    onWillClose: Event.None,
+    onDidClose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
       if (opts.agentId !== undefined) {
         const existing = handles.get(opts.agentId);
-        if (existing !== undefined) return existing;
+        if (existing !== undefined) return stubAgentContext(opts.agentId, 1);
       }
       const id = opts.agentId ?? 'agent-new';
       const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
@@ -1390,29 +2145,53 @@ function lifecycleStub(
         thinkingLevel: opts.binding?.thinking ?? 'medium',
       });
       handles.set(id, handle);
-      return handle;
+      return stubAgentContext(id, 1);
     }),
     fork: vi.fn(),
-    get: (agentId: string) => handles.get(agentId),
-    list: () => [...handles.values()],
-    remove: async (agentId: string) => {
-      handles.delete(agentId);
+    get: (agentId: string) => (handles.has(agentId) ? stubAgentContext(agentId, 1) : undefined),
+    handleOf: (agentId: string) => handles.get(agentId),
+    list: () => [...handles.keys()].map((agentId) => stubAgentContext(agentId, 1)),
+    remove: async (context: AgentContext) => {
+      handles.delete(context.agentId);
     },
     broadcastPermissionMode: () => {},
+    adopt: (handle: IAgentScopeHandle) => stubAgentContext(handle.id, 1),
   };
   return lifecycle as IAgentLifecycleService;
 }
 
-function subagentStub(): ISessionSubagentService {
+function subagentStub(
+  handles: Map<string, IAgentScopeHandle>,
+  lifecycle: IAgentLifecycleService,
+  eventBus: IEventBus,
+): ISessionSubagentService {
   return {
     _serviceBrand: undefined,
     hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
     onDidStopAgentTask: Event.None,
-    run: vi.fn(async (agentId: string) => ({
-      agentId,
+    run: vi.fn(async (agent: AgentContext) => ({
+      agentId: agent.agentId,
       turn: {} as never,
       completion: Promise.resolve({ summary: 'child summary' }),
     })),
+    planSpawn: vi.fn(async (input: SubagentSpawnPlanInput) => ({
+      profileName: input.profileName ?? 'coder',
+      model: input.model ?? 'kimi-test',
+      fork: input.fork === true,
+    })),
+    spawn: vi.fn(async (opts: SpawnSubagentOptions) => {
+      const handle = agentHandle('agent-new', lifecycle, eventBus, {
+        profileName: opts.plan.profileName,
+        modelAlias: opts.plan.model,
+      });
+      handles.set('agent-new', handle);
+      return {
+        agentId: 'agent-new',
+        profileName: opts.plan.profileName,
+        model: opts.plan.model,
+        promptText: opts.prompt,
+      };
+    }),
     notifyAgentTaskStopped: () => {},
   } as ISessionSubagentService;
 }
@@ -1439,6 +2218,12 @@ function agentHandle(
     setModeAndBroadcast: () => {},
     onDidChangeMode: Event.None,
   } as IAgentPermissionModeService;
+  const dispatcher = {
+    _serviceBrand: undefined,
+    dispatch: async (event: Event2) => {
+      eventBus.publish(event);
+    },
+  } as unknown as IEventDispatcher;
   return {
     id,
     kind: LifecycleScope.Agent,
@@ -1459,11 +2244,20 @@ function agentHandle(
         if (serviceId === IAgentLoopService) {
           return {
             _serviceBrand: undefined,
-            status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+            snapshot: () => ({ state: 'idle' }),
           } as unknown as IAgentLoopService;
         }
         if (serviceId === IAgentUserToolService) return userToolServiceStub();
+        if (serviceId === IAgentScopeContext) {
+          return {
+            _serviceBrand: undefined,
+            agentId: id,
+            agentContext: stubAgentContext(id, 1),
+            scope: (subKey?: string) => subKey ?? '',
+          };
+        }
         if (serviceId === IEventBus) return eventBus;
+        if (serviceId === IEventDispatcher) return dispatcher;
         if (serviceId === ITelemetryService) return noopTelemetryService;
         if (serviceId === IAgentLifecycleService) return lifecycle;
         return undefined;
@@ -1499,7 +2293,7 @@ function userToolServiceStub(): IAgentUserToolService {
 function eventBusStub(): IEventBus {
   return {
     _serviceBrand: undefined,
-    publish: vi.fn((_: DomainEvent) => {}),
+    publish: vi.fn((_: Event2) => {}),
     subscribe: vi.fn(() => ({ dispose: () => {} })) as IEventBus['subscribe'],
   };
 }
@@ -1514,12 +2308,14 @@ type MockAgentRunAttemptOutcome<T> =
 type MockAgentRunAttemptRecord = {
   readonly task: QueuedAgentRunTask<number>;
   readonly retryAgentId?: string;
+  ready: boolean;
   readonly markReady: () => void;
   readonly outcome: ReturnType<typeof createControlledPromise<MockAgentRunAttemptOutcome<number>>>;
 };
 
 type MockAgentRunBatchRunnerOptions = {
   readonly onSuspended?: (event: AgentRunSuspendedEvent) => void;
+  readonly onAbandoned?: (event: AgentRunAbandonedEvent) => void;
   readonly readyDelay?: (attemptIndex: number) => number | undefined;
   readonly maxConcurrency?: number;
 };
@@ -1544,19 +2340,21 @@ function createMockAgentRunBatchRunner(
   ): AgentRunAttemptHandle => {
     const task = findMockAgentRunTask<T>(activeTasks, runOptions);
     const outcome = createControlledPromise<MockAgentRunAttemptOutcome<T>>();
-    const markReady = () => {
-      runOptions.onReady?.();
-    };
     const attemptIndex = attempts.length;
-    attempts.push({
+    const record: MockAgentRunAttemptRecord = {
       task: task as unknown as QueuedAgentRunTask<number>,
       retryAgentId,
-      markReady,
+      ready: false,
+      markReady: () => {
+        record.ready = true;
+        runOptions.onReady?.();
+      },
       outcome: outcome as unknown as MockAgentRunAttemptRecord['outcome'],
-    });
+    };
+    attempts.push(record);
 
     const delay = options.readyDelay?.(attemptIndex);
-    if (delay !== undefined) setTimeout(markReady, delay);
+    if (delay !== undefined) setTimeout(record.markReady, delay);
 
     return {
       agentId,
@@ -1578,6 +2376,9 @@ function createMockAgentRunBatchRunner(
     retry: async (agentId, runOptions) => createHandle(runOptions, agentId, 'subagent', agentId),
     suspended: (event) => {
       options.onSuspended?.(event);
+    },
+    abandoned: (event) => {
+      options.onAbandoned?.(event);
     },
   };
 
@@ -1663,5 +2464,6 @@ function queuedAgentRunTask(index: number): QueuedAgentRunTask<number> {
     prompt: `Review item-${String(index)}`,
     description: `Review #${String(index)}`,
     runInBackground: false,
+    plan: { profileName: 'coder', model: 'mock-model', thinking: 'off', fork: false },
   };
 }

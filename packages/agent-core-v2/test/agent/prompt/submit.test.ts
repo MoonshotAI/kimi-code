@@ -1,13 +1,3 @@
-/**
- * Scenario: `IAgentPromptService.submit` is the wire-facing prompt entry —
- * prompt-metadata persistence and `{turn_id}` settlement.
- *
- * Migrated from the kap-server debug-RPC suite (`test/rpc.test.ts`) when the
- * RPC aggregation layer was removed: the composition now lives in the prompt
- * domain. Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/agent/prompt/submit.test.ts`.
- */
-
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { IEventService } from '#/app/event/event';
@@ -31,7 +21,6 @@ describe('prompt submit', () => {
     ctx.mockNextResponse({ type: 'text', text: 'hi' });
 
     const launched = await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
-    // Turn ids are 0-based; the point is the launch result came back at all.
     expect(launched?.turn_id).toBe(0);
     await ctx.untilTurnEnd();
   });

@@ -1,7 +1,3 @@
-/**
- * Render thrown values as human-readable lines for logs and CLI output.
- */
-
 import { isCodedError } from './serialize';
 
 export function toErrorMessage(error: unknown, verbose = false): string {

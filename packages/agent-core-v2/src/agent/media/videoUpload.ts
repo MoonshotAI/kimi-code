@@ -1,22 +1,14 @@
-/**
- * `media` domain — shared video-upload fallback helpers.
- *
- * The provider video-upload attempt and its graceful fallbacks must agree on
- * which failures are auth failures (surfaced, never masked into a fallback)
- * and which protocols carry inline `video_url` on the wire. Pure helpers; no
- * scoped service.
- */
+import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
+import { errorStatusCode } from '#human/llm/errors';
+import type { VideoURLPart } from '#human/llm/message';
+import type { Protocol } from '#/llm-adapter/protocol/protocol';
+import { ProtocolErrors } from '#/llm-adapter/protocol/errors';
 
-import { VideoUploadUnsupportedError } from '#/kosong/contract/errors';
-import type { VideoURLPart } from '#/kosong/contract/message';
-import type { Protocol } from '#/kosong/protocol/protocol';
-import { ProtocolErrors } from '#/kosong/protocol/errors';
-
-export function isVideoUploadAuthError(error: unknown): boolean {
+export function isMediaUploadAuthError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
   if ((error as { code?: unknown }).code === ProtocolErrors.codes.PROVIDER_AUTH_ERROR) return true;
-  const statusCode = (error as { statusCode?: unknown }).statusCode;
-  return statusCode === 401 || statusCode === 403;
+  const status = errorStatusCode(error);
+  return status === 401 || status === 403;
 }
 
 export function isVideoUploadUnsupportedError(error: unknown): error is VideoUploadUnsupportedError {

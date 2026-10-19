@@ -13,7 +13,6 @@ function captureHeaders() {
   return { headers, reply };
 }
 
-/** Split a CSP header value into directive → source-list tokens. */
 function parseCsp(csp: string): Map<string, string[]> {
   const directives = new Map<string, string[]>();
   for (const part of csp.split(';')) {
@@ -36,11 +35,6 @@ describe('createSecurityHeadersHook', () => {
     expect(headers.get('content-security-policy')).toBeDefined();
   });
 
-  // KaTeX math and Shiki highlighting are injected via innerHTML with
-  // per-glyph `style="…"` attributes (KaTeX carries ALL vertical/font sizing
-  // in them — stripping collapses formulas into overlapping glyphs), and
-  // Mermaid embeds an inline <style> in its SVG. style-src must therefore
-  // allow inline styles; script-src must stay strict.
   it('allows inline styles while keeping inline scripts forbidden', async () => {
     const { headers, reply } = captureHeaders();
     const hook = createSecurityHeadersHook({ tls: false });
@@ -51,10 +45,6 @@ describe('createSecurityHeadersHook', () => {
     const styleSrc = directives.get('style-src');
     expect(styleSrc).toContain("'self'");
     expect(styleSrc).toContain("'unsafe-inline'");
-    // Assert the EFFECTIVE script policy — script-src, falling back to
-    // default-src when absent — rather than matching an exact substring, so
-    // regressions like default-src gaining 'unsafe-inline' (which would
-    // allow inline <script> through the fallback) also fail here.
     const effectiveScriptSrc = directives.get('script-src') ?? directives.get('default-src');
     expect(effectiveScriptSrc).toBeDefined();
     expect(effectiveScriptSrc).not.toContain("'unsafe-inline'");

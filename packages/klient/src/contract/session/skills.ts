@@ -1,9 +1,9 @@
 /**
  * `sessionSkillCatalog` — the session-merged skill catalog. Mirrors
- * `agent-core-v2/session/sessionSkillCatalog/skillCatalog.ts` (the thin
+ * `agent-core-v2/features/skill/session/skillCatalog.ts` (the thin
  * `list()` method; the `catalog` / `ready` properties and the sink interface
  * are not wire methods). `SkillSummary` mirrors
- * `agent-core-v2/app/skillCatalog/types.ts`.
+ * `agent-core-v2/features/skill/catalog/types.ts`.
  */
 
 import { z } from 'zod';
@@ -18,6 +18,7 @@ export const skillSummarySchema = z.object({
   type: z.string().optional(),
   disableModelInvocation: z.boolean().optional(),
   isSubSkill: z.boolean().optional(),
+  scopes: z.array(z.enum(['tui', 'web'])).optional(),
 });
 
 export const sessionSkillCatalogContract = {

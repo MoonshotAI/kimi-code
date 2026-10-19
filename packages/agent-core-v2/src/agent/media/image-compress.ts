@@ -1,40 +1,7 @@
-/**
- * `media` domain — image compression for model ingestion.
- *
- * Shrink oversized images before they reach the model.
- *
- * A multimodal request carries each image as a base64 data URL; an unbounded
- * screenshot or photo wastes context tokens and can blow past the provider's
- * per-image byte ceiling. This module downsamples and re-encodes such images
- * so they fit a pixel + byte budget, while leaving already-small images
- * untouched — the common case is a fast, codec-free pass-through.
- *
- * Design notes:
- *  - Pure JS (jimp + a wasm WebP decoder), imported lazily so the codecs are
- *    only paid for when an image actually needs work; startup and the fast
- *    path stay cheap.
- *  - Best effort: any decode/encode failure returns the original bytes
- *    unchanged (`changed: false`). Callers must verify that this unchanged
- *    result satisfies their delivery limits before forwarding it.
- *  - Format gate first: content-part lists pass through
- *    {@link gateImageFormatParts} before any compression, so images outside
- *    the provider-accepted set are never decoded or forwarded — one
- *    unsupported image in the session history would make every subsequent
- *    request fail.
- *  - PNG, JPEG, and (non-animated) WebP are re-encoded; WebP re-encodes
- *    through the PNG/JPEG ladder after a wasm decode. GIF and animated WebP
- *    are passed through to preserve animation. Formats outside the
- *    provider-accepted set never reach this module from the content-part
- *    paths (the format gate drops them first); direct callers get a
- *    passthrough.
- *  - Compression must never be silent to the model: results carry the
- *    original dimensions, {@link buildImageCompressionCaption} renders the
- *    shared "what was compressed, where is the original" note every ingestion
- *    point can place next to the image, and {@link cropImageForModel} lets a
- *    caller read a region of the original back at full fidelity.
- */
-
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
+import type { ImageCompressEvent, ImageCropEvent } from '#/app/telemetry/events';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import { DEFAULT_INLINE_IMAGE_BYTE_BUDGET } from '#human/llm/media/image-formats';
 
 import { sniffImageDimensions } from './file-type';
 import {
@@ -62,7 +29,7 @@ export function resolveMaxImageEdgePx(): number {
   return configuredMaxImageEdgePx ?? MAX_IMAGE_EDGE_PX;
 }
 
-export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
+export const IMAGE_BYTE_BUDGET = DEFAULT_INLINE_IMAGE_BYTE_BUDGET;
 
 export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
 
@@ -92,23 +59,18 @@ export const MAX_IMAGE_DECODE_BYTES = 64 * 1024 * 1024;
 
 const RECODABLE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
+export function isRecodableImage(bytes: Uint8Array, mimeType: string): boolean {
+  const normalizedMime = normalizeImageMime(mimeType);
+  if (!RECODABLE_MIME.has(normalizedMime)) return false;
+  return normalizedMime !== 'image/webp' || !isAnimatedWebp(bytes);
+}
+
 export interface CompressImageOptions {
   readonly maxEdge?: number;
   readonly byteBudget?: number;
   readonly maxDecodeBytes?: number;
-  readonly telemetry?: ImageCompressionTelemetry;
-}
-
-export interface ImageCompressionTelemetryClient {
-  track(
-    event: string,
-    properties?: Readonly<Record<string, string | number | boolean | null | undefined>>,
-  ): void;
-}
-
-export interface ImageCompressionTelemetry {
-  readonly client: ImageCompressionTelemetryClient;
-  readonly source: string;
+  readonly telemetry?: ITelemetryService;
+  readonly telemetrySource?: string;
 }
 
 type CompressOutcome =
@@ -155,7 +117,7 @@ export async function compressImageForModel(
     finalByteLength: bytes.length,
   });
   const finish = (outcome: CompressOutcome, result: CompressImageResult): CompressImageResult => {
-    reportCompressEvent(options.telemetry, {
+    reportCompressEvent(options.telemetry, options.telemetrySource, {
       outcome,
       startedAt,
       inputMime: normalizedMime,
@@ -165,9 +127,7 @@ export async function compressImageForModel(
     return result;
   };
 
-  if (bytes.length === 0) return finish('passthrough_unsupported', passthrough());
-  if (!RECODABLE_MIME.has(normalizedMime)) return finish('passthrough_unsupported', passthrough());
-  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
+  if (bytes.length === 0 || !isRecodableImage(bytes, normalizedMime)) {
     return finish('passthrough_unsupported', passthrough());
   }
 
@@ -251,7 +211,7 @@ export async function compressBase64ForModel(
       originalByteLength: approxBytes,
       finalByteLength: approxBytes,
     };
-    reportCompressEvent(options.telemetry, {
+    reportCompressEvent(options.telemetry, options.telemetrySource, {
       outcome: 'passthrough_guard',
       startedAt,
       inputMime: normalizeImageMime(mimeType),
@@ -275,7 +235,7 @@ export async function compressBase64ForModel(
       originalByteLength: 0,
       finalByteLength: 0,
     };
-    reportCompressEvent(options.telemetry, {
+    reportCompressEvent(options.telemetry, options.telemetrySource, {
       outcome: 'passthrough_error',
       startedAt,
       inputMime: normalizeImageMime(mimeType),
@@ -316,7 +276,10 @@ export interface CompressedContentParts {
   readonly captions: readonly string[];
 }
 
-export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
+export function gateImageFormatParts(
+  parts: readonly ContentPart[],
+  providerType?: string,
+): ContentPart[] {
   const out: ContentPart[] = [];
   for (const part of parts) {
     if (part.type === 'image_url') {
@@ -326,11 +289,11 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
           out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
           continue;
         }
-        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
+        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url, providerType);
         if (extMime !== null) {
           out.push({
             type: 'text',
-            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
+            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url, providerType),
           });
           continue;
         }
@@ -341,8 +304,11 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
         parsed.mimeType,
         decodeBase64Prefix(parsed.base64),
       );
-      if (!isModelAcceptedImageMime(effectiveMime)) {
-        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+      if (!isModelAcceptedImageMime(effectiveMime, providerType)) {
+        out.push({
+          type: 'text',
+          text: buildUnsupportedImageNotice(effectiveMime, undefined, providerType),
+        });
         continue;
       }
       const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
@@ -358,16 +324,23 @@ export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart
 
 export async function compressImageContentParts(
   parts: readonly ContentPart[],
-  options: CompressImageOptions & { readonly annotate?: CompressAnnotateOptions } = {},
+  options: CompressImageOptions & {
+    readonly annotate?: CompressAnnotateOptions;
+    readonly providerType?: string;
+    readonly signal?: AbortSignal;
+  } = {},
 ): Promise<CompressedContentParts> {
-  const { annotate, ...compressOptions } = options;
+  const { annotate, providerType, signal, ...compressOptions } = options;
+  signal?.throwIfAborted();
   const out: ContentPart[] = [];
   const captions: string[] = [];
-  for (const part of gateImageFormatParts(parts)) {
+  for (const part of gateImageFormatParts(parts, providerType)) {
+    signal?.throwIfAborted();
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {
         const result = await compressBase64ForModel(parsed.base64, parsed.mimeType, compressOptions);
+        signal?.throwIfAborted();
         if (result.changed) {
           if (annotate !== undefined) {
             let originalPath: string | null = null;
@@ -378,6 +351,7 @@ export async function compressImageContentParts(
                   parsed.mimeType,
                 );
               } catch {
+                signal?.throwIfAborted();
                 originalPath = null;
               }
             }
@@ -415,7 +389,6 @@ export async function compressImageContentParts(
 export interface CompressAnnotateOptions {
   readonly persistOriginal?: (bytes: Uint8Array, mimeType: string) => Promise<string | null>;
 }
-
 
 export interface ImageCropRegion {
   readonly x: number;
@@ -462,11 +435,11 @@ export async function cropImageForModel(
   const normalizedMime = normalizeImageMime(mimeType);
 
   const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
-    reportCropEvent(options.telemetry, { startedAt, ok: false, errorKind });
+    reportCropEvent(options.telemetry, options.telemetrySource, { startedAt, ok: false, errorKind });
     return { ok: false, error };
   };
   const succeed = (result: CropImageSuccess): CropImageSuccess => {
-    reportCropEvent(options.telemetry, { startedAt, ok: true, result });
+    reportCropEvent(options.telemetry, options.telemetrySource, { startedAt, ok: true, result });
     return result;
   };
 
@@ -577,7 +550,6 @@ export async function cropImageForModel(
   }
 }
 
-
 export interface ImageVariantDescription {
   readonly width: number;
   readonly height: number;
@@ -641,7 +613,6 @@ export function formatByteSize(bytes: number): string {
   if (bytes < 1024 * 1024) return `${String(Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
-
 
 type JimpImage = Awaited<ReturnType<(typeof import('jimp'))['Jimp']['fromBuffer']>>;
 
@@ -738,7 +709,6 @@ function fitWithinEdge(image: JimpImage, edge: number): boolean {
   return true;
 }
 
-
 type CropErrorKind =
   | 'empty'
   | 'unsupported_format'
@@ -759,7 +729,8 @@ interface CompressEventResult {
 }
 
 function reportCompressEvent(
-  telemetry: ImageCompressionTelemetry | undefined,
+  telemetry: ITelemetryService | undefined,
+  source: string | undefined,
   input: {
     readonly outcome: CompressOutcome;
     readonly startedAt: number;
@@ -768,10 +739,10 @@ function reportCompressEvent(
     readonly result: CompressEventResult;
   },
 ): void {
-  if (telemetry === undefined) return;
+  if (telemetry === undefined || source === undefined) return;
   try {
-    telemetry.client.track('image_compress', {
-      source: telemetry.source,
+    const event: ImageCompressEvent = {
+      source,
       outcome: input.outcome,
       input_mime: input.inputMime,
       output_mime: normalizeImageMime(input.result.mimeType),
@@ -783,13 +754,15 @@ function reportCompressEvent(
       final_height: input.result.height,
       exif_transposed: input.exifTransposed,
       duration_ms: Date.now() - input.startedAt,
-    });
+    };
+    telemetry.track2('image_compress', event);
   } catch {
   }
 }
 
 function reportCropEvent(
-  telemetry: ImageCompressionTelemetry | undefined,
+  telemetry: ITelemetryService | undefined,
+  source: string | undefined,
   input: {
     readonly startedAt: number;
     readonly ok: boolean;
@@ -797,13 +770,13 @@ function reportCropEvent(
     readonly result?: CropImageSuccess;
   },
 ): void {
-  if (telemetry === undefined) return;
+  if (telemetry === undefined || source === undefined) return;
   try {
     const { result } = input;
     const originalPixels =
       result === undefined ? 0 : result.originalWidth * result.originalHeight;
-    telemetry.client.track('image_crop', {
-      source: telemetry.source,
+    const event: ImageCropEvent = {
+      source,
       ok: input.ok,
       error_kind: input.errorKind,
       resized: result?.resized,
@@ -815,7 +788,8 @@ function reportCropEvent(
           : (result.region.width * result.region.height) / originalPixels,
       final_bytes: result?.finalByteLength,
       duration_ms: Date.now() - input.startedAt,
-    });
+    };
+    telemetry.track2('image_crop', event);
   } catch {
   }
 }

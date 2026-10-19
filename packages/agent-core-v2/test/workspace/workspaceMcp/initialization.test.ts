@@ -1,13 +1,3 @@
-/**
- * Scenario: workspace MCP initialization — config-readiness gating and the
- * global `[mcp]` timeout preferences, end to end.
- *
- * Exercises the real `WorkspaceMcpService` + `WorkspaceMcpConfigService`
- * through DI against real temp config files and stdio fixture servers. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceMcp/initialization.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -22,20 +12,17 @@ import { Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
-import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import { IMcpOAuthService } from '#/app/mcpConfig/oauthService';
+import { IMcpConfigStore, type McpConfigWriteEvent } from '#/app/mcpConfig/configStore';
+import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
-import type { ReloadSummary } from '#/app/plugin/types';
+import type { PluginReloadEvent } from '#/app/plugin/types';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -83,9 +70,15 @@ describe('Workspace MCP initialization', () => {
         reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
         reg.definePartialInstance(IPluginService, {
           enabledMcpServers: async () => ({}),
-          onDidReload: Event.None as Event<ReloadSummary>,
+          onDidReload: Event.None as Event<PluginReloadEvent>,
         });
-        reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
+        reg.definePartialInstance(
+          IMcpOAuthService,
+          new McpOAuthService({ store: createMemoryMcpOAuthStore() }),
+        );
+        reg.definePartialInstance(IMcpConfigStore, {
+          onDidWrite: Event.None as Event<McpConfigWriteEvent>,
+        });
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         const runtime = Object.assign(
@@ -97,13 +90,6 @@ describe('Workspace MCP initialization', () => {
           ready,
           get: (<T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T),
-        });
-        reg.definePartialInstance(IHostFsWatchService, {
-          watch: (): IHostFsWatchHandle => ({
-            ready: Promise.resolve(),
-            onDidChange: Event.None as Event<HostFsChange>,
-            dispose: () => {},
-          }),
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {

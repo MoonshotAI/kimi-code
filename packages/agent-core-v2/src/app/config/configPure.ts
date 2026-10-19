@@ -1,11 +1,3 @@
-/**
- * `config` domain — pure helper functions for config values.
- *
- * Provides side-effect-free helpers used by config services, including plain
- * object detection, deep equality, deep merge, undefined stripping, and error
- * formatting.
- */
-
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

@@ -1,13 +1,3 @@
-/**
- * `sessionToolPolicy` domain — session-wide client tool restrictions.
- *
- * Defines the Session-scoped policy shared by every Agent in a session. The
- * client-managed denylist is persisted independently from each Agent's frozen
- * profile policy, survives resume, and emits an awaitable change event so
- * existing agents can refresh policy-derived system-prompt content before the
- * mutating request continues.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event, IWaitUntil } from '#/_base/event';
 

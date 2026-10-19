@@ -69,8 +69,6 @@ describe('createMcpAuthTool', () => {
       serverName: 'notion',
       authorizationUrl: 'https://example.com/authorize?state=abc',
     });
-    // The deadline is absolute (now + wait timeout), so hosts never mirror
-    // the engine-side constant.
     const { expiresAt } = authUpdate?.customData as { expiresAt?: number };
     expect(expiresAt).toBeGreaterThan(Date.now());
     expect(expiresAt).toBeLessThanOrEqual(Date.now() + 15 * 60 * 1000);

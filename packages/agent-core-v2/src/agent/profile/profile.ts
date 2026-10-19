@@ -1,28 +1,11 @@
-/**
- * `profile` domain — `IAgentProfileService` contract.
- *
- * Owns the active agent's identity: bound profile, model alias, thinking
- * level, system prompt, and active-tool set. `bind()` takes an optional
- * `model`, falling back to the configured `defaultModel` so edges don't each
- * re-implement the fallback (a missing model everywhere throws
- * `model.not_configured`), and an optional `thinking`; `strictThinking` marks
- * `thinking` as an explicit user request (edge input) rather than inherited
- * state, so the effort is validated against the model's supported efforts and
- * the bind rejects up front when unsupported — internal spawns pass inherited
- * thinking without the flag, and a persisted effort that drifted out of the
- * model's support list clamps instead of breaking the spawn. The profile
- * contract also owns live status re-publication for consumers that attach to
- * an agent after its initial model binding.
- */
-
 import type {
   AgentProfile,
   AgentProfileContext,
   EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { ModelCapability } from '#/kosong/contract/capability';
-import type { ThinkingEffort } from '#/kosong/contract/provider';
-import type { ModelRequestParams } from '#/kosong/model/modelRequester';
+import type { ModelCapability } from '#/llm-adapter/contract/capability';
+import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ModelRequestParams } from '#/llm-adapter/model/model-requester';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
@@ -112,6 +95,7 @@ export interface ProfileModelContext {
   readonly thinkingLevel: ThinkingEffort;
   readonly reservedContextSize: number | undefined;
   readonly compactionTriggerRatio: number | undefined;
+  readonly compactionMaxAttempts: number | undefined;
 }
 
 export interface ProfileSetModelResult {
@@ -139,13 +123,13 @@ export interface IAgentProfileService {
   getModel(): string;
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void;
   applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void>;
-  refreshSystemPrompt(): Promise<void>;
   getAgentsMdWarning(): string | undefined;
   data(): ProfileData;
   getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
   resolveRequestParams(): ModelRequestParams;
   getModelCapabilities(): ModelCapability;
+  getModelProviderType(alias?: string): string | undefined;
   getMaxOutputSize(): number | undefined;
   hasModel(): boolean;
   isRunnable(): boolean;

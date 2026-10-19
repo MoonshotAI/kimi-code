@@ -6,6 +6,13 @@ export const THIRD_PARTY_BADGE = 'third-party';
 
 export type PluginTrustLabel = 'official' | 'curated' | 'third-party';
 
+// Trusted plugin hosts come in .com / .ai region pairs: code.kimi.* is the
+// per-region marketplace CDN (cdnBase), cdn.kimi.* the content CDN. Both
+// families are trusted regardless of the current region — a zip served by
+// either deployment is still an official build.
+const CODE_CDN_HOSTS = new Set(['code.kimi.com', 'code.kimi.ai']);
+const CONTENT_CDN_HOSTS = new Set(['cdn.kimi.com', 'cdn.kimi.ai']);
+
 /**
  * Human-readable provenance label for a plugin, suitable for inline display
  * in `/plugins` overviews and lists.
@@ -40,7 +47,7 @@ export function pluginTrustLabel(plugin: PluginSummary): PluginTrustLabel {
     }
     if (
       url.protocol === 'https:' &&
-      url.hostname === 'code.kimi.com' &&
+      CODE_CDN_HOSTS.has(url.hostname) &&
       url.pathname.startsWith('/kimi-code/plugins/curated/')
     ) {
       return 'curated';
@@ -84,9 +91,9 @@ export function isOfficialPluginInstall(plugin: PluginSummary): boolean {
 function isOfficialPluginUrl(url: URL): boolean {
   if (url.protocol !== 'https:') return false;
   return (
-    (url.hostname === 'code.kimi.com' &&
+    (CODE_CDN_HOSTS.has(url.hostname) &&
       url.pathname.startsWith('/kimi-code/plugins/official/')) ||
-    (url.hostname === 'cdn.kimi.com' &&
+    (CONTENT_CDN_HOSTS.has(url.hostname) &&
       (url.pathname.startsWith('/kimi-computer-use/') ||
         url.pathname.startsWith('/kimi-computer-use-windows/')))
   );

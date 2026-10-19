@@ -24,6 +24,7 @@ export class ThinkingComponent implements Component {
   private showMarker: boolean;
   private mode: ThinkingRenderMode;
   private expanded = false;
+  private previewHidesLines = false;
   private readonly ui: TUI | undefined;
   private spinnerFrame = 0;
   private spinnerInterval: ReturnType<typeof setInterval> | undefined;
@@ -87,6 +88,18 @@ export class ThinkingComponent implements Component {
     this.markRenderDirty();
   }
 
+  hasHiddenContent(): boolean {
+    return this.previewHidesLines;
+  }
+
+  isExpanded(): boolean {
+    return this.expanded;
+  }
+
+  omitsExpandHint(): boolean {
+    return true;
+  }
+
   render(width: number): string[] {
     if (
       isRenderCacheEnabled() &&
@@ -98,6 +111,10 @@ export class ThinkingComponent implements Component {
 
     const contentWidth = Math.max(1, width - MESSAGE_INDENT.length);
     const contentLines = this.text.length > 0 ? this.textComponent.render(contentWidth) : [''];
+    // Collapsing swaps the hidden rows for a one-line hint, so a single
+    // hidden row would render at the same height as the full block.
+    this.previewHidesLines =
+      this.mode === 'finalized' && contentLines.length > THINKING_PREVIEW_LINES + 1;
 
     let rendered: string[];
     if (this.mode === 'live') {
@@ -111,7 +128,7 @@ export class ThinkingComponent implements Component {
       );
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking...'),
+        spinner + currentTheme.fg('textDim', 'thinking…'),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     } else {
@@ -121,13 +138,13 @@ export class ThinkingComponent implements Component {
         lines.push(p + contentLines[i]);
       }
 
-      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES) {
+      if (this.expanded || contentLines.length <= THINKING_PREVIEW_LINES + 1) {
         rendered = lines;
       } else {
         // Leading blank + first PREVIEW_LINES content lines + hint line.
         const truncated = lines.slice(0, 1 + THINKING_PREVIEW_LINES);
         const remaining = contentLines.length - THINKING_PREVIEW_LINES;
-        const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+        const hint = `… (${String(remaining)} more lines, ctrl+o to expand)`;
         const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
         const hintWidth = Math.max(0, width - indentWidth);
         truncated.push(

@@ -1,15 +1,3 @@
-/**
- * `_base/execEnv` — glob-pattern-to-regex conversion.
- *
- * Pure function. Mirrors Python pathlib semantics: includes dotfiles,
- * case-sensitive by default.
- */
-
-/**
- * Convert a single glob pattern segment (e.g. `"*.txt"`, `"file?.log"`) into
- * a RegExp. `*` matches any run of non-`/` characters; `?` matches any single
- * non-`/` character; `[abc]` matches one of a set (leading `!` negates).
- */
 export function globPatternToRegex(pattern: string, caseSensitive: boolean): RegExp {
   let regex = '^';
   for (let i = 0; i < pattern.length; i++) {

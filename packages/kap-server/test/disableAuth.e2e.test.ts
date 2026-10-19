@@ -1,18 +1,8 @@
-/**
- * server-v2 `--dangerous-bypass-auth` (`disableAuth`) wiring.
- *
- * When the operator opts out of the bearer-token gate, every REST and
- * WebSocket route accepts unauthenticated requests, and `/api/v1/meta`
- * advertises `dangerous_bypass_auth: true` so the web UI can connect without a
- * token. The default (hardened) boot keeps the gate closed and reports
- * `dangerous_bypass_auth: false`.
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -28,7 +18,6 @@ function rawToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-/** Resolve when the socket opens and the server's first frame arrives. */
 function openConn(url: string): Promise<{ ws: WebSocket; firstFrame: unknown }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -48,14 +37,29 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
   let home: string | undefined;
   const sockets: WebSocket[] = [];
 
-  afterEach(async () => {
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-disable-auth-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      authTokenService: fixedTokenAuth(TOKEN),
+      disableAuth: true,
+    });
+  });
+
+  afterEach(() => {
     for (const ws of sockets.splice(0)) {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -66,24 +70,10 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
     }
   });
 
-  async function boot(disableAuth?: boolean): Promise<{ base: string; port: number }> {
-    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-disable-auth-'));
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      authTokenService: fixedTokenAuth(TOKEN),
-      disableAuth,
-    });
-    return { base: `http://127.0.0.1:${server.port}`, port: server.port };
-  }
-
   it('disableAuth:true lets REST through without a token and advertises it in /meta', async () => {
-    const { base } = await boot(true);
+    const base = `http://127.0.0.1:${server!.port}`;
 
-    const meta = await fetch(`${base}/api/v1/meta`); // no Authorization header
+    const meta = await fetch(`${base}/api/v1/meta`);
     expect(meta.status).toBe(200);
     const metaBody = (await meta.json()) as {
       code: number;
@@ -92,33 +82,45 @@ describe('server-v2 disableAuth (--dangerous-bypass-auth)', () => {
     expect(metaBody.code).toBe(0);
     expect(metaBody.data.dangerous_bypass_auth).toBe(true);
 
-    // A normally-protected route is also open without a credential.
     const auth = await fetch(`${base}/api/v1/auth`);
     expect(auth.status).toBe(200);
   });
 
   it('disableAuth:true lets WebSocket upgrades through without a token', async () => {
-    const { port } = await boot(true);
-
-    const v1 = await openConn(`ws://127.0.0.1:${port}/api/v1/ws`);
+    const v1 = await openConn(`ws://127.0.0.1:${server!.port}/api/v1/ws`);
     sockets.push(v1.ws);
     expect(v1.firstFrame).toMatchObject({ type: 'server_hello' });
   });
 
   it('default boot keeps the gate closed and reports dangerous_bypass_auth: false', async () => {
-    const { base } = await boot(undefined);
-
-    const unauthed = await fetch(`${base}/api/v1/meta`); // no token
-    expect(unauthed.status).toBe(401);
-
-    const meta = await fetch(`${base}/api/v1/meta`, {
-      headers: { authorization: `Bearer ${TOKEN}` },
+    const altHome = await mkdtemp(join(tmpdir(), 'kimi-server-v2-disable-auth-'));
+    const alt = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: altHome,
+      logLevel: 'silent',
+      authTokenService: fixedTokenAuth(TOKEN),
+      disableAuth: undefined,
     });
-    expect(meta.status).toBe(200);
-    const metaBody = (await meta.json()) as {
-      code: number;
-      data: { dangerous_bypass_auth: boolean };
-    };
-    expect(metaBody.data.dangerous_bypass_auth).toBe(false);
+    try {
+      const base = `http://127.0.0.1:${alt.port}`;
+
+      const unauthed = await fetch(`${base}/api/v1/meta`);
+      expect(unauthed.status).toBe(401);
+
+      const meta = await fetch(`${base}/api/v1/meta`, {
+        headers: { authorization: `Bearer ${TOKEN}` },
+      });
+      expect(meta.status).toBe(200);
+      const metaBody = (await meta.json()) as {
+        code: number;
+        data: { dangerous_bypass_auth: boolean };
+      };
+      expect(metaBody.data.dangerous_bypass_auth).toBe(false);
+    } finally {
+      await alt.close();
+      await rm(altHome, { recursive: true, force: true });
+    }
   });
 });

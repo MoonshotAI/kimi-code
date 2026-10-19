@@ -1,4 +1,5 @@
-import type { HookDefConfig } from '#/agent/externalHooks/configSection';
+import type { IWaitUntil } from '#/_base/event';
+import type { HookDefConfig } from '#/features/externalHooks/configSection';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 
 export type PluginDiagnosticSeverity = 'error' | 'warn' | 'info';
@@ -69,6 +70,13 @@ export interface PluginMcpServerInfo {
   readonly url?: string;
   readonly envKeys?: readonly string[];
   readonly headerKeys?: readonly string[];
+}
+
+export interface PluginMcpServerEntry {
+  readonly name: string;
+  readonly config: McpServerConfig;
+  readonly pluginId: string;
+  readonly serverName: string;
 }
 
 export interface PluginCommandDef {
@@ -165,6 +173,8 @@ export interface ReloadSummary {
   readonly errors: ReadonlyArray<{ readonly id: string; readonly message: string }>;
 }
 
+export type PluginReloadEvent = ReloadSummary & IWaitUntil;
+
 export interface PluginMutation {
   readonly kind: 'install' | 'enable' | 'disable' | 'remove' | 'mcp-server';
   readonly id: string;
@@ -183,7 +193,7 @@ export interface PluginUpdateStatus {
   readonly updateAvailable: boolean;
 }
 
-export const PLUGIN_NAME_REGEX = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+export const PLUGIN_NAME_REGEX = /^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*(?:@[A-Za-z0-9_-]+)?$/;
 
 export function normalizePluginId(name: string): string {
   return name.toLowerCase();

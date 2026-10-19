@@ -1,4 +1,4 @@
-import type { KimiConfig, ModelAlias } from '@moonshot-ai/agent-core';
+import type { KimiConfig, ModelAlias } from '#/config/index';
 import {
   catalogBaseUrl,
   catalogProviderModels,
@@ -18,6 +18,17 @@ export type { CatalogImportInvalidReason, CatalogImportResolution };
 export type { Catalog, CatalogModel, CatalogProviderEntry };
 
 export const DEFAULT_CATALOG_URL = 'https://models.dev/api.json';
+
+export class RegistryImportError extends Error {
+  constructor(
+    message: string,
+    readonly phase: 'fetch' | 'empty' | 'apply',
+    readonly status?: number,
+  ) {
+    super(message);
+    this.name = 'RegistryImportError';
+  }
+}
 
 export class CatalogFetchError extends Error {
   readonly status: number;

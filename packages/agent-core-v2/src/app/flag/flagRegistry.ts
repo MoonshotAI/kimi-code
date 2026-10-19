@@ -1,15 +1,7 @@
-/**
- * `flag` domain — flag-definition registry contract.
- *
- * `IFlagRegistry` is the writable catalog that `IFlagService` reads flag
- * definitions from. Definitions are contributed **decentrally**: each domain
- * calls `registerFlagDefinition` from its own module's top level, and
- * `FlagRegistryService` drains those contributions when it is instantiated.
- * There is no central catalog to edit by hand. App-scoped.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
+
+import type { IFlagService } from './flag';
 
 export type FlagSurface = 'core' | 'tui' | 'both';
 
@@ -22,6 +14,7 @@ export interface FlagDefinitionInput {
   readonly env: string;
   readonly default: boolean;
   readonly surface: FlagSurface;
+  readonly isExposed?: (flags: IFlagService) => boolean;
 }
 
 const contributedFlags: FlagDefinitionInput[] = [];

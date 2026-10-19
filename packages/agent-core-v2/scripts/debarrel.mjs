@@ -1,20 +1,4 @@
 #!/usr/bin/env node
-/**
- * debarrel.mjs — agent-core-v2 barrel removal tool (ts-morph).
- *
- * Rewrites `#/<dir>` barrel imports/exports to precise leaf-file specifiers and
- * regenerates the package entry `src/index.ts` so it loads every domain leaf
- * (triggering all top-level `register*` side effects) without domain barrels.
- *
- * Modes:
- *   (default)          rewrite all consumer files (src + test) EXCEPT src/index.ts
- *   --only=<reldir>    limit consumer rewriting to one barrel, e.g. app/event
- *   --entry            regenerate src/index.ts only (no consumer rewriting)
- *   --delete-barrels   delete every domain barrel (per-domain src index.ts except entry)
- *   --list-registers   print the top-level register* files (coverage set)
- *   --verify-coverage  exit non-zero if any register file is unreachable from entry
- *   --dry-run          report planned edits without writing
- */
 import { Project } from 'ts-morph';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -50,8 +34,6 @@ const barrelOfDecl = (decl) => {
   return sf && isBarrelFile(sf) ? sf : null;
 };
 
-// Resolve a name exported by `barrel` to the leaf file that declares it and the
-// name that leaf uses to export it (handles `export { A as B }` at barrel level).
 function resolveName(barrel, name) {
   const decls = barrel.getExportedDeclarations().get(name);
   if (!decls || decls.length === 0) return null;
@@ -69,8 +51,6 @@ function resolveName(barrel, name) {
   return { leafFile: leaf.getFilePath(), leafName };
 }
 
-// Ordered re-export clauses of a barrel (recursively inlines nested barrels),
-// preserving source order so `export *` collision resolution is unchanged.
 function expandBarrelClauses(barrel) {
   const clauses = [];
   for (const ed of barrel.getExportDeclarations()) {
@@ -121,13 +101,9 @@ function allLeavesUnderDir(dirAbs) {
   return out.sort((a, b) => a.localeCompare(b));
 }
 
-// ---------------------------------------------------------------------------
-// Consumer rewriting (imports + named exports + export *) for a single file.
-// ---------------------------------------------------------------------------
 function rewriteConsumerFile(sf, onlyBarrelPath) {
   const report = { imports: 0, exports: 0, manuals: [], sideEffects: 0 };
 
-  // Imports.
   for (const decl of sf.getImportDeclarations()) {
     const barrel = barrelOfDecl(decl);
     if (!barrel) continue;
@@ -140,7 +116,6 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
     const hasDefault = !!decl.getDefaultImport();
     const named = decl.getNamedImports();
     if (!hasDefault && named.length === 0) {
-      // side-effect: import '#/B' -> load each leaf of B.
       const leaves = [...new Set(expandBarrelClauses(barrel).map((c) => c.file))];
       const idx = sf.getImportDeclarations().indexOf(decl);
       sf.insertImportDeclarations(
@@ -154,7 +129,7 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
     }
 
     const declType = decl.isTypeOnly();
-    const groups = new Map(); // leafFile -> [{name, alias, isTypeOnly}]
+    const groups = new Map();
     const add = (leaf, spec) => {
       if (!groups.has(leaf)) groups.set(leaf, []);
       groups.get(leaf).push(spec);
@@ -166,7 +141,7 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
       else add(r.leafFile, { default: decl.getDefaultImport().getText() });
     }
     for (const s of named) {
-      const lookup = s.getName(); // module-exported name
+      const lookup = s.getName();
       const local = s.getAliasNode()?.getText() || s.getName();
       const r = resolveName(barrel, lookup);
       if (!r) {
@@ -186,7 +161,6 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
     report.imports++;
   }
 
-  // Exports.
   for (const decl of sf.getExportDeclarations()) {
     const barrel = barrelOfDecl(decl);
     if (!barrel) continue;
@@ -203,11 +177,10 @@ function rewriteConsumerFile(sf, onlyBarrelPath) {
       report.manuals.push({ sf: sf.getFilePath(), text: decl.getText(), why: 'namespace export' });
       continue;
     }
-    // named re-export
     const declType = decl.isTypeOnly();
     const groups = new Map();
     for (const s of decl.getNamedExports()) {
-      const lookup = s.getName(); // name the consumer re-exports (= barrel's exported name)
+      const lookup = s.getName();
       const exportedAs = s.getAliasNode()?.getText() || s.getName();
       const r = resolveName(barrel, lookup);
       if (!r) {
@@ -273,17 +246,12 @@ function exportClauseToText(c) {
   return renderNamedExport(relSpec(c.file), c.specs, c.isTypeOnly);
 }
 
-// ---------------------------------------------------------------------------
-// Entry (src/index.ts) regeneration.
-// ---------------------------------------------------------------------------
 function regenerateEntry() {
   const entrySf = project.getSourceFileOrThrow(ENTRY);
   const original = entrySf.getFullText();
   const headerMatch = original.match(/^\s*\/\*\*[\s\S]*?\*\//);
   const header = headerMatch ? headerMatch[0] : '/** agent-core-v2 public surface. */';
 
-  // First pass: classify each referenced barrel and how it is referenced.
-  /** @type {Array<{decl: any, barrel: any, mode: 'star'|'named'|'side'}>} */
   const refs = [];
   for (const decl of [...entrySf.getExportDeclarations(), ...entrySf.getImportDeclarations()]) {
     const barrel = barrelOfDecl(decl);
@@ -309,7 +277,6 @@ function regenerateEntry() {
     const starLeaves = new Set(clauses.filter((c) => c.kind === 'star').map((c) => c.file));
 
     if (mode === 'star') {
-      // Public: replay the barrel's clauses in order against precise leaves.
       for (const c of clauses) publicLines.push(exportClauseToText(c));
     } else if (mode === 'named') {
       const declType = decl.isTypeOnly();
@@ -333,11 +300,9 @@ function regenerateEntry() {
         publicLines.push(renderNamedExport(relSpec(leaf), specs, allType));
       }
     }
-    // Loading: any leaf of this domain not already pulled in by an `export *`
-    // line must be imported for its side effects (registers).
     for (const leaf of allLeaves) {
       const key = leaf;
-      if (starLeaves.has(leaf)) continue; // loaded by export *
+      if (starLeaves.has(leaf)) continue;
       if (processed.has(key)) continue;
       processed.add(key);
       loadingLines.push(`import '${relSpec(leaf)}';`);
@@ -360,9 +325,6 @@ function regenerateEntry() {
   return { publicLines: publicLines.length, loadingLines: loadingLines.length };
 }
 
-// ---------------------------------------------------------------------------
-// Register-file enumeration + coverage verification.
-// ---------------------------------------------------------------------------
 const REGISTER_NAMES = new Set([
   'registerScopedService',
   'registerAgentToolService',
@@ -419,7 +381,7 @@ function reachedFromEntry() {
     if (!isUnderSrc(f)) return;
     const edges = [...sf.getImportDeclarations(), ...sf.getExportDeclarations()];
     for (const d of edges) {
-      if (d.isTypeOnly && d.isTypeOnly()) continue; // type-only edges don't execute
+      if (d.isTypeOnly && d.isTypeOnly()) continue;
       const t = resolvedFile(d);
       if (t && isUnderSrc(t.getFilePath())) visit(t);
     }
@@ -452,9 +414,6 @@ function deleteBarrels() {
   return n;
 }
 
-// ---------------------------------------------------------------------------
-// Main dispatch.
-// ---------------------------------------------------------------------------
 function main() {
   if (LIST_REGS) {
     for (const f of findRegisterFiles()) console.log(path.relative(PKG, f));
@@ -483,7 +442,7 @@ function main() {
   for (const sf of project.getSourceFiles()) {
     const f = sf.getFilePath();
     if (!isUnderSrc(f) && !f.startsWith(path.join(PKG, 'test') + path.sep)) continue;
-    if (f === ENTRY) continue; // entry handled by --entry
+    if (f === ENTRY) continue;
     const before = sf.getFullText();
     const r = rewriteConsumerFile(sf, onlyBarrelPath);
     if (sf.getFullText() !== before) {

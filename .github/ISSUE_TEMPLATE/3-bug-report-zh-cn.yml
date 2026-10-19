@@ -1,0 +1,73 @@
+name: Bug 报告
+description: 报告需要修复的问题
+labels:
+  - bug
+  - needs triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢你提交 bug 报告！这能帮助 Kimi Code 变得更好。
+
+        请确认你正在运行最新版本的 Kimi Code CLI——你遇到的问题可能已经被修复。
+
+        请尽量提供完整的信息。
+
+        如果你打算提交修复：勾选下方 Contribution 选项，并等待维护者在本 issue 中以 `/approve` 评论批准后再提 PR。
+
+  - type: input
+    id: version
+    attributes:
+      label: 你运行的 Kimi Code 版本是？
+      description: 复制 `kimi --version` 或 `/version` 的输出
+    validations:
+      required: true
+  - type: input
+    id: plan
+    attributes:
+      label: 你使用的是哪个开放平台/订阅？
+      description: 运行 `/login` 时选择的那个
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: 你使用的是哪个模型？
+      description: 底部状态栏可见，如 `kimi-k2.6`、`kimi-for-coding` 等
+  - type: input
+    id: platform
+    attributes:
+      label: 你的电脑平台是？
+      description: |
+        macOS 和 Linux：复制 `uname -mprs` 的输出
+        Windows：在 PowerShell 中运行 `"$([Environment]::OSVersion | ForEach-Object VersionString) $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" })"` 并复制输出
+  - type: textarea
+    id: actual
+    attributes:
+      label: 你遇到了什么问题？
+      description: 请包含完整的错误信息和提示词（隐去隐私信息）。如可能，请提供文本而非截图。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤？
+      description: 说明 bug 并给出可复现的代码片段。如适用，请提供 session id 和上下文用量。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望的行为是什么？
+      description: 如可能，请提供文本而非截图。
+  - type: textarea
+    id: notes
+    attributes:
+      label: 补充信息
+      description: 还有什么想让我们知道的？
+  - type: checkboxes
+    id: willing-to-pr
+    attributes:
+      label: Contribution
+      options:
+        - label: 我愿意自己提交修复此 bug 的 PR（请先等待维护者在本 issue 中批准）

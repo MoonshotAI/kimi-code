@@ -1,31 +1,3 @@
-/**
- * `profile` domain — system-prompt context assembly.
- *
- * Loads the AGENTS.md instruction hierarchy (user-level brand + generic files,
- * then project-level files from the project root down to the cwd — the root
- * discovered through a git work-tree probe) and assembles
- * the {@link SystemPromptContext} bag.
- * `agentsMdWatchRoots` exposes the watch plan for the probed file set, and
- * `prepareSystemPromptContext` accepts a `preloadedAgentsMd` snapshot so the
- * caller can inject an already-read snapshot instead of re-reading the files.
- *
- * Runs on top of the os `IHostFileSystem` (for `readText` / `stat` / `readdir`)
- * plus the host's `homeDir` — supplied together as a small `ProfileContextDeps`
- * bag threaded through the helpers.
- *
- * The combined AGENTS.md content is injected in full; when it exceeds the
- * soft {@link AGENTS_MD_RECOMMENDED_MAX_BYTES} budget a visible
- * `agentsMdWarning` is produced instead of silently truncating.
- *
- * The discovered-file list is returned alongside the content as `paths`
- * (surfaced as `agentsMdPaths`), and the per-directory candidate rules
- * (`AGENTS_MD_PLAIN_NAMES` / `dotKimiAgentsMdPath` / `findAgentsMdInDir`)
- * plus the root→leaf chain helpers (`findProjectRoot` / `dirsRootToLeaf`)
- * are exported so discovery probes and injection never drift apart. Legacy
- * restored prompts can recover their exact injected paths from the same
- * rendered source annotations.
- */
-
 import { basename, dirname, join, normalize } from 'pathe';
 
 import { findGitWorkTree } from '#/app/git/workTree';
@@ -102,6 +74,30 @@ export interface LoadedAgentsMd {
   readonly content: string;
   readonly warning: string | undefined;
   readonly paths: readonly string[];
+  readonly files: ReadonlyMap<string, string>;
+}
+
+export function splitAgentsMdFiles(
+  content: string,
+  paths: readonly string[],
+): ReadonlyMap<string, string> {
+  const wanted = new Set(paths.map(normalize));
+  const files = new Map<string, string>();
+  const markerRe = /^<!-- From: (.+) -->$/gm;
+  let prev: { key: string; bodyStart: number } | undefined;
+  const flush = (end: number): void => {
+    if (prev === undefined) return;
+    files.set(prev.key, content.slice(prev.bodyStart, end).trim());
+    prev = undefined;
+  };
+  for (const match of content.matchAll(markerRe)) {
+    const key = normalize(match[1]!);
+    if (!wanted.has(key)) continue;
+    flush(match.index);
+    prev = { key, bodyStart: match.index + match[0].length + 1 };
+  }
+  flush(content.length);
+  return files;
 }
 
 export const AGENTS_MD_PLAIN_NAMES = ['AGENTS.md', 'agents.md'] as const;
@@ -220,7 +216,8 @@ export async function loadAgentsMdForRoots(
   }
   const warning = loadWarnings.length > 0 ? loadWarnings.join('\n') : undefined;
   const paths = discovered.map((file) => normalize(file.path));
-  return { content, warning, paths };
+  const files = new Map(discovered.map((file) => [normalize(file.path), file.content]));
+  return { content, warning, paths, files };
 }
 
 export interface AgentsMdWatchRoot {
@@ -371,7 +368,6 @@ function dedupeDirs(dirs: readonly string[]): string[] {
   }
   return result;
 }
-
 
 interface ListDirectoryOptions {
   readonly collapseHiddenDirs?: boolean;

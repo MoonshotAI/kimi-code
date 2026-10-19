@@ -1,11 +1,3 @@
-/**
- *   POST /v1/search
- *
- * Wire shapes for the global message search endpoint. The wire uses
- * snake_case (REST convention in this repo); `routes/search.ts` maps to the
- * camelCase service contract in `src/search/contract.ts`.
- */
-
 import { z } from 'zod';
 
 export const searchMessagesBodySchema = z.object({

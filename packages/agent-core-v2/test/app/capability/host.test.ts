@@ -1,8 +1,3 @@
-/**
- * Capability host helpers — command timeout cleanup and late process-stream
- * failures after a timed-out command.
- */
-
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -85,12 +80,9 @@ describe('capability host downloadToFile', () => {
   }
 
   it('aborts a response whose byte stream goes quiet', async () => {
-    // One chunk flows, then the server goes silent — the install must fail
-    // (clearing the running state) instead of hanging forever.
     const body = new ReadableStream({
       start(controller) {
         controller.enqueue(new Uint8Array([1, 2, 3]));
-        // never enqueues or closes again
       },
     });
 
@@ -106,8 +98,6 @@ describe('capability host downloadToFile', () => {
   });
 
   it('aborts when the response headers never arrive', async () => {
-    // The CDN accepted the connection but never completes the headers —
-    // the header phase has its own deadline via the fetch's abort signal.
     const hangingFetch = ((_url: string, init?: { signal?: AbortSignal }) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => {
@@ -132,8 +122,6 @@ describe('capability host downloadToFile', () => {
       async start(controller) {
         for (const chunk of chunks) {
           controller.enqueue(new TextEncoder().encode(chunk));
-          // Per-chunk gaps stay under the budget, but the total stream time
-          // exceeds it — the header deadline must not abort a flowing body.
           await new Promise((resolve) => {
             setTimeout(resolve, 30);
           });

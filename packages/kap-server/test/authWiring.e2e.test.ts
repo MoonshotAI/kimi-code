@@ -1,17 +1,8 @@
-/**
- * Production auth wiring end-to-end (port of v1 `auth-wiring.e2e.test.ts`).
- *
- * Boots `startServer` with NO auth override so the REAL persistent-token auth
- * is built (`<homeDir>/server.token`, mode 0600). The token is read back from
- * disk — exactly what the CLI does — and exercised against a gated HTTP route
- * and the `/api/v1/ws` upgrade path.
- */
-
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -47,7 +38,6 @@ function expectRejected(url: string): Promise<void> {
       try {
         ws.terminate();
       } catch {
-        // ignore
       }
       if (err === undefined) resolve();
       else reject(err);
@@ -68,20 +58,26 @@ describe('production auth wiring', () => {
   let base: string;
   const sockets: WebSocket[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-auth-wiring-'));
-    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
-    base = `http://127.0.0.1:${server.port}`;
+    await boot();
   });
 
-  afterEach(async () => {
+  async function boot(): Promise<void> {
+    server = await startServer({ hostIdentity: TEST_HOST_IDENTITY, host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
+    base = `http://127.0.0.1:${server.port}`;
+  }
+
+  afterEach(() => {
     for (const ws of sockets.splice(0)) {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -101,9 +97,9 @@ describe('production auth wiring', () => {
 
     await (server as RunningServer).close();
     server = undefined;
-    // Persistent token: the file survives shutdown so the next start reuses it.
     const after = await stat(p);
     expect(after.mode & 0o777).toBe(0o600);
+    await boot();
   });
 
   it('gates HTTP: 200 with the token, 401 without', async () => {

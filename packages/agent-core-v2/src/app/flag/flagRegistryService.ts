@@ -1,11 +1,3 @@
-/**
- * `flag` domain — `IFlagRegistry` implementation.
- *
- * In-memory catalog of flag definitions. Seeds itself from the import-time
- * contributions (`getContributedFlags`) on construction, and also accepts
- * runtime `register` calls (used by tests). Bound at App scope.
- */
-
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -18,7 +10,6 @@ import {
   IFlagRegistry,
 } from './flagRegistry';
 
-// NOTE: stays Disposable — its own 'get' collides with the Fiber
 export class FlagRegistryService extends Disposable implements IFlagRegistry {
   declare readonly _serviceBrand: undefined;
   private readonly byId = new Map<FlagId, FlagDefinitionInput>();

@@ -1,12 +1,5 @@
-/**
- * `prompt` domain — safe, displayable metadata text derived from prompts.
- *
- * Shared by prompt submission and undo projection so `lastPrompt` uses one
- * normalization, redaction, and length limit, with image captions supplied by
- * the `media` domain.
- */
-
-import type { ContentPart } from '#/kosong/contract/message';
+import type { ContentPart } from '#human/llm/message';
+import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
 import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 const MAX_TITLE_LENGTH = 200;
@@ -18,13 +11,26 @@ export function titleFromPromptMetadataText(text: string): string {
 
 export function promptMetadataTextFromContentParts(
   parts: readonly ContentPart[],
+  clientMetadata?: unknown,
 ): string | undefined {
+  if (Array.isArray(clientMetadata) && clientMetadata.length > 0) {
+    const displayTexts = clientMetadata.map((entry: unknown) => {
+      if (typeof entry !== 'object' || entry === null) return undefined;
+      const text = (entry as { display_text?: unknown }).display_text;
+      return typeof text === 'string' ? text : undefined;
+    });
+    if (displayTexts.every((text) => text !== undefined)) return promptMetadataTextFromText(displayTexts.join('\n'));
+  }
+  return promptMetadataTextFromText(promptDisplayTextFromContentParts(parts));
+}
+
+export function promptDisplayTextFromContentParts(parts: readonly ContentPart[]): string {
   const texts: string[] = [];
   for (const part of parts) {
     const text = promptPartText(part);
     if (text !== undefined) texts.push(text);
   }
-  return promptMetadataTextFromText(texts.join('\n'));
+  return texts.join('\n');
 }
 
 export function promptMetadataTextFromText(text: string): string | undefined {
@@ -51,6 +57,7 @@ export function promptMetadataTextFromText(text: string): string | undefined {
 function promptPartText(part: ContentPart): string | undefined {
   switch (part.type) {
     case 'text': {
+      if (matchSingleMediaPathTag(part.text) !== undefined) return undefined;
       const { text } = extractImageCompressionCaptions(part.text);
       return text.trim().length === 0 ? undefined : text;
     }

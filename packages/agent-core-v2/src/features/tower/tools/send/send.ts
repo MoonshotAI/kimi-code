@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ITowerSendTool` contract (the `TowerSend` tool).
- *
- * Public contract of the tower inbox sender: delivers a message to a roster
- * agent, the tower, or everyone ("all"); the store builds the file name and
- * frontmatter. Exports the model-facing `TowerSendToolInputSchema` /
- * `TowerSendToolInput` and the `ITowerSendTool` DI decorator. Bound at Agent
- * scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

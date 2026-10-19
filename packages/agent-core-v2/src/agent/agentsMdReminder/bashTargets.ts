@@ -1,26 +1,3 @@
-/**
- * `agentsMdReminder` domain — Bash-command directory extraction.
- *
- * Statically extracts the directories a Bash tool call is going to inspect,
- * walking the `bashParser` syntax tree: the literal operands of
- * directory-listing commands (`ls` / `tree` / `find` / `dir` / `exa` / `eza` /
- * `lsd`), with literal `cd` commands rebasing relative resolution as they
- * appear (`cd packages && ls kap-server`) and a genuinely operand-less
- * listing command listing the current base (one whose operands all failed
- * resolution is skipped instead). Only top-level simple commands are read —
- * anything not statically resolvable (expansions, command
- * substitution, glob characters (quoted or not), `~`, quoting mixes, compound
- * constructs, `cd -`, a `cd` inside a pipeline, or a listing command invoked
- * through a path prefix like `./ls` whose semantics are unknown) is skipped,
- * and a `cd` whose operand cannot be resolved poisons relative resolution
- * (never guesses a base) until an absolute `cd` re-anchors. Flags are dropped
- * together with the arguments of the known argument-taking options
- * (`ls --sort size`), and `find` collects leading paths past its no-argument
- * global options (`find -L packages`) before stopping at the expression.
- * A missed directory is recovered by the later Read/Edit/Write
- * probes; a wrong one is not, so skipping always wins over guessing.
- */
-
 import { isAbsolute, join, normalize } from 'pathe';
 
 import type { BashSyntaxNode } from '#/app/bashParser/bashParser';

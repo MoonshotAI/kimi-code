@@ -10,13 +10,14 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { createScopedTestHost } from '#/_base/di/test';
+import type { FileLogWriter } from '#/_base/log/fileLog';
 import { ILogService } from '#/_base/log/log';
 import {
   logSeed,
   resolveLoggingConfig,
   resolveSessionLogPath,
 } from '#/_base/log/logConfig';
-import { AppLogService } from '#/_base/log/logService';
+import { AppLogService, drainLogCloses } from '#/_base/log/logService';
 import { SessionLogService } from '#/session/sessionLog/sessionLogService';
 import { makeSessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -139,6 +140,32 @@ describe('SessionLogService', () => {
     return readSessionLog().then((text) => {
       expect(text).toContain('on-dispose');
     });
+  });
+
+  it('dispose tracks the sink close so drainLogCloses waits for it', async () => {
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+    const log = session.accessor.get(ILogService) as SessionLogService;
+    const sink = (log as unknown as { sink: FileLogWriter }).sink;
+    const originalClose = sink.close.bind(sink);
+    let releaseClose!: () => void;
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    sink.close = () => originalClose().then(() => closeGate);
+    log.info('drain-me');
+    host.dispose();
+
+    let drained = false;
+    const draining = drainLogCloses().then(() => {
+      drained = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(drained).toBe(false);
+
+    releaseClose();
+    await draining;
+    expect(drained).toBe(true);
   });
 });
 

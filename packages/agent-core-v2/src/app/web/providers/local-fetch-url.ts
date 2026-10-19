@@ -1,17 +1,3 @@
-/**
- * `web` domain — local `UrlFetcher` used when no managed fetch service
- * is configured. GETs URLs with a Chrome-like UA and SSRF hardening: http(s)
- * schemes only; unless `allowPrivateAddresses` is set, IP literals and
- * DNS-resolved addresses in loopback / RFC1918 / link-local / CGNAT / ULA
- * ranges are refused, including IPv4-mapped IPv6 forms; redirects are
- * followed manually with the same validation re-run on every hop; and each
- * request's connection is pinned to the DNS answers validation approved, so
- * a connect-time re-resolution cannot be rebound elsewhere (pinning is
- * skipped for IP literals and for requests a proxy will carry — NO_PROXY
- * bypasses still pin). Oversized bodies are refused; plain texts pass
- * through verbatim and HTML is reduced to its main text.
- */
-
 import { lookup as callbackLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';

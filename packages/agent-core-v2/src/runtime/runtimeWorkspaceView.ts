@@ -1,4 +1,5 @@
 import { ErrorCodes, Error2 } from '#/errors';
+import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 
 import type { Runtime, RuntimeBinding, RuntimeWorkspaceRoots } from './runtime';
 
@@ -27,16 +28,16 @@ export class RuntimeWorkspaceView {
   }
 
   resolve(path: string, cwd = this.workDir): string {
-    const resolved = this.runtime.path.isAbsolute(path)
-      ? this.runtime.path.resolve(path)
-      : this.runtime.path.resolve(cwd, path);
-    this.assertAllowed(resolved);
-    return resolved;
+    const env = this.runtime.environment;
+    const bridged = env.pathClass === 'win32' ? getShellPathBridge(env).fromShellPath(path) : path;
+    return this.runtime.path.isAbsolute(bridged)
+      ? this.runtime.path.resolve(bridged)
+      : this.runtime.path.resolve(cwd, bridged);
   }
 
-  assertAllowed(path: string): void {
+  assertAllowed(path: string): string {
     const resolved = this.runtime.path.resolve(path);
-    if (this.roots.some((root) => contains(this.runtime, root, resolved))) return;
+    if (this.roots.some((root) => contains(this.runtime, root, resolved))) return resolved;
     throw new Error2(
       ErrorCodes.FS_PATH_ESCAPES,
       `path ${path} is outside runtime workspace ${this.binding.runtimeId}`,

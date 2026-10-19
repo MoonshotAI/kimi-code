@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ITowerPlanTool` contract (the `TowerPlan` tool).
- *
- * Public contract of the tower's mission splitter: each mission gets an id,
- * a branch, and a worktree slot; scopes must be pairwise disjoint and deps
- * must reference known mission ids (both enforced by the store). Exports the
- * model-facing `TowerPlanToolInputSchema` / `TowerPlanToolInput` and the
- * `ITowerPlanTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -19,17 +9,29 @@ export const TowerPlanToolInputSchema = z
       .array(
         z
           .object({
-            title: z.string().describe('Short mission title; becomes the branch/worktree slug'),
+            title: z
+              .string()
+              .describe(
+                'Short mission title; becomes the branch/worktree slug. Printable ASCII English only — any non-ASCII character is rejected. Include a unique identifier word (a business code, a module name, a ticket id).',
+              ),
             scope: z
               .array(z.string())
               .min(1)
               .describe(
-                'Files/globs this mission may touch (e.g. "src/build/**"). Scopes of different missions must not overlap.',
+                'Files/globs this mission may touch (e.g. "src/build/**"). Scopes of different build missions should be disjoint; when they overlap, the store auto-adds a dependency that serializes their merges.',
               ),
             tasks: z
               .array(z.string())
               .optional()
-              .describe('Checklist the worker will tick off via TowerMission task_done'),
+              .describe(
+                'Checklist the worker will tick off via TowerMission task_done — write each task as a verifiable item a reviewer can map to the diff',
+              ),
+            context: z
+              .string()
+              .optional()
+              .describe(
+                "The user's own key sentences about this mission, copied verbatim — the tower's paraphrase supplements them, never replaces them. Fill this whenever the requirement could be misread; never paste the full conversation history.",
+              ),
             deps: z
               .array(z.string())
               .optional()

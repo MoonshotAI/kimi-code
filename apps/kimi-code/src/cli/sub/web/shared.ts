@@ -40,12 +40,12 @@ export interface ParsedServerOptions {
   insecureNoTls: boolean;
   /** Allow `POST /api/v1/shutdown` on a non-loopback bind. */
   allowRemoteShutdown: boolean;
-  /** Allow PTY `/api/v1/terminals/*` routes on a non-loopback bind. */
-  allowRemoteTerminals: boolean;
   /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
   dangerousBypassAuth: boolean;
   /** Extra `Host` header values to allow through the DNS-rebinding check. */
   allowedHosts: readonly string[];
+  /** Custom browser tab title for this web UI instance (`--web-title`). */
+  webTitle?: string;
 }
 
 export interface ServerCliOptions {
@@ -57,12 +57,12 @@ export interface ServerCliOptions {
   insecureNoTls?: boolean;
   /** Allow remote shutdown on a non-loopback bind (`--allow-remote-shutdown`). */
   allowRemoteShutdown?: boolean;
-  /** Allow remote terminals on a non-loopback bind (`--allow-remote-terminals`). */
-  allowRemoteTerminals?: boolean;
   /** Disable bearer-token auth on every route (`--dangerous-bypass-auth`). */
   dangerousBypassAuth?: boolean;
   /** Extra `Host` header values to allow (`--allowed-host`). */
   allowedHost?: string[];
+  /** Custom browser tab title for this web UI instance (`--web-title`). */
+  webTitle?: string;
 }
 
 export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions {
@@ -73,9 +73,9 @@ export function parseServerOptions(opts: ServerCliOptions): ParsedServerOptions 
     debugEndpoints: opts.debugEndpoints === true,
     insecureNoTls: opts.insecureNoTls !== false,
     allowRemoteShutdown: opts.allowRemoteShutdown === true,
-    allowRemoteTerminals: opts.allowRemoteTerminals === true,
     dangerousBypassAuth: opts.dangerousBypassAuth === true,
     allowedHosts: parseAllowedHostArgs(opts.allowedHost),
+    webTitle: opts.webTitle,
   };
 }
 

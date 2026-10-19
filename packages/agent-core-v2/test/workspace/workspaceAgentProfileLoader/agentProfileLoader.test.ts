@@ -1,25 +1,10 @@
-/**
- * Scenario: agent-profile loaders + session catalog — the Contribution /
- * Registry / Catalog extension point end to end. Exercises the real loader
- * services (builtin / user / plugin / workspace / extra / explicit), the
- * App-scope `AgentProfileRegistryService` fold, and the Session-scope
- * `SessionAgentProfileCatalogService` — the loaders and the fold are resolved
- * through one DI container (the `this.provide` collection-contribution path
- * requires container-constructed units) against real temp directories:
- * source-priority merge, the builtin-override rule, explicit fatal semantics,
- * config / plugin-reload / fs-watch driven reloads, and SYSTEM.md interplay.
- * Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceAgentProfileLoader/agentProfileLoader.test.ts`.
- */
-
 import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { Emitter, Event } from '#/_base/event';
+import { AsyncEmitter, Emitter, Event } from '#/_base/event';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationService } from '#/_base/di/instantiationService';
@@ -27,7 +12,7 @@ import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { ILogService } from '#/_base/log/log';
 import { EXTRA_AGENT_DIRS_SECTION } from '#/workspace/workspaceAgentProfileLoader/configSection';
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
-import type { PluginAgentRoot, ReloadSummary } from '#/app/plugin/types';
+import type { PluginAgentRoot, PluginReloadEvent } from '#/app/plugin/types';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   normalizeAgentProfile,
@@ -47,14 +32,8 @@ import { IConfigService } from '#/app/config/config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { PluginAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoaderService';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
-import { HostFsWatchService } from '#/os/backends/node-local/hostFsWatchService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { SessionAgentProfileCatalogService } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalogService';
 import type { ISessionAgentProfileCatalogSeed } from '#/session/sessionAgentProfileCatalog/agentProfileCatalogSeed';
 import { ExplicitAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
@@ -68,6 +47,32 @@ import { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoade
 import { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 
 import { stubBootstrap } from '../../app/bootstrap/stubs';
+
+const watchMockState = vi.hoisted(() => ({ mode: 'inert' as 'inert' | 'real' }));
+
+vi.mock('#human/utils/watch', async (importOriginal) => {
+  const original = await importOriginal<typeof import('#human/utils/watch')>();
+  const watch = (path: string, options?: Parameters<typeof original.watch>[1]) => {
+    if (watchMockState.mode === 'real') return original.watch(path, options);
+    return {
+      ready: Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      dispose: () => {},
+    };
+  };
+  return {
+    ...original,
+    watch,
+    watchCandidates: (
+      root: string,
+      candidates: readonly string[],
+      options?: Parameters<typeof original.watch>[1],
+    ) =>
+      watchMockState.mode === 'real'
+        ? original.watchCandidates(root, candidates, options)
+        : watch(root, options),
+  };
+});
 
 function configStub(): IConfigService & {
   setExtraAgentDirs(dirs: readonly string[]): void;
@@ -118,17 +123,6 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
     source: 'local',
     meta: { id: 'wd_test', root: workDir, name: 'test', createdAt: 0, lastOpenedAt: 0 },
     persistenceScope: 'sessions/wd_test',
-  };
-}
-
-function fsWatchStub(): IHostFsWatchService {
-  return {
-    _serviceBrand: undefined,
-    watch: (): IHostFsWatchHandle => ({
-      ready: Promise.resolve(),
-      onDidChange: Event.None as Event<HostFsChange>,
-      dispose: () => {},
-    }),
   };
 }
 
@@ -187,7 +181,7 @@ function logStub(warnings?: string[]): ILogService {
 
 function pluginStub(
   agentRoots: readonly PluginAgentRoot[] = [],
-  reloadEmitter?: Emitter<ReloadSummary>,
+  reloadEmitter?: Emitter<PluginReloadEvent>,
 ): IPluginService {
   return {
     _serviceBrand: undefined,
@@ -209,8 +203,10 @@ function pluginStub(
     enabledSessionStarts: async () => [],
     enabledSystemPrompts: async () => [],
     enabledMcpServers: async () => ({}),
+    mcpServerEntries: async () => [],
     enabledHooks: async () => [],
     hasLoadedSnapshot: () => true,
+    enabledPluginIds: () => undefined,
   };
 }
 
@@ -244,9 +240,8 @@ interface StackOptions {
   readonly extraAgentDirs?: readonly string[];
   readonly explicitFiles?: readonly string[];
   readonly pluginAgentRoots?: readonly PluginAgentRoot[];
-  readonly pluginReloadEmitter?: Emitter<ReloadSummary>;
+  readonly pluginReloadEmitter?: Emitter<PluginReloadEvent>;
   readonly hostFs?: HostFileSystem;
-  readonly fsWatch?: IHostFsWatchService;
 }
 
 function makeStack(fixture: Fixture, opts?: StackOptions) {
@@ -267,7 +262,6 @@ function makeStack(fixture: Fixture, opts?: StackOptions) {
       [IConfigService, config],
       [IBootstrapService, bootstrap],
       [IHostFileSystem, hostFs],
-      [IHostFsWatchService, opts?.fsWatch ?? fsWatchStub()],
       [IWorkspaceContext, workspaceContext],
       [IPluginService, pluginStub(opts?.pluginAgentRoots ?? [], opts?.pluginReloadEmitter)],
       [IAgentProfileRegistry, new SyncDescriptor(AgentProfileRegistryService)],
@@ -340,6 +334,7 @@ async function withStack(
 
 describe('agent profile loaders + session catalog', () => {
   beforeEach(() => {
+    watchMockState.mode = 'inert';
     _clearAgentProfileContributionsForTests();
     const builtinDefault: AgentProfile = normalizeAgentProfile({
       name: DEFAULT_AGENT_PROFILE_NAME,
@@ -440,7 +435,7 @@ describe('agent profile loaders + session catalog', () => {
     await withFixture(async (fixture) => {
       const pluginAgentsDir = join(fixture.extraDir, 'plugin-agents');
       await mkdir(pluginAgentsDir, { recursive: true });
-      const reloadEmitter = new Emitter<ReloadSummary>();
+      const reloadEmitter = new AsyncEmitter<PluginReloadEvent>();
       await withStack(
         fixture,
         {
@@ -453,7 +448,10 @@ describe('agent profile loaders + session catalog', () => {
 
           await writeAgent(pluginAgentsDir, 'late.md', agentMd('late', 'late plugin agent'));
           const changed = waitForEvent(stack.catalog.onDidChange);
-          reloadEmitter.fire({ added: [], removed: [], errors: [] });
+          await reloadEmitter.fireAsyncConcurrent(
+            { added: [], removed: [], errors: [] },
+            new AbortController().signal,
+          );
           await changed;
 
           expect(stack.catalog.get('late')?.description).toBe('late plugin agent');
@@ -759,9 +757,10 @@ describe('agent profile loaders + session catalog', () => {
   });
 
   it('rescans the workspace source when a project agent file changes on disk', async () => {
+    watchMockState.mode = 'real';
     await withFixture(async (fixture) => {
       await mkdir(join(fixture.workDir, '.kimi-code', 'agents'), { recursive: true });
-      await withStack(fixture, { fsWatch: new HostFsWatchService() }, async (stack) => {
+      await withStack(fixture, undefined, async (stack) => {
         await stack.ready();
         expect(stack.catalog.get('watched-agent')).toBeUndefined();
 

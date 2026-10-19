@@ -337,6 +337,40 @@ describe('GoogleGenAIChatProvider', () => {
       const last = contents.at(-1)!;
       expect(last.parts.some((p) => p.functionResponse !== undefined)).toBe(true);
       expect(last.parts.some((p) => p.text === 'Now multiply')).toBe(true);
+      // Gemini rejects a trailing Content whose parts start with
+      // functionResponse followed by text ("Requests ending with a model turn
+      // are not supported"); the merged Content must keep the user text first.
+      expect(last.parts[0]).toEqual({ text: 'Now multiply' });
+    });
+
+    it('keeps trailing user text before a multimodal tool-result Content when merging', () => {
+      // A tool result carrying media yields [functionResponse, inlineData];
+      // the reorder must still put a following user text part first.
+      const toolCall: ToolCall = {
+        type: 'function',
+        id: 'call_img',
+        name: 'inspect',
+        arguments: '{}',
+      };
+      const contents = messagesToGoogleGenAIContents([
+        { role: 'user', content: [{ type: 'text', text: 'Inspect it' }], toolCalls: [] },
+        { role: 'assistant', content: [], toolCalls: [toolCall] },
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'here is the image' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+          ],
+          toolCallId: 'call_img',
+          toolCalls: [],
+        },
+        { role: 'user', content: [{ type: 'text', text: 'Now explain it' }], toolCalls: [] },
+      ]);
+
+      expect(contents.map((c) => c.role)).toEqual(['user', 'model', 'user']);
+      const last = contents.at(-1)!;
+      expect(last.parts[0]).toEqual({ text: 'Now explain it' });
+      expect(last.parts.some((p) => p.functionResponse !== undefined)).toBe(true);
     });
 
     it('multi-turn conversation with system prompt sets systemInstruction', async () => {
@@ -907,6 +941,27 @@ describe('GoogleGenAIChatProvider', () => {
       });
     });
 
+    it('gemini-4 model uses thinkingLevel', async () => {
+      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('high');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      const config = body['config'] as Record<string, unknown>;
+      expect(config['thinkingConfig']).toEqual({
+        includeThoughts: true,
+        thinkingLevel: 'HIGH',
+      });
+    });
+
+    it('gemini-4 model rejects effort off (thinking cannot be disabled)', () => {
+      const provider = createProvider({ model: 'gemini-4-argon' });
+      expect(() => provider.withThinking('off')).toThrow(
+        'thinking effort "off" is not supported for gemini-4 models: thinking cannot be disabled; use low/medium/high',
+      );
+    });
+
     it('thinking effort off for non-gemini-3 disables thinking', async () => {
       const provider = createProvider({ model: 'gemini-2.5-flash' }).withThinking('off');
       const history: Message[] = [
@@ -987,6 +1042,23 @@ describe('GoogleGenAIChatProvider', () => {
       expect(provider.thinkingEffort).toBe('high');
     });
 
+    it('thinkingEffort round-trips effort off for gemini-3', () => {
+      const provider = createProvider({ model: 'gemini-3-pro-preview' }).withThinking('off');
+      expect(provider.thinkingEffort).toBe('off');
+    });
+
+    it('thinkingEffort reflects level for gemini-4', () => {
+      const provider = createProvider({ model: 'gemini-4-argon' }).withThinking('low');
+      expect(provider.thinkingEffort).toBe('low');
+    });
+
+    it('thinkingEffort preserves low for explicit LOW kwargs on gemini-3', () => {
+      const provider = createProvider({ model: 'gemini-3-pro-preview' }).withGenerationKwargs({
+        thinkingConfig: { thinkingLevel: 'LOW', includeThoughts: false },
+      });
+      expect(provider.thinkingEffort).toBe('low');
+    });
+
     it('withThinking returns a new instance', () => {
       const provider = createProvider();
       const newProvider = provider.withThinking('high');
@@ -1014,9 +1086,9 @@ describe('GoogleGenAIChatProvider', () => {
       const provider = new GoogleGenAIChatProvider({
         model: 'gemini-2.5-flash',
         apiKey: 'test-key',
-        baseUrl: 'https://qianxun.example/v1beta',
+        baseUrl: 'https://genai-gateway.example/v1beta',
       });
-      expect(customBaseUrl(provider)).toBe('https://qianxun.example/v1beta');
+      expect(customBaseUrl(provider)).toBe('https://genai-gateway.example/v1beta');
     });
 
     it('leaves the SDK default endpoint in place when no baseUrl is set', () => {
@@ -1031,7 +1103,7 @@ describe('GoogleGenAIChatProvider', () => {
       const provider = new GoogleGenAIChatProvider({
         model: 'gemini-2.5-flash',
         apiKey: 'test-key',
-        baseUrl: 'https://qianxun.example/v1beta',
+        baseUrl: 'https://genai-gateway.example/v1beta',
         defaultHeaders: { 'User-Agent': 'kimi-code-cli/test' },
       });
       const client = (
@@ -1044,7 +1116,7 @@ describe('GoogleGenAIChatProvider', () => {
           };
         }
       )._client;
-      expect(client.apiClient.getCustomBaseUrl()).toBe('https://qianxun.example/v1beta');
+      expect(client.apiClient.getCustomBaseUrl()).toBe('https://genai-gateway.example/v1beta');
       expect(client.apiClient.getHeaders()).toMatchObject({
         'User-Agent': 'kimi-code-cli/test',
       });
@@ -1055,9 +1127,9 @@ describe('GoogleGenAIChatProvider', () => {
         model: 'gemini-1.5-pro',
         apiKey: 'test-key',
         vertexai: true,
-        baseUrl: 'https://qianxun.example/vertex',
+        baseUrl: 'https://genai-gateway.example/vertex',
       });
-      expect(customBaseUrl(provider)).toBe('https://qianxun.example/vertex');
+      expect(customBaseUrl(provider)).toBe('https://genai-gateway.example/vertex');
     });
   });
 

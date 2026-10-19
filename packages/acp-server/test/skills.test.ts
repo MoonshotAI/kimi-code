@@ -62,6 +62,18 @@ describe('buildAcpSkillSlashCommands', () => {
     expect(commands.map((command) => command.name)).toEqual(['skill:flow-one', 'skill:inline-one']);
   });
 
+  it('filters out skills restricted to specific client scopes', () => {
+    const { commands, commandMap } = buildAcpSkillSlashCommands([
+      skill('tui-only', { source: 'builtin', scopes: ['tui'] }),
+      skill('web-only', { source: 'builtin', scopes: ['web'] }),
+      skill('unrestricted', { source: 'builtin' }),
+    ]);
+
+    expect(commands.map((command) => command.name)).toEqual(['unrestricted']);
+    expect(commandMap.has('tui-only')).toBe(false);
+    expect(commandMap.has('web-only')).toBe(false);
+  });
+
   it('drops skills whose command name collides with an ACP builtin', () => {
     const { commands, commandMap } = buildAcpSkillSlashCommands([
       skill('compact', { source: 'builtin' }),

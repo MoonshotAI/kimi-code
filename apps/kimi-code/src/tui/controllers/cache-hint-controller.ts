@@ -21,18 +21,23 @@ import type { AppState, InlineSkillActivation } from '../types';
 import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { ExtractionResult } from '../utils/image-placeholder';
+import {
+  makeExtractionResendable,
+  originalsDirForSession,
+  type ExtractionResult,
+} from '../utils/image-placeholder';
 
 /** A swallowed submit: the raw text plus its media extraction (done before
  *  the dialog so pasted attachments survive a later store clear). */
 interface StashedSubmit {
   readonly text: string;
   readonly extraction?: ExtractionResult;
+  /** Session that owned any daemon refs inside {@link extraction}. */
+  readonly sessionId: string;
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 export interface CacheHintHost {
-  readonly engineV2: boolean;
   readonly harness: KimiHarness;
   readonly session: Session | undefined;
   readonly state: TUIState;
@@ -41,6 +46,12 @@ export interface CacheHintHost {
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
+  /**
+   * A stashed submission going back to the editor releases its extraction's
+   * staged media with queue-recall semantics (consume retains, retire staged
+   * copies, rebase videos) — without this the retains/copies would leak.
+   */
+  recallStashedMedia(extraction: ExtractionResult | undefined): void;
   showError(message: string): void;
   createNewSession(): Promise<void>;
   sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void>;
@@ -187,7 +198,7 @@ export class CacheHintController {
   async maybeShowOnResume(): Promise<void> {
     const { host } = this;
     const session = host.session;
-    if (!host.engineV2 || session === undefined) return;
+    if (session === undefined) return;
     if (this.resumedSessions.has(session.id)) return;
     const main = session.getResumeState()?.agents[MAIN_AGENT_ID];
     let lastActiveAt = 0;
@@ -227,6 +238,10 @@ export class CacheHintController {
       dismissed: host.state.appState.cacheExpiryHint === false,
     });
     if (decision.kind === 'skip') return;
+    // Another dialog (e.g. the model migration prompt) already owns the editor
+    // area: never replace it under the user's keystrokes. The seeded baseline
+    // leaves this cycle to the idle-submit path, which hints on the first prompt.
+    if (host.state.editorReplacementMounted) return;
     this.resumedSessions.add(session.id);
     // The resume dialog also covers this idle cycle: the first submit right
     // after it must not be intercepted again.
@@ -248,7 +263,7 @@ export class CacheHintController {
     inlineSkillActivations?: readonly InlineSkillActivation[],
   ): boolean {
     const { host } = this;
-    if (!host.engineV2 || host.session === undefined) return false;
+    if (host.session === undefined) return false;
     // A stashed message being released re-enters the send path here — never
     // re-intercept it (that would start a second fetch loop).
     if (this.releasingStashed) return false;
@@ -263,7 +278,7 @@ export class CacheHintController {
     // Coarse floor: configured cache durations are 10min+, so anything
     // fresher than a minute can never hint.
     if (Date.now() - this.lastActivityAt < 60_000) return false;
-    const stash: StashedSubmit = { text, extraction, inlineSkillActivations };
+    const stash: StashedSubmit = { text, extraction, sessionId: host.session.id, inlineSkillActivations };
     const cached = peekCacheHintConfig();
     if (cached !== undefined) {
       const decision = evaluateCacheHint({
@@ -305,7 +320,7 @@ export class CacheHintController {
     // would reorder the conversation.
     if (this.idlePrompted) {
       if (this.lastDialogRestored) {
-        this.restoreStashedInput(stash.text);
+        this.restoreStashedInput(stash);
       } else {
         await this.releaseStashed(stash);
       }
@@ -316,7 +331,7 @@ export class CacheHintController {
     // meanwhile, never send the stashed text into the wrong session — hand it
     // back to the editor instead.
     if (host.session?.id !== sessionId) {
-      this.restoreStashedInput(stash.text);
+      this.restoreStashedInput(stash);
       return;
     }
     // If a foreground operation (turn, /compact, …) started meanwhile, don't
@@ -359,23 +374,30 @@ export class CacheHintController {
   }
 
   private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
+    // A session reset cleared the image store: rebuild the extraction from
+    // its snapshots, persisting compressed pastes' originals into the NEW
+    // session's originals dir so the compression caption survives the move.
+    const extraction =
+      stash.extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId
+        ? makeExtractionResendable(stash.extraction, originalsDirForSession(this.host.session))
+        : stash.extraction;
     if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
-      await this.host.sendInlineSkillUserInput(
-        stash.text,
-        stash.inlineSkillActivations,
-        stash.extraction,
-      );
+      await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);
       return;
     }
-    await this.host.sendNormalUserInput(stash.text, stash.extraction);
+    await this.host.sendNormalUserInput(stash.text, extraction);
   }
 
   /** Restore a stashed input to the editor, appending to anything already
-   *  restored this cycle so earlier text is not overwritten. */
-  private restoreStashedInput(text: string | undefined): void {
-    if (text === undefined) return;
-    this.restoredTexts.push(text);
+   *  restored this cycle so earlier text is not overwritten, and release the
+   *  stash's staged media with recall semantics — the restored draft still
+   *  references its attachments, so retains are consumed (the next submit
+   *  re-retains) and staged copies retire instead of leaking. */
+  private restoreStashedInput(stash: StashedSubmit | undefined): void {
+    if (stash === undefined) return;
+    this.restoredTexts.push(stash.text);
     this.host.restoreInputText(this.restoredTexts.join('\n'));
+    this.host.recallStashedMedia(stash.extraction);
   }
 
   private upstreamModelId(): string | undefined {
@@ -441,7 +463,7 @@ export class CacheHintController {
     const { host } = this;
     const restoreInput = () => {
       this.lastDialogRestored = true;
-      this.restoreStashedInput(stashed?.text);
+      this.restoreStashedInput(stashed);
     };
     switch (action) {
       case 'dismiss':
@@ -492,7 +514,7 @@ export class CacheHintController {
         break;
     }
     this.lastDialogRestored = false;
-    if (stashed !== undefined) await this.releaseToSendPath(stashed);
+    if (stashed !== undefined) await this.releaseStashed(stashed);
   }
 
   /** Bounded wait for the engine to flip `isCompacting` after a compact RPC. */

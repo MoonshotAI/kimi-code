@@ -1,16 +1,3 @@
-/**
- * `workspaceAgentProfileLoader` domain — `IUserAgentProfileLoader` implementation.
- *
- * Discovers user agent profiles through `bootstrap` home paths and `hostFs`,
- * reports skipped files through `log`, and appends the `<home>/SYSTEM.md`
- * prompt-override profile (synthesized against the builtin default from the
- * App builtin loader) after the scanned profiles so it wins same-name
- * collisions within this contribution. The user roots are global os
- * directories, but per-workspace contribution keeps every record flowing
- * through the same workspace-tagged lane. Bound at Workspace scope.
- */
-
-
 import { ILogService } from '#/_base/log/log';
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';

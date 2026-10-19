@@ -141,7 +141,7 @@ describe('updateActivityPane terminal progress', () => {
     expect(setProgress).toHaveBeenLastCalledWith(false);
   });
 
-  it('keeps terminal progress active without showing a thinking spinner', () => {
+  it('keeps terminal progress active while showing the thinking spinner', () => {
     vi.useFakeTimers();
     try {
       const { driver, state, setProgress } = makeDriverWithTerminalProgress();
@@ -152,8 +152,8 @@ describe('updateActivityPane terminal progress', () => {
 
       expect(setProgress).toHaveBeenCalledTimes(1);
       expect(setProgress).toHaveBeenLastCalledWith(true);
-      expect(state.activitySpinner).toBeNull();
-      expect(state.activityContainer.children).toHaveLength(0);
+      expect(state.activitySpinner).not.toBeNull();
+      expect(state.activityContainer.children).toHaveLength(1);
 
       state.appState.streamingPhase = 'idle';
       driver.updateActivityPane();
@@ -179,7 +179,7 @@ describe('updateActivityPane terminal progress', () => {
       expect(setProgress).toHaveBeenLastCalledWith(true);
       expect(state.activitySpinner).not.toBeNull();
       expect(state.activityContainer.children).toHaveLength(0);
-      expect(strip(progress.render(80).join('\n'))).toContain('🌑 Working...');
+      expect(strip(progress.render(80).join('\n'))).toContain('🌑 Working…');
 
       state.activitySpinner?.instance.stop();
       driver.sessionEventHandler.clearAgentSwarmProgress();
@@ -209,8 +209,8 @@ describe('updateActivityPane terminal progress', () => {
       expect(state.activitySpinner).not.toBeNull();
       expect(state.activityContainer.children).toHaveLength(1);
       const output = strip(progress.render(80).join('\n'));
-      expect(output).toContain('  Working...');
-      expect(output).not.toContain('🌑 Working...');
+      expect(output).toContain('  Working…');
+      expect(output).not.toContain('🌑 Working…');
 
       state.activitySpinner?.instance.stop();
       driver.sessionEventHandler.clearAgentSwarmProgress();

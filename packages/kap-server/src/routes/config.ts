@@ -1,36 +1,4 @@
-/**
- * `/config` route handlers — server-v2 port.
- *
- * Implements the v1 `/api/v1/config` wire contract on top of `agent-core-v2`'s
- * section-registry `IConfigService`:
- *   GET  /config   — global Kimi configuration, secrets redacted
- *   POST /config   — update global configuration (merge semantics)
- *
- * **Wire fidelity**: reuses the local `protocol/rest-config` `configResponseSchema` /
- * `patchConfigRequestSchema` verbatim, so the request/response shape is
- * byte-for-byte compatible with v1's `routes/config.ts`. v2's `IConfigService`
- * is a per-domain registry (`get(domain)` / `set(domain, patch)`) and does not
- * expose a whole-config view or redaction, so this route is the edge facade
- * that:
- *   - projects `getAll()` (camelCase resolved config) into the snake_case
- *     `ConfigResponse`, redacting provider credentials to `has_api_key`
- *     (mirrors v1 `toConfigResponse`);
- *   - splits v1's flat multi-domain `POST /config` patch into per-domain
- *     `IConfigService.set(domain, value)` calls (snake_case → camelCase);
- *   - republishes the change as a v2 `DomainEvent` on `IEventService`.
- *
- * **Event shape**: v2's `DomainEvent` is `{ type, payload }`, and the Core
- * `events` WS stream forwards it as-is. The config-changed notification is
- * therefore emitted as `{ type: 'event.config.changed', payload: { changedFields,
- * config } }` rather than v1's flat `{ type, changedFields, config }`. The HTTP
- * response (the schema contract) is unaffected.
- */
-
-import {
-  IConfigService,
-  IEventService,
-  type Scope,
-} from '@moonshot-ai/agent-core-v2';
+import { IConfigService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
@@ -94,9 +62,6 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         const config = core.accessor.get(IConfigService);
         await config.ready;
         const camelPatch = convertKeysSnakeToCamel(req.body) as Record<string, unknown>;
-        // v1 wire sugar: `yolo: true` is an alias for
-        // `default_permission_mode = 'yolo'`. Fold it into the canonical domain and
-        // drop the key so `yolo` is never a config domain and never persisted.
         if (camelPatch['yolo'] === true) {
           camelPatch['defaultPermissionMode'] = 'yolo';
         }
@@ -106,14 +71,6 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
         }
         const response = toConfigResponse(config.getAll());
         const changedFields = Object.keys(req.body as Record<string, unknown>);
-        core.accessor.get(IEventService).publish({
-          type: 'event.config.changed',
-          payload: {
-            changedFields,
-            config: response,
-          },
-        });
-        // Only the changed field *names* — values may carry secrets.
         requestLog(req)?.info({ changedFields }, 'config updated');
         reply.send(okEnvelope(response, req.id));
       } catch (error) {
@@ -126,27 +83,22 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
   app.post(setRoute.path, setRoute.options, setRoute.handler as Parameters<ConfigRouteHost['post']>[2]);
 }
 
-// ---------------------------------------------------------------------------
-// Edge facade — project the v2 resolved config into the v1 `ConfigResponse`
-// wire shape. Top-level domain keys are mapped camelCase→snake_case generically,
-// so this route does not enumerate the config domains; values pass through
-// unchanged except `providers`, whose credentials are redacted to `has_api_key`
-// (the only domain-specific transform). Pure projection: no service calls.
-// ---------------------------------------------------------------------------
-
-function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
+export function toConfigResponse(resolved: Record<string, unknown>): ConfigResponse {
   const wire: Record<string, unknown> = {};
   for (const [domain, value] of Object.entries(resolved)) {
-    wire[camelToSnake(domain)] = domain === 'providers' ? toProviderResponses(value) : value;
+    wire[camelToSnake(domain)] =
+      domain === 'providers'
+        ? toProviderResponses(value)
+        : domain === 'models'
+          ? toModelResponses(value)
+          : domain === 'services'
+            ? toServiceResponses(value)
+            : value;
   }
-  // v1 wire echo: surface `yolo` as a derived boolean of the effective default
-  // permission mode. `yolo` is not a config domain; it is computed here so the
-  // v1 `/config` shape is preserved without persisting a parallel field.
   const defaultPermissionMode = resolved['defaultPermissionMode'];
   if (typeof defaultPermissionMode === 'string') {
     wire['yolo'] = defaultPermissionMode === 'yolo';
   }
-  // `providers` is required by `ConfigResponse` even when no provider is configured.
   if (wire['providers'] === undefined) {
     wire['providers'] = {};
   }
@@ -158,6 +110,7 @@ interface ProviderLike {
   readonly baseUrl?: unknown;
   readonly defaultModel?: unknown;
   readonly apiKey?: unknown;
+  readonly apiKeyEnv?: unknown;
   readonly oauth?: unknown;
 }
 
@@ -170,6 +123,7 @@ function toProviderResponses(value: unknown): Record<string, ProviderResponse> {
       type: typeof provider.type === 'string' ? provider.type : '',
       base_url: nonEmpty(provider.baseUrl),
       default_model: nonEmpty(provider.defaultModel),
+      api_key_env: nonEmpty(provider.apiKeyEnv),
       has_api_key: hasProviderCredential(provider),
     };
   }
@@ -178,8 +132,55 @@ function toProviderResponses(value: unknown): Record<string, ProviderResponse> {
 
 function hasProviderCredential(provider: ProviderLike): boolean {
   if (nonEmpty(provider.apiKey) !== undefined) return true;
+  const apiKeyEnv = nonEmpty(provider.apiKeyEnv);
+  if (apiKeyEnv !== undefined) return nonEmpty(process.env[apiKeyEnv]) !== undefined;
   if (provider.oauth !== undefined) return true;
   return false;
+}
+
+interface ModelLike {
+  readonly apiKey?: unknown;
+  readonly oauth?: unknown;
+}
+
+function toModelResponses(value: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return result;
+  for (const [id, raw] of Object.entries(value)) {
+    if (!isPlainObject(raw)) {
+      result[id] = raw;
+      continue;
+    }
+    const { apiKey: _apiKey, oauth: _oauth, ...rest } = raw as ModelLike & Record<string, unknown>;
+    result[id] = { ...rest, has_api_key: hasModelCredential(raw as ModelLike) };
+  }
+  return result;
+}
+
+function hasModelCredential(model: ModelLike): boolean {
+  if (nonEmpty(model.apiKey) !== undefined) return true;
+  if (model.oauth !== undefined) return true;
+  return false;
+}
+
+function toServiceResponses(value: unknown): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  if (!isPlainObject(value)) return result;
+  for (const [id, raw] of Object.entries(value)) {
+    if (!isPlainObject(raw)) {
+      result[id] = raw;
+      continue;
+    }
+    const { apiKey: _apiKey, oauth: _oauth, customHeaders, ...rest } = raw as ModelLike & {
+      customHeaders?: unknown;
+    } & Record<string, unknown>;
+    result[id] = {
+      ...rest,
+      has_api_key: hasModelCredential(raw as ModelLike),
+      custom_header_keys: isPlainObject(customHeaders) ? Object.keys(customHeaders) : undefined,
+    };
+  }
+  return result;
 }
 
 function nonEmpty(value: unknown): string | undefined {
@@ -192,16 +193,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/**
- * Config properties whose values are maps keyed by user-defined identifiers
- * (provider ids, model aliases, subagent pool aliases, flag names). Those keys
- * are data, not field names — snake→camel conversion must pass them through
- * untouched (`fast_model` must not become `fastModel`), while the map *values*
- * (e.g. a provider's `api_key`) still convert. Preserve mode therefore only
- * engages from a normal field-name level: an entry key that happens to match
- * the list (a provider literally named `models`) must not keep its own
- * children preserved.
- */
 const MAP_VALUED_CONFIG_KEYS = new Set(['providers', 'models', 'experimental', 'raw']);
 
 function convertKeysSnakeToCamel(obj: unknown, preserveKeys = false): unknown {

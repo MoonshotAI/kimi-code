@@ -14,6 +14,13 @@ import {
 export interface DetectPendingInput {
   readonly sourceHome: string;
   readonly targetHome: string;
+  readonly skillsSourceHome?: string;
+  /**
+   * kimi-cli keeps plan files at `~/.kimi/plans` regardless of KIMI_SHARE_DIR,
+   * so detection reads them from the user's home by default. Injectable for
+   * isolated tests.
+   */
+  readonly plansSourceHome?: string;
   /**
    * When true, skip the marker-based suppression (`.migrated-to-kimi-code` /
    * `.skip-migration-from-kimi-cli`). The explicit `kimi migrate` command sets
@@ -36,7 +43,11 @@ export async function detectPendingMigration(
 
   let plan: MigrationPlan;
   try {
-    plan = await detectMigration({ sourcePath: sourceHome });
+    plan = await detectMigration({
+      sourcePath: sourceHome,
+      skillsSourcePath: input.skillsSourceHome,
+      plansSourcePath: input.plansSourceHome,
+    });
   } catch {
     // Detection failure must never block startup; skip the screen.
     return null;
@@ -50,7 +61,10 @@ export async function detectPendingMigration(
     plan.totalSessions === 0 &&
     !plan.hasConfig &&
     !plan.hasMcp &&
-    !plan.hasUserHistory;
+    !plan.hasUserHistory &&
+    !plan.hasSkills &&
+    !plan.hasPlans &&
+    (plan.sessionScanFailures?.length ?? 0) === 0;
   if (nothingToMigrate) return null;
 
   return plan;

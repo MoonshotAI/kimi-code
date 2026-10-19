@@ -1,15 +1,3 @@
-/**
- * title/metadata patch for `POST /sessions/{session_id}/profile`.
- *
- * Like the `agent_config` dispatch (`sessionAgentConfig.ts`), the
- * title/metadata update is a wire-to-native translation with no v1-only
- * projection, so it lives at the server edge instead of inside
- * `ISessionLegacyService`. The helper resumes the session (cold-load if
- * needed), applies the patch through `ISessionMetadata`, and reads the
- * metadata document back together with `ISessionContext` to assemble the
- * `SessionWireFields` shape the route feeds to `toWireSession`.
- */
-
 import {
   ErrorCodes,
   Error2,

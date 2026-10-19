@@ -1,14 +1,6 @@
-/**
- * `toolSelect` domain — progressive tool disclosure contract.
- *
- * Defines the Agent-scope service that shapes provider-visible tool/history
- * views, records selected dynamic schemas as pending declarations, and
- * reports loadable-tool announcements.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import type { Tool } from '#/kosong/contract/tool';
+import type { ToolDescription as Tool } from '#human/llm/message';
 import type { ToolInfo } from '#/tool/toolContract';
 
 export const SELECT_TOOLS_TOOL_NAME = 'select_tools';
@@ -20,7 +12,14 @@ export interface ShapedToolEntry extends ToolInfo {
 export interface LoadToolsResult {
   readonly toLoad: readonly string[];
   readonly alreadyAvailable: readonly string[];
+  readonly alreadyCallable: readonly string[];
+  readonly staleLoaded: readonly string[];
+  readonly policyDenied: readonly string[];
   readonly unknown: readonly string[];
+  readonly escalated: Readonly<Record<string, number>>;
+  readonly consecutiveFailures: number;
+  readonly suggestions: Readonly<Record<string, readonly string[]>>;
+  readonly loadable: readonly string[];
 }
 
 export interface IAgentToolSelectService {

@@ -1,12 +1,3 @@
-/**
- * `command` domain — the `IAgentCommandService` contract.
- *
- * The agent-scope registry over the `CommandContribution` collection: lists
- * the contributed executable commands (name-level dedup, last record wins,
- * `source` = provider unit name) and runs one by name with an args string.
- * Bound at Agent scope.
- */
-
 import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 

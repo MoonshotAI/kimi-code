@@ -54,10 +54,6 @@ export async function writePrivateFile(
 
 export async function readPrivateFile(filePath: string): Promise<Buffer> {
   const info = await stat(filePath);
-  // Windows does not have Unix-style permission bits; libuv synthesises the
-  // mode from the read-only attribute, so a private writable file is reported
-  // as 0o666 and a read-only one as 0o444. The ACL-based security model is
-  // different, so this check only makes sense on POSIX systems.
   if (process.platform !== 'win32' && (info.mode & 0o077) !== 0) {
     throw new PrivateFileTooPermissiveError(filePath, info.mode & 0o777);
   }

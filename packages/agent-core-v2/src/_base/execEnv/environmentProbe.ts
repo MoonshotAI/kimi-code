@@ -1,22 +1,3 @@
-/**
- * `_base/execEnv` — OS / shell probe.
- *
- * Detects the host operating system, architecture, kernel release, and a
- * usable POSIX shell path. The result is a pure function of injected probes
- * (`platform` / `arch` / `release` / `env` / `isFile` / `execFileText`) so the
- * same suite runs identically on any host OS. `probeHostEnvironmentFromNode()`
- * bundles the Node defaults for production callers and memoises the promise.
- *
- * On Windows the probe expects bash from Git for Windows or MSYS2. If no
- * shell can be located the function throws `ProbeShellNotFoundError`, a
- * distinct type carrying the checked paths (`checked`) with an install hint
- * in its message, so the DI boundary can tell a missing shell apart from
- * other probe errors and translate it into a coded error. Set
- * `KIMI_SHELL_PATH` to override.
- *
- * Kept as a pure helper with no DI dependencies.
- */
-
 import { execFile as nodeExecFile } from 'node:child_process';
 import { constants as fsConstants } from 'node:fs';
 import { access } from 'node:fs/promises';

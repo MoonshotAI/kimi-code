@@ -1,21 +1,12 @@
-/**
- * `sessionLifecycle` domain — fork-time turn truncation over raw wire records.
- *
- * Ports the v1 engine's `forkSession(turnIndex)` slicing onto the flat
- * `WireRecord` shape: a user-visible turn boundary is a
- * `context.append_message` user record with an interactive origin (plain user
- * input, a user-slash skill / plugin command, or a shell-command input line),
- * the retained main prefix runs through the addressed turn inclusive, and
- * `turn.prompt` / `turn.steer` inputs inside the prefix survive only when
- * matched (origin kind, then content exact-then-fuzzy) to a retained boundary.
- * Subagent wires time-cut at the retained main prefix's latest record time,
- * and the fork's `lastPrompt` re-derives from the addressed turn's record
- * through the `prompt` domain's shared metadata-text normalization. Pure
- * functions over already-read records — own no scoped state.
- */
-
 import { Error2, ErrorCodes } from '#/errors';
-import type { ContentPart } from '#/kosong/contract/message';
+import { FILE_HISTORY_RECORD_PREFIX } from '#/features/fileHistory/fileHistoryOps';
+import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
+import {
+  annotateBundledSkillParts,
+  isSkillActivationPart,
+  type BundledSkillActivation,
+} from '#human/agent/origin';
+import type { ContentPart } from '#human/llm/message';
 import {
   promptMetadataTextFromContentParts,
   promptMetadataTextFromText,
@@ -61,7 +52,9 @@ export function sliceMainRecordsAtTurn(
   const retained = records
     .slice(0, end)
     .filter(
-      (record, index) => !isUserVisibleTurnInputRecord(record) || retainedTurnInputs.has(index),
+      (record, index) =>
+        !record.type.startsWith(FILE_HISTORY_RECORD_PREFIX) &&
+        (!isUserVisibleTurnInputRecord(record) || retainedTurnInputs.has(index)),
     );
   const cutoffTimes = retained
     .map(recordTime)
@@ -129,25 +122,28 @@ function turnInputIndicesThrough(
   records: readonly WireRecord[],
   turnIndex: number,
 ): ReadonlySet<number> {
-  const pending: number[] = [];
-  const retained = new Set<number>();
+  const inputIndices: number[] = [];
+  const appends: { readonly record: WireRecord; readonly visibleTurnIndex: number }[] = [];
   let visibleTurnIndex = 0;
   for (let index = 0; index < records.length; index += 1) {
     const record = records[index]!;
     if (isUserVisibleTurnInputRecord(record)) {
-      pending.push(index);
+      inputIndices.push(index);
       continue;
     }
     if (!isUserVisibleTurnRecord(record)) continue;
-
-    const matchAt = findMatchingTurnInput(records, pending, record);
-    if (matchAt !== -1) {
-      const [inputIndex] = pending.splice(matchAt, 1);
-      if (visibleTurnIndex <= turnIndex && inputIndex !== undefined) {
-        retained.add(inputIndex);
-      }
-    }
+    appends.push({ record, visibleTurnIndex });
     visibleTurnIndex += 1;
+  }
+  const unused = [...inputIndices];
+  const retained = new Set<number>();
+  for (const append of appends) {
+    const matchAt = findMatchingTurnInput(records, unused, append.record);
+    if (matchAt === -1) continue;
+    const [inputIndex] = unused.splice(matchAt, 1);
+    if (append.visibleTurnIndex <= turnIndex && inputIndex !== undefined) {
+      retained.add(inputIndex);
+    }
   }
   return retained;
 }
@@ -178,6 +174,21 @@ function turnInputMatchesRecord(
   const messageKind = asRecord(message['origin'])?.['kind'];
   if (messageKind !== undefined && typeof messageKind !== 'string') return false;
   if (!sameTurnOrigin(inputKind, messageKind)) return false;
+  const messageId = typeof message['id'] === 'string' ? message['id'] : undefined;
+  const steerMessageId =
+    inputRecord.type === 'turn.steer' && typeof inputRecord['messageId'] === 'string'
+      ? inputRecord['messageId']
+      : undefined;
+  if (steerMessageId !== undefined && messageId !== undefined) {
+    return steerMessageId === messageId;
+  }
+  const promptId =
+    inputRecord.type === 'turn.prompt' && typeof inputRecord['promptId'] === 'string'
+      ? inputRecord['promptId']
+      : undefined;
+  if (promptId !== undefined && messageId !== undefined) {
+    return promptId === messageId;
+  }
   return (
     !compareContent ||
     JSON.stringify(inputRecord['input']) === JSON.stringify(message['content'])
@@ -206,7 +217,7 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   if (origin?.['kind'] === 'skill_activation') {
     const name = origin['skillName'];
     if (typeof name !== 'string') return undefined;
-    return promptMetadataTextFromText(slashCommandText(`/${name}`, origin['skillArgs']));
+    return promptMetadataTextFromContentParts([{ type: 'text', text: slashCommandText(`/${name}`, origin['skillArgs']) }], origin['clientMetadata']);
   }
   if (origin?.['kind'] === 'plugin_command') {
     const pluginId = origin['pluginId'];
@@ -219,9 +230,15 @@ function promptMetadataFromTurnRecord(record: WireRecord): string | undefined {
   const content = message['content'];
   if (!Array.isArray(content)) return undefined;
   const activations = origin?.['skillActivations'];
-  const bundled = origin?.['kind'] === 'user' && Array.isArray(activations) ? activations.length : 0;
+  const bundled =
+    origin?.['kind'] === 'user' && Array.isArray(activations)
+      ? (activations as BundledSkillActivation[])
+      : [];
   return promptMetadataTextFromContentParts(
-    (bundled === 0 ? content : content.slice(bundled)) as readonly ContentPart[],
+    annotateBundledSkillParts(content as readonly ContentPart[], bundled).filter(
+      (part) => !isSkillActivationPart(part) && !isUserPromptSubmitHookPart(part),
+    ),
+    origin?.['kind'] === 'user' ? origin['clientMetadata'] : undefined,
   );
 }
 

@@ -100,3 +100,63 @@ describe('/undo with bundled prompts', () => {
     expect(entries).toHaveLength(0);
   });
 });
+
+describe('/undo todo panel refresh', () => {
+  function hostWithTodos(
+    entries: TranscriptEntry[],
+    session: Record<string, unknown>,
+  ): { host: SlashCommandHost; setTodoList: ReturnType<typeof vi.fn> } {
+    const host = hostWith(entries);
+    const setTodoList = vi.fn();
+    (host as { streamingUI?: unknown }).streamingUI = { setTodoList };
+    (host as { session?: unknown }).session = session;
+    return { host, setTodoList };
+  }
+
+  it('re-pulls the engine todo state after a successful undo', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
+    ];
+    const { host, setTodoList } = hostWithTodos(entries, {
+      undoHistory: vi.fn(async () => {}),
+      getTodos: vi.fn(async () => [{ title: 'kept', status: 'pending' }]),
+    });
+
+    await handleUndoCommand(host, '1');
+
+    expect(setTodoList).toHaveBeenCalledWith([{ title: 'kept', status: 'pending' }]);
+  });
+
+  it('keeps the panel as-is when the engine has no todo read surface', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
+    ];
+    const { host, setTodoList } = hostWithTodos(entries, {
+      undoHistory: vi.fn(async () => {}),
+      getTodos: vi.fn(async () => {
+        throw new Error('getTodos is only available on the agent-core-v2 engine.');
+      }),
+    });
+
+    await handleUndoCommand(host, '1');
+
+    expect(setTodoList).not.toHaveBeenCalled();
+  });
+
+  it('hides the panel when the restored todos are all done', async () => {
+    const entries: TranscriptEntry[] = [
+      entry({ kind: 'user', content: 'question' }),
+      entry({ kind: 'assistant', content: 'answer' }),
+    ];
+    const { host, setTodoList } = hostWithTodos(entries, {
+      undoHistory: vi.fn(async () => {}),
+      getTodos: vi.fn(async () => [{ title: 'finished', status: 'done' }]),
+    });
+
+    await handleUndoCommand(host, '1');
+
+    expect(setTodoList).toHaveBeenCalledWith([]);
+  });
+});

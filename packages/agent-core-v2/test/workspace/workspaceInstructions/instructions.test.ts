@@ -1,20 +1,9 @@
-/**
- * Scenario: workspace AGENTS.md instructions — build-time snapshot,
- * watch-driven refresh, and the `workspaceInstructions.current` state
- * registration.
- *
- * Exercises the real `WorkspaceInstructionsService` against real temp
- * instruction files with a manually-fired fs-watch stub. Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/workspace/workspaceInstructions/instructions.test.ts`.
- */
-
 import { mkdtempSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -24,11 +13,6 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
-import {
-  IHostFsWatchService,
-  type HostFsChange,
-  type IHostFsWatchHandle,
-} from '#/os/interface/hostFsWatch';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
@@ -36,23 +20,40 @@ import {
   WorkspaceInstructionsService,
   workspaceInstructionsCurrentKey,
 } from '#/workspace/workspaceInstructions/workspaceInstructionsService';
+import type { WatchChange } from '#human/utils/watch';
 
 import { stubLog } from '../../_base/log/stubs';
 import { registerStateServices } from '../../state/stubs';
+
+const watchFires = new Map<string, Emitter<WatchChange>>();
+
+vi.mock('#human/utils/watch', () => {
+  const watch = (path: string) => {
+    let emitter = watchFires.get(path);
+    if (emitter === undefined) {
+      emitter = new Emitter<WatchChange>();
+      watchFires.set(path, emitter);
+    }
+    return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
+  };
+  return {
+    watch,
+    watchCandidates: (root: string) => watch(root),
+  };
+});
 
 describe('WorkspaceInstructionsService', () => {
   let workDir: string;
   let osHomeDir: string;
   let brandHomeDir: string;
   let disposables: DisposableStore;
-  let watchFires: Map<string, Emitter<HostFsChange>>;
 
   beforeEach(() => {
     workDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-work-'));
     osHomeDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-os-'));
     brandHomeDir = mkdtempSync(join(tmpdir(), 'kimi-instructions-brand-'));
     disposables = new DisposableStore();
-    watchFires = new Map();
+    watchFires.clear();
   });
 
   afterEach(async () => {
@@ -63,20 +64,6 @@ describe('WorkspaceInstructionsService', () => {
       rm(brandHomeDir, { recursive: true, force: true }),
     ]);
   });
-
-  function fsWatchStub(): IHostFsWatchService {
-    return {
-      _serviceBrand: undefined,
-      watch: (path: string): IHostFsWatchHandle => {
-        let emitter = watchFires.get(path);
-        if (emitter === undefined) {
-          emitter = new Emitter<HostFsChange>();
-          watchFires.set(path, emitter);
-        }
-        return { ready: Promise.resolve(), onDidChange: emitter.event, dispose: () => {} };
-      },
-    };
-  }
 
   function fireWatch(path: string): void {
     for (const [root, emitter] of watchFires) {
@@ -98,7 +85,6 @@ describe('WorkspaceInstructionsService', () => {
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IHostEnvironment, { homeDir: osHomeDir });
         reg.definePartialInstance(IBootstrapService, { homeDir: brandHomeDir });
-        reg.defineInstance(IHostFsWatchService, fsWatchStub());
         reg.defineInstance(ILogService, stubLog());
         reg.define(IWorkspaceInstructionsService, WorkspaceInstructionsService);
       },
@@ -118,6 +104,40 @@ describe('WorkspaceInstructionsService', () => {
     const provider = service.sessionProvider();
     expect(provider.agentsMd).toBe(service.snapshot.agentsMd);
     expect(provider.agentsMdWarning).toBeUndefined();
+  });
+
+  it('does not fire onDidChange for the initial load', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf8');
+
+    let fired = 0;
+    const { service } = createService();
+    service.onDidChange(() => {
+      fired += 1;
+    });
+    await service.ready;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+
+    expect(fired).toBe(0);
+    expect(service.snapshot.agentsMd).toContain('project instructions');
+  });
+
+  it('fires onDidChange with the changed file paths when a watched file changes', async () => {
+    const file = join(workDir, 'AGENTS.md');
+    await writeFile(file, 'old instructions', 'utf8');
+    const { service } = createService();
+    await service.ready;
+
+    const changed = new Promise<readonly WatchChange[]>((resolvePromise) => {
+      const d = service.onDidChange((changes) => {
+        d.dispose();
+        resolvePromise(changes);
+      });
+    });
+    await writeFile(file, 'new instructions', 'utf8');
+    fireWatch(file);
+    const changes = await changed;
+
+    expect(changes).toEqual([{ path: file, action: 'modified', kind: 'file' }]);
   });
 
   it('refreshes the snapshot and fires onDidChange when a watched file changes', async () => {

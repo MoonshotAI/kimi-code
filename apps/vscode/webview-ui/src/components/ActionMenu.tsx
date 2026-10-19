@@ -140,7 +140,7 @@ export function ActionMenu({ className, onAuthAction }: ActionMenuProps) {
             danger={isLoggedIn}
           >
             {loading ? <IconLoader2 className="size-4 animate-spin" /> : isLoggedIn ? <IconLogout className="size-4" /> : <IconLogin className="size-4 text-muted-foreground" />}
-            <span className="flex-1">{loading ? "Processing..." : isLoggedIn ? "Sign out" : "Sign in"}</span>
+            <span className="flex-1">{loading ? "Processing…" : isLoggedIn ? "Sign out" : "Sign in"}</span>
           </MenuItem>
         </MenuSection>
       </PopoverContent>

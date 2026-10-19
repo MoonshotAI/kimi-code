@@ -1,32 +1,3 @@
-/**
- * `plugin` domain — plugin marketplace catalog client and parser.
- *
- * Loads and normalizes the plugin marketplace catalog (`marketplace.json`)
- * for every host (CLI panel, kap-server REST route). The catalog format is a
- * public, hand-writable contract, so parsing is deliberately lenient: legacy
- * field aliases (`url`/`downloadUrl`, `name`/`shortDescription`/`websiteURL`)
- * are honored, blank strings read as missing, `keywords` keeps only non-blank
- * strings, and `type`/`tier` validate against the accepted vocabulary
- * (`plugin` plus legacy `managed`/`guide`; `official`/`curated`). Entry
- * sources may be http(s), GitHub repo/ref URLs, `file://`, absolute paths,
- * `~`-relative, or catalog-relative (`./official/*.zip`) — all resolve to a
- * directly installable form here. Entries without a `version` get one from a
- * GitHub ref tail (`releases/tag/<tag>`, `tree/<ref>`, `commit/<sha>` —
- * semver-shaped refs only), or from the bare repo's latest release via the
- * `/releases/latest` redirect (a UI route, deliberately never the
- * rate-limited api.github.com). `computeUpdateStatus` reports an update only
- * on strict semver latest > installed, and never borrows the catalog version
- * for an unknown local one. `withBuiltInEntries` masks same-id catalog rows
- * with client-injected built-in capability entries (taking only their
- * version), so what those ids mean stays bound to the client release; the
- * `builtIn` flag is set only by that path, never from catalog data.
- * `readPluginMarketplace` returns the location actually read, because entry
- * sources resolve against it — including the host-supplied source-checkout
- * fallback, which hosts pass only when the catalog location is the built-in
- * default (an explicitly configured catalog fails hard). No DI collaborators
- * — pure functions over `fetch`/`fs`.
- */
-
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';

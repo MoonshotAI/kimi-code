@@ -1,48 +1,27 @@
-/**
- * Cold-path history grouping: rebuild a turn tree from a flat message list
- * (as produced by the engine's `reduceContextTranscript`).
- *
- * This is a best-effort reconstruction — the live path (engine events) is the
- * high-fidelity one. Known limitations, accepted by design:
- *  - step granularity collapses to "one assistant message = one step";
- *  - live-only detail is never backfilled: step usage / finishReason /
- *    timing / retry, tool inputText / progress, and task resultSummary /
- *    error / stateReason / usage exist only on live engine events — persisted
- *    context messages do not carry them (turn end facts DO persist as
- *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
- *  - media content parts become attachment entities (metadata only — base64
- *    bytes are dropped, never shipped); mid-turn media is not anchored;
- *  - streamed-vs-persisted duplication is assumed already resolved upstream;
- *  - only the turn tree is built here: tasks / interactions / todos / meta
- *    (goal, plan, swarm) are NOT context messages — the companion fold
- *    (`foldWireRecordFacts` in `foldFacts.ts`) rebuilds them from the
- *    non-`context.*` wire records on top of this base snapshot;
- *  - persisted messages carry no turn ids, so turn ordinals are assigned by
- *    grouping — **0-based, matching the engine's live turn numbering** — and
- *    can drift from the engine's ids when hidden origins (e.g. retries) make
- *    the engine consume an ordinal that grouping cannot see. Alignment is
- *    what makes a rebuilt slice safe to merge into a live store (backfill):
- *    the engine's next turn continues at `t<turnCount>` without colliding.
- *
- * The input type is structural so the engine's `ContextMessage` is directly
- * assignable without a dependency from this package onto the engine.
- */
-
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 import type { TranscriptAttachment } from '../model/attachment';
-import type { TranscriptFrame } from '../model/frame';
+import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
-import type { TurnOrigin } from '../model/turn';
+import type { StepTiming, StepUsage, TurnOrigin } from '../model/turn';
+import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
+import { projectTranscriptUserOrigin, projectTranscriptUserTurnOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
-  | { readonly kind: 'file'; readonly file_id: string };
+  | { readonly kind: 'file' | 'session_media'; readonly file_id: string };
+
+export interface HistoryTextPartMeta {
+  readonly source?: string;
+  readonly contentType?: string;
+  readonly activationId?: string;
+  readonly [key: string]: unknown;
+}
 
 export type HistoryContentPart =
-  | { readonly type: 'text'; readonly text: string }
-  | { readonly type: 'think'; readonly think: string }
-  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource }
+  | { readonly type: 'text'; readonly text: string; readonly meta?: HistoryTextPartMeta }
+  | { readonly type: 'think'; readonly think: string; readonly hidden?: boolean }
+  | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
   | {
       readonly type: 'file';
       readonly file_id: string;
@@ -52,6 +31,71 @@ export type HistoryContentPart =
     }
   | { readonly type: string };
 
+const USER_PROMPT_SUBMIT_HOOK_SOURCE = 'user prompt submit hook';
+
+export function isUserPromptSubmitHookPart(part: { readonly type: string }): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
+      USER_PROMPT_SUBMIT_HOOK_SOURCE
+  );
+}
+
+const SKILL_ACTIVATION_PART_SOURCE = 'skill activation';
+
+export function isSkillActivationPart(part: { readonly type: string }): boolean {
+  return (
+    part.type === 'text' &&
+    (part as { readonly meta?: HistoryTextPartMeta }).meta?.source ===
+      SKILL_ACTIVATION_PART_SOURCE
+  );
+}
+
+function annotateBundledSkillParts<T extends { readonly type: string }>(
+  content: readonly T[],
+  bundledActivations: readonly BundledSkillActivation[],
+): T[] {
+  if (bundledActivations.length === 0 || content.some(isSkillActivationPart)) {
+    return [...content];
+  }
+  let index = 0;
+  return content.map((part) => {
+    const activation = bundledActivations[index];
+    if (
+      activation !== undefined &&
+      part.type === 'text' &&
+      (part as { readonly meta?: HistoryTextPartMeta }).meta?.source === undefined
+    ) {
+      index += 1;
+      return {
+        ...part,
+        meta: { source: SKILL_ACTIVATION_PART_SOURCE, activationId: activation.activationId },
+      } as T;
+    }
+    return part;
+  });
+}
+
+export function withoutUserPromptSubmitHookParts<T extends { readonly type: string }>(
+  content: readonly T[],
+): readonly T[] {
+  if (!content.some(isUserPromptSubmitHookPart)) return content;
+  return content.filter((part) => !isUserPromptSubmitHookPart(part));
+}
+
+const USER_PROMPT_HOOK_RESULT_WRAPPER_RE =
+  /^<hook_result hook_event="UserPromptSubmit">\n([\s\S]*)\n<\/hook_result>$/;
+
+function userPromptSubmitHookMarkerPayload(part: { readonly type: string }): {
+  readonly hookEvent: string;
+  readonly content: string;
+} {
+  const text = (part as { readonly text?: unknown }).text;
+  const raw = typeof text === 'string' ? text : '';
+  const match = USER_PROMPT_HOOK_RESULT_WRAPPER_RE.exec(raw);
+  return { hookEvent: 'UserPromptSubmit', content: match?.[1] ?? raw };
+}
+
 export interface HistoryToolCall {
   readonly id: string;
   readonly name: string;
@@ -59,17 +103,21 @@ export interface HistoryToolCall {
 }
 
 export interface HistoryMessage {
+  readonly id?: string;
   readonly role: string;
   readonly content?: readonly HistoryContentPart[];
   readonly toolCalls?: readonly HistoryToolCall[];
   readonly toolCallId?: string;
   readonly isError?: boolean;
   readonly origin?: { readonly kind: string };
+  readonly usage?: StepUsage;
+  readonly llmTiming?: StepTiming;
 }
 
 interface TurnDraft {
   turnId: string;
   ordinal: number;
+  triggerPromptId?: string;
   origin: TurnOrigin;
   prompt?: string;
   attachmentIds?: string[];
@@ -80,22 +128,12 @@ interface StepDraft {
   stepId: string;
   ordinal: number;
   frames: TranscriptFrame[];
+  usage?: StepUsage;
+  llmTiming?: StepTiming;
 }
 
-/** Origins whose content is context, not display — folded away, not shown. */
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
-/**
- * Hidden origins that nonetheless OPEN a real engine turn
- * (`MessageStepRequest` with `admission: 'newTurn'`, e.g. goal continuation;
- * a subagent's run prompt goes through `promptService.enqueue`, which always
- * launches a new turn). Other hidden origins are mid-turn context
- * (reminders, injections, retries) and stay folded away; skipping a
- * turn-opening one would fold the continuation's assistant output into the
- * prior visible turn and break the 0-based ordinal alignment with the
- * engine's live turn numbering.
- */
 const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation', 'subagent']);
-/** Origins rendered as timeline markers rather than turns. */
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
   plugin_command: 'skill',
@@ -106,18 +144,42 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
+  options?: {
+    readonly taskOriginTurnTaskIds?: ReadonlySet<string>;
+    readonly steeredContents?: ReadonlyMap<string, ReadonlyMap<string, number>>;
+    readonly steeredByMessageId?: ReadonlyMap<string, readonly string[]>;
+    readonly turnPromptIds?: ReadonlySet<string>;
+  },
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
+  const steeredContents = new Map(
+    [...(options?.steeredContents ?? [])].map(([key, byKind]) => [key, new Map(byKind)]),
+  );
+  const steeredByMessageId = new Map(options?.steeredByMessageId);
   let turn: TurnDraft | undefined;
-  /** Next turn ordinal — 0-based, matching the engine's live turn numbering. */
+  let pendingNotificationFrames: {
+    text: string;
+    taskId: string | undefined;
+    attachmentIds?: string[];
+    promptIds?: readonly string[];
+    origin?: TranscriptUserOrigin;
+    steered?: boolean;
+  }[] = [];
   let nextOrdinal = 0;
   let markerCount = 0;
 
-  /** Media parts of a turn-opening user message → attachment entities (+ ids). */
-  const collectAttachments = (message: HistoryMessage): string[] | undefined => {
+  const foldTurnOpeningInput = (
+    message: HistoryMessage,
+  ): { text: string; attachmentIds?: string[] } => {
+    const parts = message.content ?? [];
     const ids: string[] = [];
-    for (const part of message.content ?? []) {
+    const texts: string[] = [];
+    for (const part of parts) {
+      if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
+        texts.push(part.text);
+        continue;
+      }
       if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
         if (!('source' in part) || part.source === undefined) continue;
         const source = part.source as HistoryMediaSource;
@@ -125,17 +187,19 @@ export function groupMessagesIntoSnapshot(
           attachmentId: `att_${attachments.length + 1}`,
           mediaType:
             source.kind === 'base64' ? source.media_type : `${part.type}/*`,
+          name: part.name,
           source:
             source.kind === 'url'
               ? { kind: 'url', url: source.url }
-              : source.kind === 'file'
-                ? { kind: 'file', fileId: source.file_id }
+              : source.kind === 'file' || source.kind === 'session_media'
+                ? { kind: source.kind, fileId: source.file_id }
                 : undefined,
-          // base64 bytes are deliberately dropped — never shipped to clients.
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
-      } else if (part.type === 'file' && 'file_id' in part) {
+        continue;
+      }
+      if (part.type === 'file' && 'file_id' in part) {
         const entity: TranscriptAttachment = {
           attachmentId: `att_${attachments.length + 1}`,
           mediaType: part.media_type as string,
@@ -145,9 +209,31 @@ export function groupMessagesIntoSnapshot(
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
+        continue;
+      }
+      const ref = daemonFileRefFromPairingPart(part);
+      if (ref !== undefined) {
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: `${ref.kind}/*`,
+          name: ref.name,
+          source: { kind: 'session_media', fileId: ref.ref.fileId },
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
       }
     }
-    return ids.length > 0 ? ids : undefined;
+    for (const attachment of originFileAttachments(message)) {
+      const entity: TranscriptAttachment = {
+        attachmentId: `att_${attachments.length + 1}`,
+        mediaType: attachment.mediaType,
+        name: attachment.name,
+        size: attachment.size,
+      };
+      attachments.push(entity);
+      ids.push(entity.attachmentId);
+    }
+    return { text: texts.join(''), attachmentIds: ids.length > 0 ? ids : undefined };
   };
 
   const ensureTurn = (origin: TurnOrigin = FALLBACK_ORIGIN): TurnDraft => {
@@ -160,10 +246,46 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+  const flushSteeredLeftovers = (): void => {
+    const leftovers = pendingNotificationFrames.filter((pending) => pending.steered);
+    if (leftovers.length === 0) return;
+    pendingNotificationFrames = pendingNotificationFrames.filter((pending) => !pending.steered);
+    for (const pending of leftovers) {
+      const targetTurn = turn ?? startTurn({ kind: 'user' });
+      let lastStep = targetTurn.steps.at(-1);
+      if (lastStep === undefined) {
+        const ordinal = targetTurn.steps.length + 1;
+        lastStep = {
+          stepId: `${targetTurn.turnId}.${ordinal}`,
+          ordinal,
+          frames: [],
+        };
+        targetTurn.steps.push(lastStep);
+      }
+      lastStep.frames.push({
+        kind: 'text',
+        frameId: `${lastStep.stepId}.f${lastStep.frames.length + 1}`,
+        role: 'user',
+        text: pending.text,
+        attachmentIds: pending.attachmentIds,
+        promptIds: pending.promptIds,
+        origin: pending.origin,
+      });
+      syncTurnItem(items, targetTurn);
+    }
+  };
+
+  const startTurn = (
+    origin: TurnOrigin,
+    prompt?: string,
+    attachmentIds?: string[],
+    triggerPromptId?: string,
+  ): TurnDraft => {
+    flushSteeredLeftovers();
     const ordinal = nextOrdinal;
     nextOrdinal += 1;
-    turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
+    pendingNotificationFrames = [];
+    turn = { turnId: `t${ordinal}`, ordinal, triggerPromptId, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
   };
@@ -174,52 +296,116 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
-  for (const message of messages) {
+  const extractBundledSkillMarkers = (message: HistoryMessage): HistoryMessage => {
+    const bundled = bundledSkillActivations(message);
+    const annotated = annotateBundledSkillParts(message.content ?? [], bundled);
+    const skillParts = annotated.filter(isSkillActivationPart);
+    bundled.forEach((activation, index) => {
+      const block = skillParts[index];
+      pushMarker('skill', {
+        text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
+        origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
+      });
+    });
+    return { ...message, content: annotated.filter((part) => !isSkillActivationPart(part)) };
+  };
+
+  let prevNonTaskRole: string | undefined;
+  for (const entry of messages) {
+    const content =
+      entry.content === undefined ? undefined : withoutUserPromptSubmitHookParts(entry.content);
+    const hookParts =
+      entry.content === undefined || content === entry.content
+        ? []
+        : entry.content.filter(isUserPromptSubmitHookPart);
+    const message = content === entry.content ? entry : { ...entry, content };
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
+    const isTaskOrigin =
+      originKind === 'task' || originKind === 'background_task' || originKind === 'task_notification';
+    const prevRoleAtEntry = prevNonTaskRole;
+    if (!isTaskOrigin) prevNonTaskRole = message.role;
 
     if (message.role === 'user') {
+      for (const part of hookParts) {
+        pushMarker('hook', userPromptSubmitHookMarkerPayload(part));
+      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          // A real turn boundary: advance the grouping (and the ordinal).
-          // The steering text is internal — the boundary lands promptless,
-          // mirroring the live path's displayable-origin gate.
-          startTurn(mapOrigin(message));
+          const opening =
+            (message.origin as { name?: unknown }).name === 'subagent'
+              ? foldTurnOpeningInput(message)
+              : undefined;
+          startTurn(mapOrigin(message), opening?.text || undefined, opening?.attachmentIds);
         }
         continue;
       }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
-      if (markerKey !== undefined) {
+      if (markerKey !== undefined && !isUserSlashPrompt(message)) {
         pushMarker(markerKey, { text: textOf(message), origin: message.origin });
-        // A user-slash skill/plugin command is a real user prompt (mirrors
-        // the engine's `isRealUserPrompt`): it opened its own turn, so
-        // advance the grouping instead of folding the response into the
-        // previous turn. Other triggers are mid-turn context — marker only.
-        if (isUserSlashPrompt(message)) {
-          startTurn(mapOrigin(message), textOf(message));
+        continue;
+      }
+      const contentKey = JSON.stringify(message.content ?? []);
+      const steerKind = originKind ?? 'user';
+      const opensAsTurnPrompt =
+        message.id !== undefined && options?.turnPromptIds?.has(message.id) === true;
+      const steeredPromptIds =
+        !opensAsTurnPrompt && message.id !== undefined
+          ? steeredByMessageId.get(message.id)
+          : undefined;
+      const steeredById = steeredPromptIds !== undefined;
+      if (steeredById && message.id !== undefined) steeredByMessageId.delete(message.id);
+      const steeredByKind = opensAsTurnPrompt || steeredById ? undefined : steeredContents.get(contentKey);
+      const steeredRemaining = steeredByKind?.get(steerKind) ?? 0;
+      if (steeredById || (steeredByKind !== undefined && steeredRemaining > 0)) {
+        if (!steeredById) steeredByKind!.set(steerKind, steeredRemaining - 1);
+        const opening = foldTurnOpeningInput(extractBundledSkillMarkers(message));
+        pendingNotificationFrames.push({
+          text: opening.text,
+          taskId: undefined,
+          attachmentIds: opening.attachmentIds,
+          origin: projectTranscriptUserOrigin(message.origin),
+          promptIds:
+            steeredPromptIds !== undefined && steeredPromptIds.length > 0
+              ? steeredPromptIds
+              : undefined,
+          steered: true,
+        });
+        continue;
+      }
+      if (markerKey !== undefined) {
+        const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
+        pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
+        if (opening !== undefined) {
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         }
+        continue;
+      }
+      if (isTaskOrigin) {
+        const origin = message.origin as { taskId?: unknown } | undefined;
+        const taskId = typeof origin?.taskId === 'string' ? origin.taskId : undefined;
+        const opensOwn = options?.taskOriginTurnTaskIds === undefined
+          ? prevRoleAtEntry !== 'assistant' && prevRoleAtEntry !== 'tool'
+          : taskId === undefined ||
+            options.taskOriginTurnTaskIds.has(taskId) ||
+            originKind === 'background_task';
+        if (opensOwn) {
+          const opening = foldTurnOpeningInput(message);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          continue;
+        }
+        pendingNotificationFrames.push({ text: notificationFrameText(textOf(message)), taskId });
         continue;
       }
       const bundled = bundledSkillActivations(message);
       if (bundled.length > 0) {
-        // The v2 engine bundles a prompt's inline skill activations into the
-        // prompt message itself: one rendered text part per skill precedes
-        // the caller's parts in the content, and the origin carries every
-        // activation. Expand the persisted bundle back into per-skill markers
-        // so a cold rebuild shows the same cards the live events produced.
-        const parts = message.content ?? [];
-        bundled.forEach((activation, index) => {
-          const block = parts[index];
-          pushMarker('skill', {
-            text: block !== undefined && block.type === 'text' && 'text' in block ? block.text : '',
-            origin: { kind: 'skill_activation', trigger: 'user-slash', ...activation },
-          });
-        });
-        const callerMessage = { ...message, content: parts.slice(bundled.length) };
-        startTurn(mapOrigin(message), textOf(callerMessage), collectAttachments(callerMessage));
+        const callerMessage = extractBundledSkillMarkers(message);
+        const opening = foldTurnOpeningInput(callerMessage);
+        startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
         continue;
       }
-      startTurn(mapOrigin(message), textOf(message), collectAttachments(message));
+      const opening = foldTurnOpeningInput(message);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds, triggerPromptIdOf(message));
       continue;
     }
 
@@ -230,6 +416,8 @@ export function groupMessagesIntoSnapshot(
         stepId: `${current.turnId}.${stepOrdinal}`,
         ordinal: stepOrdinal,
         frames: [],
+        usage: message.usage,
+        llmTiming: message.llmTiming,
       };
       current.steps.push(step);
       let frameCount = 0;
@@ -237,10 +425,23 @@ export function groupMessagesIntoSnapshot(
         frameCount += 1;
         return `${step.stepId}.f${frameCount}`;
       };
+      for (const pending of pendingNotificationFrames) {
+        step.frames.push({
+          kind: 'text',
+          frameId: nextFrameId(),
+          role: 'user',
+          text: pending.text,
+          taskId: pending.taskId,
+          attachmentIds: pending.attachmentIds,
+          promptIds: pending.promptIds,
+          origin: pending.origin,
+        });
+      }
+      pendingNotificationFrames = [];
       for (const part of message.content ?? []) {
         if (part.type === 'text' && 'text' in part && typeof part.text === 'string' && part.text.length > 0) {
           step.frames.push({ kind: 'text', frameId: nextFrameId(), role: 'assistant', text: part.text });
-        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0) {
+        } else if (part.type === 'think' && 'think' in part && typeof part.think === 'string' && part.think.length > 0 && part.hidden !== true) {
           step.frames.push({ kind: 'thinking', frameId: nextFrameId(), text: part.think });
         }
       }
@@ -250,9 +451,6 @@ export function groupMessagesIntoSnapshot(
           frameId: `${step.stepId}.${call.id}`,
           toolCallId: call.id,
           name: call.name,
-          // The result may not be persisted yet (approval pending / tool
-          // still executing at capture time): start 'running' and let the
-          // `role === 'tool'` branch transition to done/error.
           state: 'running',
           input: parseArguments(call.arguments),
         });
@@ -277,16 +475,45 @@ export function groupMessagesIntoSnapshot(
     }
   }
 
-  // The entity slots stay empty here: tasks / interactions / todos / meta are
-  // not context messages — `foldWireRecordFacts` fills them from the
-  // non-`context.*` wire records on top of this base snapshot. Prompts stay
-  // empty too: the wire journal carries no prompt records (see foldFacts).
+  flushSteeredLeftovers();
+
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
-// ---------------------------------------------------------------- helpers
+function notificationFrameText(text: string): string {
+  if (!text.startsWith('<notification')) return text;
+  const openingEnd = text.indexOf('>');
+  const closingStart = text.lastIndexOf('</notification>');
+  if (openingEnd === -1 || closingStart <= openingEnd) return text;
+  const inner = text.slice(openingEnd + 1, closingStart);
+  const lines = inner.split('\n');
+  let headerEnd = 0;
+  while (headerEnd < lines.length && lines[headerEnd]!.trim() === '') headerEnd += 1;
+  let title = '';
+  let bodyStart = headerEnd;
+  const titleLine = lines[bodyStart];
+  if (titleLine !== undefined && titleLine.startsWith('Title: ')) {
+    title = titleLine.slice('Title: '.length);
+    bodyStart += 1;
+  }
+  const severityLine = lines[bodyStart];
+  if (severityLine !== undefined && severityLine.startsWith('Severity: ')) {
+    bodyStart += 1;
+  }
+  const bodyLines = lines.slice(bodyStart);
+  const childStart = bodyLines.findIndex((line) => {
+    const trimmed = line.trimStart();
+    return (
+      trimmed.startsWith('<output-file') ||
+      trimmed.startsWith('<output-preview') ||
+      trimmed.startsWith('<answer')
+    );
+  });
+  const body = (childStart === -1 ? bodyLines : bodyLines.slice(0, childStart)).join('\n').trim();
+  if (title.length > 0 && body.length > 0) return `${title}\n${body}`;
+  return title.length > 0 ? title : body.length > 0 ? body : text;
+}
 
-/** Whether a hidden-origin user message opened its own engine turn. */
 function opensOwnTurn(message: HistoryMessage): boolean {
   const origin = message.origin as { kind?: unknown; name?: unknown } | undefined;
   return (
@@ -296,17 +523,24 @@ function opensOwnTurn(message: HistoryMessage): boolean {
   );
 }
 
-/**
- * Whether a skill/plugin-activation message was a user-slash prompt — a real
- * turn opener per the engine's `isRealUserPrompt` (other triggers are
- * mid-turn context).
- */
 function isUserSlashPrompt(message: HistoryMessage): boolean {
   const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
   return (
     (origin?.kind === 'skill_activation' || origin?.kind === 'plugin_command') &&
     origin.trigger === 'user-slash'
   );
+}
+
+function triggerPromptIdOf(message: HistoryMessage): string | undefined {
+  if (typeof message.id !== 'string' || message.id.length === 0) return undefined;
+  const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
+  if (origin?.kind === undefined || origin.kind === 'user') return message.id;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  )
+    ? message.id
+    : undefined;
 }
 
 function mapOrigin(message: HistoryMessage): TurnOrigin {
@@ -319,9 +553,6 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     }
     case 'task':
     case 'background_task': {
-      // Legacy/v1 sessions persist background-task notifications under the
-      // 'background_task' spelling (the live mapper already handles it) —
-      // same shape, same taskId, so the turn keeps its task link.
       const taskId = (origin as { taskId?: unknown }).taskId;
       return taskId !== undefined && typeof taskId === 'string'
         ? { kind: 'task', taskId, payload: origin }
@@ -330,10 +561,9 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
     case 'hook_result':
       return { kind: 'hook', payload: origin };
     case 'shell_command':
-      // `!shell` input/output echo: displayed as user-turn input; the payload
-      // (`phase`, `isError`) lets a client renderer specialize later.
       return { kind: 'user', payload: origin };
     case 'user':
+      return projectTranscriptUserTurnOrigin(origin);
     case undefined:
       return { kind: 'user' };
     default:
@@ -363,6 +593,28 @@ function bundledSkillActivations(message: HistoryMessage): readonly BundledSkill
   );
 }
 
+interface OriginFileAttachment {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+function originFileAttachments(message: HistoryMessage): readonly OriginFileAttachment[] {
+  if (message.origin?.kind !== 'user' && message.origin?.kind !== 'skill_activation') return [];
+  const attachments = (message.origin as { readonly attachments?: unknown }).attachments;
+  if (!Array.isArray(attachments)) return [];
+  return attachments.filter(
+    (attachment): attachment is OriginFileAttachment =>
+      typeof attachment === 'object' &&
+      attachment !== null &&
+      typeof (attachment as { name?: unknown }).name === 'string' &&
+      typeof (attachment as { mediaType?: unknown }).mediaType === 'string' &&
+      typeof (attachment as { size?: unknown }).size === 'number' &&
+      typeof (attachment as { path?: unknown }).path === 'string',
+  );
+}
+
 function textOf(message: HistoryMessage): string {
   return (message.content ?? [])
     .filter((part): part is { readonly type: 'text'; readonly text: string } => part.type === 'text' && 'text' in part)
@@ -383,6 +635,7 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
   return {
     kind: 'turn',
     turnId: draft.turnId,
+    triggerPromptId: draft.triggerPromptId,
     ordinal: draft.ordinal,
     state: 'completed',
     origin: draft.origin,
@@ -395,11 +648,12 @@ function draftToTurnItem(draft: TurnDraft): TranscriptItem {
       ordinal: step.ordinal,
       state: 'completed' as const,
       frames: step.frames,
+      usage: step.usage,
+      llmTiming: step.llmTiming,
     })),
   };
 }
 
-/** Re-project the (mutated) draft into the items array, preserving identity of slots. */
 function syncTurnItem(items: TranscriptItem[], draft: TurnDraft): void {
   const index = items.findIndex((entry) => entry.kind === 'turn' && entry.turnId === draft.turnId);
   if (index >= 0) items[index] = draftToTurnItem(draft);

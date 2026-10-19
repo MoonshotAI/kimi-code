@@ -35,7 +35,7 @@ describe('ShellExecutionComponent', () => {
     expect(collapsedOutput).toContain('line1');
     expect(collapsedOutput).toContain('line3');
     expect(collapsedOutput).not.toContain('line4');
-    expect(collapsedOutput).toContain('... (2 more lines, ctrl+o to expand)');
+    expect(collapsedOutput).toContain('… (2 more lines, ctrl+o to expand)');
 
     const expanded = new ShellExecutionComponent({
       result: {
@@ -76,7 +76,7 @@ describe('ShellExecutionComponent', () => {
 
     const output = component.render(100).map(strip).join('\n');
     expect(output).toContain('hello');
-    expect(output).not.toContain('... (2 more lines');
+    expect(output).not.toContain('… (2 more lines');
   });
 
   it('preserves internal empty lines while trimming only trailing ones', () => {
@@ -91,7 +91,7 @@ describe('ShellExecutionComponent', () => {
     const output = component.render(100).map(strip).join('\n');
     expect(output).toContain('a');
     expect(output).toContain('b');
-    expect(output).not.toContain('... (2 more lines');
+    expect(output).not.toContain('… (2 more lines');
   });
 
   it('truncates long single-line output by wrapped visual lines', () => {
@@ -106,13 +106,13 @@ describe('ShellExecutionComponent', () => {
     const out = strip(component.render(20).join('\n'));
     expect(out).toContain('x');
     expect(out).not.toContain('x'.repeat(500));
-    expect(out).toContain('... (');
+    expect(out).toContain('… (');
   });
 
   describe('shellExecutionResultRenderer', () => {
     const longCmd = `echo ${'a'.repeat(200)}\necho done`;
 
-    it('renders only the result and leaves the command to the call preview', () => {
+    it('renders only the last output line as the outcome row while collapsed', () => {
       const components = shellExecutionResultRenderer(
         {
           id: 'call_1',
@@ -121,8 +121,73 @@ describe('ShellExecutionComponent', () => {
         },
         {
           tool_call_id: 'call_1',
-          output: 'ok',
+          output: 'first\nsecond\nthird\n\nTests 12 passed\n\n',
           is_error: false,
+        },
+        { expanded: false },
+      );
+
+      const rendered = components.flatMap((c) => c.render(100)).map(strip);
+      expect(rendered).toEqual(['  … Tests 12 passed']);
+    });
+
+    it('identifies a background task by its first metadata line while collapsed', () => {
+      const components = shellExecutionResultRenderer(
+        {
+          id: 'call_1',
+          name: 'Bash',
+          args: { command: 'npm run build', run_in_background: true },
+        },
+        {
+          tool_call_id: 'call_1',
+          output: [
+            'task_id: bash-abc123',
+            'pid: 12345',
+            'description: npm run build',
+            'status: running',
+            'automatic_notification: true',
+            'next_step: The completion arrives automatically in a later turn.',
+            'human_shell_hint: The task is visible in the background-task panel.',
+          ].join('\n'),
+          is_error: false,
+        },
+        { expanded: false },
+      );
+
+      const rendered = components.flatMap((c) => c.render(100)).map(strip);
+      expect(rendered).toEqual(['  task_id: bash-abc123 …']);
+    });
+
+    it('shows a short result whole while collapsed', () => {
+      const components = shellExecutionResultRenderer(
+        { id: 'call_1', name: 'Bash', args: { command: 'git status --short' } },
+        { tool_call_id: 'call_1', output: ' M src/a.ts\n?? src/b.ts\n', is_error: false },
+        { expanded: false },
+      );
+      const rendered = components.flatMap((c) => c.render(100)).map(strip);
+      expect(rendered).toEqual(['   M src/a.ts', '  ?? src/b.ts']);
+    });
+
+    it('renders no outcome row for a successful result without output', () => {
+      const components = shellExecutionResultRenderer(
+        { id: 'call_1', name: 'Bash', args: { command: 'true' } },
+        { tool_call_id: 'call_1', output: '\n  \n', is_error: false },
+        { expanded: false },
+      );
+      expect(components).toEqual([]);
+    });
+
+    it('keeps a failing result previewed while collapsed and leaves the command to the call preview', () => {
+      const components = shellExecutionResultRenderer(
+        {
+          id: 'call_1',
+          name: 'Bash',
+          args: { command: longCmd },
+        },
+        {
+          tool_call_id: 'call_1',
+          output: 'boom',
+          is_error: true,
         },
         { expanded: false },
       );
@@ -135,7 +200,7 @@ describe('ShellExecutionComponent', () => {
       // renderer — rendering it here too would duplicate it once the result
       // lands.
       expect(rendered).not.toContain('$ echo');
-      expect(rendered).toContain('ok');
+      expect(rendered).toContain('boom');
     });
 
     it('still renders only the result when expanded', () => {

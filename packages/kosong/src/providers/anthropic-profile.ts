@@ -74,9 +74,10 @@ const VERSION_FIRST_RE = /(\d{1,2})[-._](\d{1,2})[-._](opus|sonnet|haiku)/;
 const BARE_FAMILY_RE = /(\d{1,2})[-._](opus|sonnet|haiku)/;
 
 export function parseAnthropicModelVersion(
-  model: string,
+  model: string | undefined,
   requireClaudeMarker = false,
 ): AnthropicModelVersion | null {
+  if (model === undefined) return null;
   const normalized = model.toLowerCase();
   if (requireClaudeMarker && !normalized.includes('claude')) return null;
 
@@ -111,8 +112,9 @@ export function parseAnthropicModelVersion(
 }
 
 export function matchKnownAnthropicModelProfile(
-  model: string,
+  model: string | undefined,
 ): AnthropicModelProfile | undefined {
+  if (model === undefined) return undefined;
   const normalized = model.toLowerCase();
   if (/mythos[-._]preview/.test(normalized)) return ALWAYS_ADAPTIVE_MAX_PROFILE;
 
@@ -164,7 +166,10 @@ export function inferAnthropicModelProfile(model: string): AnthropicModelProfile
  * fallback: an Anthropic-protocol endpoint still needs some profile to shape
  * requests.
  */
-export function matchUnknownClaudeProfile(model: string): AnthropicModelProfile | undefined {
+export function matchUnknownClaudeProfile(
+  model: string | undefined,
+): AnthropicModelProfile | undefined {
+  if (model === undefined) return undefined;
   const normalized = model.toLowerCase();
   return normalized.includes('claude') || CLAUDE_FAMILY_WORD_RE.test(normalized)
     ? LATEST_OPUS_PROFILE

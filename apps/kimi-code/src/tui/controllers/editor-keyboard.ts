@@ -1,7 +1,13 @@
-import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
-import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
+import { readFile } from 'node:fs/promises';
 
-import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
+import type { FileMeta, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import { compressImageForModel } from '@moonshot-ai/kimi-code-sdk';
+
+import {
+  ClipboardMediaError,
+  readClipboardMedia,
+  type ClipboardVideo,
+} from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
@@ -11,20 +17,26 @@ import {
   DOUBLE_ESC_WINDOW_MS,
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
-  NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
+import { Key, matchesKey } from '@moonshot-ai/pi-tui';
+import { MEDIA_STAGING_TTL_SECONDS } from '../constant/media';
 import { formatErrorMessage } from '../utils/event-payload';
-import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import { extractMediaAttachments } from '../utils/image-placeholder';
-import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
-import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
+import type {
+  ImageAttachment,
+  ImageAttachmentStore,
+  VideoAttachment,
+} from '../utils/image-attachment-store';
+import { extractMediaAttachments, imageExtensionForMime } from '../utils/image-placeholder';
+import { resolveUserInput } from '../commands/resolve';
+import type { PendingExit, QueuedMessage } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
+import type { SurveyController } from './survey-controller';
+import type { ModelMigrationController } from './model-migration';
 
 export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
-  readonly engineV2: boolean;
   cancelInFlight: (() => void) | undefined;
   /**
    * The host's harness (KimiTUI always has one). Its `imageLimits` drives
@@ -35,15 +47,19 @@ export interface EditorKeyboardHost {
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
+  readonly surveyController: SurveyController;
+  readonly modelMigration?: ModelMigrationController;
   readonly skillCommandMap: Map<string, string>;
-  steerMessage(session: Session, input: readonly SteerInputItem[]): void;
-  steerSkillActivation(session: Session, skillName: string, skillArgs: string): void;
+  readonly pluginCommandMap: Map<string, string>;
+  steerQueuedMessagesIntoRunningTurn(manual?: boolean): void;
   validateMediaCapabilities(extraction: {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
   }): boolean;
+  releaseStagingMedia(mediaAttachmentIds: readonly number[]): void;
   recallLastQueued(): QueuedMessage | undefined;
+  isSteeringQueuedMessages(): boolean;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
   updateEditorBorderHighlight(text?: string): void;
@@ -52,6 +68,9 @@ export interface EditorKeyboardHost {
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
   toggleTodoPanelExpansion(): void;
+  /** Returns true when the Updates panel grabbed or released focus. */
+  toggleNotifyPanelFocus(): boolean;
+  handleNotifyPanelKey(key: 'left' | 'right' | 'up' | 'down' | 'escape'): boolean;
   detachCurrentForegroundTask(): void;
   cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
@@ -68,6 +87,7 @@ export interface EditorKeyboardHost {
 export class EditorKeyboardController {
   private pendingExit: PendingExit | null = null;
   private pendingUndoEsc: { readonly timer: ReturnType<typeof setTimeout> } | null = null;
+  private disposed = false;
 
   constructor(
     private readonly host: EditorKeyboardHost,
@@ -79,12 +99,26 @@ export class EditorKeyboardController {
     const editor = host.state.editor;
 
     editor.onSubmit = (text: string) => {
+      if (host.surveyController.handleSubmit(text)) return;
       host.handleUserInput(text);
+    };
+
+    // After dispose (shutdown), consume every key here so no shortcut can fire
+    // while the UI is being torn down — Ctrl+C is handled earlier, at the UI
+    // input-listener level.
+    editor.onPreInput = (data: string) => {
+      if (this.disposed) return true;
+      if (matchesKey(data, Key.escape)) this.clearPendingExit();
+      const consumed = host.surveyController.handlePreInput(data);
+      if (consumed) this.clearPendingUndoEsc();
+      return consumed;
     };
 
     editor.onChange = (text: string) => {
       if (this.pendingExit) this.clearPendingExit();
+      host.surveyController.handleEditorChange(text);
       host.updateEditorBorderHighlight(text);
+      if (text.length === 0) host.modelMigration?.retry();
       // Expanding paste markers costs a full-text pass, and only `/goal`
       // input can trip the objective length limit — so skip the expansion
       // for ordinary prompts. Submitted text is trimmed before dispatch, so
@@ -245,10 +279,6 @@ export class EditorKeyboardController {
         host.handlePlanToggle(next);
       };
       if (host.session === undefined) {
-        if (!host.engineV2) {
-          host.showError(NO_ACTIVE_SESSION_MESSAGE);
-          return;
-        }
         // v2 session-less: lazy-create the session, then toggle — the same
         // path /plan takes.
         void host.ensureSession().then((session) => {
@@ -264,6 +294,7 @@ export class EditorKeyboardController {
     };
 
     editor.onOpenExternalEditor = () => {
+      host.surveyController.notifyDisplaced();
       host.track('shortcut_editor');
       void this.openExternalEditor();
     };
@@ -283,108 +314,69 @@ export class EditorKeyboardController {
       return true;
     };
 
+    editor.onPageNotify = (): boolean => {
+      if (!host.toggleNotifyPanelFocus()) return false;
+      this.clearPendingExit();
+      host.track('shortcut_notify_page');
+      return true;
+    };
+
+    editor.onNotifyPanelKey = (key) => host.handleNotifyPanelKey(key);
+
     editor.onCtrlS = () => {
       if (
         host.state.appState.streamingPhase === 'idle' ||
         host.state.appState.streamingPhase === 'shell' ||
-        host.state.appState.isCompacting
-      )
-        return;
-      const text = editor.getText().trim();
+        host.state.appState.isCompacting ||
+        host.isSteeringQueuedMessages()
+      ) return;
+      const text = (editor.getExpandedText?.() ?? editor.getText()).trim();
       const editorIsBash = editor.inputMode === 'bash';
-
-      // Bash commands (`! …`) are not steerable: they stay queued so they run
-      // after the current task. Grouped inline-skill submissions are not
-      // steerable either — steer carries no skill activations, so they stay
-      // queued and submit intact when the session drains; the same applies to
-      // an editor draft carrying inline skill tokens. Steering stops at the
-      // first such bundle: items behind it stay queued too, or a later
-      // message would jump ahead of its bundle and reverse the conversational
-      // order. Everything else steers in queue order — plain text as a
-      // steered message, slash-skill items as activations fired into the
-      // running turn (never as literal text).
-      const queued = host.state.queuedMessages;
-      const firstBundle = queued.findIndex((m) => m.inlineSkillActivations !== undefined);
-      const windowBeforeFirstBundle = firstBundle === -1 ? queued : queued.slice(0, firstBundle);
-      const steerable = windowBeforeFirstBundle.filter((m) => m.mode !== 'bash');
-      const editorHasInlineSkills =
-        !editorIsBash &&
-        text.length > 0 &&
-        host.engineV2 &&
-        extractInlineSkillActivations(text, host.skillCommandMap).length > 0;
-
-      type SteerRun =
-        | { readonly kind: 'text'; readonly items: SteerInputItem[] }
-        | { readonly kind: 'skill'; readonly skillName: string; readonly skillArgs: string };
-      const runs: SteerRun[] = [];
-      let textRun: SteerInputItem[] = [];
-      const flushTextRun = (): void => {
-        if (textRun.length > 0) {
-          runs.push({ kind: 'text', items: textRun });
-          textRun = [];
-        }
-      };
-      for (const m of steerable) {
-        if (m.mode === 'skill' && m.skillName !== undefined) {
-          flushTextRun();
-          runs.push({ kind: 'skill', skillName: m.skillName, skillArgs: m.skillArgs ?? '' });
-          continue;
-        }
-        const trimmed = m.text.trim();
-        if (trimmed.length > 0) {
-          // Queued items carry the parts extracted when they were submitted
-          // (and were already capability-validated then).
-          textRun.push({ text: trimmed, parts: m.parts, imageAttachmentIds: m.imageAttachmentIds });
-        }
-      }
-      let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
-      if (!editorIsBash && text.length > 0 && !editorHasInlineSkills && firstBundle === -1) {
+      let extraction: ReturnType<typeof extractMediaAttachments> | undefined;
+      if (!editorIsBash && text.length > 0) {
         try {
-          editorExtraction = extractMediaAttachments(text, this.imageStore);
+          extraction = extractMediaAttachments(text, this.imageStore);
         } catch (error) {
-          // Cache copy failed (e.g. the pasted video's source vanished) —
-          // leave the queue and the editor draft untouched.
           host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
           return;
         }
-        textRun.push({
-          text,
-          parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
-          imageAttachmentIds:
-            editorExtraction.imageAttachmentIds.length > 0
-              ? editorExtraction.imageAttachmentIds
-              : undefined,
-        });
-      }
-      flushTextRun();
-
-      if (runs.length > 0) {
-        // The editor draft is fresh input: gate it on the model's media
-        // capabilities before splicing the queue, so a rejection leaves the
-        // queue and the draft untouched.
-        if (
-          editorExtraction !== undefined &&
-          !host.validateMediaCapabilities(editorExtraction)
-        ) {
+        if (!host.validateMediaCapabilities(extraction)) {
+          host.releaseStagingMedia([
+            ...extraction.imageAttachmentIds,
+            ...extraction.videoAttachmentIds,
+          ]);
           return;
         }
-        host.state.queuedMessages = queued.filter(
-          (m, index) => m.mode === 'bash' || (firstBundle !== -1 && index >= firstBundle),
-        );
-        if (!editorIsBash && !editorHasInlineSkills && firstBundle === -1) editor.setText('');
-        const session = host.session;
-        if (host.state.appState.model.trim().length === 0 || session === undefined) {
-          host.showError(LLM_NOT_SET_MESSAGE);
-        } else {
-          for (const run of runs) {
-            if (run.kind === 'text') {
-              host.steerMessage(session, run.items);
-            } else {
-              host.steerSkillActivation(session, run.skillName, run.skillArgs);
-            }
-          }
-        }
       }
+      if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+        host.releaseStagingMedia([
+          ...(extraction?.imageAttachmentIds ?? []),
+          ...(extraction?.videoAttachmentIds ?? []),
+        ]);
+        host.showError(LLM_NOT_SET_MESSAGE);
+        return;
+      }
+      if (extraction !== undefined) {
+        const { activations } = resolveUserInput({
+          input: text,
+          skillCommandMap: host.skillCommandMap,
+          pluginCommandMap: host.pluginCommandMap,
+          isStreaming: true,
+          isCompacting: host.state.appState.isCompacting,
+        });
+        host.state.queuedMessages.push({
+          text,
+          agentId: host.harness?.interactiveAgentId,
+          parts: extraction.hasMedia ? extraction.parts : undefined,
+          imageAttachmentIds:
+            extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
+          videoAttachmentIds:
+            extraction.videoAttachmentIds.length > 0 ? extraction.videoAttachmentIds : undefined,
+          inlineSkillActivations: activations.length > 0 ? activations : undefined,
+        });
+        editor.setText('');
+      }
+      host.steerQueuedMessagesIntoRunningTurn(true);
       host.updateQueueDisplay();
       host.state.ui.requestRender();
     };
@@ -443,6 +435,7 @@ export class EditorKeyboardController {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.clearPendingExit();
     this.clearPendingUndoEsc();
   }
@@ -515,27 +508,79 @@ export class EditorKeyboardController {
     if (media === null) return false;
 
     if (media.kind === 'video') {
+      // Same shape as the image flow below: register the attachment and put
+      // its placeholder in the editor first, then upload the source file to
+      // the daemon file store in the background — typing never waits on it,
+      // and submit gives a pending upload the bounded `pendingMediaIngestions`
+      // wait. Unlike an image there is no inline fallback form, so a video
+      // whose upload has not landed (or failed) refuses the submission at
+      // extraction time.
       const attachment = this.imageStore.addVideo(media.mimeType, media.sourcePath, media.filename);
       this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
       this.host.state.ui.requestRender();
       this.host.track('shortcut_paste', { kind: 'video' });
+      attachment.pending = this.finishClipboardVideoPaste(attachment, media).catch(
+        (error: unknown) => {
+          this.host.showError(`Failed to process pasted video: ${formatErrorMessage(error)}`);
+        },
+      );
       return true;
     }
 
     const meta = parseImageMeta(media.bytes);
     if (meta === null) return false;
+
+    // Register the attachment and put its placeholder in the editor before
+    // any of the asynchronous ingestion work below. CustomEditor only holds
+    // keystrokes until this handler settles, so the callback returns right
+    // after the placeholder lands and ingestion continues in the background —
+    // typing never waits on compression or the daemon upload. Submit gives a
+    // pending ingestion a bounded wait (`pendingImageIngestions`) and falls
+    // back to the inline form when it has not finished.
+    const attachment = this.imageStore.addImage(
+      media.bytes,
+      meta.mime,
+      meta.width,
+      meta.height,
+    );
+    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    this.host.state.ui.requestRender();
+    this.host.track('shortcut_paste', { kind: 'image' });
+
+    attachment.pending = this.finishClipboardImagePaste(
+      attachment,
+      media.bytes,
+      meta.mime,
+      meta.width,
+      meta.height,
+    ).catch((error: unknown) => {
+      // The raw attachment and its already-visible placeholder are still a
+      // valid inline fallback when optional ingestion work fails.
+      this.host.showError(`Failed to process pasted image: ${formatErrorMessage(error)}`);
+    });
+    return true;
+  }
+
+  private async finishClipboardImagePaste(
+    attachment: ImageAttachment,
+    originalBytes: Uint8Array,
+    originalMime: string,
+    originalWidth: number,
+    originalHeight: number,
+  ): Promise<void> {
     // Compress at ingestion — a pure data step while building the attachment, so
     // the stored bytes, the inline thumbnail, the `[image #N (W×H)]` placeholder,
     // and the submitted image all agree, and the agent core only ever sees an
     // already-compressed image. Best effort: originals pass through on failure.
-    // When compression changed the bytes, the original is persisted (into the
-    // session's media-originals dir when known, else the temp-dir fallback)
-    // and recorded on the attachment, so submit-time expansion can announce
-    // the compression and point the model at the full-fidelity copy.
+    // When compression changed the bytes, the pre-compression original is kept
+    // on the attachment in memory: the session whose media-originals dir it
+    // belongs in may not exist yet at paste time, so dispatch-time caption
+    // resolution (`resolveOriginalCaptions`) persists it and announces the
+    // compression, pointing the model at the full-fidelity copy.
     // The edge cap comes from the host harness's [image] config (resolved per
     // paste so a config reload applies immediately); hosts without a harness
     // use the env/built-in default.
-    const compressed = await compressImageForModel(media.bytes, meta.mime, {
+    const compressed = await compressImageForModel(originalBytes, originalMime, {
       maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
       telemetry: {
         client: {
@@ -545,39 +590,110 @@ export class EditorKeyboardController {
         source: 'tui_paste',
       },
     });
-    const sessionDir = this.host.session?.summary?.sessionDir;
     // Dimensions come from the compression result, not parseImageMeta: the
     // compressor reports display space (EXIF orientation applied) — the space
     // the sent image, the caption, and ReadMediaFile region readback share —
     // while parseImageMeta reads the raw pre-rotation header.
-    const attachment = compressed.changed
-      ? this.imageStore.addImage(
-          compressed.data,
-          compressed.mimeType,
-          compressed.width,
-          compressed.height,
-          {
-            path: await persistOriginalImage(
-              media.bytes,
-              meta.mime,
-              sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
-            ),
-            width: compressed.originalWidth,
-            height: compressed.originalHeight,
-            byteLength: media.bytes.length,
-            mime: meta.mime,
-          },
-        )
-      : this.imageStore.addImage(
-          media.bytes,
-          meta.mime,
-          compressed.width || meta.width,
-          compressed.height || meta.height,
-        );
-    this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
+    const original = compressed.changed
+      ? {
+          bytes: originalBytes,
+          width: compressed.originalWidth,
+          height: compressed.originalHeight,
+          byteLength: originalBytes.length,
+          mime: originalMime,
+        }
+      : undefined;
+    // v2 only: upload the final bytes to the daemon file store so submit-time
+    // expansion emits a `kimi-file://` reference instead of inline base64.
+    const uploaded = await this.uploadImageToDaemonFileStore(
+      compressed.changed ? compressed.data : originalBytes,
+      compressed.changed ? compressed.mimeType : originalMime,
+    );
+    const completed = this.imageStore.completeImage(attachment, {
+      bytes: compressed.changed ? compressed.data : originalBytes,
+      mime: compressed.changed ? compressed.mimeType : originalMime,
+      width: compressed.width || originalWidth,
+      height: compressed.height || originalHeight,
+      original,
+      fileId: uploaded?.id,
+      fileExpiresAt: parseExpiry(uploaded),
+    });
+    if (completed === undefined && uploaded !== undefined) {
+      await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
+    }
     this.host.state.ui.requestRender();
-    this.host.track('shortcut_paste', { kind: 'image' });
-    return true;
+  }
+
+  /**
+   * Paste-time upload of the final image bytes to the engine's daemon file
+   * store (agent-core-v2 only), run as part of the background ingestion —
+   * typing never waits on it, and submit only gives it the bounded
+   * `pendingImageIngestions` wait. Best effort: any failure returns undefined,
+   * so the attachment keeps no `fileId` and submit-time expansion falls back
+   * to the inline base64 form.
+   */
+  private async uploadImageToDaemonFileStore(
+    bytes: Uint8Array,
+    mime: string,
+  ): Promise<FileMeta | undefined> {
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    try {
+      const meta = await harness.uploadFile(bytes, {
+        name: `pasted-image.${imageExtensionForMime(mime)}`,
+        mimeType: mime,
+        expiresInSec: MEDIA_STAGING_TTL_SECONDS,
+      });
+      return meta;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Paste-time upload of the video's source file to the engine's daemon file
+   * store (agent-core-v2 only), run as background ingestion exactly like the
+   * image upload above. Best effort: any failure returns undefined, leaving
+   * the attachment without a `fileId` — submit-time expansion then refuses
+   * the submission, since a video has no inline fallback form.
+   */
+  private async uploadVideoToDaemonFileStore(
+    media: ClipboardVideo,
+  ): Promise<FileMeta | undefined> {
+    const harness = this.host.harness;
+    if (harness === undefined) return undefined;
+    let bytes: Uint8Array;
+    try {
+      bytes = await readFile(media.sourcePath);
+    } catch {
+      // The source (e.g. a clipboard temp file) vanished before the upload
+      // could read it — same outcome as a failed upload.
+      return undefined;
+    }
+    try {
+      return await harness.uploadFile(bytes, {
+        name: media.filename,
+        mimeType: media.mimeType,
+        expiresInSec: MEDIA_STAGING_TTL_SECONDS,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async finishClipboardVideoPaste(
+    attachment: VideoAttachment,
+    media: ClipboardVideo,
+  ): Promise<void> {
+    const uploaded = await this.uploadVideoToDaemonFileStore(media);
+    const completed = this.imageStore.completeVideo(attachment, {
+      fileId: uploaded?.id,
+      fileExpiresAt: parseExpiry(uploaded),
+    });
+    if (completed === undefined && uploaded !== undefined) {
+      await this.host.harness?.deleteFile(uploaded.id).catch(() => undefined);
+    }
+    this.host.state.ui.requestRender();
   }
 
   private async openExternalEditor(): Promise<void> {
@@ -620,4 +736,10 @@ export class EditorKeyboardController {
       this.host.setExternalEditorRunning(false);
     }
   }
+}
+
+function parseExpiry(meta: FileMeta | undefined): number | undefined {
+  if (meta?.expires_at === undefined) return undefined;
+  const value = Date.parse(meta.expires_at);
+  return Number.isFinite(value) ? value : undefined;
 }

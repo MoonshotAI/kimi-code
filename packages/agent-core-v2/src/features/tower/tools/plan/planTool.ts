@@ -1,18 +1,16 @@
-/**
- * `tools` domain — `TowerPlanTool` implementation (the `TowerPlan` tool).
- *
- * Splits the tower goal into missions through the protocol `TowerStore`
- * rooted at the session cwd (`sessionContext`), refusing to run while tower
- * mode (`tower`) is inactive. Registered for the main agent only. Bound at
- * Agent scope.
- */
-
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import type { ToolExecution } from '#/tool/toolContract';
 
-import { newTowerStore, runTowerTool } from '../support';
+import {
+  newTowerStore,
+  runTowerTool,
+  TOWER_MAIN_AGENT_ONLY,
+  TOWER_MODE_USER_ENABLED_ONLY,
+} from '../support';
 import DESCRIPTION from './plan.md?raw';
 import { ITowerPlanTool, TowerPlanToolInputSchema, type TowerPlanToolInput } from './plan';
 
@@ -25,9 +23,16 @@ export class TowerPlanTool implements ITowerPlanTool {
   constructor(
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentTowerService private readonly tower: IAgentTowerService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   resolveExecution(args: TowerPlanToolInput): ToolExecution {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID) {
+      return {
+        isError: true,
+        output: TOWER_MAIN_AGENT_ONLY,
+      };
+    }
     return {
       description: `Planning ${String(args.missions.length)} tower mission(s)`,
       approvalRule: this.name,
@@ -35,7 +40,7 @@ export class TowerPlanTool implements ITowerPlanTool {
         runTowerTool(async () => {
           if (!this.tower.isActive) {
             return {
-              output: 'tower mode is not active — run TowerInit first',
+              output: TOWER_MODE_USER_ENABLED_ONLY,
               isError: true,
             };
           }

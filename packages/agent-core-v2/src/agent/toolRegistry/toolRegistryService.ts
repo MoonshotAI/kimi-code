@@ -1,11 +1,3 @@
-/**
- * `toolRegistry` domain — `IAgentToolRegistryService` implementation.
- *
- * The per-agent tool table (`tools`) stays a plain instance field: its values
- * hold `ExecutableTool` class instances, not plain data, so it is not
- * registered into `agentState` (`IAgentStateService`). Bound at Agent scope.
- */
-
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';

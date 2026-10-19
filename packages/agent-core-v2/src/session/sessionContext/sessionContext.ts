@@ -1,15 +1,3 @@
-/**
- * `sessionContext` domain — seeded per-session facts.
- *
- * Defines the `ISessionContext` carrying the session's identity, storage
- * addressing (`sessionId`, `workspaceId`, `sessionDir`, `metaScope`), the
- * session's working directory (`cwd`) — frozen at session creation — and a
- * `scope(subKey?)` helper that returns the session's persistence scope (or a
- * child under it, e.g. `scope('agents/main/cron')`). Seeded into the Session
- * scope when the session is created. Pure facts — no store, no IO.
- * Session-scoped.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ScopeSeed } from '#/_base/di/scope';
 

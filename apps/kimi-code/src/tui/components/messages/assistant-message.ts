@@ -5,8 +5,9 @@
  * to align after the bullet.
  */
 
-import { Container, Markdown, truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
+import { Container, truncateToWidth, visibleWidth, type Component, type TuiMouseDispatchResult, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
 
+import { Markdown } from '#/tui/components/markdown/markdown';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -69,7 +70,11 @@ export class AssistantMessageComponent implements Component {
         0,
         createMarkdownTheme({ transient }),
         undefined,
-        createMarkdownOptions(),
+        {
+          ...createMarkdownOptions(),
+          copySource: true,
+          onVisualStateChange: () => this.markRenderDirty(),
+        },
       );
       this.markdownTransient = transient;
       this.contentContainer.addChild(this.markdown);
@@ -94,11 +99,36 @@ export class AssistantMessageComponent implements Component {
         0,
         createMarkdownTheme({ transient: this.lastTransient }),
         undefined,
-        createMarkdownOptions(),
+        {
+          ...createMarkdownOptions(),
+          copySource: true,
+          onVisualStateChange: () => this.markRenderDirty(),
+        },
       );
       this.markdownTransient = this.lastTransient;
       this.contentContainer.addChild(this.markdown);
     }
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseDispatchResult | undefined {
+    if (this.lastText.trim().length === 0) return undefined;
+
+    const prefix = this.showBullet ? STATUS_BULLET : MESSAGE_INDENT;
+    const prefixWidth = visibleWidth(prefix);
+    const contentWidth = Math.max(1, Math.max(0, event.width) - prefixWidth);
+    const y = event.y - 1;
+    if (y < 0) return undefined;
+
+    const contentHeight = this.contentContainer.render(contentWidth).length;
+    if (y >= contentHeight) return undefined;
+
+    return this.contentContainer.handleMouse({
+      ...event,
+      x: event.x - prefixWidth,
+      y,
+      width: contentWidth,
+      height: contentHeight,
+    });
   }
 
   render(width: number): string[] {

@@ -1,20 +1,3 @@
-/**
- * `agentIdentity` domain — the `[identity]` config section.
- *
- * Owns the user-facing custom-identity preference: `name`, the display name in
- * the system prompt, and the optional `slug` that goes into protocol fields.
- * Both bind to `KIMI_CODE_IDENTITY_NAME` / `KIMI_CODE_IDENTITY_SLUG` so a
- * container or CI run can state an identity without writing `config.toml`; an
- * env override never persists back into the file. Leaving the section unset
- * means no custom identity, and every consumer keeps its current behavior.
- *
- * Unlike most sections this one is read exactly once: `agentIdentity` freezes
- * its snapshot when config first loads, so edits apply on the next start —
- * see the domain contract for why mid-process changes cannot be honored.
- *
- * Self-registered at module load via `registerConfigSection`.
- */
-
 import { z } from 'zod';
 
 import {

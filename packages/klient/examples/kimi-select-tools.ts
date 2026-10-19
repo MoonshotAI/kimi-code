@@ -60,18 +60,19 @@ import type { AddressInfo } from 'node:net';
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agent/toolSelect/dynamicTools';
-import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/kosong/contract/capability';
-import type { Message } from '@moonshot-ai/agent-core-v2/kosong/contract/message';
-import type { Tool } from '@moonshot-ai/agent-core-v2/kosong/contract/tool';
-import type { AuthProvider, Model } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
-import { IModelCatalog } from '@moonshot-ai/agent-core-v2/kosong/model/catalog';
+import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
+import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
+import type { ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import { createStaticCredentialProvider } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
+import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {
   ModelRequestInput,
   ModelRequester,
-} from '@moonshot-ai/agent-core-v2/kosong/model/modelRequester';
-import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/kosong/model/modelRequesterImpl';
-import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/kosong/protocol/protocol';
-import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/kosong/provider/protocolAdapterRegistry';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
+import { ModelRequesterImpl } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester-impl';
+import { IProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocol';
+import { ProtocolAdapterRegistry } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
 
 function assert(cond: boolean, message: string): asserts cond {
   if (!cond) throw new Error(`assertion failed: ${message}`);
@@ -147,10 +148,13 @@ const SELECT_TOOLS: Tool = {
   name: 'select_tools',
   description:
     'Load one or more tools by name so you can call them. ' +
-    'All available tool names are listed in the <tools_added>/<tools_removed> announcements ' +
+    'The loadable names are listed in the <tools_added>/<tools_removed> announcements ' +
     'in the system context — fold them in order to get the current list. ' +
-    'Pass the exact name(s) you need; their full definitions become available immediately, ' +
-    'so you can call them directly in your next tool call.',
+    'Pass the exact tool name(s) you need — plugin, skill, or category names do not work. ' +
+    'The full definitions become available immediately, so you can call them directly ' +
+    'in your next tool call. ' +
+    'Only announced names are loadable — tools you already have available are called ' +
+    'directly, never passed to select_tools.',
   parameters: {
     type: 'object',
     properties: {
@@ -281,10 +285,6 @@ async function probeWireEncoding(): Promise<void> {
   const port = (server.address() as AddressInfo).port;
 
   const registry = new ProtocolAdapterRegistry();
-  const staticKey: AuthProvider = {
-    canRefresh: false,
-    getAuth: () => Promise.resolve({ apiKey: 'sk-probe' }),
-  };
   const makeRequester = (providerType?: string): ModelRequester => {
     const model: Model = {
       id: 'probe',
@@ -298,7 +298,7 @@ async function probeWireEncoding(): Promise<void> {
       alwaysThinking: false,
       providerType,
       providerName: providerType ?? 'probe',
-      authProvider: staticKey,
+      credentialProvider: createStaticCredentialProvider('sk-probe'),
     };
     return new ModelRequesterImpl(model, registry);
   };

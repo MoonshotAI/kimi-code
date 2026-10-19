@@ -1,16 +1,6 @@
-/**
- * The v1 WS `Event` union — the per-agent event stream frame payloads.
- *
- * Most frames are the engine's own `DomainEvent`s (turn / tool / subagent /
- * compaction / mcp / …), re-exported here as the stream's backbone. The
- * remaining interfaces are the v1-only frames this transport synthesizes
- * (session/workspace lifecycle, config changes, the merged
- * legacy status overlay, and the legacy background-task spellings) — they
- * never had an engine-side producer, so they are defined here, next to the
- * broadcaster that emits them.
- */
+import type { z } from 'zod';
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
+import type { agentEventSchema } from '../../../protocol/events-zod';
 import type { MessageContent } from '../../../protocol/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
@@ -28,6 +18,7 @@ export interface AgentStatusUpdatedEvent {
   readonly contextUsage?: number;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
+  readonly towerMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
   readonly phase?: AgentPhase;
@@ -50,6 +41,16 @@ export interface SessionMetaUpdatedEvent {
 export interface SessionCreatedEvent {
   readonly type: 'event.session.created';
   readonly session: Session;
+}
+
+export interface SessionArchivedEvent {
+  readonly type: 'event.session.archived';
+  readonly workspace_id: string;
+}
+
+export interface SessionDeletedEvent {
+  readonly type: 'event.session.deleted';
+  readonly workspace_id: string;
 }
 
 export interface WorkspaceCreatedEvent {
@@ -101,30 +102,41 @@ export interface ConfigWarningItem {
   readonly message: string;
 }
 
-/**
- * Global config warnings (deprecated keys / env vars in use, invalid
- * sections). Pushed live to every connection whenever the config service's
- * warning set changes; an empty `warnings` array means the last warning
- * cleared. Late joiners are not replayed — pull current warnings via the
- * config diagnostics RPC surface instead.
- */
 export interface ConfigWarningEvent {
   readonly type: 'event.config.warning';
   readonly warnings: readonly ConfigWarningItem[];
 }
 
-/**
- * Plugin set mutation (install / enable / disable / remove from any client).
- * Bare fan-out signal — clients re-read the plugins REST surface.
- */
+export interface ModelCatalogRefreshChange {
+  readonly provider_id: string;
+  readonly provider_name: string;
+  readonly added: number;
+  readonly removed: number;
+}
+
+export interface ModelCatalogRefreshFailure {
+  readonly provider: string;
+  readonly reason: string;
+}
+
+export interface ModelCatalogRetiredDefault {
+  readonly from: string;
+  readonly to: string;
+  readonly from_display_name: string;
+}
+
+export interface ModelCatalogChangedEvent {
+  readonly type: 'event.model_catalog.changed';
+  readonly changed: readonly ModelCatalogRefreshChange[];
+  readonly unchanged: readonly string[];
+  readonly failed: readonly ModelCatalogRefreshFailure[];
+  readonly retired_default?: ModelCatalogRetiredDefault;
+}
+
 export interface PluginChangedEvent {
   readonly type: 'event.plugin.changed';
 }
 
-/**
- * Capability install progress transition. Global fan-out; clients update the
- * row live and re-read the capability once it settles (`running: false`).
- */
 export interface CapabilityChangedEvent {
   readonly type: 'event.capability.changed';
   readonly capability_id: string;
@@ -137,14 +149,8 @@ export interface CapabilityChangedEvent {
   };
 }
 
-/**
- * DI unit state transition of the engine's scope tree, produced by
- * agent-core-v2's `IDebugCascadeService` (the L5 debug surface feed). Global:
- * carries no owning session and fans out to every connection.
- */
 export interface DiUnitChangedEvent {
   readonly type: 'event.di.unit_changed';
-  /** Scope path of the container owning the unit (`app` / `app/workspace:<id>` / …). */
   readonly scope: string;
   readonly token: string;
   readonly state: 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
@@ -204,12 +210,6 @@ export type TaskInfo =
   | AgentTaskInfo
   | QuestionTaskInfo;
 
-/**
- * Legacy background-task lifecycle events (`background.task.started` /
- * `background.task.terminated`). The v2 engine emits `task.started` /
- * `task.terminated`; the broadcaster re-spells them onto these legacy names so
- * older clients see a consistent stream.
- */
 export interface BackgroundTaskStartedEvent {
   readonly type: 'background.task.started';
   readonly info: TaskInfo;
@@ -220,13 +220,17 @@ export interface BackgroundTaskTerminatedEvent {
   readonly info: TaskInfo;
 }
 
+type CoreStreamEvent = z.infer<typeof agentEventSchema>;
+
 export type AgentEvent =
-  | DomainEvent
+  | CoreStreamEvent
   | AgentStatusUpdatedEvent
   | AgentCreatedEvent
   | AgentDisposedEvent
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
+  | SessionArchivedEvent
+  | SessionDeletedEvent
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
@@ -234,6 +238,7 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
+  | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent
   | DiUnitChangedEvent
@@ -241,7 +246,7 @@ export type AgentEvent =
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;
 
-export type Event = AgentEvent & { agentId: string; sessionId: string };
+export type Event = AgentEvent & { agentId: string; sessionId: string; readonly time?: number };
 
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',
@@ -253,9 +258,6 @@ export const VOLATILE_EVENT_TYPES = [
   'shell.completed',
   'agent.status.updated',
   'event.di.unit_changed',
-  // Live-only install progress (per-chunk download ticks) — durable journaling
-  // would persist hundreds of stale frames per install. The settle frame is
-  // recoverable via a direct capability read, so the whole type stays volatile.
   'event.capability.changed',
 ] as const;
 
@@ -263,10 +265,6 @@ export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
 
 const volatileEventTypeSet: ReadonlySet<string> = new Set(VOLATILE_EVENT_TYPES);
 
-/**
- * Volatile-vs-durable classification for the global / model event paths (the
- * agent path uses the local `isVolatileSignal` in the broadcaster instead).
- */
 export function isVolatileEventType(type: string): type is VolatileEventType {
   return volatileEventTypeSet.has(type);
 }

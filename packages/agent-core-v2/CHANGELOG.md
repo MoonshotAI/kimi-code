@@ -1,5 +1,33 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.5.0
+
+### Minor Changes
+
+- [#4058](https://github.com/MoonshotAI/kimi-code/pull/4058) [`5b93669`](https://github.com/MoonshotAI/kimi-code/commit/5b936697670ed15444bcb4720bd91e6ee776a941) Thanks [@liruifengv](https://github.com/liruifengv)! - Add an `allow_ignored_globs` option to the workspace `fs:list` request: matching entries are listed even when gitignored, ignored ancestor directories of a match stay traversable, and dot-path allowances require `show_hidden: true`.
+
+### Patch Changes
+
+- [#4058](https://github.com/MoonshotAI/kimi-code/pull/4058) [`5b93669`](https://github.com/MoonshotAI/kimi-code/commit/5b936697670ed15444bcb4720bd91e6ee776a941) Thanks [@liruifengv](https://github.com/liruifengv)! - Match workspace fs globs (`include_globs`, `exclude_globs`, `allow_ignored_globs`) with the standard picomatch engine: `a/**/b` no longer matches paths like `a/xxb`, and `a/**` now also matches `a` itself.
+
+## 0.4.3
+
+### Patch Changes
+
+- [#3341](https://github.com/MoonshotAI/kimi-code/pull/3341) [`9fa1e77`](https://github.com/MoonshotAI/kimi-code/commit/9fa1e77df5794cebaa3eb09d01bbe174d55e5a28) Thanks [@7Sageer](https://github.com/7Sageer)! - Remove the `${now}` variable from the system prompt template variable table.
+
+## 0.4.2
+
+### Patch Changes
+
+- [#3289](https://github.com/MoonshotAI/kimi-code/pull/3289) [`f143130`](https://github.com/MoonshotAI/kimi-code/commit/f143130c072e9dba8d60ef40c49d4305b93ab2fe) Thanks [@liruifengv](https://github.com/liruifengv)! - Carry the orchestrator's prompt on subagent turns: `isDisplayablePromptOrigin` now accepts `system_trigger/subagent`, so live `turn.started` events include the prompt, and cold rebuild folds the opening input (text and attachments) into turns opened by subagent run messages. Other system triggers (goal_continuation, stop_hook, loadable-tools) remain promptless.
+
+## 0.4.1
+
+### Patch Changes
+
+- [#3109](https://github.com/MoonshotAI/kimi-code/pull/3109) [`f1208c8`](https://github.com/MoonshotAI/kimi-code/commit/f1208c8d7241e8ef428d83ff235f5a218911b342) Thanks [@liruifengv](https://github.com/liruifengv)! - Rework the session title excerpts: rebalance the segment budgets toward user prompts (400 chars each, assistant 300), cap each prompt in the `user_prompts` excerpt, and compose the `digest` excerpt from the full conversation arc — every natural-language user prompt in the live window paired with its own turn's final assistant text, interleaved chronologically, within per-segment caps and a 3000-char total budget (middle turns elided).
+
 ## 0.4.0
 
 ### Minor Changes

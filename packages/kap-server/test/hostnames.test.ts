@@ -199,9 +199,6 @@ describe('startServer allowedHosts — env + option merge', () => {
       allowedHosts: ['opt-only.example.com'],
     });
     const token = server.authTokenService.getToken();
-    // `fetch` won't override the Host header (forbidden per the Fetch spec), so
-    // drive the request through Fastify's inject, which honors `headers.host`
-    // and still runs the global onRequest Host/auth hooks.
     const probe = async (host: string): Promise<number> => {
       const res = await (server as RunningServer).app.inject({
         method: 'GET',
@@ -211,11 +208,8 @@ describe('startServer allowedHosts — env + option merge', () => {
       return res.statusCode;
     };
 
-    // The env allowlist must still be honored even when the option is passed…
     expect(await probe('env-only.example.com')).toBe(200);
-    // …and the option entry must be honored too.
     expect(await probe('opt-only.example.com')).toBe(200);
-    // Sanity: an unrelated host is still rejected.
     expect(await probe('evil.example.com')).toBe(403);
   });
 });

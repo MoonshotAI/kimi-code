@@ -16,7 +16,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/logout` | — | Clear credentials for the currently selected account | No |
 | `/provider` | — | Open the interactive provider manager to view, add, and remove configured providers. See [Platforms & Models — `/provider` and provider management](../configuration/providers.md#provider-—-interactive-provider-management) | Yes |
 | `/model` | — | Switch the LLM model used in the current session | Yes |
-| `/secondary-model` | `/subagent-model` | Pick the default model for subagents (writes `[secondary_model] default_model`; see the [subagent model pool](../configuration/config-files.md#subagent-model-pool)). Visible when the subagent model pool experiment is enabled | Yes |
+| `/secondary-model` | `/subagent-model` | Pick the default model for subagents (writes `[secondary_model] default_model`; see the [subagent model pool](../configuration/config-files.md#subagent-model-pool)) | Yes |
 | `/settings` | `/config` | Open the settings panel inside the TUI | Yes |
 | `/experiments` | `/experimental` | Open the experimental feature panel | Yes |
 | `/permission` | — | Select a permission mode | Yes |
@@ -34,7 +34,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/title [<text>]` | `/rename` | Without arguments, display the current session title; with an argument, set a new title (max 200 characters) | Yes |
 | `/compact [<instruction>]` | — | Compact the current conversation context to free up token usage; an optional custom instruction can hint to the model what to preserve | No |
 | `/undo [<count>]` | — | Undo recent prompts from the active context. Without a count, opens a selector; with a count, undoes that many prompts. Prompts before the last compaction cannot be undone. Undoing also rolls back the todo list and plan mode state produced by those prompts (code changes are not reverted) | No |
-| `/reload` | — | Reload the current session and apply the latest `config.toml` settings (providers, models, etc.) and `tui.toml` UI preferences, without restarting the CLI | No |
+| `/reload` | — | Reload the current session and apply the latest `config.toml` settings (providers, models, etc.) and `tui.toml` UI preferences, without restarting the CLI; the agent is also notified of external changes to AGENTS.md files, skills, and subagent profiles or models | No |
 | `/reload-tui` | — | Reload only the `tui.toml` UI preferences (theme, editor, notifications, etc.) without rebuilding the session | Yes |
 | `/init` | — | Analyze the current codebase and generate `AGENTS.md` | No |
 | `/export-md [<path>]` | `/export` | Export the current session as a Markdown file | No |
@@ -42,18 +42,26 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/copy` | — | Copy the last assistant message to the clipboard | No |
 | `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory for the project in `.kimi-code/local.toml` | No |
 | `/web` | — | Open the current session in the web UI: pick a running server to connect to, or start a new foreground server after the TUI exits. See [`kimi web`](./kimi-command.md#kimi-web) | Yes |
+| `/desktop` | `/install-desktop` | Open the Kimi Code desktop app page in your browser (URL follows the active region: `https://www.kimi.com/code` or `https://www.kimi.ai/code`). See [`kimi install-desktop`](./kimi-command.md#kimi-install-desktop) | Yes |
 
 ## Modes & Run Control
 
 | Command | Alias | Description | Always available |
 | --- | --- | --- | --- |
-| `/yolo [on\|off]` | `/yes` | Toggle YOLO mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. When enabled, skips approval for regular tool calls; Plan mode exit approval is not affected | Yes |
-| `/auto [on\|off]` | — | Toggle auto permission mode. When enabled, tool approvals are handled automatically and the Agent will not ask the user questions | Yes |
+| `/yolo` | `/yes` | Open the permission mode list with Ask When Needed preselected; press `Enter` to confirm. In this mode, routine edits and commands run automatically; risky actions, questions, and plans still ask | Yes |
+| `/auto` | — | Open the permission mode list with Never Ask preselected; press `Enter` to confirm. In this mode, Kimi never interrupts you; everything runs and is decided automatically | Yes |
 | `/plan [on\|off]` | — | Toggle Plan mode. Without arguments, flips the current state; explicitly passing `on`/`off` forces the setting. Simply toggling does not create an empty plan file | Yes |
 | `/plan clear` | — | Clear the current plan | No |
 | `/swarm on\|off` | — | Turn swarm mode on or off without sending a prompt. | Yes |
-| `/swarm <task>` | — | Turn swarm mode on, then send `<task>` as a normal prompt. If the turn completes normally, swarm mode turns off automatically. In `manual` permission mode, Kimi Code asks whether to switch to `auto` or `yolo` before starting. | No |
+| `/swarm <task>` | — | Turn swarm mode on, then send `<task>` as a normal prompt. If the turn completes normally, swarm mode turns off automatically. In `manual` permission mode, Kimi Code asks whether to switch to Ask When Needed or Never Ask mode before starting. | No |
+| `/tower` or `/tower status` | — | Show the base, missions, roster, review gates, inbox, concurrency, and recent activity without starting a model turn | Yes |
+| `/tower on` | — | Turn Tower mode on without changing the recorded base or sending a prompt; first initialization defaults to the current local branch | Yes |
+| `/tower off` | — | Exit Tower mode without stopping running background agents or removing `.tower/` state | Yes |
+| `/tower <base-branch>` | — | Enable Tower and set or re-anchor the local base branch that missions merge into; this does not send an objective | Yes |
+| `/tower teardown` | — | Ask the agent to remove eligible mission worktrees while protecting dirty or live-agent worktrees; branches and `.tower/comms/` are kept, and Tower mode stays on | Yes |
 | `/goal [...]` | — | Start or manage an autonomous goal | See below |
+
+Tower is experimental. For enablement, workflow, safety, and cleanup boundaries, see [Tower multi-agent collaboration](../guides/tower.md).
 
 ::: warning
 `/yolo` skips approval for regular tool calls. Please make sure you understand the potential risks before enabling it. Plan mode exit approval is not bypassed by `/yolo`; `Bash` inside Plan mode is still subject to the regular `/yolo` allow rules.
@@ -61,7 +69,7 @@ Some commands are only available in the idle state. Executing these commands whi
 
 ## Autonomous Goal
 
-`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Goals](../guides/goals.md).
+`/goal` starts or manages goal mode: a persistent objective that Kimi Code works toward across automatically continuing turns. For usage guidance and examples, see [Interaction and input: Goal mode](../guides/interaction.md#goal-mode).
 
 ```sh
 /goal Update the checkout docs, run docs build, and stop if still blocked after 20 turns
@@ -149,12 +157,12 @@ External sub-skills appear directly in the slash command panel with dotted names
 
 For example, a child Skill named `review` inside a parent Skill named `code-style` is shown as `/code-style.review`. The dotted command name is derived from the hierarchy; the child `SKILL.md` can keep its local `name`.
 
-For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command. That is, `/code-style` falls back to matching `/skill:code-style`.
+For convenience, external Skill commands also support a shorthand form that omits the `skill:` prefix — `/<name>` — as long as the name is not taken by a system slash command or a plugin command. That is, `/code-style` falls back to matching `/skill:code-style`.
 
 Built-in Skills shipped with Kimi Code CLI appear directly as `/<name>` in the slash command panel. For example, `/mcp-config` helps configure MCP servers and handle MCP OAuth login, and `/custom-theme [extra text]` invokes the custom-theme workflow to create or edit a TUI theme.
 
 ::: info
-All Skill commands are only available in the idle state. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
+External Skill commands entered while the agent is busy are queued behind the running turn instead of being rejected — press `Ctrl-S` to steer a queued command into the running turn immediately. `flow`-type Skills are also exposed via `/skill:<name>` — there is no separate `/flow:` namespace.
 :::
 
 For installing and authoring Skills, see [Agent Skills](../customization/skills.md).

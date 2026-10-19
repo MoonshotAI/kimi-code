@@ -1,10 +1,3 @@
-/**
- * `loop` domain error codes.
- *
- * `turn.agent_busy` is the legacy turn-domain code; the wire string is
- * unchanged.
- */
-
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const LoopErrors = {

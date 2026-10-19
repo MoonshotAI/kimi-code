@@ -1,12 +1,3 @@
-/**
- * `web` domain tests — `LocalFetchURLProvider` SSRF guard and redirects.
- *
- * Locks in that the provider rejects URLs whose IP literal or resolved
- * address is private / loopback / link-local (including IPv4-mapped IPv6
- * forms), fails closed on DNS errors, and follows redirects manually with
- * every hop re-validated. DNS is mocked so tests stay hermetic.
- */
-
 import { lookup } from 'node:dns/promises';
 
 import { Agent } from 'undici';

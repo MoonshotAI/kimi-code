@@ -1,13 +1,3 @@
-/**
- * `model` domain tests — covers `effectiveModelConfig`, the `models` config
- * section registration + TOML transforms (now owned by the app/kosongConfig
- * persistence wrapper), and the `KIMI_MODEL_*` env overlay.
- *
- * The registry itself (`ModelService`) is a pure in-memory store covered by
- * `test/kosong/model/modelService.test.ts`; persistence through the config
- * bridge is covered by `test/app/kosongConfig/kosongConfigService.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { ConfigRegistry } from '#/app/config/configService';
@@ -20,11 +10,9 @@ import {
   modelsFromToml,
   modelsToToml,
 } from '#/app/kosongConfig/configSection';
-import { type ModelRecord } from '#/kosong/model/model';
-import { effectiveModelConfig } from '#/kosong/model/modelAuth';
+import { type ModelRecord } from '#/llm-adapter/model/model';
+import { effectiveModelConfig } from '#/llm-adapter/model/model-auth';
 
-import '#/kosong/provider/providers/kimi/kimi.contrib';
-import '#/kosong/provider/providers/standard.contrib';
 
 describe('effectiveModelConfig', () => {
   it('clamps the input cap to the effective total window without mutating the source', () => {

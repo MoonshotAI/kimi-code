@@ -4,10 +4,14 @@ import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { FAILURE_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
-import type { BackgroundAgentStatusData } from '#/tui/types';
+import type { BackgroundAgentStatusData, BackgroundAgentStatusPhase } from '#/tui/types';
 
 export class BackgroundAgentStatusComponent implements Component {
   constructor(private readonly data: BackgroundAgentStatusData) {}
+
+  get phase(): BackgroundAgentStatusPhase {
+    return this.data.phase;
+  }
 
   invalidate(): void {}
 
@@ -23,7 +27,9 @@ export class BackgroundAgentStatusComponent implements Component {
           : 'error';
 
     const bullet =
-      this.data.phase === 'failed' ? currentTheme.fg(tone, FAILURE_MARK) : currentTheme.fg(tone, STATUS_BULLET);
+      this.data.phase === 'failed' || this.data.phase === 'killed'
+        ? currentTheme.fg(tone, FAILURE_MARK)
+        : currentTheme.fg(tone, STATUS_BULLET);
     const text =
       currentTheme.fg(tone, this.data.headline) +
       (this.data.detail !== undefined && this.data.detail.length > 0

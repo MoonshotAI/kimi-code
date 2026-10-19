@@ -5,6 +5,8 @@
  * command itself chalks the colour afterwards.
  */
 
+import { type ManagedQuota, type ManagedQuotaEntry } from '@moonshot-ai/kimi-code-oauth';
+
 /**
  * Format a token count in 1024-based units: context sizes are powers of
  * two, so 262144 reads as "256k", not "262.1k". k values at or above
@@ -63,4 +65,51 @@ export function ratioSeverity(ratio: number): 'ok' | 'warn' | 'danger' {
   if (ratio >= 0.85) return 'danger';
   if (ratio >= 0.5) return 'warn';
   return 'ok';
+}
+
+/**
+ * The kimi/code split of the new plan's monthly quota: `codeRatio` is the
+ * code-typed share of the monthly total as served, `kimiRatio` the
+ * remainder, clamped against float noise.
+ */
+export interface MonthlyUsageBreakdown {
+  readonly kimiRatio: number;
+  readonly codeRatio: number;
+}
+
+export interface QuotaUsageRow {
+  readonly name: string;
+  readonly usedRatio: number;
+  readonly resetAt?: string;
+  readonly breakdown?: MonthlyUsageBreakdown;
+}
+
+/**
+ * Assemble the plan-usage rows for the `/usage` report from the managed
+ * quota: one row per quota window the backend served — 5h, weekly,
+ * monthly (with its kimi/code breakdown) — in payload order. Entries the
+ * backend omitted are skipped.
+ */
+export function quotaUsageRows(quota: ManagedQuota): QuotaUsageRow[] {
+  const rows: QuotaUsageRow[] = [];
+  const push = (
+    name: string,
+    entry: ManagedQuotaEntry | undefined,
+    breakdown?: MonthlyUsageBreakdown,
+  ): void => {
+    if (entry === undefined) return;
+    rows.push({ name, usedRatio: entry.usedRatio, resetAt: entry.resetAt, breakdown });
+  };
+  push('5h limit', quota.usages.limit5h);
+  push('Weekly limit', quota.usages.limit7d);
+  push('Monthly limit', quota.usages.monthTotal, monthlyBreakdown(quota));
+  return rows;
+}
+
+function monthlyBreakdown(quota: ManagedQuota): MonthlyUsageBreakdown | undefined {
+  const total = quota.usages.monthTotal;
+  if (total === undefined) return undefined;
+  const codeRatio = safeUsageRatio(quota.usages.monthCode?.usedRatio ?? 0);
+  const kimiRatio = safeUsageRatio(Math.round((total.usedRatio - codeRatio) * 1e6) / 1e6);
+  return { kimiRatio, codeRatio };
 }

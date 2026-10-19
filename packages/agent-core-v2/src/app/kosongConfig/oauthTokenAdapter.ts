@@ -1,11 +1,3 @@
-/**
- * `kosongConfig` domain — `IModelOAuthTokens` implementation.
- *
- * Delegates kosong's OAuth token port to `IOAuthService` and owns the
- * `auth.login_required` error contract: kosong's model catalog only sees
- * the port.
- */
-
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -13,9 +5,9 @@ import { Error2 } from '#/_base/errors/errors';
 
 import { IOAuthService } from '#/app/auth/auth';
 import { AuthErrors } from '#/app/auth/errors';
-import { nonEmpty } from '#/kosong/model/modelAuth';
-import { IModelOAuthTokens } from '#/kosong/model/modelOAuth';
-import type { OAuthRef } from '#/kosong/provider/provider';
+import { nonEmpty } from '#/llm-adapter/model/model-auth';
+import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
+import type { OAuthRef } from '#/llm-adapter/provider/provider';
 
 export class ModelOAuthTokenAdapter implements IModelOAuthTokens {
   declare readonly _serviceBrand: undefined;

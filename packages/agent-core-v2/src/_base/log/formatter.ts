@@ -1,12 +1,3 @@
-/**
- * `log` domain — logfmt entry formatter.
- *
- * Renders a `LogEntry` as a single logfmt line (`ISO LEVEL msg k=v ...`),
- * redacts secret-shaped keys and raw secret patterns, truncates oversized
- * fields, optionally colorizes the level with ANSI, and indents error stacks.
- * Pure — no I/O, no DI.
- */
-
 import type { LogContext, LogEntry, LogEntryError } from './log';
 
 export const MSG_MAX_CHARS = 200;

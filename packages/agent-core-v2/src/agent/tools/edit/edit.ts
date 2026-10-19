@@ -1,17 +1,3 @@
-/**
- * `tools` domain — `IEditTool` contract.
- *
- * Public contract of Edit, the model's exact-string-replacement editor for
- * text files. Line endings are preserved by the model view: the raw file is
- * normalized to LF for matching (so pure CRLF files can be edited with LF
- * `old_string`), then re-materialized to the original style on write — pure
- * CRLF files round-trip to CRLF, mixed/lone-CR files stay on the exact raw
- * path.
- *
- * Owns the `EditInput` zod schema and the Agent-scope service identifier.
- * Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

@@ -1,14 +1,3 @@
-/**
- * `debug` domain — `IDebugLedgerService`: the unit tree = ledger tree (L5
- * debug surface, plan §5.11).
- *
- * Public contract. `tree()` walks the whole container tree under the App
- * root; every node carries the container's scope path and label, its units
- * (the service registrations joined with the cascade engine's five-state
- * unit snapshots) and its ledger entries verbatim (child ledgers already
- * recurse). Bound at App scope. All payloads are JSON-serializable wire data.
- */
-
 import type { UnitState } from '#/_base/di/cascadeEngine';
 import { createDecorator } from '#/_base/di/instantiation';
 import type { LedgerEntryInfo } from '#/_base/lifecycle/ledger';

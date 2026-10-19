@@ -1,28 +1,9 @@
-/**
- * Scenario (v1 `tool-select.e2e.test.ts` headline parity): progressive tool
- * disclosure converges the provider-visible table for MCP and opted-in user
- * tools, keeps it byte-stable across loads, makes a loaded tool dispatchable
- * the next step, and self-heals the loaded-ledger across undo.
- *
- * Responsibilities: assert v1 contract at the provider wire, not via service
- * internals: the manifest announcement reaches the model, `select_tools`
- * loads a schema into the next request, the top-level table never changes
- * across loads, the record carries the disclosure gate (v1 recorder parity,
- * F2), and a tail-slicing undo re-enables re-injection (F1). Wiring:
- * testAgent harness with scripted provider, real toolSelect / executor /
- * projector / announcer services; harness builds the Agent scope without
- * `AgentLifecycleService.create`, so the eager-instantiation production
- * would do (agentLifecycleService create) is forced here the same way.
- * The flag env is stubbed before `createTestAgent` snapshots it into
- * bootstrap, and module imports register the flag / tool contributions the
- * way `src/index.ts` does in production.
- * Run: ../../node_modules/.bin/vitest run test/toolSelect/toolSelect.e2e.test.ts
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -117,9 +98,12 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.get(IAgentToolSelectSchemasService);
     ctx.get(IAgentToolExecutorService);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
+    await ctx.restorePersisted();
     await ctx.rpc.setPermission({ mode: 'yolo' });
     alpha = new StubMcpTool(MCP_ALPHA);
-    registration = ctx.get(IAgentToolRegistryService).register(alpha, { source: 'mcp' });
+    registration = ctx
+      .get(IAgentToolRegistryService)
+      .register(alpha, { source: 'mcp', disclosure: 'deferred' });
   });
 
   afterEach(async () => {
@@ -225,7 +209,7 @@ describe('progressive tool disclosure end-to-end', () => {
     );
   });
 
-  it('re-injects a selected schema after undo slices the tail of the loaded exchange', async () => {
+  it('keeps the selected schema across undo and reports it as already available on reselect', async () => {
     ctx.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
@@ -241,7 +225,7 @@ describe('progressive tool disclosure end-to-end', () => {
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentContextMemoryService).get();
     expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
-      false,
+      true,
     );
 
     ctx.mockNextResponse(selectToolsCall('call_select_2', [MCP_ALPHA]));
@@ -253,7 +237,125 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(
       afterReload.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);
-    expect(historyText(afterReload)).toContain('Loaded: mcp__srv__alpha');
-    expect(historyText(afterReload)).not.toContain('Already available: mcp__srv__alpha');
+    expect(historyText(afterReload)).toContain('Already available: mcp__srv__alpha');
+    expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');
+  });
+
+  it('reports select_tools as callable despite a profile allowlist omission, but respects an explicit deny', async () => {
+    ctx.get(IAgentProfileService).update({ activeToolNames: ['Read'] });
+    ctx.mockNextResponse(selectToolsCall('call_select_self', ['select_tools']));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select the selection tool' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain('"select_tools" is already available — call it directly;');
+    expect(text).not.toContain('disabled by the current tool policy');
+    expect(text).not.toContain('Unknown tool: select_tools');
+    expect(ctx.get(IAgentToolSelectService).load(['select_tools'])).toMatchObject({
+      alreadyCallable: ['select_tools'],
+      consecutiveFailures: 0,
+    });
+
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['select_tools'] });
+    expect(ctx.get(IAgentToolSelectService).load(['select_tools'])).toMatchObject({
+      alreadyCallable: [],
+      policyDenied: ['select_tools'],
+    });
+  });
+
+  it('answers not-available-in-this-session for a host-denied name', async () => {
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['Automation'] });
+
+    ctx.mockNextResponse(selectToolsCall('call_select_1', ['Automation']));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select automation' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain(
+      '"Automation" is disabled by the current tool policy. select_tools cannot enable it. ' +
+        'Do not retry unless the policy changes; use an available tool instead.',
+    );
+  });
+
+  it('loads an announced user tool with an MCP-like name despite an MCP deny glob', async () => {
+    registration?.dispose();
+    registration = ctx.get(IAgentToolRegistryService).register(alpha, {
+      source: 'user',
+      disclosure: 'deferred',
+    });
+    ctx.get(IAgentProfileService).update({ disallowedTools: ['mcp__srv__*'] });
+    ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load the announced tool' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain(`<tools_added>\n${MCP_ALPHA}\n</tools_added>`);
+    expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
+    expect(text).not.toContain('disabled by the current tool policy');
+  });
+
+  it('reports a loaded MCP tool as currently unavailable after its server disconnects', async () => {
+    ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
+    ctx.mockNextResponse({ type: 'text', text: 'loaded' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load alpha' }] });
+    await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      `Loaded: ${MCP_ALPHA}`,
+    );
+
+    registration?.dispose();
+    registration = undefined;
+
+    ctx.mockNextResponse(selectToolsCall('call_select_2', [MCP_ALPHA]));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select alpha again' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain(
+      `"${MCP_ALPHA}" was previously selected or loaded but is no longer registered. ` +
+        'select_tools cannot restore it. Do not select it again unless a new <tools_added> announcement lists it.',
+    );
+    expect(text).not.toContain(`Already available: ${MCP_ALPHA}`);
+  });
+
+  it('resets the call streak on success but preserves unrelated name failures in the same turn', async () => {
+    ctx.mockNextResponse(selectToolsCall('guess_1', ['Automation']));
+    ctx.mockNextResponse(selectToolsCall('guess_2', ['AutomationList']));
+    ctx.mockNextResponse(selectToolsCall('guess_3', ['mcp__example__automation']));
+    ctx.mockNextResponse(selectToolsCall('load_alpha', [MCP_ALPHA]));
+    ctx.mockNextResponse(selectToolsCall('guess_4', ['Automation']));
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'select a tool' }] });
+    await ctx.untilTurnEnd();
+
+    const text = historyText(ctx.get(IAgentContextMemoryService).get());
+    expect(text).toContain('Unknown tool: mcp__example__automation.');
+    expect(text.match(/3 consecutive select_tools calls/g)).toHaveLength(1);
+    expect(text).toContain(`Loaded: ${MCP_ALPHA}`);
+    expect(text).not.toContain('4 consecutive select_tools calls');
+    expect(text).toContain('"Automation" has already failed selection 2 times');
+  });
+
+  it('escalates to stop-retry wording when the same unknown name is selected twice', async () => {
+    ctx.mockNextResponse(selectToolsCall('call_select_1', ['mcp__srv__ghost']));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost' }] });
+    await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      'Unknown tool: mcp__srv__ghost.',
+    );
+
+    ctx.mockNextResponse(selectToolsCall('call_select_2', ['mcp__srv__ghost']));
+    ctx.mockNextResponse({ type: 'text', text: 'ok' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'load ghost again' }] });
+    await ctx.untilTurnEnd();
+    expect(historyText(ctx.get(IAgentContextMemoryService).get())).toContain(
+      '"mcp__srv__ghost" has already failed selection 2 times. ' +
+        'Stop retrying this name until its availability changes.',
+    );
   });
 });

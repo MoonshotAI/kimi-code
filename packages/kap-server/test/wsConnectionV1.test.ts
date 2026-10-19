@@ -1,8 +1,3 @@
-/**
- * `WsConnectionV1` — outbound send buffer: coalescing of high-frequency
- * volatile text deltas, batch flush, backpressure deferral, and close flush.
- */
-
 import type { WebSocket } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,10 +8,6 @@ import {
   WsConnectionV1,
   coalesceFrames,
 } from '../src/transport/ws/v1/wsConnectionV1';
-
-// ---------------------------------------------------------------------------
-// Fakes
-// ---------------------------------------------------------------------------
 
 class FakeSocket {
   readonly OPEN = 1;
@@ -125,10 +116,6 @@ function durable(type: string, sessionId: string, seq: number) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// coalesceFrames — pure
-// ---------------------------------------------------------------------------
-
 describe('coalesceFrames', () => {
   it('merges adjacent compatible assistant deltas', () => {
     const out = coalesceFrames([
@@ -205,10 +192,6 @@ describe('coalesceFrames', () => {
     expect(out[0]).toBe(only);
   });
 });
-
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — transcript subscription parsing
-// ---------------------------------------------------------------------------
 
 describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
   interface SubscribeCall {
@@ -383,11 +366,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
       durable('assistant.delta', 's1', 4),
       durable('event.session.work_changed', 's1', 5),
     ];
-    // Mirror the real broadcaster's replay crop: with a transcript grade spec
-    // the projected types drop out, retained (global/lifecycle) events stay.
-    // The dedicated suppression coverage lives in sessionEventBroadcaster's
-    // tests — here we only verify the preserved grade spec reaches
-    // `getBufferedSince`.
     const PROJECTED = new Set(['turn.started', 'assistant.delta']);
     let seenGrades: unknown;
     const broadcaster = {
@@ -424,7 +402,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     } as unknown as SessionEventBroadcaster;
     const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
 
-    // Grades arrive via subscribe_v2 first (no cursor → immediate baseline)…
     socket.emit(
       'message',
       controlFrame('subscribe_v2', { session_id: 's1', transcript: { '*': 'delta' } }),
@@ -435,7 +412,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     });
     expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' });
 
-    // …then a plain re-subscribe with a durable cursor must not wipe them.
     socket.emit(
       'message',
       controlFrame('subscribe', {
@@ -447,9 +423,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     expect(conn.subscriptions.get('s1')?.transcriptGrades).toEqual({ '*': 'delta' });
 
     const types = socket.frames().map((f) => (f as { type: string }).type);
-    // The replay is filtered through the preserved grades: projected events
-    // are suppressed; only the retained global event replays, and the
-    // deferred baseline reset lands after it.
     expect(types).not.toContain('turn.started');
     expect(types).not.toContain('assistant.delta');
     expect(
@@ -503,7 +476,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     await vi.waitFor(() => expect(detaches).toHaveLength(1));
 
     expect(detaches[0]).toEqual({ sessionId: 's1', agentIds: ['main'] });
-    // An explicit 'off' — deleting the key would fall back to the '*' default.
     expect(conn.subscriptions.get('s1')).toEqual({
       agentFilter: new Set(['main']),
       transcriptGrades: { '*': 'delta', main: 'off' },
@@ -579,8 +551,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     const { broadcaster, calls } = makeCapturingBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    // No awaits between the frames — the second handler reads state the
-    // first one stores, so they must run in receive order.
     socket.emit(
       'message',
       controlFrame('subscribe', { session_ids: ['s1'], agent_filter: { s1: ['main'] } }),
@@ -623,10 +593,6 @@ describe('WsConnectionV1 transcript subscriptions (subscribe_v2)', () => {
     conn.close();
   });
 });
-
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — flush / backpressure / close
-// ---------------------------------------------------------------------------
 
 describe('WsConnectionV1 outbound buffer', () => {
   beforeEach(() => {
@@ -765,10 +731,6 @@ describe('WsConnectionV1 outbound buffer', () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — heartbeat
-// ---------------------------------------------------------------------------
-
 describe('WsConnectionV1 heartbeat', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -830,12 +792,10 @@ describe('WsConnectionV1 heartbeat', () => {
     expect(sentTypes(socket)).toEqual(['ping']);
     expect(socket.closeCalls).toHaveLength(0);
 
-    // Second silent cycle: the tick closes instead of pinging again.
     vi.advanceTimersByTime(10);
     expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
     expect(sentTypes(socket)).toEqual(['ping']);
 
-    // The heartbeat stops with the connection.
     vi.advanceTimersByTime(100);
     expect(sentTypes(socket)).toEqual(['ping']);
     expect(socket.closeCalls).toHaveLength(1);
@@ -846,16 +806,13 @@ describe('WsConnectionV1 heartbeat', () => {
     const conn = makeConn(socket, { heartbeatIntervalMs: 10 });
     socket.sent = [];
 
-    // t=10: ping. t=15: an unknown control frame still resets the window.
     vi.advanceTimersByTime(15);
     socket.emit('message', JSON.stringify({ type: 'some_future_frame', payload: {} }));
 
-    // t=20 (silence 5) and t=30 (silence 15): pings, no reap.
     vi.advanceTimersByTime(20);
     expect(sentTypes(socket)).toEqual(['ping', 'ping', 'ping']);
     expect(socket.closeCalls).toHaveLength(0);
 
-    // t=40: silence 25 ≥ 2 cycles — reaped.
     vi.advanceTimersByTime(5);
     expect(socket.closeCalls).toEqual([{ code: 1001, reason: 'heartbeat timeout' }]);
   });
@@ -874,10 +831,6 @@ describe('WsConnectionV1 heartbeat', () => {
     expect(socket.closeCalls).toHaveLength(0);
   });
 });
-
-// ---------------------------------------------------------------------------
-// WsConnectionV1 — global-event registration lifecycle
-// ---------------------------------------------------------------------------
 
 describe('WsConnectionV1 global target registration', () => {
   function makeGlobalTargetBroadcaster() {
@@ -928,7 +881,6 @@ describe('WsConnectionV1 global target registration', () => {
     const { broadcaster, diOptIns } = makeGlobalTargetBroadcaster();
     const conn = makeConn(socket, { broadcaster });
 
-    // Another client id (or none) never joins the DI fan-out.
     socket.emit(
       'message',
       JSON.stringify({ type: 'client_hello', id: 'h1', payload: { client_id: 'kimi-web' } }),

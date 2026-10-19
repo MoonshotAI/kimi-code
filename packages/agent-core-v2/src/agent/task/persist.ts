@@ -1,22 +1,3 @@
-/**
- * `task` domain — `AgentTaskPersistence`, the per-agent task
- * persistence helper.
- *
- * Persists task state (`<taskId>.json`) and raw task output (`output.log`)
- * through the `storage` access-pattern stores (`IAtomicDocumentStore` for
- * atomic whole-document state, `IFileSystemStorageService` byte primitives for ordered
- * output append), addressed under the owning agent's storage scope
- * (`<sessionScope>/agents/<agentId>/tasks/…`) so the domain never touches the
- * filesystem and each agent reads back exactly its own records — v1's
- * per-agent `<sessionDir>/agents/<id>/tasks/` layout. An optional read-only
- * fallback keeps the previous v2 session-level task root readable during the
- * layout transition; primary agent keys and output files always win, while
- * every write remains rooted at the owning agent. Task ids are validated
- * against the `{prefix}-{8 hex}` shape before use as path segments
- * (path-traversal and legacy `bg_<hex>` guard), and legacy snake_case records
- * are normalized to the current shape on read. Not scope-bound.
- */
-
 import { join } from 'pathe';
 
 import { BugIndicatingError } from '#/errors';
@@ -26,6 +7,8 @@ import type { IFileSystemStorageService } from '#/persistence/interface/storage'
 import type { AgentTaskInfo, AgentTaskStatus } from './types';
 
 const VALID_TASK_ID: RegExp = /^[a-z0-9]+(?:-[a-z0-9]+)*-[0-9a-z]{8}$/;
+
+const TASK_READ_CONCURRENCY = 16;
 
 const TASKS_SCOPE = 'tasks';
 const OUTPUT_LOG_KEY = 'output.log';
@@ -181,20 +164,39 @@ export class AgentTaskPersistence {
   }> {
     const keys = (await this.docs.list(this.tasksScope(root))).toSorted();
     const reservedIds = new Set<string>();
-    const tasks: ListedTask[] = [];
+    const candidates: { readonly keyId: string; readonly key: string }[] = [];
     for (const key of keys) {
       if (!key.endsWith(JSON_SUFFIX)) continue;
       const id = key.slice(0, -JSON_SUFFIX.length);
       if (!VALID_TASK_ID.test(id)) continue;
       reservedIds.add(id);
-      let task: DiskPersistedTask | undefined;
-      try {
-        task = await this.docs.get<DiskPersistedTask>(this.tasksScope(root), key);
-      } catch {
-        continue;
-      }
+      candidates.push({ keyId: id, key });
+    }
+    const fetched = Array.from<DiskPersistedTask | undefined>({ length: candidates.length });
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(TASK_READ_CONCURRENCY, candidates.length) },
+      async () => {
+        while (next < candidates.length) {
+          const index = next++;
+          const candidate = candidates[index]!;
+          try {
+            fetched[index] = await this.docs.get<DiskPersistedTask>(
+              this.tasksScope(root),
+              candidate.key,
+            );
+          } catch {
+            fetched[index] = undefined;
+          }
+        }
+      },
+    );
+    await Promise.all(workers);
+    const tasks: ListedTask[] = [];
+    for (let index = 0; index < candidates.length; index++) {
+      const task = fetched[index];
       if (task === undefined || !isReadablePersistedTask(task)) continue;
-      tasks.push({ keyId: id, task: normalizePersistedTask(task) });
+      tasks.push({ keyId: candidates[index]!.keyId, task: normalizePersistedTask(task) });
     }
     return { reservedIds, tasks };
   }

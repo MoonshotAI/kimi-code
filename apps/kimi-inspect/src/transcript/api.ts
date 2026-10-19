@@ -17,6 +17,7 @@ import {
   transcriptOpsCatchupResponseSchema,
   transcriptPlanResponseSchema,
   transcriptResponseSchema,
+  type AttachmentSource,
   type TranscriptAttachment,
   type TranscriptInteraction,
   type TranscriptItem,
@@ -25,6 +26,44 @@ import {
   type TranscriptTask,
   type TranscriptTodo,
 } from '@moonshot-ai/transcript';
+
+type StoredAttachmentSource = Extract<AttachmentSource, { kind: 'file' | 'session_media' }>;
+
+export interface FetchTranscriptAttachmentOptions {
+  readonly baseUrl: string;
+  readonly token?: string;
+  readonly sessionId: string;
+  readonly source: StoredAttachmentSource;
+  readonly fetchImpl?: typeof fetch;
+}
+
+export function transcriptAttachmentUrl(
+  baseUrl: string,
+  sessionId: string,
+  source: AttachmentSource,
+): string {
+  if (source.kind === 'url') return source.url;
+  if (source.kind === 'file') {
+    return `${baseUrl}/api/v1/files/${encodeURIComponent(source.fileId)}`;
+  }
+  return `${baseUrl}/api/v1/sessions/${encodeURIComponent(sessionId)}/media/${encodeURIComponent(source.fileId)}`;
+}
+
+export async function fetchTranscriptAttachment(
+  opts: FetchTranscriptAttachmentOptions,
+): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  if (opts.token !== undefined && opts.token !== '') {
+    headers['authorization'] = `Bearer ${opts.token}`;
+  }
+  const doFetch = opts.fetchImpl ?? fetch;
+  const res = await doFetch(
+    transcriptAttachmentUrl(opts.baseUrl, opts.sessionId, opts.source),
+    { headers },
+  );
+  if (!res.ok) throw new Error(`attachment download failed (${res.status})`);
+  return res.blob();
+}
 
 /** One transcript page as merged by the chat store. */
 export interface TranscriptPage {

@@ -1,11 +1,3 @@
-/**
- * `agentLifecycle` domain — persisted subagent relationship labels.
- *
- * Provides the label helpers that record and read the requester → subagent
- * relationship without making the flat lifecycle registry interpret parentage
- * itself.
- */
-
 import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export function subagentLabels(
@@ -17,6 +9,14 @@ export function subagentLabels(
     labels['swarmItem'] = options.swarmItem;
   }
   return labels;
+}
+
+export function withSubagentProfile(
+  labels: Readonly<Record<string, string>> | undefined,
+  profileName: string | undefined,
+): Readonly<Record<string, string>> | undefined {
+  if (profileName === undefined || profileName.length === 0) return labels;
+  return { ...labels, profileName };
 }
 
 export function labelsFromAgentMeta(
@@ -48,6 +48,11 @@ export function subagentParentAgentId(meta: AgentMeta | undefined): string | und
 export function subagentSwarmItem(meta: AgentMeta | undefined): string | undefined {
   if (meta === undefined) return undefined;
   return firstNonEmpty(meta.labels?.['swarmItem'], meta.swarmItem);
+}
+
+export function subagentProfileName(meta: AgentMeta | undefined): string | undefined {
+  if (meta === undefined) return undefined;
+  return firstNonEmpty(meta.labels?.['profileName']);
 }
 
 function firstNonEmpty(...values: readonly (string | undefined)[]): string | undefined {

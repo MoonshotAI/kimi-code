@@ -1,12 +1,3 @@
-/**
- * `workspaceGit` domain — `IWorkspaceGitService` implementation.
- *
- * Delegates every call to the App-scope `IGitService` with `cwd` pinned to
- * the handler's workspace root (`IWorkspaceContext.cwd`). Owns no state.
- * Bound at Workspace scope.
- */
-
-
 import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { type FsDiffResponse, type FsGitStatusResponse, IGitService } from '#/app/git/git';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';

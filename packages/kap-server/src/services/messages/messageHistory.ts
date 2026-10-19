@@ -1,22 +1,3 @@
-/**
- * v1-compatible message history — the loader behind
- * `GET /api/v1/sessions/{sid}/messages[/{mid}]`, served from the server layer
- * on top of the engine's native services (moved out of the engine's deleted
- * `messageLegacy` edge adapter).
- *
- * History is streamed from the main agent's append log after its pending wire
- * writes are flushed. The journal is folded incrementally by the shared
- * transcript reducer, keeping full history across compactions (inserting a
- * summary marker instead of folding) — unlike the live
- * `IAgentContextMemoryService.get()`, whose folded context collapses into
- * `[...keptUserMessages, compaction_summary]` and would lose the prefix.
- * `foldedLength` is what the live history length WOULD be from the journal's
- * records; because the journal can trail the live context by a record within a
- * single dispatch, anything beyond it is appended as the unflushed tail.
- * Pagination, id derivation, and the role filter mirror the legacy v1
- * semantics.
- */
-
 import {
   AGENT_WIRE_RECORD_KEY,
   IAgentBlobService,
@@ -26,7 +7,6 @@ import {
   ISessionIndex,
   IWireService,
   createContextTranscriptReducer,
-  ensureMainAgent,
   resumeSessionById,
   type ContextMessage,
   type ContextTranscript,
@@ -35,13 +15,13 @@ import {
   type WireRecord,
 } from '@moonshot-ai/agent-core-v2';
 
+import { ensureMainAgent } from '../../transport/mainAgent';
 import type { Message, MessageRole } from '../../protocol/message';
 import { toProtocolMessage } from './messageProjection';
 
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_PAGE_SIZE = 100;
 
-/** Sentinel — the route maps it to 40401. */
 export class SessionNotFoundError extends Error {
   readonly sessionId: string;
   constructor(sessionId: string) {
@@ -51,7 +31,6 @@ export class SessionNotFoundError extends Error {
   }
 }
 
-/** Sentinel — the route maps it to 40403. */
 export class MessageNotFoundError extends Error {
   readonly sessionId: string;
   readonly messageId: string;
@@ -135,13 +114,6 @@ async function loadMessages(core: Scope, sessionId: string): Promise<Message[]> 
   return loadMessageHistory(core, agent, sessionId, summary.createdAt);
 }
 
-/**
- * One agent's full, ascending, projected message history: the persisted
- * journal (flushed first) folded by the transcript reducer, the unflushed
- * live tail merged in, blob references rehydrated, and timestamps clamped
- * strictly increasing. Shared by the `messages` routes and the `snapshot`
- * route so all history-serving surfaces agree.
- */
 export async function loadMessageHistory(
   core: Scope,
   agent: IAgentScopeHandle,
@@ -162,11 +134,6 @@ export async function loadMessageHistory(
   });
 }
 
-/**
- * Replace `blobref:` media URLs with `data:` URIs read from the agent's
- * blob store (v1's `rehydrateBlobRefs`); unresolvable refs become the
- * `[media missing]` placeholder, same as v1 and live replay.
- */
 async function rehydrate(
   agent: IAgentScopeHandle,
   messages: readonly ContextMessage[],

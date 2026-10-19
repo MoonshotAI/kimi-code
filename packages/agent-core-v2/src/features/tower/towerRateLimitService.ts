@@ -1,19 +1,3 @@
-/**
- * `tower` domain — `ITowerRateLimitService` implementation.
- *
- * The tower face of the provider-concurrency capacity machine, process-wide
- * like v1's `towerRateLimiter` singleton: an inflight acquire/release
- * counter, a short spawn pause after each 429 (lifted early by the next
- * success), and a recovery ceiling (`TOWER_MAX_BUDGET`). The underlying
- * algorithm is the one proven in `SubagentBatch`: uncapped until the first
- * provider 429, then capacity snaps to (what was actually running − 1),
- * shrinks by one per subsequent 429 (throttled so a burst is one episode),
- * and recovers +1 per quiet window without 429s. NOTE: nothing feeds
- * `reportRateLimited` / `reportSuccess` yet — v2 has no retry funnel
- * (v1's `chatWithRetry`) to report 429s and successes through; that
- * integration is pending. Bound at App scope.
- */
-
 import { Disposable } from '#/_base/di/lifecycle';
 import {
   ITowerRateLimitService,
@@ -22,9 +6,7 @@ import {
 
 export const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2_000;
 export const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 180_000;
-/** Tower-only: how long new spawns stay paused after a 429 episode. */
 export const TOWER_SPAWN_PAUSE_MS = 60_000;
-/** Tower-only: ceiling the capacity may recover to. */
 export const TOWER_MAX_BUDGET = 16;
 
 export class RateLimitCapacityGovernor {
@@ -162,4 +144,3 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
     this.blockedUntil = null;
   }
 }
-

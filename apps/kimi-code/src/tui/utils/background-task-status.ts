@@ -20,7 +20,7 @@ function truncate(value: string | undefined): string | undefined {
   const collapsed = value.trim().replaceAll(/\s+/g, ' ');
   if (collapsed.length === 0) return undefined;
   if (collapsed.length <= MAX_DETAIL_LENGTH) return collapsed;
-  return `${collapsed.slice(0, MAX_DETAIL_LENGTH - 3)}...`;
+  return `${collapsed.slice(0, MAX_DETAIL_LENGTH - 1)}…`;
 }
 
 export type BackgroundTaskTranscriptPhase = 'started' | 'updated' | 'terminal';

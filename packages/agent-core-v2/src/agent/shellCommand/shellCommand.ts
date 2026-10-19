@@ -1,12 +1,3 @@
-/**
- * `shellCommand` domain — shell command contract.
- *
- * Defines the Agent-scoped `IAgentShellCommandService` used to run user-initiated
- * `!` commands: resolves the builtin Bash tool, records the command and its
- * output into context, and notifies the model when a command is detached to
- * background. Bound at Agent scope.
- */
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface RunShellCommandInput {

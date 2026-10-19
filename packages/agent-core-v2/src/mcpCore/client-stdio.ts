@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — stdio transport MCP client.
- */
-
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -55,9 +51,6 @@ export class StdioMcpClient implements MCPClient {
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
 
   constructor(config: McpServerStdioConfig, options: StdioMcpClientOptions) {
-    if (config.executor !== undefined && config.executor !== 'local') {
-      throw new Error2(ErrorCodes.NOT_IMPLEMENTED, `MCP stdio executor '${config.executor}' is not yet implemented`);
-    }
     this.transport = new RuntimeStdioTransport(config, options, this.stderrBuffer);
     this.client = new Client({
       name: options.clientName ?? KIMI_MCP_CLIENT_NAME,

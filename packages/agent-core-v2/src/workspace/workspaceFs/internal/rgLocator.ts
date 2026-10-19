@@ -1,21 +1,3 @@
-/**
- * `workspaceFs` domain — shared ripgrep (`rg`) binary locator.
- *
- * Single place that decides which `rg` the fs search/grep paths run. The
- * lookup mirrors v1's `ensureRgPath` intent (bundled-or-system, graceful
- * degradation) but is driven through a caller-supplied {@link RgProbe} so it
- * works against whatever execution environment the caller has.
- *
- * Lookup order (first hit wins):
- *   1. System `rg` on the execution-environment PATH (`rg --version`).
- *   2. Persistent cache at `<KIMI_CODE_HOME|~/.kimi-code>/bin/rg` — where a
- *      previously bootstrapped or manually dropped static binary lives. Only
- *      attempted when `allowCachedFallback` is set.
- *
- * If nothing resolves, {@link ensureRgPath} throws and callers surface
- * {@link rgUnavailableMessage} instead of a naked `spawn rg ENOENT`.
- */
-
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 

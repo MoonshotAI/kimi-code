@@ -1,17 +1,7 @@
-/**
- * `search` module — hit snippet generation (pure function).
- *
- * minidb's text index scores documents but cannot locate the match inside the
- * text, so the snippet is produced here: a ~`radius`-char window around the
- * first occurrence of any query term (case-insensitive), whitespace-collapsed,
- * with ellipses marking truncation. Highlighting is left to clients.
- */
-
 function collapseWs(s: string): string {
   return s.replaceAll(/\s+/g, ' ').trim();
 }
 
-/** Query terms for locating: whitespace-split words plus the whole query. */
 export function snippetTerms(query: string): string[] {
   const terms = query
     .split(/\s+/)
@@ -22,14 +12,6 @@ export function snippetTerms(query: string): string[] {
   return terms;
 }
 
-/**
- * `anchor` — a caller-known hit location (`at` = offset of the match in
- * `text`, `len` = match length in code units), e.g. the confirmation offset
- * from literal search. When given, the term-guessing pass is skipped. The
- * window math clamps out-of-range offsets, so an anchor taken from a
- * normalized copy of the text (NFKC can shift offsets) degrades to a
- * slightly shifted window, never an error.
- */
 export function makeSnippet(
   text: string,
   query: string,
@@ -43,7 +25,6 @@ export function makeSnippet(
     hitLen = anchor.len;
   } else {
     const lower = text.toLowerCase();
-    // Earliest occurrence across all terms wins; on ties prefer the longer term.
     for (const term of snippetTerms(query)) {
       const i = lower.indexOf(term.toLowerCase());
       if (i === -1) continue;

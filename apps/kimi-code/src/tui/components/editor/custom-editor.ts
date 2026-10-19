@@ -125,6 +125,7 @@ export class CustomEditor extends Editor {
    * double-Esc so only two consecutive Escape presses trigger the shortcut.
    */
   public onNonEscapeInput?: () => void;
+  public onPreInput?: (data: string) => boolean;
   public onCtrlD?: () => void;
   public onCtrlC?: () => void;
   public onToggleToolExpand?: () => void;
@@ -134,6 +135,10 @@ export class CustomEditor extends Editor {
   public onCtrlB?: () => boolean;
   /** Return `true` to consume Ctrl+T (the todo list had overflow to toggle); return `false`/`undefined` to fall through to the editor default. */
   public onToggleTodoExpand?: () => boolean;
+  /** Return true to consume Ctrl+N (the Updates panel grabbed or released focus); otherwise use the editor bindings. */
+  public onPageNotify?: () => boolean;
+  /** Route `←`/`→`/`↑`/`↓`/`Esc` to the focused Updates panel; return `true` to consume. */
+  public onNotifyPanelKey?: (key: 'left' | 'right' | 'up' | 'down' | 'escape') => boolean;
   public onUndo?: () => void;
   public onTextPaste?: () => void;
   /**
@@ -155,13 +160,16 @@ export class CustomEditor extends Editor {
    * Alt-V on Windows — Ctrl-V is terminal-reserved there). Return
    * `true` to consume the key (image was read and handled); return
    * `false` to let the key fall through to the normal paste path.
-   * The callback may be async; pi-tui awaits it before dispatching
-   * the next keystroke.
+   * The callback may be async; CustomEditor queues subsequent keystrokes until
+   * it settles before dispatching them.
    */
   public onPasteImage?: () => Promise<boolean>;
 
   private consumingPaste = false;
   private consumeBuffer = '';
+  /** Serialize paste callbacks so Enter/typing cannot overtake an image paste. */
+  private pasteInFlight = false;
+  private readonly pasteInputQueue: string[] = [];
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
 
@@ -253,7 +261,7 @@ export class CustomEditor extends Editor {
     return false;
   }
 
-  private hasAutocompleteActivity(): boolean {
+  public hasAutocompleteActivity(): boolean {
     const autocomplete = this as unknown as AutocompleteInternals;
     return (
       this.isShowingAutocomplete() ||
@@ -363,10 +371,24 @@ export class CustomEditor extends Editor {
       return;
     }
 
+    // Clipboard reads are asynchronous. Queue every key received while a
+    // paste callback is in flight and replay it once the callback settles
+    // (clipboard read + placeholder insert — compression and the daemon
+    // upload continue in the background off this path), so Enter cannot
+    // submit a draft that is still missing the pasted image.
+    if (this.pasteInFlight) {
+      this.pasteInputQueue.push(normalized);
+      return;
+    }
+
     // Any input other than a lone Escape breaks a pending double-Esc sequence,
     // so the shortcut only fires for two consecutive Escape presses.
     if (!matchesKey(normalized, Key.escape)) {
       this.onNonEscapeInput?.();
+    }
+
+    if (this.onPreInput?.(normalized) === true) {
+      return;
     }
 
     // When a paste marker was just expanded, discard the trailing bracketed
@@ -406,17 +428,21 @@ export class CustomEditor extends Editor {
           this.onTextPaste?.();
           super.handleInput.call(this, normalized);
         };
-        void handler().then(
-          (handled) => {
+        this.pasteInFlight = true;
+        void handler()
+          .then((handled) => {
             if (!handled) pasteAsText();
-          },
-          () => {
+          })
+          .catch(() => {
             // A rejecting image-paste handler must not leak an unhandled
             // rejection (the CLI turns those into a silent exit) — treat it
             // the same as "no image available" and fall back to text paste.
             pasteAsText();
-          },
-        );
+          })
+          .finally(() => {
+            this.pasteInFlight = false;
+            this.flushPasteInputQueue();
+          });
         return;
       }
     }
@@ -459,6 +485,37 @@ export class CustomEditor extends Editor {
       // Only consume the key when the todo list actually has overflow to
       // expand/collapse; otherwise fall through to the editor default.
       if (this.onToggleTodoExpand?.() === true) return;
+    }
+
+    if (matchesKey(normalized, Key.ctrl('n'))) {
+      // Only consume the key when the Updates panel grabbed or released
+      // focus; otherwise fall through to the editor default.
+      if (this.onPageNotify?.() === true) return;
+    }
+
+    // A focused Updates panel owns ←/→ (channel switching), ↑/↓ (paging the
+    // channel's updates) and Esc (release focus); when it is not focused the
+    // handler returns false and every key falls through to the normal editor
+    // behavior below. Active autocomplete outranks the panel: its menu needs
+    // the same keys for selection and dismissal.
+    if (
+      !this.hasAutocompleteActivity() &&
+      (matchesKey(normalized, Key.left) ||
+        matchesKey(normalized, Key.right) ||
+        matchesKey(normalized, Key.up) ||
+        matchesKey(normalized, Key.down) ||
+        matchesKey(normalized, Key.escape))
+    ) {
+      const panelKey = matchesKey(normalized, Key.left)
+        ? ('left' as const)
+        : matchesKey(normalized, Key.right)
+          ? ('right' as const)
+          : matchesKey(normalized, Key.up)
+            ? ('up' as const)
+            : matchesKey(normalized, Key.down)
+              ? ('down' as const)
+              : ('escape' as const);
+      if (this.onNotifyPanelKey?.(panelKey) === true) return;
     }
 
     if (matchesKey(normalized, 'shift+tab')) {
@@ -539,6 +596,14 @@ export class CustomEditor extends Editor {
     }
 
     this.reopenAutocompleteAfterInput();
+  }
+
+  private flushPasteInputQueue(): void {
+    if (this.pasteInFlight) return;
+    const next = this.pasteInputQueue.shift();
+    if (next === undefined) return;
+    this.handleInput(next);
+    if (!this.pasteInFlight) this.flushPasteInputQueue();
   }
 
   private reopenAutocompleteAfterInput(): void {

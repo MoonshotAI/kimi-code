@@ -15,7 +15,7 @@ import { WireTab } from '../components/wire/WireTab';
 import { Pill } from '../components/shared/Pill';
 import { useSession } from '../hooks/useSession';
 import { useCron, useTasks } from '../hooks/useTasks';
-import { formatAbsoluteTime, formatRelativeTime } from '../util/time';
+import { formatAbsoluteTime, formatRelativeTime, parseTimestamp } from '../util/time';
 
 type TabId = 'wire' | 'timeline' | 'context' | 'agents' | 'tasks' | 'cron' | 'logs' | 'state';
 
@@ -42,8 +42,9 @@ export function SessionDetailPage() {
   const state = (session.state ?? null) as {
     title?: string;
     lastPrompt?: string;
-    updatedAt?: string;
+    updatedAt?: string | number;
   } | null;
+  const updatedAt = parseTimestamp(state?.updatedAt);
 
   const mainAgent = session.agents.find((a) => a.agentId === 'main') ?? null;
   const subagentCount = session.agents.filter((a) => a.agentId !== 'main').length;
@@ -80,10 +81,9 @@ export function SessionDetailPage() {
           </div>
         ) : null}
         <div className="mt-1 flex items-center gap-3 font-mono text-[11px] text-fg-2">
-          {state?.updatedAt ? (
+          {updatedAt !== null ? (
             <span className="text-fg-3 tabular">
-              updated {formatRelativeTime(Date.parse(state.updatedAt))} ·{' '}
-              {formatAbsoluteTime(Date.parse(state.updatedAt))}
+              updated {formatRelativeTime(updatedAt)} · {formatAbsoluteTime(updatedAt)}
             </span>
           ) : null}
           {session.workDir ? (

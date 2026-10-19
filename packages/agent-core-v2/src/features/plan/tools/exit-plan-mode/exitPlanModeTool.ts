@@ -1,22 +1,3 @@
-/**
- * `plan` domain — `IExitPlanModeTool` implementation.
- *
- * Reads the plan file tracked by the plan service (`plan`) and flips plan
- * mode off. Every submission — the moment the final content is read for the
- * `plan_review` display — records a plan revision through
- * `planMode.recordRevision()` (blob snapshot + `plan.revision` wire record),
- * so a Revise → resubmit archives each reviewed version.
- *
- * `execute` runs only when no interactive review ask intercepted the call. In
- * auto permission mode (`permissionMode`) the auto-mode-approve policy lets
- * every call through before any ask can fire, so the result is worded as
- * auto-approved (not user-reviewed), matching the `auto_approved` telemetry
- * outcome (`telemetry`). In manual / yolo modes the review-ask policy owns
- * the user-facing result; the only way `execute` still runs there is a
- * configured or session allow/ask rule — an explicit user decision that keeps
- * the user-approved output and the `approved` outcome. Bound at Agent scope.
- */
-
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';

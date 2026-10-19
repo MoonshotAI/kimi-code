@@ -1,18 +1,8 @@
-/**
- * WebSocket upgrade Host/Origin checks (port of v1 `host-origin.e2e.test.ts`).
- *
- * The raw HTTP `upgrade` event bypasses Fastify's `onRequest` hooks, so the
- * Host and Origin allowlists are enforced explicitly in the upgrade handler
- * (matching v1's wsGatewayService) — and BEFORE token validation. A spoofed
- * Host or a disallowed browser Origin is rejected with 403; a missing Origin
- * is treated as a non-browser client and allowed (present-only).
- */
-
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -42,7 +32,6 @@ function expectRejected(url: string, opts?: ConnectOptions): Promise<void> {
       try {
         ws.terminate();
       } catch {
-        // ignore
       }
       if (err !== undefined) reject(err);
       else resolve();
@@ -63,7 +52,7 @@ describe('WS upgrade Host/Origin checks', () => {
   let v1Url: string;
   const sockets: WebSocket[] = [];
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ws-host-origin-'));
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -76,14 +65,16 @@ describe('WS upgrade Host/Origin checks', () => {
     v1Url = `ws://127.0.0.1:${server.port}/api/v1/ws`;
   });
 
-  afterEach(async () => {
+  afterEach(() => {
     for (const ws of sockets.splice(0)) {
       try {
         ws.close();
       } catch {
-        // ignore
       }
     }
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;

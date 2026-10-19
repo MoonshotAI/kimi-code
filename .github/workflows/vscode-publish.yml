@@ -1,0 +1,151 @@
+name: Publish VS Code extension
+
+on:
+  workflow_call:
+    secrets:
+      VSCE_PAT:
+        required: false
+      OVSX_PAT:
+        required: false
+
+concurrency:
+  group: vscode-publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish VSIX to marketplaces
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'MoonshotAI' && startsWith(github.ref, 'refs/heads/release/')
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve publish gate
+        id: gate
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          pkg="apps/vscode/package.json"
+          version="$(node -p "require('./${pkg}').version")"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "extension version: ${version}"
+
+          prev=""
+          if [ -n "${BEFORE_SHA}" ] && [ -n "${BEFORE_SHA//0/}" ]; then
+            if git show "${BEFORE_SHA}:${pkg}" > /tmp/prev-vscode-pkg.json 2> /dev/null; then
+              prev="$(node -p "require('/tmp/prev-vscode-pkg.json').version")"
+            fi
+          else
+            echo "push event has no usable before SHA ('${BEFORE_SHA}') — treating as a version change"
+          fi
+          if [ "${prev}" = "${version}" ]; then
+            echo "apps/vscode version unchanged in this push (${version}) — nothing to publish"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "version changed ${prev:-<none>} -> ${version} — release push"
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+
+          # 线上闸门：逐平台核验，6 个 targetPlatform 全部在线才跳过对应市场；
+          # 任一平台缺失即放行给 publish 步骤幂等补齐。
+          # fail-closed：查询失败视为未发布 → 放行，交给 publish 步骤决定成败。
+          platforms="darwin-x64 darwin-arm64 linux-x64 linux-arm64 win32-x64 win32-arm64"
+
+          ovsx_missing=""
+          for target in ${platforms}; do
+            if ! curl -fsS -o /dev/null "https://open-vsx.org/api/moonshot-ai/kimi-code/${target}/${version}"; then
+              ovsx_missing="${ovsx_missing} ${target}"
+            fi
+          done
+          if [ -z "${ovsx_missing}" ]; then
+            echo "${version} is fully on Open VSX (all 6 platforms) — publish:ovsx will be skipped"
+            echo "ovsx_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Open VSX missing platform(s):${ovsx_missing} — publish:ovsx will run to backfill"
+            echo "ovsx_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if pnpm --filter kimi-code exec vsce show moonshot-ai.kimi-code --json \
+              | node -e "const v=process.argv[1];const want=process.argv[2].split(' ');let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{const j=JSON.parse(d);const got=new Set((j.versions||[]).filter(x=>x.version===v).map(x=>x.targetPlatform||''));const missing=want.filter(p=>!got.has(p));if(missing.length){console.error('VS Marketplace missing platform(s): '+missing.join(' '));process.exit(1)}process.exit(0)})" "${version}" "${platforms}"; then
+            echo "${version} is fully on VS Marketplace (all 6 platforms) — publish:vsix will be skipped"
+            echo "vsix_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "vsix_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check publish secrets
+        if: steps.gate.outputs.should_publish == 'true'
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [ -z "${VSCE_PAT:-}" ] && missing+=(VSCE_PAT)
+          [ -z "${OVSX_PAT:-}" ] && missing+=(OVSX_PAT)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::missing repository secrets: ${missing[*]} — a repo admin must configure them before publishing"
+            exit 1
+          fi
+
+      - name: Package all platform VSIX
+        if: steps.gate.outputs.should_publish == 'true'
+        run: pnpm --filter kimi-code run package:platform
+
+      - name: Verify VSIX packages
+        if: steps.gate.outputs.should_publish == 'true'
+        run: pnpm --filter kimi-code run package:verify
+
+      - name: Upload VSIX artifacts
+        if: steps.gate.outputs.should_publish == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: kimi-code-vsix-${{ steps.gate.outputs.version }}
+          path: apps/vscode/artifacts/vsix/*.vsix
+          retention-days: 14
+
+      - name: Install extension-host smoke dependencies
+        if: steps.gate.outputs.should_publish == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libgbm1 libasound2t64
+
+      - name: Extension host smoke test
+        if: steps.gate.outputs.should_publish == 'true'
+        # 1.100.0 即 package.json engines.vscode 下限，与 0.7.3 手动发版的冒烟口径一致
+        run: xvfb-run -a pnpm --filter kimi-code run test:extension-host -- --version 1.100.0
+
+      - name: Publish to VS Marketplace
+        if: steps.gate.outputs.should_publish == 'true' && steps.gate.outputs.vsix_published != 'true'
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: pnpm --filter kimi-code run publish:vsix
+
+      - name: Publish to Open VSX
+        if: steps.gate.outputs.should_publish == 'true' && steps.gate.outputs.ovsx_published != 'true'
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: pnpm --filter kimi-code run publish:ovsx

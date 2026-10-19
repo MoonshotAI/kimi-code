@@ -1,20 +1,5 @@
-/**
- * file-type — magic-byte + extension detection.
- *
- * Tests pin:
- *   - magic-byte recognition for PNG / JPEG / GIF / WebP / AVIF /
- *     MP4 ftyp / MKV / AVI
- *   - extension lookup for each `IMAGE_MIME_BY_SUFFIX` / `VIDEO_MIME_BY_SUFFIX`
- *   - NUL bytes → unknown
- *   - extension hints a different kind than sniff → unknown
- *   - `NON_TEXT_SUFFIXES` lookup returns unknown (so binaries aren't
- *     treated as text on a blind read)
- *   - no header provided → extension-only detection
- */
-
 import { describe, expect, it } from 'vitest';
 
-// eslint-disable-next-line import/no-unresolved
 import {
   detectFileType,
   sniffImageDimensions,
@@ -268,7 +253,6 @@ describe('detectFileType', () => {
     expect(detectFileType('notes.txt', binaryHeader).kind).toBe('unknown');
   });
 });
-
 
 const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 

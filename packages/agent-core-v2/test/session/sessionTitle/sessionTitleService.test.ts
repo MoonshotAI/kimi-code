@@ -1,12 +1,3 @@
-/**
- * Scenario: on-demand managed chat_title generation through the session-scoped
- * service, including OAuth failures, title-state transitions, request headers,
- * and races.
- * Wiring: the real title service with contract fakes; only fetch crosses the
- * external boundary. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec
- * vitest run test/session/sessionTitle/sessionTitleService.test.ts`.
- */
-
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { OAuthConnectionError, OAuthUnauthorizedError } from '@moonshot-ai/kimi-code-oauth';
@@ -17,14 +8,14 @@ import { LifecycleScope } from '#/app/scopes';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IOAuthService } from '#/app/auth/auth';
-import { IFlagService } from '#/app/flag/flag';
-import { type DomainEvent, IEventService } from '#/app/event/event';
-import { IHostRequestHeaders } from '#/kosong/model/hostRequestHeaders';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
+import { IHostRequestHeaders } from '#/llm-adapter/model/host-request-headers';
 import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
-} from '#/kosong/provider/provider';
+} from '#/llm-adapter/provider/provider';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   IAgentLifecycleService,
@@ -43,7 +34,7 @@ import {
   type SessionMetaPatch,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
-import '#/kosong/provider/providers/kimi/kimi.contrib';
+import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubProviderService } from '../../app/provider/stubs';
@@ -57,16 +48,16 @@ const MANAGED_PROVIDER: ProviderConfig = {
 
 class FakeEventService implements IEventService {
   declare readonly _serviceBrand: undefined;
-  private readonly emitter = new Emitter<DomainEvent>();
+  private readonly emitter = new Emitter<Event2>();
   readonly onDidPublish = this.emitter.event;
-  readonly published: DomainEvent[] = [];
+  readonly published: Event2[] = [];
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2): void {
     this.published.push(event);
     this.emitter.fire(event);
   }
 
-  subscribe(handler: (event: DomainEvent) => void): IDisposable {
+  subscribe(handler: (event: Event2) => void): IDisposable {
     return this.emitter.event(handler);
   }
 }
@@ -153,7 +144,6 @@ describe('SessionTitleService', () => {
   let turnExcerpt: TitleTurnExcerpt;
   let digestExcerpt: TitleDigestExcerpt;
   let tokenCalls: boolean[];
-  let flagEnabled: boolean;
 
   beforeEach(() => {
     tokenError = undefined;
@@ -162,9 +152,8 @@ describe('SessionTitleService', () => {
     titlePrompts = [];
     promptSourceImpl = async (limit) => titlePrompts.slice(0, limit);
     turnExcerpt = {};
-    digestExcerpt = {};
+    digestExcerpt = { turns: [] };
     tokenCalls = [];
-    flagEnabled = true;
     providers = { 'managed:kimi-code': MANAGED_PROVIDER };
     metadata = new FakeSessionMetadata();
     events = new FakeEventService();
@@ -205,7 +194,7 @@ describe('SessionTitleService', () => {
           dispose: () => undefined,
         };
         reg.definePartialInstance(IAgentLifecycleService, {
-          get: () => mainAgent,
+          handleOf: () => mainAgent,
         });
         reg.defineInstance(IEventService, events);
         reg.defineInstance(IProviderService, stubProviderService(providers));
@@ -228,7 +217,6 @@ describe('SessionTitleService', () => {
           headers: { 'User-Agent': 'test' },
           thirdPartyHeaders: {},
         });
-        reg.definePartialInstance(IFlagService, { enabled: () => flagEnabled });
         reg.define(ISessionTitleService, SessionTitleService);
       },
     });
@@ -239,17 +227,6 @@ describe('SessionTitleService', () => {
     disposables.dispose();
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-  });
-
-  it('is unavailable while the experimental auto_session_title flag is off', async () => {
-    flagEnabled = false;
-    titlePrompts = ['hello'];
-
-    await expect(ix.get(ISessionTitleService).generateTitle()).resolves.toBeUndefined();
-    await expect(
-      ix.get(ISessionTitleService).generateTitle({ force: true, source: 'digest' }),
-    ).resolves.toBeUndefined();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('replaces the easy title with the generated one', async () => {
@@ -271,9 +248,9 @@ describe('SessionTitleService', () => {
     );
 
     const rebroadcast = events.published.find(
-      (event) =>
+      (event): event is SessionMetaUpdated =>
         event.type === 'session.meta.updated' &&
-        (event.payload as { patch?: { title?: string } }).patch?.title === '生成的标题',
+        (event as SessionMetaUpdated).payload.patch.title === '生成的标题',
     );
     expect(rebroadcast).toBeDefined();
   });
@@ -292,15 +269,14 @@ describe('SessionTitleService', () => {
     });
   });
 
-  it('truncates the composed title input to the total budget, keeping the head', async () => {
+  it('truncates each prompt to the per-prompt budget, keeping the head', async () => {
     titlePrompts = ['很长的输入'.repeat(400), '第二条'];
 
     await ix.get(ISessionTitleService).generateTitle();
 
     const [, init] = fetchMock.mock.calls[0]!;
     const body = JSON.parse(init?.body as string) as { params: { chat_content: string } };
-    expect(body.params.chat_content.startsWith('user: 很长的输入')).toBe(true);
-    expect(body.params.chat_content).toHaveLength(1000);
+    expect(body.params.chat_content).toBe(`user: ${'很长的输入'.repeat(80)}\nuser: 第二条`);
   });
 
   it('returns unavailable when only a slash activation updated lastPrompt', async () => {
@@ -415,11 +391,16 @@ describe('SessionTitleService', () => {
     const [, init] = fetchMock.mock.calls[0]!;
     const content = (JSON.parse(init?.body as string) as { params: { chat_content: string } })
       .params.chat_content;
-    expect(content).toBe(`user: ${'问'.repeat(300)}\nassistant: ${'答'.repeat(600)}`);
+    expect(content).toBe(`user: ${'问'.repeat(400)}\nassistant: ${'答'.repeat(300)}`);
   });
 
-  it('digest composes head and tail segments, tolerating a missing reply', async () => {
-    digestExcerpt = { firstUser: '开场', lastUser: '最新追问', assistant: '当前进展' };
+  it('digest composes every turn as interleaved user/assistant lines', async () => {
+    digestExcerpt = {
+      turns: [
+        { user: '开场', assistant: '开场回答' },
+        { user: '最新追问', assistant: '当前进展' },
+      ],
+    };
 
     await expect(
       ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
@@ -428,11 +409,13 @@ describe('SessionTitleService', () => {
     let [, init] = fetchMock.mock.calls[0]!;
     expect(JSON.parse(init?.body as string)).toEqual({
       method: 'chat_title',
-      params: { chat_content: 'user: 开场\nuser: 最新追问\nassistant: 当前进展' },
+      params: {
+        chat_content: 'user: 开场\nassistant: 开场回答\nuser: 最新追问\nassistant: 当前进展',
+      },
     });
 
     fetchMock.mockClear();
-    digestExcerpt = { firstUser: '开场' };
+    digestExcerpt = { turns: [{ user: '开场', assistant: undefined }] };
     await expect(
       ix.get(ISessionTitleService).generateTitle({ force: true, source: 'digest' }),
     ).resolves.toBe('生成的标题');
@@ -443,8 +426,45 @@ describe('SessionTitleService', () => {
     });
   });
 
+  it('digest truncates each segment to its budget', async () => {
+    digestExcerpt = {
+      turns: [{ user: '问'.repeat(300), assistant: '答'.repeat(300) }],
+    };
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
+    ).resolves.toBe('生成的标题');
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const content = (JSON.parse(init?.body as string) as { params: { chat_content: string } })
+      .params.chat_content;
+    expect(content).toBe(`user: ${'问'.repeat(200)}\nassistant: ${'答'.repeat(200)}`);
+  });
+
+  it('digest elides the middle turns when the input exceeds the total budget', async () => {
+    digestExcerpt = {
+      turns: Array.from({ length: 30 }, (_, i) => ({
+        user: `第${i}个${'问'.repeat(180)}`,
+        assistant: `第${i}个${'答'.repeat(180)}`,
+      })),
+    };
+
+    await expect(
+      ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),
+    ).resolves.toBe('生成的标题');
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const content = (JSON.parse(init?.body as string) as { params: { chat_content: string } })
+      .params.chat_content;
+    expect(content.length).toBeLessThanOrEqual(3000);
+    expect(content.startsWith('user: 第0个')).toBe(true);
+    expect(content).toContain('\n...\n');
+    expect(content.split('\n...\n')[1]?.startsWith('user: ')).toBe(true);
+    expect(content.endsWith(`assistant: 第29个${'答'.repeat(180)}`)).toBe(true);
+  });
+
   it('digest is unavailable when the window yields no segments at all', async () => {
-    digestExcerpt = {};
+    digestExcerpt = { turns: [] };
 
     await expect(
       ix.get(ISessionTitleService).generateTitle({ source: 'digest' }),

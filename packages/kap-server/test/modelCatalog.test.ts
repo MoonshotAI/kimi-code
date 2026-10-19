@@ -13,7 +13,7 @@ import {
   type ModelCatalogConfig,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -59,22 +59,39 @@ const CATALOG_TOML = [
 
 describe('server-v2 /api/v1 model/provider catalog', () => {
   let server: RunningServer | undefined;
+  let active: RunningServer | undefined;
+  const alts: RunningServer[] = [];
   let home: string | undefined;
   let base: string;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-model-catalog-'));
-    // Disable the background refresh scheduler so its startup refresh never
-    // races the route-level assertions below (it shares the IProviderDiscoveryService
-    // binding that the stub tests override).
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START'] = '0';
     process.env['KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS'] = '0';
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    active = server;
+    base = `http://127.0.0.1:${server.port}`;
   });
 
   afterEach(async () => {
+    for (const alt of alts.splice(0)) {
+      await alt.close();
+    }
+    active = server;
+    base = `http://127.0.0.1:${(server as RunningServer).port}`;
+  });
+
+  afterAll(async () => {
     if (server !== undefined) {
       await server.close();
       server = undefined;
+      active = undefined;
     }
     if (home !== undefined) {
       await rm(home, { recursive: true, force: true });
@@ -88,20 +105,27 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     if (toml !== undefined) {
       await writeFile(join(home as string, 'config.toml'), toml, 'utf-8');
     }
-    server = await startServer({
-      hostIdentity: TEST_HOST_IDENTITY,
-      host: '127.0.0.1',
-      port: 0,
-      homeDir: home,
-      logLevel: 'silent',
-      seeds,
-    });
-    base = `http://127.0.0.1:${server.port}`;
+    if (seeds !== undefined) {
+      const alt = await startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+        seeds,
+      });
+      alts.push(alt);
+      active = alt;
+    } else {
+      await (server as RunningServer).core.accessor.get(IConfigService).reload();
+      active = server;
+    }
+    base = `http://127.0.0.1:${(active as RunningServer).port}`;
   }
 
   async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
     const res = await fetch(`${base}${path}`, {
-      headers: authHeaders(server as RunningServer),
+      headers: authHeaders(active as RunningServer),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
@@ -113,7 +137,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     const res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: authHeaders(
-        server as RunningServer,
+        active as RunningServer,
         body === undefined ? {} : { 'content-type': 'application/json' },
       ),
       body: body === undefined ? undefined : JSON.stringify(body),
@@ -147,6 +171,21 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
         max_context_size: 128000,
       },
     ]);
+  });
+
+  it('returns model upgrade metadata from config', async () => {
+    await boot(
+      `${CATALOG_TOML}\n[models.k2.upgrade]\nmodel = "turbo"\nmigration_markdown = "Use {model_to}"\nretirement_at = "2030-01-01T00:00:00Z"\n`,
+    );
+    const { status, body } = await getJson<{
+      items: Array<{ model: string; upgrade?: unknown }>;
+    }>('/api/v1/models');
+    expect(status).toBe(200);
+    expect(body.data.items.find((item) => item.model === 'k2')?.upgrade).toEqual({
+      model: 'turbo',
+      migration_markdown: 'Use {model_to}',
+      retirement_at: '2030-01-01T00:00:00Z',
+    });
   });
 
   it('lists models without refreshing providers', async () => {
@@ -201,7 +240,6 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       has_api_key: true,
       status: 'connected',
       models: ['k2', 'turbo'],
-      // The single GET reveals the stored key; the list above never does.
       api_key: 'sk-test',
     });
 
@@ -210,7 +248,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     expect(noKey.body.data).not.toHaveProperty('api_key');
   });
 
-  it('sets the global default model and reflects it in /auth', async () => {
+  it('sets the global default model and reflects it in /config', async () => {
     await boot(CATALOG_TOML);
     const { body } = await postJson<unknown>('/api/v1/models/turbo:set_default', {});
     expect(body.code).toBe(0);
@@ -224,9 +262,9 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       },
     });
 
-    const auth = await getJson<{ default_model: string | null }>('/api/v1/auth');
-    expect(auth.body.code).toBe(0);
-    expect(auth.body.data.default_model).toBe('turbo');
+    const config = await getJson<{ default_model: string | null }>('/api/v1/config');
+    expect(config.body.code).toBe(0);
+    expect(config.body.data.default_model).toBe('turbo');
   });
 
   it('maps unknown provider and model ids to catalog not-found codes', async () => {
@@ -271,7 +309,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       getRequester: () => {
         throw new Error('unused');
       },
-      inspect: () => {
+      generate: () => {
         throw new Error('unused');
       },
       ping: async () => {
@@ -292,7 +330,12 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
   function discoveryStub(
     refreshProviderModels: IProviderDiscoveryServiceType['refreshProviderModels'],
   ): IProviderDiscoveryServiceType {
-    return { _serviceBrand: undefined, refreshProviderModels };
+    return {
+      _serviceBrand: undefined,
+      onDidRetireModel: () => ({ dispose: () => {} }),
+      refreshProviderModels,
+      retiredModelReplacement: () => undefined,
+    };
   }
 
   function oauthStub(
@@ -316,6 +359,7 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
       getManagedUserInfo: async () => ({ kind: 'error' as const, message: 'unused' }),
       resolveTokenProvider: () => undefined,
       getCachedAccessToken: async () => undefined,
+      getRegion: () => 'mainland-cn',
     };
   }
 

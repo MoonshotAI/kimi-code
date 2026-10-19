@@ -57,6 +57,19 @@ export interface V2SessionsQuery {
   readonly pageToken?: string;
 }
 
+export interface V2SessionGroup {
+  readonly workspace: { readonly id: string; readonly cwd: string | null };
+  readonly sessions: readonly V2Session[];
+  /** Full matching-session count of this workspace (≥ sessions.length). */
+  readonly total: number;
+}
+
+export interface V2SessionGroupPage {
+  readonly groups: readonly V2SessionGroup[];
+  readonly hasMore: boolean;
+  readonly nextPageToken?: string;
+}
+
 export interface V2SessionPage {
   readonly items: readonly V2Session[];
   readonly hasMore: boolean;
@@ -132,21 +145,29 @@ function parseSession(value: unknown): V2Session | undefined {
   };
 }
 
-export async function fetchV2SessionsPage(
-  opts: { readonly baseUrl: string; readonly token?: string } & V2SessionsQuery & {
-      readonly fetchImpl?: typeof fetch;
-    },
-): Promise<V2SessionPage> {
-  const params = new URLSearchParams();
-  for (const id of opts.workspaceIds ?? []) params.append('workspace.id', id);
-  for (const status of opts.statuses ?? []) params.append('activity.status', status);
-  if (opts.updatedAfter !== undefined) params.set('meta.updated_after', String(opts.updatedAfter));
-  if (opts.archived !== undefined) params.set('meta.archived', opts.archived);
-  if (opts.sort !== undefined) params.set('sort', opts.sort);
-  if (opts.includeGit === true) params.set('include', 'git');
-  if (opts.pageSize !== undefined) params.set('page_size', String(opts.pageSize));
-  if (opts.pageToken !== undefined) params.set('page_token', opts.pageToken);
+interface FetchOptions {
+  readonly baseUrl: string;
+  readonly token?: string;
+  readonly fetchImpl?: typeof fetch;
+}
 
+function buildParams(query: V2SessionsQuery): URLSearchParams {
+  const params = new URLSearchParams();
+  for (const id of query.workspaceIds ?? []) params.append('workspace.id', id);
+  for (const status of query.statuses ?? []) params.append('activity.status', status);
+  if (query.updatedAfter !== undefined) params.set('meta.updated_after', String(query.updatedAfter));
+  if (query.archived !== undefined) params.set('meta.archived', query.archived);
+  if (query.sort !== undefined) params.set('sort', query.sort);
+  if (query.includeGit === true) params.set('include', 'git');
+  if (query.pageSize !== undefined) params.set('page_size', String(query.pageSize));
+  if (query.pageToken !== undefined) params.set('page_token', query.pageToken);
+  return params;
+}
+
+async function requestData(
+  opts: FetchOptions,
+  params: URLSearchParams,
+): Promise<Record<string, unknown>> {
   const headers: Record<string, string> = {};
   if (opts.token !== undefined && opts.token !== '') {
     headers['authorization'] = `Bearer ${opts.token}`;
@@ -167,16 +188,74 @@ export async function fetchV2SessionsPage(
     throw new Error(`v2 sessions failed (${code ?? `http_${res.status}`}): ${msg}`);
   }
   const data = envelope['data'] as Record<string, unknown> | null;
-  if (data === null || typeof data !== 'object' || !Array.isArray(data['items'])) {
+  if (data === null || typeof data !== 'object') {
+    throw new Error('v2 sessions: unexpected response shape');
+  }
+  return data;
+}
+
+function pageMeta(data: Record<string, unknown>): {
+  readonly hasMore: boolean;
+  readonly nextPageToken?: string;
+} {
+  return {
+    hasMore: data['has_more'] === true,
+    nextPageToken:
+      typeof data['next_page_token'] === 'string' ? data['next_page_token'] : undefined,
+  };
+}
+
+export async function fetchV2SessionsPage(
+  opts: FetchOptions & V2SessionsQuery,
+): Promise<V2SessionPage> {
+  const data = await requestData(opts, buildParams(opts));
+  if (!Array.isArray(data['items'])) {
     throw new Error('v2 sessions: unexpected response shape');
   }
   const items = (data['items'] as unknown[])
     .map(parseSession)
     .filter((s): s is V2Session => s !== undefined);
-  return {
-    items,
-    hasMore: data['has_more'] === true,
-    nextPageToken:
-      typeof data['next_page_token'] === 'string' ? data['next_page_token'] : undefined,
-  };
+  return { items, ...pageMeta(data) };
+}
+
+/**
+ * The workspace-grouped projection (`view=by_workspace`): one request returns
+ * every workspace with a matching session, each carrying its first
+ * `groupPageSize` sessions under the requested sort plus the workspace's full
+ * matching `total`. The opaque cursor pages over groups.
+ */
+export async function fetchV2SessionGroups(
+  opts: FetchOptions & V2SessionsQuery & { readonly groupPageSize?: number },
+): Promise<V2SessionGroupPage> {
+  const params = buildParams(opts);
+  params.set('view', 'by_workspace');
+  if (opts.groupPageSize !== undefined) params.set('group.page_size', String(opts.groupPageSize));
+  const data = await requestData(opts, params);
+  if (!Array.isArray(data['groups'])) {
+    throw new Error('v2 sessions: unexpected response shape');
+  }
+  const groups: V2SessionGroup[] = [];
+  for (const value of data['groups'] as unknown[]) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) continue;
+    const g = value as Record<string, unknown>;
+    const workspace = g['workspace'] as Record<string, unknown> | null;
+    if (
+      workspace === null ||
+      typeof workspace !== 'object' ||
+      typeof workspace['id'] !== 'string' ||
+      !Array.isArray(g['sessions']) ||
+      typeof g['total'] !== 'number'
+    ) {
+      continue;
+    }
+    const cwd = workspace['cwd'];
+    groups.push({
+      workspace: { id: workspace['id'], cwd: typeof cwd === 'string' ? cwd : null },
+      sessions: (g['sessions'] as unknown[])
+        .map(parseSession)
+        .filter((s): s is V2Session => s !== undefined),
+      total: g['total'],
+    });
+  }
+  return { groups, ...pageMeta(data) };
 }

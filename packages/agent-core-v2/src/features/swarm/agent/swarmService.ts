@@ -1,52 +1,45 @@
-/**
- * `swarm` domain — `IAgentSwarmService` implementation.
- *
- * Tracks swarm-mode enter/exit in the `wire` `SwarmModel` (mutated only through
- * the `swarm_mode.enter` / `swarm_mode.exit` Ops, read through `wire.getModel`),
- * derives `agent.status.updated` from the Ops' `toEvent`, announces the mode
- * through the `swarm_mode` context-injection provider (`SwarmInjection`),
- * mirrors replayable trailing-enter removal through `contextMemory`, and
- * auto-exits on turn end via `turn`. Bound at Agent scope — contributed into
- * every Agent scope by `SwarmFeature` (`features/swarm/swarmFeature`). The
- * service also
- * guards AgentSwarm batch exclusivity through an `onBeforeExecuteTool` veto
- * listener: an AgentSwarm call must be the only tool call in its batch;
- * anything else is vetoed with a `toolApproval.formatDenyMessage`-formatted
- * reason.
- */
-
 import { Service } from '#/_base/di/service';
-import { IInstantiationService } from '#/_base/di/instantiation';
+import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
-import { IWireService } from '#/wire/wire';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentStateService } from '#/agent/state/agentState';
+import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { SwarmInjection } from './injection/swarmInjection';
 import { IAgentSwarmService, type SwarmModeTrigger } from './swarm';
-import { swarmEnter, swarmExit, SwarmModel } from '../swarmOps';
+import { SwarmModeEnter, SwarmModeExit, swarmKey } from '../swarmOps';
 
 export class AgentSwarmService extends Service implements IAgentSwarmService {
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IWireService private readonly wire: IWireService,
-    @IInstantiationService instantiation: IInstantiationService,
+    @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IAgentReminderService reminder: IAgentReminderService,
     @IEventBus eventBus: IEventBus,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
+    @IAgentStateService private readonly agentState: IAgentStateService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
+    this.agentState.contributeState(swarmKey);
     this._register(
-      instantiation.createInstance(SwarmInjection, {
-        getTrigger: () => this.wire.getModel(SwarmModel),
-      }),
+      new SwarmInjection(
+        { getTrigger: () => this.agentState.get(swarmKey) },
+        reminder,
+        this.context,
+      ),
     );
     this._register(
-      eventBus.subscribe('turn.ended', () => {
+      eventBus.subscribe(TurnEnded, () => {
         if (this.shouldAutoExit) {
           this.exit();
         }
@@ -74,23 +67,26 @@ export class AgentSwarmService extends Service implements IAgentSwarmService {
   }
 
   enter(trigger: SwarmModeTrigger): void {
-    if (this.wire.getModel(SwarmModel) !== null) return;
-    this.wire.dispatch(swarmEnter({ trigger }));
+    if (this.agentState.get(swarmKey) !== null) return;
+    void this.dispatcher.dispatch(new SwarmModeEnter({ agentId: this.agentCtx.agentId, trigger }));
+    this.telemetry.track2('swarm_mode_entered', { trigger });
   }
 
   exit(): void {
-    if (this.wire.getModel(SwarmModel) === null) return;
+    const trigger = this.agentState.get(swarmKey);
+    if (trigger === null) return;
     const history = this.context.get();
-    this.wire.dispatch(swarmExit({}));
+    void this.dispatcher.dispatch(new SwarmModeExit({ agentId: this.agentCtx.agentId }));
+    this.telemetry.track2('swarm_mode_exited', { trigger });
     this.context.publishTrailingRemoval(history);
   }
 
   get isActive(): boolean {
-    return this.wire.getModel(SwarmModel) !== null;
+    return this.agentState.get(swarmKey) !== null;
   }
 
   private get shouldAutoExit(): boolean {
-    const trigger = this.wire.getModel(SwarmModel);
+    const trigger = this.agentState.get(swarmKey);
     return trigger === 'task' || trigger === 'tool';
   }
 }

@@ -25,6 +25,7 @@ export class FakeRuntime implements Runtime {
       readonly status?: RuntimeStatus;
       readonly capabilities?: readonly RuntimeCapability[];
       readonly pathClass?: 'posix' | 'win32';
+      readonly environment?: Partial<Runtime['environment']>;
       readonly mapWorkspaceRoots?: Runtime['workspace']['mapRoots'];
     } = {},
   ) {
@@ -39,6 +40,7 @@ export class FakeRuntime implements Runtime {
       shellPath: '/bin/sh',
       pathClass: options.pathClass ?? 'posix',
       homeDir: options.pathClass === 'win32' ? 'C:\\Users\\fake' : '/home/fake',
+      ...options.environment,
     };
     this.path = {
       separator: path.sep as '/' | '\\',

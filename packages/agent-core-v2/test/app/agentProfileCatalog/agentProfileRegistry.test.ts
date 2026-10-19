@@ -1,19 +1,3 @@
-/**
- * Scenario: the App-scope agent-profile registry fold.
- *
- * Exercises `AgentProfileRegistryService` as a fold over the
- * `AgentProfileContribution` collection: records are contributed through real
- * containers by contributor units (the same `this.provide` path the
- * production loaders take), and the suite pins the folded read surface — the
- * (sourceId, workspaceKey) pair encoding (one global entry per source id,
- * with same-id workspace-local entries coexisting across handlers),
- * later-record-shadows-earlier replacement, provider-death withdrawal, the
- * `entries()` metadata, and the decoded `onDidChange` payload (a pair fires
- * only when its winning record actually changes). Run:
- * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
- * test/app/agentProfileCatalog/agentProfileRegistry.test.ts`.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { createDecorator } from '#/_base/di/instantiation';

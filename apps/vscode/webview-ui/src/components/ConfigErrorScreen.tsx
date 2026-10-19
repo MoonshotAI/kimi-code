@@ -106,7 +106,7 @@ export function ConfigErrorScreen({ type, errorMessage, onRefresh, onBackToLogin
           <KimiMascot className="h-10 mx-auto opacity-50" />
           <div className="inline-flex items-center gap-2 text-muted-foreground">
             <IconLoader2 className="size-4 animate-spin" />
-            <span className="text-sm">Starting Kimi Code...</span>
+            <span className="text-sm">Starting Kimi Code…</span>
           </div>
         </div>
       </div>

@@ -1,8 +1,3 @@
-/**
- *   GET /v1/sessions/{session_id}/messages
- *   GET /v1/sessions/{session_id}/messages/{message_id}
- */
-
 import { z } from 'zod';
 
 import { messageRoleSchema, messageSchema } from './message';

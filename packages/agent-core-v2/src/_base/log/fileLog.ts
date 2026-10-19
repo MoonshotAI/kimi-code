@@ -1,15 +1,3 @@
-/**
- * `_base/log` — plain (non-DI) log sinks.
- *
- * Owns the `RotatingFileWriter` (size-rotated, async-serial, sync-flush on
- * exit) and the `ILogWriter` implementations built on top of it (`FileLogWriter`),
- * plus the in-memory and console sinks used by tests and debugging. All classes
- * here are plain: constructed with an explicit options object, no `@IService`
- * deps, never registered with the container — a `*LogService` creates and owns
- * them. Uses `node:fs` rather than `kaos` because rotation needs atomic rename
- * and synchronous append.
- */
-
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { mkdir, open, rename, stat, unlink } from 'node:fs/promises';
 import { dirname } from 'pathe';
@@ -282,19 +270,15 @@ export class ConsoleLogWriter implements ILogWriter {
     const { text } = formatEntry(entry, { ansi: process.stderr.isTTY === true });
     switch (entry.level) {
       case 'error':
-        // eslint-disable-next-line no-console
         console.error(text);
         break;
       case 'warn':
-        // eslint-disable-next-line no-console
         console.warn(text);
         break;
       case 'debug':
-        // eslint-disable-next-line no-console
         console.debug(text);
         break;
       default:
-        // eslint-disable-next-line no-console
         console.log(text);
     }
   }

@@ -220,7 +220,8 @@ export class SubagentActivityStore {
         return;
       }
       case 'tool.progress': {
-        if (event.update.kind !== 'stdout' && event.update.kind !== 'stderr') return;
+        const kind = event.update.kind;
+        if (kind !== 'stdout' && kind !== 'stderr' && kind !== 'status') return;
         const text = event.update.text;
         if (text === undefined || text.trim().length === 0) return;
         const record = this.records.get(event.agentId);

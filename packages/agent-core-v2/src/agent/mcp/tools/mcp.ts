@@ -1,39 +1,11 @@
-/**
- * MCP tool adapter — wraps a remote MCP tool as an `ExecutableTool`.
- *
- * Each tool exposed by a connected MCP server is adapted into an
- * `ExecutableTool` whose `resolveExecution` forwards the call to the client
- * and normalizes the result. When a call fails, the adapter picks one of
- * three recoveries based on why it failed:
- *
- * - The server answered (a JSON-RPC error, or a response that failed
- *   client-side schema validation) → the error is rethrown; reconnecting
- *   would not change the answer.
- * - The failure is ambiguous (a raw fetch/socket error) → the client is
- *   probed with a ping: alive means a transient blip and the call is
- *   retried once in place; dead means the transport is gone.
- * - The transport is provably dead (the SDK fired `onclose`, or the probe
- *   failed) → the server is reconnected once through `options.reconnect`
- *   and the call retried on the fresh client, so a dropped connection
- *   surfaces as a slow call instead of a failed turn.
- *
- * Retries are at-least-once: if the transport died after the server
- * processed the call but before the response arrived, the retry may
- * duplicate side effects. There is no protocol-level dedup across
- * reconnects, so this trade-off is accepted deliberately.
- *
- * When the server has been tombstoned as removed (`options.isRemoved`),
- * the call short-circuits to an error result telling the model to stop
- * calling the tool — no client call, no reconnect.
- */
-
-import type { Tool as KosongTool } from '#/kosong/contract/tool';
+import type { ToolDescription as KosongTool } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes, toErrorMessage } from '#/errors';
 import { isAbortError } from '#/_base/utils/abort';
 
-import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult } from '#/tool/toolContract';
-import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
+import type { ExecutableTool, ExecutableToolContext } from '#/tool/toolContract';
+import { mcpResultToExecutableOutput, type McpOutputOptions } from '#/agent/mcp/output';
+import { qualifyMcpToolName } from '#/mcpCore/tool-naming';
 import type { MCPClient, MCPToolResult } from '#/mcpCore/types';
 import {
   isMcpConnectionClosedError,
@@ -43,10 +15,14 @@ import {
 } from '#/mcpCore/client-shared';
 
 interface McpToolOptions {
+  readonly serverName?: string;
+  readonly attachmentStore?: McpOutputOptions['attachmentStore'];
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
+  readonly providerType?: () => string | undefined;
   readonly reconnect?: (signal?: AbortSignal) => Promise<MCPClient | undefined>;
   readonly isRemoved?: () => boolean;
+  readonly onUnauthorized?: (error: unknown, client: MCPClient) => Promise<boolean>;
 }
 
 export function createMcpTool(
@@ -76,17 +52,44 @@ export function createMcpTool(
         try {
           result = await callTool(client, args, context.signal);
         } catch (error) {
-          result = await retryAfterReconnect(error, client, args, context, options, callTool);
+          await throwIfUnauthorized(options, qualifiedName, error, client);
+          result = await retryAfterReconnect(
+            error,
+            client,
+            args,
+            context,
+            options,
+            callTool,
+            qualifiedName,
+          );
         }
-        return normalizeMcpToolResult(
-          await mcpResultToExecutableOutput(result, qualifiedName, {
-            originalsDir: options.originalsDir,
-            telemetry: options.telemetry,
-          }),
-        );
+        return mcpResultToExecutableOutput(result, qualifiedName, {
+          signal: context.signal,
+          attachmentStore: options.attachmentStore,
+          originalsDir: options.originalsDir,
+          telemetry: options.telemetry,
+          providerType: options.providerType?.(),
+        });
       },
     }),
   };
+}
+
+async function throwIfUnauthorized(
+  options: McpToolOptions,
+  qualifiedName: string,
+  error: unknown,
+  client: MCPClient,
+): Promise<void> {
+  if ((await options.onUnauthorized?.(error, client)) !== true) return;
+  const serverName = options.serverName ?? qualifiedName;
+  throw new Error2(
+    ErrorCodes.MCP_OAUTH_FAILED,
+    `MCP server "${serverName}" rejected the call with 401 Unauthorized and is now ` +
+      `marked needs-auth. Call the ${qualifyMcpToolName(serverName, 'authenticate')} ` +
+      `tool to complete the OAuth login, then retry the original call.`,
+    { cause: error },
+  );
 }
 
 async function retryAfterReconnect(
@@ -96,6 +99,7 @@ async function retryAfterReconnect(
   context: Pick<ExecutableToolContext, 'signal' | 'onUpdate'>,
   options: McpToolOptions,
   callTool: (client: MCPClient, args: unknown, signal: AbortSignal) => Promise<MCPToolResult>,
+  qualifiedName: string,
 ): Promise<MCPToolResult> {
   const reconnect = options.reconnect;
   const isUnrecoverable = (e: unknown): boolean =>
@@ -115,6 +119,7 @@ async function retryAfterReconnect(
       try {
         return await callTool(client, args, context.signal);
       } catch (retryError) {
+        await throwIfUnauthorized(options, qualifiedName, retryError, client);
         if (isUnrecoverable(retryError)) {
           throw retryError;
         }
@@ -140,21 +145,10 @@ async function retryAfterReconnect(
   if (freshClient === undefined) {
     throw failure;
   }
-  return callTool(freshClient, args, context.signal);
-}
-
-function normalizeMcpToolResult(result: {
-  readonly output: ExecutableToolResult['output'];
-  readonly isError: boolean;
-  readonly note?: string;
-  readonly truncated?: true;
-}): ExecutableToolResult {
-  if (result.isError) {
-    return result.truncated === true
-      ? { output: result.output, isError: true, note: result.note, truncated: true }
-      : { output: result.output, isError: true, note: result.note };
+  try {
+    return await callTool(freshClient, args, context.signal);
+  } catch (finalError) {
+    await throwIfUnauthorized(options, qualifiedName, finalError, freshClient);
+    throw finalError;
   }
-  return result.truncated === true
-    ? { output: result.output, note: result.note, truncated: true }
-    : { output: result.output, note: result.note };
 }

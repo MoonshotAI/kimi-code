@@ -1,7 +1,3 @@
-/**
- * `mcpCore` domain — shared MCP client helpers — request options, liveness probes, result conversion.
- */
-
 import { getCoreVersion } from '#/_base/version';
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 

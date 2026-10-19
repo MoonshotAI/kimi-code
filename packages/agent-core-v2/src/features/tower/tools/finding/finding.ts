@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ITowerFindingTool` contract (the `TowerFinding` tool).
- *
- * Public contract of the structured finding filer (bug / improve / vuln /
- * idea) for the tower to route; workers use it for anything notable outside
- * their mission scope instead of fixing it directly. Exports the
- * model-facing `TowerFindingToolInputSchema` / `TowerFindingToolInput` and
- * the `ITowerFindingTool` DI decorator. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

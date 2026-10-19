@@ -20,7 +20,7 @@ describe('TruncatedOutputComponent', () => {
     const lines = strip(component.render(80).join('\n')).split('\n');
     expect(lines[0]?.startsWith('      a')).toBe(true);
     expect(lines[1]?.startsWith('      b')).toBe(true);
-    expect(lines[2]).toBe('      ... (3 more lines, ctrl+o to expand)');
+    expect(lines[2]).toBe('      … (3 more lines, ctrl+o to expand)');
   });
 
   it('defaults to a two-space indent for both content and hint', () => {
@@ -32,7 +32,7 @@ describe('TruncatedOutputComponent', () => {
 
     const lines = strip(component.render(80).join('\n')).split('\n');
     expect(lines[0]?.startsWith('  x')).toBe(true);
-    expect(lines[1]).toBe('  ... (2 more lines, ctrl+o to expand)');
+    expect(lines[1]).toBe('  … (2 more lines, ctrl+o to expand)');
   });
 
   it('omits the ctrl+o promise when expandHint is false', () => {
@@ -45,7 +45,7 @@ describe('TruncatedOutputComponent', () => {
     });
 
     const lines = strip(component.render(80).join('\n')).split('\n');
-    expect(lines[2]).toBe('    ... (2 more lines)');
+    expect(lines[2]).toBe('    … (2 more lines)');
   });
 
   it('renders all lines without a hint when expanded', () => {
@@ -59,6 +59,33 @@ describe('TruncatedOutputComponent', () => {
     const out = strip(component.render(80).join('\n'));
     expect(out).toContain('d');
     expect(out).not.toContain('more lines, ctrl+o');
+  });
+
+  it('shows a single overflow line instead of swapping it for a same-height hint', () => {
+    const component = new TruncatedOutputComponent('a\nb\nc\nd', {
+      expanded: false,
+      isError: false,
+      maxLines: 3,
+    });
+
+    const lines = strip(component.render(80).join('\n')).split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toContain('d');
+    expect(lines.some((line) => line.includes('more lines'))).toBe(false);
+    expect(component.wasTruncated()).toBe(false);
+  });
+
+  it('collapses once folding saves at least one row', () => {
+    const component = new TruncatedOutputComponent('a\nb\nc\nd\ne', {
+      expanded: false,
+      isError: false,
+      maxLines: 3,
+    });
+
+    const lines = strip(component.render(80).join('\n')).split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe('  … (2 more lines, ctrl+o to expand)');
+    expect(component.wasTruncated()).toBe(true);
   });
 
   it('keeps the truncation footer within the requested render width', () => {

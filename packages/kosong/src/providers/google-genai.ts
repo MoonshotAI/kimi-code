@@ -498,7 +498,17 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     isToolResultOnly: (content) =>
       content.parts.length > 0 &&
       content.parts.every((part) => part.functionResponse !== undefined),
-    merge: (last, next) => ({ ...last, parts: [...last.parts, ...next.parts] }),
+    merge: (last, next) => {
+      const lastStartsWithFunctionResponse =
+        last.parts[0]?.functionResponse !== undefined;
+      const nextHasFunctionResponse = next.parts.some(
+        (part) => part.functionResponse !== undefined,
+      );
+      if (lastStartsWithFunctionResponse && !nextHasFunctionResponse) {
+        return { ...next, parts: [...next.parts, ...last.parts] };
+      }
+      return { ...last, parts: [...last.parts, ...next.parts] };
+    },
   });
 }
 export class GoogleGenAIStreamedMessage implements StreamedMessage {
@@ -800,7 +810,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     const thinkingConfig = this._generationKwargs.thinkingConfig;
     if (thinkingConfig === undefined) return null;
 
-    // For gemini-3 models that use thinkingLevel
+    // For models that use thinkingLevel
     if (thinkingConfig.thinkingLevel !== undefined) {
       switch (thinkingConfig.thinkingLevel) {
         case 'MINIMAL':
@@ -920,10 +930,15 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   withThinking(effort: ThinkingEffort): GoogleGenAIChatProvider {
     const thinkingConfig: ThinkingConfig = { includeThoughts: true };
 
-    if (this._model.includes('gemini-3')) {
-      // Gemini 3 models use thinkingLevel (MINIMAL/LOW/MEDIUM/HIGH). The SDK
-      // does not expose a "disabled" level, so 'off' maps to MINIMAL with
-      // thought output suppressed — the lowest thinking intensity available.
+    if (this._model.includes('gemini-3') || this._model.includes('gemini-4')) {
+      // Gemini 3 and later models use thinkingLevel. The SDK does not expose a
+      // "disabled" level: 'off' maps to MINIMAL with thoughts hidden on Gemini 3,
+      // while Gemini 4 cannot disable thinking at all, so 'off' is rejected.
+      if (effort === 'off' && this._model.includes('gemini-4')) {
+        throw new ChatProviderError(
+          'thinking effort "off" is not supported for gemini-4 models: thinking cannot be disabled; use low/medium/high',
+        );
+      }
       switch (effort) {
         case 'off':
           thinkingConfig.thinkingLevel = 'MINIMAL';

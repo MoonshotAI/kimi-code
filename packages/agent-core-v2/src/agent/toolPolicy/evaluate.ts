@@ -1,28 +1,3 @@
-/**
- * `toolPolicy` domain — pure tool-activation policy evaluation.
- *
- * Applies allowlists and denylists with builtin/MCP matching semantics shared
- * by Agent authorization, profile prompt construction, and child-agent setup.
- * `isToolActiveComposed` intersects the policy layers (workspace os-level
- * veto, profile, global `[tools]` config, Session denylist — the workspace
- * veto first, outranking the rest) so every consumer evaluates the same
- * combination instead of re-implementing it. An empty/absent global `enabled`
- * list means unconstrained — an explicit empty list must never disable
- * everything.
- *
- * `findInactiveToolPatterns` statically inspects policy entries so
- * misconfigurations surface as warnings instead of silently shrinking the
- * active tool set. Three entry shapes are dead on arrival under
- * `isToolActive`: `wildcard-not-mcp` (non-MCP entries match builtin/user
- * tools by exact name only, and the MCP branch filters entries without the
- * `mcp__` prefix, so a wildcard outside `mcp__…` patterns can never match — a
- * bare `*` in an allowlist disables everything, in a denylist it is a
- * no-op), `incomplete-mcp-name` (an `mcp__…` literal without glob magic must
- * be a full `mcp__<server>__<tool>` name; `mcp__github__*` is the working
- * form for a whole server), and `unknown-tool` (a literal naming no
- * registered tool and no builtin-profile tool is almost always a typo).
- */
-
 import picomatch from 'picomatch';
 
 import { isMcpToolName, type ToolSource } from '#/tool/toolContract';

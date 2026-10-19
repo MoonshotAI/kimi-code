@@ -1,14 +1,3 @@
-/**
- * `telemetry` domain — agent-core-v2 package version resolution.
- *
- * Resolves the engine's own package version at runtime by walking up from
- * this module's location to the nearest `package.json` named
- * `@moonshot-ai/agent-core-v2`. Works whenever the package runs from its own
- * directory layout (workspace installs); falls back to
- * `'unknown'` when the code is bundled into another package's artifact.
- * App-scoped, no collaborators.
- */
-
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';

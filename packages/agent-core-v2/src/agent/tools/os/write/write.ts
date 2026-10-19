@@ -1,18 +1,3 @@
-/**
- * `tools` domain — `IWriteTool` contract.
- *
- * Public contract of Write, the model's UTF-8 text file writer. Overwrites a
- * file entirely or appends content to its end. Creates the file if it does
- * not exist, and creates missing parent directories automatically (mirroring
- * `mkdir(parents=True, exist_ok=True)`). Path access policy is resolved
- * before any filesystem I/O.
- *
- * Append semantics never read or rewrite existing content, keeping appends
- * atomic with respect to concurrent writers and safe against mid-write
- * crashes. Owns the `WriteInput` / `WriteOutput` zod schemas and the
- * Agent-scope service identifier. Bound at Agent scope.
- */
-
 import { z } from 'zod';
 
 import { createDecorator } from '#/_base/di/instantiation';

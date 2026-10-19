@@ -1,15 +1,3 @@
-/**
- * `command` domain — `IAgentCommandService` implementation.
- *
- * The fold over the `CommandContribution` collection (`command`): `list()`
- * dedupes the live records by name (a later record shadows an earlier one of
- * the same name), and `run` invokes the contribution's callback inside an
- * `invokeFunction` so its `ctx.get` resolves through the agent container.
- * Unknown names fail with a coded `REQUEST_INVALID` error. Bound at Agent
- * scope; constructed on demand — nothing pushes to a command registry, every
- * consumer pulls.
- */
-
 import { Emitter, type Event } from '#/_base/event';
 import { type CollectionRecord, type CollectionView } from '#/_base/di/collection';
 import {

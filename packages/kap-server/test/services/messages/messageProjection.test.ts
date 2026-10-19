@@ -1,14 +1,8 @@
-/**
- * Unit tests for the server-layer `ContextMessage → wire Message` projection
- * (`services/messages/messageProjection.ts`) — the shape served on the
- * `messages`, `snapshot`, and `sessions` (`:undo`) v1 surfaces.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 
-import { toProtocolMessage } from '../../../src/services/messages/messageProjection';
+import { projectPromptContentParts, toProtocolMessage } from '../../../src/services/messages/messageProjection';
 
 const SESSION_ID = 'session_1';
 const CREATED_AT = 1_700_000_000_000;
@@ -40,6 +34,81 @@ describe('toProtocolMessage', () => {
     ]);
   });
 
+  it('projects a daemon-ref image part to a session_media source', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is this?' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: 'what is this?' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('preserves media names in live and prompt projections', () => {
+    const part = {
+      type: 'image_url' as const,
+      imageUrl: { url: 'kimi-file://file_9', id: 'file_9', name: 'photo.png' },
+    };
+    const msg: ContextMessage = { role: 'user', content: [part], toolCalls: [] };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' }, name: 'photo.png' },
+    ]);
+    expect(projectPromptContentParts([part])).toEqual([
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' }, name: 'photo.png' },
+    ]);
+  });
+
+  it('keeps a legacy tag+ref pair as text plus the ref projection', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '<image path="/cache/pic.png"></image>' },
+        { type: 'image_url', imageUrl: { url: 'kimi-file://file_9?path=%2Fcache%2Fpic.png' } },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<image path="/cache/pic.png"></image>' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'file_9' } },
+    ]);
+  });
+
+  it('keeps a bare <media path> tag as text in user messages', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: '<video path="/cache/clip.mp4">' },
+        { type: 'text', text: 'watch this' },
+      ],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<video path="/cache/clip.mp4">' },
+      { type: 'text', text: 'watch this' },
+    ]);
+  });
+
+  it('passes assistant tag-shaped text through verbatim', () => {
+    const msg: ContextMessage = {
+      role: 'assistant',
+      content: [{ type: 'text', text: '<image path="/cache/out.png"></image>' }],
+      toolCalls: [],
+    };
+
+    expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
+      { type: 'text', text: '<image path="/cache/out.png"></image>' },
+    ]);
+  });
+
   it('projects a kimi-file video reference to a structured file source without leaking the path', () => {
     const msg: ContextMessage = {
       role: 'user',
@@ -50,7 +119,7 @@ describe('toProtocolMessage', () => {
     };
 
     expect(toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT).content).toEqual([
-      { type: 'video', source: { kind: 'file', file_id: 'file_9' } },
+      { type: 'video', source: { kind: 'session_media', file_id: 'file_9' } },
     ]);
   });
 
@@ -153,5 +222,13 @@ describe('toProtocolMessage', () => {
     expect(toProtocolMessage(SESSION_ID, 0, userText('a'), CREATED_AT)).not.toHaveProperty(
       'metadata',
     );
+  });
+
+  it('retains composer metadata separately from the projected model content', () => {
+    const clientMetadata = [{ composer: { version: 1, refs: ['example-ref'] } }];
+    const msg: ContextMessage = { ...userText('visible'), origin: { kind: 'user', clientMetadata } };
+    const projected = toProtocolMessage(SESSION_ID, 0, msg, CREATED_AT);
+    expect(projected.content).toEqual([{ type: 'text', text: 'visible' }]);
+    expect(projected.metadata).toEqual({ origin: { kind: 'user', clientMetadata } });
   });
 });
