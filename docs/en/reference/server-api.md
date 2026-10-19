@@ -72,6 +72,8 @@ Error codes are grouped by band:
 | `500xx` | Server internal error | `50001` uncaught exception, `50003` persistence failure |
 | `6xxxx` / `7xxxx` / `8xxxx` | Tool runtime / LLM provider / MCP passthrough errors; `msg` carries the upstream text | |
 
+`40930` and `40931` only appear when the same session is open in multiple clients. `40931` means another Kimi Code process is writing to the session right now; wait for it to go idle, then retry. `40930` means the session was updated by another client: the server has already reloaded it and pushed a fresh transcript to subscribers, the rejected input was not persisted, and the caller may resubmit it as-is.
+
 ### Pagination
 
 List endpoints come in two styles:

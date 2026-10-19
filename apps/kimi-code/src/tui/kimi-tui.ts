@@ -2152,7 +2152,7 @@ export class KimiTUI {
         const reloaded = await reloadSessionAfterStale(
           this,
           session.id,
-          'Loaded updates from another client. Your message is back in the input.',
+          'Loaded updates from another client. Your message was resent.',
           () => {
             const parked = this.state.queuedMessages;
             this.state.queuedMessages = [];
@@ -2165,6 +2165,11 @@ export class KimiTUI {
           },
         );
         this.imageStore.restore(mediaSnapshot);
+        this.setAppState({ streamingPhase: 'idle' });
+        if (reloaded) {
+          retry();
+          return;
+        }
         const typedDuringReload = this.state.editor.getText();
         restore();
         if (typedDuringReload.trim().length > 0) {
@@ -2173,8 +2178,6 @@ export class KimiTUI {
             restored.length > 0 ? `${restored}\n${typedDuringReload}` : typedDuringReload,
           );
         }
-        this.setAppState({ streamingPhase: 'idle' });
-        if (reloaded) this.drainQueueIfIdle();
       })();
       return true;
     }
@@ -2788,16 +2791,21 @@ export class KimiTUI {
     initialUserTurnCount = session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
   ): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
-    await previous?.close();
-    // A session switch abandons the previous session's in-flight staging
-    // leases and retires its history-owned cache copies. Do this at the
-    // boundary so retired paths cannot accumulate until process shutdown.
-    // Only when actually replacing a live session, though: on lazy first
-    // creation the outstanding lease belongs to the new session's first
-    // prompt, whose dispatch continues right after this — releasing it here
-    // would delete the staged media (e.g. a pasted image's daemon upload)
-    // before the engine's intake can read it.
-    if (previous !== undefined) this.staging.releaseAll();
+    // An in-place reload (e.g. after a stale conflict) returns the same
+    // Session object: closing it here would mark it closed for every later
+    // call, and its staging leases are still owned by the current session.
+    if (previous !== session) {
+      await previous?.close();
+      // A session switch abandons the previous session's in-flight staging
+      // leases and retires its history-owned cache copies. Do this at the
+      // boundary so retired paths cannot accumulate until process shutdown.
+      // Only when actually replacing a live session, though: on lazy first
+      // creation the outstanding lease belongs to the new session's first
+      // prompt, whose dispatch continues right after this — releasing it here
+      // would delete the staged media (e.g. a pasted image's daemon upload)
+      // before the engine's intake can read it.
+      if (previous !== undefined) this.staging.releaseAll();
+    }
     this.session = session;
     this.surveyController.seedUserTurnCount(initialUserTurnCount);
     this.harness.setTelemetryContext({ sessionId: session.id });

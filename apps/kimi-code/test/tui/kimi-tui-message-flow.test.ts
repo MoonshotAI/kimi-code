@@ -958,7 +958,7 @@ describe('KimiTUI message flow', () => {
     ]);
   });
 
-  it('merges input typed during a stale reload instead of overwriting it (v2 engine)', async () => {
+  it('keeps input typed during a stale reload while resending the original message (v2 engine)', async () => {
     const reloaded = makeSession({ id: 'ses-1' });
     let finishReload!: (value: unknown) => void;
     const session = makeSession({
@@ -989,10 +989,10 @@ describe('KimiTUI message flow', () => {
     finishReload(reloaded);
 
     await vi.waitFor(() => {
-      expect(driver.state.appState.streamingPhase).toBe('idle');
+      expect(reloaded.prompt).toHaveBeenCalled();
     });
-    expect(driver.state.editor.getText()).toBe('original message\ntyped during reload');
-    expect(reloaded.prompt).not.toHaveBeenCalled();
+    expect(reloaded.prompt.mock.calls[0]?.[0]).toBe('original message');
+    expect(driver.state.editor.getText()).toBe('typed during reload');
   });
 
   it('sends messages queued during a stale reload to the reloaded session (v2 engine)', async () => {
@@ -1028,8 +1028,32 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(reloaded.prompt).toHaveBeenCalled();
     });
-    expect(reloaded.prompt.mock.calls[0]?.[0]).toBe('queued while reloading');
-    expect(driver.state.editor.getText()).toBe('original message');
+    expect(reloaded.prompt.mock.calls[0]?.[0]).toBe('original message');
+    expect(driver.state.queuedMessages).toHaveLength(1);
+    expect(driver.state.editor.getText()).toBe('');
+  });
+
+  it('does not close the active session when a stale reload returns the same session object (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-1',
+      prompt: vi
+        .fn()
+        .mockRejectedValueOnce(new KimiError(ErrorCodes.SESSION_STALE, 'stale'))
+        .mockResolvedValue(undefined),
+    });
+    const { driver, harness } = await makeDriver(session, {
+      reloadSession: vi.fn(async () => session),
+    });
+
+    driver.handleUserInput('original message');
+    await vi.waitFor(() => {
+      expect(harness.reloadSession).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(2);
+    });
+    expect(session.prompt.mock.calls[1]?.[0]).toBe('original message');
+    expect(session.close).not.toHaveBeenCalled();
   });
 
   it.each([
