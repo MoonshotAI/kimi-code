@@ -72,7 +72,7 @@ Error codes are grouped by band:
 | `500xx` | Server internal error | `50001` uncaught exception, `50003` persistence failure |
 | `6xxxx` / `7xxxx` / `8xxxx` | Tool runtime / LLM provider / MCP passthrough errors; `msg` carries the upstream text | |
 
-`40931` and `40932` only appear when the same session is open in multiple clients. `40931` means another Kimi Code process is writing to the session right now; wait for it to go idle, then retry. `40932` means the session was updated by another client: the server has already reloaded it and pushed a fresh transcript to subscribers, the rejected input was not persisted, and the caller may resubmit it as-is.
+`40931` and `40932` only appear when the same session is open in multiple clients. `40931` means another Kimi Code process is writing to the session right now; wait for it to go idle, then retry. When the session was updated by another client, prompt submission, skill activation, and compaction reload it on the server, push a fresh transcript to subscribers, and run the request again, so callers never see `40932` from them. Only undo returns `40932`: the server has already reloaded the session and nothing was undone; let the user review the refreshed history before undoing again.
 
 ### Pagination
 
