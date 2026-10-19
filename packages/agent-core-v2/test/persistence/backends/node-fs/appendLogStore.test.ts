@@ -890,7 +890,6 @@ describe('AppendLogStore session lock integration', () => {
   });
 
   it('does not report external modification while an own append is in flight', async () => {
-    const storage = new FileStorageService(homeDir);
     const realAppend = storage.append.bind(storage);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -900,27 +899,20 @@ describe('AppendLogStore session lock integration', () => {
       await realAppend(scope, key, data, options);
       await gate;
     };
-    const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const gatedLog = ix.get(IAppendLogStore);
 
-    for await (const _ of gatedLog.read(SCOPE, KEY)) {
-      void _;
-    }
-    gatedLog.append<Rec>(SCOPE, KEY, { n: 1 });
-    const flushing = gatedLog.flush();
+    await readAll();
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    const flushing = log.flush();
     await vi.waitFor(() => {
       expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
     });
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
     release();
     await flushing;
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 
   it('does not report external modification before an own append lands', async () => {
-    const storage = new FileStorageService(homeDir);
     const realAppend = storage.append.bind(storage);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -930,25 +922,18 @@ describe('AppendLogStore session lock integration', () => {
       await gate;
       await realAppend(scope, key, data, options);
     };
-    const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const gatedLog = ix.get(IAppendLogStore);
 
-    for await (const _ of gatedLog.read(SCOPE, KEY)) {
-      void _;
-    }
-    gatedLog.append<Rec>(SCOPE, KEY, { n: 1 });
-    const flushing = gatedLog.flush();
+    await readAll();
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    const flushing = log.flush();
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
     release();
     await flushing;
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 
   it('does not report external modification in the middle of a chunked append', async () => {
-    const storage = new FileStorageService(homeDir);
     const realAppend = storage.append.bind(storage);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -960,26 +945,19 @@ describe('AppendLogStore session lock integration', () => {
       await gate;
       await realAppend(scope, key, data.subarray(half), options);
     };
-    const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const gatedLog = ix.get(IAppendLogStore);
 
-    for await (const _ of gatedLog.read(SCOPE, KEY)) {
-      void _;
-    }
-    gatedLog.append<Rec>(SCOPE, KEY, { n: 1234567 });
-    const flushing = gatedLog.flush();
+    await readAll();
+    log.append<Rec>(SCOPE, KEY, { n: 1234567 });
+    const flushing = log.flush();
     await vi.waitFor(() => {
       expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
     });
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
     release();
     await flushing;
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
   it('does not report external modification while an own rewrite is in flight', async () => {
-    const storage = new FileStorageService(homeDir);
     const realWrite = storage.write.bind(storage);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -989,21 +967,15 @@ describe('AppendLogStore session lock integration', () => {
       await realWrite(scope, key, data, options);
       await gate;
     };
-    const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, storage);
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    const gatedLog = ix.get(IAppendLogStore);
 
-    for await (const _ of gatedLog.read(SCOPE, KEY)) {
-      void _;
-    }
-    const rewriting = gatedLog.rewrite<Rec>(SCOPE, KEY, [{ n: 1 }, { n: 2 }]);
+    await readAll();
+    const rewriting = log.rewrite<Rec>(SCOPE, KEY, [{ n: 1 }, { n: 2 }]);
     await vi.waitFor(() => {
       expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
     });
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
     release();
     await rewriting;
-    expect(gatedLog.externallyModified(SCOPE, KEY)).toBe(false);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 });
