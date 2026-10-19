@@ -17,6 +17,8 @@ import { ISkillDiscovery } from '#/features/skill/catalog/skillDiscovery';
 
 export type HostUiCapability = 'update_panel';
 
+export type HostKind = 'server' | 'cli';
+
 export interface HostArgs {
   readonly agentFiles?: readonly string[];
   readonly skillDirs?: readonly string[];
@@ -24,6 +26,7 @@ export interface HostArgs {
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
   readonly nonInteractive?: boolean;
+  readonly hostKind?: HostKind;
   readonly uiCapabilities?: readonly HostUiCapability[];
 }
 
@@ -34,6 +37,7 @@ export interface HostArgsInput {
   readonly displayName?: string;
   readonly replyStyleGuide?: string;
   readonly nonInteractive?: boolean;
+  readonly hostKind?: HostKind;
   readonly uiCapabilities?: readonly HostUiCapability[];
 }
 
@@ -45,6 +49,7 @@ export function resolveHostArgs(input: HostArgsInput | undefined): HostArgs {
     displayName: input?.displayName,
     replyStyleGuide: input?.replyStyleGuide,
     nonInteractive: input?.nonInteractive,
+    hostKind: input?.hostKind,
     uiCapabilities: input?.uiCapabilities,
   };
 }

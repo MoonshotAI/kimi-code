@@ -210,6 +210,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         skillDirs: opts.skillDirs,
         displayName: opts.hostIdentity.displayName,
         replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+        hostKind: 'server',
         uiCapabilities: [NOTIFY_USER_UI_CAPABILITY],
       },
     },

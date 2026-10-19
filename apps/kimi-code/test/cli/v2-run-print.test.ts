@@ -23,6 +23,7 @@ import {
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
+  ISessionMetadata,
   ITelemetryService,
   IWorkspaceInstanceManager,
   makeAgentScopeContext,
@@ -236,6 +237,19 @@ function makeFakeHarness() {
         handleOf: vi.fn(() => agent),
       },
     ],
+    [
+      ISessionMetadata,
+      {
+        read: vi.fn(async () => ({
+          id: 'ses_v2',
+          createdAt: 1,
+          updatedAt: 1,
+          archived: false,
+          custom: { existing: true },
+        })),
+        update: vi.fn(async () => {}),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -327,6 +341,7 @@ describe('runV2Print', () => {
     // Pin the telemetry kill-switch to "unset" so the host environment cannot
     // flip the default telemetry-on path these tests exercise.
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
+    vi.stubEnv('KIMI_CODE_INVOKED_BY', '');
     // `vi.clearAllMocks` keeps implementations, so re-pin the default here.
     mocks.loadMcpServersDetailed.mockImplementation(async () => ({
       servers: {},
@@ -342,7 +357,7 @@ describe('runV2Print', () => {
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices, sessionServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -354,10 +369,31 @@ describe('runV2Print', () => {
       message: { role: 'user', content: [{ type: 'text', text: 'say hello' }] },
       meta: { origin: { kind: 'user' }, tracked: true },
     });
+    const metadata = sessionServices.get(ISessionMetadata) as { update: ReturnType<typeof vi.fn> };
+    expect(metadata.update).toHaveBeenCalledWith({
+      custom: { existing: true, source: 'cli-print' },
+    });
     // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('records KIMI_CODE_INVOKED_BY as the session source when set', async () => {
+    vi.stubEnv('KIMI_CODE_INVOKED_BY', 'external-agent');
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, sessionServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const metadata = sessionServices.get(ISessionMetadata) as { update: ReturnType<typeof vi.fn> };
+    expect(metadata.update).toHaveBeenCalledWith({
+      custom: { existing: true, source: 'external-agent' },
+    });
   });
 
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {

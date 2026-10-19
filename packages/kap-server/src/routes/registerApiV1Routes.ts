@@ -22,6 +22,7 @@ import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
+import { registerExternalSessionsRoutes } from './externalSessions';
 import { registerMetaRoute } from './meta';
 import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
@@ -128,6 +129,10 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         { sessionEventCursor: (sessionId) => opts.broadcaster.getCursor(sessionId) },
+      );
+      registerExternalSessionsRoutes(
+        apiV1 as unknown as Parameters<typeof registerExternalSessionsRoutes>[0],
+        core,
       );
       registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(
