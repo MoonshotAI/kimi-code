@@ -25,6 +25,7 @@ import {
   ISessionContext,
   ISessionIndex,
   ISessionLockService,
+  ISessionRunGate,
   ISessionManager,
   ITelemetryService,
   IWorkspaceInstanceManager,
@@ -253,6 +254,13 @@ function makeFakeHarness() {
         cwd: process.cwd(),
       }),
     ],
+    [
+      ISessionRunGate,
+      {
+        begin: vi.fn(() => {}),
+        tryHold: vi.fn(() => true),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -392,10 +400,12 @@ describe('runV2Print', () => {
       list: ReturnType<typeof vi.fn>;
     };
     lifecycle.list.mockReturnValue([{ agentId: 'main' }]);
-    const log = appServices.get(IAppendLogStore) as {
-      externallyModified: ReturnType<typeof vi.fn>;
+    const runGate = sessionServices.get(ISessionRunGate) as {
+      begin: ReturnType<typeof vi.fn>;
     };
-    log.externallyModified.mockReturnValueOnce(true);
+    runGate.begin.mockImplementationOnce(() => {
+      throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
+    });
     const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
     loop.submit
       .mockImplementationOnce(() => {

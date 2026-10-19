@@ -9,6 +9,7 @@ import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { SessionErrors } from '#/session/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -58,6 +59,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
   ) {
     super();
     this._register({
@@ -126,15 +128,6 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
     }
     this.lastRefreshToken = token;
-  }
-
-  private tryHoldForWrite(): boolean {
-    try {
-      this.sessionLocks.beginRun(this.ctx.sessionId);
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   async setTitle(title: string): Promise<void> {
@@ -244,7 +237,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
           agents: this.data.agents ?? {},
           custom: this.data.custom ?? {},
         };
-        if (this.tryHoldForWrite()) {
+        if (this.runGate.tryHold()) {
           await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
         }
       }
@@ -261,7 +254,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
       agents: {},
       custom: {},
     };
-    if (this.tryHoldForWrite()) {
+    if (this.runGate.tryHold()) {
       await this.store.set(this.scope, META_KEY, encodeSessionMeta(this.data));
     }
     this.mirrorToReadModel();

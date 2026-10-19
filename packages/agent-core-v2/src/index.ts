@@ -176,6 +176,8 @@ export * from '#/session/sessionActivity/sessionActivityService';
 export * from '#/session/sessionActivity/sessionLockReleaseService';
 export * from '#/session/sessionActivity/sessionOutcomeMirror';
 export * from '#/session/sessionActivity/sessionOutcomeMirrorService';
+export * from '#/session/sessionActivity/sessionRunGate';
+export * from '#/session/sessionActivity/sessionRunGateService';
 export * from '#/session/sessionTitle/agentTitlePromptSource';
 import '#/session/sessionTitle/agentTitlePromptSourceService';
 export * from '#/session/sessionTitle/sessionTitle';

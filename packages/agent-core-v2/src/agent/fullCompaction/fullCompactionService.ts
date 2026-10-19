@@ -45,10 +45,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
 import { IEventDispatcher } from '#/state/eventDispatcher';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { renderCompactionInstruction } from './compactionInstruction';
 import { renderContextRecoveryPointer } from './contextRecovery';
 import {
@@ -160,10 +157,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentStateService private readonly states: IAgentStateService,
     @IWireService private readonly wire: IWireService,
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @ISessionLockService private readonly sessionLocks: ISessionLockService,
-    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
   ) {
     super();
     this.states.contributeState(fullCompactionKey);
@@ -342,12 +336,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     if (this._compacting) return false;
     const data: CompactionBeginData = { source: input.source, instruction: input.instruction };
     if (data.source === 'manual') {
-      beginSessionRun(
-        this.sessionLocks,
-        this.appendLogStore,
-        this.sessionContext,
-        this.agentLifecycle,
-      );
+      this.runGate.begin();
     }
     if (!this.reserveCompactionSlot(data.source)) return false;
 

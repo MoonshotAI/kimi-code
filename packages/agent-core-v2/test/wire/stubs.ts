@@ -13,6 +13,9 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+
+import { stubSessionRunGate } from '../stubs';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -120,6 +123,7 @@ export function registerTestAgentWire(
   if (previousLocks !== undefined) {
     ix.set(ISessionLockService, previousLocks as ISessionLockService);
   }
+  ix.stub(ISessionRunGate, stubSessionRunGate(ix.get(ISessionLockService)));
   ix.set(IWireService, new SyncDescriptor(WireService));
   const eventBus = ix.get(IEventBus);
   if (typeof (eventBus as Partial<ISessionEventBus>).activateAgent === 'function') {
@@ -140,7 +144,9 @@ export function registerTestAgentWireServices(
   registration.defineInstance(ILogService, noopLogger);
   registration.defineInstance(ITelemetryService, noopTelemetryService);
   registration.defineInstance(ISessionContext, stubSessionContext());
-  registration.defineInstance(ISessionLockService, new InMemorySessionLockService());
+  const locks = new InMemorySessionLockService();
+  registration.defineInstance(ISessionLockService, locks);
+  registration.defineInstance(ISessionRunGate, stubSessionRunGate(locks));
   registration.defineInstance(IAgentStateService, new AgentStateService());
   registration.define(IWireService, WireService);
   registration.define(IEventDispatcher, EventDispatcherService);

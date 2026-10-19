@@ -130,6 +130,7 @@ import {
   InMemoryStorageService,
   InMemorySessionLockService,
   ISessionLockService,
+  ISessionRunGate,
   AgentFullCompactionService,
   IAppendLogStore,
   IFileSystemStorageService,
@@ -190,6 +191,7 @@ import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { stubSessionRunGate } from '../stubs';
 import { IEventService } from '#/app/event/event';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -1147,7 +1149,9 @@ export class AgentTestContext {
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, []);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());
-          reg.defineInstance(ISessionLockService, new InMemorySessionLockService());
+          const sessionLocks = new InMemorySessionLockService();
+          reg.defineInstance(ISessionLockService, sessionLocks);
+          reg.defineInstance(ISessionRunGate, stubSessionRunGate(sessionLocks));
           reg.define(IBlobStore, BlobStoreService);
           reg.defineInstance(
             IConfigService,

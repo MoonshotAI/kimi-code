@@ -43,6 +43,8 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import {
   cancelInteractionsForTurn,
@@ -124,7 +126,7 @@ import {
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubAgentContext } from '../../agent/agentContext/stubs';
-import { stubProviderDiscovery } from '../../stubs';
+import { stubProviderDiscovery, stubSessionRunGate } from '../../stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -551,6 +553,7 @@ describe('AgentLifecycleService', () => {
         },
       },
     );
+    ix.stub(ISessionRunGate, stubSessionRunGate(new InMemorySessionLockService()));
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {

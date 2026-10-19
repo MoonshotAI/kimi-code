@@ -43,10 +43,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IFileService } from '#/app/file/fileService';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { ISessionLockService, beginSessionRun } from '#/persistence/interface/sessionLock';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
   TurnInterruptedEvent,
@@ -173,10 +170,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IPluginService private readonly plugins: IPluginService,
-    @ISessionContext private readonly sessionContext: ISessionContext,
-    @ISessionLockService private readonly sessionLocks: ISessionLockService,
-    @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
-    @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
+    @ISessionRunGate private readonly runGate: ISessionRunGate,
   ) {
     super();
     this.states.contributeState(turnKey);
@@ -309,12 +303,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult {
     if (this.disposing) throw abortError('Agent loop disposed');
-    beginSessionRun(
-      this.sessionLocks,
-      this.appendLogStore,
-      this.sessionContext,
-      this.agentLifecycle,
-    );
+    this.runGate.begin();
     const meta = input.meta;
     const id = meta?.promptId ?? newMessageId();
     const origin = (meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };

@@ -31,17 +31,14 @@ import {
   IEventDispatcher,
   IHostFileSystem,
   IOAuthToolkit,
-  ISessionContext,
   ISessionIndex,
-  ISessionLockService,
   ISessionManager,
+  ISessionRunGate,
   ITelemetryService,
   IWorkspaceInstanceManager,
-  IAppendLogStore,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
   applyPrintModeConfigDefaults,
-  beginSessionRun,
   bootstrap,
   closeSessionById,
   createCloudAppender,
@@ -345,7 +342,7 @@ export async function runV2Print(
       try {
         if (preflight) {
           preflight = false;
-          preflightSessionRun(app, resolved.session);
+          preflightSessionRun(resolved.session);
         }
         runAttempts++;
         await runTurnOnce();
@@ -693,14 +690,8 @@ function reportSessionOccupied(
   process.exitCode = PRINT_EXIT_SESSION_OCCUPIED;
 }
 
-function preflightSessionRun(app: Scope, session: ISessionScopeHandle): void {
-  const ctx = session.accessor.get(ISessionContext);
-  beginSessionRun(
-    app.accessor.get(ISessionLockService),
-    app.accessor.get(IAppendLogStore),
-    ctx,
-    session.accessor.get(IAgentLifecycleService),
-  );
+function preflightSessionRun(session: ISessionScopeHandle): void {
+  session.accessor.get(ISessionRunGate).begin();
 }
 
 async function ensureNativeGoal(

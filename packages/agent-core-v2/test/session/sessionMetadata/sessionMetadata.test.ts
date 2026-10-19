@@ -22,9 +22,11 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 
 import { stubSessionIndexMirror } from '../../app/sessionIndex/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubSessionRunGate } from '../../stubs';
 
 const META_SCOPE = 'sessions/wd_test/s1/session-meta';
 
@@ -76,7 +78,9 @@ describe('SessionMetadata', () => {
     ix.stub(ILogService, stubLog());
     ix.stub(ISessionContext, makeContext());
     ix.stub(ISessionIndexMirror, mirror);
-    ix.stub(ISessionLockService, new InMemorySessionLockService());
+    const locks = new InMemorySessionLockService();
+    ix.stub(ISessionLockService, locks);
+    ix.stub(ISessionRunGate, stubSessionRunGate(locks, 's1'));
     ix.set(ISessionStateService, new SyncDescriptor(SessionStateService));
     ix.set(IFileSystemStorageService, new SyncDescriptor(InMemoryStorageService));
     ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
