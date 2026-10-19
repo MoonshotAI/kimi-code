@@ -2160,15 +2160,17 @@ export class KimiTUI {
     const session = this.session;
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
     if (manual ? !this.canManuallySteer() : !this.canSteerQueueIntoRunningTurn()) return;
-    // A queued /compact is a FIFO barrier for manual steering: messages
-    // behind it must wait for the compaction, not jump into the
+    // A queued /compact is a FIFO barrier for steering, manual or automatic:
+    // messages behind it must wait for the compaction, not jump into the
     // pre-compaction context.
     const firstCompact = this.state.queuedMessages.findIndex((message) => message.mode === 'compact');
+    const beforeBarrier = this.state.queuedMessages.slice(
+      0,
+      firstCompact === -1 ? this.state.queuedMessages.length : firstCompact,
+    );
     const batch = manual
-      ? this.state.queuedMessages
-          .slice(0, firstCompact === -1 ? this.state.queuedMessages.length : firstCompact)
-          .filter((message) => message.mode !== 'bash')
-      : [...this.state.queuedMessages];
+      ? beforeBarrier.filter((message) => message.mode !== 'bash')
+      : beforeBarrier;
     if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
     const pending = [...batch];
     const sendNext = (): void => {
