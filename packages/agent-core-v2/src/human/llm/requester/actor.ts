@@ -12,8 +12,6 @@ import type {
   LlmRequester,
 } from './requester';
 import type { LlmRecoveryRecord } from './recovery';
-import { createStreamIdleWatchdog, type StreamIdleWatchdog } from './streamIdleWatchdog';
-import { resolveLlmStreamIdleTimeoutMs } from './timeout';
 
 export interface LlmInput {
   readonly config: LlmRequestConfig;
@@ -56,21 +54,13 @@ export type LlmEvent =
       statusCode?: number;
     };
 
-const IDLE_WATCHDOG_TERMINAL_EVENTS: ReadonlySet<LlmRequestEvent['type']> = new Set([
-  'llm.done',
-  'llm.failed.syntax',
-  'llm.failed.remote',
-]);
-
 export function createRequestActor(
   requester: LlmRequester,
   messageResolvers: readonly MessageResolver[] = [],
 ) {
   return fromCallback<LlmEvent, LlmInput>(({ input, sendBack }) => {
     void (async () => {
-      let watchdog: StreamIdleWatchdog | undefined;
       try {
-        const idleTimeoutMs = resolveLlmStreamIdleTimeoutMs();
         const credential = input.config.credentialProvider?.resolve();
         const config =
           credential === undefined
@@ -88,44 +78,17 @@ export function createRequestActor(
             signal: input.signal,
           });
         }
-        watchdog =
-          idleTimeoutMs === undefined
-            ? undefined
-            : createStreamIdleWatchdog({
-                idleTimeoutMs,
-                upstream: input.signal,
-                onIdle: () => {
-                  sendBack({
-                    type: 'llm.failed.remote',
-                    error: {
-                      kind: 'timeout',
-                      message: `LLM request stalled: no stream events for ${idleTimeoutMs}ms; aborted the attempt to retry`,
-                    },
-                  });
-                },
-              });
-        const active = watchdog;
         await requester.generate(
           config,
           { ...input.content, messages },
-          active === undefined
-            ? { signal: input.signal, onEvent: sendBack }
-            : {
-                signal: active.signal,
-                onEvent: (event) => {
-                  if (active.triggered) return;
-                  if (IDLE_WATCHDOG_TERMINAL_EVENTS.has(event.type)) active.cancel();
-                  else active.reset();
-                  sendBack(event);
-                },
-              },
+          {
+            signal: input.signal,
+            onEvent: sendBack,
+          },
         );
       } catch (error) {
-        if (watchdog?.triggered === true) return;
         if (isAbortError(error) || input.signal.aborted) return;
         sendBack({ type: 'llm.failed.remote', error: toLlmErrorMessage(error), rawError: error });
-      } finally {
-        watchdog?.cancel();
       }
     })();
   });

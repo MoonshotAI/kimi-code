@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isError2 } from '#/_base/errors/errors';
 import {
@@ -15,12 +15,17 @@ import type {
   LlmRequester,
 } from '#human/llm/requester/requester';
 import {
+  DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS,
+  LLM_STREAM_IDLE_TIMEOUT_ENV,
+} from '#human/llm/requester/timeout';
+import {
   APIEmptyResponseError,
   APIStatusError,
   ChatProviderError,
   PROVIDER_API_ERROR_CODE,
   PROVIDER_AUTH_ERROR_CODE,
   isAbortError,
+  llmMessageFromError,
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#/llm-adapter/contract/message';
 import type { Model } from '#/llm-adapter/model/catalog';
@@ -117,6 +122,9 @@ async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelR
 }
 
 const INPUT = { systemPrompt: 'sys', tools: [], messages: [] };
+
+const MODEL_REQUESTER_STREAM_IDLE_WATCHDOG_OFF = '0';
+process.env[LLM_STREAM_IDLE_TIMEOUT_ENV] ??= MODEL_REQUESTER_STREAM_IDLE_WATCHDOG_OFF;
 
 describe('ModelRequesterImpl request execution', () => {
   it('maps ModelRequestParams onto LlmRequestConfig, content and control', async () => {
@@ -494,5 +502,199 @@ describe('buildStreamTiming', () => {
       clientConsumeMs: 60,
       clientBlockedMs: 80,
     });
+  });
+});
+
+describe('ModelRequesterImpl stream idle watchdog', () => {
+  const IDLE = DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    savedEnv = process.env[LLM_STREAM_IDLE_TIMEOUT_ENV];
+    delete process.env[LLM_STREAM_IDLE_TIMEOUT_ENV];
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    if (savedEnv === undefined) delete process.env[LLM_STREAM_IDLE_TIMEOUT_ENV];
+    else process.env[LLM_STREAM_IDLE_TIMEOUT_ENV] = savedEnv;
+  });
+
+  function hangingRequester(onAbort?: (control: LlmRequestControl) => void): FakeLlmRequester {
+    const requester = new FakeLlmRequester();
+    requester.handler = (callIndex) =>
+      new Promise<void>((resolve) => {
+        const control = requester.calls[callIndex]?.control;
+        control?.signal.addEventListener(
+          'abort',
+          () => {
+            if (onAbort !== undefined) {
+              onAbort(control);
+            } else {
+              control.onEvent?.({
+                type: 'llm.failed.remote',
+                error: { kind: 'abort', message: 'The operation was aborted.' },
+              });
+            }
+            resolve();
+          },
+          { once: true },
+        );
+      });
+    return requester;
+  }
+
+  function requestEvents(
+    requester: FakeLlmRequester,
+    signal: AbortSignal = new AbortController().signal,
+  ): Promise<ModelRequestEvent[]> {
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
+    return collect(impl.request(INPUT, signal));
+  }
+
+  function trackSettlement(pending: Promise<unknown>): () => boolean {
+    let settled = false;
+    void pending.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    return () => settled;
+  }
+
+  it('aborts a stalled stream and surfaces a retryable timeout', async () => {
+    const requester = hangingRequester();
+    const pending = requestEvents(requester);
+    const failure = pending.catch((error: unknown) => error);
+    const settled = trackSettlement(pending);
+
+    await vi.advanceTimersByTimeAsync(IDLE - 1);
+    expect(settled()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(llmMessageFromError(await failure)).toMatchObject({
+      kind: 'timeout',
+      message: expect.stringContaining(`${IDLE}ms`),
+    });
+    expect(requester.calls[0]?.control.signal.aborted).toBe(true);
+  });
+
+  it('stays quiet while headers and parts keep arriving', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_i, emit) =>
+      new Promise<void>((resolve) => {
+        let waves = 0;
+        const emitNext = () => {
+          waves += 1;
+          if (waves <= 3) {
+            emit({ type: 'llm.streaming.headers', headers: {} });
+            setTimeout(emitNext, IDLE / 2);
+            return;
+          }
+          emitAll(emit, [
+            { type: 'llm.streaming.part', part: { type: 'text', text: 'late' } },
+            {
+              type: 'llm.streaming.finish',
+              finish: { finishReason: 'completed', rawFinishReason: 'stop' },
+            },
+            { type: 'llm.done' },
+          ]);
+          resolve();
+        };
+        emit({ type: 'llm.sent' });
+        setTimeout(emitNext, IDLE / 2);
+      });
+    const pending = requestEvents(requester);
+
+    await vi.advanceTimersByTimeAsync(IDLE * 2);
+    const events = await pending;
+    expect(events.some((event) => event.type === 'finish')).toBe(true);
+    const count = events.length;
+    await vi.advanceTimersByTimeAsync(IDLE * 3);
+    expect(events).toHaveLength(count);
+  });
+
+  it('keeps a caller abort as a non-retryable abort, not a watchdog timeout', async () => {
+    const controller = new AbortController();
+    const requester = hangingRequester();
+    const pending = requestEvents(requester, controller.signal);
+
+    const failure = pending.catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(1_000);
+    controller.abort();
+    expect(isAbortError(await failure)).toBe(true);
+    expect(llmMessageFromError(failure)).toBeUndefined();
+
+    await vi.advanceTimersByTimeAsync(IDLE * 3);
+  });
+
+  it('keeps the timeout classification when the provider reports an abort right after', async () => {
+    const requester = hangingRequester((control) => {
+      control.onEvent?.({
+        type: 'llm.failed.remote',
+        error: { kind: 'abort', message: 'The operation was aborted.' },
+      });
+    });
+    const pending = requestEvents(requester);
+    const failure = pending.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(llmMessageFromError(await failure)).toMatchObject({ kind: 'timeout' });
+  });
+
+  it('reports a real provider failure instead of a timeout', async () => {
+    const requester = new FakeLlmRequester();
+    requester.handler = (_i, emit) =>
+      new Promise<void>((resolve) => {
+        setTimeout(() => {
+          emit({
+            type: 'llm.failed.remote',
+            error: {
+              kind: 'status',
+              statusCode: 500,
+              message: 'server error',
+              requestId: null,
+              retryAfterMs: null,
+              headers: null,
+            },
+          });
+          resolve();
+        }, IDLE / 2);
+      });
+    const pending = requestEvents(requester);
+    const failure = pending.catch((error: unknown) => error);
+
+    await vi.advanceTimersByTimeAsync(IDLE);
+    expect(llmMessageFromError(await failure)).toMatchObject({ kind: 'status', statusCode: 500 });
+  });
+
+  it('never fires when the watchdog is disabled', async () => {
+    process.env[LLM_STREAM_IDLE_TIMEOUT_ENV] = '0';
+    const controller = new AbortController();
+    const requester = hangingRequester();
+    const pending = requestEvents(requester, controller.signal);
+    const settled = trackSettlement(pending);
+
+    await vi.advanceTimersByTimeAsync(IDLE * 10);
+    expect(settled()).toBe(false);
+    controller.abort();
+    await pending.catch(() => undefined);
+  });
+
+  it('fails the request loudly when the env var is invalid', async () => {
+    process.env[LLM_STREAM_IDLE_TIMEOUT_ENV] = 'abc';
+    const requester = new FakeLlmRequester();
+    requester.handler = (_i, emit) => {
+      textStream(emit);
+    };
+
+    await expect(requestEvents(requester)).rejects.toThrowError(LLM_STREAM_IDLE_TIMEOUT_ENV);
   });
 });
