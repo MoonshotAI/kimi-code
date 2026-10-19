@@ -30,7 +30,7 @@ export async function sendSessionError(
     reply.send({
       code: ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE,
       msg: error.message,
-      data: { path: path ?? null, reason },
+      data: { path, reason },
       request_id: req.id,
     });
     return;

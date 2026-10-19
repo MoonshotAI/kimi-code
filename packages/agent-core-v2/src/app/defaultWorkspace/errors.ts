@@ -24,7 +24,6 @@ export type DefaultWorkspaceUnavailableReason =
   | 'no_space'
   | 'read_only'
   | 'invalid_path'
-  | 'documents_unavailable'
   | 'unknown';
 
 export const DEFAULT_WORKSPACE_PROBLEM_MESSAGES: Readonly<
@@ -36,12 +35,11 @@ export const DEFAULT_WORKSPACE_PROBLEM_MESSAGES: Readonly<
   no_space: 'the disk is full',
   read_only: 'the file system is read-only',
   invalid_path: 'the path is not absolute or is too long',
-  documents_unavailable: 'the Documents folder cannot be located',
   unknown: 'the folder cannot be created',
 };
 
 export type DefaultWorkspaceUnavailableDetails = {
-  readonly path: string | undefined;
+  readonly path: string;
   readonly reason: DefaultWorkspaceUnavailableReason;
 };
 

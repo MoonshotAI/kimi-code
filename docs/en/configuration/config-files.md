@@ -487,7 +487,7 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 ## `default_workspace`
 
-`default_workspace` sets where chats go when no workspace is chosen, such as new desktop chats without a project. Without it, the folder is `<Documents>/KimiCode/Default`.
+`default_workspace` sets where chats go when no workspace is chosen, such as new desktop chats without a project. Without it, the folder is `KimiCode/Default` under your home folder (`~/KimiCode/Default`).
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |

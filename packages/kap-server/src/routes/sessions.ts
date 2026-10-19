@@ -203,7 +203,7 @@ export function registerSessionsRoutes(
         },
       },
       description:
-        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the Documents folder) and cannot be combined with workspace_id or metadata.',
+        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the home folder) and cannot be combined with workspace_id or metadata.',
       tags: ['sessions'],
     },
     async (req, reply) => {
