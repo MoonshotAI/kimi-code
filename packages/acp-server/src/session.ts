@@ -113,6 +113,10 @@ const SESSION_STALE_CODE = 'session.stale';
  *    re-auth flow (same mapping as the `turn.ended` auth path).
  *  - `turn.agent_busy` maps to `invalidRequest` (-32600), matching the legacy
  *    adapter's busy-prompt semantics.
+ *  - `session.occupied` / `session.stale` map to `invalidRequest` too:
+ *    occupied passes the engine message through (it is user-facing already),
+ *    stale swaps in a client-action message because the engine's names the
+ *    internal session id.
  *  - Everything else becomes a fixed-message `internalError` (-32603): the
  *    raw engine message and stack are logged server-side but NEVER cross the
  *    wire, so internal details cannot leak into the JSON-RPC channel.

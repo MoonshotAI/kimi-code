@@ -272,7 +272,7 @@ describe('server-v2 /api/v1 skills', () => {
 
     it.each([
       [ErrorCodes.SESSION_OCCUPIED, 40931],
-      [ErrorCodes.SESSION_STALE, 40930],
+      [ErrorCodes.SESSION_STALE, 40932],
     ])('maps skill activation conflict %s', async (code, expected) => {
       const id = await createSession();
       await createMainAgent(id);

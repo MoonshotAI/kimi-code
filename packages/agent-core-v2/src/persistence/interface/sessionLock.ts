@@ -50,14 +50,6 @@ export function sessionOccupiedError(sessionId: string, holder?: SessionLockHold
   );
 }
 
-export function sessionStaleError(sessionId: string): Error2 {
-  return new Error2(
-    SessionErrors.codes.SESSION_STALE,
-    `Session "${sessionId}" was updated by another client; reload it before continuing`,
-    { details: { sessionId } },
-  );
-}
-
 export function beginSessionRun(
   locks: ISessionLockService,
   log: IAppendLogStore,
@@ -76,5 +68,9 @@ export function beginSessionRun(
     );
   if (!stale) return;
   locks.endRun(sessionId);
-  throw sessionStaleError(sessionId);
+  throw new Error2(
+    SessionErrors.codes.SESSION_STALE,
+    `Session "${sessionId}" was updated by another client; reload it before continuing`,
+    { details: { sessionId } },
+  );
 }

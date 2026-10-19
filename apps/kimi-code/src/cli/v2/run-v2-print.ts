@@ -685,7 +685,7 @@ function reportSessionOccupied(
   const message = error.message;
   if (outputFormat === 'stream-json') {
     stdout.write(
-      `${JSON.stringify({ type: 'error', code: 'session.occupied', message, details: error.details })}\n`,
+      `${JSON.stringify({ type: 'error', code: error.code, message, details: error.details })}\n`,
     );
   } else {
     stderr.write(`${message}\n`);

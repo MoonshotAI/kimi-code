@@ -4,8 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { log } from '@moonshot-ai/kimi-code-sdk';
-import { ErrorCodes, isKimiError } from '@moonshot-ai/kimi-code-sdk';
+import { ErrorCodes, isKimiError, log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,

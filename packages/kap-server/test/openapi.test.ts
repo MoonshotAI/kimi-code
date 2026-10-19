@@ -130,7 +130,7 @@ describe('server-v2 OpenAPI', () => {
       const schema = asRecord(asRecord(content['application/json'])['schema']);
       const variants = schema['oneOf'];
       expect(Array.isArray(variants)).toBe(true);
-      for (const code of [40930, 40931]) {
+      for (const code of [40931, 40932]) {
         expect(
           (variants as unknown[]).some((variant) => {
             const properties = asRecord(asRecord(variant)['properties']);

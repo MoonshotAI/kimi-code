@@ -5,6 +5,13 @@ import { describe, expect, it } from 'vitest';
 import { mapError } from '../src/transport/errors';
 import { installErrorHandler } from '../src/error-handler';
 
+describe('ErrorCode', () => {
+  it('has unique numeric values', () => {
+    const values = Object.values(ErrorCode);
+    expect(new Set(values).size).toBe(values.length);
+  });
+});
+
 describe('/api/v1/debug transport mapError', () => {
   it.each([
     [ErrorCodes.OS_FS_NOT_FOUND, ErrorCode.FS_PATH_NOT_FOUND],

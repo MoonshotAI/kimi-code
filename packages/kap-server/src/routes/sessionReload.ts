@@ -1,12 +1,13 @@
 import {
   closeSessionById,
+  ErrorCodes,
   isError2,
   resumeSessionById,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
 export function isSessionStale(error: unknown): boolean {
-  return isError2(error) && error.code === 'session.stale';
+  return isError2(error) && error.code === ErrorCodes.SESSION_STALE;
 }
 
 export async function reloadStaleSession(core: Scope, sessionId: string): Promise<void> {

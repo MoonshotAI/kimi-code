@@ -118,7 +118,7 @@ interface SessionState {
   readonly tracker: InFlightTurnTracker;
   readonly roster: SubagentRosterTracker;
   deferredWork?: SessionActivityState;
-  detached?: boolean;
+  detached?: true;
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
   readonly targets: Map<BroadcastTarget, TargetSubscription>;
   queue: Promise<void>;

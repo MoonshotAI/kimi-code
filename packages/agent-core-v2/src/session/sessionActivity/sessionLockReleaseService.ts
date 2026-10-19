@@ -11,7 +11,7 @@ import { ISessionActivityView } from './sessionActivity';
 
 const SESSION_LOCK_RELEASE_DELAY_MS = 3000;
 
-const ISessionLockReleaseService = createDecorator<SessionLockReleaseService>(
+export const ISessionLockReleaseService = createDecorator<SessionLockReleaseService>(
   'sessionLockReleaseService',
 );
 

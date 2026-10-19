@@ -1999,15 +1999,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * `compaction.unable` on an empty history or an active turn.
    */
   override async compact(input: SessionIdRpcInput & CompactOptions): Promise<void> {
-    try {
+    await restate(async () => {
       const agent = await this.agentScope(input.sessionId);
       agent.accessor.get(IAgentFullCompactionService).begin({
         source: 'manual',
         instruction: input.instruction,
       });
-    } catch (error) {
-      throw restateEngineError(error);
-    }
+    });
   }
 
   /**
@@ -2038,12 +2036,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   override async undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void> {
-    try {
+    await restate(async () => {
       const agent = await this.agentScope(input.sessionId);
       await agent.accessor.get(IAgentConversationUndoService).undo(input.count);
-    } catch (error) {
-      throw restateEngineError(error);
-    }
+    });
   }
 
   /**
@@ -2103,15 +2099,13 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * where v2 queues it FIFO.
    */
   override async prompt(input: SessionPromptRpcInput): Promise<void> {
-    try {
+    await restate(async () => {
       const agent = await this.agentFacade(input.sessionId);
       await agent.prompt({
         input: input.input,
         promptId: input.promptId,
       });
-    } catch (error) {
-      throw restateEngineError(error);
-    }
+    });
   }
 
   /**
@@ -2121,16 +2115,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * anchor. v2-only: the base class rejects this method on the v1 engine.
    */
   override async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
-    try {
+    await restate(async () => {
       const agent = await this.agentFacade(input.sessionId);
       await agent.promptWithSkills({
         input: input.input,
         skills: input.skills,
         steerIfActive: input.steerIfActive,
       });
-    } catch (error) {
-      throw restateEngineError(error);
-    }
+    });
   }
 
   /**
@@ -2140,12 +2132,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * title/lastPrompt are updated like a prompt's.
    */
   override async steer(input: SessionPromptRpcInput): Promise<void> {
-    try {
+    await restate(async () => {
       const agent = await this.agentFacade(input.sessionId);
       await agent.steer({ input: input.input });
-    } catch (error) {
-      throw restateEngineError(error);
-    }
+    });
   }
 
   /**
@@ -2203,16 +2193,14 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * v1 drops the activation while a turn runs where v2 queues it.
    */
   override async activatePluginCommand(input: ActivatePluginCommandRpcInput): Promise<void> {
-    try {
+    await restate(async () => {
       const agent = await this.agentScope(input.sessionId);
       await agent.accessor.get(IAgentPluginCommandService).activate({
         pluginId: input.pluginId,
         commandName: input.commandName,
         args: input.args,
       });
-    } catch (error) {
-      throw restateEngineError(error);
-    }
+    });
   }
 
   /**
@@ -2936,6 +2924,18 @@ function restateEngineError(error: unknown): unknown {
     details: error.details as Record<string, unknown> | undefined,
     cause: error.cause,
   });
+}
+
+/**
+ * Run an engine-backed call, restating any thrown `Error2` via
+ * `restateEngineError` — the method-level counterpart to `mcpManagement`.
+ */
+async function restate<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    throw restateEngineError(error);
+  }
 }
 
 /**
