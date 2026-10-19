@@ -2,17 +2,23 @@ import { mkdtempSync, rmSync, appendFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import type { IInstantiationService } from '#/_base/di/instantiation';
 import { TestInstantiationService } from '#/_base/di/test';
 import { isError2 } from '#/_base/errors/errors';
+import { Emitter } from '#/_base/event';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import {
+  ISessionActivityView,
+  type SessionActivityChangedEvent,
+  type SessionActivityState,
+} from '#/session/sessionActivity/sessionActivity';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -40,12 +46,33 @@ function bootstrapStub(homeDir: string, platform = 'test_client'): IBootstrapSer
   } as IBootstrapService;
 }
 
+function activityStub(disposables: DisposableStore) {
+  const emitter = disposables.add(new Emitter<SessionActivityChangedEvent>());
+  let state: SessionActivityState = {
+    busy: true,
+    mainTurnActive: true,
+    pendingInteraction: 'none',
+  };
+  return {
+    view: {
+      _serviceBrand: undefined,
+      state: () => state,
+      onDidChange: emitter.event,
+    } as ISessionActivityView,
+    setBusy(busy: boolean): void {
+      state = { ...state, busy, mainTurnActive: busy };
+      emitter.fire({ state, cause: busy ? 'turn_started' : 'turn_ended' });
+    },
+  };
+}
+
 describe('SessionRunGateService', () => {
   let homeDir: string;
   let disposables: DisposableStore;
   let log: IAppendLogStore;
   let serviceA: SessionLockService;
   let serviceB: SessionLockService;
+  let activity: ReturnType<typeof activityStub>;
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'session-run-gate-'));
@@ -56,6 +83,7 @@ describe('SessionRunGateService', () => {
     log = ix.get(IAppendLogStore);
     serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
     serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'), noopLogger);
+    activity = activityStub(disposables);
   });
 
   afterEach(() => {
@@ -67,10 +95,14 @@ describe('SessionRunGateService', () => {
 
   function gate(agents: IAgentLifecycleService = mainOnlyAgents): SessionRunGateService {
     const instantiation = {
-      invokeFunction: (fn: (accessor: { get: () => IAgentLifecycleService }) => unknown) =>
-        fn({ get: () => agents }),
+      invokeFunction: (fn: (accessor: { get: (id: unknown) => unknown }) => unknown) =>
+        fn({
+          get: (id: unknown) => (id === ISessionActivityView ? activity.view : agents),
+        }),
     } as unknown as IInstantiationService;
-    return new SessionRunGateService(sessionContextStub, serviceA, log, instantiation);
+    return disposables.add(
+      new SessionRunGateService(sessionContextStub, serviceA, log, instantiation),
+    );
   }
 
   async function readAll(): Promise<void> {
@@ -175,5 +207,22 @@ describe('SessionRunGateService', () => {
     serviceB.release(SID);
     expect(gate().tryHold()).toBe(true);
     serviceA.release(SID);
+  });
+
+  it('releases a directly held lock only after the session becomes idle', async () => {
+    vi.useFakeTimers();
+    try {
+      gate();
+      serviceA.hold(SID);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(serviceA.held(SID)).toBe(true);
+      activity.setBusy(false);
+      await vi.advanceTimersByTimeAsync(2_999);
+      expect(serviceA.held(SID)).toBe(true);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(serviceA.held(SID)).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
