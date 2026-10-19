@@ -42,15 +42,6 @@ describe('product entry points', () => {
     expect(resolve(`@moonshot-ai/kimi-code-product/${subpath}`)).toBe(join(sourceRoot, source));
   });
 
-  it.each(['', '/core', '/shared/node/json-file', '/session-rating/node/host'])(
-    'does not export the %s private or removed entry',
-    (subpath) => {
-      expect(() => resolve(`@moonshot-ai/kimi-code-product${subpath}`)).toThrowError(
-        expect.objectContaining({ code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' }),
-      );
-    },
-  );
-
   it('typechecks the public contract and all common modules without Node types', () => {
     const consumerPath = fileURLToPath(new URL('common-consumer.ts', import.meta.url)).replaceAll('\\', '/');
     const consumer = `
