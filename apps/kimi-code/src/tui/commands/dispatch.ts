@@ -163,6 +163,8 @@ export interface SlashCommandHost {
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  /** Queue a `/compact` for FIFO dispatch; false when one is already queued. */
+  enqueueCompactCommand(args: string): boolean;
   requestQueuedGoalPromotion?(): void;
   /** Reset the client-side cache-break baseline after the context was cut
    *  (/undo): the next step's cache-read drop is expected, not a break. */
@@ -297,6 +299,16 @@ async function executeSlashCommand(
       host.sendNormalUserInput(intent.input);
       return;
     case 'builtin':
+      if (intent.enqueue === true) {
+        if (!host.enqueueCompactCommand(intent.args)) {
+          host.track('input_command_invalid', { reason: 'duplicate-compact', command: intent.name });
+          host.showError('A /compact is already queued.');
+          host.restoreInputText(input);
+          return;
+        }
+        host.track('input_queue');
+        return;
+      }
       host.track('input_command', { command: intent.name });
       if (intent.name === 'new' && parsedCommand?.name === 'clear') {
         host.track('clear');

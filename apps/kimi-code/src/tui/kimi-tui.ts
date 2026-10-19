@@ -9,6 +9,7 @@ import type {
   ApprovalRequest,
   ApprovalResponse,
   BackgroundTaskInfo,
+  CompactionStartedEvent,
   CreateSessionOptions,
   KimiHarness,
   PermissionMode,
@@ -369,6 +370,10 @@ export class KimiTUI {
   cancelInFlight: (() => void) | undefined;
   deferUserMessages = false;
   aborted = false;
+  /** Trigger of the most recent compaction.started; paired with its completed. */
+  lastCompactionTrigger: CompactionStartedEvent['trigger'] | undefined;
+  /** Bumped on every completed auto compaction; queued /compact items snapshot it. */
+  autoCompactionSerial = 0;
   private terminalFocusTrackingDispose: (() => void) | undefined;
   private terminalThemeTrackingDispose: (() => void) | undefined;
   private clipboardImageHintController: ClipboardImageHintController | undefined;
@@ -1823,6 +1828,21 @@ export class KimiTUI {
     };
   }
 
+  enqueueCompactCommand(args: string): boolean {
+    if (this.state.queuedMessages.some((message) => message.mode === 'compact')) return false;
+    const instruction = args.trim() || undefined;
+    this.state.queuedMessages.push({
+      text: '/compact' + (instruction !== undefined ? ` ${instruction}` : ''),
+      agentId: this.harness.interactiveAgentId,
+      mode: 'compact',
+      compactInstruction: instruction,
+      queuedAfterAutoSerial: this.autoCompactionSerial,
+    });
+    this.updateQueueDisplay();
+    this.state.ui.requestRender();
+    return true;
+  }
+
   beginSessionRequest(): void {
     this.cacheHint.onTurnBegin();
     this.streamingUI.setTurnId(undefined);
@@ -1848,6 +1868,32 @@ export class KimiTUI {
   }
 
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
+    if (item.mode === 'compact') {
+      if (item.queuedAfterAutoSerial !== this.autoCompactionSerial) {
+        this.showNotice('Skipped queued /compact — context was already auto-compacted.');
+        this.drainOneQueuedMessage();
+        return;
+      }
+      void session.compact({ instruction: item.compactInstruction }).catch((error: unknown) => {
+        // The fire races other clients holding the engine queue
+        // (COMPACTION_UNABLE): requeue at the head with a bounded retry.
+        // A session switch (/new) clears the queue — do not resurrect the
+        // item into the new session's queue.
+        if (this.session !== session) return;
+        const retries = (item.compactRetries ?? 0) + 1;
+        if (retries >= 3) {
+          this.showError(`Failed to run queued /compact: ${formatErrorMessage(error)}`);
+          this.drainOneQueuedMessage();
+          return;
+        }
+        this.state.queuedMessages.unshift({ ...item, compactRetries: retries });
+        this.updateQueueDisplay();
+        setTimeout(() => {
+          this.drainOneQueuedMessage();
+        }, 1000);
+      });
+      return;
+    }
     if (item.mode === 'bash') {
       this.staging.releaseQueued([item]);
       void this.runShellCommandFromInput(item.text);
@@ -2088,7 +2134,9 @@ export class KimiTUI {
     if (session === undefined || this.steeringQueuedMessages.size > 0) return;
     if (manual ? !this.canManuallySteer() : !this.canSteerQueueIntoRunningTurn()) return;
     const batch = manual
-      ? this.state.queuedMessages.filter((message) => message.mode !== 'bash')
+      ? this.state.queuedMessages.filter(
+          (message) => message.mode !== 'bash' && message.mode !== 'compact',
+        )
       : [...this.state.queuedMessages];
     if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
     const pending = [...batch];
@@ -4456,7 +4504,8 @@ export class KimiTUI {
 function isSteerableQueuedMessage(message: QueuedMessage): boolean {
   return (
     message.inlineSkillActivations === undefined &&
-    message.mode !== 'bash'
+    message.mode !== 'bash' &&
+    message.mode !== 'compact'
   );
 }
 

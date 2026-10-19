@@ -22,6 +22,8 @@ export type SlashCommandIntent =
       readonly command: BuiltinSlashCommand;
       readonly name: BuiltinSlashCommandName;
       readonly args: string;
+      /** Queue instead of executing now (/compact while streaming). */
+      readonly enqueue?: boolean;
     }
   | {
       readonly kind: 'skill';
@@ -70,6 +72,15 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
       busyReason !== undefined &&
       resolveSlashCommandAvailability(command, parsed.args) === 'idle-only'
     ) {
+      if (command.name === 'compact' && busyReason === 'streaming') {
+        return {
+          kind: 'builtin',
+          command,
+          name: command.name,
+          args: parsed.args,
+          enqueue: true,
+        };
+      }
       return {
         kind: 'blocked',
         commandName: parsed.name,
