@@ -2,7 +2,6 @@ import { ErrorCodes, isKimiError } from '@moonshot-ai/kimi-code-sdk';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { formatErrorMessage } from './event-payload';
-import { sessionLockHolderFromDetails } from './session-client';
 
 export function isSessionOccupiedError(error: unknown): boolean {
   return isKimiError(error) && error.code === ErrorCodes.SESSION_OCCUPIED;
@@ -14,7 +13,8 @@ export function isSessionStaleError(error: unknown): boolean {
 
 export function occupiedHolderClientId(error: unknown): string {
   if (!isKimiError(error)) return 'unknown';
-  return sessionLockHolderFromDetails(error.details)?.clientIdentity ?? 'unknown';
+  const details = error.details as { holder?: { clientIdentity?: string } } | null | undefined;
+  return details?.holder?.clientIdentity ?? 'unknown';
 }
 
 interface StaleReloadHost {

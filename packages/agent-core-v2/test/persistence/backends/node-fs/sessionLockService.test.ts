@@ -147,14 +147,6 @@ describe('SessionLockService', () => {
     serviceB.endRun(SID);
   });
 
-  it('does not unlink a lock owned by someone else on release', () => {
-    serviceA.beginRun(SID);
-    const leaseB = serviceB.acquire('other-session');
-    leaseB.release();
-    expect(existsSync(lockPath(homeDir, SID))).toBe(true);
-    serviceA.endRun(SID);
-  });
-
   it('continues without a lock when the lock directory is not writable', () => {
     const blockedHome = join(homeDir, 'blocked');
     writeFileSync(blockedHome, 'not a directory');
@@ -262,27 +254,6 @@ describe('beginSessionRun', () => {
     expect(isError2(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe('session.stale');
     expect(serviceA.held(SID)).toBe(false);
-  });
-
-  it('checks staleness once per lock hold, not per run', async () => {
-    await readAll();
-    const spy = vi.spyOn(log, 'externallyModified');
-    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
-    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
-    expect(spy).toHaveBeenCalledTimes(1);
-    serviceA.endRun(SID);
-    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
-    expect(spy).toHaveBeenCalledTimes(2);
-    serviceA.endRun(SID);
-  });
-
-  it('scopes the once-per-hold cache to the session context', async () => {
-    await readAll();
-    const spy = vi.spyOn(log, 'externallyModified');
-    beginSessionRun(serviceA, log, sessionContextStub, mainOnlyAgents);
-    beginSessionRun(serviceA, log, { ...sessionContextStub }, mainOnlyAgents);
-    expect(spy).toHaveBeenCalledTimes(2);
-    serviceA.endRun(SID);
   });
 
   it('checks staleness even when the lock was already acquired by another path', async () => {

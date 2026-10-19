@@ -29,6 +29,8 @@ import {
   ITelemetryService,
   IWorkspaceInstanceManager,
   InMemorySessionLockService,
+  Error2,
+  ErrorCodes,
   makeAgentScopeContext,
   makeSessionContext,
   resolveKimiHome,
@@ -375,6 +377,48 @@ describe('runV2Print', () => {
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('preserves stale reloads and occupied handling across retries', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices, sessionServices, appServices } = makeFakeHarness();
+    const sessions = appServices.get(ISessionManager) as {
+      create: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    };
+    sessions.close = vi.fn(async () => {});
+    const lifecycle = sessionServices.get(IAgentLifecycleService) as {
+      list: ReturnType<typeof vi.fn>;
+    };
+    lifecycle.list.mockReturnValue([{ agentId: 'main' }]);
+    const log = appServices.get(IAppendLogStore) as {
+      externallyModified: ReturnType<typeof vi.fn>;
+    };
+    log.externallyModified.mockReturnValueOnce(true);
+    const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
+    loop.submit
+      .mockImplementationOnce(() => {
+        throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
+      })
+      .mockImplementationOnce(() => {
+        throw new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+      });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const previousExitCode = process.exitCode;
+    try {
+      await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+      expect(sessions.create).toHaveBeenCalledTimes(3);
+      expect(sessions.close).toHaveBeenCalledTimes(2);
+      expect(loop.submit).toHaveBeenCalledTimes(2);
+      expect(process.exitCode).toBe(4);
+      expect(stderr.text()).toContain('occupied');
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
