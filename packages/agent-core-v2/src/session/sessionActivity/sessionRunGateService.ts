@@ -1,6 +1,5 @@
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 import { LifecycleScope } from '#/app/scopes';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -20,15 +19,16 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
 
   private timer: ReturnType<typeof setTimeout> | undefined;
   private releasing = false;
-  private activityView: ISessionActivityView | undefined;
 
   constructor(
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IAgentLifecycleService private readonly agents: IAgentLifecycleService,
+    @ISessionActivityView private readonly activity: ISessionActivityView,
   ) {
     super();
+    this._register(this.activity.onDidChange(() => this.schedule()));
     this._register(
       this.sessionLocks.onDidHold((event) => {
         if (event.sessionId === this.ctx.sessionId) this.schedule();
@@ -45,10 +45,7 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
   begin(): void {
     const sessionId = this.ctx.sessionId;
     this.sessionLocks.hold(sessionId);
-    const agents = this.instantiation.invokeFunction((accessor) =>
-      accessor.get(IAgentLifecycleService),
-    );
-    const stale = agents
+    const stale = this.agents
       .list()
       .some((agent) =>
         this.appendLogStore.externallyModified(
@@ -65,22 +62,9 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
     );
   }
 
-  tryHold(): boolean {
-    return this.sessionLocks.tryHold(this.ctx.sessionId);
-  }
-
-  private activity(): ISessionActivityView {
-    if (this.activityView !== undefined) return this.activityView;
-    this.activityView = this.instantiation.invokeFunction((accessor) =>
-      accessor.get(ISessionActivityView),
-    );
-    this._register(this.activityView.onDidChange(() => this.schedule()));
-    return this.activityView;
-  }
-
   private schedule(): void {
     this.cancelTimer();
-    if (this.activity().state().busy) return;
+    if (this.activity.state().busy) return;
     if (!this.sessionLocks.held(this.ctx.sessionId)) return;
     this.timer = setTimeout(() => {
       void this.releaseWhenIdle();
@@ -91,13 +75,13 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
     if (this.releasing) return;
     this.releasing = true;
     try {
-      if (this.activity().state().busy) return;
+      if (this.activity.state().busy) return;
       await this.appendLogStore.flush().catch(() => undefined);
-      if (this.activity().state().busy) return;
+      if (this.activity.state().busy) return;
       this.sessionLocks.release(this.ctx.sessionId);
     } finally {
       this.releasing = false;
-      if (!this.activity().state().busy && this.sessionLocks.held(this.ctx.sessionId)) {
+      if (!this.activity.state().busy && this.sessionLocks.held(this.ctx.sessionId)) {
         this.schedule();
       }
     }

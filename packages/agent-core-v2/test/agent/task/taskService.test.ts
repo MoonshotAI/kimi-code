@@ -53,9 +53,7 @@ import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
-import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 
-import { stubSessionRunGate } from '../../stubs';
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
@@ -874,7 +872,6 @@ describe('AgentTaskService', () => {
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const sessionLocks = new InMemorySessionLockService();
     ix.stub(ISessionLockService, sessionLocks);
-    ix.stub(ISessionRunGate, stubSessionRunGate(sessionLocks));
     ix.set(IWireService, new SyncDescriptor(WireService));
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));

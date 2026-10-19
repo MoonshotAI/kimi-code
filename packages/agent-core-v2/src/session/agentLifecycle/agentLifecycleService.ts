@@ -58,7 +58,7 @@ import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -127,7 +127,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionEventBus bus: ISessionEventBus,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
-    @ISessionRunGate private readonly runGate: ISessionRunGate,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IBlobStore private readonly blobStore: IBlobStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @ILogService private readonly logger: ILogService,
@@ -281,7 +281,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         this.storage,
         this.logger,
         telemetryBinding.telemetry,
-        this.runGate,
+        this.sessionLocks,
+        this.ctx,
       );
       wireView = wire;
       const handle = createScopedChildHandle(

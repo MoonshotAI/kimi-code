@@ -4,7 +4,6 @@ export interface ISessionRunGate {
   readonly _serviceBrand: undefined;
 
   begin(): void;
-  tryHold(): boolean;
 }
 
 export const ISessionRunGate: ServiceIdentifier<ISessionRunGate> =

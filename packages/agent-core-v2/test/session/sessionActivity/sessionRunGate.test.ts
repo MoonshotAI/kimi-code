@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
-import type { IInstantiationService } from '#/_base/di/instantiation';
 import { TestInstantiationService } from '#/_base/di/test';
 import { isError2 } from '#/_base/errors/errors';
 import { Emitter } from '#/_base/event';
@@ -15,7 +14,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
-  ISessionActivityView,
+  type ISessionActivityView,
   type SessionActivityChangedEvent,
   type SessionActivityState,
 } from '#/session/sessionActivity/sessionActivity';
@@ -94,14 +93,8 @@ describe('SessionRunGateService', () => {
   });
 
   function gate(agents: IAgentLifecycleService = mainOnlyAgents): SessionRunGateService {
-    const instantiation = {
-      invokeFunction: (fn: (accessor: { get: (id: unknown) => unknown }) => unknown) =>
-        fn({
-          get: (id: unknown) => (id === ISessionActivityView ? activity.view : agents),
-        }),
-    } as unknown as IInstantiationService;
     return disposables.add(
-      new SessionRunGateService(sessionContextStub, serviceA, log, instantiation),
+      new SessionRunGateService(sessionContextStub, serviceA, log, agents, activity.view),
     );
   }
 
@@ -199,14 +192,6 @@ describe('SessionRunGateService', () => {
     expect(isError2(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe('session.occupied');
     serviceB.release(SID);
-  });
-
-  it('tryHold returns false instead of throwing when occupied', async () => {
-    serviceB.hold(SID);
-    expect(gate().tryHold()).toBe(false);
-    serviceB.release(SID);
-    expect(gate().tryHold()).toBe(true);
-    serviceA.release(SID);
   });
 
   it('releases a directly held lock only after the session becomes idle', async () => {

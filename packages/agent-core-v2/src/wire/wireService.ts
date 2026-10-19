@@ -10,7 +10,8 @@ import {
   IAppendLogStore,
 } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
-import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { IWireService, type WireRestoreChains } from './wire';
 import { WireError, WireErrors } from './errors';
@@ -78,7 +79,8 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @ILogService private readonly logger: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @ISessionRunGate private readonly runGate: ISessionRunGate,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
   ) {
     super();
     this.wireScope = scopeContext.scope();
@@ -86,7 +88,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
     this._register(
       this.log.bindWriteGuard(this.wireScope, AGENT_WIRE_RECORD_KEY, () =>
-        this.runGate.tryHold(),
+        this.sessionLocks.tryHold(this.sessionContext.sessionId),
       ),
     );
   }
@@ -444,7 +446,10 @@ export class WireService extends Service implements IWireService, IAgentJournal 
   }
 
   private async rewriteMigratedJournal(records: WireRecord[]): Promise<boolean> {
-    if (!this.runGate.tryHold() || this.log.externallyModified(this.wireScope, AGENT_WIRE_RECORD_KEY)) {
+    if (
+      !this.sessionLocks.tryHold(this.sessionContext.sessionId) ||
+      this.log.externallyModified(this.wireScope, AGENT_WIRE_RECORD_KEY)
+    ) {
       return false;
     }
     await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, records);
@@ -483,7 +488,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       }
     }
     if (
-      !this.runGate.tryHold() ||
+      !this.sessionLocks.tryHold(this.sessionContext.sessionId) ||
       this.log.externallyModified(this.wireScope, AGENT_WIRE_RECORD_KEY)
     ) {
       this.pendingRepair = { records, truncation };
