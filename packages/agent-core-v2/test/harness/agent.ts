@@ -2144,7 +2144,7 @@ export class AgentTestContext {
     const env = this.root.accessor.get(IHostEnvironment);
     const bootstrapService = this.root.accessor.get(IBootstrapService);
     const cwd = this.cwd;
-    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [] };
+    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [], files: new Map() };
     return {
       _serviceBrand: undefined,
       get ready(): Promise<void> {

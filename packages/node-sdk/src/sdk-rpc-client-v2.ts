@@ -145,6 +145,7 @@ import {
   ensureMainAgent,
   ensureAgent,
   agentContextOf,
+  IAgentChangeNotifierService,
   IAgentContextMemoryService,
   IAgentConversationUndoService,
   IAgentCronService,
@@ -185,6 +186,7 @@ import {
   ISessionManager,
   ISessionMcpHandle,
   ISessionMetadata,
+  ISessionAgentProfileCatalog,
   ISessionSkillCatalog,
   IAgentTodoService,
   ISessionWorkspaceContext,
@@ -211,6 +213,7 @@ import {
   ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
   resolveConfigPath,
+  resolveSubagentModelPool,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -223,6 +226,7 @@ import {
   type Scope,
   type ServicesAccessor,
   type SessionSummary as V2SessionSummary,
+  type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import {
   RPCError,
@@ -1580,6 +1584,8 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const sessionId = input.sessionId;
     return this.runSessionAccess(sessionId, async () => {
       const live = this.liveSession(sessionId);
+      const indexEntry =
+        live === undefined ? await this.engineAccessor.get(ISessionIndex).get(sessionId) : undefined;
       if (live !== undefined) {
         const agentLifecycle = live.accessor.get(IAgentLifecycleService);
         for (const agent of agentLifecycle.list()) {
@@ -1592,14 +1598,55 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
               { details: { sessionId } },
             );
           }
+          if (agentHandle.accessor.get(IAgentFullCompactionService).compacting !== null) {
+            throw new KimiError(
+              ErrorCodes.TURN_AGENT_BUSY,
+              `Session "${sessionId}" cannot be reloaded while compaction is running`,
+              { details: { sessionId } },
+            );
+          }
         }
-      } else if ((await this.engineAccessor.get(ISessionIndex).get(sessionId)) === undefined) {
+      } else if (indexEntry === undefined) {
         throw SDKRpcClientV2.sessionNotFound(sessionId);
       }
+      const workspaceId =
+        live?.accessor.get(ISessionContext).workspaceId ?? indexEntry?.workspaceId;
+      let previousSubagentNames: readonly string[] | undefined;
+      let previousModelPool: SubagentModelPoolSnapshot | null | undefined;
+      let staleNotifier: IAgentChangeNotifierService | undefined;
+      if (live !== undefined) {
+        const main = live.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
+        if (main !== undefined) {
+          previousSubagentNames = main.accessor
+            .get(ISessionAgentProfileCatalog)
+            .list()
+            .map((profile) => profile.name);
+          const pool = resolveSubagentModelPool(main.accessor.get(IConfigService));
+          previousModelPool =
+            pool === undefined
+              ? null
+              : { defaultModel: pool.defaultModel, models: { ...pool.models } };
+          staleNotifier = main.accessor.get(IAgentChangeNotifierService);
+          staleNotifier.mute();
+        }
+      }
       await this.configReady;
-      await this.klient.global.config.reload();
-      await this.klient.global.plugins.reload();
-      await this.refreshPluginSessionStarts(sessionId);
+      try {
+        await this.klient.global.config.reload();
+        await this.klient.global.plugins.reload();
+        await this.reloadWorkspaceCatalogs(workspaceId);
+        await this.refreshPluginSessionStarts(sessionId);
+      } catch (error) {
+        if (staleNotifier !== undefined) {
+          staleNotifier.unmute();
+          await Promise.all([
+            staleNotifier.notifyAgentsMdChanges(),
+            staleNotifier.notifySkillChanges(),
+            staleNotifier.notifySubagentChanges({}),
+          ]).catch(() => undefined);
+        }
+        throw error;
+      }
       if (live !== undefined) {
         await closeSessionById(this.engineAccessor, sessionId);
       }
@@ -1607,16 +1654,31 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       if (handle === undefined) throw SDKRpcClientV2.sessionNotFound(sessionId);
       const main = handle.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID);
       await main?.accessor.get(IAgentPluginService).refreshSessionStart();
+      if (main !== undefined) {
+        const notifier = main.accessor.get(IAgentChangeNotifierService);
+        await notifier.notifyAgentsMdChanges();
+        await notifier.notifySkillChanges();
+        await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+      }
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
     });
+  }
+
+  private async reloadWorkspaceCatalogs(workspaceId: string | undefined): Promise<void> {
+    if (workspaceId === undefined) return;
+    const target = this.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+    if (target === undefined) return;
+    await target.program.instructions.reload();
+    await target.program.skills.reload();
+    await target.program.agentProfiles.reload().catch(() => undefined);
+    await target.program.userAgentProfiles.reload().catch(() => undefined);
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {
     const workspaces = this.engineAccessor.get(IWorkspaceInstanceManager);
     await Promise.all(
       workspaces.list().map(async (handler) => {
-        await handler.program.skills.reload();
         const sessions = this.engineAccessor
           .get(ISessionManager)
           .list()

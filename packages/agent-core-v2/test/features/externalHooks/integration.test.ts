@@ -1167,6 +1167,7 @@ describe('IExternalHooksRunnerService integration', () => {
       const fired: Array<{
         event: string;
         matcherValue?: unknown;
+        cwd?: string;
         inputData?: unknown;
       }> = [];
       const hookEngine = {
@@ -1174,11 +1175,12 @@ describe('IExternalHooksRunnerService integration', () => {
         triggerBlock: async () => undefined,
         fireAndForgetTrigger: async (
           event: string,
-          args: { matcherValue?: unknown; inputData?: unknown },
+          args: { matcherValue?: unknown; cwd?: string; inputData?: unknown },
         ) => {
           fired.push({
             event,
             matcherValue: args.matcherValue,
+            cwd: args.cwd,
             inputData: args.inputData,
           });
           return [];
@@ -1190,7 +1192,7 @@ describe('IExternalHooksRunnerService integration', () => {
         additionalServices: (reg) => {
           registerStateServices(reg);
           registerTestAgentWireServices(reg, 'wire/external-hooks');
-          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(IBootstrapService, { ...stubBootstrap(), cwd: '/launch-dir' });
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.defineInstance(ISessionMetadata, stubSessionMetadata('My Session'));
           reg.definePartialInstance(IConfigService, {});
@@ -1255,6 +1257,7 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'TurnStarted',
           matcherValue: 'system_trigger',
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             turnId: 3,
@@ -1266,6 +1269,7 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'TurnStarted',
           matcherValue: 'user',
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             turnId: 4,
@@ -1277,6 +1281,7 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'UserPromptQueued',
           matcherValue: queuedContent,
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             promptId: 'p1',
@@ -1287,6 +1292,7 @@ describe('IExternalHooksRunnerService integration', () => {
         {
           event: 'TaskStarted',
           matcherValue: 'process',
+          cwd: '/tmp',
           inputData: {
             sessionTitle: 'My Session',
             taskId: 'task-1',

@@ -485,6 +485,21 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
 
+## `default_workspace`
+
+`default_workspace` sets where chats go when no workspace is chosen, such as new desktop chats without a project. Without it, the folder is `<Documents>/KimiCode/Default`.
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `path` | `string` | — | Absolute path, or a path under your home folder written as `~/...`. Created on first use |
+
+```toml
+[default_workspace]
+path = "~/Projects/Chats"
+```
+
+Changing the location does not move existing chats; the previous folder stays as an ordinary workspace.
+
 <!--
 ## `experimental`
 
@@ -522,7 +537,7 @@ api_key = "sk-xxx"
 
 `permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order; the first matching rule takes effect.
 
-You can also set `dangerous_command_guard = false` under `[permission]` to turn off the built-in dangerous-command policy entirely (no dangerous-command confirmation in Always Ask and Ask When Needed mode; the policy is never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting and restores the behavior before the policy was introduced. Use this switch only for environments that already gate commands outside the agent.
+You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |

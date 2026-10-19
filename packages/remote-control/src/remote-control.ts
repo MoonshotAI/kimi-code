@@ -29,7 +29,12 @@ export function resolveRemoteControlRelayOrigin(
 }
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
-const MAX_HTTP_REQUEST_BYTES = 10 * 1024 * 1024;
+const MAX_HTTP_REQUEST_BYTES = 104 * 1024 * 1024;
+const MAX_RETAINED_HTTP_BYTES = 2 * MAX_HTTP_REQUEST_BYTES;
+const HTTP_FRAGMENT_OVERHEAD_BYTES = 1024;
+const MAX_SINGLE_FRAME_RESPONSE_BYTES = 10 * 1024 * 1024;
+const RESPONSE_CHUNK_BYTES = 5 * 1024 * 1024;
+const HTTP_TUNNEL_CAPABILITIES = 'request_chunk,response_chunk,abort';
 const HTTP_REQUEST_TIMEOUT_MS = 30_000;
 const REGISTER_TIMEOUT_MS = 10_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -77,16 +82,26 @@ interface RelayMessage {
   readonly payload?: Record<string, unknown>;
 }
 
-interface PendingHttpRequest {
-  readonly chunks: Buffer[];
+interface HttpTransfer {
+  readonly id: string;
+  readonly controller: AbortController;
+  chunks: Buffer[] | undefined;
   size: number;
+  retained: number;
+  frames: (() => string)[];
 }
+
+type LocalHttpForward = (
+  request: ParsedRawHttpRequest,
+  signal: AbortSignal,
+  retain: (receivedBytes: number) => boolean,
+) => Promise<Buffer[]>;
 
 export interface ParsedRawHttpRequest {
   readonly method: string;
   readonly path: string;
   readonly headers: readonly [string, string][];
-  readonly body: Buffer;
+  readonly body: readonly Buffer[];
 }
 
 export type RemoteControlStatus =
@@ -148,12 +163,13 @@ export function buildRemoteControlUrl(
   return url.toString();
 }
 
-export function parseRawHttpRequest(raw: Buffer): ParsedRawHttpRequest {
-  const separator = raw.indexOf('\r\n\r\n');
+export function parseRawHttpRequest(chunks: readonly Buffer[]): ParsedRawHttpRequest {
+  const prefix = Buffer.concat(sliceChunks(chunks, 0, MAX_HTTP_HEADER_BYTES + 4));
+  const separator = prefix.indexOf('\r\n\r\n');
   if (separator < 0 || separator > MAX_HTTP_HEADER_BYTES) {
     throw new SyntaxError('invalid HTTP request headers');
   }
-  const head = raw.subarray(0, separator).toString('latin1');
+  const head = prefix.subarray(0, separator).toString('latin1');
   const lines = head.split('\r\n');
   const requestLine = lines.shift();
   const match = requestLine?.match(
@@ -180,8 +196,21 @@ export function parseRawHttpRequest(raw: Buffer): ParsedRawHttpRequest {
     method: match[1]!,
     path: match[2]!,
     headers,
-    body: raw.subarray(separator + 4),
+    body: sliceChunks(chunks, separator + 4, Infinity),
   };
+}
+
+function sliceChunks(chunks: readonly Buffer[], start: number, end: number): Buffer[] {
+  const result: Buffer[] = [];
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (offset >= end) break;
+    const from = Math.max(start - offset, 0);
+    const to = Math.min(end - offset, chunk.length);
+    if (from < to) result.push(chunk.subarray(from, to));
+    offset += chunk.length;
+  }
+  return result;
 }
 
 export function filterForwardRequestHeaders(
@@ -209,6 +238,7 @@ export function rewriteRemoteControlResponse(
   body: Buffer,
   publicPrefix: string,
 ): Buffer {
+  if (!rewritesContentType(contentType)) return body;
   const normalizedPrefix = publicPrefix.replace(/\/+$/, '');
   if (contentType.toLowerCase().includes('text/html')) {
     const prefixLiteral = JSON.stringify(normalizedPrefix);
@@ -225,17 +255,18 @@ export function rewriteRemoteControlResponse(
     text = text.replaceAll(/\bhref="\//g, `href="${normalizedPrefix}/`);
     return Buffer.from(text);
   }
+  let text = body.toString('utf8');
+  text = text.replaceAll('"/assets/', `"${normalizedPrefix}/assets/`);
+  text = text.replaceAll("'/assets/", `'${normalizedPrefix}/assets/`);
+  text = text.replaceAll('(/assets/', `(${normalizedPrefix}/assets/`);
+  text = text.replaceAll('"/sessions/"', `"${normalizedPrefix}/sessions/"`);
+  text = text.replaceAll('return"/"+', `return"${normalizedPrefix}/"+`);
+  return Buffer.from(text);
+}
+
+function rewritesContentType(contentType: string): boolean {
   const lower = contentType.toLowerCase();
-  if (lower.includes('javascript') || lower.includes('text/css')) {
-    let text = body.toString('utf8');
-    text = text.replaceAll('"/assets/', `"${normalizedPrefix}/assets/`);
-    text = text.replaceAll("'/assets/", `'${normalizedPrefix}/assets/`);
-    text = text.replaceAll('(/assets/', `(${normalizedPrefix}/assets/`);
-    text = text.replaceAll('"/sessions/"', `"${normalizedPrefix}/sessions/"`);
-    text = text.replaceAll('return"/"+', `return"${normalizedPrefix}/"+`);
-    return Buffer.from(text);
-  }
-  return body;
+  return lower.includes('text/html') || lower.includes('javascript') || lower.includes('text/css');
 }
 
 function acceptsGzipEncoding(headers: readonly [string, string][]): boolean {
@@ -361,12 +392,11 @@ class RemoteControlClient {
   private readonly stderr: Pick<NodeJS.WriteStream, 'write'>;
   private readonly onStatus: (status: RemoteControlStatus) => void;
   private readonly streams = new Map<string, ActiveStream>();
-  private readonly pendingHttpRequests = new Map<string, PendingHttpRequest>();
   private readonly pendingSockets = new Set<WebSocket>();
   private management: WebSocket | undefined;
   private reconnectAbort: AbortController | undefined;
   private http: WebSocket | undefined;
-  private pendingHttpBytes = 0;
+  private httpTunnel: HttpTunnel | undefined;
   private reconnectAttempt = 0;
   private reconnectImmediately = false;
   private readonly pingIntervalMs: number;
@@ -494,15 +524,29 @@ class RemoteControlClient {
 
     const managementEnd = waitForSocketEnd(management);
     const http = await this.connectRelay(
-      `/v1/remote/http?device_id=${encodeURIComponent(this.deviceId)}`,
+      `/v1/remote/http?device_id=${encodeURIComponent(this.deviceId)}&capabilities=${HTTP_TUNNEL_CAPABILITIES}`,
     );
     this.http = http;
+    const tunnel = new HttpTunnel(
+      http,
+      (request, signal, retain) =>
+        requestLocalHttp(
+          this.localOrigin,
+          request,
+          this.localServerToken(),
+          this.publicPrefix(),
+          signal,
+          retain,
+        ),
+      this.stderr,
+    );
+    this.httpTunnel = tunnel;
     this.watchSocket(http, 'http');
     if (management.readyState !== WebSocket.OPEN) {
       throw new Error('management connection closed');
     }
     management.on('message', (data) => this.handleManagementMessage(data));
-    http.on('message', (data) => this.handleHttpMessage(data));
+    http.on('message', (data) => tunnel.handleMessage(data));
     this.reconnectAttempt = 0;
     this.relayOnline = true;
     this.onStatus('relay_connected');
@@ -589,78 +633,6 @@ class RemoteControlClient {
     }
   }
 
-  private handleHttpMessage(data: RawData): void {
-    const text = rawDataText(data).trim();
-    if (text.length === 0) return;
-    let requestId: string | undefined;
-    try {
-      const parsed = JSON.parse(text) as Record<string, unknown>;
-      if (parsed['type'] !== 'request') return;
-      requestId = typeof parsed['request_id'] === 'string' ? parsed['request_id'] : undefined;
-      if (
-        requestId === undefined ||
-        typeof parsed['body_base64'] !== 'string' ||
-        typeof parsed['is_last'] !== 'boolean'
-      ) {
-        throw new SyntaxError('invalid HTTP tunnel request message');
-      }
-      const bodyBase64 = parsed['body_base64'];
-      const minDecodedBytes = Math.floor(bodyBase64.length / 4) * 3 - 2;
-      if (this.pendingHttpBytes + minDecodedBytes > MAX_HTTP_REQUEST_BYTES) {
-        throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
-      }
-      const chunk = decodeBase64(bodyBase64);
-      const pending = this.pendingHttpRequests.get(requestId) ?? { chunks: [], size: 0 };
-      if (this.pendingHttpBytes + chunk.length > MAX_HTTP_REQUEST_BYTES) {
-        throw new SyntaxError('HTTP tunnel request exceeds 10 MiB');
-      }
-      pending.chunks.push(chunk);
-      pending.size += chunk.length;
-      this.pendingHttpBytes += chunk.length;
-      this.pendingHttpRequests.set(requestId, pending);
-      if (!parsed['is_last']) return;
-      const rawRequest = Buffer.concat(pending.chunks, pending.size);
-      this.clearPendingHttpRequest(requestId);
-      void this.forwardHttpRequest(requestId, rawRequest);
-    } catch (error) {
-      if (requestId !== undefined) {
-        this.clearPendingHttpRequest(requestId);
-        const status = error instanceof SyntaxError ? 400 : 502;
-        this.sendHttpResponse(requestId, buildErrorResponse(status));
-      }
-      this.stderr.write(`Remote Control HTTP message error: ${errorMessage(error)}\n`);
-    }
-  }
-
-  private async forwardHttpRequest(requestId: string, rawRequest: Buffer): Promise<void> {
-    try {
-      const parsed = parseRawHttpRequest(rawRequest);
-      const response = await requestLocalHttp(
-        this.localOrigin,
-        parsed,
-        this.localServerToken(),
-        this.publicPrefix(),
-      );
-      this.sendHttpResponse(requestId, response);
-    } catch (error) {
-      const status = error instanceof SyntaxError ? 400 : 502;
-      this.sendHttpResponse(requestId, buildErrorResponse(status));
-      this.stderr.write(`Remote Control HTTP forwarding failed: ${errorMessage(error)}\n`);
-    }
-  }
-
-  private sendHttpResponse(requestId: string, response: Buffer): void {
-    if (this.http?.readyState !== WebSocket.OPEN) return;
-    this.http.send(
-      JSON.stringify({
-        request_id: requestId,
-        type: 'response',
-        is_last: true,
-        body_base64: response.toString('base64'),
-      }),
-    );
-  }
-
   private async openStream(payload: Record<string, unknown>): Promise<void> {
     const streamId = stringField(payload, 'stream_id');
     const path = stringField(payload, 'path');
@@ -742,17 +714,9 @@ class RemoteControlClient {
     stream.tunnel.close();
   }
 
-  private clearPendingHttpRequest(requestId: string): void {
-    const pending = this.pendingHttpRequests.get(requestId);
-    if (pending === undefined) return;
-    this.pendingHttpRequests.delete(requestId);
-    this.pendingHttpBytes -= pending.size;
-  }
-
   private closeCycle(): void {
     for (const streamId of this.streams.keys()) this.closeStream(streamId);
-    this.pendingHttpRequests.clear();
-    this.pendingHttpBytes = 0;
+    this.httpTunnel?.close();
     for (const socket of this.pendingSockets) socket.terminate();
     this.pendingSockets.clear();
     this.management?.close();
@@ -763,6 +727,7 @@ class RemoteControlClient {
     }
     this.management = undefined;
     this.http = undefined;
+    this.httpTunnel = undefined;
   }
 
   private publicPrefix(): string {
@@ -782,6 +747,197 @@ class RemoteControlClient {
       if (this.reconnectAbort === controller) this.reconnectAbort = undefined;
     }
   }
+}
+
+export class HttpTunnel {
+  private readonly transfers = new Map<string, HttpTransfer>();
+  private readonly ready = new Set<HttpTransfer>();
+  private retainedBytes = 0;
+  private pumping = false;
+
+  constructor(
+    private readonly socket: WebSocket,
+    private readonly forwardLocal: LocalHttpForward,
+    private readonly stderr: Pick<NodeJS.WriteStream, 'write'>,
+  ) {}
+
+  handleMessage(data: RawData): void {
+    if (this.socket.readyState !== WebSocket.OPEN) return;
+    const text = rawDataText(data).trim();
+    if (text.length === 0) return;
+    let receiving: HttpTransfer | undefined;
+    try {
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      const requestId = typeof parsed['request_id'] === 'string' ? parsed['request_id'] : undefined;
+      if (parsed['type'] === 'abort') {
+        const aborted = requestId === undefined ? undefined : this.transfers.get(requestId);
+        if (aborted !== undefined) this.end(aborted);
+        return;
+      }
+      if (parsed['type'] !== 'request') return;
+      if (requestId === undefined) throw new SyntaxError('invalid HTTP tunnel request message');
+      const transfer = this.transfers.get(requestId) ?? this.open(requestId);
+      const chunks = transfer.chunks;
+      if (chunks === undefined) {
+        throw new Error(`HTTP tunnel request ${requestId} is no longer accepting chunks`);
+      }
+      receiving = transfer;
+      const bodyBase64 = parsed['body_base64'];
+      if (typeof bodyBase64 !== 'string' || typeof parsed['is_last'] !== 'boolean') {
+        throw new SyntaxError('invalid HTTP tunnel request message');
+      }
+      const minDecodedBytes = Math.floor(bodyBase64.length / 4) * 3 - 2;
+      if (transfer.size + minDecodedBytes > MAX_HTTP_REQUEST_BYTES) {
+        throw new SyntaxError(
+          `HTTP tunnel request exceeds ${MAX_HTTP_REQUEST_BYTES / 1024 / 1024} MiB`,
+        );
+      }
+      const chunk = decodeBase64(bodyBase64);
+      if (transfer.size + chunk.length > MAX_HTTP_REQUEST_BYTES) {
+        throw new SyntaxError(
+          `HTTP tunnel request exceeds ${MAX_HTTP_REQUEST_BYTES / 1024 / 1024} MiB`,
+        );
+      }
+      if (!this.tryRetain(transfer, transfer.retained + chunk.length + HTTP_FRAGMENT_OVERHEAD_BYTES)) {
+        throw new SyntaxError(
+          `HTTP tunnel retained bytes exceed ${MAX_RETAINED_HTTP_BYTES / 1024 / 1024} MiB`,
+        );
+      }
+      chunks.push(chunk);
+      transfer.size += chunk.length;
+      if (!parsed['is_last']) return;
+      transfer.chunks = undefined;
+      void this.forward(transfer, chunks);
+    } catch (error) {
+      if (receiving !== undefined) {
+        this.respond(receiving, [buildErrorResponse(error instanceof SyntaxError ? 400 : 502)]);
+      }
+      this.stderr.write(`Remote Control HTTP message error: ${errorMessage(error)}\n`);
+    }
+  }
+
+  close(): void {
+    for (const transfer of this.transfers.values()) this.end(transfer);
+  }
+
+  private open(id: string): HttpTransfer {
+    const transfer: HttpTransfer = {
+      id,
+      controller: new AbortController(),
+      chunks: [],
+      size: 0,
+      retained: 0,
+      frames: [],
+    };
+    this.transfers.set(id, transfer);
+    return transfer;
+  }
+
+  private async forward(transfer: HttpTransfer, chunks: readonly Buffer[]): Promise<void> {
+    const requestBytes = transfer.retained;
+    try {
+      const response = await this.forwardLocal(
+        parseRawHttpRequest(chunks),
+        transfer.controller.signal,
+        (receivedBytes) => this.tryRetain(transfer, requestBytes + receivedBytes),
+      );
+      this.respond(transfer, response);
+    } catch (error) {
+      if (transfer.controller.signal.aborted) return;
+      const status =
+        error instanceof ResponseBudgetExceededError
+          ? 503
+          : error instanceof SyntaxError
+            ? 400
+            : 502;
+      this.respond(transfer, [buildErrorResponse(status)]);
+      this.stderr.write(`Remote Control HTTP forwarding failed: ${errorMessage(error)}\n`);
+    }
+  }
+
+  private respond(transfer: HttpTransfer, response: readonly Buffer[]): void {
+    if (transfer.controller.signal.aborted) return;
+    transfer.chunks = undefined;
+    this.retain(transfer, byteLength(response));
+    transfer.frames = responseFrames(transfer.id, response);
+    this.ready.add(transfer);
+    void this.pump();
+  }
+
+  private async pump(): Promise<void> {
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      for (;;) {
+        const transfer = this.ready.values().next().value;
+        if (transfer === undefined) return;
+        this.ready.delete(transfer);
+        const frame = transfer.frames.shift()!;
+        if (!(await sendFrame(this.socket, frame()))) {
+          this.socket.terminate();
+          this.close();
+          return;
+        }
+        if (transfer.frames.length > 0) this.ready.add(transfer);
+        else this.end(transfer);
+      }
+    } finally {
+      this.pumping = false;
+    }
+  }
+
+  private tryRetain(transfer: HttpTransfer, bytes: number): boolean {
+    if (transfer.controller.signal.aborted) return false;
+    const total = this.retainedBytes - transfer.retained + bytes;
+    if (bytes > transfer.retained && total > MAX_RETAINED_HTTP_BYTES) return false;
+    this.retain(transfer, bytes);
+    return true;
+  }
+
+  private retain(transfer: HttpTransfer, bytes: number): void {
+    this.retainedBytes += bytes - transfer.retained;
+    transfer.retained = bytes;
+  }
+
+  private end(transfer: HttpTransfer): void {
+    if (this.transfers.get(transfer.id) !== transfer) return;
+    this.transfers.delete(transfer.id);
+    this.ready.delete(transfer);
+    this.retain(transfer, 0);
+    transfer.chunks = undefined;
+    transfer.frames = [];
+    transfer.controller.abort();
+  }
+}
+
+function responseFrames(requestId: string, response: readonly Buffer[]): (() => string)[] {
+  const length = byteLength(response);
+  const frame =
+    (type: string, isLast: boolean, start: number, end: number) =>
+    (): string =>
+      JSON.stringify({
+        request_id: requestId,
+        type,
+        is_last: isLast,
+        body_base64: Buffer.concat(sliceChunks(response, start, end)).toString('base64'),
+      });
+  if (length <= MAX_SINGLE_FRAME_RESPONSE_BYTES) return [frame('response', true, 0, length)];
+  const frames: (() => string)[] = [];
+  for (let offset = 0; offset <= length; offset += RESPONSE_CHUNK_BYTES) {
+    const end = Math.min(offset + RESPONSE_CHUNK_BYTES, length);
+    frames.push(frame('response_chunk', end - offset < RESPONSE_CHUNK_BYTES, offset, end));
+  }
+  return frames;
+}
+
+function byteLength(chunks: readonly Buffer[]): number {
+  return chunks.reduce((total, chunk) => total + chunk.length, 0);
+}
+
+function sendFrame(socket: WebSocket, data: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    socket.send(data, (error) => resolve(error === undefined || error === null));
+  });
 }
 
 async function connectWebSocket(
@@ -901,13 +1057,23 @@ function parseRelayMessage(data: RawData): RelayMessage {
   return { type: parsed['type'], payload };
 }
 
+class ResponseBudgetExceededError extends Error {}
+
 function requestLocalHttp(
   localOrigin: string,
   parsed: ParsedRawHttpRequest,
   serverToken: string,
   publicPrefix: string,
-): Promise<Buffer> {
+  signal: AbortSignal,
+  retain: (receivedBytes: number) => boolean,
+): Promise<Buffer[]> {
   const origin = new URL(localOrigin);
+  const headers = [...filterForwardRequestHeaders(parsed.headers, serverToken), 'Host', origin.host];
+  const bodyBytes = byteLength(parsed.body);
+  const declaresLength = headers.some(
+    (value, index) => index % 2 === 0 && value.toLowerCase() === 'content-length',
+  );
+  if (bodyBytes > 0 && !declaresLength) headers.push('Content-Length', String(bodyBytes));
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       {
@@ -916,42 +1082,60 @@ function requestLocalHttp(
         port: origin.port,
         method: parsed.method,
         path: parsed.path,
-        headers: [
-          ...filterForwardRequestHeaders(parsed.headers, serverToken),
-          'Host',
-          origin.host,
-        ],
+        headers,
         timeout: HTTP_REQUEST_TIMEOUT_MS,
+        signal,
       },
-      (response) => {
+      (localResponse) => {
         const chunks: Buffer[] = [];
-        response.on('data', (chunk: Buffer | string) => chunks.push(Buffer.from(chunk)));
-        response.once('error', reject);
-        response.once('end', () => {
-          void (async (): Promise<Buffer> => {
-            const contentType = response.headers['content-type'] ?? '';
+        let receivedBytes = 0;
+        localResponse.on('data', (chunk: Buffer | string) => {
+          const buffer = Buffer.from(chunk);
+          receivedBytes += buffer.length;
+          if (!retain(receivedBytes)) {
+            reject(new ResponseBudgetExceededError('remote control response byte budget exceeded'));
+            request.destroy();
+            return;
+          }
+          chunks.push(buffer);
+        });
+        localResponse.once('error', reject);
+        localResponse.once('end', () => {
+          void (async (): Promise<Buffer[]> => {
+            const statusCode = localResponse.statusCode ?? 502;
+            const statusMessage = localResponse.statusMessage ?? 'Bad Gateway';
+            const responseHead = (headers: readonly string[]): Buffer =>
+              Buffer.from(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headerLines(headers)}\r\n\r\n`);
+            const contentType = localResponse.headers['content-type'] ?? '';
+            const transformable =
+              localResponse.headers['content-encoding'] === undefined &&
+              (rewritesContentType(contentType) || isGzipCompressibleType(contentType));
+            if (!transformable) {
+              const headers = filterResponseHeaders(localResponse.rawHeaders);
+              headers.push('Content-Length', String(receivedBytes));
+              return [responseHead(headers), ...chunks];
+            }
             const receivedBody = Buffer.concat(chunks);
             let body =
-              response.headers['content-encoding'] === undefined
+              localResponse.headers['content-encoding'] === undefined
                 ? rewriteRemoteControlResponse(contentType, receivedBody, publicPrefix)
                 : receivedBody;
             const rewritten = body !== receivedBody;
-            const headers = filterResponseHeaders(response.rawHeaders, rewritten);
+            const headers = filterResponseHeaders(localResponse.rawHeaders, rewritten);
             if (rewritten) {
               const etag = rewrittenResponseETag(body);
               headers.push('Cache-Control', 'no-cache', 'ETag', etag);
-              const statusCode = response.statusCode ?? 502;
               const revalidatable =
                 (parsed.method === 'GET' || parsed.method === 'HEAD') &&
                 statusCode >= 200 &&
                 statusCode < 300;
               if (revalidatable && requestMatchesETag(parsed.headers, etag)) {
-                return Buffer.from(`HTTP/1.1 304 Not Modified\r\n${headerLines(headers)}\r\n\r\n`);
+                return [Buffer.from(`HTTP/1.1 304 Not Modified\r\n${headerLines(headers)}\r\n\r\n`)];
               }
             }
             const negotiated =
-              response.headers['content-encoding'] === undefined &&
-              response.statusCode !== 206 &&
+              localResponse.headers['content-encoding'] === undefined &&
+              localResponse.statusCode !== 206 &&
               body.length >= GZIP_MIN_BODY_BYTES &&
               isGzipCompressibleType(contentType);
             if (negotiated) {
@@ -971,19 +1155,15 @@ function requestLocalHttp(
               headers.push('Content-Encoding', 'gzip');
             }
             headers.push('Content-Length', String(body.length));
-            const statusCode = response.statusCode ?? 502;
-            const statusMessage = response.statusMessage ?? 'Bad Gateway';
-            return Buffer.concat([
-              Buffer.from(`HTTP/1.1 ${statusCode} ${statusMessage}\r\n${headerLines(headers)}\r\n\r\n`),
-              body,
-            ]);
+            return [responseHead(headers), body];
           })().then(resolve, reject);
         });
       },
     );
     request.once('timeout', () => request.destroy(new Error('local HTTP request timed out')));
     request.once('error', reject);
-    request.end(parsed.body);
+    for (const chunk of parsed.body) request.write(chunk);
+    request.end();
   });
 }
 
@@ -1104,7 +1284,8 @@ function headerLines(headers: readonly string[]): string {
 }
 
 function buildErrorResponse(status: number): Buffer {
-  const reason = status === 400 ? 'Bad Request' : 'Bad Gateway';
+  const reason =
+    status === 400 ? 'Bad Request' : status === 503 ? 'Service Unavailable' : 'Bad Gateway';
   return Buffer.from(`HTTP/1.1 ${status} ${reason}\r\nContent-Length: 0\r\n\r\n`);
 }
 

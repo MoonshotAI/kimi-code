@@ -1,4 +1,9 @@
-import { ErrorCodes, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
+import {
+  ErrorCodes,
+  isError2,
+  type DefaultWorkspaceUnavailableError,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
 import { ErrorCode } from '../protocol/error-codes';
@@ -19,6 +24,16 @@ export async function sendSessionError(
 ): Promise<void> {
   if (sessionId !== undefined && isSessionStale(error)) {
     await reloadStaleSession(core, sessionId).catch(() => undefined);
+  }
+  if (isError2(error) && error.code === ErrorCodes.DEFAULT_WORKSPACE_UNAVAILABLE) {
+    const { path, reason } = (error as DefaultWorkspaceUnavailableError).details;
+    reply.send({
+      code: ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE,
+      msg: error.message,
+      data: { path: path ?? null, reason },
+      request_id: req.id,
+    });
+    return;
   }
   if (isError2(error) && error.code === ErrorCodes.SESSION_UNDO_UNAVAILABLE) {
     reply.send({
