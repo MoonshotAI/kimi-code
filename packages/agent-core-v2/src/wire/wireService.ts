@@ -112,6 +112,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
       try {
         this.appendRecordLow(record);
       } catch (error) {
+        this.logger.error('wire append failed', { agentId: this.agentId, error });
         onUnexpectedError(error);
       }
       return;
@@ -131,7 +132,10 @@ export class WireService extends Service implements IWireService, IAgentJournal 
         const output = dehydrate === undefined ? record : await dehydrate(record, transform);
         this.appendRecordLow(output);
       })
-      .catch((error: unknown) => onUnexpectedError(error));
+      .catch((error: unknown) => {
+        this.logger.error('wire append failed', { agentId: this.agentId, error });
+        onUnexpectedError(error);
+      });
     this.persistQueue = queued;
     void queued.then(() => {
       if (this.persistQueue === queued) this.persistQueue = undefined;
