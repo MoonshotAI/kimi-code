@@ -796,6 +796,7 @@ describe('`kimi web` foreground shutdown', () => {
     });
 
     const previousListeners = new Set(process.listeners('SIGINT'));
+    const previousTermListeners = new Set(process.listeners('SIGTERM'));
     const exit = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
     const now = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
     let signalHandler: (() => void) | undefined;
@@ -836,6 +837,9 @@ describe('`kimi web` foreground shutdown', () => {
       );
     } finally {
       if (signalHandler !== undefined) process.removeListener('SIGINT', signalHandler);
+      for (const listener of process.listeners('SIGTERM')) {
+        if (!previousTermListeners.has(listener)) process.removeListener('SIGTERM', listener);
+      }
       now.mockRestore();
       exit.mockRestore();
       vi.doUnmock('@moonshot-ai/kap-server');

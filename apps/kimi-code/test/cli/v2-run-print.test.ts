@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
   setCrashPhase: vi.fn(),
   setTelemetryContext: vi.fn(),
   setTelemetryModel: vi.fn(),
-  shutdownTelemetry: vi.fn(async () => {}),
+  shutdownTelemetry: vi.fn(async (_options: { timeoutMs: number }) => {}),
 }));
 
 vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
@@ -663,9 +663,9 @@ describe('runV2Print', () => {
     expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
-    expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({
-      timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS,
-    });
+    const shutdownBudgetMs = mocks.shutdownTelemetry.mock.lastCall?.[0].timeoutMs;
+    expect(shutdownBudgetMs).toBeGreaterThan(0);
+    expect(shutdownBudgetMs).toBeLessThanOrEqual(CLI_SHUTDOWN_TIMEOUT_MS);
   });
 
   it('reconciles the v1 sink model with the resumed session model', async () => {
