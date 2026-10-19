@@ -123,6 +123,31 @@ describe('ToolOutputAccumulator', () => {
     expect(builder.ok().spill).toBeUndefined();
   });
 
+  it('caps retained output on a code point boundary', () => {
+    const builder = new ToolOutputAccumulator();
+
+    builder.write(`${'x'.repeat(9_999_999)}\u{1F600}tail`);
+
+    const result = builder.ok();
+    expect(result.output).toBe('x'.repeat(9_999_999));
+    expect(builder.nChars).toBe(9_999_999);
+    expect(builder.totalChars).toBe(10_000_005);
+    expect(result.spill).toEqual({ totalChars: 10_000_005 });
+  });
+
+  it('caps retained output across writes without splitting a pair', () => {
+    const builder = new ToolOutputAccumulator();
+
+    builder.write('x'.repeat(9_999_999));
+    builder.write(`\u{1F600}${'y'.repeat(10)}`);
+
+    const result = builder.ok();
+    expect(result.output).toBe('x'.repeat(9_999_999));
+    expect(builder.nChars).toBe(9_999_999);
+    expect(builder.totalChars).toBe(10_000_011);
+    expect(result.spill).toEqual({ totalChars: 10_000_011 });
+  });
+
   it('treats an empty write as a no-op', () => {
     const builder = new ToolOutputAccumulator();
 
