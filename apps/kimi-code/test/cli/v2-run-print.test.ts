@@ -54,7 +54,7 @@ const mocks = vi.hoisted(() => ({
   setCrashPhase: vi.fn(),
   setTelemetryContext: vi.fn(),
   setTelemetryModel: vi.fn(),
-  shutdownTelemetry: vi.fn(async () => {}),
+  shutdownTelemetry: vi.fn(async (_options: { timeoutMs: number }) => {}),
 }));
 
 vi.mock('@moonshot-ai/agent-core-v2', async (importOriginal) => {
@@ -360,6 +360,46 @@ describe('runV2Print', () => {
     expect(app.dispose).toHaveBeenCalled();
   });
 
+  it('preserves a successful print result when telemetry shutdown rejects', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, appServices } = makeFakeHarness();
+    const telemetry = appServices.get(ITelemetryService) as {
+      shutdown: ReturnType<typeof vi.fn>;
+    };
+    telemetry.shutdown.mockRejectedValue(new Error('telemetry unavailable'));
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await expect(
+      runV2Print(opts() as never, '1.2.3-test', { stdout, stderr }),
+    ).resolves.toBeUndefined();
+
+    expect(telemetry.shutdown).toHaveBeenCalledOnce();
+    expect(app.dispose).toHaveBeenCalledOnce();
+    expect(stderr.text()).toContain(
+      'Warning: telemetry shutdown failed: telemetry unavailable',
+    );
+  });
+
+  it('reports a host telemetry shutdown rejection without changing the print result', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent } = makeFakeHarness();
+    mocks.shutdownTelemetry.mockRejectedValueOnce(new Error('host telemetry unavailable'));
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await expect(
+      runV2Print(opts() as never, '1.2.3-test', { stdout, stderr }),
+    ).resolves.toBeUndefined();
+
+    expect(app.dispose).toHaveBeenCalledOnce();
+    expect(stderr.text()).toContain(
+      'Warning: telemetry shutdown failed: host telemetry unavailable',
+    );
+  });
+
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {
     const stdout = writer();
     const stderr = writer();
@@ -623,9 +663,9 @@ describe('runV2Print', () => {
     expect(mocks.setTelemetryModel).toHaveBeenCalledWith('k2');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('runtime');
     expect(mocks.setCrashPhase).toHaveBeenCalledWith('shutdown');
-    expect(mocks.shutdownTelemetry).toHaveBeenCalledWith({
-      timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS,
-    });
+    const shutdownBudgetMs = mocks.shutdownTelemetry.mock.lastCall?.[0].timeoutMs;
+    expect(shutdownBudgetMs).toBeGreaterThan(0);
+    expect(shutdownBudgetMs).toBeLessThanOrEqual(CLI_SHUTDOWN_TIMEOUT_MS);
   });
 
   it('reconciles the v1 sink model with the resumed session model', async () => {
