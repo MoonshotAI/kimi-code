@@ -18,6 +18,7 @@ import {
 import { IWireService } from '#/wire/wire';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { sessionOccupiedError } from '#/persistence/interface/sessionLock';
 import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
@@ -420,11 +421,11 @@ describe('WireService migration rewrite', () => {
     const storage = new InMemoryStorageService();
     const log = await seedLegacyLog(storage);
     const locks = new InMemorySessionLockService();
-    const beginRun = locks.beginRun.bind(locks);
+    const hold = locks.hold.bind(locks);
     let occupied = true;
-    locks.beginRun = (sessionId) => {
-      if (occupied) throw new Error('occupied');
-      beginRun(sessionId);
+    locks.hold = (sessionId) => {
+      if (occupied) throw sessionOccupiedError(sessionId);
+      hold(sessionId);
     };
     const svc = createAgentWireHarness(log, storage, locks);
 

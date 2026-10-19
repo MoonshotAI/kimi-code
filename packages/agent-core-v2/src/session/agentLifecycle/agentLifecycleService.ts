@@ -58,7 +58,6 @@ import { WireService } from '#/wire/wireService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -128,7 +127,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionEventBus bus: ISessionEventBus,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
-    @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @ISessionRunGate private readonly runGate: ISessionRunGate,
     @IBlobStore private readonly blobStore: IBlobStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,

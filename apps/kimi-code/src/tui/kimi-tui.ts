@@ -4,7 +4,7 @@ import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
-import { ErrorCodes, isKimiError, log } from '@moonshot-ai/kimi-code-sdk';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -193,7 +193,12 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
-import { reloadSessionAfterStale, occupiedHolderClientId } from './utils/session-lock-errors';
+import {
+  isSessionOccupiedError,
+  isSessionStaleError,
+  occupiedHolderClientId,
+  reloadSessionAfterStale,
+} from './utils/session-lock-errors';
 import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -2042,6 +2047,15 @@ export class KimiTUI {
         !goalActive && stagingIds.length > 0 ? randomUUID() : undefined,
       );
     const submissionId = stagingLease?.submissionId;
+    const resend = (): void => {
+      this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+      this.updateQueueDisplay();
+      this.drainQueueIfIdle();
+    };
+    const restoreInput = (): void => {
+      this.staging.releaseRecalled(stagingIds);
+      this.restoreInputText(input);
+    };
     // While a goal is being pursued the engine holds its active turn across the
     // whole continuation loop, so a fresh prompt races the goal driver at every
     // continuation boundary and is rejected with `turn.agent_busy`, dropping
@@ -2054,18 +2068,8 @@ export class KimiTUI {
           session,
           error,
           entries: [entry],
-          retry: () => {
-            this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
-            this.updateQueueDisplay();
-            this.drainQueueIfIdle();
-          },
-          restore: () => {
-            this.staging.releaseRecalled([
-              ...(options?.imageAttachmentIds ?? []),
-              ...(options?.videoAttachmentIds ?? []),
-            ]);
-            this.restoreInputText(input);
-          },
+          retry: resend,
+          restore: restoreInput,
         });
         if (recovered) {
           this.staging.defer(stagingLease);
@@ -2080,18 +2084,8 @@ export class KimiTUI {
         session,
         error,
         entries: [entry],
-        retry: () => {
-          this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
-          this.updateQueueDisplay();
-          this.drainQueueIfIdle();
-        },
-        restore: () => {
-          this.staging.releaseRecalled([
-            ...(options?.imageAttachmentIds ?? []),
-            ...(options?.videoAttachmentIds ?? []),
-          ]);
-          this.restoreInputText(input);
-        },
+        retry: resend,
+        restore: restoreInput,
       });
       if (recovered) {
         this.staging.defer(stagingLease);
@@ -2110,82 +2104,76 @@ export class KimiTUI {
   }): boolean {
     const { session, error, entries, retry, restore } = args;
     if (this.session?.id !== session.id) return false;
-    if (isKimiError(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
+    if (isSessionOccupiedError(error)) {
       if (entries !== undefined) this.removeTranscriptEntries(entries);
       this.setAppState({ streamingPhase: 'idle' });
       this.resetLivePane();
-      const holderClient = occupiedHolderClientId(error);
-      this.track('occupied_prompt_shown', {
-        holder_client: holderClient,
-        opener_client: CLI_MSH_PLATFORM,
-      });
-      const cancelOccupied = (): void => {
-        this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
-        restore();
-      };
-      this.mountEditorReplacement(
-        new ChoicePickerComponent({
-          title: formatErrorMessage(error),
-          options: [
-            { value: 'retry', label: 'Retry', description: 'send again now' },
-            { value: 'cancel', label: 'Cancel', description: 'get your message back' },
-          ],
-          spaceSelect: false,
-          onSelect: (action) => {
-            if (action === 'retry') {
-              this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
-              this.restoreEditor();
-              retry();
-              return;
-            }
-            cancelOccupied();
-          },
-          onCancel: cancelOccupied,
-        }),
-      );
+      this.showSessionOccupied(error, retry, restore);
       return true;
     }
-    if (isKimiError(error) && error.code === ErrorCodes.SESSION_STALE) {
+    if (isSessionStaleError(error)) {
       if (entries !== undefined) this.removeTranscriptEntries(entries);
       this.resetLivePane();
-      const mediaSnapshot = this.imageStore.snapshot();
-      void (async () => {
-        // The request stays in flight across the reload: submissions queue
-        // instead of racing the closing session, and the queue is parked
-        // around switchToSession so resetSessionRuntime cannot wipe it.
-        const reloaded = await reloadSessionAfterStale(
-          this,
-          session.id,
-          'Loaded updates from another client. Your message was resent.',
-          () => {
-            const parked = this.state.queuedMessages;
-            this.state.queuedMessages = [];
-            this.updateQueueDisplay();
-            return () => {
-              if (parked.length === 0) return;
-              this.state.queuedMessages.push(...parked);
-              this.updateQueueDisplay();
-            };
-          },
-        );
-        this.imageStore.restore(mediaSnapshot);
-        this.setAppState({ streamingPhase: 'idle' });
-        if (reloaded) {
-          retry();
-          return;
-        }
-        const typedDuringReload = this.state.editor.getText();
-        restore();
-        if (typedDuringReload.trim().length > 0) {
-          const restored = this.state.editor.getText();
-          this.restoreInputText(
-            restored.length > 0 ? `${restored}\n${typedDuringReload}` : typedDuringReload,
-          );
-        }
-      })();
+      void this.resendAfterStaleReload(session, retry, restore);
       return true;
     }
     return false;
+  }
+
+  private showSessionOccupied(error: unknown, retry: () => void, restore: () => void): void {
+    const holderClient = occupiedHolderClientId(error);
+    this.track('occupied_prompt_shown', {
+      holder_client: holderClient,
+      opener_client: CLI_MSH_PLATFORM,
+    });
+    const cancel = (): void => {
+      this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
+      restore();
+    };
+    this.mountEditorReplacement(
+      new ChoicePickerComponent({
+        title: formatErrorMessage(error),
+        options: [
+          { value: 'retry', label: 'Retry', description: 'send again now' },
+          { value: 'cancel', label: 'Cancel', description: 'get your message back' },
+        ],
+        spaceSelect: false,
+        onSelect: (action) => {
+          if (action !== 'retry') {
+            cancel();
+            return;
+          }
+          this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
+          this.restoreEditor();
+          retry();
+        },
+        onCancel: cancel,
+      }),
+    );
+  }
+
+  // The request stays in flight across the reload, so input submitted
+  // meanwhile queues against the reloaded session instead of the closing one.
+  private async resendAfterStaleReload(
+    session: Session,
+    retry: () => void,
+    restore: () => void,
+  ): Promise<void> {
+    const reloaded = await reloadSessionAfterStale(
+      this,
+      session.id,
+      'Loaded updates from another client. Your message was resent.',
+    );
+    this.setAppState({ streamingPhase: 'idle' });
+    if (reloaded) {
+      retry();
+      return;
+    }
+    const typedDuringReload = this.state.editor.getText();
+    restore();
+    if (typedDuringReload.trim().length === 0) return;
+    const restored = this.state.editor.getText();
+    this.restoreInputText(restored.length > 0 ? `${restored}\n${typedDuringReload}` : typedDuringReload);
   }
 
   activatePluginCommand(
@@ -2795,21 +2783,16 @@ export class KimiTUI {
     initialUserTurnCount = session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
   ): Promise<void> {
     const previous = this.unloadCurrentSession('switching session');
-    // An in-place reload (e.g. after a stale conflict) returns the same
-    // Session object: closing it here would mark it closed for every later
-    // call, and its staging leases are still owned by the current session.
-    if (previous !== session) {
-      await previous?.close();
-      // A session switch abandons the previous session's in-flight staging
-      // leases and retires its history-owned cache copies. Do this at the
-      // boundary so retired paths cannot accumulate until process shutdown.
-      // Only when actually replacing a live session, though: on lazy first
-      // creation the outstanding lease belongs to the new session's first
-      // prompt, whose dispatch continues right after this — releasing it here
-      // would delete the staged media (e.g. a pasted image's daemon upload)
-      // before the engine's intake can read it.
-      if (previous !== undefined) this.staging.releaseAll();
-    }
+    await previous?.close();
+    // A session switch abandons the previous session's in-flight staging
+    // leases and retires its history-owned cache copies. Do this at the
+    // boundary so retired paths cannot accumulate until process shutdown.
+    // Only when actually replacing a live session, though: on lazy first
+    // creation the outstanding lease belongs to the new session's first
+    // prompt, whose dispatch continues right after this — releasing it here
+    // would delete the staged media (e.g. a pasted image's daemon upload)
+    // before the engine's intake can read it.
+    if (previous !== undefined) this.staging.releaseAll();
     this.session = session;
     this.surveyController.seedUserTurnCount(initialUserTurnCount);
     this.harness.setTelemetryContext({ sessionId: session.id });
@@ -3024,12 +3007,12 @@ export class KimiTUI {
     this.state.terminal.setTitle(label);
   }
 
-  resetSessionRuntime(): void {
+  resetSessionRuntime(options?: { readonly keepQueuedMessages?: boolean }): void {
     this.aborted = false;
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
-    this.clearQueuedMessages();
+    if (options?.keepQueuedMessages !== true) this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -3122,7 +3105,11 @@ export class KimiTUI {
     void this.cacheHint.maybeShowOnResume();
   }
 
-  async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
+  async reloadCurrentSessionView(
+    session: Session,
+    statusMessage: string,
+    options?: { readonly replayHistory?: boolean },
+  ): Promise<void> {
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
     this.clearReverseRpcPanels();
@@ -3131,7 +3118,8 @@ export class KimiTUI {
     this.approvalController.cancelAll('reloading session');
     this.questionController.cancelAll('reloading session');
 
-    this.resetSessionRuntime();
+    // The same session reloads in place, so its queued messages stay queued.
+    this.resetSessionRuntime({ keepQueuedMessages: true });
     this.session = session;
     this.surveyController.seedUserTurnCount(
       session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
@@ -3145,6 +3133,14 @@ export class KimiTUI {
       await this.refreshPluginCommands(session);
     } catch {
       /* keep the reloaded session usable even if dynamic skills fail */
+    }
+    if (options?.replayHistory === true) {
+      this.clearTranscriptView();
+      try {
+        await this.sessionReplay.hydrateFromReplay(session);
+      } catch (error) {
+        this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
+      }
     }
     this.sessionEventHandler.startSubscription();
     const resumeState = session.getResumeState();
@@ -3416,6 +3412,11 @@ export class KimiTUI {
   }
 
   private clearTranscriptAndRedraw(): void {
+    this.staging.deleteStaged(this.imageStore.clear());
+    this.clearTranscriptView();
+  }
+
+  private clearTranscriptView(): void {
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
     this.streamingUI.disposeActiveCompactionBlock();
@@ -3429,8 +3430,6 @@ export class KimiTUI {
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
     this.sessionEventHandler.notifications.clear();
-    const stagingFileIds = this.imageStore.clear();
-    this.staging.deleteStaged(stagingFileIds);
     this.renderWelcome();
     // No forced full render on session reset: let the differential renderer
     // converge on its own (a mass change above the viewport still makes the

@@ -60,7 +60,8 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
-import { sendSessionError, sessionConflictErrors } from './sessionErrors';
+import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import { reloadIfStale } from './sessionReload';
 
 interface SkillsRouteHost {
   get(
@@ -289,7 +290,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (error) {
         await preparedMedia?.discard();
-        await sendSessionError(core, session_id, reply, req, error);
+        await reloadIfStale(core, session_id, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );

@@ -19,7 +19,11 @@ export function occupiedHolderClientId(error: unknown): string {
 
 interface StaleReloadHost {
   readonly harness: KimiHarness;
-  switchToSession(session: Session, message: string): Promise<void>;
+  reloadCurrentSessionView(
+    session: Session,
+    message: string,
+    options?: { readonly replayHistory?: boolean },
+  ): Promise<void>;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
 }
@@ -28,19 +32,13 @@ export async function reloadSessionAfterStale(
   host: StaleReloadHost,
   sessionId: string,
   statusMessage: string,
-  beforeSwitch?: () => () => void,
 ): Promise<boolean> {
   try {
     const reloaded = await host.harness.reloadSession({
       id: sessionId,
       forcePluginSessionStartReminder: true,
     });
-    const unpark = beforeSwitch?.();
-    try {
-      await host.switchToSession(reloaded, statusMessage);
-    } finally {
-      unpark?.();
-    }
+    await host.reloadCurrentSessionView(reloaded, statusMessage, { replayHistory: true });
     host.track('session_stale_reload', { outcome: 'reloaded' });
     return true;
   } catch (error) {

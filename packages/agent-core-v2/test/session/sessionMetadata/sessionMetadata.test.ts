@@ -706,7 +706,7 @@ describe('SessionMetadata', () => {
     const store = ix.get(IAtomicDocumentStore);
     await meta.setTitle('mine');
 
-    locks.endRun('s1');
+    locks.release('s1');
     const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
     await store.set(META_SCOPE, 'state.json', {
       ...current!,
@@ -741,7 +741,7 @@ describe('SessionMetadata', () => {
     await vi.waitFor(() => {
       expect(store.set).toHaveBeenCalled();
     });
-    locks.endRun('s1');
+    locks.release('s1');
     expect(locks.held('s1')).toBe(true);
     release();
     await writing;
@@ -767,7 +767,7 @@ describe('SessionMetadata', () => {
         lastPrompt: 'first prompt',
       });
 
-      locks.endRun('s1');
+      locks.release('s1');
       const current = await store.get<SessionMeta>(META_SCOPE, 'state.json');
       await store.set(META_SCOPE, 'state.json', {
         ...current!,

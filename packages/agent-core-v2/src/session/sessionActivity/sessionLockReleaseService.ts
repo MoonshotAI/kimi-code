@@ -1,5 +1,4 @@
-import { Disposable } from '#/_base/di/lifecycle';
-import { createDecorator } from '#/_base/di/instantiation';
+import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 
@@ -8,14 +7,11 @@ import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 
 import { ISessionActivityView } from './sessionActivity';
+import { ISessionLockReleaseService } from './sessionLockRelease';
 
 const SESSION_LOCK_RELEASE_DELAY_MS = 3000;
 
-export const ISessionLockReleaseService = createDecorator<SessionLockReleaseService>(
-  'sessionLockReleaseService',
-);
-
-export class SessionLockReleaseService extends Disposable {
+export class SessionLockReleaseService extends Disposable implements ISessionLockReleaseService {
   declare readonly _serviceBrand: undefined;
 
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -34,12 +30,12 @@ export class SessionLockReleaseService extends Disposable {
         if (event.sessionId === this.ctx.sessionId) this.schedule();
       }),
     );
-    this._register({
-      dispose: () => {
+    this._register(
+      toDisposable(() => {
         this.cancelTimer();
-        this.sessionLocks.endRun(this.ctx.sessionId);
-      },
-    });
+        this.sessionLocks.release(this.ctx.sessionId);
+      }),
+    );
     this.schedule();
   }
 
@@ -59,7 +55,7 @@ export class SessionLockReleaseService extends Disposable {
       if (this.activity.state().busy) return;
       await this.appendLogStore.flush().catch(() => undefined);
       if (this.activity.state().busy) return;
-      this.sessionLocks.endRun(this.ctx.sessionId);
+      this.sessionLocks.release(this.ctx.sessionId);
     } finally {
       this.releasing = false;
       if (!this.activity.state().busy && this.sessionLocks.held(this.ctx.sessionId)) {

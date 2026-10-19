@@ -50,7 +50,8 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
-import { sendSessionError, sessionConflictErrors } from './sessionErrors';
+import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import { reloadIfStale } from './sessionReload';
 import {
   assertPromptFileRefs,
   assertPromptPathRefs,
@@ -181,7 +182,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         const result = projectPromptList((await resolvePrompt(core, session_id)).prompt);
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -361,7 +362,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
         if (!enqueued) await preparedMedia?.discard();
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        await reloadIfStale(core, req.params.session_id, req, error);
+        sendMappedError(reply, req, error);
       } finally {
         reservation?.dispose();
       }
@@ -392,7 +394,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         await resolved.prompt.steer(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        await reloadIfStale(core, req.params.session_id, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -432,7 +435,8 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           extra: { resolved, session_id, req, reply },
         });
       } catch (error) {
-        await sendSessionError(core, session_id, reply, req, error);
+        await reloadIfStale(core, session_id, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );

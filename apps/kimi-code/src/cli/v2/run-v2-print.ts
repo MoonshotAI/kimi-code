@@ -312,13 +312,8 @@ export async function runV2Print(
         `Session "${resolved.session.id}" was updated by another client; reloading.\n`,
       );
       await closeSessionById(app.accessor, resolved.session.id);
-      const reloaded = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
-      resolved = reloaded;
-      restorePermission = reloaded.restorePermission;
-      quiesceAgents = async () => {
-        releaseQuiescence = await quiesceSessionAgents(reloaded.session, reloaded.agent);
-      };
-      flushWires = () => flushSessionWires(reloaded.session, reloaded.agent);
+      resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+      restorePermission = resolved.restorePermission;
     };
     const runTurnOnce = async (): Promise<void> => {
       if (goalCreate !== undefined) {
@@ -336,27 +331,22 @@ export async function runV2Print(
         await runNativeTurn(app, resolved.session, resolved.agent, opts.prompt!, outputFormat, stdout, stderr);
       }
     };
-    let preflight = true;
-    let runAttempts = 0;
-    for (;;) {
-      try {
-        if (preflight) {
-          preflight = false;
-          preflightSessionRun(resolved.session);
+    try {
+      for (let staleReloads = 0; ; staleReloads++) {
+        try {
+          resolved.session.accessor.get(ISessionRunGate).begin();
+          await runTurnOnce();
+          break;
+        } catch (error) {
+          const stale = isError2(error) && error.code === ErrorCodes.SESSION_STALE;
+          if (!stale || staleReloads >= PRINT_MAX_STALE_RELOADS) throw error;
+          await reloadAfterStale();
         }
-        runAttempts++;
-        await runTurnOnce();
-        break;
-      } catch (error) {
-        if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
-          reportSessionOccupied(error, outputFormat, stdout, stderr);
-          return;
-        }
-        if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE || runAttempts > 1) {
-          throw error;
-        }
-        await reloadAfterStale();
       }
+    } catch (error) {
+      if (!isError2(error) || error.code !== ErrorCodes.SESSION_OCCUPIED) throw error;
+      reportSessionOccupied(error, outputFormat, stdout, stderr);
+      return;
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
@@ -672,6 +662,7 @@ async function runNativeTurn(
 }
 
 const PRINT_EXIT_SESSION_OCCUPIED = 4;
+const PRINT_MAX_STALE_RELOADS = 2;
 
 function reportSessionOccupied(
   error: Error2,
@@ -688,10 +679,6 @@ function reportSessionOccupied(
     stderr.write(`${message}\n`);
   }
   process.exitCode = PRINT_EXIT_SESSION_OCCUPIED;
-}
-
-function preflightSessionRun(session: ISessionScopeHandle): void {
-  session.accessor.get(ISessionRunGate).begin();
 }
 
 async function ensureNativeGoal(

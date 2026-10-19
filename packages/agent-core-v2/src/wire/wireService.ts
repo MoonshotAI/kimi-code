@@ -85,7 +85,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     this.agentId = scopeContext.agentId;
     this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
     this._register(
-      this.log.bindSessionLock(this.wireScope, AGENT_WIRE_RECORD_KEY, () =>
+      this.log.bindWriteGuard(this.wireScope, AGENT_WIRE_RECORD_KEY, () =>
         this.runGate.tryHold(),
       ),
     );

@@ -26,7 +26,7 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
 
   begin(): void {
     const sessionId = this.ctx.sessionId;
-    this.sessionLocks.beginRun(sessionId);
+    this.sessionLocks.hold(sessionId);
     const agents = this.instantiation.invokeFunction((accessor) =>
       accessor.get(IAgentLifecycleService),
     );
@@ -39,7 +39,7 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
         ),
       );
     if (!stale) return;
-    this.sessionLocks.endRun(sessionId);
+    this.sessionLocks.release(sessionId);
     throw new Error2(
       SessionErrors.codes.SESSION_STALE,
       `Session "${sessionId}" was updated by another client; reload it before continuing`,
@@ -48,12 +48,7 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
   }
 
   tryHold(): boolean {
-    try {
-      this.sessionLocks.beginRun(this.ctx.sessionId);
-      return true;
-    } catch {
-      return false;
-    }
+    return this.sessionLocks.tryHold(this.ctx.sessionId);
   }
 }
 

@@ -1030,7 +1030,7 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     return false;
   }
 
-  bindSessionLock(): IDisposable {
+  bindWriteGuard(): IDisposable {
     return toDisposable(() => undefined);
   }
   snapshot(): WireRecord[] {

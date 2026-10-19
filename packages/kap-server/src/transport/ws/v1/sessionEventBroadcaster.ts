@@ -176,7 +176,12 @@ export class SessionEventBroadcaster {
       this.detachSession(event.sessionId);
     });
     this.createSubscription = sessionManager.onDidCreateSession?.((event) => {
-      void this.reattachSession(event.sessionId).catch(() => undefined);
+      void this.reattachSession(event.sessionId).catch((error: unknown) =>
+        this.opts.logger?.warn(
+          { sessionId: event.sessionId, err: error },
+          'session event reattach failed',
+        ),
+      );
     });
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)

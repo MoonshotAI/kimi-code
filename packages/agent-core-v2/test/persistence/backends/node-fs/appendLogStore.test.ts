@@ -35,6 +35,7 @@ function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
     list: async () => [],
     delete: async () => {},
     size: async () => undefined,
+    sizeSync: () => undefined,
     mtime: async () => undefined,
     pathFor: () => undefined,
     flush: async () => {},
@@ -870,7 +871,7 @@ describe('AppendLogStore session lock integration', () => {
   it('keeps writes in memory while the session lock binding rejects, then flushes when released', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     let acquired = false;
-    const binding = log.bindSessionLock(SCOPE, KEY, () => acquired);
+    const binding = log.bindWriteGuard(SCOPE, KEY, () => acquired);
 
     log.append<Rec>(SCOPE, KEY, { n: 1 });
     await log.flush();

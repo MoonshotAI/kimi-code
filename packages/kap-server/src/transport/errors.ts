@@ -58,13 +58,15 @@ const KIMI_TO_PROTOCOL: Record<string, ErrorCode> = {
   [ErrorCodes.STORAGE_LOCKED]: ErrorCode.PERSISTENCE_FAILURE,
 };
 
+const PUBLIC_DETAIL_CODES: ReadonlySet<string> = new Set([
+  ErrorCodes.SESSION_OCCUPIED,
+  ErrorCodes.SESSION_STALE,
+]);
+
 export function mapError(err: unknown, requestId: string): ReturnType<typeof errEnvelope> {
   if (err instanceof Error2) {
     const code = KIMI_TO_PROTOCOL[err.code] ?? ErrorCode.INTERNAL_ERROR;
-    const details =
-      err.code === ErrorCodes.SESSION_OCCUPIED || err.code === ErrorCodes.SESSION_STALE
-        ? err.details
-        : undefined;
+    const details = PUBLIC_DETAIL_CODES.has(err.code) ? err.details : undefined;
     return errEnvelope(code, err.message, requestId, err.stack, details);
   }
   if (err instanceof TimeoutError) {

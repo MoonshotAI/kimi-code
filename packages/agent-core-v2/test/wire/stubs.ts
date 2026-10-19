@@ -50,7 +50,7 @@ const noopLog: IAppendLogStore = {
   acquire: () => toDisposable(() => {}),
   drainRetirements: () => Promise.resolve(),
   externallyModified: () => false,
-  bindSessionLock: () => ({ dispose: () => undefined }),
+  bindWriteGuard: () => ({ dispose: () => undefined }),
 };
 
 const noopBlob: IAgentBlobService = {
@@ -258,6 +258,6 @@ export function recordingWireLog(
     acquire: () => toDisposable(() => {}),
     drainRetirements: () => Promise.resolve(),
     externallyModified: () => false,
-    bindSessionLock: () => ({ dispose: () => undefined }),
+    bindWriteGuard: () => ({ dispose: () => undefined }),
   };
 }

@@ -174,16 +174,7 @@ export function stubSessionRunGate(
 ): ISessionRunGate {
   return {
     _serviceBrand: undefined,
-    begin: () => {
-      locks.beginRun(sessionId);
-    },
-    tryHold: () => {
-      try {
-        locks.beginRun(sessionId);
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    begin: () => locks.hold(sessionId),
+    tryHold: () => locks.tryHold(sessionId),
   };
 }

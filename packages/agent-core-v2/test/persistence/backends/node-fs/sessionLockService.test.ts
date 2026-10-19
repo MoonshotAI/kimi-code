@@ -8,6 +8,7 @@ import { isError2 } from '#/_base/errors/errors';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { SessionLockHolder } from '#/persistence/interface/sessionLock';
 import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
+import { noopLogger } from '../../../wire/stubs';
 
 const SID = 'session-1';
 
@@ -33,8 +34,8 @@ describe('SessionLockService', () => {
 
   beforeEach(() => {
     homeDir = mkdtempSync(join(tmpdir(), 'session-lock-'));
-    serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'));
-    serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'));
+    serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
+    serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'), noopLogger);
   });
 
   afterEach(() => {
@@ -43,31 +44,31 @@ describe('SessionLockService', () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  it('beginRun publishes a lock and endRun removes it', () => {
-    serviceA.beginRun(SID);
+  it('hold publishes a lock and release removes it', () => {
+    serviceA.hold(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(true);
     const holder = readLockFile(homeDir, SID);
     expect(holder.pid).toBe(process.pid);
     expect(holder.clientIdentity).toBe('client_a');
-    serviceA.endRun(SID);
+    serviceA.release(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
   });
 
-  it('beginRun is re-entrant within the same process', () => {
-    serviceA.beginRun(SID);
-    expect(() => serviceA.beginRun(SID)).not.toThrow();
-    const lease = serviceA.acquire(SID);
-    expect(() => serviceA.beginRun(SID)).not.toThrow();
+  it('hold is re-entrant within the same process', () => {
+    serviceA.hold(SID);
+    expect(() => serviceA.hold(SID)).not.toThrow();
+    const lease = serviceA.lease(SID);
+    expect(() => serviceA.hold(SID)).not.toThrow();
     lease.release();
-    serviceA.endRun(SID);
+    serviceA.release(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
   });
 
   it('throws session.occupied with holder details when another client holds the lock', () => {
-    serviceA.beginRun(SID);
+    serviceA.hold(SID);
     let caught: unknown;
     try {
-      serviceB.beginRun(SID);
+      serviceB.hold(SID);
     } catch (error) {
       caught = error;
     }
@@ -88,12 +89,12 @@ describe('SessionLockService', () => {
       startedAt: 0,
       clientIdentity: 'ghost',
     };
-    serviceA.beginRun('warmup');
-    serviceA.endRun('warmup');
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(stale), { mode: 0o600 });
-    expect(() => serviceA.beginRun(SID)).not.toThrow();
+    expect(() => serviceA.hold(SID)).not.toThrow();
     expect(readLockFile(homeDir, SID).token).not.toBe('dead-token');
-    serviceA.endRun(SID);
+    serviceA.release(SID);
   });
 
   it('treats a lock from another hostname as occupied even when the pid is dead', () => {
@@ -105,51 +106,52 @@ describe('SessionLockService', () => {
       startedAt: 0,
       clientIdentity: 'ghost',
     };
-    serviceA.beginRun('warmup');
-    serviceA.endRun('warmup');
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(foreign), { mode: 0o600 });
-    expect(() => serviceA.beginRun(SID)).toThrowError(/in use by another Kimi Code process/);
+    expect(() => serviceA.hold(SID)).toThrowError(/in use by another Kimi Code process/);
     expect(readLockFile(homeDir, SID).token).toBe('foreign-token');
   });
 
-  it('explicit lease keeps the lock through endRun until released', () => {
-    const lease = serviceA.acquire(SID);
-    serviceA.beginRun(SID);
-    serviceA.endRun(SID);
+  it('a lease keeps the lock through release until it is released', () => {
+    const lease = serviceA.lease(SID);
+    serviceA.hold(SID);
+    serviceA.release(SID);
     expect(existsSync(lockPath(homeDir, SID))).toBe(true);
-    expect(() => serviceB.beginRun(SID)).toThrowError(/in use by another Kimi Code process/);
+    expect(() => serviceB.hold(SID)).toThrowError(/in use by another Kimi Code process/);
     lease.release();
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
-    expect(() => serviceB.beginRun(SID)).not.toThrow();
-    serviceB.endRun(SID);
+    expect(() => serviceB.hold(SID)).not.toThrow();
+    serviceB.release(SID);
   });
 
   it('continues without a lock when the lock directory is not writable', () => {
     const blockedHome = join(homeDir, 'blocked');
     writeFileSync(blockedHome, 'not a directory');
-    const degraded = new SessionLockService(bootstrapStub(blockedHome));
-    expect(() => degraded.beginRun(SID)).not.toThrow();
+    const degraded = new SessionLockService(bootstrapStub(blockedHome), noopLogger);
+    expect(() => degraded.hold(SID)).not.toThrow();
     expect(degraded.held(SID)).toBe(true);
-    expect(() => degraded.endRun(SID)).not.toThrow();
+    expect(() => degraded.release(SID)).not.toThrow();
     degraded.dispose();
   });
 
-  it('releases held locks when the process exit hook fires', async () => {
-    vi.resetModules();
-    const fresh = await import('#/persistence/backends/node-fs/sessionLockService');
+  it('releases held locks when the process exit hook fires', () => {
     const onSpy = vi.spyOn(process, 'on');
+    const offSpy = vi.spyOn(process, 'off');
     try {
-      const freshService = new fresh.SessionLockService(bootstrapStub(homeDir, 'client_fresh'));
-      freshService.beginRun(SID);
+      serviceA.hold(SID);
+      serviceA.hold('other');
       expect(existsSync(lockPath(homeDir, SID))).toBe(true);
       const exitCalls = onSpy.mock.calls.filter(([event]) => event === 'exit');
       expect(exitCalls).toHaveLength(1);
       const exitListener = exitCalls[0]?.[1] as () => void;
       exitListener();
       expect(existsSync(lockPath(homeDir, SID))).toBe(false);
-      freshService.dispose();
+      expect(existsSync(lockPath(homeDir, 'other'))).toBe(false);
+      expect(offSpy.mock.calls.filter(([event]) => event === 'exit')).toHaveLength(1);
     } finally {
       onSpy.mockRestore();
+      offSpy.mockRestore();
     }
   });
 });

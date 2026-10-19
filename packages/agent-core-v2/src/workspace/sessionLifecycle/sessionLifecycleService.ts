@@ -431,7 +431,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async archive(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    const lease = this.sessionLocks.acquire(sessionId);
+    const lease = this.sessionLocks.lease(sessionId);
     try {
       const meta = handle.accessor.get(ISessionMetadata);
       await meta.setArchived(true);
@@ -476,7 +476,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined && !persistedHere) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
-    const lease = this.sessionLocks.acquire(sessionId);
+    const lease = this.sessionLocks.lease(sessionId);
     try {
       if (handle !== undefined) {
         await this.close(sessionId);
@@ -539,7 +539,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetId: string | undefined;
     let targetSessionDir: string | undefined;
     const quiescenceHolds: IDisposable[] = [];
-    const sourceLease = this.sessionLocks.acquire(sourceId);
+    const sourceLease = this.sessionLocks.lease(sourceId);
     try {
       if (sourceHandle !== undefined) {
         const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);

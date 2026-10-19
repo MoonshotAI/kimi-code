@@ -104,12 +104,6 @@ export interface VideoAttachment {
 
 export type MediaAttachment = ImageAttachment | VideoAttachment;
 
-export interface MediaStoreSnapshot {
-  readonly entries: readonly MediaAttachment[];
-  readonly nextId: number;
-  readonly stagingUses: ReadonlyMap<number, number>;
-}
-
 type MutableImageAttachment = {
   -readonly [Property in keyof ImageAttachment]: ImageAttachment[Property];
 };
@@ -239,22 +233,6 @@ export class ImageAttachmentStore {
 
   get(id: number): MediaAttachment | undefined {
     return this.byId.get(id);
-  }
-
-  snapshot(): MediaStoreSnapshot {
-    return {
-      entries: [...this.byId.values()],
-      nextId: this.nextId,
-      stagingUses: new Map(this.stagingUses),
-    };
-  }
-
-  restore(snapshot: MediaStoreSnapshot): void {
-    this.byId.clear();
-    for (const entry of snapshot.entries) this.byId.set(entry.id, entry);
-    this.nextId = snapshot.nextId;
-    this.stagingUses.clear();
-    for (const [id, uses] of snapshot.stagingUses) this.stagingUses.set(id, uses);
   }
 
   /**

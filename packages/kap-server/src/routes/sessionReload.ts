@@ -6,11 +6,19 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
-export function isSessionStale(error: unknown): boolean {
-  return isError2(error) && error.code === ErrorCodes.SESSION_STALE;
-}
+import { requestLog } from '../lib/requestLog';
 
-export async function reloadStaleSession(core: Scope, sessionId: string): Promise<void> {
-  await closeSessionById(core.accessor, sessionId);
-  await resumeSessionById(core.accessor, sessionId);
+export async function reloadIfStale(
+  core: Scope,
+  sessionId: string,
+  req: { id: string },
+  error: unknown,
+): Promise<void> {
+  if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE) return;
+  try {
+    await closeSessionById(core.accessor, sessionId);
+    await resumeSessionById(core.accessor, sessionId);
+  } catch (reloadError) {
+    requestLog(req)?.warn({ err: reloadError, session_id: sessionId }, 'stale session reload failed');
+  }
 }

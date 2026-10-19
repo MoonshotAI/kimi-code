@@ -251,7 +251,7 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
     acquire: () => ({ dispose: () => {} }),
     drainRetirements: () => Promise.resolve(),
     externallyModified: () => false,
-    bindSessionLock: () => ({ dispose: () => undefined }),
+    bindWriteGuard: () => ({ dispose: () => undefined }),
   };
   return {
     appended,

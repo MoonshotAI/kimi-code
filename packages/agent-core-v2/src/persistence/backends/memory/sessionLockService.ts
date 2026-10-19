@@ -1,68 +1,9 @@
-import { Emitter, type Event } from '#/_base/event';
+import { SessionLockHolds } from '#/persistence/interface/sessionLock';
 
-import {
-  ISessionLockService,
-  type SessionLockHeldEvent,
-  type SessionLockLease,
-} from '#/persistence/interface/sessionLock';
-
-interface HeldState {
-  token: string;
-  run: boolean;
-  explicit: number;
-}
-
-let tokenSeq = 0;
-
-export class InMemorySessionLockService implements ISessionLockService {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly heldSessions = new Map<string, HeldState>();
-  private readonly holdEmitter = new Emitter<SessionLockHeldEvent>();
-  readonly onDidHold: Event<SessionLockHeldEvent> = this.holdEmitter.event;
-
-  beginRun(sessionId: string): void {
-    const state = this.heldSessions.get(sessionId);
-    if (state !== undefined) {
-      state.run = true;
-      return;
-    }
-    this.heldSessions.set(sessionId, { token: `mem-${++tokenSeq}`, run: true, explicit: 0 });
-    this.holdEmitter.fire({ sessionId });
+export class InMemorySessionLockService extends SessionLockHolds {
+  protected publish(): string {
+    return '';
   }
 
-  endRun(sessionId: string): void {
-    const state = this.heldSessions.get(sessionId);
-    if (state === undefined || !state.run) return;
-    state.run = false;
-    if (state.explicit === 0) this.heldSessions.delete(sessionId);
-  }
-
-  acquire(sessionId: string): SessionLockLease {
-    let state = this.heldSessions.get(sessionId);
-    if (state === undefined) {
-      state = { token: `mem-${++tokenSeq}`, run: false, explicit: 0 };
-      this.heldSessions.set(sessionId, state);
-      this.holdEmitter.fire({ sessionId });
-    }
-    state.explicit += 1;
-    let released = false;
-    return {
-      sessionId,
-      release: () => {
-        if (released) return;
-        released = true;
-        state.explicit -= 1;
-        if (!state.run && state.explicit === 0) this.heldSessions.delete(sessionId);
-      },
-    };
-  }
-
-  held(sessionId: string): boolean {
-    return this.heldSessions.has(sessionId);
-  }
-
-  holdToken(sessionId: string): string | undefined {
-    return this.heldSessions.get(sessionId)?.token;
-  }
+  protected unpublish(): void {}
 }

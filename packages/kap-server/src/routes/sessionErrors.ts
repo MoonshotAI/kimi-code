@@ -2,29 +2,22 @@ import {
   ErrorCodes,
   isError2,
   type DefaultWorkspaceUnavailableError,
-  type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
 import { requestLog } from '../lib/requestLog';
 import { ErrorCode } from '../protocol/error-codes';
 import { mapError } from '../transport/errors';
-import { isSessionStale, reloadStaleSession } from './sessionReload';
 
 export const sessionConflictErrors = {
   [ErrorCode.SESSION_OCCUPIED]: {},
   [ErrorCode.SESSION_STALE]: {},
 } as const;
 
-export async function sendSessionError(
-  core: Scope,
-  sessionId: string | undefined,
+export function sendMappedError(
   reply: { send(payload: unknown): unknown },
   req: { id: string },
   error: unknown,
-): Promise<void> {
-  if (sessionId !== undefined && isSessionStale(error)) {
-    await reloadStaleSession(core, sessionId).catch(() => undefined);
-  }
+): void {
   if (isError2(error) && error.code === ErrorCodes.DEFAULT_WORKSPACE_UNAVAILABLE) {
     const { path, reason } = (error as DefaultWorkspaceUnavailableError).details;
     reply.send({

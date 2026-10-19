@@ -1,5 +1,3 @@
-import { statSync } from 'node:fs';
-
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -38,7 +36,7 @@ interface LogState {
   knownLength: number | undefined;
   inFlightBytes: number;
   rewriteInFlight: number | undefined;
-  lockWarned: boolean;
+  guardWarned: boolean;
   onError?: (error: unknown) => void;
 }
 
@@ -46,7 +44,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly logs = new Map<string, LogState>();
-  private readonly lockBindings = new Map<string, () => boolean>();
+  private readonly writeGuards = new Map<string, () => boolean>();
   private readonly writeEmitter = this._register(new Emitter<AppendLogWrite>());
   readonly onDidWrite: Event<AppendLogWrite> = this.writeEmitter.event;
 
@@ -199,43 +197,31 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     return disk < known || disk > known + (state?.inFlightBytes ?? 0);
   }
 
-  bindSessionLock(scope: string, key: string, tryAcquire: () => boolean): IDisposable {
+  bindWriteGuard(scope: string, key: string, guard: () => boolean): IDisposable {
     const id = logId(scope, key);
-    this.lockBindings.set(id, tryAcquire);
+    this.writeGuards.set(id, guard);
     return toDisposable(() => {
-      if (this.lockBindings.get(id) === tryAcquire) this.lockBindings.delete(id);
+      if (this.writeGuards.get(id) === guard) this.writeGuards.delete(id);
     });
   }
 
-  private acquireSessionLock(scope: string, key: string, state: LogState): boolean {
-    const binding = this.lockBindings.get(logId(scope, key));
-    if (binding === undefined) return true;
-    let acquired = false;
-    try {
-      acquired = binding();
-    } catch {
-      acquired = false;
-    }
-    if (acquired) {
-      state.lockWarned = false;
+  private writeAllowed(scope: string, key: string, state: LogState): boolean {
+    const guard = this.writeGuards.get(logId(scope, key));
+    if (guard === undefined || guard()) {
+      state.guardWarned = false;
       return true;
     }
-    if (!state.lockWarned) {
-      state.lockWarned = true;
-      console.warn(
-        `[append-log] ${scope}/${key}: session lock unavailable; keeping writes in memory`,
-      );
+    if (!state.guardWarned) {
+      state.guardWarned = true;
+      console.warn(`[append-log] ${scope}/${key}: write guard declined; keeping writes in memory`);
     }
     return false;
   }
 
   private diskLength(scope: string, key: string): number | undefined {
-    const path = this.storage.pathFor(scope, key);
-    if (path === undefined) return undefined;
     try {
-      return statSync(path).size;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+      return this.storage.sizeSync(scope, key) ?? 0;
+    } catch {
       return undefined;
     }
   }
@@ -258,7 +244,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         knownLength: undefined,
         inFlightBytes: 0,
         rewriteInFlight: undefined,
-        lockWarned: false,
+        guardWarned: false,
       };
       this.logs.set(id, state);
     }
@@ -301,7 +287,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       await this.flushState(scope, key, state);
       if (state.pending.length > 0) {
         console.warn(
-          `[append-log] ${scope}/${key}: dropping ${state.pending.length} unflushed record(s) on close; session lock was unavailable`,
+          `[append-log] ${scope}/${key}: dropping ${state.pending.length} unflushed record(s) on close; write guard declined`,
         );
       }
     } finally {
@@ -337,7 +323,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       const owned = owner();
       if (state.flushPromise === owned) {
         while (state.flushPromise === owned && state.pending.length > 0) {
-          if (!this.acquireSessionLock(scope, key, state)) break;
+          if (!this.writeAllowed(scope, key, state)) break;
           await this.drain(scope, key, state, wroteBox);
         }
       }
@@ -362,7 +348,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     const cutoverEpoch = state.cutoverEpoch;
     await state.ready;
     if (state.cutoverEpoch !== cutoverEpoch) return false;
-    if (state.pending.length > 0 && !this.acquireSessionLock(scope, key, state)) return false;
+    if (state.pending.length > 0 && !this.writeAllowed(scope, key, state)) return false;
     let wrote = false;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();

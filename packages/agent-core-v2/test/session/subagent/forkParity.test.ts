@@ -120,7 +120,7 @@ class ScopedAppendLogStore implements IAppendLogStore {
     return false;
   }
 
-  bindSessionLock(): IDisposable {
+  bindWriteGuard(): IDisposable {
     return { dispose: () => undefined };
   }
 }

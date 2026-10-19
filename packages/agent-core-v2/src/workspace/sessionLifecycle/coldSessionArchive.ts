@@ -23,7 +23,7 @@ export async function setColdSessionArchived(
 ): Promise<ColdSessionArchiveOutcome> {
   const summary = await accessor.get(ISessionIndex).get(sessionId);
   if (summary === undefined) return 'not_found';
-  const lease = accessor.get(ISessionLockService).acquire(sessionId);
+  const lease = accessor.get(ISessionLockService).lease(sessionId);
   try {
     const docs = accessor.get(IAtomicDocumentStore);
     const metaScope = sessionScopeOf(

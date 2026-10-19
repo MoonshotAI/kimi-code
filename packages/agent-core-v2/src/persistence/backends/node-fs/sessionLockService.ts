@@ -4,39 +4,32 @@ import os from 'node:os';
 
 import { join } from 'pathe';
 
-import { Disposable } from '#/_base/di/lifecycle';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { isError2 } from '#/_base/errors/errors';
-import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   ISessionLockService,
+  SessionLockHolds,
   sessionOccupiedError,
-  type SessionLockHeldEvent,
   type SessionLockHolder,
-  type SessionLockLease,
 } from '#/persistence/interface/sessionLock';
 
 const LOCK_FILE_VERSION = 1;
 
-interface HeldState {
-  token: string;
-  run: boolean;
-  explicit: number;
-}
+const UNREADABLE_HOLDER: SessionLockHolder = {
+  version: 0,
+  token: '',
+  pid: 0,
+  hostname: '',
+  startedAt: 0,
+  clientIdentity: 'unknown',
+};
 
-const heldServices = new Set<SessionLockService>();
-let exitHooked = false;
-
-function hookExit(): void {
-  if (exitHooked) return;
-  exitHooked = true;
-  process.on('exit', () => {
-    for (const service of heldServices) service.releaseAll();
-  });
-}
+type ClaimOutcome =
+  | { readonly claimed: true }
+  | { readonly claimed: false; readonly holder: SessionLockHolder | undefined };
 
 function pidAlive(pid: number): boolean {
   try {
@@ -47,118 +40,72 @@ function pidAlive(pid: number): boolean {
   }
 }
 
-let tmpSeq = 0;
-
-export class SessionLockService extends Disposable implements ISessionLockService {
-  declare readonly _serviceBrand: undefined;
-
-  private readonly heldLocks = new Map<string, HeldState>();
+export class SessionLockService extends SessionLockHolds {
   private readonly lockDir: string;
   private readonly hostname: string;
   private readonly clientIdentity: string;
   private lockDirReady = false;
-  private readonly holdEmitter = this._register(new Emitter<SessionLockHeldEvent>());
-  readonly onDidHold: Event<SessionLockHeldEvent> = this.holdEmitter.event;
+  private exitListener: (() => void) | undefined;
 
-  constructor(@IBootstrapService bootstrap: IBootstrapService) {
+  constructor(
+    @IBootstrapService bootstrap: IBootstrapService,
+    @ILogService private readonly log: ILogService,
+  ) {
     super();
     this.lockDir = join(bootstrap.homeDir, 'locks', 'sessions');
     this.hostname = os.hostname();
     this.clientIdentity = bootstrap.clientIdentity.platform || bootstrap.clientIdentity.productName;
   }
 
-  beginRun(sessionId: string): void {
-    const state = this.heldLocks.get(sessionId);
-    if (state !== undefined) {
-      state.run = true;
-      return;
-    }
-    this.heldLocks.set(sessionId, { token: this.publish(sessionId), run: true, explicit: 0 });
-    this.holdEmitter.fire({ sessionId });
-  }
-
-  endRun(sessionId: string): void {
-    const state = this.heldLocks.get(sessionId);
-    if (state === undefined || !state.run) return;
-    state.run = false;
-    this.maybeUnlink(sessionId, state);
-  }
-
-  acquire(sessionId: string): SessionLockLease {
-    let state = this.heldLocks.get(sessionId);
-    if (state === undefined) {
-      state = { token: this.publish(sessionId), run: false, explicit: 0 };
-      this.heldLocks.set(sessionId, state);
-      this.holdEmitter.fire({ sessionId });
-    }
-    state.explicit += 1;
-    let released = false;
-    return {
-      sessionId,
-      release: () => {
-        if (released) return;
-        released = true;
-        state.explicit -= 1;
-        this.maybeUnlink(sessionId, state);
-      },
-    };
-  }
-
-  held(sessionId: string): boolean {
-    return this.heldLocks.has(sessionId);
-  }
-
-  holdToken(sessionId: string): string | undefined {
-    return this.heldLocks.get(sessionId)?.token;
-  }
-
-  override dispose(): void {
-    this.releaseAll();
-    super.dispose();
-  }
-
-  releaseAll(): void {
-    for (const [sessionId, state] of this.heldLocks) {
-      this.unlinkIfMine(sessionId, state.token);
-    }
-    this.heldLocks.clear();
-    heldServices.delete(this);
-  }
-
-  private maybeUnlink(sessionId: string, state: HeldState): void {
-    if (state.run || state.explicit > 0) return;
-    if (this.heldLocks.get(sessionId) !== state) return;
-    this.heldLocks.delete(sessionId);
-    if (this.heldLocks.size === 0) heldServices.delete(this);
-    this.unlinkIfMine(sessionId, state.token);
-  }
-
-  private publish(sessionId: string): string {
+  protected publish(sessionId: string): string {
     const token = `${process.pid}:${randomUUID()}`;
+    let outcome: ClaimOutcome;
     try {
-      this.ensureLockDir();
-      const lockPath = this.lockPath(sessionId);
-      for (let attempt = 0; attempt < 2; attempt++) {
-        if (this.tryPublish(lockPath, this.payload(token))) {
-          heldServices.add(this);
-          hookExit();
-          return token;
-        }
-        const current = this.readHolder(lockPath);
-        if (current !== undefined && this.alive(current)) {
-          throw sessionOccupiedError(sessionId, current);
-        }
-        this.reclaim(lockPath, token);
-      }
-      throw sessionOccupiedError(sessionId, this.readHolder(lockPath));
+      outcome = this.claim(this.lockPath(sessionId), token);
     } catch (error) {
-      if (isError2(error)) throw error;
-      console.warn(
-        `[session-lock] locking unavailable for session "${sessionId}", continuing without lock`,
-        error,
-      );
+      this.log.warn('session lock unavailable; continuing without lock', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return token;
     }
+    if (!outcome.claimed) throw sessionOccupiedError(sessionId, outcome.holder);
+    this.watchExit();
+    return token;
+  }
+
+  protected unpublish(sessionId: string, token: string): void {
+    try {
+      const lockPath = this.lockPath(sessionId);
+      if (this.readHolder(lockPath)?.token === token) this.unlinkSilent(lockPath);
+    } catch {
+      return;
+    } finally {
+      if (!this.holding) this.unwatchExit();
+    }
+  }
+
+  private claim(lockPath: string, token: string): ClaimOutcome {
+    this.ensureLockDir();
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (this.tryPublish(lockPath, this.payload(token))) return { claimed: true };
+      const current = this.readHolder(lockPath);
+      if (current !== undefined && this.alive(current)) return { claimed: false, holder: current };
+      this.reclaim(lockPath, token);
+    }
+    return { claimed: false, holder: this.readHolder(lockPath) };
+  }
+
+  private watchExit(): void {
+    if (this.exitListener !== undefined) return;
+    this.exitListener = () => this.releaseAll();
+    process.on('exit', this.exitListener);
+  }
+
+  private unwatchExit(): void {
+    if (this.exitListener === undefined) return;
+    process.off('exit', this.exitListener);
+    this.exitListener = undefined;
   }
 
   private reclaim(lockPath: string, token: string): void {
@@ -177,7 +124,7 @@ export class SessionLockService extends Disposable implements ISessionLockServic
   }
 
   private tryPublish(lockPath: string, body: string): boolean {
-    const tmp = `${lockPath}.tmp-${process.pid}-${++tmpSeq}`;
+    const tmp = `${lockPath}.tmp-${process.pid}-${randomUUID()}`;
     try {
       fs.writeFileSync(tmp, body, { mode: 0o600 });
       fs.linkSync(tmp, lockPath);
@@ -198,20 +145,24 @@ export class SessionLockService extends Disposable implements ISessionLockServic
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
       throw error;
     }
+    let parsed: Partial<SessionLockHolder>;
     try {
-      const parsed = JSON.parse(raw) as Partial<SessionLockHolder>;
-      return {
-        version: typeof parsed.version === 'number' ? parsed.version : 0,
-        token: typeof parsed.token === 'string' ? parsed.token : '',
-        pid: typeof parsed.pid === 'number' ? parsed.pid : 0,
-        hostname: typeof parsed.hostname === 'string' ? parsed.hostname : '',
-        startedAt: typeof parsed.startedAt === 'number' ? parsed.startedAt : 0,
-        clientIdentity:
-          typeof parsed.clientIdentity === 'string' ? parsed.clientIdentity : 'unknown',
-      };
+      parsed = JSON.parse(raw) as Partial<SessionLockHolder>;
     } catch {
-      return { version: 0, token: '', pid: 0, hostname: '', startedAt: 0, clientIdentity: 'unknown' };
+      return UNREADABLE_HOLDER;
     }
+    return {
+      version: typeof parsed.version === 'number' ? parsed.version : UNREADABLE_HOLDER.version,
+      token: typeof parsed.token === 'string' ? parsed.token : UNREADABLE_HOLDER.token,
+      pid: typeof parsed.pid === 'number' ? parsed.pid : UNREADABLE_HOLDER.pid,
+      hostname: typeof parsed.hostname === 'string' ? parsed.hostname : UNREADABLE_HOLDER.hostname,
+      startedAt:
+        typeof parsed.startedAt === 'number' ? parsed.startedAt : UNREADABLE_HOLDER.startedAt,
+      clientIdentity:
+        typeof parsed.clientIdentity === 'string'
+          ? parsed.clientIdentity
+          : UNREADABLE_HOLDER.clientIdentity,
+    };
   }
 
   private alive(holder: SessionLockHolder): boolean {
@@ -230,15 +181,6 @@ export class SessionLockService extends Disposable implements ISessionLockServic
       startedAt: Date.now(),
       clientIdentity: this.clientIdentity,
     } satisfies SessionLockHolder);
-  }
-
-  private unlinkIfMine(sessionId: string, token: string): void {
-    try {
-      const current = this.readHolder(this.lockPath(sessionId));
-      if (current?.token === token) this.unlinkSilent(this.lockPath(sessionId));
-    } catch {
-      return;
-    }
   }
 
   private unlinkSilent(path: string): void {

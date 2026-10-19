@@ -173,6 +173,7 @@ export * from '#/session/sessionMetadata/sessionMetadataService';
 export * from '#/session/sessionMetadata/promptMetadata';
 export * from '#/session/sessionActivity/sessionActivity';
 export * from '#/session/sessionActivity/sessionActivityService';
+export * from '#/session/sessionActivity/sessionLockRelease';
 export * from '#/session/sessionActivity/sessionLockReleaseService';
 export * from '#/session/sessionActivity/sessionOutcomeMirror';
 export * from '#/session/sessionActivity/sessionOutcomeMirrorService';

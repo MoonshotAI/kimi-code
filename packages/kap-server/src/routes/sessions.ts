@@ -78,8 +78,8 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
-import { sendSessionError, sessionConflictErrors } from './sessionErrors';
-import { isSessionStale, reloadStaleSession } from './sessionReload';
+import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import { reloadIfStale } from './sessionReload';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -289,7 +289,7 @@ export function registerSessionsRoutes(
         );
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        await sendSessionError(core, undefined, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -561,7 +561,7 @@ export function registerSessionsRoutes(
         }
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -617,7 +617,7 @@ export function registerSessionsRoutes(
         }
         reply.send(okEnvelope({ title }, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -669,7 +669,7 @@ export function registerSessionsRoutes(
           },
         });
       } catch (error) {
-        await sendSessionError(core, undefined, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -728,7 +728,7 @@ export function registerSessionsRoutes(
             : projected;
         reply.send(okEnvelope({ items, has_more: page.nextCursor !== undefined }, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -776,7 +776,7 @@ export function registerSessionsRoutes(
         );
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -805,7 +805,7 @@ export function registerSessionsRoutes(
         const status = await core.accessor.get(ISessionLegacyService).status(session_id);
         reply.send(okEnvelope(status, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -834,7 +834,7 @@ export function registerSessionsRoutes(
         const goal = await core.accessor.get(ISessionLegacyService).goal(session_id);
         reply.send(okEnvelope(goal, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -881,7 +881,7 @@ export function registerSessionsRoutes(
               ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
-        await sendSessionError(core, req.params.session_id, reply, req, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -964,7 +964,7 @@ async function compactSessionAction(
       .get(IAgentFullCompactionService)
       .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
   } catch (error) {
-    if (isSessionStale(error)) await reloadStaleSession(core, id).catch(() => undefined);
+    await reloadIfStale(core, id, req, error);
     throw error;
   }
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
@@ -979,7 +979,7 @@ async function undoSessionAction(
   try {
     await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
   } catch (error) {
-    if (isSessionStale(error)) await reloadStaleSession(core, id).catch(() => undefined);
+    await reloadIfStale(core, id, req, error);
     throw error;
   }
   const history = agent.accessor.get(IAgentContextMemoryService).get();

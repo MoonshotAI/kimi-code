@@ -18,6 +18,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
 import { SessionRunGateService } from '#/session/sessionActivity/sessionRunGateService';
+import { noopLogger } from '../../wire/stubs';
 
 const SID = 'session-1';
 const SCOPE = 'sessions/ws1/session-1/agents/main';
@@ -53,8 +54,8 @@ describe('SessionRunGateService', () => {
     ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
-    serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'));
-    serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'));
+    serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
+    serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'), noopLogger);
   });
 
   afterEach(() => {
@@ -90,7 +91,7 @@ describe('SessionRunGateService', () => {
       gate().begin();
     }).not.toThrow();
     expect(serviceA.held(SID)).toBe(true);
-    serviceA.endRun(SID);
+    serviceA.release(SID);
   });
 
   it('throws session.stale and releases when the wire changed on disk', async () => {
@@ -130,7 +131,7 @@ describe('SessionRunGateService', () => {
 
   it('checks staleness even when the lock was already acquired by another path', async () => {
     await readAll();
-    serviceA.beginRun(SID);
+    serviceA.hold(SID);
     writeExternally(`${JSON.stringify({ type: 'metadata', protocol_version: 1 })}\n`);
     let caught: unknown;
     try {
@@ -151,12 +152,12 @@ describe('SessionRunGateService', () => {
     expect(() => {
       gate().begin();
     }).not.toThrow();
-    serviceA.endRun(SID);
+    serviceA.release(SID);
   });
 
   it('throws session.occupied when another client runs the session', async () => {
     await readAll();
-    serviceB.beginRun(SID);
+    serviceB.hold(SID);
     let caught: unknown;
     try {
       gate().begin();
@@ -165,14 +166,14 @@ describe('SessionRunGateService', () => {
     }
     expect(isError2(caught)).toBe(true);
     expect((caught as { code: string }).code).toBe('session.occupied');
-    serviceB.endRun(SID);
+    serviceB.release(SID);
   });
 
   it('tryHold returns false instead of throwing when occupied', async () => {
-    serviceB.beginRun(SID);
+    serviceB.hold(SID);
     expect(gate().tryHold()).toBe(false);
-    serviceB.endRun(SID);
+    serviceB.release(SID);
     expect(gate().tryHold()).toBe(true);
-    serviceA.endRun(SID);
+    serviceA.release(SID);
   });
 });
