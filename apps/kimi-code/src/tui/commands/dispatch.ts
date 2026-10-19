@@ -373,6 +373,13 @@ async function handleBuiltInSlashCommand(
       command !== undefined &&
       resolveSlashCommandAvailability(command, args) === 'idle-only'
     ) {
+      // Same enqueue semantics as the dispatch builtin branch: a /compact
+      // submitted before the session existed joins the queue when the
+      // awaited creation lands on a running turn.
+      if (name === 'compact' && busyReason === 'streaming' && !host.state.appState.isCompacting) {
+        if (!host.enqueueCompactCommand(args)) host.showError('A /compact is already queued.');
+        return;
+      }
       host.showError(slashBusyMessage(name, busyReason));
       // Same as the dispatch blocked branch: give the cleared input back,
       // guarded the same way — session creation awaited above.

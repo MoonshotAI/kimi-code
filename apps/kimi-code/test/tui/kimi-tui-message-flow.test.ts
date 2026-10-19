@@ -4970,6 +4970,36 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('/compact');
   });
 
+  it('queues /compact submitted while the lazy session creation was in flight', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/compact');
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({ mode: 'compact', text: '/compact' }),
+    ]);
+    expect(lazySession.compact).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Cannot /compact');
+  });
+
   it('skips a queued /compact when an auto compaction completed while it waited', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -5061,10 +5091,28 @@ command = "vim"
     const compactOnlyPane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
     expect(compactOnlyPane).toContain('/compact');
     expect(compactOnlyPane).not.toContain('ctrl-s to steer immediately');
+  });
+
+  it('omits the steer hint when every steerable message sits behind a queued /compact', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput('/compact');
+    driver.handleUserInput('plain note');
+
+    const pane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+    expect(pane).not.toContain('ctrl-s to steer immediately');
+  });
+
+  it('shows the steer hint when a steerable message sits ahead of a queued /compact', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
 
     driver.handleUserInput('plain note');
-    const mixedPane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
-    expect(mixedPane).toContain('ctrl-s to steer immediately');
+    driver.handleUserInput('/compact');
+
+    const pane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+    expect(pane).toContain('ctrl-s to steer immediately');
   });
 
   it('recalls a queued /compact into the editor on up arrow', async () => {
