@@ -345,6 +345,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             dispatch: () => {},
             replay: async () => {},
             flush: async () => {},
+            externallyModified: () => false,
             getModel: () => [],
             subscribe: () => noopDisposable(),
             onEmission: () => noopDisposable(),

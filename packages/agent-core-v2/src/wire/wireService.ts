@@ -445,10 +445,14 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     return this.storage.pathFor(this.wireScope, AGENT_WIRE_RECORD_KEY);
   }
 
+  externallyModified(): boolean {
+    return this.log.externallyModified(this.wireScope, AGENT_WIRE_RECORD_KEY);
+  }
+
   private async rewriteMigratedJournal(records: WireRecord[]): Promise<boolean> {
     if (
       !this.sessionLocks.tryHold(this.sessionContext.sessionId) ||
-      this.log.externallyModified(this.wireScope, AGENT_WIRE_RECORD_KEY)
+      this.externallyModified()
     ) {
       return false;
     }
@@ -489,7 +493,7 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     }
     if (
       !this.sessionLocks.tryHold(this.sessionContext.sessionId) ||
-      this.log.externallyModified(this.wireScope, AGENT_WIRE_RECORD_KEY)
+      this.externallyModified()
     ) {
       this.pendingRepair = { records, truncation };
       return;

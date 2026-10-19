@@ -7,7 +7,7 @@ import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { SessionErrors } from '#/session/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { AGENT_WIRE_RECORD_KEY } from '#/wire/record';
+import { IWireService } from '#/wire/wire';
 
 import { ISessionActivityView } from './sessionActivity';
 import { ISessionRunGate } from './sessionRunGate';
@@ -47,11 +47,10 @@ export class SessionRunGateService extends Disposable implements ISessionRunGate
     this.sessionLocks.hold(sessionId);
     const stale = this.agents
       .list()
-      .some((agent) =>
-        this.appendLogStore.externallyModified(
-          this.ctx.scope(`agents/${agent.agentId}`),
-          AGENT_WIRE_RECORD_KEY,
-        ),
+      .some(
+        (agent) =>
+          this.agents.handleOf(agent.agentId)?.accessor.get(IWireService).externallyModified() ??
+          false,
       );
     if (!stale) return;
     this.sessionLocks.release(sessionId);

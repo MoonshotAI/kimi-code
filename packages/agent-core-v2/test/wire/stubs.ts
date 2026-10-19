@@ -192,6 +192,7 @@ export function stubAgentWire(
     lineCount: () => 0,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,
+    externallyModified: () => false,
     journalRef: { tree: 'stub', branch: 'main' },
     append: () => {},
     read: async function* () {},

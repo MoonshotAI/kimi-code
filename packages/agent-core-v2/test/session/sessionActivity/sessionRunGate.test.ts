@@ -34,10 +34,6 @@ const sessionContextStub = {
   scope: (subKey?: string) => `sessions/ws1/${SID}/${subKey}`,
 } as ISessionContext;
 
-const mainOnlyAgents = {
-  list: () => [{ agentId: 'main' }],
-} as unknown as IAgentLifecycleService;
-
 function bootstrapStub(homeDir: string, platform = 'test_client'): IBootstrapService {
   return {
     homeDir,
@@ -92,7 +88,21 @@ describe('SessionRunGateService', () => {
     rmSync(homeDir, { recursive: true, force: true });
   });
 
-  function gate(agents: IAgentLifecycleService = mainOnlyAgents): SessionRunGateService {
+  function agentsOf(...agentIds: string[]): IAgentLifecycleService {
+    return {
+      list: () => agentIds.map((agentId) => ({ agentId })),
+      handleOf: (agentId: string) => ({
+        accessor: {
+          get: () => ({
+            externallyModified: () =>
+              log.externallyModified(sessionContextStub.scope(`agents/${agentId}`), KEY),
+          }),
+        },
+      }),
+    } as unknown as IAgentLifecycleService;
+  }
+
+  function gate(agents: IAgentLifecycleService = agentsOf('main')): SessionRunGateService {
     return disposables.add(
       new SessionRunGateService(sessionContextStub, serviceA, log, agents, activity.view),
     );
@@ -135,9 +145,7 @@ describe('SessionRunGateService', () => {
 
   it('throws session.stale and releases when a loaded subagent wire changed on disk', async () => {
     const subScope = 'sessions/ws1/session-1/agents/coder-1';
-    const withSubagent = {
-      list: () => [{ agentId: 'main' }, { agentId: 'coder-1' }],
-    } as unknown as IAgentLifecycleService;
+    const withSubagent = agentsOf('main', 'coder-1');
     await readAll();
     for await (const _ of log.read(subScope, KEY)) {
       void _;
