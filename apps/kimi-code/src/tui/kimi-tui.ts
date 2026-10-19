@@ -19,6 +19,7 @@ import type {
   TokenUsage,
   TurnEndedEvent,
   TurnStartedEvent,
+  Unsubscribe,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
@@ -45,7 +46,7 @@ import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
 import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
-import { configuredSurveyOptOut, migrateLegacySurveySetting } from '#/utils/survey-setting';
+import { migrateLegacySurveySetting } from '#/utils/survey-setting';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
@@ -346,6 +347,7 @@ export class KimiTUI {
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
+  private surveySettingSubscription: Unsubscribe | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
@@ -497,6 +499,10 @@ export class KimiTUI {
         },
       }),
     );
+    this.surveySettingSubscription = this.harness.onConfigSectionChanged((change) => {
+      if (change.domain !== 'disableFeedbackSurvey') return;
+      this.setAppState({ disableFeedbackSurvey: change.value === true ? true : undefined });
+    });
     this.streamingUI = new StreamingUIController(this);
     this.authFlow = new AuthFlowController(this);
     this.btwPanelController = new BtwPanelController(this, this.imageStore, this.staging);
@@ -506,8 +512,6 @@ export class KimiTUI {
     this.surveyController = new SurveyController(this, {
       accessToken: () => this.harness.auth.getCachedAccessToken(),
       telemetryDisabled: () => isTelemetryDisabledByEnv() || this.telemetryDisabled,
-      feedbackSurveyDisabled: () =>
-        configuredSurveyOptOut() ?? this.state.appState.disableFeedbackSurvey === true,
     });
     this.modelMigration = new ModelMigrationController(this);
     this.editorKeyboard = new EditorKeyboardController(this, this.imageStore);
@@ -1071,6 +1075,8 @@ export class KimiTUI {
     this.disposeTranscriptChildren();
     this.editorKeyboard.dispose();
     this.surveyController.dispose();
+    this.surveySettingSubscription?.();
+    this.surveySettingSubscription = undefined;
     this.state.footer.dispose();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();

@@ -308,6 +308,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       },
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -11695,6 +11696,27 @@ describe('KimiTUI session rating survey', () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+
+  it('mirrors disable_feedback_survey config changes into appState', async () => {
+    let listener: ((change: { domain: string; value: unknown }) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const { driver } = await makeDriver(makeSession(), {
+      onConfigSectionChanged: vi.fn(
+        (fn: (change: { domain: string; value: unknown }) => void) => {
+          listener = fn;
+          return unsubscribe;
+        },
+      ),
+    });
+    expect(listener).toBeDefined();
+    expect(unsubscribe).not.toHaveBeenCalled();
+    listener?.({ domain: 'disableFeedbackSurvey', value: true });
+    expect(driver.state.appState.disableFeedbackSurvey).toBe(true);
+    listener?.({ domain: 'disableFeedbackSurvey', value: false });
+    expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
+    listener?.({ domain: 'telemetry', value: false });
+    expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
   });
 });
 

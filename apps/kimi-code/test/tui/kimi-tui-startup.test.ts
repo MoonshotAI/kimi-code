@@ -214,6 +214,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     listSessions: vi.fn(async () => []),

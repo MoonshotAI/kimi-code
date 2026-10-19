@@ -225,6 +225,7 @@ function makeHarness(initialSession: Session) {
       },
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => initialSession),
     resumeSession: vi.fn(async () => initialSession),
     forkSession: vi.fn(async () => initialSession),

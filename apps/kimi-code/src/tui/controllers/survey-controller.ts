@@ -63,7 +63,6 @@ export interface SurveyControllerDeps {
   readonly setTimer?: (fn: () => void, ms: number) => unknown;
   readonly clearTimer?: (handle: unknown) => void;
   readonly telemetryDisabled?: () => boolean;
-  readonly feedbackSurveyDisabled?: () => boolean;
   readonly terminalHeight?: () => number;
   readonly terminalWidth?: () => number;
   readonly accessToken?: () => Promise<string | undefined>;
@@ -342,8 +341,7 @@ export class SurveyController {
       thinkingEffort: appState.thinkingEffort,
       busy: appState.streamingPhase !== 'idle' || appState.isCompacting,
       telemetryDisabled: (this.deps.telemetryDisabled ?? isTelemetryDisabledByEnv)(),
-      ratingDisabled:
-        this.deps.feedbackSurveyDisabled?.() ?? appState.disableFeedbackSurvey === true,
+      ratingDisabled: appState.disableFeedbackSurvey === true,
       historyUserTurnCount: this.initialUserTurnCount,
       resumedAgents: this.resumedAgents,
     };

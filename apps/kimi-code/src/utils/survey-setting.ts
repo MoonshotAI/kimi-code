@@ -1,13 +1,4 @@
-import {
-  loadRuntimeConfigSafe,
-  resolveConfigPath,
-  type KimiConfig,
-  type KimiConfigPatch,
-} from '@moonshot-ai/kimi-code-sdk';
-
-export function configuredSurveyOptOut(): boolean | undefined {
-  return loadRuntimeConfigSafe(resolveConfigPath({})).config.disableFeedbackSurvey;
-}
+import type { KimiConfig, KimiConfigPatch } from '@moonshot-ai/kimi-code-sdk';
 
 export interface SurveySettingMigrationDeps {
   readonly legacyValue: boolean | undefined;
