@@ -4,9 +4,9 @@ import { z } from 'zod';
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import {
+  clientConfigsBaseUrl,
+  fetchClientConfig,
   isRegisteredClientConfig,
-  peekClientConfig,
-  refreshClientConfigs,
 } from '../services/clientConfigs';
 
 interface RouteHost {
@@ -45,15 +45,14 @@ export function registerClientConfigsRoutes(app: RouteHost, core: Scope): void {
         reply.send(okEnvelope({ name, config: null }, req.id));
         return;
       }
-      let config = peekClientConfig(name);
-      if (config === undefined) {
-        const bootstrap = core.accessor.get(IBootstrapService);
-        await refreshClientConfigs(core.accessor.get(IOAuthService).getRegion(), {
-          baseUrlOverride:
-            bootstrap.getEnv('KIMI_CODE_BASE_URL') ?? process.env['KIMI_CODE_BASE_URL'],
-        });
-        config = peekClientConfig(name);
-      }
+      const bootstrap = core.accessor.get(IBootstrapService);
+      const config = await fetchClientConfig(
+        name,
+        clientConfigsBaseUrl(
+          bootstrap.getEnv('KIMI_CODE_BASE_URL') ?? process.env['KIMI_CODE_BASE_URL'],
+          core.accessor.get(IOAuthService).getRegion(),
+        ),
+      );
       reply.send(okEnvelope({ name, config: config ?? null }, req.id));
     },
   );

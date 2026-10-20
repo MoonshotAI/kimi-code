@@ -12,9 +12,6 @@ import {
   fetchClientConfig,
   isRegisteredClientConfig,
   MODEL_SWITCH_CONFIRM_CONFIG_NAME,
-  peekClientConfig,
-  refreshClientConfigs,
-  resetClientConfigsForTest,
 } from '../src/services/clientConfigs';
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
@@ -50,10 +47,6 @@ describe('clientConfigsBaseUrl', () => {
 });
 
 describe('fetchClientConfig', () => {
-  beforeEach(() => {
-    resetClientConfigsForTest();
-  });
-
   it('posts the config name and parses the envelope payload', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({
@@ -196,42 +189,6 @@ describe('fetchClientConfig', () => {
   });
 });
 
-describe('refreshClientConfigs / peekClientConfig', () => {
-  beforeEach(() => {
-    resetClientConfigsForTest();
-  });
-
-  it('stores parsed configs in memory and reset clears them', async () => {
-    expect(isRegisteredClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME)).toBe(true);
-    expect(peekClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME)).toBeUndefined();
-    const fetchImpl = vi.fn(async () =>
-      jsonResponse({
-        name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
-        config: { enable: true, rules: [{ from: 'a', to: 'b' }] },
-      }),
-    );
-    await refreshClientConfigs('mainland-cn', {
-      baseUrlOverride: 'https://example.com',
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-    });
-    expect(peekClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME)).toEqual({
-      enable: true,
-      rules: [{ from: 'a', to: 'b' }],
-    });
-    resetClientConfigsForTest();
-    expect(peekClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME)).toBeUndefined();
-  });
-
-  it('keeps the cache empty when the fetch fails', async () => {
-    const fetchImpl = vi.fn(async () => jsonResponse({}, false));
-    await refreshClientConfigs('mainland-cn', {
-      baseUrlOverride: 'https://example.com',
-      fetchImpl: fetchImpl as unknown as typeof fetch,
-    });
-    expect(peekClientConfig(MODEL_SWITCH_CONFIRM_CONFIG_NAME)).toBeUndefined();
-  });
-});
-
 describe('server-v2 POST /api/v1/client_configs', () => {
   let server: RunningServer | undefined;
   let cloud: Server | undefined;
@@ -240,7 +197,6 @@ describe('server-v2 POST /api/v1/client_configs', () => {
   let cloudBehavior: { status: number; body: unknown };
 
   beforeEach(async () => {
-    resetClientConfigsForTest();
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-client-configs-'));
     cloudBehavior = { status: 200, body: {} };
   });
@@ -262,7 +218,6 @@ describe('server-v2 POST /api/v1/client_configs', () => {
       await rm(home, { recursive: true, force: true });
       home = undefined;
     }
-    resetClientConfigsForTest();
   });
 
   async function boot(): Promise<void> {
@@ -325,9 +280,7 @@ describe('server-v2 POST /api/v1/client_configs', () => {
     });
   });
 
-  it('refetches on demand when the startup refresh failed', async () => {
-    cloudBehavior = { status: 500, body: {} };
-    await boot();
+  it('fetches the cloud on every request, so config changes are picked up immediately', async () => {
     cloudBehavior = {
       status: 200,
       body: {
@@ -335,8 +288,19 @@ describe('server-v2 POST /api/v1/client_configs', () => {
         config: { enable: true, rules: [{ from: 'a', to: 'b' }] },
       },
     };
-    const body = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
-    expect(body.data.config).toEqual({ enable: true, rules: [{ from: 'a', to: 'b' }] });
+    await boot();
+    const first = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    expect(first.data.config).toEqual({ enable: true, rules: [{ from: 'a', to: 'b' }] });
+
+    cloudBehavior = {
+      status: 200,
+      body: {
+        name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
+        config: { enable: true, rules: [{ from: ['a', 'c'], to: 'b' }] },
+      },
+    };
+    const second = await postClientConfigs(MODEL_SWITCH_CONFIRM_CONFIG_NAME);
+    expect(second.data.config).toEqual({ enable: true, rules: [{ from: ['a', 'c'], to: 'b' }] });
   });
 
   it('returns null config for an unregistered name', async () => {

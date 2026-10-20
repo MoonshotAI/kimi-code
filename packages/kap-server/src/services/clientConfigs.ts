@@ -48,14 +48,8 @@ const registry = new Map<string, z.ZodTypeAny>([
   [MODEL_SWITCH_CONFIRM_CONFIG_NAME, modelSwitchConfirmConfigSchema],
 ]);
 
-const configs = new Map<string, unknown>();
-
 export function isRegisteredClientConfig(name: string): boolean {
   return registry.has(name);
-}
-
-export function peekClientConfig(name: string): unknown {
-  return configs.get(name);
 }
 
 export function clientConfigsBaseUrl(
@@ -93,26 +87,4 @@ export async function fetchClientConfig(
   } catch {
     return undefined;
   }
-}
-
-export interface RefreshClientConfigsOptions {
-  readonly baseUrlOverride?: string;
-  readonly fetchImpl?: typeof fetch;
-}
-
-export async function refreshClientConfigs(
-  region: KimiRegion,
-  options: RefreshClientConfigsOptions = {},
-): Promise<void> {
-  const baseUrl = clientConfigsBaseUrl(options.baseUrlOverride, region);
-  await Promise.all(
-    [...registry.keys()].map(async (name) => {
-      const config = await fetchClientConfig(name, baseUrl, options.fetchImpl);
-      if (config !== undefined) configs.set(name, config);
-    }),
-  );
-}
-
-export function resetClientConfigsForTest(): void {
-  configs.clear();
 }
