@@ -104,6 +104,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | `builtin_product_skills` | `boolean` | `true` | Whether the built-in skills that document Kimi Code itself are offered to the model |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `auto_session_title` | `boolean` | `true` | Whether clients may automatically generate session titles; disabled only when explicitly set to `false` |
+| `disable_feedback_survey` | `boolean` | `false` | Turn off the occasional session rating prompt in the CLI and the desktop app |
 | [`providers`](#providers) | `table` | `{}` | API provider table |
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
@@ -581,7 +582,6 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
-| `disable_feedback_survey` | `boolean` | `false` | Disable the occasional session rating prompt above the input box |
 | `auto_session_title` | `boolean` | `true` | Let the TUI automatically generate a session title after the first completed turn; `false` opts out the TUI only, without affecting the global `auto_session_title` gate in `config.toml` |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
@@ -604,7 +604,6 @@ tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
-disable_feedback_survey = false # true hides the occasional session rating prompt
 auto_session_title = true # false stops the TUI from auto-generating a session title after the first turn
 
 [editor]

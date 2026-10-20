@@ -169,6 +169,13 @@ export interface SessionWarningInfo {
   readonly severity: 'info' | 'warning' | 'error';
 }
 
+export interface ConfigSectionChange {
+  readonly domain: string;
+  readonly source: 'load' | 'reload' | 'set';
+  readonly value: unknown;
+  readonly previousValue: unknown;
+}
+
 export abstract class SDKRpcClientBase {
   private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
   private readonly eventListeners = new Set<(event: Event) => void>();
@@ -214,6 +221,8 @@ export abstract class SDKRpcClientBase {
   abstract getConfig(input?: GetConfigOptions): Promise<KimiConfig>;
 
   abstract getConfigDiagnostics(): Promise<ConfigDiagnostics>;
+
+  abstract onConfigSectionChanged(listener: (change: ConfigSectionChange) => void): Unsubscribe;
 
   abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
 

@@ -1223,6 +1223,37 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('round-trips disableFeedbackSurvey to the disable_feedback_survey config.toml field', async () => {
+    const { harness, homeDir } = await makeHarness();
+    try {
+      await harness.setConfig({ disableFeedbackSurvey: true });
+
+      const toml = await readFile(join(homeDir, 'config.toml'), 'utf-8');
+      expect(toml).toContain('disable_feedback_survey = true');
+
+      const reread = await harness.getConfig({ reload: true });
+      expect(reread.disableFeedbackSurvey).toBe(true);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('forwards engine config section changes through onConfigSectionChanged', async () => {
+    const { harness } = await makeHarness();
+    try {
+      const changes: unknown[] = [];
+      const unsubscribe = harness.onConfigSectionChanged((change) => {
+        if (change.domain === 'disableFeedbackSurvey') changes.push(change.value);
+      });
+      await harness.setConfig({ disableFeedbackSurvey: true });
+      unsubscribe();
+      await harness.setConfig({ disableFeedbackSurvey: false });
+      expect(changes).toEqual([true]);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('deleteSession removes a session and rejects a missing id with session_not_found', async () => {
     const { harness, homeDir } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
