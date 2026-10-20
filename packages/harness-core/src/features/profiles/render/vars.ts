@@ -1,7 +1,8 @@
+import { NOTIFY_USER_GUIDANCE } from '#/features/notify/index';
+
 import { DEFAULT_PRODUCT_NAME, type AgentProfileContext } from '../definition/types';
 
-export const NOTIFY_USER_GUIDANCE =
-  'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Keep each update to one or two sentences in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates remain visible until the main agent starts its next turn, so your final reply must still stand on its own.';
+export { NOTIFY_USER_GUIDANCE };
 
 const WINDOWS_NOTES =
   'IMPORTANT: You are on Windows. The Bash tool runs through Git Bash, so use Unix shell syntax inside Bash commands — `/dev/null` not `NUL`, and forward slashes in paths. For file operations, always prefer the built-in tools (Read, Write, Edit, Glob, Grep) over Bash commands — they work reliably across all platforms.';

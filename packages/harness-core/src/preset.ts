@@ -1,6 +1,7 @@
 import type { Feature } from '@moonshot-ai/agent-core/app/index';
 
 import { createBtw } from './features/btw/index';
+import { createDateChange } from './features/dateChange/index';
 import { createCron } from './features/cron/index';
 import { createGoal } from './features/goal/index';
 import { interaction } from './features/interaction/index';
@@ -32,6 +33,7 @@ export const harnessPreset: readonly Feature[] = [
   createBtw(),
   createCron(),
   createTask(),
+  createDateChange(),
   createSwarm(),
   createToolDedupe(),
 ];
