@@ -1,5 +1,15 @@
 # @moonshot-ai/kimi-code
 
+## 2.3.0
+
+### Minor Changes
+
+- [#4286](https://github.com/MoonshotAI/kimi-code/pull/4286) [`7051f3e`](https://github.com/MoonshotAI/kimi-code/commit/7051f3e5373bd50fbb275ab9a045adb2d9935c9c) Thanks [@liruifengv](https://github.com/liruifengv)! - Add a confirmation dialog when switching models in a session with conversation history: start a new session, compact and continue, continue directly, or cancel. Shown only when enabled by cloud configuration.
+
+### Patch Changes
+
+- [#4276](https://github.com/MoonshotAI/kimi-code/pull/4276) [`f716dd7`](https://github.com/MoonshotAI/kimi-code/commit/f716dd721c70e5f92e0505427dcf8596dbc45553) Thanks [@liruifengv](https://github.com/liruifengv)! - Queue /compact while the agent is busy: the command now joins the message queue and runs in order instead of failing with an error; it is skipped if the context was auto-compacted while it waited.
+
 ## 2.2.0
 
 ### Minor Changes
