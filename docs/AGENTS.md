@@ -199,7 +199,7 @@ Rules:
 - **Drop filler that adds no fact.** Banned patterns: 值得注意的是 / 首先、其次、最后 / 总而言之、综上所述 / 你会发现 / 进行安装、轻松搞定 / 强大、灵活、高效、无缝. State the fact directly; use an ordered list for a real sequence; replace praise with verifiable behavior, numbers, or limits.
 - **Delete colloquial 了 in rules and statements of fact.** Write 取消、新增、修改, not 取消了、新增了、改了.
 - **Avoid explanatory em-dashes (——).** Rewrite as a period, colon, or list instead.
-- **Parentheses carry facts, not filler.** Drop circular glosses (`glob（glob 过滤）`) and enumerative examples in parentheses; keep defaults, permission numbers, path rules, and version ranges.
+- **Parentheses carry facts, not filler.** Drop circular glosses (`glob（glob 过滤）`) and enumerative examples in parentheses; keep defaults, permission numbers, path rules, and version ranges. Not every detail needs to be shown to the reader: omit details that do not help them act, decide, or troubleshoot instead of tucking them into parentheses.
 
 ### Example: good vs bad
 
@@ -254,7 +254,7 @@ Upgrade to the latest version:
 
 Choose the format that matches the content's structure, not the one that looks most thorough.
 
-**Lightest sufficient format** — from lightest to heaviest: sentence → unordered list → table → subheading / `<details>`. Before upgrading the format, ask whether dropping one level would lose information; upgrade only when readers need to locate individual rows or items.
+**Most suitable format** — use formatting deliberately, not sparingly by default. Choose the format that best matches the content and the reader's task: sentence, list, table, subheading, or `<details>`. Use formatting when it improves scanning, lookup, or comparison; do not upgrade just because a richer format looks more thorough.
 
 **Ordered list** — steps that must happen in sequence (installation, configuration, migration). Do not nest sub-lists inside steps.
 
