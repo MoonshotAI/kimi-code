@@ -166,7 +166,7 @@ Look up national (GB), industry, local, and association standards by number or t
 
 <a id="kimi-webbridge"></a>
 
-### Kimi Browser Extension <Badge type="tip" text="v2.0.11" />
+### Kimi Browser Extension <Badge type="tip" text="v2.0.26" />
 
 Kimi Browser Extension lets AI drive your browser directly: not an emulator, not a crawler, but the browser you use every day, with your login sessions and cookies. AI can open pages, read content, click buttons, fill in forms, and take screenshots just like you do, taking repetitive web operations off your hands. See the [Kimi Browser Extension site](https://www.kimi.com/en/products/kimi-browser-extension) for a product overview.
 

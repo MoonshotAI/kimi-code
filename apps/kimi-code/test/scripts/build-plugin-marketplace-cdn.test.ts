@@ -15,14 +15,13 @@ afterEach(async () => {
 });
 
 describe('buildPluginMarketplaceCdn', () => {
-  it('packages WebBridge without publishing other unlisted official directories', async () => {
+  it('packages only the listed plugins and skips unlisted official directories', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-plugin-cdn-build-'));
     tempRoots.push(root);
     const pluginsRoot = join(root, 'plugins');
     const outDir = join(root, 'out');
 
     await writePlugin(pluginsRoot, 'listed-plugin');
-    await writePlugin(pluginsRoot, 'kimi-webbridge');
     await writePlugin(pluginsRoot, 'not-listed');
     await writeFile(
       join(pluginsRoot, 'marketplace.json'),
@@ -36,7 +35,6 @@ describe('buildPluginMarketplaceCdn', () => {
     await buildPluginMarketplaceCdn({ pluginsRoot, outDir });
 
     await expect(access(join(outDir, 'official/listed-plugin.zip'))).resolves.toBeUndefined();
-    await expect(access(join(outDir, 'official/kimi-webbridge.zip'))).resolves.toBeUndefined();
     await expect(access(join(outDir, 'official/not-listed.zip'))).rejects.toThrow();
     const marketplace = JSON.parse(await readFile(join(outDir, 'marketplace.json'), 'utf8'));
     expect(marketplace.plugins).toHaveLength(1);

@@ -78,7 +78,14 @@ const CAPABILITY_ROW_IDS: Readonly<
 > = {
   'kimi-cu': { capabilityId: 'kimi-cu', wiringPluginIds: ['kimi-cu', 'kimi-cu-win'] },
   'kimi-cu-win': { capabilityId: 'kimi-cu', wiringPluginIds: ['kimi-cu', 'kimi-cu-win'] },
-  'kimi-webbridge': { capabilityId: 'kimi-webbridge', wiringPluginIds: ['kimi-webbridge'] },
+  'kimi-webbridge': {
+    capabilityId: 'kimi-webbridge',
+    wiringPluginIds: ['kimi-browser-extension', 'kimi-webbridge'],
+  },
+  'kimi-browser-extension': {
+    capabilityId: 'kimi-webbridge',
+    wiringPluginIds: ['kimi-browser-extension', 'kimi-webbridge'],
+  },
 };
 
 function orderedWiringPluginIds(ids: readonly string[]): readonly string[] {

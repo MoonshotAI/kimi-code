@@ -35,18 +35,27 @@ const ELLIPSIS = '…';
 
 // Hardcoded Web Bridge promotion: a built-in fallback shown only while the
 // marketplace catalog is loading, unreachable, or predates the real
-// `kimi-webbridge` entry. Selecting it opens the install page in the browser;
-// once the catalog carries the real entry, that row wins and installs
+// `kimi-browser-extension` entry. Selecting it opens the install page in the
+// browser; once the catalog carries the real entry, that row wins and installs
 // normally.
 const WEB_BRIDGE_URL = 'https://www.kimi.com/features/webbridge#local-agent';
 const WEB_BRIDGE_ENTRY: PluginMarketplaceEntry = {
-  id: 'kimi-webbridge',
+  id: 'kimi-browser-extension',
   displayName: 'Kimi Browser Extension',
   source: WEB_BRIDGE_URL,
   tier: 'official',
   homepage: WEB_BRIDGE_URL,
   description: 'Control your real browser from Kimi Code — navigate, click, type, and screenshot',
 };
+
+// Ids that count as an existing Web Bridge row when deciding whether the
+// promo fallback is needed: the current plugin/catalog id, plus the legacy
+// plugin id — engine capability rows still use it, and pre-migration catalogs
+// carry the entry under it.
+const WEB_BRIDGE_KNOWN_IDS: ReadonlySet<string> = new Set([
+  WEB_BRIDGE_ENTRY.id,
+  'kimi-webbridge',
+]);
 
 // Only the hardcoded pinned row should open the WebBridge install page. Match
 // by reference (not id) so a catalog entry on another tab that happens to
@@ -463,14 +472,14 @@ export class PluginsPanelComponent extends Container implements Focusable {
     // capability rows still render and install — built-in runtime setup
     // must never be blocked by an unrelated catalog fetch.
     if (this.market.status !== 'loaded') {
-      return this.pendingBuiltInEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
+      return this.pendingBuiltInEntries.some((entry) => WEB_BRIDGE_KNOWN_IDS.has(entry.id))
         ? this.pendingBuiltInEntries
         : [...this.pendingBuiltInEntries, WEB_BRIDGE_ENTRY];
     }
     // The real catalog entry wins when present (it installs the actual
     // plugin); the hardcoded promo row is only a fallback while the catalog
     // is loading, unreachable, or predates it — never a duplicate row.
-    return this.officialCatalogEntries.some((entry) => entry.id === WEB_BRIDGE_ENTRY.id)
+    return this.officialCatalogEntries.some((entry) => WEB_BRIDGE_KNOWN_IDS.has(entry.id))
       ? this.officialCatalogEntries
       : [WEB_BRIDGE_ENTRY, ...this.officialCatalogEntries];
   }

@@ -525,7 +525,7 @@ describe('server-v2 /api/v1 plugins', () => {
     const datasource = body.data.entries.find((e) => e.id === 'kimi-datasource');
     expect(datasource?.source.startsWith('http')).toBe(false);
     expect(datasource?.source.endsWith(join('plugins', 'official', 'kimi-datasource'))).toBe(true);
-    const webbridge = body.data.entries.find((e) => e.id === 'kimi-webbridge');
+    const webbridge = body.data.entries.find((e) => e.id === 'kimi-browser-extension');
     expect(webbridge?.capabilityId).toBe('kimi-webbridge');
     const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
     const cu = body.data.entries.find((e) => e.id === 'kimi-cu');

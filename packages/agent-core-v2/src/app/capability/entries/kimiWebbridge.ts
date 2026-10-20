@@ -3,11 +3,7 @@ import { access, chmod, mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import {
-  kimiCdnContentUrl,
-  kimiRegionProfile,
-  resolveKimiRegion,
-} from '@moonshot-ai/kimi-code-oauth';
+import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
 
 import { downloadToFile, runCommand } from '../host';
 import type {
@@ -18,8 +14,9 @@ import type {
 } from '../types';
 import type { CapabilityEntryContext } from './context';
 
-const PLUGIN_ID = 'kimi-webbridge';
-const PLUGIN_ZIP_PATH = 'plugins/official/kimi-webbridge.zip';
+const PLUGIN_ID = 'kimi-browser-extension';
+const LEGACY_PLUGIN_ID = 'kimi-webbridge';
+const PLUGIN_ZIP_URL = 'https://catalog.msh.team/plugins/1a0a4778-7732-85f9-8000-000017acd03b/files';
 const BINARY_CDN_PATH = 'webbridge/latest/releases';
 const DEFAULT_DAEMON_BASE_URL = 'http://127.0.0.1:10086';
 const STATUS_TIMEOUT_MS = 1_500;
@@ -139,6 +136,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
 
     const installed = await ctx.plugins.listPlugins();
     const plugin = installed.find((p) => p.id === PLUGIN_ID);
+    const legacyPlugin = installed.find((p) => p.id === LEGACY_PLUGIN_ID);
     const mcpGap =
       plugin !== undefined && plugin.enabledMcpServerCount < plugin.mcpServerCount
         ? `mcp ${plugin.enabledMcpServerCount}/${plugin.mcpServerCount} enabled`
@@ -153,6 +151,15 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       state: pluginOk ? 'ok' : 'missing',
       detail: mcpGap ?? plugin?.version,
     });
+
+    if (legacyPlugin !== undefined) {
+      steps.push({
+        id: 'legacy-plugin',
+        state: 'missing',
+        detail: `${LEGACY_PLUGIN_ID} ${legacyPlugin.version}`,
+        optional: true,
+      });
+    }
 
     const standaloneSkills = await standaloneSkillDirs();
     if (standaloneSkills.length > 0) {
@@ -222,13 +229,12 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     }
 
     report('skill');
-    const region = (await ctx.resolveRegion?.()) ?? resolveKimiRegion();
-    const summary = await ctx.plugins.installPlugin({
-      source: `${kimiRegionProfile(region).cdnBase}/${PLUGIN_ZIP_PATH}`,
-    });
+    const summary = await ctx.plugins.installPlugin({ source: PLUGIN_ZIP_URL });
     if (!summary.enabled) {
       await ctx.plugins.setPluginEnabled({ id: PLUGIN_ID, enabled: true });
     }
+
+    const legacyRemoved = await removeLegacyPluginIfPresent(report);
 
     if (standaloneSkillMigrationPending) {
       report('standalone-skill-migration');
@@ -240,9 +246,20 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
           `Could not back up the standalone kimi-webbridge skill: ${error instanceof Error ? error.message : String(error)}`;
       }
     }
-    return standaloneSkillMigrationPending && standaloneSkillMigrationError === undefined
-      ? 'user-skill-migrated'
-      : undefined;
+    if (standaloneSkillMigrationPending && standaloneSkillMigrationError === undefined) {
+      return 'user-skill-migrated';
+    }
+    return legacyRemoved ? 'legacy-plugin-removed' : undefined;
+  }
+
+  async function removeLegacyPluginIfPresent(
+    report: CapabilityInstallReporter,
+  ): Promise<boolean> {
+    const installed = await ctx.plugins.listPlugins();
+    if (!installed.some((p) => p.id === LEGACY_PLUGIN_ID)) return false;
+    report('legacy-plugin');
+    await ctx.plugins.removePlugin({ id: LEGACY_PLUGIN_ID });
+    return true;
   }
 
   async function installBinary(
