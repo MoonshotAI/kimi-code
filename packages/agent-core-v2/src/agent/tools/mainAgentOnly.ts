@@ -6,6 +6,8 @@ export const CRON_MAIN_AGENT_ONLY = 'Cron tools are only supported by the main a
 
 export const GOAL_MAIN_AGENT_ONLY = 'Goal tools are only supported by the main agent.';
 
+export const MONITOR_MAIN_AGENT_ONLY = 'Monitor is only supported by the main agent.';
+
 export function mainAgentOnlyExecution(
   scopeContext: IAgentScopeContext,
   output: string,

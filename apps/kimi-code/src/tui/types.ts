@@ -174,12 +174,16 @@ export interface BackgroundAgentMetadata {
   readonly effort?: string;
 }
 
-export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed';
+export type BackgroundAgentStatusPhase = 'started' | 'completed' | 'failed' | 'killed' | 'event';
 
 export interface BackgroundAgentStatusData {
   readonly phase: BackgroundAgentStatusPhase;
   readonly headline: string;
   readonly detail?: string;
+  /** Output lines shown under the headline; set for monitor events. */
+  readonly lines?: readonly string[];
+  /** Earlier lines the engine left out of this monitor event. */
+  readonly omittedLines?: number;
   /** Subagent behind a background-agent card; lets the task-notification
    *  anchor reuse a terminal card that was mounted before its task id was
    *  known (e.g. a tower worker that finished before `registerTask`). */

@@ -20,12 +20,13 @@ import type { ResultRenderer } from './types';
 const DESCRIPTION_MAX = 72;
 const RUNNING_SAMPLES = 3;
 
-type WaitForStatus = 'completed' | 'timed_out' | 'interrupted' | 'no_tasks';
+type WaitForStatus = 'completed' | 'timed_out' | 'interrupted' | 'no_tasks' | 'event';
 
 interface WaitForResultView {
   readonly status: WaitForStatus;
   readonly waitedMs: number;
   readonly finishedTaskId?: string;
+  readonly eventTaskId?: string;
   readonly finishedStatus?: string;
   readonly finishedDescription?: string;
   readonly extraCount: number;
@@ -75,10 +76,18 @@ export function buildWaitForHeader(options: {
     return `${currentTheme.fg('warning', STATUS_BULLET)}${currentTheme.boldFg('warning', 'Wait timed out')}${argText}${chip}`;
   }
   if (status === 'no_tasks') {
-    return `${bullet}${currentTheme.boldFg('primary', 'No background tasks running')}${chip}`;
+    const label = field(result.output, 'running_monitors') === undefined
+      ? 'No background tasks running'
+      : 'Nothing to wait for (only monitors running)';
+    return `${bullet}${currentTheme.boldFg('primary', label)}${chip}`;
   }
   if (status === 'interrupted') {
     return `${bullet}${currentTheme.boldFg('primary', 'Wait interrupted by new input')}${argText}${chip}`;
+  }
+  if (status === 'event') {
+    const eventTaskId = field(result.output, 'event_task_id');
+    const eventText = eventTaskId === undefined ? argText : currentTheme.dimFg('textDim', ` (${eventTaskId})`);
+    return `${bullet}${currentTheme.boldFg('primary', 'Wait ended by monitor output')}${eventText}${chip}`;
   }
   const label = taskId === undefined ? 'Waited for a background task' : 'Waited for background task';
   return `${bullet}${currentTheme.boldFg('primary', label)}${argText}${chip}`;
@@ -96,7 +105,8 @@ function glanceLines(view: WaitForResultView): string[] {
     case 'no_tasks':
       return [];
     case 'timed_out':
-    case 'interrupted': {
+    case 'interrupted':
+    case 'event': {
       if (view.runningCount === 0) return [];
       const summary = `${pluralizeTasks(view.runningCount)} still running`;
       if (view.runningSamples.length === 0) return [summary];
@@ -132,7 +142,8 @@ export function parseWaitForOutput(output: string): WaitForResultView | undefine
     status !== 'completed' &&
     status !== 'timed_out' &&
     status !== 'interrupted' &&
-    status !== 'no_tasks'
+    status !== 'no_tasks' &&
+    status !== 'event'
   ) {
     return undefined;
   }

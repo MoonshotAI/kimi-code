@@ -70,7 +70,7 @@
 | `EnterPlanMode` | 自动放行 | 进入 Plan 模式 |
 | `ExitPlanMode` | 自动放行（需用户确认计划） | 退出 Plan 模式并提交计划 |
 
-Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只允许写入当前的计划文件，`TaskStop` 被完全拦截。其余工具（包括 `Bash`）仍按当前权限规则处理。
+Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只允许写入当前的计划文件，`TaskStop` 和 `Monitor` 被完全拦截。其余工具（包括 `Bash`）仍按当前权限规则处理。
 
 **`EnterPlanMode`** 不接受任何参数，进入成功后返回工作流指引及计划文件路径。
 
@@ -124,6 +124,7 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 | `TaskOutput` | 自动放行 | 查看后台任务的输出 |
 | `TaskStop` | 需审批 | 停止正在运行的后台任务 |
 | `WaitFor` | 自动放行 | 等待后台任务结束 |
+| `Monitor` | 需审批 | 在后台运行命令，输出的每一行随时送达 Agent（实验特性） |
 
 **`TaskList`** 返回后台任务列表。可选参数 `active_only`（默认 true，仅列出运行中的任务）和 `limit`（默认 20，取值范围 1–100）。
 
@@ -134,6 +135,8 @@ Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只�
 **`WaitFor`** 把当前轮次挂起，直到后台任务结束、超时或有新输入注入当前轮次。参数：`timeout`（必填，单位秒，上限 90）和可选的 `task_id`。不传 `task_id` 时，调用时刻运行中的任意一个后台任务结束即返回；当前没有运行中的后台任务时立即返回。超时不是错误——结果会列出仍在运行的任务，Agent 可以再次等待，也可以先处理其他工作。新消息会提前结束本次等待。
 
 在终端中，Agent 等待期间按 `Enter` 会将消息注入当前轮次，等待开始时已在队列中的消息也会被自动注入。如果队列中有 Shell 命令或 Skill，则不会自动投递，队列和新输入仍排队到轮次结束。按 `Ctrl-S` 可手动将编辑器和队列中的非 Shell 输入注入当前轮次。后台任务继续运行，完成后仍会自动通知。已通过 `WaitFor` 汇报结果的任务不会再推送自动完成通知。
+
+**`Monitor`** 在后台启动一条命令，其 stdout 的每一行会在 Agent 继续工作的同时送达，让 Agent 在日志出现某行、测试失败或状态变化时立即做出反应。参数：`command`、`description`、可选的 `timeout`（单位秒，默认 300，上限 3600）和可选的 `persistent`（关闭超时；命令退出、`TaskStop`、会话结束和输出限制仍会停止 monitor）。相隔很近的多行会合并为一条通知；Agent 空闲时会为它开启新轮次，忙碌时在下一步看到它。stderr 不会送达，只保存在任务输出中。一分钟内 stdout 输出超过 300 行，或 stdout 与 stderr 累计输出超过 16 MiB 时，monitor 会被停止，`persistent: true` 也不例外。应在命令中提前过滤这两种输出。`WaitFor` 传入 monitor 的 `task_id` 时，下一批输出一旦就绪即返回；不传 `task_id` 的 `WaitFor` 不会等待 monitor。只有主 Agent 拥有此工具，且 Plan 模式下禁止调用；启动 monitor 前需先调用 `ExitPlanMode`。这是默认关闭的实验特性：通过 `KIMI_CODE_EXPERIMENTAL_MONITOR=1`、`config.toml` 中的 `[experimental] monitor = true` 或 `/experiments` 启用。
 
 ## 定时任务
 

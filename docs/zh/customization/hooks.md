@@ -126,7 +126,7 @@ Hook 命令的工作目录是当前会话的项目目录。
 | `Interrupt` | 空字符串 | — | 用户中断本轮时触发（如按 Esc）；超时等程序性中断不触发，此时 `Stop` 由本事件替代；payload 含 `reason` |
 | `PreCompact` | `manual` 或 `auto` | — | 上下文压缩开始前触发；返回值被完全忽略 |
 | `PostCompact` | `manual` 或 `auto` | — | 上下文压缩完成后触发 |
-| `Notification` | 通知类型（如 `task.completed`） | — | 后台任务状态变化时触发 |
+| `Notification` | 通知类型（如 `task.completed`；Monitor 输出为 `task.event`） | — | 后台任务状态变化时触发；`Monitor` 任务每送出一批新输出也会触发（匹配 `task.event` 即可单独处理或排除） |
 
 ## 示例：阻断危险 Shell 命令
 

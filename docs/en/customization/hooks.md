@@ -126,7 +126,7 @@ Only **blockable events** (`PreToolUse`, `Stop`, `UserPromptSubmit`) have return
 | `Interrupt` | Empty string | — | Triggered when the user interrupts the turn (e.g. pressing Esc); not fired for timeouts or programmatic aborts; fires in place of `Stop`; payload includes `reason` |
 | `PreCompact` | `manual` or `auto` | — | Triggered before context compaction begins; return values are completely ignored |
 | `PostCompact` | `manual` or `auto` | — | Triggered after context compaction completes |
-| `Notification` | Notification type (e.g. `task.completed`) | — | Triggered when a background task status changes |
+| `Notification` | Notification type (e.g. `task.completed`; `task.event` for Monitor output) | — | Triggered when a background task status changes, and for each batch of new output a `Monitor` task delivers (match `task.event` to target or exclude those) |
 
 ## Example: Blocking Dangerous Shell Commands
 
