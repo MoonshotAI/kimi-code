@@ -3,7 +3,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
 import { IAgentLifecycleService } from './agentLifecycle';
 
-export async function ensureAgent(
+export async function getOrRestoreAgent(
   session: ISessionScopeHandle,
   agentId: string,
 ): Promise<IAgentScopeHandle | undefined> {

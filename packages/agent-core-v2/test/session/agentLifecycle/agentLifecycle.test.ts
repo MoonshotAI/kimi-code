@@ -52,7 +52,7 @@ import {
 } from '#/agent/interaction/interactionWiring';
 import { interactions } from '#/human/interaction/facade';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { ensureAgent } from '#/session/agentLifecycle/ensureAgent';
+import { getOrRestoreAgent } from '#/session/agentLifecycle/getOrRestoreAgent';
 import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER } from '#/features/btw/btw';
 import { SessionBtwService } from '#/features/btw/btwService';
 import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
@@ -1308,23 +1308,23 @@ describe('AgentLifecycleService', () => {
     return tracked;
   }
 
-  it('ensureAgent returns the live handle when the agent already exists', async () => {
+  it('getOrRestoreAgent returns the live handle when the agent already exists', async () => {
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
 
-    const handle = await ensureAgent(sessionHandle(), 'main');
+    const handle = await getOrRestoreAgent(sessionHandle(), 'main');
 
     expect(handle).toBe(svc.handleOf('main'));
   });
 
-  it('ensureAgent returns undefined for an agent missing from session metadata', async () => {
+  it('getOrRestoreAgent returns undefined for an agent missing from session metadata', async () => {
     const svc = ix.get(IAgentLifecycleService);
 
-    await expect(ensureAgent(sessionHandle(), 'agent-7')).resolves.toBeUndefined();
+    await expect(getOrRestoreAgent(sessionHandle(), 'agent-7')).resolves.toBeUndefined();
     expect(svc.get('agent-7')).toBeUndefined();
   });
 
-  it('ensureAgent rebuilds a registered agent with its persisted identity', async () => {
+  it('getOrRestoreAgent rebuilds a registered agent with its persisted identity', async () => {
     const agents: Record<string, AgentMeta> = {
       'agent-3': {
         homedir: '/tmp/kimi-agentLifecycle-home/agents/agent-3',
@@ -1337,7 +1337,7 @@ describe('AgentLifecycleService', () => {
     const tracked = stubPersistedAgents(agents);
     const svc = ix.get(IAgentLifecycleService);
 
-    const handle = await ensureAgent(sessionHandle(), 'agent-3');
+    const handle = await getOrRestoreAgent(sessionHandle(), 'agent-3');
 
     expect(handle).toBeDefined();
     expect(handle).toBe(svc.handleOf('agent-3'));
@@ -1351,7 +1351,7 @@ describe('AgentLifecycleService', () => {
     );
   });
 
-  it('ensureAgent returns one handle when rebuild calls start concurrently', async () => {
+  it('getOrRestoreAgent returns one handle when rebuild calls start concurrently', async () => {
     const agents: Record<string, AgentMeta> = {
       'agent-4': { type: 'sub', parentAgentId: 'main', forkedFrom: 'main' },
     };
@@ -1359,8 +1359,8 @@ describe('AgentLifecycleService', () => {
     const session = sessionHandle();
 
     const [first, second] = await Promise.all([
-      ensureAgent(session, 'agent-4'),
-      ensureAgent(session, 'agent-4'),
+      getOrRestoreAgent(session, 'agent-4'),
+      getOrRestoreAgent(session, 'agent-4'),
     ]);
 
     expect(first).toBeDefined();
@@ -1368,7 +1368,7 @@ describe('AgentLifecycleService', () => {
     expect(tracked).toHaveBeenCalledTimes(1);
   });
 
-  it('ensureAgent restores the rebuilt agent context from the wire journal', async () => {
+  it('getOrRestoreAgent restores the rebuilt agent context from the wire journal', async () => {
     const agents: Record<string, AgentMeta> = {};
     stubPersistedAgents(agents);
     const svc = ix.get(IAgentLifecycleService);
@@ -1382,7 +1382,7 @@ describe('AgentLifecycleService', () => {
     await svc.remove(svc.get(child.agentId)!);
     expect(svc.handleOf(child.agentId)).toBeUndefined();
 
-    const rebuilt = await ensureAgent(sessionHandle(), child.agentId);
+    const rebuilt = await getOrRestoreAgent(sessionHandle(), child.agentId);
 
     expect(rebuilt).toBeDefined();
     const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
@@ -1414,7 +1414,7 @@ describe('AgentLifecycleService', () => {
     await svc.remove(svc.get(childId)!);
 
     const beforeRebuild = beforeExecuteListeners;
-    const rebuilt = await ensureAgent(sessionHandle(), childId);
+    const rebuilt = await getOrRestoreAgent(sessionHandle(), childId);
 
     expect(rebuilt).toBeDefined();
     expect(beforeExecuteListeners - beforeRebuild).toBe(baseline + 1);

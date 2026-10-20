@@ -143,7 +143,7 @@ import {
   drainSessionIndexMirror,
   ensureKimiHome,
   ensureMainAgent,
-  ensureAgent,
+  getOrRestoreAgent,
   reloadOnStale,
   agentContextOf,
   IAgentChangeNotifierService,
@@ -1859,7 +1859,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     const session = this.requireLiveSession(sessionId);
     const agentId = this.interactiveAgentId;
     if (agentId === MAIN_AGENT_ID) return this.materializeMainAgent(session);
-    const agent = await ensureAgent(session, agentId);
+    const agent = await getOrRestoreAgent(session, agentId);
     if (agent === undefined) {
       throw new KimiError(ErrorCodes.AGENT_NOT_FOUND, `Agent "${agentId}" was not found`);
     }
