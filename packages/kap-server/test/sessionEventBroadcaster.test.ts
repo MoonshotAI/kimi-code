@@ -2504,6 +2504,29 @@ describe('SessionEventBroadcaster', () => {
       expect(transcriptEnvelopes(deltaView.envelopes).every((e) => e.volatile === true)).toBe(true);
     });
 
+    it('still broadcasts compaction events to transcript subscribers', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const deltaView = collectingTarget();
+      await bc.subscribe('s1', deltaView.target, undefined, { main: 'delta' });
+
+      main.bus.emit(agentEvent('compaction.started', { agentId: 'main', trigger: 'manual' }));
+      main.bus.emit(
+        agentEvent('compaction.completed', {
+          agentId: 'main',
+          result: { tokensBefore: 100, tokensAfter: 40 },
+        }),
+      );
+      await bc.getCursor('s1');
+
+      const types = deltaView.envelopes.map((e) => e.type);
+      expect(types).toContain('compaction.started');
+      expect(types).toContain('compaction.completed');
+    });
+
     it('re-sends transcript.reset on grade upgrade, not on equal or downgraded re-subscribe', async () => {
       const lc = new FakeLifecycle();
       lc.addAgent('main');
