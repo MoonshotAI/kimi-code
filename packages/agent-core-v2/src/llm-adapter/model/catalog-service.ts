@@ -8,6 +8,9 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
+import { ILogService } from '#/_base/log/log';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
 import {
@@ -89,6 +92,9 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     @IProtocolAdapterRegistry
     private readonly protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
+    @ILogService private readonly log: ILogService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
     this._register(
@@ -140,7 +146,11 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
     const model = this.buildModel(id);
     const entry: CatalogEntry = {
       model,
-      requester: new ModelRequesterImpl(model, this.protocolRegistry),
+      requester: new ModelRequesterImpl(model, this.protocolRegistry, {
+        log: this.log,
+        telemetry: this.telemetry,
+        env: (name) => this.bootstrap.getEnv(name),
+      }),
     };
     this.cache.set(id, entry);
     return entry;

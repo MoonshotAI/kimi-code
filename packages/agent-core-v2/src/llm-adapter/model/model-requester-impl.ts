@@ -3,6 +3,9 @@ import * as nodePath from 'node:path';
 import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
+import type { ILogService } from '#/_base/log/log';
+import type { LlmRequestSanitizedEvent } from '#/app/telemetry/events';
+import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { LlmErrorMessage } from '#human/llm/errors';
 import { emptyResponseError } from '#human/llm/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
@@ -29,7 +32,7 @@ import {
   traceIdFromHeadersRecord,
   VideoUploadUnsupportedError,
 } from '../contract/errors';
-import { fromLlmAssistantMessage, toLlmMessage, type Tool } from '../contract/message';
+import { fromLlmAssistantMessage, toLlmMessage, type Message, type Tool } from '../contract/message';
 import { mergeUsagePatch } from '#human/llm/usage';
 
 import type { Model } from './catalog';
@@ -41,6 +44,13 @@ import type {
   ModelRequestTiming,
   SamplingOptions,
 } from './model-requester';
+import {
+  REQUEST_SANITIZE_ENV,
+  resolveRequestSanitizeEnabled,
+  sanitizeRequestMessages,
+  type RequestSanitizeRepair,
+  type RequestSanitizeRepairKind,
+} from './requestSanitize';
 import { translateProviderError } from '../protocol/errors';
 
 export interface ResolvedLlmModel {
@@ -54,6 +64,12 @@ export interface ModelLlmGateway {
   resolve(model: Model): ResolvedLlmModel;
 }
 
+export interface ModelRequesterObservability {
+  readonly log?: ILogService;
+  readonly telemetry?: ITelemetryService;
+  readonly env?: (name: string) => string | undefined;
+}
+
 interface StreamDecodeStats {
   readonly serverDecodeMs: number;
   readonly clientConsumeMs: number;
@@ -63,10 +79,12 @@ interface StreamDecodeStats {
 export class ModelRequesterImpl implements ModelRequester {
   private cached: ResolvedLlmModel | undefined;
   private cachedRequester: LlmRequester | undefined;
+  private lastSanitizeSignature: string | undefined;
 
   constructor(
     readonly model: Model,
     private readonly gateway: ModelLlmGateway,
+    private readonly observability: ModelRequesterObservability = {},
   ) {}
 
   private resolve(): ResolvedLlmModel {
@@ -81,6 +99,62 @@ export class ModelRequesterImpl implements ModelRequester {
       this.cachedRequester = throwToEvent(resolved.requester);
     }
     return this.cachedRequester;
+  }
+
+  private sanitizeOutgoing(
+    messages: readonly Message[],
+    protocol: ProtocolName,
+  ): readonly Message[] {
+    if (!this.requestSanitizeEnabled()) return messages;
+    const { messages: sanitized, repairs } = sanitizeRequestMessages(messages, { protocol });
+    if (repairs.length === 0) {
+      this.lastSanitizeSignature = undefined;
+      return sanitized;
+    }
+    this.reportSanitizeRepairs(repairs, protocol);
+    return sanitized;
+  }
+
+  private requestSanitizeEnabled(): boolean {
+    const env = this.observability.env;
+    if (env === undefined) return resolveRequestSanitizeEnabled();
+    return resolveRequestSanitizeEnabled({ [REQUEST_SANITIZE_ENV]: env(REQUEST_SANITIZE_ENV) });
+  }
+
+  private reportSanitizeRepairs(
+    repairs: readonly RequestSanitizeRepair[],
+    protocol: ProtocolName,
+  ): void {
+    const signature = repairs
+      .map((repair) => `${repair.kind}:${repair.role}:${repair.toolCallId ?? ''}:${repair.count}`)
+      .toSorted()
+      .join('|');
+    if (signature === this.lastSanitizeSignature) return;
+    this.lastSanitizeSignature = signature;
+    const countOf = (kind: RequestSanitizeRepairKind): number =>
+      repairs.reduce((total, repair) => (repair.kind === kind ? total + repair.count : total), 0);
+    const loneSurrogates = countOf('lone_surrogate');
+    const emptyToolContent = countOf('empty_tool_content');
+    const toolMediaDowngraded = countOf('unsupported_tool_media');
+    const toolCallIds = [
+      ...new Set(repairs.flatMap((repair) => (repair.toolCallId === undefined ? [] : [repair.toolCallId]))),
+    ].slice(0, 5);
+    this.observability.log?.warn('sanitized the outgoing request to keep it wire-valid', {
+      loneSurrogates,
+      emptyToolContent,
+      toolMediaDowngraded,
+      toolCallIds,
+      model: this.model.id,
+      protocol,
+    });
+    const properties: LlmRequestSanitizedEvent = {
+      lone_surrogates: loneSurrogates,
+      empty_tool_content: emptyToolContent,
+      tool_media_downgraded: toolMediaDowngraded,
+      model: this.model.id,
+      protocol,
+    };
+    this.observability.telemetry?.track2('llm_request_sanitized', properties);
   }
 
   request(
@@ -171,7 +245,7 @@ export class ModelRequesterImpl implements ModelRequester {
       extraParams: samplingExtraParams(resolved.protocol, params?.sampling),
     };
     const content: LlmRequestContent = {
-      messages: input.messages.map(toLlmMessage),
+      messages: this.sanitizeOutgoing(input.messages, resolved.protocol).map(toLlmMessage),
       usedContextTokens: params?.usedContextTokens,
     };
 

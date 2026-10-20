@@ -1058,8 +1058,21 @@ class ConfigBackedModelCatalog extends ModelCatalog {
     @IModelOAuthTokens oauthTokens: IModelOAuthTokens,
     @IProtocolAdapterRegistry protocolRegistry: IProtocolAdapterRegistry,
     @IHostRequestHeaders hostRequestHeaders: IHostRequestHeaders,
+    @ILogService log: ILogService,
+    @ITelemetryService telemetry: ITelemetryService,
+    @IBootstrapService bootstrap: IBootstrapService,
   ) {
-    super(runtime, providerRegistry, modelRegistry, oauthTokens, protocolRegistry, hostRequestHeaders);
+    super(
+      runtime,
+      providerRegistry,
+      modelRegistry,
+      oauthTokens,
+      protocolRegistry,
+      hostRequestHeaders,
+      log,
+      telemetry,
+      bootstrap,
+    );
   }
 
   private syncRegistriesFromConfig(): void {
