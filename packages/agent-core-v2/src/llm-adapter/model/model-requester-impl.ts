@@ -48,6 +48,7 @@ import {
   REQUEST_SANITIZE_ENV,
   resolveRequestSanitizeEnabled,
   sanitizeRequestMessages,
+  sanitizeRequestSurface,
   type RequestSanitizeRepair,
   type RequestSanitizeRepairKind,
 } from './requestSanitize';
@@ -76,6 +77,12 @@ interface StreamDecodeStats {
   readonly clientBlockedMs?: number;
 }
 
+interface SanitizedOutgoing {
+  readonly messages: readonly Message[];
+  readonly systemPrompt: string;
+  readonly tools: readonly Tool[];
+}
+
 export class ModelRequesterImpl implements ModelRequester {
   private cached: ResolvedLlmModel | undefined;
   private cachedRequester: LlmRequester | undefined;
@@ -101,18 +108,23 @@ export class ModelRequesterImpl implements ModelRequester {
     return this.cachedRequester;
   }
 
-  private sanitizeOutgoing(
-    messages: readonly Message[],
-    protocol: ProtocolName,
-  ): readonly Message[] {
-    if (!this.requestSanitizeEnabled()) return messages;
-    const { messages: sanitized, repairs } = sanitizeRequestMessages(messages, { protocol });
-    if (repairs.length === 0) {
-      this.lastSanitizeSignature = undefined;
-      return sanitized;
+  private sanitizeOutgoing(input: ModelRequestInput, protocol: ProtocolName): SanitizedOutgoing {
+    if (!this.requestSanitizeEnabled()) {
+      return {
+        messages: input.messages,
+        systemPrompt: input.systemPrompt,
+        tools: input.tools,
+      };
     }
-    this.reportSanitizeRepairs(repairs, protocol);
-    return sanitized;
+    const { messages, repairs } = sanitizeRequestMessages(input.messages, { protocol });
+    const surface = sanitizeRequestSurface(input.systemPrompt, input.tools);
+    const allRepairs = [...repairs, ...surface.repairs];
+    if (allRepairs.length === 0) {
+      this.lastSanitizeSignature = undefined;
+    } else {
+      this.reportSanitizeRepairs(allRepairs, protocol);
+    }
+    return { messages, systemPrompt: surface.systemPrompt, tools: surface.tools };
   }
 
   private requestSanitizeEnabled(): boolean {
@@ -230,10 +242,11 @@ export class ModelRequesterImpl implements ModelRequester {
     let traceId: string | null | undefined;
     let failed: LlmErrorMessage | undefined;
 
+    const outgoing = this.sanitizeOutgoing(input, resolved.protocol);
     const config: LlmRequestConfig = {
       model: resolved.model,
-      systemPrompt: input.systemPrompt,
-      tools: wireTools(input.tools),
+      systemPrompt: outgoing.systemPrompt,
+      tools: wireTools(outgoing.tools),
       cacheKey: params?.cacheKey,
       thinking:
         params?.thinkingEffort === undefined
@@ -245,7 +258,7 @@ export class ModelRequesterImpl implements ModelRequester {
       extraParams: samplingExtraParams(resolved.protocol, params?.sampling),
     };
     const content: LlmRequestContent = {
-      messages: this.sanitizeOutgoing(input.messages, resolved.protocol).map(toLlmMessage),
+      messages: outgoing.messages.map(toLlmMessage),
       usedContextTokens: params?.usedContextTokens,
     };
 

@@ -33,6 +33,12 @@ export interface SanitizeRequestMessagesResult {
   readonly repairs: RequestSanitizeRepair[];
 }
 
+export interface SanitizeRequestSurfaceResult {
+  readonly systemPrompt: string;
+  readonly tools: readonly Tool[];
+  readonly repairs: RequestSanitizeRepair[];
+}
+
 type Env = Readonly<Record<string, string | undefined>>;
 
 export function resolveRequestSanitizeEnabled(env: Env = process.env): boolean {
@@ -285,21 +291,21 @@ function sanitizeMessage(
   mapId: ToolCallIdMapper,
 ): Message {
   const tally: Tally = { count: 0 };
+  const toolCallId =
+    message.toolCallId === undefined ? undefined : mapId(message.toolCallId, tally);
   let content = sanitizeContent(message.content, tally);
   if (message.role === 'tool') {
-    content = downgradeToolDataMedia(content, protocol, message.toolCallId, repairs);
-    content = padEmptyToolContent(content, protocol, message.toolCallId, repairs);
+    content = downgradeToolDataMedia(content, protocol, toolCallId, repairs);
+    content = padEmptyToolContent(content, protocol, toolCallId, repairs);
   }
   const toolCalls = sanitizeToolCalls(message.toolCalls, tally, mapId);
   const name = fixOptionalString(message.name, tally);
-  const toolCallId =
-    message.toolCallId === undefined ? undefined : mapId(message.toolCallId, tally);
   const tools = sanitizeTools(message.tools, tally);
   if (tally.count > 0) {
     repairs.push({
       kind: 'lone_surrogate',
       role: message.role,
-      toolCallId: message.toolCallId,
+      toolCallId,
       count: tally.count,
     });
   }
@@ -328,4 +334,22 @@ export function sanitizeRequestMessages(
     return next;
   });
   return { messages: changed ? out : messages, repairs };
+}
+
+export function sanitizeRequestSurface(
+  systemPrompt: string,
+  tools: readonly Tool[],
+): SanitizeRequestSurfaceResult {
+  const repairs: RequestSanitizeRepair[] = [];
+  const promptTally: Tally = { count: 0 };
+  const nextPrompt = fixString(systemPrompt, promptTally);
+  if (promptTally.count > 0) {
+    repairs.push({ kind: 'lone_surrogate', role: 'system', count: promptTally.count });
+  }
+  const toolsTally: Tally = { count: 0 };
+  const nextTools = sanitizeTools(tools, toolsTally) ?? tools;
+  if (toolsTally.count > 0) {
+    repairs.push({ kind: 'lone_surrogate', role: 'system', count: toolsTally.count });
+  }
+  return { systemPrompt: nextPrompt, tools: nextTools, repairs };
 }

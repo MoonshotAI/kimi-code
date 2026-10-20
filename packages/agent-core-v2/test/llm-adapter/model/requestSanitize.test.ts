@@ -9,7 +9,7 @@ import type {
   LlmRequestEvent,
   LlmRequester,
 } from '#human/llm/requester/requester';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message, Tool } from '#/llm-adapter/contract/message';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestEvent } from '#/llm-adapter/model/model-requester';
 import {
@@ -24,6 +24,7 @@ import {
   REQUEST_SANITIZE_ENV,
   resolveRequestSanitizeEnabled,
   sanitizeRequestMessages,
+  sanitizeRequestSurface,
   type RequestSanitizeRepair,
 } from '#/llm-adapter/model/requestSanitize';
 
@@ -365,9 +366,64 @@ describe('sanitizeRequestMessages tool call id stability', () => {
     const { repairs } = sanitizeRequestMessages(poisonedExchange());
     expect(repairsOfKind(repairs, 'lone_surrogate')).toEqual([
       { kind: 'lone_surrogate', role: 'assistant', count: 2 },
-      { kind: 'lone_surrogate', role: 'tool', toolCallId: leadId, count: 1 },
-      { kind: 'lone_surrogate', role: 'tool', toolCallId: trailId, count: 1 },
+      { kind: 'lone_surrogate', role: 'tool', toolCallId: `abc${REPLACEMENT}`, count: 1 },
+      { kind: 'lone_surrogate', role: 'tool', toolCallId: `abc${REPLACEMENT}__2`, count: 1 },
     ]);
+  });
+
+  it('records the repaired ids in the repair log signature surfaces', () => {
+    const { repairs } = sanitizeRequestMessages([
+      { role: 'tool', content: [], toolCalls: [], toolCallId: leadId },
+    ]);
+    expect(repairsOfKind(repairs, 'empty_tool_content')).toEqual([
+      { kind: 'empty_tool_content', role: 'tool', toolCallId: `abc${REPLACEMENT}`, count: 1 },
+    ]);
+  });
+});
+
+describe('sanitizeRequestSurface', () => {
+  it('repairs lone surrogates in request-level tool name, description and parameters', () => {
+    const tools: Tool[] = [
+      {
+        name: `read${LONE_LEAD}`,
+        description: `reads${LONE_TRAIL}`,
+        parameters: { properties: { path: { description: `p${LONE_LEAD}` } } },
+      },
+    ];
+    const { tools: sanitized, repairs } = sanitizeRequestSurface('sys', tools);
+    expect(sanitized).toEqual([
+      {
+        name: `read${REPLACEMENT}`,
+        description: `reads${REPLACEMENT}`,
+        parameters: { properties: { path: { description: `p${REPLACEMENT}` } } },
+      },
+    ]);
+    expect(repairsOfKind(repairs, 'lone_surrogate')).toEqual([
+      { kind: 'lone_surrogate', role: 'system', count: 3 },
+    ]);
+    expect(tools[0]?.description).toBe(`reads${LONE_TRAIL}`);
+  });
+
+  it('repairs lone surrogates in the system prompt', () => {
+    const { systemPrompt, repairs } = sanitizeRequestSurface(`be kind${LONE_TRAIL}`, []);
+    expect(systemPrompt).toBe(`be kind${REPLACEMENT}`);
+    expect(repairsOfKind(repairs, 'lone_surrogate')).toEqual([
+      { kind: 'lone_surrogate', role: 'system', count: 1 },
+    ]);
+  });
+
+  it('passes a clean system prompt and clean tools through reference-equal', () => {
+    const tools: Tool[] = [
+      {
+        name: 'read',
+        description: 'reads',
+        parameters: { properties: { path: { type: 'string' } } },
+      },
+    ];
+    const { systemPrompt, tools: sanitized, repairs } = sanitizeRequestSurface('be kind', tools);
+    expect(systemPrompt).toBe('be kind');
+    expect(sanitized).toBe(tools);
+    expect(repairs).toEqual([]);
   });
 });
 
@@ -577,5 +633,45 @@ describe('ModelRequesterImpl request sanitizing', () => {
       toolCallId: 'call-2',
       content: [{ type: 'text', text: EMPTY_TOOL_OUTPUT_PLACEHOLDER }],
     });
+  });
+
+  it('sanitizes the system prompt and request-level tools before they reach the wire requester', async () => {
+    const requester = new FakeLlmRequester();
+    const observability: ModelRequesterObservability = {
+      log: { warn: vi.fn() } as unknown as ModelRequesterObservability['log'],
+      telemetry: { track2: vi.fn() } as unknown as ModelRequesterObservability['telemetry'],
+    };
+    const impl = new ModelRequesterImpl(
+      fakeModel(),
+      gatewayReturning(requester, 'openai'),
+      observability,
+    );
+    const tools: Tool[] = [
+      { name: 'read', description: `reads${LONE_TRAIL}`, parameters: { type: 'object' } },
+    ];
+    await drain(
+      impl.request({ systemPrompt: `be kind${LONE_LEAD}`, tools, messages: [userText('hi')] }),
+    );
+
+    expect(requester.calls[0]?.config.systemPrompt).toBe(`be kind${REPLACEMENT}`);
+    expect(requester.calls[0]?.config.tools).toEqual([
+      { name: 'read', description: `reads${REPLACEMENT}`, parameters: { type: 'object' } },
+    ]);
+    expect(observability.telemetry?.track2).toHaveBeenCalledWith(
+      'llm_request_sanitized',
+      expect.objectContaining({ lone_surrogates: 2 }),
+    );
+  });
+
+  it('passes a clean system prompt and clean tools through reference-equal', async () => {
+    const requester = new FakeLlmRequester();
+    const impl = new ModelRequesterImpl(fakeModel(), gatewayReturning(requester, 'openai'));
+    const tools: Tool[] = [
+      { name: 'read', description: 'reads', parameters: { type: 'object' } },
+    ];
+    await drain(impl.request({ systemPrompt: 'be kind', tools, messages: [userText('hi')] }));
+
+    expect(requester.calls[0]?.config.systemPrompt).toBe('be kind');
+    expect(requester.calls[0]?.config.tools).toBe(tools);
   });
 });

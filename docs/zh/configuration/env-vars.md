@@ -183,7 +183,7 @@ kimi
 | `KIMI_MODEL_THINKING_EFFORT` | 在线上强制使用指定的思考强度，绕过模型声明的 `support_efforts`；仅 `kimi` 供应商生效 | 思考强度值，如 `max` |
 | `KIMI_MODEL_THINKING_KEEP` | 保留思考透传；`kimi` 以 `thinking.keep` 发送，`anthropic` 以 `clear_thinking_20251015` 编辑发送；覆盖 `[thinking] keep` | API 接受的值，如 `all`；传入关值（`false`/`0`/`no`/`off`/`none`/`null`）可禁用 |
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | `openai` / `openai-responses` / `anthropic` 协议的 LLM 请求等待响应头（首字节）的最长时间（毫秒），替代 HTTP 客户端默认的 300 秒响应头超时——长时间非流式 thinking 可调大；未设置保持默认；SDK 自身的总请求超时（默认 10 分钟）仍对单次尝试生效；`google-genai` 不支持（其 SDK 没有 dispatcher 配置项）；SOCKS 代理下不生效（请求仍走代理） | 正整数，不超过 2147483647；非法值会使请求失败 |
-| `KIMI_CODE_REQUEST_SANITIZE` | 发往模型的请求消息在出口前的最后清洗：工具输出被截断产生的 UTF-16 孤代理码元替换为 U+FFFD，空工具结果垫占位文本，端点拒收的 base64 音视频工具结果降级为占位文本；未设置保持开启 | 设为 `off` 关闭；其他任何值（含未设置）保持开启 |
+| `KIMI_CODE_REQUEST_SANITIZE` | 发往模型的请求在出口前的最后清洗：请求消息、系统提示词和工具声明中的 UTF-16 孤代理码元（多为工具输出被截断产生）替换为 U+FFFD，空工具结果垫占位文本，端点拒收的 base64 音视频工具结果降级为占位文本；未设置保持开启 | 设为 `off` 关闭；其他任何值（含未设置）保持开启 |
 | `KIMI_CODE_NO_AUTO_UPDATE` | 完全禁用更新预检：不检查、不后台安装、不提示。同时兼容旧名 `KIMI_CLI_NO_AUTO_UPDATE` | 真值：`1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | 禁用定时任务工具（`CronCreate` 拒绝新计划，已有任务不触发） | `1` 表示禁用 |
 
