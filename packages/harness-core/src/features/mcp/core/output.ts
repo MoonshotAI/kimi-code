@@ -231,7 +231,7 @@ async function offloadInlineImage(part: ContentPart, options: McpOutputOptions):
     });
     options.signal?.throwIfAborted();
     return { ...part, source: { kind: 'store', ref: ref.ref } };
-  } catch (error) {
+  } catch {
     options.signal?.throwIfAborted();
     return part;
   }

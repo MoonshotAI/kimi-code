@@ -361,12 +361,12 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, Wo
                 return {
                   host: fsHost,
                   git,
-                  browse: browser.browse,
-                  home: browser.home,
-                  probe: browser.probe,
+                  browse: (path) => browser.browse(path),
+                  home: () => browser.home(),
+                  probe: (path) => browser.probe(path),
                   read: (path, n, offset) => fsHost.fs.readBytes(path, n, offset),
                   stat: (path) => fsHost.fs.stat(path),
-                  mkdir: browser.mkdir,
+                  mkdir: (path) => browser.mkdir(path),
                   view: (roots) => createWorkspaceFsView(fsHost.fs, roots, git),
                 };
               })(),

@@ -1,0 +1,42 @@
+# harness-core
+
+> Kimi product harness built on @moonshot-ai/agent-core: a runtime seam
+> (createHarness + AgentRuntime), 44 product features as createFeature units,
+> and HTTP/ACP/remote-control transports. agent-core provides the kernel Unit
+> runtime, the loop machine, the session domain, and the store/blob layer.
+
+Import conventions: `@moonshot-ai/harness-core` has a root export;
+`@moonshot-ai/agent-core` is subpath-only (`@moonshot-ai/agent-core/app/index`,
+`.../kernel/index`, `.../session/index`, `.../loop/index`, `.../store/index`,
+`.../blob/index`, `.../tool/index`, `.../history/index`, `.../llm/*`).
+
+## Docs
+
+- [README](README.md): package orientation, documentation map, import conventions.
+- [Architecture](explanation/architecture.md): layers (agent-core vs harness-core), the three-level createFeature mechanism, features.add scope rules, facade tokens, EventContext-enriched event bubbling, and the dispose/remount re-entrancy discipline.
+- [Persistence](explanation/persistence.md): agent loop logs (LoopRecord), the session roster log, feature journals via useFeatureStore with turnId-stamped undo rewind, blobs, and the fsSessionSpace directory layout.
+- [Agent Runtime](explanation/agent-runtime.md): the AgentRuntime record (requester slot, live policy arrays, tool registry, system prompt sections), ensureAgent, setTools/setSystemPrompt freeze semantics, and provider-catalog managed model binding.
+- [Contribution Hooks](reference/contribution-hooks.md): every hook a feature unit can call — harness runtime hooks, agent-core loop hook helpers, kernel hooks — one line each with its module.
+- [Events](reference/events.md): every event reachable via app.on — built-in app/unit events, forwarded log commits, and each feature's declared event union; notes which old-world events are gone.
+- [Facades](reference/facades.md): every facade token exposed by features and transports, one line each.
+- [Run a Turn](how-to-guides/01-run-a-turn.md): createHarness + features.add + app.create + ensureAgent + requester + runTurn, end to end.
+- [Develop a Feature](how-to-guides/02-develop-a-feature.md): createFeature anatomy — levels, props, facade, events, tools, feature store, remount-safe setup, and the memory-space + scripted-requester test pattern.
+- [Persist Feature State](how-to-guides/03-persist-feature-state.md): useFeatureStore scope/projection/dispatch/onCommit semantics and undoAgentTurns.
+- [Serve HTTP](how-to-guides/04-serve-http.md): createHttp options, the route-builtin/route-features/route-v2 layers, custom routes via useHttpRoute, and facade consumption in handlers.
+
+## Key Source Entry Points
+
+- `src/runtime/harness.ts`: createHarness, memoryHarnessSpace, HarnessSessionSpace, harnessInternals.
+- `src/runtime/agents.ts`: AgentRuntime, agentCaps, ensureAgent options, system prompt assembly, syncAgentTools.
+- `src/runtime/hooks.ts`: useAgentTools/useSystemPrompt/useMessageResolver/useLlmRecovery/useLlmRetryable/useLoopEvent/useBlobs/useWaitForTasks.
+- `src/runtime/stores.ts`: useFeatureStore, FeatureStore, FeatureEvent, undoAgentTurns.
+- `src/preset.ts`: harnessPreset — the default feature bundle.
+- `src/features/<name>/feature.ts`: each feature's createFeature definition (facade tokens, event unions, props).
+- `src/feature-http/feature.ts`: createHttp; `src/feature-http/scope.ts`: useHttpRoute, sessionFacade/agentFacade.
+- `src/host/session-space.ts`: fsSessionSpace.
+- `example/app.ts`: full assembly of a product host; `example/cli.ts`: running a turn.
+
+## Related
+
+- `packages/agent-core/AGENTS.md`: authoritative index of the runtime architecture (kernel, loop, session, app, store, blob, tool).
+- `packages/agent-core/docs/`: LLM boundary, request lifecycle, input contract, errors/retries, and loop/session how-tos.

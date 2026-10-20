@@ -199,7 +199,8 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, McpEvent> {
         },
         ready: () => initialLoad,
       });
-      const { dispose: disposeManagement, ...managementFace } = management;
+      const managementFace = { ...management };
+      Reflect.deleteProperty(managementFace, 'dispose');
       useExpose(McpRef, {
         list: () => manager.list(),
         reconnect: (name) => mutate(() => manager.reconnectAndJoin(name)),
@@ -215,7 +216,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, McpEvent> {
         ...managementFace,
       });
       useCleanup(() => {
-        disposeManagement();
+        management.dispose();
         unsubscribeOAuth();
         unsubscribeStatus();
         for (const unsubscribe of sourceUnsubscribes) unsubscribe();
@@ -432,7 +433,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, McpEvent> {
       });
       useCleanup(() => {
         disposed = true;
-        for (const server of [...registrations.keys()]) unregisterServer(server);
+        for (const server of registrations.keys()) unregisterServer(server);
       });
     },
   });

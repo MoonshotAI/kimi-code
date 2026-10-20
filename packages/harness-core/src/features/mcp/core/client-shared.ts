@@ -1,5 +1,7 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
+import { describeUnknownError } from '#/features/config/index';
+
 import type { McpRemoteServerConfig, McpServerConfig } from './config-schema';
 
 export const MCP_CLIENT_NAME = 'kimi-code';
@@ -209,5 +211,5 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<
 
 function abortReason(signal: AbortSignal): Error {
   const reason: unknown = signal.reason;
-  return reason instanceof Error ? reason : new Error(reason === undefined ? 'aborted' : String(reason));
+  return reason instanceof Error ? reason : new Error(reason === undefined ? 'aborted' : describeUnknownError(reason));
 }

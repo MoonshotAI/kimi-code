@@ -81,16 +81,15 @@ export function createConfig(deps: {
       );
       useReady(store.reload());
       useExpose(ConfigRef, store);
-      const persistWatch = deps.persist?.watch;
-      if (persistWatch !== undefined) {
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        const off = persistWatch(() => {
-          if (timer !== undefined) clearTimeout(timer);
-          timer = setTimeout(() => {
-            timer = undefined;
-            void store.reload();
-          }, 150);
-        });
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const off = deps.persist?.watch?.(() => {
+        if (timer !== undefined) clearTimeout(timer);
+        timer = setTimeout(() => {
+          timer = undefined;
+          void store.reload();
+        }, 150);
+      });
+      if (off !== undefined) {
         useCleanup(() => {
           if (timer !== undefined) clearTimeout(timer);
           off();

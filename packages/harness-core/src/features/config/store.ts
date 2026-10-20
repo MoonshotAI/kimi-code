@@ -435,7 +435,7 @@ export function createConfigStore(deps: {
       const next = new Map<string, ConfigSectionContribution>();
       for (const item of list) next.set(item.name, item);
       const changed: string[] = [];
-      for (const name of [...sectionsByName.keys()]) {
+      for (const name of sectionsByName.keys()) {
         if (next.has(name)) continue;
         sectionsByName.delete(name);
         changed.push(name);

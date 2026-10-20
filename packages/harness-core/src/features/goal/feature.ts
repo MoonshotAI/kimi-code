@@ -677,7 +677,7 @@ export function createGoal(props: CreateGoalProps = {}): Feature<void, GoalUpdat
 
       const setBudgetLimits = (
         input: { readonly budgetLimits: GoalBudgetLimits },
-        actor: GoalActor = 'user',
+        _actor: GoalActor = 'user',
       ): Promise<GoalSnapshot> =>
         run(async () => {
           assertSupportedAgent();

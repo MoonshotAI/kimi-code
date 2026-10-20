@@ -5,6 +5,7 @@ import type { TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import { MAX_STEPS_REASON, type TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
 
+import { describeUnknownError } from '#/features/config/index';
 import type { OsProcessPort } from '#/features/os/index';
 import {
   agentCaps,
@@ -327,7 +328,7 @@ export function classifyOutcome(outcome: TurnOutcome): {
       ? error.message
       : error === undefined
         ? 'Agent turn failed'
-        : String(error);
+        : describeUnknownError(error);
   return { reason: 'error', message };
 }
 

@@ -234,7 +234,7 @@ export function openInteractions(input?: {
     },
 
     cancelAgent(agentId: string, reason: InteractionCancellation['reason']): void {
-      for (const record of [...records.values()]) {
+      for (const record of records.values()) {
         if (record.resolved) continue;
         if (record.tags[INTERACTION_TAG_AGENT_ID] !== agentId) continue;
         resolve(record.id, { cancelled: true, reason });
@@ -243,7 +243,7 @@ export function openInteractions(input?: {
 
     stop(): void {
       const response: InteractionCancellation = { cancelled: true, reason: 'agent_closed' };
-      for (const record of [...records.values()]) {
+      for (const record of records.values()) {
         if (record.resolved) continue;
         resolve(record.id, response);
       }

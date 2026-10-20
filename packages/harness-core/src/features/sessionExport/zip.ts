@@ -7,7 +7,7 @@ import { dirname, join, resolve } from 'pathe';
 import { ZipFile, type ReadStreamOptions } from 'yazl';
 
 import { SessionExportError } from './errors';
-import { openZipSource, type ZipSource, type ZipSourceIdentity } from './file-source';
+import type { ZipSource, ZipSourceIdentity } from './file-source';
 import type { ExportSessionManifest } from './sessionExport';
 
 export interface SessionLogZipEntry {

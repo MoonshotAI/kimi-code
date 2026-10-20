@@ -3,6 +3,8 @@ import { extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message'
 import type { AsyncToolOutcome, LoopRecord } from '@moonshot-ai/agent-core/loop/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
+import { describeUnknownError } from '#/features/config/index';
+
 import { describeToolArguments } from './format';
 
 export type TaskStatus = 'running' | 'completed' | 'failed' | 'killed' | 'lost';
@@ -40,7 +42,7 @@ function errorMessage(error: unknown): string | undefined {
     const message = (error as { message?: unknown }).message;
     if (typeof message === 'string') return message;
   }
-  return String(error);
+  return describeUnknownError(error);
 }
 
 function isLoopCause(reason: unknown): boolean {

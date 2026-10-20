@@ -16,6 +16,7 @@ import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import { join } from 'pathe';
 
+import { describeUnknownError } from '#/features/config/index';
 import type { PermissionFace } from '#/features/permission/index';
 
 import {
@@ -585,7 +586,7 @@ function classifyOutcome(outcome: TurnOutcome): { readonly message: string } {
           ? error.message
           : error === undefined
             ? 'Agent turn failed'
-            : String(error),
+            : describeUnknownError(error),
     };
   }
   return { message: 'Subagent turn ended without a final message.' };

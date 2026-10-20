@@ -8,6 +8,8 @@ import { createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/mess
 import type { LlmOutcome, TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 
+import { describeUnknownError } from '#/features/config/index';
+
 import instructionTemplate from './compaction-instruction.md?raw';
 import { CompactError, isShrinkableSummaryError } from './errors';
 
@@ -70,7 +72,7 @@ export function createSummarize(options: CreateSummarizeOptions): Summarize {
       ) {
         throw new CompactError(
           'summary-failed',
-          `summary turn failed: ${error instanceof Error ? error.message : String(error)}`,
+          `summary turn failed: ${describeUnknownError(error)}`,
         );
       }
       attemptHistory = dropOldestAndLeadingToolResults(attemptHistory);

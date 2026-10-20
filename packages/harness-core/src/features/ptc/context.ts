@@ -63,6 +63,7 @@ export function createPtcContext(
     disposers.push(unsubscribe);
     return unsubscribe;
   };
+  const wait: Loop['wait'] = (type, opts) => agent.loop.wait(type, opts);
   const getState = async (): Promise<LoopRecordState> => {
     await agent.flush();
     return agent.view.getState();
@@ -71,8 +72,8 @@ export function createPtcContext(
     level: full ? 'full' : 'readonly',
     useAgent: () =>
       full
-        ? { id: agent.id, subscribe, wait: agent.loop.wait, loop: agent.loop, flush: () => agent.flush() }
-        : { id: agent.id, subscribe, wait: agent.loop.wait },
+        ? { id: agent.id, subscribe, wait, loop: agent.loop, flush: () => agent.flush() }
+        : { id: agent.id, subscribe, wait },
     useAgentStore: () =>
       full && store !== undefined
         ? { getState, dispatch: (events) => store.dispatch(events) }

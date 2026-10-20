@@ -54,7 +54,7 @@ export function createAgentsMdReminder(props: CreateAgentsMdReminderProps): Feat
       });
       useToolEnding(service.toolEnding);
       useStepStarting(service.stepStarting);
-      useExpose(AgentsMdReminderRef, { seed: service.seed });
+      useExpose(AgentsMdReminderRef, { seed: (paths) => service.seed(paths) });
     },
   });
 }
