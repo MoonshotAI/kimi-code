@@ -5,7 +5,7 @@ import {
 } from '@anthropic-ai/sdk';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
-import type { DecodeSink, StreamDecoder } from '#/llm/protocol/protocol';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import { toLlmStatusErrorMessage, toLlmTransportErrorMessage } from '#/llm/protocol/rules/status';
 import {
   NO_FINISH,
@@ -101,65 +101,67 @@ function parseUsage(usage: RawUsage | undefined): Partial<TokenUsage> | undefine
   return patch;
 }
 
-function decodeBlock(block: RawBlock, sink: DecodeSink): void {
+function replayBlockDeltas(block: RawBlock, index: number): RawChunk[] {
   switch (block.type) {
-    case 'text':
-      if (block.text) {
-        sink.onDelta({ type: 'text', text: block.text });
+    case 'thinking':
+      return block.signature
+        ? [{ type: 'content_block_delta', index, delta: { type: 'signature_delta', signature: block.signature } }]
+        : [];
+    case 'tool_use':
+      return block.input === undefined
+        ? []
+        : [
+            {
+              type: 'content_block_delta',
+              index,
+              delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) },
+            },
+          ];
+    default:
+      return [];
+  }
+}
+
+export function replay(response: RawResponse): RawChunk[] {
+  const blocks = (response.content ?? []).flatMap((block, index): RawChunk[] => [
+    { type: 'content_block_start', index, content_block: block },
+    ...replayBlockDeltas(block, index),
+    { type: 'content_block_stop', index },
+  ]);
+  return [
+    { type: 'message_start', message: { id: response.id } },
+    ...blocks,
+    { type: 'message_delta', usage: response.usage, delta: { stop_reason: response.stop_reason } },
+  ];
+}
+
+export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
+  const toolUseIndexes = new Set<number>();
+  const push = (chunk: RawChunk): void => {
+    if (chunk.type === 'content_block_stop') {
+      const index = chunk.index ?? 0;
+      if (toolUseIndexes.delete(index)) {
+        sink.onToolCallEnd(index);
       }
       return;
-    case 'thinking':
-      sink.onDelta({ type: 'think', think: block.thinking ?? '', encrypted: block.signature });
-      return;
-    case 'redacted_thinking':
-      sink.onDelta({ type: 'think', think: '', encrypted: block.data });
-      return;
-    case 'tool_use':
-      sink.onDelta({
-        type: 'function',
-        id: block.id ?? crypto.randomUUID(),
-        name: block.name ?? '',
-        arguments: block.input === undefined ? null : JSON.stringify(block.input),
-      });
-      return;
-  }
-}
-
-export function decodeResponse(response: RawResponse, sink: DecodeSink): void {
-  if (typeof response.id === 'string' && response.id.length > 0) {
-    sink.onMessageId?.(response.id);
-  }
-  const usage = parseUsage(response.usage);
-  if (usage !== undefined) {
-    sink.onUsage?.(usage);
-  }
-  for (const block of response.content ?? []) {
-    decodeBlock(block, sink);
-  }
-  if (response.stop_reason !== undefined && response.stop_reason !== null) {
-    sink.onFinish(normalizeStopReason(response.stop_reason));
-  }
-}
-
-export function createStreamDecoder(): StreamDecoder<RawChunk> {
-  return (chunk, sink) => {
+    }
     if (chunk.type === 'message_start') {
       const messageId = chunk.message?.id;
       if (typeof messageId === 'string' && messageId.length > 0) {
-        sink.onMessageId?.(messageId);
+        sink.onMessageId(messageId);
       }
       const usage = parseUsage(chunk.message?.usage);
       if (usage !== undefined) {
         const inputUsage = { ...usage };
         delete inputUsage.output;
-        sink.onUsage?.(inputUsage);
+        sink.onUsage(inputUsage);
       }
       return;
     }
     if (chunk.type === 'message_delta') {
       const usage = parseUsage(chunk.usage);
       if (usage !== undefined) {
-        sink.onUsage?.(usage);
+        sink.onUsage(usage);
       }
       const stopReason = chunk.delta?.stop_reason;
       if (stopReason !== undefined && stopReason !== null) {
@@ -171,6 +173,7 @@ export function createStreamDecoder(): StreamDecoder<RawChunk> {
       const block = chunk.content_block;
       const index = chunk.index ?? 0;
       if (block.type === 'tool_use') {
+        toolUseIndexes.add(index);
         sink.onDelta({
           type: 'function',
           id: block.id ?? crypto.randomUUID(),
@@ -214,6 +217,7 @@ export function createStreamDecoder(): StreamDecoder<RawChunk> {
       return;
     }
   };
+  return { push, end: () => {} };
 }
 
 export function decodeError(error: unknown): LlmRemoteErrorMessage {

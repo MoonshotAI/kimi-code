@@ -1,20 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createAssistantMessage,
-  createToolMessage,
-  createUserMessage,
-  type Message,
-} from '#/llm/message';
+import { createUserMessage, type Message } from '#/llm/message';
 import type { LlmModelSpec, ResponseFormat } from '#/llm/request';
 import { createRequester } from '#/llm/requester';
 import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
 import { googleGenAIProtocol } from '#/llm/builtin/protocol/google-genai/index';
-import { extractToolText, openAIProtocol } from '#/llm/builtin/protocol/openai/index';
-import {
-  extractToolText as extractResponsesToolText,
-  openAIResponsesProtocol,
-} from '#/llm/builtin/protocol/openai-responses/index';
+import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
+import { openAIResponsesProtocol } from '#/llm/builtin/protocol/openai-responses/index';
 
 const spec: LlmModelSpec = {
   provider: 'test',
@@ -285,54 +277,5 @@ describe('google-genai requester responseFormat', () => {
     config = client.body()['config'] as Record<string, unknown> | undefined;
     expect(config?.['responseMimeType']).toBe('application/json');
     expect(config?.['responseJsonSchema']).toBeUndefined();
-  });
-});
-
-describe('requester toolMessageConversion', () => {
-  it('forces tool results to plain text when set to extract_text', async () => {
-    const toolMessages: readonly Message[] = [
-      createUserMessage('hi'),
-      createAssistantMessage([], [
-        { type: 'function', id: 'call_1', name: 'snap', arguments: '{}' },
-      ]),
-      createToolMessage('call_1', [
-        { type: 'text', text: 'shot taken' },
-        { type: 'image_url', source: { kind: 'url', url: 'https://example.test/shot.png' } },
-      ]),
-    ];
-    const expectedText = 'shot taken\n[image omitted: not supported by this provider]';
-    const conversation = createRequester().with({
-      model: { spec: { provider: 'test', name: 'gpt-4o-mini' } },
-      content: { messages: toolMessages },
-    });
-
-    const openAIClient = stubOpenAIClient(chatCompletionChunks);
-    await conversation.generate(
-      {
-        protocol: { base: openAIProtocol.with(extractToolText) },
-        endpoint: { clientFactory: openAIClient.clientFactory },
-      },
-      control(),
-    );
-    const chatMessages = openAIClient.body()['messages'] as Record<string, unknown>[];
-    expect(chatMessages.find((message) => message['role'] === 'tool')?.['content']).toBe(
-      expectedText,
-    );
-    expect(chatMessages.filter((message) => message['role'] === 'user')).toHaveLength(1);
-    expect(JSON.stringify(chatMessages)).not.toContain('image_url');
-
-    const responsesClient = stubResponsesClient(responsesStreamEvents);
-    await conversation.generate(
-      {
-        protocol: { base: openAIResponsesProtocol.with(extractResponsesToolText) },
-        endpoint: { clientFactory: responsesClient.clientFactory },
-      },
-      control(),
-    );
-    const inputItems = responsesClient.body()['input'] as Record<string, unknown>[];
-    expect(
-      inputItems.find((item) => item['type'] === 'function_call_output')?.['output'],
-    ).toBe(expectedText);
-    expect(JSON.stringify(inputItems)).not.toContain('input_image');
   });
 });

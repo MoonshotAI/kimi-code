@@ -4,7 +4,7 @@ import { defineProtocol } from '#/llm/protocol/protocol';
 import type { ResolvedEndpoint } from '#/llm/endpoint';
 
 import { inferGoogleGenAICapability } from './capability';
-import { createStreamDecoder, decodeError, decodeResponse } from './decode';
+import { createDecoder, decodeError, replay } from './decode';
 import { googleGenAIPipeline, type Request } from './lower';
 
 export type {
@@ -91,8 +91,8 @@ async function* abortableStream<T>(
 export const googleGenAIProtocol = defineProtocol({
   ...googleGenAIPipeline,
   capability: inferGoogleGenAICapability,
-  decode: (_module, response: unknown, sink) => decodeResponse(response, sink),
-  decodeStream: () => createStreamDecoder(),
+  decoder: (_module, sink) => createDecoder(sink),
+  replay: (response: unknown) => replay(response),
   decodeError,
   client: createClient,
   send: async (client: GenAIClient, request: Request, signal) => {

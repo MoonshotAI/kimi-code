@@ -34,14 +34,14 @@ function stubProtocol(
   return {
     media: { kinds: {} },
     encode: (module) => ({ module }),
-    decode: (_module, response, sink) => {
-      sink.onDelta({ type: 'text', text: response });
-      sink.onFinish({ finishReason: 'completed', rawFinishReason: 'stop' });
-    },
-    decodeStream: () => (chunk, sink) => {
-      sink.onDelta({ type: 'text', text: chunk });
-      sink.onFinish({ finishReason: 'completed', rawFinishReason: 'stop' });
-    },
+    decoder: (_module, sink) => ({
+      push: (chunk) => {
+        sink.onDelta({ type: 'text', text: chunk });
+        sink.onFinish({ finishReason: 'completed', rawFinishReason: 'stop' });
+      },
+      end: () => {},
+    }),
+    replay: (response) => [response],
     decodeError: (error) => error as LlmRemoteErrorMessage,
     client: (endpoint) => ({ endpoint }),
     send: async (client, request) => {

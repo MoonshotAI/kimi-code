@@ -9,6 +9,7 @@ import type { LlmErrorMessage, LlmRemoteErrorMessage, LlmStreamEvent } from '#/l
 export type LlmAttemptEvent =
   | LlmStreamEvent
   | { readonly type: 'attempt.sending' }
+  | { readonly type: 'attempt.tool_call_end'; readonly index?: number | string }
   | { readonly type: 'attempt.failed'; readonly error: LlmErrorMessage; readonly rawError?: unknown };
 
 export interface LlmAttemptControl {
@@ -50,6 +51,7 @@ function createEventSink(onEvent: ((event: LlmAttemptEvent) => void) | undefined
       failed = true;
       onEvent?.({ type: 'attempt.failed', error: message });
     },
+    onToolCallEnd: (index) => onEvent?.({ type: 'attempt.tool_call_end', index }),
     failed: () => failed,
   };
 }
@@ -86,23 +88,15 @@ export async function generate(request: LlmRequest, control: LlmAttemptControl):
         : clientFactory(endpoint);
     const sink = uniqueToolCallIds(module.content.messages, createEventSink(onEvent));
     onEvent?.({ type: 'attempt.sending' });
-    if (stream) {
-      const chunks = receive(
-        await base.sendStream(client, encodedRequest, signal),
-        onEvent,
-      );
-      const decode = base.decodeStream(module);
-      for await (const chunk of chunks) {
-        decode(chunk, sink);
-        if (sink.failed()) return;
-      }
-    } else {
-      const response = receive(
-        await base.send(client, encodedRequest, signal),
-        onEvent,
-      );
-      base.decode(module, response, sink);
+    const chunks = stream
+      ? receive(await base.sendStream(client, encodedRequest, signal), onEvent)
+      : base.replay(receive(await base.send(client, encodedRequest, signal), onEvent));
+    const decoder = base.decoder(module, sink);
+    for await (const chunk of chunks) {
+      decoder.push(chunk);
+      if (sink.failed()) return;
     }
+    decoder.end();
   } catch (error) {
     onEvent?.({ type: 'attempt.failed', error: remoteErrorOf(request, error), rawError: error });
   }

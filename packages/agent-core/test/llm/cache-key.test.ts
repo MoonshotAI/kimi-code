@@ -158,12 +158,12 @@ describe('openai requester cacheKey', () => {
     expect(streamedParts(events)).toEqual([
       { type: 'think', think: 'why', reasoningKey: 'reasoning_content' },
       { type: 'text', text: 'hi' },
-      { type: 'function', id: 'call-1', name: 'f', arguments: '{}' },
+      { type: 'function', id: 'call-1', name: 'f', arguments: '{}', _streamIndex: 0 },
     ]);
-    expect(events).toContainEqual({
-      type: 'llm.streaming.finish',
-      finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' },
-    });
+    expect(events.slice(-2)).toEqual([
+      { type: 'attempt.tool_call_end', index: 0 },
+      { type: 'llm.streaming.finish', finish: { finishReason: 'tool_calls', rawFinishReason: 'tool_calls' } },
+    ]);
     expect(events.some((event) => event.type === 'attempt.failed')).toBe(false);
   });
 
@@ -239,11 +239,14 @@ describe('anthropic requester cacheKey', () => {
     expect(once.body()['metadata']).toEqual({ user_id: 'session-1' });
     expect(once.body()['stream']).toBe(false);
     expect(streamedParts(events)).toEqual([
-      { type: 'think', think: 'why', encrypted: 'sig' },
+      { type: 'think', think: 'why' },
+      { type: 'think', think: '', encrypted: 'sig' },
       { type: 'text', text: 'hi' },
-      { type: 'function', id: 'tool-1', name: 'f', arguments: '{"a":1}' },
+      { type: 'function', id: 'tool-1', name: 'f', arguments: '', _streamIndex: 2 },
+      { type: 'tool_call_part', argumentsPart: '{"a":1}', index: 2 },
     ]);
     expect(events).toContainEqual({ type: 'llm.streaming.message_id', messageId: 'msg-1' });
+    expect(events).toContainEqual({ type: 'attempt.tool_call_end', index: 2 });
     expect(events.some((event) => event.type === 'attempt.failed')).toBe(false);
   });
 });

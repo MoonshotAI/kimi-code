@@ -4,13 +4,7 @@ import type { ResolvedEndpoint } from '#/llm/endpoint';
 import { headersToRecord, requestIdFromHeader } from '#/llm/protocol/kit/http';
 import { defineProtocol } from '#/llm/protocol/protocol';
 
-import {
-  createStreamDecoder,
-  decodeError,
-  decodeResponse,
-  type RawChunk,
-  type RawResponse,
-} from './decode';
+import { createDecoder, decodeError, replay, type RawChunk, type RawResponse } from './decode';
 import { inferAnthropicCapability } from './capability';
 import { anthropicPipeline, type Request } from './lower';
 
@@ -96,8 +90,8 @@ export const anthropicProtocol = defineProtocol({
   ...anthropicPipeline,
   capability: inferAnthropicCapability,
   requestId: requestIdFromHeader('request-id'),
-  decode: (_module, response: RawResponse, sink) => decodeResponse(response, sink),
-  decodeStream: () => createStreamDecoder(),
+  decoder: (_module, sink) => createDecoder(sink),
+  replay: (response: RawResponse) => replay(response),
   decodeError,
   client: createClient,
   send: async (client: Anthropic, request: Request, signal) => {

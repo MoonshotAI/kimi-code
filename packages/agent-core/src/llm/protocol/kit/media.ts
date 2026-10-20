@@ -1,7 +1,4 @@
-import type { MediaKind } from '#/llm/message';
 import type { LlmFileInput } from '#/llm/request';
-
-import type { MediaKindSupport, MediaSupport } from '../rules/media';
 
 export const BASELINE_IMAGE_MIMES: ReadonlySet<string> = new Set([
   'image/png',
@@ -39,12 +36,4 @@ export function uploadFilename(file: LlmFileInput): string {
     ([, mime]) => mime === file.mimeType,
   )?.[0];
   return `upload.${ext ?? 'bin'}`;
-}
-
-export function textOnlyToolResults(support: MediaSupport): MediaSupport {
-  const kinds: Partial<Record<MediaKind, MediaKindSupport>> = {};
-  for (const [kind, spec] of Object.entries(support.kinds) as [MediaKind, MediaKindSupport][]) {
-    kinds[kind] = { ...spec, inToolResult: 'unsupported' };
-  }
-  return { kinds };
 }

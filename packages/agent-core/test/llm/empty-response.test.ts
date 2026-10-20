@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AssistantMessage, StreamedMessagePart } from '#/llm/message';
-import { createMessageAccumulator, emptyResponseError } from '#/llm/policy/settle';
+import { extractText, type AssistantMessage, type StreamedMessagePart } from '#/llm/message';
+import {
+  createMessageAccumulator,
+  emptyResponseError,
+  usableOutputOf,
+} from '#/llm/policy/settle';
 import type { LlmModelSpec } from '#/llm/request';
 import { NO_FINISH } from '#/llm/response';
 
@@ -78,5 +82,43 @@ describe('emptyResponseError', () => {
         NO_FINISH,
       ),
     ).toBeNull();
+  });
+});
+
+describe('usableOutputOf', () => {
+  it('returns null when nothing or only vacuous parts were streamed', () => {
+    expect(usableOutputOf(accumulatedMessage([]))).toBeNull();
+    expect(
+      usableOutputOf(accumulatedMessage([{ type: 'text', text: '  \n' }])),
+    ).toBeNull();
+  });
+
+  it('returns null when the stream is still in the thinking phase', () => {
+    expect(
+      usableOutputOf(accumulatedMessage([{ type: 'think', think: 'reasoning' }])),
+    ).toBeNull();
+    expect(
+      usableOutputOf(
+        accumulatedMessage([
+          { type: 'think', think: 'reasoning' },
+          { type: 'text', text: ' ' },
+        ]),
+      ),
+    ).toBeNull();
+  });
+
+  it('keeps thinking alongside visible output once text has started', () => {
+    const salvaged = usableOutputOf(
+      accumulatedMessage([
+        { type: 'think', think: 'reasoning' },
+        { type: 'text', text: 'partial answer' },
+      ]),
+    );
+    expect(salvaged).not.toBeNull();
+    expect(extractText(salvaged as AssistantMessage)).toBe('partial answer');
+    expect((salvaged as AssistantMessage).content.some((part) => part.type === 'think')).toBe(
+      true,
+    );
+    expect((salvaged as AssistantMessage).toolCalls).toEqual([]);
   });
 });

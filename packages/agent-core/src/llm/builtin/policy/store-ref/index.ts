@@ -1,5 +1,4 @@
-export { createBlobUploadCache, type BlobBackend } from './adapters/blob';
-export { createMemoryRefStore, createMemoryUploadCache, type MemoryRefStore } from './adapters/memory';
+export { createBlobRefStore, createBlobUploadCache } from './adapters/blob';
 export type {
   Placeholder,
   PlaceholderInput,

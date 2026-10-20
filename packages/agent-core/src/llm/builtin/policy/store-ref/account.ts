@@ -1,7 +1,6 @@
 import { headerValue, type ResolvedEndpoint } from '#/llm/endpoint';
 import type { LlmModelSpec } from '#/llm/request';
-
-import { sha256Hex } from './hash';
+import { sha256Hex } from '#/utils/hash';
 
 function decodeBase64Url(text: string): string {
   const base64 = text.replace(/-/g, '+').replace(/_/g, '/');

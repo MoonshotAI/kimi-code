@@ -229,8 +229,8 @@ function failingThenDone(failures: readonly LlmRemoteErrorMessage[]): LlmProtoco
   const base: Protocol<unknown, unknown, string, string, unknown> = {
     media: { kinds: {} },
     encode: () => ({}),
-    decode: (_input, response, sink) => sink.onDelta({ type: 'text', text: response }),
-    decodeStream: () => (chunk, sink) => sink.onDelta({ type: 'text', text: chunk }),
+    decoder: (_input, sink) => ({ push: (chunk) => sink.onDelta({ type: 'text', text: chunk }), end: () => {} }),
+    replay: (response) => [response],
     decodeError: (error) => error as LlmRemoteErrorMessage,
     client: () => ({}),
     send: () => reply('ok'),

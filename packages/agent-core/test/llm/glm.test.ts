@@ -4,10 +4,12 @@ import { describe, expect, it } from 'vitest';
 import { glmProtocol } from '#/llm/builtin/provider/glm/index';
 import type { OpenAIOptions } from '#/llm/builtin/protocol/openai/index';
 import { createAssistantMessage, createToolMessage, createUserMessage, type Message } from '#/llm/message';
-import type { DecodeSink, LlmModule } from '#/llm/protocol/protocol';
+import type { LlmModule } from '#/llm/protocol/protocol';
 import { effectiveModelSpec } from '#/llm/protocol/rules/model';
 import type { LlmRequestModel } from '#/llm/request';
 import type { FinishInfo, LlmRemoteErrorMessage } from '#/llm/response';
+
+import { sinkOf } from './sink';
 
 const specOf = (name: string) => effectiveModelSpec(glmProtocol, { provider: 'glm', name });
 
@@ -29,13 +31,12 @@ function encode(name: string, model: Omit<LlmRequestModel, 'spec'> = {}, message
 function decodeChunks(chunks: readonly Record<string, unknown>[]) {
   const finishes: FinishInfo[] = [];
   const errors: LlmRemoteErrorMessage[] = [];
-  const sink: DecodeSink = {
-    onDelta: () => {},
+  const sink = sinkOf({
     onFinish: (finish) => finishes.push(finish),
     onError: (error) => errors.push(error),
-  };
-  const decode = glmProtocol.decodeStream(moduleOf('glm-5.3'));
-  for (const chunk of chunks) decode(chunk as never, sink);
+  });
+  const decoder = glmProtocol.decoder(moduleOf('glm-5.3'), sink);
+  for (const chunk of chunks) decoder.push(chunk as never);
   return { finishes, errors };
 }
 

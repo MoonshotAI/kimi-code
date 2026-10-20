@@ -1,674 +1,468 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createUserMessage, extractText, type SystemMessage } from '#/llm/message';
-import type { LlmOutcome } from '#/llm/response';
-import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
-import { openBlobs, type Blobs } from '#/store/blob';
-import { MemoryBackend, Trees } from '#/store/tree';
-import { openSessionStores, type RosterEntry, type SessionStores } from '#/stores/session';
-import type { ToolResult } from '#/tool';
-import { createFacadeToken, useExpose, useFire, useInject, ref, type Ref, type RuntimeEvent } from '#/kernel/index';
-import { createFeature, useAgentTools, useBlobs, useOnAgent, useOnApp, useOnSession, useSession, useSessionStore } from '#/feature/index';
-import { createHarness, memorySessionSpace, type AgentHandle } from '#/app/index';
+import { createApp, createFeature, useAgent, useApp, useSession, useTurnStarting } from '#/app/index';
+import { createSystemEntry } from '#/history/message';
+import { useCleanup, useFire, useOn, type RuntimeEvent } from '#/kernel/index';
+import { extractText } from '#/llm/message';
+import { memorySessionSpace } from '#/session/index';
+import type { ToolResult } from '#/tool/index';
 
-import { fakeRequester, testModel, textOutcome } from '../fake-llm';
+import {
+  agentCaps,
+  appEvent,
+  echoRequester,
+  hangingRequester,
+  loopEvent,
+  noopExecutor,
+  scriptedRequester,
+  textOutcome,
+  texts,
+  user,
+} from './fake-llm';
 
-function createEchoRequester(): AgentLlmRequester {
-  return fakeRequester((rest) => {
-    const messages = rest.content?.messages ?? [];
-    const last = messages.at(-1);
-    const text = last !== undefined && last.role === 'user' ? extractText(last) : '';
-    return textOutcome(`echo:${text}`);
+function gate(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
   });
+  return { promise, resolve };
 }
 
-async function testStores(): Promise<{ stores: SessionStores }> {
-  const backend = new MemoryBackend();
-  const trees = await Trees.open(backend.trees, {});
-  const tree = await trees.tree('sess');
-  return { stores: await openSessionStores(tree, openBlobs(backend.blobs)) };
-}
-
-function turnDone(agent: AgentHandle): Promise<string[]> {
-  return new Promise((resolve) => {
-    agent.on('turn.done', (event) => {
-      resolve(event.messages.map((entry) => extractText(entry.message)));
-    });
-  });
-}
-
-const AppCounter = createFacadeToken<{ count: Ref<number> }>('test.appCounter');
-const SessionCounter = createFacadeToken<{
-  count: Ref<number>;
-  appCount: Ref<number>;
-  roster(): Record<string, RosterEntry>;
-  blobs: Blobs;
-}>('test.sessionCounter');
-
-describe('app-session-agent units', () => {
-  it('assembles the three-tier unit tree and runs a real turn with isolated session features', async () => {
-    const envA = await testStores();
-    const envB = await testStores();
-    const seen: string[] = [];
-    const appSpec = createFeature('app-probe', {
-      app() {
-        useExpose(AppCounter, { count: ref(0) });
-      },
-    });
-    interface ProbeReady extends RuntimeEvent {
-      readonly type: 'session-probe.ready';
-      readonly sessionId: string;
-    }
-    const sessionSpec = createFeature<ProbeReady>('session-probe', {
-      session() {
-        const appState = useInject(AppCounter).value!;
-        const sessionStore = useSessionStore();
-        useExpose(SessionCounter, {
-          count: ref(0),
-          appCount: appState.count,
-          roster: () => sessionStore.getState().roster.agents,
-          blobs: useBlobs(),
-        });
-        useFire()({ type: 'session-probe.ready', sessionId: useSession().sessionId });
-      },
-    });
-    const app = createHarness({ features: [appSpec, sessionSpec] });
-    await app.ready();
-    app.on(sessionSpec, 'session-probe.ready', (event) => {
-      seen.push(event.sessionId);
-    });
-    app.resolve(AppCounter)!.count.value += 1;
-    expect(app.resolve(AppCounter)!.count.value).toBe(1);
-    const leftReady = app.wait(sessionSpec, 'session-probe.ready');
-    const left = await app.create({ sessionId: 'left', stores: envA.stores });
-    expect((await leftReady).sessionId).toBe('left');
-    const rightReady = app.wait(sessionSpec, 'session-probe.ready');
-    const right = await app.create({ sessionId: 'right', stores: envB.stores });
-    expect((await rightReady).sessionId).toBe('right');
-    expect(app.list()).toEqual(['left', 'right']);
-    expect(app.get('left')).toBe(left);
-    expect(seen).toEqual(['left', 'right']);
-    expect(left.resolve(SessionCounter)!.blobs).toBe(envA.stores.blobs);
-    expect(right.resolve(SessionCounter)!.blobs).toBe(envB.stores.blobs);
-    left.resolve(SessionCounter)!.count.value += 1;
-    expect(left.resolve(SessionCounter)!.count.value).toBe(1);
-    expect(right.resolve(SessionCounter)!.count.value).toBe(0);
-    expect(left.resolve(SessionCounter)!.appCount.value).toBe(1);
-    expect(right.resolve(SessionCounter)!.appCount.value).toBe(1);
-    const agent = await left.create({ agentId: 'agent-0' });
-    agent.setModel(testModel);
-    agent.setRequester(createEchoRequester());
-    expect(left.resolve(SessionCounter)!.roster()).toEqual({
-      'agent-0': { branch: 'agent-0', features: ['app-probe', 'session-probe'] },
-    });
-    expect(right.resolve(SessionCounter)!.roster()).toEqual({});
-    const done = turnDone(agent);
-    expect(agent.submit(createUserMessage('hello'))?.type).toBe('prompt.submitted');
-    expect(await done).toContain('echo:hello');
-    const store = envA.stores.get('agent-0');
-    await envA.stores.flush();
-    expect(store?.getState().history.some((entry) => extractText(entry.message) === 'echo:hello')).toBe(true);
-    const ExtraCounter = createFacadeToken<{ count: Ref<number> }>('test.extraCounter');
-    const extraSpec = createFeature('extra', {
-      app() {
-        useExpose(ExtraCounter, { count: ref(0) });
-      },
-    });
-    app.installFeature(extraSpec);
-    await app.ready();
-    app.resolve(ExtraCounter)!.count.value = 7;
-    expect(app.resolve(ExtraCounter)!.count.value).toBe(7);
-    expect(() => app.installFeature(extraSpec)).toThrow('already installed');
-    expect(app.uninstallFeature(extraSpec)).toBe(true);
-    await app.ready();
-    expect(app.resolve(ExtraCounter)).toBeUndefined();
-    app.installFeature(extraSpec);
-    await app.ready();
-    expect(app.resolve(ExtraCounter)!.count.value).toBe(0);
-    expect(app.uninstallFeature('extra')).toBe(true);
-    expect(app.uninstallFeature('extra')).toBe(false);
+describe('app units', () => {
+  it('mirrors live sessions and agents as units and forwards their log commits with context', async () => {
+    const app = createApp();
+    const left = await app.create({ sessionId: 'left' });
+    const right = await app.create({ sessionId: 'right' });
+    expect([...app.sessions.keys()]).toEqual(['left', 'right']);
+    const agent = await left.open('agent-0', agentCaps());
+    expect(left.roster.getState().agents['agent-0']).toEqual({});
+    expect(right.roster.getState().agents).toEqual({});
+    const forwarded = appEvent(app, 'turn.ended');
+    expect(agent.loop.submit(user('hello'))?.type).toBe('prompt.submitted');
+    expect(await forwarded).toMatchObject({ sessionId: 'left', agentId: 'agent-0', outcome: { type: 'done' } });
+    expect(texts(agent)).toContain('echo:hello');
     await app.close();
-    expect(agent.state).toBe('unmounted');
-    expect(left.state).toBe('unmounted');
-    expect(app.list()).toEqual([]);
-    await expect(agent.ready()).rejects.toThrow('unmounted');
-    expect(app.resolve(AppCounter)).toBeUndefined();
-    await envA.stores.dispose();
-    await envB.stores.dispose();
+    expect(app.sessions.size).toBe(0);
+    expect(agent.loop.submit(user('late'))).toBeUndefined();
   });
 
-  it('exposes session agent management and agent input interfaces', async () => {
+  it('app.wait resolves a matching event and app.on honors once', async () => {
+    const app = createApp();
+    const created: string[] = [];
+    app.on('session.created', (event) => {
+      created.push(String(event['sessionId']));
+    }, { once: true });
+    const waiting = app.wait('session.created', { match: (event) => event['sessionId'] === 'right' });
+    await app.create({ sessionId: 'left' });
+    await app.create({ sessionId: 'right' });
+    expect(created).toEqual(['left']);
+    await expect(waiting).resolves.toMatchObject({ sessionId: 'right' });
+    await app.close();
+  });
+
+  it('app.on and app.wait accept a feature for typed and prefix-matched listening', async () => {
+    type ProbeEvent =
+      | { readonly type: 'probe.ready'; readonly value: number }
+      | { readonly type: 'probe.done'; readonly value: number };
+    const probe = createFeature<ProbeEvent>('probe', {
+      app: () => {
+        const fire = useFire();
+        fire({ type: 'stray.tick' });
+        fire({ type: 'probe.ready', value: 1 });
+        fire({ type: 'probe.done', value: 2 });
+      },
+    });
+    const app = createApp();
+    const all: string[] = [];
+    app.on(probe, '*', (event) => {
+      all.push(event.type);
+    });
+    const onceSeen: string[] = [];
+    app.on(probe, '*', (event) => {
+      onceSeen.push(event.type);
+    }, { once: true });
+    const done: number[] = [];
+    app.on(probe, 'probe.done', (event) => {
+      done.push(event.value);
+    });
+    const ready = app.wait(probe, 'probe.ready');
+    const remove = app.features.add(probe);
+    await expect(ready).resolves.toMatchObject({ type: 'probe.ready', value: 1 });
+    await vi.waitFor(() => {
+      expect(all).toEqual(['probe.ready', 'probe.done']);
+    });
+    expect(onceSeen).toEqual(['probe.ready']);
+    expect(done).toEqual([2]);
+    await remove();
+    await app.close();
+  });
+
+  it('acknowledges agent inputs synchronously and manages agents within a session', async () => {
     const requests: string[][] = [];
-    let gate: PromiseWithResolvers<void> | undefined;
-    const requester = fakeRequester((rest) => {
+    let pending: ReturnType<typeof gate> | undefined;
+    const requester = scriptedRequester((rest) => {
       const messages = rest.content?.messages ?? [];
       requests.push(messages.map((message) => extractText(message)));
-      const respond = (): LlmOutcome => {
-        const last = messages.at(-1);
-        const lastUser = messages.toReversed().find((message) => message.role === 'user');
-        if (last !== undefined && last.role === 'tool') {
-          return textOutcome('done');
-        }
-        if (lastUser !== undefined && extractText(lastUser) === 'go') {
-          return textOutcome('', [
-            { type: 'function', id: `call-${requests.length}`, name: 'ping', arguments: '{}' },
-          ]);
+      const respond = () => {
+        const goIndex = messages.findIndex((message) => message.role === 'user' && extractText(message) === 'go');
+        const served = goIndex >= 0 && messages.slice(goIndex).some((message) => message.role === 'tool');
+        if (goIndex >= 0 && !served) {
+          return textOutcome('', [{ type: 'function', id: `call-${requests.length}`, name: 'ping', arguments: '{}' }]);
         }
         return textOutcome('done');
       };
-      const pending = gate;
-      if (pending === undefined) {
-        return respond();
-      }
-      return pending.promise.then(respond);
+      const current = pending;
+      return current === undefined ? respond() : current.promise.then(respond);
     });
-    const spec = createFeature('probe', {
-      agent() {
-        useAgentTools({
-          name: 'ping',
-          description: 'ping',
-          parameters: { type: 'object', properties: {} },
-          execute: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
-        });
-      },
-    });
-    const env = await testStores();
-    const app = createHarness({ features: [spec] });
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main' });
-    agent.setModel(testModel);
-    agent.setRequester(requester);
-    expect(session.list()).toEqual(['main']);
-    expect(session.get('main')).toBe(agent);
-    gate = Promise.withResolvers<void>();
-    expect(agent.notify(createUserMessage('note'))?.type).toBe('prompt.notified');
-    expect(agent.remind(createUserMessage('reminder-text'), { key: 'rk' })?.type).toBe('prompt.reminded');
-    expect(agent.remind({ role: 'system', content: [{ type: 'text', text: 'sys-reminder' }] } satisfies SystemMessage, { key: 'sk' })?.type).toBe('prompt.reminded');
-    const first = turnDone(agent);
-    expect(agent.submit(createUserMessage('go'))?.type).toBe('prompt.submitted');
-    gate.resolve();
+    const executor = {
+      execute: async () => ({ content: [{ type: 'text' as const, text: 'pong' }] }),
+    };
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const agent = await session.open('main', agentCaps(executor, requester));
+    expect([...session.agents.keys()]).toEqual(['main']);
+    pending = gate();
+    expect(agent.loop.notify(user('note', { source: 'notify' }))?.type).toBe('prompt.notified');
+    expect(agent.loop.remind(user('reminder-text', { source: 'reminder', key: 'rk' }))?.type).toBe('prompt.reminded');
+    const system = createSystemEntry({ role: 'system', content: [{ type: 'text', text: 'sys-reminder' }] }, { source: 'reminder', key: 'sk' });
+    expect(agent.loop.remind(system)?.type).toBe('prompt.reminded');
+    const first = loopEvent(agent.loop, 'turn.ended');
+    expect(agent.loop.submit(user('go'))?.type).toBe('prompt.submitted');
+    pending.resolve();
     await first;
-    gate = undefined;
-    await vi.waitFor(() => { expect(requests).toHaveLength(3); });
+    pending = undefined;
+    await vi.waitFor(() => {
+      expect(requests).toHaveLength(3);
+    });
     expect(requests[0]).toEqual(['note']);
-    expect(requests[1]).toEqual(['note', 'done', 'go']);
-    expect(requests[2]).toEqual(expect.arrayContaining(['pong', 'reminder-text', 'sys-reminder']));
-    gate = Promise.withResolvers<void>();
-    const second = turnDone(agent);
-    agent.submit(createUserMessage('p1'), { promptId: 'p1' });
-    agent.submit(createUserMessage('p2'), { promptId: 'p2' });
-    expect(agent.cancel('p2')).toMatchObject({ type: 'prompt.cancelled', id: 'p2', cancelled: true });
-    gate.resolve();
+    expect(requests[1]).toEqual(['note', 'done', 'go', 'reminder-text', 'sys-reminder']);
+    expect(requests[2]).toEqual(expect.arrayContaining(['pong']));
+    pending = gate();
+    const second = loopEvent(agent.loop, 'turn.ended');
+    agent.loop.submit(user('p1', { promptId: 'p1' }));
+    agent.loop.submit(user('p2', { promptId: 'p2' }));
+    expect(agent.loop.cancel('p2')).toMatchObject({ type: 'prompt.canceled', promptId: 'p2', canceled: true });
+    pending.resolve();
     await second;
-    expect(requests).toHaveLength(4);
+    pending = undefined;
     expect(requests.flat()).not.toContain('p2');
-    expect(agent.pause()?.type).toBe('agent.paused');
-    expect(agent.continue()?.type).toBe('agent.continued');
-    expect(agent.abort()?.type).toBe('agent.aborted');
-    expect(agent.steer(['none'])).toMatchObject({ type: 'prompt.steered', ids: ['none'], queueItemIds: [] });
-    expect(agent.cancel('missing')).toMatchObject({ type: 'prompt.cancelled', id: 'missing', cancelled: false });
-    const store = env.stores.get('main');
-    await env.stores.flush();
-    expect(store?.getState().history.some((entry) => extractText(entry.message) === 'note')).toBe(true);
-    const copy = await session.fork('main', { agentId: 'copy' });
-    copy.setModel(testModel);
-    copy.setRequester(requester);
-    expect(session.list()).toEqual(['main', 'copy']);
-    const copyStore = env.stores.get('copy');
-    expect(copyStore?.getState().history.some((entry) => extractText(entry.message) === 'go')).toBe(true);
+    expect(agent.loop.steer(['none'])).toMatchObject({ type: 'prompt.steered', promptIds: [] });
+    expect(agent.loop.cancel('missing')).toMatchObject({ type: 'prompt.canceled', promptId: 'missing', canceled: false });
+    await agent.loop.waitForIdle();
+    await agent.flush();
+    expect(texts(agent)).toContain('note');
+    const copy = await session.fork('main', 'copy', agentCaps(executor, requester));
+    expect([...session.agents.keys()]).toEqual(['main', 'copy']);
+    expect(texts(copy)).toContain('go');
     await session.close('main');
-    expect(session.list()).toEqual(['copy']);
-    const sessionLog = env.stores.session;
-    expect(Object.keys(sessionLog.getState().roster.agents)).toEqual(['main', 'copy']);
+    expect([...session.agents.keys()]).toEqual(['copy']);
+    expect(Object.keys(session.roster.getState().agents)).toEqual(['main', 'copy']);
     await app.close('sess');
-    expect(app.list()).toEqual([]);
-    expect(session.state).toBe('unmounted');
-    expect(copy.state).toBe('unmounted');
-    await env.stores.dispose();
+    expect(app.sessions.size).toBe(0);
+    expect(copy.loop.submit(user('late'))).toBeUndefined();
+    await app.close();
   });
 
-  it('waits machine events with match, timeout, and abort signal', async () => {
-    const env = await testStores();
-    const app = createHarness({});
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main' });
-    agent.setModel(testModel);
-    agent.setRequester(createEchoRequester());
-    const done = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
-    agent.submit(createUserMessage('hello'));
+  it('waits loop events with match, timeout, and abort signal', async () => {
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const agent = await session.open('main', agentCaps());
+    const done = loopEvent(agent.loop, 'turn.ended', { match: (event) => event.outcome.type === 'done' });
+    agent.loop.submit(user('hello'));
     await expect(done).resolves.toMatchObject({ outcome: { type: 'done' } });
-    await expect(agent.wait('turn.done', { timeoutMs: 10 })).rejects.toThrow("wait 'turn.done' timed out after 10ms");
+    await expect(loopEvent(agent.loop, 'turn.ended', { timeoutMs: 10 })).rejects.toThrow('wait timed out after 10ms');
     const controller = new AbortController();
-    const pending = agent.wait('turn.done', { signal: controller.signal });
+    const waiting = loopEvent(agent.loop, 'turn.ended', { signal: controller.signal });
     controller.abort(new Error('stop'));
-    await expect(pending).rejects.toThrow('stop');
-    await app.disposeAsync();
-    await env.stores.dispose();
+    await expect(waiting).rejects.toThrow('stop');
+    await app.close();
   });
 
-  it('runs a full turn with agent.run, requires an idle agent, and rejects on external abort or timeout', async () => {
-    const env = await testStores();
-    const app = createHarness({});
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main' });
-    agent.setModel(testModel);
-    agent.setRequester(createEchoRequester());
-    const first = await agent.run(createUserMessage('hello'));
-    expect(first.outcome.type).toBe('done');
-    expect(first.turnId).toBeGreaterThanOrEqual(0);
-    expect(first.branchId).toBe('main');
-    expect(first.messages.map((entry) => extractText(entry.message))).toContain('echo:hello');
-    const inFlight = agent.run(createUserMessage('one'));
-    await expect(agent.run(createUserMessage('two'))).rejects.toThrow('agent is busy');
-    await expect(agent.retry()).rejects.toThrow('agent is busy');
-    expect((await inFlight).outcome.type).toBe('done');
-    const hanging: AgentLlmRequester = {
-      with: () => hanging,
-      request: () => {
-        throw new Error('fake requester cannot build wire requests');
-      },
-      generate: (_rest, { signal }) =>
-        new Promise((_, reject) => {
-          if (signal.aborted) {
-            reject(signal.reason);
-            return;
-          }
-          signal.addEventListener('abort', () => reject(signal.reason));
-        }),
-    };
-    agent.setRequester(hanging);
-    const controller = new AbortController();
-    const aborted = agent.run(createUserMessage('hang'), {
-      signal: controller.signal,
-      onStarted: () => controller.abort(new Error('stop')),
-    });
-    const woundDown = agent.wait('turn.done', { timeoutMs: 15000 }).catch(() => {});
-    await expect(aborted).rejects.toThrow('stop');
-    await woundDown;
-    const timedOut = agent.run(createUserMessage('hang'), { timeoutMs: 10 });
-    const timedOutWoundDown = agent.wait('turn.done', { timeoutMs: 15000 }).catch(() => {});
-    await expect(timedOut).rejects.toThrow('run timed out after 10ms');
-    await timedOutWoundDown;
-    await app.disposeAsync();
-    await env.stores.dispose();
-  });
-
-  it('retries with agent.retry and settles external aborts as outcomes with abortAsOutcome', async () => {
-    const env = await testStores();
-    const app = createHarness({});
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main' });
-    agent.setModel(testModel);
-    agent.setRequester(createEchoRequester());
-    const retried = await agent.retry();
-    expect(retried.outcome.type).toBe('done');
-    const history = env.stores.get('main')?.getState().history ?? [];
-    const retryEntry = history.find(
-      (entry) => entry.message.role === 'user' && entry.meta?.origin?.kind === 'retry',
+  it('runs a full turn only while idle and settles signal aborts and timeouts as aborted outcomes', async () => {
+    const caps = agentCaps();
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const agent = await session.open('main', caps);
+    expect((await agent.loop.runTurn(user('hello'))).type).toBe('done');
+    expect(agent.loop.state.messages.map((entry) => extractText(entry.message))).toContain('echo:hello');
+    const release = gate();
+    caps.use(
+      scriptedRequester(async (rest) => {
+        await release.promise;
+        const last = (rest.content?.messages ?? []).at(-1);
+        return textOutcome(`echo:${last !== undefined && last.role === 'user' ? extractText(last) : ''}`);
+      }),
     );
-    expect(retryEntry?.message).toMatchObject({ role: 'user', content: [] });
-    const hanging: AgentLlmRequester = {
-      with: () => hanging,
-      request: () => {
-        throw new Error('fake requester cannot build wire requests');
-      },
-      generate: (_rest, { signal }) =>
-        new Promise((_, reject) => {
-          if (signal.aborted) {
-            reject(signal.reason);
-            return;
-          }
-          signal.addEventListener('abort', () => reject(signal.reason));
-        }),
-    };
-    agent.setRequester(hanging);
+    const inFlight = agent.loop.runTurn(user('one'));
+    await expect(agent.loop.runTurn(user('two'))).rejects.toThrow('runTurn is only accepted while idle');
+    release.resolve();
+    expect((await inFlight).type).toBe('done');
+    caps.use(hangingRequester());
     const controller = new AbortController();
-    const settled = agent.run(createUserMessage('hang'), {
-      signal: controller.signal,
-      onStarted: () => controller.abort(new Error('stop')),
-      abortAsOutcome: true,
+    void loopEvent(agent.loop, 'turn.started').then(() => controller.abort(new Error('stop')));
+    await expect(agent.loop.runTurn(user('hang', { promptId: 'h1' }), { signal: controller.signal })).resolves.toMatchObject({
+      type: 'aborted',
+      reason: expect.any(Error),
     });
-    const woundDown = agent.wait('turn.done', { timeoutMs: 15000 }).catch(() => {});
-    await expect(settled).resolves.toMatchObject({
-      outcome: { type: 'aborted', reason: expect.any(Error) },
-    });
-    await woundDown;
+    expect(agent.loop.state.inbox.normal.map((entry) => extractText(entry.message))).toEqual(['hang']);
+    agent.loop.cancel('h1');
     await expect(
-      agent.retry({ signal: controller.signal, abortAsOutcome: true }),
-    ).resolves.toMatchObject({ outcome: { type: 'aborted', reason: expect.any(Error) } });
-    await app.disposeAsync();
-    await env.stores.dispose();
+      agent.loop.runTurn(user('hang', { promptId: 'h2' }), { signal: AbortSignal.timeout(10) }),
+    ).resolves.toMatchObject({ type: 'aborted' });
+    agent.loop.cancel('h2');
+    await expect(agent.loop.runTurn(user('skip'), { signal: controller.signal })).resolves.toMatchObject({ type: 'aborted' });
+    expect(agent.loop.state.inbox.normal).toEqual([]);
+    await app.close();
   });
 
   it('aborts a detached background tool with abortTool', async () => {
-    const requester = fakeRequester((rest) => {
-      const messages = rest.content?.messages ?? [];
-      const last = messages.at(-1);
+    const requester = scriptedRequester((rest) => {
+      const last = (rest.content?.messages ?? []).at(-1);
       if (last !== undefined && last.role === 'user' && extractText(last) === 'bg') {
         return textOutcome('', [{ type: 'function', id: 'call-bg', name: 'bg', arguments: '{}' }]);
       }
       return textOutcome('done');
     });
-    const spec = createFeature('probe', {
-      agent() {
-        useAgentTools({
-          name: 'bg',
-          description: 'detach and hang',
-          parameters: { type: 'object', properties: {} },
-          execute: ({ signal, detach }) => {
-            detach?.('bg ack');
-            return new Promise((_resolve, reject) => {
-              signal.addEventListener('abort', () => reject(new Error('bg aborted')));
-            });
-          },
+    const executor = {
+      execute: ({ signal, detach }: { signal: AbortSignal; detach?: (text: string) => void }) => {
+        detach?.('bg ack');
+        return new Promise<ToolResult>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(new Error('bg aborted')));
         });
       },
+    };
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const agent = await session.open('main', agentCaps(executor, requester));
+    const detached = loopEvent(agent.loop, 'tool.ended', {
+      match: (event) => event.toolCallId === 'call-bg' && event.detached,
     });
-    const env = await testStores();
-    const app = createHarness({ features: [spec] });
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main' });
-    agent.setModel(testModel);
-    agent.setRequester(requester);
-    const detached = agent.wait('tool.detached', { match: (event) => event.toolCallId === 'call-bg' });
-    expect(agent.submit(createUserMessage('bg'))?.type).toBe('prompt.submitted');
+    expect(agent.loop.submit(user('bg'))?.type).toBe('prompt.submitted');
     await detached;
-    expect(agent.abortTool('missing')).toBeUndefined();
-    const settled = agent.wait('tool.done', { match: (event) => event.toolCallId === 'call-bg' });
-    agent.abortTool('call-bg', 'test stop');
+    agent.loop.abortTool('missing');
+    const settled = loopEvent(agent.loop, 'tool.async_ended', { match: (event) => event.toolCallId === 'call-bg' });
+    agent.loop.abortTool('call-bg', 'test stop');
     await expect(settled).resolves.toMatchObject({ outcome: { type: 'aborted', reason: 'test stop' } });
-    await app.disposeAsync();
-    await env.stores.dispose();
+    await app.close();
   });
 
   it('moves a foreground tool to the background with detachTool and still reports its completion', async () => {
-    const requester = fakeRequester((rest) => {
-      const messages = rest.content?.messages ?? [];
-      const last = messages.at(-1);
+    const requester = scriptedRequester((rest) => {
+      const last = (rest.content?.messages ?? []).at(-1);
       if (last !== undefined && last.role === 'user' && extractText(last) === 'fg') {
         return textOutcome('', [{ type: 'function', id: 'call-fg', name: 'fg', arguments: '{}' }]);
       }
       return textOutcome('done');
     });
     let settle: ((result: ToolResult) => void) | undefined;
-    const spec = createFeature('probe', {
-      agent() {
-        useAgentTools({
-          name: 'fg',
-          description: 'hang in the foreground',
-          parameters: { type: 'object', properties: {} },
-          execute: () =>
-            new Promise<ToolResult>((resolve) => {
-              settle = resolve;
-            }),
-        });
-      },
+    const executor = {
+      execute: () =>
+        new Promise<ToolResult>((resolve) => {
+          settle = resolve;
+        }),
+    };
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const agent = await session.open('main', agentCaps(executor, requester));
+    agent.loop.detachTool('missing');
+    const spawned = loopEvent(agent.loop, 'tool.started', { match: (event) => event.toolCall.id === 'call-fg' });
+    const detached = loopEvent(agent.loop, 'tool.ended', {
+      match: (event) => event.toolCallId === 'call-fg' && event.detached,
     });
-    const env = await testStores();
-    const app = createHarness({ features: [spec] });
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main' });
-    agent.setModel(testModel);
-    agent.setRequester(requester);
-    expect(agent.detachTool('missing')).toBeUndefined();
-    const spawned = agent.wait('turn.spawn_tools', {
-      match: (event) => event.toolCalls.some((call) => call.id === 'call-fg'),
-    });
-    const detached = agent.wait('tool.detached', { match: (event) => event.toolCallId === 'call-fg' });
-    const firstTurn = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
-    expect(agent.submit(createUserMessage('fg'))?.type).toBe('prompt.submitted');
+    const firstTurn = loopEvent(agent.loop, 'turn.ended', { match: (event) => event.outcome.type === 'done' });
+    expect(agent.loop.submit(user('fg'))?.type).toBe('prompt.submitted');
     await spawned;
-    agent.detachTool('call-fg');
+    agent.loop.detachTool('call-fg');
     await expect(detached).resolves.toMatchObject({
       toolCallId: 'call-fg',
-      text: 'moved to background by the user: fg (tool_call_id=call-fg)',
+      outcome: {
+        entry: {
+          message: {
+            content: [{ type: 'text', text: 'moved to background by the user: fg (tool_call_id=call-fg)' }],
+          },
+        },
+      },
     });
     await firstTurn;
-    const ackEntry = env.stores
-      .get('main')
-      ?.getState()
-      .history.find(
-        (entry) => entry.message.role === 'tool' && entry.message.toolCallId === 'call-fg',
-      );
-    expect(ackEntry?.message.content).toEqual([
-      { type: 'text', text: 'moved to background by the user: fg (tool_call_id=call-fg)' },
-    ]);
-    const secondTurn = agent.wait('turn.done', { match: (event) => event.outcome.type === 'done' });
+    await agent.flush();
+    const ackEntry = agent.view
+      .getState()
+      .messages.find((entry) => entry.message.role === 'tool' && entry.message.toolCallId === 'call-fg');
+    expect(ackEntry?.message).toMatchObject({
+      content: [{ type: 'text', text: 'moved to background by the user: fg (tool_call_id=call-fg)' }],
+    });
+    const secondTurn = loopEvent(agent.loop, 'turn.ended', { match: (event) => event.outcome.type === 'done' });
     settle?.({ content: [{ type: 'text', text: 'fg output' }] });
     await secondTurn;
-    const notification = env.stores
-      .get('main')
-      ?.getState()
-      .history.find((entry) => entry.meta?.source === 'async-tool');
-    expect(notification?.message.content).toEqual([
-      { type: 'text', text: '[async tool completed] fg (tool_call_id=call-fg)' },
-      { type: 'text', text: 'fg output' },
-    ]);
-    await app.disposeAsync();
-    await env.stores.dispose();
+    await agent.flush();
+    const notification = agent.view.getState().messages.find((entry) => entry.meta?.source === 'async-tool');
+    expect(notification?.message).toMatchObject({
+      content: [
+        { type: 'text', text: '[async tool completed] fg (tool_call_id=call-fg)' },
+        { type: 'text', text: 'fg output' },
+      ],
+    });
+    await app.close();
   });
 
-  it('counts steps monotonically across drains and fails with max_steps even when a drain carries messages', async () => {
-    let requests = 0;
-    const requester = fakeRequester(() => {
-      requests += 1;
-      return textOutcome('', [
-        { type: 'function', id: `call-${requests}`, name: 'spin', arguments: '{}' },
-      ]);
-    });
-    const spec = createFeature('probe', {
-      agent() {
-        useAgentTools({
-          name: 'spin',
-          description: 'keep the turn going',
-          parameters: { type: 'object', properties: {} },
-          execute: () => Promise.resolve({ content: [{ type: 'text', text: 'spun' }] }),
+  it('mounts the units of a feature per level, attaches them to their level, and keeps per-instance registration', async () => {
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const a1 = await session.open('a1', agentCaps());
+    const hookIds = (agent: typeof a1) => agent.loop.hooks.list().map((hook) => hook.id);
+    const mounted: string[] = [];
+    const fires = new Map<string, (event: RuntimeEvent) => void>();
+    const heard: Array<[unknown, unknown]> = [];
+    const Probe = createFeature<RuntimeEvent, { readonly tag: string }>('probe', {
+      session: (props) => {
+        expect(() => useAgent()).toThrow("no provider for token 'agent'");
+        mounted.push(`+${useSession().id}:${props.tag}`);
+        useOn('ping', (event) => {
+          heard.push([event['agentId'], event['from']]);
+        });
+      },
+      agent: (props) => {
+        const agent = useAgent();
+        expect(useSession()).toBe(session);
+        expect(useApp()).toBe(app);
+        mounted.push(`+${agent.id}:${props.tag}`);
+        fires.set(agent.id, useFire());
+        useTurnStarting(() => undefined, { id: 'probe' });
+        useCleanup(() => {
+          mounted.push(`-${agent.id}:${props.tag}`);
         });
       },
     });
-    const env = await testStores();
-    const app = createHarness({ features: [spec] });
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const agent = await session.create({ agentId: 'main', machineOptions: { maxStepsPerTurn: 2 } });
-    agent.setModel(testModel);
-    agent.setRequester(requester);
-    const done = new Promise<{ outcome: unknown; texts: string[] }>((resolve) => {
-      agent.on('turn.done', (event) => {
-        resolve({ outcome: event.outcome, texts: event.messages.map((entry) => extractText(entry.message)) });
-      });
+    const offApp = app.features.add(Probe, { props: { tag: 'app' } });
+    expect([...mounted].sort()).toEqual(['+a1:app', '+sess:app']);
+    const a2 = await session.open('a2', agentCaps());
+    expect(mounted.slice(2)).toEqual(['+a2:app']);
+    expect(hookIds(a2)).toEqual(['probe']);
+    fires.get('a1')?.({ type: 'ping', from: 'a1-probe' });
+    fires.get('a2')?.({ type: 'ping', from: 'a2-probe' });
+    expect(heard).toEqual([
+      ['a1', 'a1-probe'],
+      ['a2', 'a2-probe'],
+    ]);
+    const offOwn = app.features.add(Probe, { session: 'sess', agent: 'a2', props: { tag: 'own' } });
+    expect(mounted).toHaveLength(3);
+    const Other = createFeature('other', {
+      app: () => {
+        mounted.push('+app:other');
+      },
+      agent: () => {
+        mounted.push(`+${useAgent().id}:other`);
+      },
     });
-    expect(agent.submit(createUserMessage('go'))?.type).toBe('prompt.submitted');
-    agent.remind(createUserMessage('mid-turn note'));
-    const result = await done;
-    expect(requests).toBe(2);
-    expect(result.outcome).toMatchObject({ type: 'failed', failure: { reason: 'max_steps' } });
-    expect(result.texts).toContain('mid-turn note');
-    await app.disposeAsync();
-    await env.stores.dispose();
+    app.features.add(Other, { session: 'sess' });
+    expect(mounted.slice(3).sort()).toEqual(['+a1:other', '+a2:other']);
+    expect(app.features.list({ session: 'sess' })).toEqual([Other]);
+    expect(() => app.features.add(createFeature('app-only', { app: () => {} }), { session: 'sess' })).toThrow(TypeError);
+    expect(() => app.features.add(Probe, { session: 'ghost' })).toThrow("session 'ghost' is not open");
+    await offOwn();
+    await session.close('a2');
+    expect(hookIds(a2)).toEqual([]);
+    expect(hookIds(a1)).toEqual(['probe']);
+    await offApp();
+    expect(hookIds(a1)).toEqual([]);
+    expect(mounted.slice(5).sort()).toEqual(['-a1:app', '-a2:app']);
+    await app.close();
   });
 
-  it('generates v2-style session ids when opening without an explicit id', async () => {
-    const app = createHarness({ space: memorySessionSpace() });
-    const session = await app.open({});
-    expect(session.sessionId).toMatch(
-      /^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
-    await app.disposeAsync();
-  });
-
-  it('tracks the open source of sessions across open paths', async () => {
-    const space = memorySessionSpace();
-    const app = createHarness({ space });
+  it('tracks the open source of sessions across open paths and forwards session.created', async () => {
+    const app = createApp({ space: memorySessionSpace() });
     const created: Array<{ sessionId?: unknown; from?: unknown }> = [];
     app.on('session.created', (event) => {
       created.push({ sessionId: event['sessionId'], from: event['from'] });
     });
-    const env = await testStores();
-    const direct = await app.create({ sessionId: 'direct', stores: env.stores });
-    expect(direct.status().source).toBe('startup');
-    expect(created).toEqual([]);
-    const fresh = await app.open({});
+    const fresh = await app.create({});
+    expect(fresh.id).toMatch(/^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(fresh.status().source).toBe('startup');
-    expect(created).toEqual([{ sessionId: fresh.sessionId, from: undefined }]);
-    const live = await app.open({ sessionId: fresh.sessionId });
+    expect(created).toEqual([{ sessionId: fresh.id, from: undefined }]);
+    const live = await app.create({ sessionId: fresh.id });
     expect(live).toBe(fresh);
-    expect(live.status().source).toBe('startup');
-    await app.close(fresh.sessionId);
-    const resumed = await app.open({ sessionId: fresh.sessionId });
+    await app.close(fresh.id);
+    const resumed = await app.create({ sessionId: fresh.id });
+    expect(resumed).not.toBe(fresh);
     expect(resumed.status().source).toBe('resume');
     expect(created).toHaveLength(1);
-    const forked = await app.open({ from: fresh.sessionId });
+    const forked = await app.create({ from: fresh.id });
     expect(forked.status().source).toBe('fork');
     expect(created).toEqual([
-      { sessionId: fresh.sessionId, from: undefined },
-      { sessionId: forked.sessionId, from: fresh.sessionId },
+      { sessionId: fresh.id, from: undefined },
+      { sessionId: forked.id, from: fresh.id },
     ]);
-    await app.disposeAsync();
-    await env.stores.dispose();
+    await app.close();
   });
 
-  it('deletes cold and live sessions and fires session.deleted on the app node', async () => {
+  it('deletes cold and live sessions and forwards session.deleted', async () => {
     const space = memorySessionSpace();
-    const app = createHarness({ space });
-    const cold = await app.open({});
-    await app.close(cold.sessionId);
-    const live = await app.open({});
-    const deleted: string[] = [];
+    const app = createApp({ space });
+    const cold = await app.create({});
+    await app.close(cold.id);
+    const live = await app.create({});
+    const deleted: unknown[] = [];
     app.on('session.deleted', (event) => {
-      deleted.push((event as unknown as { sessionId: string }).sessionId);
+      deleted.push(event['sessionId']);
     });
-    await app.delete(cold.sessionId);
-    expect(await space.get(cold.sessionId)).toBeUndefined();
-    expect(deleted).toEqual([cold.sessionId]);
-    await app.delete(live.sessionId);
-    expect(app.get(live.sessionId)).toBeUndefined();
-    expect(live.state).toBe('unmounted');
-    expect(await space.get(live.sessionId)).toBeUndefined();
-    expect(deleted).toEqual([cold.sessionId, live.sessionId]);
-    await expect(app.delete(live.sessionId)).rejects.toThrow(
-      `session '${live.sessionId}' does not exist`,
-    );
-    expect(deleted).toEqual([cold.sessionId, live.sessionId]);
-    await app.disposeAsync();
+    await app.delete(cold.id);
+    expect(await space.get(cold.id)).toBeUndefined();
+    expect(deleted).toEqual([cold.id]);
+    await app.delete(live.id);
+    expect(app.sessions.get(live.id)).toBeUndefined();
+    await expect(live.open('main', agentCaps())).rejects.toThrow('Writer is closed');
+    expect(await space.get(live.id)).toBeUndefined();
+    expect(deleted).toEqual([cold.id, live.id]);
+    await expect(app.delete(live.id)).rejects.toThrow(`session '${live.id}' does not exist`);
+    expect(deleted).toEqual([cold.id, live.id]);
+    await app.close();
   });
 
-  it('fires session.meta_updated on the app node for cold sessions without double-firing live ones', async () => {
+  it('updates catalog metadata of cold and live sessions once each', async () => {
     const space = memorySessionSpace();
-    const app = createHarness({ space });
-    const cold = await app.open({ title: 'cold' });
-    await app.close(cold.sessionId);
-    const live = await app.open({ title: 'live' });
-    const seen: Array<{ sessionId: string; title?: string }> = [];
+    const app = createApp({ space });
+    const cold = await app.create({ title: 'cold' });
+    await app.close(cold.id);
+    const live = await app.create({ title: 'live' });
+    const seen: Array<{ sessionId: unknown; title?: string }> = [];
     app.on('session.meta_updated', (event) => {
-      const payload = event as unknown as { sessionId: string; meta?: { title?: string } };
-      seen.push({ sessionId: payload.sessionId, title: payload.meta?.title });
+      seen.push({ sessionId: event['sessionId'], title: (event['meta'] as { title?: string }).title });
     });
-    await app.updateSession(cold.sessionId, { title: 'cold-renamed' });
-    expect(seen).toEqual([{ sessionId: cold.sessionId, title: 'cold-renamed' }]);
-    expect((await space.get(cold.sessionId))?.title).toBe('cold-renamed');
-    await app.updateSession(live.sessionId, { title: 'live-renamed' });
+    await app.update(cold.id, { title: 'cold-renamed' });
+    expect((await space.get(cold.id))?.title).toBe('cold-renamed');
+    await app.update(live.id, { title: 'live-renamed' });
     expect(seen).toEqual([
-      { sessionId: cold.sessionId, title: 'cold-renamed' },
-      { sessionId: live.sessionId, title: 'live-renamed' },
+      { sessionId: cold.id, title: 'cold-renamed' },
+      { sessionId: live.id, title: 'live-renamed' },
     ]);
-    await app.disposeAsync();
+    await app.close();
   });
 
-  it('fires agent.opened with reopened discrimination and agent.closed on the session node', async () => {
-    const env = await testStores();
-    const app = createHarness({ features: [] });
-    await app.ready();
-    const session = await app.create({ sessionId: 'sess', stores: env.stores });
-    const opened: Array<{ agentId: string; source?: string; reopened?: boolean }> = [];
-    const closed: string[] = [];
-    session.on('agent.opened', (event) => {
-      const payload = event as unknown as { agentId: string; source?: string; reopened?: boolean };
-      opened.push({ agentId: payload.agentId, source: payload.source, reopened: payload.reopened });
+  it('fires agent.opened with reopened discrimination and agent.closed as agent units mount and unmount', async () => {
+    const app = createApp();
+    const session = await app.create({ sessionId: 'sess' });
+    const opened: Array<{ agentId: unknown; source?: unknown; reopened?: unknown }> = [];
+    const closed: unknown[] = [];
+    app.on('agent.opened', (event) => {
+      opened.push({ agentId: event['agentId'], source: event['source'], reopened: event['reopened'] });
     });
-    session.on('agent.closed', (event) => {
-      closed.push((event as unknown as { agentId: string }).agentId);
+    app.on('agent.closed', (event) => {
+      closed.push(event['agentId']);
     });
-
-    await session.create({ agentId: 'main', systemPrompt: 'main' });
-    await session.create({ agentId: 'sub-1', source: 'spawn:main:coder' });
-    await session.fork('main', { agentId: 'sub-2', source: 'btw' });
+    await session.open('main', agentCaps(noopExecutor, echoRequester()));
+    await session.open('sub-1', agentCaps(), { source: 'spawn:main:coder' });
+    await session.fork('main', 'sub-2', agentCaps(), { source: 'btw' });
+    const closing = appEvent(app, 'agent.closed');
     await session.close('sub-1');
-    await session.create({ agentId: 'sub-1' });
-
+    await closing;
+    await session.open('sub-1', agentCaps());
     expect(opened).toEqual([
-      { agentId: 'main', source: undefined, reopened: undefined },
-      { agentId: 'sub-1', source: 'spawn:main:coder', reopened: undefined },
-      { agentId: 'sub-2', source: 'btw', reopened: undefined },
+      { agentId: 'main', source: undefined, reopened: false },
+      { agentId: 'sub-1', source: 'spawn:main:coder', reopened: false },
+      { agentId: 'sub-2', source: 'btw', reopened: false },
       { agentId: 'sub-1', source: 'spawn:main:coder', reopened: true },
     ]);
     expect(closed).toEqual(['sub-1']);
-    await app.disposeAsync();
-    await env.stores.dispose();
-  });
-
-  it('subscribes to sibling feature events at the app, session, and agent tiers', async () => {
-    interface Ping extends RuntimeEvent {
-      readonly type: 'pinger.ping';
-      readonly sessionId: string;
-      readonly agentId: string;
-    }
-    const PingerRef = createFacadeToken<{ ping(): void }>('test.pinger');
-    const pinger = createFeature<Ping>('pinger', {
-      agent() {
-        const fire = useFire();
-        useExpose(PingerRef, { ping: () => fire({ type: 'pinger.ping' }) });
-      },
-    });
-    const seen: string[] = [];
-    const listener = createFeature('listener', {
-      app() {
-        useOnApp(pinger, 'pinger.ping', (event) => {
-          seen.push(`app:${event.sessionId}:${event.agentId}`);
-        });
-      },
-      session() {
-        useOnSession(pinger, 'pinger.ping', (event) => {
-          seen.push(`session:${event.agentId}`);
-        });
-        useOnSession(pinger, '*', (event) => {
-          seen.push(`any:${event.type}`);
-        });
-      },
-      agent() {
-        useOnAgent(pinger, 'pinger.ping', (event) => {
-          seen.push(`agent:${event.agentId}`);
-        });
-      },
-    });
-    const envA = await testStores();
-    const envB = await testStores();
-    const app = createHarness({ features: [pinger, listener] });
-    const left = await app.create({ sessionId: 'left', stores: envA.stores });
-    const right = await app.create({ sessionId: 'right', stores: envB.stores });
-    const leftAgent = await left.create({ agentId: 'main' });
-    const rightAgent = await right.create({ agentId: 'main' });
-    leftAgent.resolve(PingerRef)!.ping();
-    expect(seen).toEqual(['agent:main', 'session:main', 'any:pinger.ping', 'app:left:main']);
-    seen.length = 0;
-    await app.close('left');
-    const viaHandle: string[] = [];
-    rightAgent.on(pinger, 'pinger.ping', (event) => {
-      viaHandle.push(`handle:${event.agentId}`);
-    });
-    rightAgent.resolve(PingerRef)!.ping();
-    expect(seen).toEqual(['agent:main', 'session:main', 'any:pinger.ping', 'app:right:main']);
-    expect(viaHandle).toEqual(['handle:main']);
-    await app.disposeAsync();
-    await envA.stores.dispose();
-    await envB.stores.dispose();
-  });
-
-  it('rejects a tier subscription without a matching tier ancestor', () => {
-    const bad = createFeature('bad', {
-      app() {
-        useOnAgent('nope', () => {});
-      },
-    });
-    expect(() => createHarness({ features: [bad] })).toThrow("no provider for token 'agent.node'");
+    await app.close();
   });
 });

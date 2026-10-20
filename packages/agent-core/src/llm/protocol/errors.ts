@@ -64,9 +64,21 @@ function abortErrorMessage(error: unknown): string {
   return 'The operation was aborted.';
 }
 
-export function toLlmErrorMessage(error: unknown): LlmRemoteErrorMessage {
-  if (isAbortError(error)) {
-    return { kind: 'abort', message: abortErrorMessage(error) };
+export function errorText(error: unknown): string {
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return 'unprintable error';
   }
-  return { kind: 'unknown', message: error instanceof Error ? error.message : String(error) };
+}
+
+export function toLlmErrorMessage(error: unknown): LlmRemoteErrorMessage {
+  try {
+    if (isAbortError(error)) {
+      return { kind: 'abort', message: abortErrorMessage(error) };
+    }
+  } catch {
+    return { kind: 'unknown', message: errorText(error) };
+  }
+  return { kind: 'unknown', message: errorText(error) };
 }

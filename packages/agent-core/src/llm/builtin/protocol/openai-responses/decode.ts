@@ -1,10 +1,12 @@
 import type { StreamedMessagePart } from '#/llm/message';
-import type { DecodeSink, StreamDecoder } from '#/llm/protocol/protocol';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import { NO_FINISH, type FinishInfo, type LlmRemoteErrorMessage, type TokenUsage } from '#/llm/response';
 
 import { isContextOverflowCode, isInsufficientQuotaCode } from '../openai/decode';
 
 export type RawChunk = Record<string, unknown>;
+
+export type RawResponse = Record<string, unknown>;
 
 export type RawUsage = {
   input_tokens?: number;
@@ -316,15 +318,6 @@ function parseUsage(usage: RawObject | null | undefined): TokenUsage | undefined
   };
 }
 
-function extractEventUsage(event: RawObject): RawObject | undefined {
-  const type = readStringField(event, 'type');
-  if (type === 'response.completed' || type === 'response.incomplete') {
-    const response = readObjectField(event, 'response');
-    return response === undefined ? undefined : readObjectField(response, 'usage');
-  }
-  return readObjectField(event, 'usage');
-}
-
 function failedResponseError(response: RawObject): LlmRemoteErrorMessage {
   const error = readResponsesFailedResponseError(response);
   if (error !== undefined) {
@@ -341,65 +334,50 @@ function failedResponseError(response: RawObject): LlmRemoteErrorMessage {
   };
 }
 
-function decodeOutputItem(item: ResponseOutputItemView, sink: DecodeSink): void {
+function replayOutputItem(value: RawObject, outputIndex: number): RawChunk[] {
+  const item = readResponseOutputItem(value, `response.output[${outputIndex}]`);
   switch (item.type) {
     case 'message':
-      for (const content of item.content) {
+      return item.content.flatMap((content) => {
         const text = readStringField(content, 'text');
-        if (readStringField(content, 'type') === 'output_text' && text !== undefined) {
-          sink.onDelta({ type: 'text', text });
-        }
-      }
-      return;
-    case 'function_call':
-      sink.onDelta({
-        type: 'function',
-        id: functionCallId(item.callId),
-        name: requireFunctionCallName(item),
-        arguments: item.arguments ?? null,
+        return readStringField(content, 'type') === 'output_text' && text !== undefined
+          ? [{ type: 'response.output_text.delta', delta: text }]
+          : [];
       });
-      return;
+    case 'function_call':
+      return [
+        { type: 'response.output_item.added', output_index: outputIndex, item: value },
+        { type: 'response.output_item.done', output_index: outputIndex, item: value },
+      ];
     case 'reasoning':
-      for (const summary of item.summary) {
-        const text = readStringField(summary, 'text');
-        if (text !== undefined) {
-          sink.onDelta({ type: 'think', think: text });
-        }
-      }
-      sink.onDelta({ type: 'think', think: '', encrypted: item.encryptedContent });
-      return;
+      return [
+        ...item.summary.flatMap((summary) => {
+          const text = readStringField(summary, 'text');
+          return text === undefined ? [] : [{ type: 'response.reasoning_summary_text.delta', delta: text }];
+        }),
+        { type: 'response.output_item.done', output_index: outputIndex, item: value },
+      ];
     case 'other':
-      return;
+      return [];
   }
 }
 
-export function decodeResponse(response: RawChunk, sink: DecodeSink): void {
-  const messageId = readStringField(response, 'id');
-  if (messageId !== undefined) {
-    sink.onMessageId?.(messageId);
-  }
-  const usage = parseUsage(readObjectField(response, 'usage'));
-  if (usage !== undefined) {
-    sink.onUsage?.(usage);
-  }
+function terminalEventType(status: string | undefined): string {
+  if (status === 'failed') return 'response.failed';
+  if (status === 'incomplete') return 'response.incomplete';
+  return 'response.completed';
+}
+
+export function replay(response: RawResponse): RawChunk[] {
   const status = readStringField(response, 'status');
-  if (status === 'failed') {
-    sink.onError?.(failedResponseError(response));
-    return;
-  }
-  for (const [index, value] of (readObjectArrayField(response, 'output') ?? []).entries()) {
-    decodeOutputItem(readResponseOutputItem(value, `response.output[${index}]`), sink);
-  }
-  const incompleteDetails = readObjectField(response, 'incomplete_details');
-  sink.onFinish(
-    normalizeResponsesFinish(
-      status,
-      incompleteDetails === undefined ? undefined : readStringField(incompleteDetails, 'reason'),
-    ),
-  );
+  const output =
+    status === 'failed'
+      ? []
+      : (readObjectArrayField(response, 'output') ?? []).flatMap((value, index) => replayOutputItem(value, index));
+  return [...output, { type: terminalEventType(status), response }];
 }
 
-export function createStreamDecoder(): StreamDecoder {
+export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
   const functionCallArgumentsByIndex = new Map<number | string, string>();
   let unindexedFunctionCallArguments: string | undefined;
 
@@ -472,21 +450,26 @@ export function createStreamDecoder(): StreamDecoder {
     return [{ type: 'tool_call_part', argumentsPart: suffix, index: streamIndex }];
   };
 
-  return (chunk, sink) => {
+  const push = (chunk: RawChunk): void => {
     const event = asRawObject(chunk);
     if (event === null) {
       return;
     }
-    const usage = parseUsage(extractEventUsage(event));
+    const eventResponse = readObjectField(event, 'response');
+    const messageId = eventResponse === undefined ? undefined : readStringField(eventResponse, 'id');
+    if (messageId !== undefined) {
+      sink.onMessageId(messageId);
+    }
+    const usage = parseUsage(readObjectField(eventResponse ?? event, 'usage'));
     if (usage !== undefined) {
-      sink.onUsage?.(usage);
+      sink.onUsage(usage);
     }
     const type = readStringField(event, 'type');
     if (type === undefined) {
       if (!hasOwn(event, 'type')) {
         const message = readStringField(event, 'message');
         if (message !== undefined) {
-          sink.onError?.(malformedStreamErrorEvent(message));
+          sink.onError(malformedStreamErrorEvent(message));
           return;
         }
       }
@@ -521,11 +504,14 @@ export function createStreamDecoder(): StreamDecoder {
           sink.onDelta({ type: 'think', think: '', encrypted: item.encryptedContent });
           return;
         }
-        if (item.type === 'function_call' && typeof item.arguments === 'string') {
+        if (item.type === 'function_call') {
           const streamIndex = responseStreamIndex(item.itemId, outputIndex);
-          for (const part of finalArgumentsSuffix(streamIndex, item.arguments, type)) {
-            sink.onDelta(part);
+          if (typeof item.arguments === 'string') {
+            for (const part of finalArgumentsSuffix(streamIndex, item.arguments, type)) {
+              sink.onDelta(part);
+            }
           }
+          sink.onToolCallEnd(streamIndex);
         }
         return;
       }
@@ -558,14 +544,9 @@ export function createStreamDecoder(): StreamDecoder {
         return;
       case 'response.completed':
       case 'response.incomplete': {
-        const response = readObjectField(event, 'response');
-        const messageId = response === undefined ? undefined : readStringField(response, 'id');
-        if (messageId !== undefined) {
-          sink.onMessageId?.(messageId);
-        }
-        const status = response === undefined ? undefined : readStringField(response, 'status');
+        const status = eventResponse === undefined ? undefined : readStringField(eventResponse, 'status');
         const incompleteDetails =
-          response === undefined ? undefined : readObjectField(response, 'incomplete_details');
+          eventResponse === undefined ? undefined : readObjectField(eventResponse, 'incomplete_details');
         const reason =
           incompleteDetails === undefined
             ? undefined
@@ -577,7 +558,7 @@ export function createStreamDecoder(): StreamDecoder {
       }
       case 'error': {
         const message = requireStringField(event, 'message', type);
-        sink.onError?.(
+        sink.onError(
           errorFromOpenAIResponsesEvent(
             'OpenAI Responses stream error',
             readNullableStringField(event, 'code') ?? null,
@@ -588,10 +569,11 @@ export function createStreamDecoder(): StreamDecoder {
         return;
       }
       case 'response.failed':
-        sink.onError?.(failedResponseError(requireObjectField(event, 'response', type)));
+        sink.onError(failedResponseError(requireObjectField(event, 'response', type)));
         return;
       default:
         return;
     }
   };
+  return { push, end: () => {} };
 }

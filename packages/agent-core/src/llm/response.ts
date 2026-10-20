@@ -1,12 +1,12 @@
-import type { AssistantMessage, StreamedMessagePart } from '#/llm/message';
+import type { AssistantMessage, StreamedMessagePart, ToolCall } from '#/llm/message';
 
 export type FinishReason =
-  | 'completed'
-  | 'tool_calls'
-  | 'truncated'
-  | 'filtered'
-  | 'paused'
-  | 'other';
+  | 'completed' // openai: stop; anthropic: end_turn, stop_sequence; google-genai: STOP; openai-responses: completed
+  | 'tool_calls' // openai: tool_calls, function_call; anthropic: tool_use
+  | 'truncated' // openai: length; anthropic: max_tokens; google-genai: MAX_TOKENS; openai-responses: max_output_tokens
+  | 'filtered' // openai: content_filter; anthropic: refusal; google-genai: SAFETY, RECITATION, BLOCKLIST, PROHIBITED_CONTENT, SPII, IMAGE_SAFETY; openai-responses: content_filter
+  | 'paused' // anthropic: pause_turn
+  | 'other'; // fallback for anything unmatched above (e.g. openai-responses: incomplete, failed); the raw value is preserved in rawFinishReason
 
 export interface FinishInfo {
   readonly finishReason: FinishReason | null;
@@ -126,6 +126,7 @@ export type LlmStreamEvent =
   | { readonly type: 'llm.streaming.part'; readonly part: StreamedMessagePart }
   | { readonly type: 'llm.streaming.usage'; readonly usage: Partial<TokenUsage> }
   | { readonly type: 'llm.streaming.finish'; readonly finish: FinishInfo }
+  | { readonly type: 'llm.streaming.tool_call_end'; readonly toolCall: ToolCall; readonly index?: number | string }
   | { readonly type: 'llm.streaming.message_id'; readonly messageId: string };
 
 export type LlmRetrying =
@@ -159,7 +160,7 @@ export interface LlmOutput {
 export type LlmOutcome =
   | ({ readonly type: 'done' } & LlmOutput)
   | ({ readonly type: 'failed'; readonly error: LlmErrorMessage; readonly rawError?: unknown } & Partial<LlmOutput>)
-  | ({ readonly type: 'aborted'; readonly message: AssistantMessage | null } & Omit<LlmOutput, 'message'>);
+  | ({ readonly type: 'aborted'; readonly message: AssistantMessage | null; readonly reason?: unknown } & Omit<LlmOutput, 'message'>);
 
 export type LlmRunEvent =
   | { readonly type: 'llm.started' }

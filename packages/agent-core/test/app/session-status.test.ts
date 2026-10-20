@@ -1,144 +1,124 @@
 import { describe, expect, it } from 'vitest';
 
-import { createHarness, memorySessionSpace, type AgentHandle, type AppHandle, type SessionHandle, type SessionStatus } from '#/app/index';
-import { undo, UndoRef } from '#/builtin/undo/index';
-import { createFeature, MAIN_AGENT_ID, useAgent } from '#/feature/index';
-import { createUserMessage } from '#/llm/message';
-import type { AgentLlmRequester } from '#/agent-machine/llm-actor';
+import { createApp, type App } from '#/app/index';
+import type { LlmRequest } from '#/llm/request';
+import type { LoopLlmRequester } from '#/loop/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '#/session/index';
 
-import { testModel, textOutcome } from '../fake-llm';
+import { agentCaps, loopEvent, noopExecutor, textOutcome, user } from './fake-llm';
 
 type Step = { readonly kind: 'text'; readonly text: string } | { readonly kind: 'fail' } | { readonly kind: 'hang' };
 
 let queue: Step[] = [];
 
-function createMockRequester(): AgentLlmRequester {
-  const requester: AgentLlmRequester = {
-    with: () => requester,
-    request: () => {
-      throw new Error('fake requester cannot build wire requests');
-    },
+function createMockRequester(): LoopLlmRequester {
+  const self: LoopLlmRequester = {
+    with: () => self,
+    request: (part) => part as unknown as LlmRequest,
     generate: async (_rest, control) => {
       const step: Step = queue.shift() ?? { kind: 'text', text: 'done' };
       if (step.kind === 'hang') {
-        return new Promise<never>((_, reject) => {
+        return new Promise((_, reject) => {
           control.signal.addEventListener('abort', () => {
             reject(control.signal.reason);
           });
         });
       }
       if (step.kind === 'fail') throw new Error('boom');
-      const outcome = textOutcome(step.text);
-      control.onEvent?.({ type: 'llm.ended', outcome });
-      return outcome;
+      return textOutcome(step.text);
     },
   };
-  return requester;
-}
-
-function bindTestLlm(requester: AgentLlmRequester) {
-  return createFeature('test-llm', {
-    agent() {
-      const agent = useAgent();
-      agent.setModel(testModel);
-      agent.setRequester(requester);
-    },
-  });
+  return self;
 }
 
 async function startTest(): Promise<{
-  app: AppHandle;
+  app: App;
   space: ReturnType<typeof memorySessionSpace>;
-  session: SessionHandle;
-  main: AgentHandle;
+  session: Session;
+  main: Agent;
 }> {
   const space = memorySessionSpace();
-  const app = createHarness({ space, features: [undo, bindTestLlm(createMockRequester())] });
-  await app.ready();
-  const session = await app.open({});
-  const main = await session.create({ agentId: MAIN_AGENT_ID, systemPrompt: 'host' });
-  await main.ready();
+  const app = createApp({ space });
+  const session = await app.create({});
+  const main = await session.open(MAIN_AGENT_ID, agentCaps(noopExecutor, createMockRequester()));
   return { app, space, session, main };
 }
 
-async function statusOf(session: SessionHandle): Promise<SessionStatus> {
-  await session.stores.flush();
-  return session.status();
-}
-
 describe('session.status', () => {
-  it('folds the main agent turn outcome into the session journal and ignores other agents', async () => {
+  it('derives the last turn outcome from the main agent log and ignores other agents', async () => {
     const { app, session, main } = await startTest();
     queue = [{ kind: 'text', text: 'hi' }];
-    await main.run(createUserMessage('go'));
-
-    expect(await statusOf(session)).toEqual({ busy: false, mainTurnActive: false, source: 'startup', lastTurnReason: 'completed' });
-
-    const sub = await session.create({ agentId: 'sub' });
-    await sub.ready();
-    queue = [{ kind: 'text', text: 'sub' }];
-    await sub.run(createUserMessage('go'));
-    expect((await statusOf(session)).lastTurnReason).toBe('completed');
-
-    await app.disposeAsync();
+    await main.loop.runTurn(user('go'));
+    await main.flush();
+    expect(session.status()).toEqual({
+      busy: false,
+      mainTurnActive: false,
+      source: 'startup',
+      lastTurnReason: 'completed',
+    });
+    const sub = await session.open('sub', agentCaps(noopExecutor, createMockRequester()));
+    queue = [{ kind: 'fail' }];
+    await sub.loop.runTurn(user('go'));
+    await sub.flush();
+    expect(session.status().lastTurnReason).toBe('completed');
+    await app.close();
   });
 
   it('maps failed and aborted outcomes, tracks busy while a turn is running, and keeps the previous outcome', async () => {
     const { app, session, main } = await startTest();
     queue = [{ kind: 'fail' }];
-    const failed = await main.run(createUserMessage('go'));
-    expect(failed.outcome.type).toBe('failed');
-    expect((await statusOf(session)).lastTurnReason).toBe('failed');
-
+    const failed = await main.loop.runTurn(user('go'));
+    expect(failed.type).toBe('failed');
+    await main.flush();
+    expect(session.status().lastTurnReason).toBe('failed');
     queue = [{ kind: 'hang' }];
-    const started = session.wait('turn.started');
-    main.submit(createUserMessage('again'));
+    const started = loopEvent(main.loop, 'turn.started');
+    main.loop.submit(user('again'));
     await started;
-    expect(await statusOf(session)).toEqual({ busy: true, mainTurnActive: true, source: 'startup', lastTurnReason: 'failed' });
-
-    const done = main.wait('turn.done');
-    main.abort();
-    await done;
-    expect((await statusOf(session)).lastTurnReason).toBe('cancelled');
-
-    await app.disposeAsync();
+    expect(session.status()).toEqual({
+      busy: true,
+      mainTurnActive: true,
+      source: 'startup',
+      lastTurnReason: 'failed',
+    });
+    const ended = loopEvent(main.loop, 'turn.ended');
+    main.loop.abort();
+    await ended;
+    await main.flush();
+    expect(session.status().lastTurnReason).toBe('cancelled');
+    await app.close();
   });
 
-  it('seeds the surviving branch outcome after undo remount', async () => {
+  it('follows the surviving branch after undo', async () => {
     const { app, session, main } = await startTest();
     queue = [{ kind: 'text', text: 'one' }];
-    await main.run(createUserMessage('one'));
+    await main.loop.runTurn(user('one'));
     queue = [{ kind: 'fail' }];
-    await main.run(createUserMessage('two'));
-    expect((await statusOf(session)).lastTurnReason).toBe('failed');
-
-    const undone = await main.resolve(UndoRef)!.undo(1);
-    expect(undone).toBe(1);
-    expect((await statusOf(session)).lastTurnReason).toBe('completed');
-
-    await app.disposeAsync();
+    await main.loop.runTurn(user('two'));
+    await main.flush();
+    expect(session.status().lastTurnReason).toBe('failed');
+    await session.undo(MAIN_AGENT_ID, 1);
+    expect(session.status().lastTurnReason).toBe('completed');
+    expect(session.agents.get(MAIN_AGENT_ID)).toBe(main);
+    await app.close();
   });
 
-  it('is available right after reopen without opening the main agent store', async () => {
+  it('is available right after reopen without opening the main agent', async () => {
     const { app, space, session, main } = await startTest();
     queue = [{ kind: 'text', text: 'hi' }];
-    await main.run(createUserMessage('go'));
-    const sessionId = session.sessionId;
-    const branch = session.stores.branch(MAIN_AGENT_ID);
-    await app.disposeAsync();
-
-    const app2 = createHarness({
-      space,
-      features: [bindTestLlm(createMockRequester())],
+    await main.loop.runTurn(user('go'));
+    const sessionId = session.id;
+    await app.close();
+    expect((await space.get(sessionId))?.lastTurn).toEqual({ turnId: 0, outcome: 'done' });
+    const reopened = createApp({ space });
+    const session2 = await reopened.create({ sessionId });
+    expect(session2.agents.size).toBe(0);
+    expect(session2.status()).toEqual({
+      busy: false,
+      mainTurnActive: false,
+      source: 'resume',
+      lastTurnReason: 'completed',
     });
-    await app2.ready();
-    const session2 = await app2.open({ sessionId });
-    expect(session2.list()).toEqual([]);
-    expect(await statusOf(session2)).toEqual({ busy: false, mainTurnActive: false, source: 'resume', lastTurnReason: 'completed' });
-    expect(session2.list()).toEqual([]);
-    expect(session2.stores.get(MAIN_AGENT_ID)).toBeUndefined();
-    expect(session2.stores.session.getState().roster.agents[MAIN_AGENT_ID]?.branch).toBe(branch);
-
-    await app2.disposeAsync();
+    await reopened.close();
   });
 });

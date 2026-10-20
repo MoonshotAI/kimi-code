@@ -1,47 +1,46 @@
-import { computed, toValue, type ComputedRef, type MaybeRefOrGetter } from '@vue/reactivity';
+import { computed, toValue, watch, type ComputedRef, type MaybeRefOrGetter } from '@vue/reactivity';
 
-import {
-  watchEffect,
-  type CertainToken,
-  type CollectionToken,
-  type FacadeToken,
-  type ShallowRef,
-  type Token,
-} from './primitives';
+import type { WaitOpts } from '../utils/wait';
+
+import type { CertainToken, CollectionToken, FacadeToken, ShallowRef, Token } from './primitives';
 import {
   currentUnit,
-  lineage,
-  pushCleanup,
+  report,
   type EventHandler,
-  type KernelRecipe,
+  type ListenOpts,
   type RuntimeEvent,
-  type UnitHandle,
   type UnitNode,
+  type UnitRecipe,
 } from './runtime';
 
 export function useReady(operation: Promise<unknown>): void {
   const node = currentUnit();
-  let cancel = (): void => {};
-  const cancelled = new Promise<void>((resolve) => { cancel = resolve; });
-  node.signal.addEventListener('abort', cancel, { once: true });
-  if (node.signal.aborted) cancel();
-  node.trackReady(Promise.race([operation, cancelled]).finally(() => node.signal.removeEventListener('abort', cancel)));
+  node.track(
+    new Promise<void>((resolve) => {
+      node.signal.addEventListener('abort', () => resolve(), { once: true });
+      operation.then(
+        () => resolve(),
+        (error: unknown) => {
+          if (!node.signal.aborted) {
+            node.fail(error);
+          }
+          resolve();
+        },
+      );
+    }),
+  );
 }
 
 export function provide<T>(token: Token<T>, value: T): void {
-  currentUnit().provide(token, value);
+  const node = currentUnit();
+  node.own(node.register(token, value));
 }
 
 export function useExpose<T>(token: FacadeToken<T>, value: T): void {
   if (token.kind !== 'facade') {
     throw new Error(`useExpose requires a facade token ('${token.key ?? 'unknown'}')`);
   }
-  const node = currentUnit();
-  if (node.parent === null) {
-    provide(token, value);
-    return;
-  }
-  pushCleanup(node, node.parent.provide(token, value));
+  currentUnit().expose(token, value);
 }
 
 export function useInject<T>(token: CertainToken<T>): T;
@@ -53,51 +52,47 @@ export function useInject<T>(
   if (token.kind === 'certain') {
     return node.resolve(token);
   }
-  const directory = node.providerRef(token);
-  return computed(() => {
-    for (const unit of lineage(node)) {
-      const entry = directory.value.findLast((candidate) => candidate.node === unit);
-      if (entry !== undefined) {
-        return entry.value;
-      }
+  return computed(() => node.lookup(token)?.value as T | undefined);
+}
+
+export function useMounted(callback: () => void): void {
+  const node = currentUnit();
+  node.afterMount(() => {
+    try {
+      callback();
+    } catch (error) {
+      node.fail(error);
     }
-    return undefined;
   });
 }
 
 export function useCleanup(cleanup: () => void | Promise<void>): void {
-  pushCleanup(currentUnit(), cleanup);
-}
-
-export function inject<T>(token: CertainToken<T>): T {
-  return currentUnit().resolve(token);
-}
-
-export function useNode(): UnitNode {
-  return currentUnit();
+  currentUnit().own(cleanup);
 }
 
 export function useFire(): (event: RuntimeEvent) => void {
   const node = currentUnit();
-  return (event) => node.fire(event);
+  return (event) => {
+    node.fire(event);
+  };
 }
 
 export function useOn<E extends RuntimeEvent>(
-  type: E['type'],
+  type: E['type'] | '*',
   handler: EventHandler<E>,
-  opts?: { once?: boolean; capture?: boolean },
+  opts?: ListenOpts,
 ): void {
   const node = currentUnit();
-  pushCleanup(node, node.on(type, handler as EventHandler, opts));
+  node.own(node.listen(type, handler as EventHandler, opts));
 }
 
-export function useContribute<T>(
-  collection: CollectionToken<T>,
-  value: T,
-  priority = 0,
-): void {
+export function useWait<E extends RuntimeEvent>(type: E['type'] | '*', opts?: WaitOpts<E>): Promise<E> {
+  return currentUnit().wait(type, opts as WaitOpts<RuntimeEvent>) as Promise<E>;
+}
+
+export function useContribute<T>(collection: CollectionToken<T>, value: T, priority = 0): void {
   const node = currentUnit();
-  pushCleanup(node, node.contribute(collection, value, priority));
+  node.own(node.register(collection, value, priority));
 }
 
 export function useCollection<T>(collection: CollectionToken<T>): ComputedRef<readonly T[]> {
@@ -107,71 +102,108 @@ export function useCollection<T>(collection: CollectionToken<T>): ComputedRef<re
 
 export interface ChildEntry {
   readonly key: string;
-  readonly recipe: KernelRecipe;
+  readonly recipe: UnitRecipe<any>;
   readonly props?: unknown;
 }
 
-interface ChildMount {
-  recipe: KernelRecipe;
-  props: unknown;
-  handle: UnitHandle;
+interface Slot {
+  recipe?: UnitRecipe<any>;
+  props?: unknown;
+  child?: UnitNode;
+  queued: boolean;
+  chain: Promise<void>;
 }
 
-export function useChildren(source: MaybeRefOrGetter<Array<ChildEntry | null>>): { ready(): Promise<void> } {
+export function useChildren(source: MaybeRefOrGetter<ReadonlyArray<ChildEntry | null>>): void {
   const node = currentUnit();
-  const mounts = new Map<string, ChildMount>();
+  const slots = new Map<string, Slot>();
+  let entries: ReadonlyArray<ChildEntry | null> = [];
   let desired = new Map<string, ChildEntry>();
-  let pending: Promise<void> | undefined;
-  const reconcile = (): void => {
-    if (node.state === 'unmounted' || pending !== undefined) return;
-    const removals: Promise<void>[] = [];
-    for (const [key, child] of mounts) {
-      if (desired.get(key)?.recipe !== child.recipe) {
-        mounts.delete(key);
-        removals.push(child.handle.unmount());
-      }
-    }
-    if (removals.length > 0) {
-      pending = Promise.all(removals).then(() => {
-        pending = undefined;
-        reconcile();
-      });
-      node.trackReady(pending);
+  let scheduled = false;
+
+  const apply = async (key: string, slot: Slot): Promise<void> => {
+    slot.queued = false;
+    if (node.state !== 'active') {
       return;
     }
-    for (const entry of desired.values()) {
-      const current = mounts.get(entry.key);
-      if (current === undefined) {
-        const handle = node.mount(entry.recipe, entry.props);
-        mounts.set(entry.key, { recipe: entry.recipe, props: entry.props, handle });
-      } else if (!Object.is(current.props, entry.props)) {
-        current.props = entry.props;
-        current.handle.update(entry.props);
+    const entry = desired.get(key);
+    const child = slot.child;
+    if (child !== undefined && entry?.recipe === slot.recipe) {
+      if (Object.is(entry?.props, slot.props)) {
+        return;
+      }
+      if (child.state === 'active') {
+        slot.props = entry?.props;
+        child.update(entry?.props);
+        return;
       }
     }
+    if (child !== undefined) {
+      slot.child = undefined;
+      const initiated = child.state === 'active';
+      await child.dispose().catch((error: unknown) => {
+        if (initiated) {
+          report(node, error);
+        }
+      });
+      if (node.state !== 'active') {
+        return;
+      }
+    }
+    const next = desired.get(key);
+    if (next === undefined) {
+      if (!slot.queued) {
+        slots.delete(key);
+      }
+      return;
+    }
+    slot.recipe = next.recipe;
+    slot.props = next.props;
+    slot.child = node.mount(next.recipe, next.props);
   };
-  watchEffect(() => {
+
+  const flush = (): void => {
+    scheduled = false;
+    if (node.state !== 'active') {
+      return;
+    }
     const next = new Map<string, ChildEntry>();
-    for (const entry of toValue(source)) {
-      if (entry === null) continue;
-      if (next.has(entry.key)) throw new Error(`duplicate child key '${entry.key}' in unit '${node.recipe.name}'`);
+    for (const entry of entries) {
+      if (entry === null) {
+        continue;
+      }
+      if (next.has(entry.key)) {
+        report(node, new Error(`duplicate child key '${entry.key}' in unit '${node.name}'`));
+        return;
+      }
       next.set(entry.key, entry);
     }
     desired = next;
-    reconcile();
-  });
-  return {
-    ready: async () => {
-      for (;;) {
-        if (node.state === 'unmounted') throw new Error(`unit '${node.name}' is unmounted`);
-        await pending;
-        const snapshot = [...mounts.values()];
-        await Promise.all(snapshot.map((child) => child.handle.ready().catch(async (error: unknown) => {
-          if (child.handle.state !== 'unmounted') throw error;
-          await child.handle.unmount();
-        })));
-        if (pending === undefined && snapshot.length === mounts.size && snapshot.every((child) => [...mounts.values()].includes(child))) return;
+    for (const key of new Set([...slots.keys(), ...desired.keys()])) {
+      const slot = slots.get(key) ?? { queued: false, chain: Promise.resolve() };
+      slots.set(key, slot);
+      if (slot.queued) {
+        continue;
+      }
+      slot.queued = true;
+      slot.chain = slot.chain
+        .then(() => apply(key, slot))
+        .catch((error: unknown) => {
+          report(node, error);
+        });
+      node.track(slot.chain);
+    }
+  };
+
+  watch(
+    () => [...toValue(source)],
+    (next) => {
+      entries = next;
+      if (!scheduled) {
+        scheduled = true;
+        node.track(Promise.resolve().then(flush));
       }
     },
-  };
+    { immediate: true },
+  );
 }

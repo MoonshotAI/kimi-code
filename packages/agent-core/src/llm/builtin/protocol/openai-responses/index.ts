@@ -1,19 +1,18 @@
 import OpenAI from 'openai';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';
-import { extractText } from '#/llm/message';
 import { headersToRecord, requestIdFromHeader } from '#/llm/protocol/kit/http';
-import { textOnlyToolResults } from '#/llm/protocol/kit/media';
 import { defineProtocol } from '#/llm/protocol/protocol';
 
 import { inferOpenAIFamilyCapability } from '../openai/capability';
 import { decodeError } from '../openai/decode';
-import { createStreamDecoder, decodeResponse, type RawChunk } from './decode';
+import { createDecoder, replay, type RawChunk, type RawResponse } from './decode';
 import { openAIResponsesPipeline } from './lower';
 
 export { sanitizeOpenAIResponsesCallId } from './lower';
 export type {
   RawChunk as OpenAIResponsesRawChunk,
+  RawResponse as OpenAIResponsesRawResponse,
   RawUsage as OpenAIResponsesRawUsage,
 } from './decode';
 export type {
@@ -55,8 +54,8 @@ export const openAIResponsesProtocol = defineProtocol({
   ...openAIResponsesPipeline,
   capability: inferOpenAIFamilyCapability,
   requestId: requestIdFromHeader('x-request-id'),
-  decode: (_module, response: RawChunk, sink) => decodeResponse(response, sink),
-  decodeStream: () => createStreamDecoder(),
+  decoder: (_module, sink) => createDecoder(sink),
+  replay: (response: RawResponse) => replay(response),
   decodeError,
   client: createClient,
   send: async (client: OpenAI, request, signal) => {
@@ -64,7 +63,7 @@ export const openAIResponsesProtocol = defineProtocol({
       .create({ ...request.params, stream: false }, { signal })
       .withResponse();
     return {
-      body: data as unknown as RawChunk,
+      body: data as unknown as RawResponse,
       headers: headersToRecord(response.headers) ?? {},
     };
   },
@@ -72,14 +71,6 @@ export const openAIResponsesProtocol = defineProtocol({
     const { data, response } = await client.responses
       .create({ ...request.params, stream: true }, { signal })
       .withResponse();
-    return { body: data as AsyncIterable<unknown>, headers: headersToRecord(response.headers) ?? {} };
+    return { body: data as AsyncIterable<RawChunk>, headers: headersToRecord(response.headers) ?? {} };
   },
-});
-
-export const extractToolText: Parameters<typeof openAIResponsesProtocol.with>[0] = (base) => ({
-  media: textOnlyToolResults(base.media),
-  message: (message, module) =>
-    message.role === 'tool'
-      ? [{ call_id: message.toolCallId, output: extractText(message, '\n'), type: 'function_call_output' }]
-      : base.message(message, module),
 });

@@ -7,7 +7,7 @@ import {
 
 import type { StreamedMessagePart } from '#/llm/message';
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
-import type { DecodeSink, StreamDecoder } from '#/llm/protocol/protocol';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import {
   sanitizeStatusErrorMessage,
   toLlmStatusErrorMessage,
@@ -125,20 +125,6 @@ function parseUsage(usage: RawUsage | null | undefined): TokenUsage | undefined 
   };
 }
 
-function decodeEnvelope(payload: RawChunk | RawResponse, sink: DecodeSink): void {
-  if (typeof payload.id === 'string' && payload.id.length > 0) {
-    sink.onMessageId?.(payload.id);
-  }
-  const usage = parseUsage(payload.usage);
-  if (usage !== undefined) {
-    sink.onUsage?.(usage);
-  }
-  const finishReason = payload.choices?.[0]?.finish_reason;
-  if (finishReason !== undefined && finishReason !== null) {
-    sink.onFinish(normalizeFinishReason(finishReason));
-  }
-}
-
 function decodeReasoningAndText(
   source: { readonly content?: string | null },
   sink: DecodeSink,
@@ -152,33 +138,41 @@ function decodeReasoningAndText(
   }
 }
 
-export function decodeResponse(
-  response: RawResponse,
-  sink: DecodeSink,
-  reasoningKey?: string,
-): void {
-  decodeEnvelope(response, sink);
-  const message = response.choices?.[0]?.message;
-  if (message === undefined || message === null) {
-    return;
-  }
-  decodeReasoningAndText(message, sink, reasoningKey);
-  for (const toolCall of message.tool_calls ?? []) {
-    const fn = toolCall.function;
-    if ((toolCall.type !== undefined && toolCall.type !== 'function') || fn === undefined || fn === null) {
-      continue;
-    }
-    sink.onDelta({
-      type: 'function',
-      id: toolCall.id || crypto.randomUUID(),
-      name: fn.name ?? '',
-      arguments: fn.arguments ?? null,
-    });
-  }
+export function replay(response: RawResponse): RawChunk[] {
+  const { choices, ...envelope } = response;
+  return [
+    {
+      ...envelope,
+      choices: choices?.map(({ message, ...choice }) => ({
+        ...choice,
+        delta:
+          message === undefined || message === null
+            ? {}
+            : {
+                ...message,
+                tool_calls: message.tool_calls?.flatMap((toolCall, index) =>
+                  toolCall.type !== undefined && toolCall.type !== 'function'
+                    ? []
+                    : [{ index, id: toolCall.id, function: toolCall.function }],
+                ),
+              },
+      })),
+    },
+  ];
 }
 
-export function createStreamDecoder(reasoningKey?: string): StreamDecoder<RawChunk> {
+export function createDecoder(sink: DecodeSink, reasoningKey?: string): Decoder<RawChunk> {
   const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
+  const seenIndexes = new Set<number | string>();
+  let lastActiveIndex: number | string | undefined;
+
+  const closeActiveToolCall = (): void => {
+    if (lastActiveIndex === undefined) return;
+    if (bufferedToolCalls.get(lastActiveIndex)?.emitted === true) {
+      sink.onToolCallEnd(lastActiveIndex);
+    }
+    lastActiveIndex = undefined;
+  };
 
   function convertStreamToolCall(
     toolCall: RawStreamToolCallDelta,
@@ -244,18 +238,41 @@ export function createStreamDecoder(reasoningKey?: string): StreamDecoder<RawChu
     return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
   }
 
-  return (chunk, sink) => {
-    decodeEnvelope(chunk, sink);
-    const delta = chunk.choices?.[0]?.delta;
-    if (!delta) {
-      return;
-    }
-    decodeReasoningAndText(delta, sink, reasoningKey);
-    for (const toolCall of delta.tool_calls ?? []) {
-      for (const part of convertStreamToolCall(toolCall)) {
-        sink.onDelta(part);
+  return {
+    push(chunk) {
+      if (typeof chunk.id === 'string' && chunk.id.length > 0) {
+        sink.onMessageId(chunk.id);
       }
-    }
+      const usage = parseUsage(chunk.usage);
+      if (usage !== undefined) {
+        sink.onUsage(usage);
+      }
+      const delta = chunk.choices?.[0]?.delta;
+      if (delta) {
+        decodeReasoningAndText(delta, sink, reasoningKey);
+        for (const toolCall of delta.tool_calls ?? []) {
+          const streamIndex = toolCall.index;
+          if (
+            streamIndex !== undefined &&
+            streamIndex !== lastActiveIndex &&
+            !seenIndexes.has(streamIndex)
+          ) {
+            closeActiveToolCall();
+            seenIndexes.add(streamIndex);
+            lastActiveIndex = streamIndex;
+          }
+          for (const part of convertStreamToolCall(toolCall)) {
+            sink.onDelta(part);
+          }
+        }
+      }
+      const finishReason = chunk.choices?.[0]?.finish_reason;
+      if (finishReason !== undefined && finishReason !== null) {
+        closeActiveToolCall();
+        sink.onFinish(normalizeFinishReason(finishReason));
+      }
+    },
+    end: closeActiveToolCall,
   };
 }
 

@@ -102,9 +102,9 @@ function mergeInPlace(target: StreamedMessagePart, source: StreamedMessagePart):
   return false;
 }
 
-function salvageInterruptedMessage(message: AssistantMessage): AssistantMessage | null {
+export function usableOutputOf(message: AssistantMessage): AssistantMessage | null {
   const content = message.content.filter((part) => !isVacuousContentPart(part));
-  if (content.length === 0) {
+  if (content.length === 0 || content.every((part) => part.type === 'think')) {
     return null;
   }
   return { role: 'assistant', content, toolCalls: [] };
@@ -112,6 +112,7 @@ function salvageInterruptedMessage(message: AssistantMessage): AssistantMessage 
 
 export interface MessageAccumulator {
   push(part: StreamedMessagePart): void;
+  toolCallEnd(index?: number | string): ToolCall | undefined;
   finish(): AssistantMessage;
 }
 
@@ -179,6 +180,17 @@ export function createMessageAccumulator(): MessageAccumulator {
         flush();
         pending = structuredClone(part);
       }
+    },
+    toolCallEnd(index) {
+      if (
+        pending === null ||
+        !isToolCall(pending) ||
+        (index !== undefined && pending._streamIndex !== index)
+      ) {
+        return undefined;
+      }
+      flush();
+      return message.toolCalls[message.toolCalls.length - 1];
     },
     finish(): AssistantMessage {
       flush();
@@ -321,6 +333,13 @@ export async function settleLlmRequest(
       case 'attempt.sending':
         clock.sent();
         return;
+      case 'attempt.tool_call_end': {
+        const toolCall = inner.toolCallEnd(event.index);
+        if (toolCall !== undefined) {
+          onEvent?.({ type: 'llm.streaming.tool_call_end', index: event.index, toolCall });
+        }
+        return;
+      }
       case 'llm.streaming.headers':
         headers = event.headers;
         requestId = request.protocol.base.requestId?.(event.headers);
@@ -362,7 +381,7 @@ export async function settleLlmRequest(
 
   const aborted = (): LlmOutcome => ({
     type: 'aborted',
-    message: salvageInterruptedMessage(inner.finish()),
+    message: usableOutputOf(inner.finish()),
     ...extras(),
   });
 

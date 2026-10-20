@@ -12,11 +12,23 @@ import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import { BASELINE_IMAGE_MIMES } from '#/llm/protocol/kit/media';
 import type { LlmNotice, LlmNoticeInput, LlmRunEvent } from '#/llm/response';
 import { createMediaDegradeRecovery } from '#/llm/builtin/policy/media-degrade';
+import { memoryBlobBackend } from '#/blob/backend/memory';
+import { openBlobCache } from '#/blob/index';
 import {
-  createMemoryRefStore,
-  createMemoryUploadCache,
+  createBlobUploadCache,
   createStoreRefResolver,
+  type RefStore,
+  type StoredContent,
+  type UploadCache,
 } from '#/llm/builtin/policy/store-ref/index';
+
+function createMemoryRefStore(entries: Readonly<Record<string, StoredContent>>): RefStore {
+  return { get: async (ref) => entries[ref] };
+}
+
+function createMemoryUploadCache(): UploadCache {
+  return createBlobUploadCache(openBlobCache(memoryBlobBackend(), 'media-upload'));
+}
 
 const spec: LlmModelSpec = { provider: 'kimi', name: 'kimi-k2' };
 const videoSpec: LlmModelSpec = {

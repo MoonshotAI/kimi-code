@@ -6,7 +6,6 @@ import {
   type OpenAINativeMessage,
   type OpenAIOptions,
   type OpenAIRawChunk,
-  type OpenAIRawResponse,
   type OpenAIRawUsage,
 } from '#/llm/builtin/protocol/openai/index';
 import type { ContentPart, MediaKind, Message, ToolDescription } from '#/llm/message';
@@ -167,7 +166,7 @@ function isUsage(value: unknown): value is OpenAIRawUsage {
   return typeof value === 'object' && value !== null;
 }
 
-function hoistKimiUsage<T extends OpenAIRawChunk | OpenAIRawResponse>(payload: T): T {
+function hoistKimiUsage(payload: OpenAIRawChunk): OpenAIRawChunk {
   if (isUsage(payload.usage)) return payload;
   const choiceUsage = (payload.choices?.[0] as { usage?: unknown } | undefined)?.usage;
   return isUsage(choiceUsage) ? { ...payload, usage: choiceUsage } : payload;
@@ -193,19 +192,17 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
   tool: convertKimiTool,
   message: (message, module) =>
     base.message(message, module).map((native) => convertKimiMessage(message, native, module)),
-  decode: (module, response, sink) => {
-    const message = response.choices?.[0]?.message;
-    decodeReasoningDetails(message, sink, hasReasoningContent(message));
-    base.decode(module, hoistKimiUsage(response), sink);
-  },
-  decodeStream: (module) => {
-    const decode = base.decodeStream(module);
+  decoder: (module, sink) => {
+    const inner = base.decoder(module, sink);
     let seenReasoningContent = false;
-    return (chunk, sink) => {
-      const delta = chunk.choices?.[0]?.delta;
-      seenReasoningContent ||= hasReasoningContent(delta);
-      decodeReasoningDetails(delta, sink, seenReasoningContent);
-      decode(hoistKimiUsage(chunk), sink);
+    return {
+      push(chunk) {
+        const delta = chunk.choices?.[0]?.delta;
+        seenReasoningContent ||= hasReasoningContent(delta);
+        decodeReasoningDetails(delta, sink, seenReasoningContent);
+        inner.push(hoistKimiUsage(chunk));
+      },
+      end: inner.end,
     };
   },
   decodeError: withKimiErrors(base),

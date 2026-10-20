@@ -1,7 +1,7 @@
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
 import type { StreamedMessagePart, ThinkPart, ToolCall } from '#/llm/message';
-import type { DecodeSink, StreamDecoder } from '#/llm/protocol/protocol';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import { toLlmStatusErrorMessage } from '#/llm/protocol/rules/status';
 import {
   NO_FINISH,
@@ -97,30 +97,36 @@ function extractChunkParts(response: Record<string, unknown>): StreamedMessagePa
   return parts;
 }
 
-export function decodeResponse(chunk: unknown, sink: DecodeSink): void {
-  const response = chunk as Record<string, unknown>;
-  if (response === null || typeof response !== 'object') {
-    return;
-  }
-  const rawFinish = extractChunkFinishReason(response);
-  const responseId = response['responseId'];
-  if (typeof responseId === 'string' && responseId.length > 0) {
-    sink.onMessageId?.(responseId);
-  }
-  const usage = parseUsage(response);
-  if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
-    sink.onUsage?.(usage);
-  }
-  if (rawFinish !== undefined && rawFinish !== null) {
-    sink.onFinish(normalizeFinishReason(rawFinish));
-  }
-  for (const part of extractChunkParts(response)) {
-    sink.onDelta(part);
-  }
+export function replay(response: unknown): unknown[] {
+  return [response];
 }
 
-export function createStreamDecoder(): StreamDecoder {
-  return decodeResponse;
+export function createDecoder(sink: DecodeSink): Decoder {
+  const push = (chunk: unknown): void => {
+    const response = chunk as Record<string, unknown>;
+    if (response === null || typeof response !== 'object') {
+      return;
+    }
+    const rawFinish = extractChunkFinishReason(response);
+    const responseId = response['responseId'];
+    if (typeof responseId === 'string' && responseId.length > 0) {
+      sink.onMessageId(responseId);
+    }
+    const usage = parseUsage(response);
+    if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
+      sink.onUsage(usage);
+    }
+    for (const part of extractChunkParts(response)) {
+      sink.onDelta(part);
+      if (part.type === 'function') {
+        sink.onToolCallEnd();
+      }
+    }
+    if (rawFinish !== undefined && rawFinish !== null) {
+      sink.onFinish(normalizeFinishReason(rawFinish));
+    }
+  };
+  return { push, end: () => {} };
 }
 
 function parseUsage(response: Record<string, unknown>): TokenUsage | undefined {

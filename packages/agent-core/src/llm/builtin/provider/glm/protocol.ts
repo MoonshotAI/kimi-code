@@ -1,9 +1,4 @@
-import {
-  openAIProtocol,
-  type OpenAINativeMessage,
-  type OpenAIRawChunk,
-  type OpenAIRawResponse,
-} from '#/llm/builtin/protocol/openai/index';
+import { openAIProtocol, type OpenAINativeMessage, type OpenAIRawChunk } from '#/llm/builtin/protocol/openai/index';
 import { ThinkingConfigError } from '#/llm/protocol/errors';
 import type { DecodeSink } from '#/llm/protocol/protocol';
 import type { MediaSupport } from '#/llm/protocol/rules/media';
@@ -112,7 +107,7 @@ function flattenTextContent(native: OpenAINativeMessage): OpenAINativeMessage {
   return { ...native, content: content.map((part) => part.text ?? '').join('\n') } as OpenAINativeMessage;
 }
 
-function withGlmFinishReasons<T extends OpenAIRawChunk | OpenAIRawResponse>(payload: T): T {
+function withGlmFinishReasons(payload: OpenAIRawChunk): OpenAIRawChunk {
   const choices = payload.choices;
   if (choices === undefined || !choices.some((choice) => (choice.finish_reason ?? '') in GLM_FINISH_REASONS)) {
     return payload;
@@ -126,9 +121,9 @@ function withGlmFinishReasons<T extends OpenAIRawChunk | OpenAIRawResponse>(payl
   };
 }
 
-function failedInference(payload: OpenAIRawChunk | OpenAIRawResponse, sink: DecodeSink): boolean {
+function failedInference(payload: OpenAIRawChunk, sink: DecodeSink): boolean {
   if (!payload.choices?.some((choice) => choice.finish_reason === 'network_error')) return false;
-  sink.onError?.({ kind: 'provider', message: 'GLM inference failed (finish_reason: network_error).' });
+  sink.onError({ kind: 'provider', message: 'GLM inference failed (finish_reason: network_error).' });
   return true;
 }
 
@@ -157,15 +152,14 @@ export const glmProtocol = openAIProtocol.with((base) => ({
   thinking: (thinking, module) =>
     thinking === undefined ? undefined : encodeGlmThinking(thinking, module.model.spec.name),
   message: (message, module) => base.message(message, module).map(flattenTextContent),
-  decode: (module, response, sink) => {
-    if (failedInference(response, sink)) return;
-    base.decode(module, withGlmFinishReasons(response), sink);
-  },
-  decodeStream: (module) => {
-    const decode = base.decodeStream(module);
-    return (chunk, sink) => {
-      if (failedInference(chunk, sink)) return;
-      decode(withGlmFinishReasons(chunk), sink);
+  decoder: (module, sink) => {
+    const inner = base.decoder(module, sink);
+    return {
+      push(chunk) {
+        if (failedInference(chunk, sink)) return;
+        inner.push(withGlmFinishReasons(chunk));
+      },
+      end: inner.end,
     };
   },
   decodeError: withGlmErrors(base),

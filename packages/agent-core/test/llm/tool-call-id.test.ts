@@ -3,18 +3,22 @@ import { describe, expect, it } from 'vitest';
 import type { Message, StreamedMessagePart, ToolCall } from '#/llm/message';
 import { uniqueToolCallIds } from '#/llm/protocol/rules/tool-call-ids';
 
+import { sinkOf } from './sink';
+
 function call(id: string, streamIndex?: number): ToolCall {
   return { type: 'function', id, name: 'Bash', arguments: '{}', _streamIndex: streamIndex };
 }
 
 function decodedIds(history: readonly Message[], parts: readonly StreamedMessagePart[]): string[] {
   const ids: string[] = [];
-  const sink = uniqueToolCallIds(history, {
-    onDelta: (part) => {
-      if (part.type === 'function') ids.push(part.id);
-    },
-    onFinish: () => {},
-  });
+  const sink = uniqueToolCallIds(
+    history,
+    sinkOf({
+      onDelta: (part) => {
+        if (part.type === 'function') ids.push(part.id);
+      },
+    }),
+  );
   for (const part of parts) sink.onDelta(part);
   return ids;
 }
@@ -26,7 +30,7 @@ describe('uniqueToolCallIds', () => {
       { role: 'tool', content: [], toolCallId: 'Bash_1' },
     ];
     const parts: StreamedMessagePart[] = [];
-    const sink = uniqueToolCallIds(history, { onDelta: (part) => parts.push(part), onFinish: () => {} });
+    const sink = uniqueToolCallIds(history, sinkOf({ onDelta: (part) => parts.push(part) }));
     sink.onDelta(call('Bash_0', 0));
     sink.onDelta(call('Bash_1', 1));
     expect(parts).toMatchObject([

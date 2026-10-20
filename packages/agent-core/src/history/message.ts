@@ -145,10 +145,13 @@ export interface UserMeta extends EntryMeta {
   tracked?: boolean;
   createdAt?: string;
   userMessageId?: string;
+  toolCallId?: string;
 }
 
 export interface ToolMeta extends EntryMeta {
   isError?: true;
+  stopTurn?: true;
+  detached?: true;
 }
 
 export interface AssistantMeta extends EntryMeta {

@@ -21,12 +21,16 @@ export interface LlmModule<TOptions = unknown> {
 export interface DecodeSink {
   onDelta(part: StreamedMessagePart): void;
   onFinish(finish: FinishInfo): void;
-  onMessageId?(messageId: string): void;
-  onUsage?(usage: Partial<TokenUsage>): void;
-  onError?(message: LlmRemoteErrorMessage): void;
+  onMessageId(messageId: string): void;
+  onUsage(usage: Partial<TokenUsage>): void;
+  onError(message: LlmRemoteErrorMessage): void;
+  onToolCallEnd(index?: number | string): void;
 }
 
-export type StreamDecoder<TChunk = unknown> = (chunk: TChunk, sink: DecodeSink) => void;
+export interface Decoder<TChunk = unknown> {
+  push(chunk: TChunk): void;
+  end(): void;
+}
 
 export interface ProtocolReply<TBody> {
   readonly body: TBody;
@@ -44,8 +48,8 @@ export interface Protocol<
   readonly capability?: (modelName: string) => ModelCapability | undefined;
   readonly requestId?: (headers: Readonly<Record<string, string>>) => string | undefined;
   readonly encode: (module: LlmModule<TOptions>, hooks?: EncodeHooks) => TRequest;
-  readonly decode: (module: LlmModule<TOptions>, response: TResponse, sink: DecodeSink) => void;
-  readonly decodeStream: (module: LlmModule<TOptions>) => StreamDecoder<TChunk>;
+  readonly decoder: (module: LlmModule<TOptions>, sink: DecodeSink) => Decoder<TChunk>;
+  readonly replay: (response: TResponse) => Iterable<TChunk>;
   readonly decodeError: (error: unknown) => LlmRemoteErrorMessage;
   readonly client: (endpoint: ResolvedEndpoint, options: TOptions | undefined) => TClient;
   readonly send: (

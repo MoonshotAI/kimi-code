@@ -1,31 +1,16 @@
 export * from './primitives';
-export {
-  EventContext,
-  UnitNode,
-  asUnit,
-  createUnit,
-  currentUnit,
-  hasCurrentUnit,
-  lineage,
-  mountRoot,
-  pushCleanup,
-  removeCleanup,
-} from './runtime';
+export { EventContext, createUnit, mountRoot } from './runtime';
 export type {
   EventHandler,
-  KernelRecipe,
+  ListenOpts,
   MountRootOptions,
-  NodeRef,
-  ProviderEntry,
-  RecipeExtension,
   RuntimeEvent,
   UnitContext,
+  UnitErrorEvent,
   UnitHandle,
   UnitRecipe,
   UnitSetup,
   UnitState,
-  Unsubscribe,
-  WaitOpts,
 } from './runtime';
 export {
   provide,
@@ -36,7 +21,9 @@ export {
   useExpose,
   useFire,
   useInject,
+  useMounted,
   useOn,
   useReady,
+  useWait,
 } from './hooks';
 export type { ChildEntry } from './hooks';

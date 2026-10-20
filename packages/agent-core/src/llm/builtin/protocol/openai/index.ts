@@ -1,17 +1,10 @@
 import OpenAI from 'openai';
 
 import type { ResolvedEndpoint } from '#/llm/endpoint';
-import { extractText } from '#/llm/message';
 import { headersToRecord, requestIdFromHeader } from '#/llm/protocol/kit/http';
-import { textOnlyToolResults } from '#/llm/protocol/kit/media';
 import { defineProtocol } from '#/llm/protocol/protocol';
 
-import {
-  createStreamDecoder,
-  decodeError,
-  decodeResponse,
-  type RawResponse,
-} from './decode';
+import { createDecoder, decodeError, replay, type RawResponse } from './decode';
 import { inferOpenAICapability } from './capability';
 import { openAIPipeline } from './lower';
 
@@ -68,9 +61,8 @@ export const openAIProtocol = defineProtocol({
   ...openAIPipeline,
   capability: inferOpenAICapability,
   requestId: requestIdFromHeader('x-request-id'),
-  decode: (module, response: RawResponse, sink) =>
-    decodeResponse(response, sink, module.options?.reasoningKey),
-  decodeStream: (module) => createStreamDecoder(module.options?.reasoningKey),
+  decoder: (module, sink) => createDecoder(sink, module.options?.reasoningKey),
+  replay: (response: RawResponse) => replay(response),
   decodeError,
   client: createClient,
   send: async (client: OpenAI, request, signal) => {
@@ -88,21 +80,4 @@ export const openAIProtocol = defineProtocol({
       .withResponse();
     return { body: data, headers: headersToRecord(response.headers) ?? {} };
   },
-});
-
-export const extractToolText: Parameters<typeof openAIProtocol.with>[0] = (base) => ({
-  media: textOnlyToolResults(base.media),
-  message: (message, module) =>
-    base.message(
-      message.role === 'tool'
-        ? {
-            ...message,
-            content: [
-              { type: 'text', text: extractText(message, '\n') },
-              ...message.content.filter((part) => part.type === 'think'),
-            ],
-          }
-        : message,
-      module,
-    ),
 });
