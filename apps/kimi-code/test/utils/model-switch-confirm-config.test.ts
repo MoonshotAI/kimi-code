@@ -76,6 +76,34 @@ describe('refreshModelSwitchConfirmConfig', () => {
     });
   });
 
+  it('keeps id lists and drops rules with empty or mixed lists', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: 'model_switch_confirm',
+        config: {
+          enable: true,
+          rules: [
+            { from: ['a', 'b'], to: 'c' },
+            { from: 'd', to: ['e', 'f'] },
+            { from: [], to: 'g' },
+            { from: ['a', 2], to: 'c' },
+            { from: 'h', to: [1] },
+          ],
+        },
+      }),
+    );
+
+    const result = await refreshModelSwitchConfirmConfig({ fetchImpl: fetchImpl as typeof fetch });
+
+    expect(result).toEqual({
+      enable: true,
+      rules: [
+        { from: ['a', 'b'], to: 'c' },
+        { from: 'd', to: ['e', 'f'] },
+      ],
+    });
+  });
+
   it('falls back to the disabled default when enable is invalid or missing', async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse({
@@ -216,6 +244,18 @@ describe('matchModelSwitchRule', () => {
     expect(matchModelSwitchRule(config, 'a', 'c')).toEqual({ from: 'a', to: 'c' });
     expect(matchModelSwitchRule(config, 'x', 'y')?.hint?.en).toBe('first rule');
     expect(matchModelSwitchRule(config, 'y', 'x')).toBeUndefined();
+  });
+
+  it('matches any id in a from/to list', () => {
+    const config = {
+      enable: true,
+      rules: [{ from: ['a', 'b'], to: ['c', 'd'], hint: { en: 'listed' } }],
+    };
+    expect(matchModelSwitchRule(config, 'a', 'c')?.hint?.en).toBe('listed');
+    expect(matchModelSwitchRule(config, 'b', 'd')?.hint?.en).toBe('listed');
+    expect(matchModelSwitchRule(config, 'a', 'd')).toBeDefined();
+    expect(matchModelSwitchRule(config, 'x', 'c')).toBeUndefined();
+    expect(matchModelSwitchRule(config, 'a', 'x')).toBeUndefined();
   });
 });
 

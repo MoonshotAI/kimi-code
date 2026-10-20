@@ -151,6 +151,37 @@ describe('fetchClientConfig', () => {
     ).toEqual({ enable: false, rules: [] });
   });
 
+  it('passes id lists through and drops rules with empty or mixed lists', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({
+        name: MODEL_SWITCH_CONFIRM_CONFIG_NAME,
+        config: {
+          enable: true,
+          rules: [
+            { from: ['a', 'b'], to: 'c' },
+            { from: 'd', to: ['e', 'f'] },
+            { from: [], to: 'g' },
+            { from: ['a', 1], to: 'c' },
+            { from: 'h', to: [1] },
+          ],
+        },
+      }),
+    );
+    expect(
+      await fetchClientConfig(
+        MODEL_SWITCH_CONFIRM_CONFIG_NAME,
+        'https://example.com',
+        fetchImpl as unknown as typeof fetch,
+      ),
+    ).toEqual({
+      enable: true,
+      rules: [
+        { from: ['a', 'b'], to: 'c' },
+        { from: 'd', to: ['e', 'f'] },
+      ],
+    });
+  });
+
   it('returns undefined when the fetch throws', async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error('network down');

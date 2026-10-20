@@ -18,11 +18,12 @@ export interface ModelSwitchLocalizedString {
 }
 
 /** A confirm-dialog gate for one model switch: `from` and `to` are upstream
- *  model ids (e.g. `kimi-k2.5`), matched exactly — no wildcards. `hint`
- *  optionally overrides the built-in dialog body text for this pair. */
+ *  model ids (e.g. `kimi-k2.5`), matched exactly — no wildcards. Each is
+ *  either a single id or a list of ids; a list matches when any entry does.
+ *  `hint` optionally overrides the built-in dialog body text for this pair. */
 export interface ModelSwitchRule {
-  from: string;
-  to: string;
+  from: string | string[];
+  to: string | string[];
   hint?: ModelSwitchLocalizedString;
 }
 
@@ -42,9 +43,11 @@ const localizedStringSchema = z.object({
   zh: z.string().optional(),
 });
 
+const modelIdListSchema = z.union([z.string(), z.array(z.string()).min(1)]);
+
 const modelSwitchRuleSchema = z.object({
-  from: z.string(),
-  to: z.string(),
+  from: modelIdListSchema,
+  to: modelIdListSchema,
   hint: localizedStringSchema.optional(),
 });
 
@@ -87,15 +90,18 @@ export function resetModelSwitchConfirmConfigCache(): void {
   cached = undefined;
 }
 
-/** The first rule matching the (from, to) pair exactly, when the feature is
- *  enabled; undefined gates the dialog off. */
+/** The first rule matching the (from, to) pair, when the feature is enabled;
+ *  a rule whose from/to is a list matches when any entry does. Undefined
+ *  gates the dialog off. */
 export function matchModelSwitchRule(
   config: ModelSwitchConfirmConfig | undefined,
   fromModelId: string,
   toModelId: string,
 ): ModelSwitchRule | undefined {
   if (config === undefined || !config.enable) return undefined;
-  return config.rules.find((rule) => rule.from === fromModelId && rule.to === toModelId);
+  const hit = (ids: string | string[], id: string): boolean =>
+    typeof ids === 'string' ? ids === id : ids.includes(id);
+  return config.rules.find((rule) => hit(rule.from, fromModelId) && hit(rule.to, toModelId));
 }
 
 /** Resolve the dialog body text for a matched rule: the rule's English arm,
