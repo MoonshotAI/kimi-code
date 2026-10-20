@@ -436,6 +436,10 @@ export function confirmThenPerformModelSwitch(
   );
   const toModel = modelDisplayName(alias, availableModels[alias]);
   const dismiss = (): void => {
+    // Only close while this dialog still owns the editor replacement: an
+    // approval/question panel mounted over it must never be wiped out by the
+    // async finalizer of a settled action.
+    if (host.state.activeDialog !== 'model-switch-confirm') return;
     host.state.activeDialog = null;
     host.restoreEditor();
   };

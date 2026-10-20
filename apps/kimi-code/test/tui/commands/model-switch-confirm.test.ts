@@ -270,4 +270,17 @@ describe('confirmThenPerformModelSwitch new-session action', () => {
     releaseCreation();
     await vi.waitFor(() => expect(restoreEditor).toHaveBeenCalled());
   });
+
+  it('does not dismiss a panel that displaced the dialog when creation settles', async () => {
+    const { host, mountEditorReplacement, restoreEditor } = makeSwitchHost();
+    await enableRule();
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', false);
+    const dialog = mountedDialog(mountEditorReplacement);
+
+    dialog.opts.onSelect('new');
+    (host.state as unknown as { activeDialog: string | null }).activeDialog = null;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(restoreEditor).not.toHaveBeenCalled();
+  });
 });
