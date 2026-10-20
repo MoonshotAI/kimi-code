@@ -5,7 +5,7 @@
       "name": "Kimi Code: Extension Development Host (isolated)",
       "type": "extensionHost",
       "request": "launch",
-      "preLaunchTask": "vscode: dev",
+      "preLaunchTask": "vscode: build extension",
       "args": [
         "--extensionDevelopmentPath=${workspaceFolder}",
         "--user-data-dir=${workspaceFolder}/../../.tmp/vscode-extension-dev/user-data",
