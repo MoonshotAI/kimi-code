@@ -1,5 +1,6 @@
 import {
   effectiveModelAlias,
+  ErrorCodes,
   PRIMARY_SUBAGENT_MODEL_CHOICE,
   SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
@@ -17,6 +18,7 @@ import {
 } from '../components/dialogs/experiments-selector';
 import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -27,6 +29,13 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
+import {
+  matchModelSwitchRule,
+  peekModelSwitchConfirmConfig,
+  resolveModelSwitchHint,
+  type ModelSwitchAction,
+  type ModelSwitchRule,
+} from '#/utils/model-switch-confirm-config';
 import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
@@ -41,6 +50,8 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
+
+const MODEL_SWITCH_COMPACT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const MODEL_SWITCH_CACHE_WARNING =
   'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
@@ -387,17 +398,154 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, true);
+        confirmThenPerformModelSwitch(host, alias, thinking, true);
       },
       onSessionOnlySelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, false);
+        confirmThenPerformModelSwitch(host, alias, thinking, false);
       },
       onCancel: () => {
         host.restoreEditor();
       },
     }),
   );
+}
+
+/**
+ * Cloud-gated confirmation for a model switch with conversation history: when
+ * the `model_switch_confirm` client config enables the feature and the
+ * (current, target) upstream model ids match a rule exactly, the user picks
+ * how the switch happens before any state changes. Cancel is a no-op by
+ * construction — nothing was applied yet.
+ */
+function confirmThenPerformModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  thinking: ThinkingEffort,
+  persist: boolean,
+): void {
+  const rule = matchedModelSwitchRule(host, alias);
+  if (rule === undefined) {
+    void performModelSwitch(host, alias, thinking, persist);
+    return;
+  }
+  const availableModels = host.state.appState.availableModels;
+  const fromModel = modelDisplayName(
+    host.state.appState.model,
+    availableModels[host.state.appState.model],
+  );
+  const toModel = modelDisplayName(alias, availableModels[alias]);
+  const dismiss = (): void => {
+    host.state.activeDialog = null;
+    host.restoreEditor();
+  };
+  host.state.activeDialog = 'model-switch-confirm';
+  host.mountEditorReplacement(
+    new ModelSwitchConfirmDialogComponent({
+      fromModel,
+      toModel,
+      hint: resolveModelSwitchHint(rule),
+      onSelect: (action) => {
+        dismiss();
+        void runModelSwitchAction(host, action, alias, thinking, persist);
+      },
+      onCancel: dismiss,
+    }),
+  );
+}
+
+function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
+  const prevAlias = host.state.appState.model;
+  // Effort-only switches and re-picks of the live alias lose no cache. A
+  // streaming switch keeps the existing behavior: performModelSwitch rejects
+  // it with an error, so the dialog must not precede that rejection.
+  if (alias === prevAlias) return undefined;
+  if (host.state.appState.streamingPhase !== 'idle') return undefined;
+  if (!hasConversationHistory(host)) return undefined;
+  const fromModelId = host.state.appState.availableModels[prevAlias]?.model;
+  const toModelId = host.state.appState.availableModels[alias]?.model;
+  if (fromModelId === undefined || toModelId === undefined) return undefined;
+  return matchModelSwitchRule(peekModelSwitchConfirmConfig(), fromModelId, toModelId);
+}
+
+/**
+ * Fire a compaction and wait for it to settle before the model switch. The
+ * compact RPC resolves as soon as the engine *starts* compacting — the
+ * completed/cancelled/failed outcome arrives later as an event — and
+ * performModelSwitch rejects any switch while the session is busy, so the
+ * switch must hold until one of those events lands. True only when the
+ * compaction completed on the same session; any other outcome shows a
+ * message and leaves the model unchanged.
+ */
+export async function compactForModelSwitch(
+  host: SlashCommandHost,
+  session: Session,
+): Promise<boolean> {
+  type CompactionSettle = 'completed' | 'cancelled' | 'failed' | 'timeout';
+  let settle: (outcome: CompactionSettle) => void = () => undefined;
+  const settled = new Promise<CompactionSettle>((resolve) => {
+    settle = resolve;
+  });
+  const unsubscribe = session.onEvent((event) => {
+    if (event.type === 'compaction.completed') settle('completed');
+    else if (event.type === 'compaction.cancelled') settle('cancelled');
+    else if (event.type === 'error' && event.code === ErrorCodes.COMPACTION_FAILED) {
+      settle('failed');
+    }
+  });
+  const timer = setTimeout(() => {
+    settle('timeout');
+  }, MODEL_SWITCH_COMPACT_TIMEOUT_MS);
+  try {
+    await session.compact({});
+    const outcome = await settled;
+    if (outcome === 'completed' && host.session === session) return true;
+    if (outcome === 'completed') {
+      host.showNotice('Model switch aborted — session changed.');
+    } else if (outcome === 'timeout') {
+      host.showError('Timed out waiting for compaction — model unchanged.');
+    } else if (outcome === 'cancelled') {
+      host.showNotice('Compaction cancelled — model unchanged.');
+    } else {
+      host.showNotice('Model switch aborted — model unchanged.');
+    }
+    return false;
+  } catch (error) {
+    host.showError(`Failed to compact: ${formatErrorMessage(error)}. Model unchanged.`);
+    return false;
+  } finally {
+    clearTimeout(timer);
+    unsubscribe();
+  }
+}
+
+async function runModelSwitchAction(
+  host: SlashCommandHost,
+  action: ModelSwitchAction,
+  alias: string,
+  thinking: ThinkingEffort,
+  persist: boolean,
+): Promise<void> {
+  switch (action) {
+    case 'cancel':
+      return;
+    case 'continue':
+      await performModelSwitch(host, alias, thinking, persist);
+      return;
+    case 'new':
+      await host.createNewSession();
+      await performModelSwitch(host, alias, thinking, persist);
+      return;
+    case 'compact': {
+      // Compact with the current model first, then switch: the new model
+      // starts from the compacted context.
+      if (host.session !== undefined && !(await compactForModelSwitch(host, host.session))) {
+        return;
+      }
+      await performModelSwitch(host, alias, thinking, persist);
+      return;
+    }
+  }
 }
 
 async function performModelSwitch(
