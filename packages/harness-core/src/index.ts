@@ -5,3 +5,6 @@ export * from './features/interaction/index';
 export * from './features/todo/index';
 export * from './features/usage/index';
 export * from './features/timing/index';
+export * from './features/provider-catalog/index';
+export * from './features/wait-for/index';
+export * from './features/undo/index';
