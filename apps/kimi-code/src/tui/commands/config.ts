@@ -458,7 +458,11 @@ export function confirmThenPerformModelSwitch(
         dismiss();
         void runModelSwitchAction(host, action, alias, thinking, persist);
       },
-      onCancel: dismiss,
+      onCancel: () => {
+        if (settled) return;
+        settled = true;
+        dismiss();
+      },
     }),
   );
   host.state.activeDialog = 'model-switch-confirm';

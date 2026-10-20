@@ -237,4 +237,37 @@ describe('confirmThenPerformModelSwitch new-session action', () => {
 
     expect(session.setModel).toHaveBeenCalledWith('new-alias');
   });
+
+  it('dismisses on Escape before any action is chosen', async () => {
+    const { host, session, mountEditorReplacement, restoreEditor } = makeSwitchHost();
+    await enableRule();
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', false);
+
+    mountedDialog(mountEditorReplacement).opts.onCancel();
+
+    expect(restoreEditor).toHaveBeenCalled();
+    expect(session.setModel).not.toHaveBeenCalled();
+  });
+
+  it('ignores Escape once an action has been chosen', async () => {
+    const { host, mountEditorReplacement, restoreEditor, createNewSession } = makeSwitchHost();
+    await enableRule();
+    let releaseCreation!: () => void;
+    createNewSession.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseCreation = resolve;
+        }),
+    );
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', false);
+    const dialog = mountedDialog(mountEditorReplacement);
+
+    dialog.opts.onSelect('new');
+    dialog.opts.onCancel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(restoreEditor).not.toHaveBeenCalled();
+
+    releaseCreation();
+    await vi.waitFor(() => expect(restoreEditor).toHaveBeenCalled());
+  });
 });
