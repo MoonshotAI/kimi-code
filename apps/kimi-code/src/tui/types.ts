@@ -296,9 +296,13 @@ export interface QueuedMessage {
   readonly imageAttachmentIds?: readonly number[];
   readonly videoAttachmentIds?: readonly number[];
   readonly mediaSnapshots?: readonly MediaAttachment[];
-  readonly mode?: 'prompt' | 'bash';
+  readonly mode?: 'prompt' | 'bash' | 'compact';
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+  readonly compactInstruction?: string;
+  readonly compactRetries?: number;
+  /** Auto-compaction serial at enqueue time; a mismatch at dequeue skips the fire. */
+  readonly queuedAfterAutoSerial?: number;
 }
 
 /**

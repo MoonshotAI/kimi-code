@@ -4926,6 +4926,450 @@ command = "vim"
     expect(session.activateSkill).not.toHaveBeenCalled();
   });
 
+  it('queues /compact while streaming and fires it when the queued turn ends', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    harness.track.mockClear();
+
+    driver.handleUserInput('/compact focus on src');
+
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      {
+        text: '/compact focus on src',
+        agentId: 'main',
+        mode: 'compact',
+        compactInstruction: 'focus on src',
+        queuedAfterAutoSerial: 0,
+      },
+    ]);
+    expect(harness.track).toHaveBeenCalledWith('input_queue', undefined);
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Cannot /compact');
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      (item) => { driver.sendQueuedMessage(session, item); },
+    );
+
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({ instruction: 'focus on src' });
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('runs a queued /compact in FIFO order between queued prompts', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput('first');
+    driver.handleUserInput('/compact tidy up');
+    driver.handleUserInput('second');
+
+    expect(driver.state.queuedMessages.map((m) => m.text)).toEqual([
+      'first',
+      '/compact tidy up',
+      'second',
+    ]);
+
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 1, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('first', { promptId: undefined });
+    });
+    expect(session.compact).not.toHaveBeenCalled();
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'turn.ended', agentId: 'main', turnId: 2, reason: 'completed' } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({ instruction: 'tidy up' });
+    });
+    expect(session.prompt).not.toHaveBeenCalledWith('second', { promptId: undefined });
+
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'manual' } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      sendQueued,
+    );
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('second', { promptId: undefined });
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('rejects a second /compact while one is already queued', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/compact one');
+    harness.track.mockClear();
+
+    driver.handleUserInput('/compact two');
+
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({ mode: 'compact', compactInstruction: 'one' }),
+    ]);
+    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+      reason: 'duplicate-compact',
+      command: 'compact',
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('A /compact is already queued.');
+    expect(driver.state.editor.getText()).toBe('/compact two');
+  });
+
+  it('keeps /compact blocked while compacting', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.appState.isCompacting = true;
+    harness.track.mockClear();
+
+    driver.handleUserInput('/compact');
+
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+      reason: 'blocked',
+      command: 'compact',
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('Cannot /compact while compacting');
+    expect(driver.state.editor.getText()).toBe('/compact');
+  });
+
+  it('keeps /compact blocked while a compaction holds the turn', async () => {
+    const { driver, session, harness } = await makeDriver();
+    driver.state.appState.isCompacting = true;
+    driver.state.appState.streamingPhase = 'waiting';
+    harness.track.mockClear();
+
+    driver.handleUserInput('/compact');
+
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([]);
+    expect(harness.track).toHaveBeenCalledWith('input_command_invalid', {
+      reason: 'blocked',
+      command: 'compact',
+    });
+    expect(stripSgr(renderTranscript(driver))).toContain('Cannot /compact while compacting');
+    expect(driver.state.editor.getText()).toBe('/compact');
+  });
+
+  it('queues /compact submitted while the lazy session creation was in flight', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/compact');
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+    });
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({ mode: 'compact', text: '/compact' }),
+    ]);
+    expect(lazySession.compact).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Cannot /compact');
+  });
+
+  it('restores the input when a second /compact is refused during lazy session creation', async () => {
+    const lazySession = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver, harness } = await makeDriver(lazySession, {}, startupInput);
+
+    let resolveCreate!: (s: ReturnType<typeof makeSession>) => void;
+    harness.createSession.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveCreate = resolve; }),
+    );
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(harness.createSession).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('/compact');
+    driver.handleUserInput('/compact');
+
+    resolveCreate(lazySession);
+    await vi.waitFor(() => {
+      expect(lazySession.prompt).toHaveBeenCalledWith('hello', { promptId: undefined });
+      expect(stripSgr(renderTranscript(driver))).toContain('A /compact is already queued.');
+    });
+    expect(driver.state.editor.getText()).toBe('/compact');
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({ mode: 'compact', text: '/compact' }),
+    ]);
+    expect(lazySession.compact).not.toHaveBeenCalled();
+  });
+
+  it('skips a queued /compact when an auto compaction completed while it waited', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/compact');
+    driver.handleUserInput('after compact');
+
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'auto' } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'compaction.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        result: { summary: 's', compactedCount: 1, tokensBefore: 10, tokensAfter: 5 },
+      } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith('after compact', { promptId: undefined });
+    });
+    expect(session.compact).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain(
+      'Skipped queued /compact — context was already auto-compacted.',
+    );
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('still fires a queued /compact when the intervening auto compaction is cancelled', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/compact');
+
+    const sendQueued = (item: QueuedMessage) => { driver.sendQueuedMessage(session, item); };
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.started', agentId: 'main', sessionId: 'ses-1', trigger: 'auto' } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      { type: 'compaction.cancelled', agentId: 'main', sessionId: 'ses-1' } as Event,
+      sendQueued,
+    );
+
+    await vi.waitFor(() => {
+      expect(session.compact).toHaveBeenCalledWith({ instruction: undefined });
+    });
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('steers only the messages ahead of a queued /compact on Ctrl-S', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('msg1');
+    driver.handleUserInput('/compact foo');
+    driver.handleUserInput('msg2');
+
+    driver.state.editor.onCtrlS?.();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.steer).toHaveBeenCalledTimes(1);
+    expect(session.steer).toHaveBeenCalledWith('msg1');
+    expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
+  });
+
+  it('steers nothing on Ctrl-S when only /compact items are queued', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('/compact');
+
+    driver.state.editor.onCtrlS?.();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([
+      expect.objectContaining({ mode: 'compact', text: '/compact' }),
+    ]);
+  });
+
+  it('auto-steers messages ahead of a queued /compact when a WaitFor starts', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('msg1');
+    driver.handleUserInput('/compact foo');
+    driver.handleUserInput('msg2');
+    expect(driver.state.queuedMessages).toHaveLength(3);
+
+    startWaitFor(driver);
+
+    expect(session.steer).toHaveBeenCalledTimes(1);
+    expect(session.steer).toHaveBeenCalledWith('msg1');
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
+    });
+  });
+
+  it('omits the steer hint when only /compact items are queued', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput('/compact');
+    const compactOnlyPane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+    expect(compactOnlyPane).toContain('/compact');
+    expect(compactOnlyPane).not.toContain('ctrl-s to steer immediately');
+  });
+
+  it('omits the steer hint when every steerable message sits behind a queued /compact', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput('/compact');
+    driver.handleUserInput('plain note');
+
+    const pane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+    expect(pane).not.toContain('ctrl-s to steer immediately');
+  });
+
+  it('shows the steer hint when a steerable message sits ahead of a queued /compact', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput('plain note');
+    driver.handleUserInput('/compact');
+
+    const pane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+    expect(pane).toContain('ctrl-s to steer immediately');
+  });
+
+  it('recalls a queued /compact into the editor on up arrow', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/compact bring it back');
+
+    expect(driver.state.editor.onUpArrowEmpty?.()).toBe(true);
+
+    expect(driver.state.editor.getText()).toBe('/compact bring it back');
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('attempts a failed queued /compact fire three times, then drops it and drains on', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession({
+        compact: vi.fn(async () => {
+          throw new Error('COMPACTION_UNABLE');
+        }),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.queuedMessages = [
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+        { text: 'next', agentId: 'main' },
+      ];
+
+      driver.sendQueuedMessage(session, driver.state.queuedMessages.shift()!);
+      await vi.advanceTimersByTimeAsync(0);
+      const requeuedPane = driver.state.queueContainer.render(120).map(stripSgr).join('\n');
+      expect(requeuedPane).toContain('/compact');
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(session.compact).toHaveBeenCalledTimes(3);
+      expect(session.prompt).toHaveBeenCalledWith('next', { promptId: undefined });
+      expect(driver.state.queuedMessages).toEqual([]);
+      expect(stripSgr(renderTranscript(driver))).toContain('Failed to run queued /compact');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('waits for idle before retrying a failed queued /compact fire', async () => {
+    vi.useFakeTimers();
+    try {
+      const session = makeSession({
+        compact: vi.fn(async () => {
+          throw new Error('COMPACTION_UNABLE');
+        }),
+      });
+      const { driver } = await makeDriver(session);
+      driver.state.queuedMessages = [
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+      ];
+
+      driver.sendQueuedMessage(session, driver.state.queuedMessages.shift()!);
+      expect(session.compact).toHaveBeenCalledTimes(1);
+
+      driver.state.appState.streamingPhase = 'waiting';
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(session.compact).toHaveBeenCalledTimes(1);
+
+      driver.state.appState.streamingPhase = 'idle';
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session.compact).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('requeues a queued /compact without firing when another compaction is already running', async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, session } = await makeDriver();
+      driver.state.queuedMessages = [
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+      ];
+      driver.state.appState.isCompacting = true;
+
+      driver.sendQueuedMessage(session, driver.state.queuedMessages.shift()!);
+
+      expect(session.compact).not.toHaveBeenCalled();
+      expect(driver.state.queuedMessages).toEqual([
+        { text: '/compact', agentId: 'main', mode: 'compact', queuedAfterAutoSerial: 0 },
+      ]);
+
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(session.compact).not.toHaveBeenCalled();
+
+      driver.state.appState.isCompacting = false;
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(session.compact).toHaveBeenCalledWith({ instruction: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('clears a queued /compact when starting a new session', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.handleUserInput('/compact');
+    expect(driver.state.queuedMessages).toHaveLength(1);
+
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/new');
+
+    await vi.waitFor(() => {
+      expect(driver.state.queuedMessages).toEqual([]);
+    });
+    expect(session.compact).not.toHaveBeenCalled();
+  });
+
   it('steers fresh input while a goal is active even when the streaming phase is idle', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.goal = makeActiveGoalSnapshot();

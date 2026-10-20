@@ -165,6 +165,8 @@ export interface SlashCommandHost {
   beginSessionRequest(): void;
   failSessionRequest(message: string): void;
   sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  /** Queue a `/compact` for FIFO dispatch; false when one is already queued. */
+  enqueueCompactCommand(args: string): boolean;
   requestQueuedGoalPromotion?(): void;
   /** Reset the client-side cache-break baseline after the context was cut
    *  (/undo): the next step's cache-read drop is expected, not a break. */
@@ -299,6 +301,16 @@ async function executeSlashCommand(
       host.sendNormalUserInput(intent.input);
       return;
     case 'builtin':
+      if (intent.enqueue === true) {
+        if (!host.enqueueCompactCommand(intent.args)) {
+          host.track('input_command_invalid', { reason: 'duplicate-compact', command: intent.name });
+          host.showError('A /compact is already queued.');
+          host.restoreInputText(input);
+          return;
+        }
+        host.track('input_queue');
+        return;
+      }
       host.track('input_command', { command: intent.name });
       if (intent.name === 'new' && parsedCommand?.name === 'clear') {
         host.track('clear');
@@ -363,6 +375,17 @@ async function handleBuiltInSlashCommand(
       command !== undefined &&
       resolveSlashCommandAvailability(command, args) === 'idle-only'
     ) {
+      // Same enqueue semantics as the dispatch builtin branch: a /compact
+      // submitted before the session existed joins the queue when the
+      // awaited creation lands on a running turn.
+      if (name === 'compact' && busyReason === 'streaming' && !host.state.appState.isCompacting) {
+        if (!host.enqueueCompactCommand(args)) {
+          host.showError('A /compact is already queued.');
+          // Same restore as the adjacent blocked path, guarded the same way.
+          if (canRestoreSubmittedInput(host)) host.restoreInputText(input);
+        }
+        return;
+      }
       host.showError(slashBusyMessage(name, busyReason));
       // Same as the dispatch blocked branch: give the cleared input back,
       // guarded the same way — session creation awaited above.
