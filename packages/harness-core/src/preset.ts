@@ -11,6 +11,7 @@ import { createPlan } from './features/plan/index';
 import { providerCatalog } from './features/provider-catalog/index';
 import { createSwarm } from './features/swarm/index';
 import { createTask } from './features/task/index';
+import { tokenCounting } from './features/tokenCounting/index';
 import { timing } from './features/timing/index';
 import { todo } from './features/todo/index';
 import { createToolDedupe } from './features/toolDedupe/index';
@@ -26,6 +27,7 @@ export const harnessPreset: readonly Feature[] = [
   timing,
   usage,
   createKimi(),
+  tokenCounting,
   interaction,
   createPlan(),
   createGoal(),

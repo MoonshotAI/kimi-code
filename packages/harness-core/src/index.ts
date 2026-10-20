@@ -42,3 +42,4 @@ export * from './features/dateChange/index';
 export * from './features/notify/index';
 export * from './features/shellCommand/index';
 export * from './features/externalHooks/index';
+export * from './features/tokenCounting/index';
