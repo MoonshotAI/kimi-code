@@ -315,12 +315,23 @@ describe('plugins selector dialogs', () => {
     ).toBe(true);
     expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe(false);
-    // The internal plugin catalog is an official publication channel.
+    // The internal plugin catalog is trusted only for the registered official
+    // endpoint — other packages in the same namespace stay third-party.
     expect(
       isOfficialPluginSource(
         'https://catalog.msh.team/plugins/1a0a4778-7732-85f9-8000-000017acd03b/files',
       ),
     ).toBe(true);
+    expect(
+      isOfficialPluginSource(
+        'https://catalog.msh.team/plugins/1a0a4778-7732-85f9-8000-000017acd03b/files/',
+      ),
+    ).toBe(true);
+    expect(
+      isOfficialPluginSource(
+        'https://catalog.msh.team/plugins/ffffffff-ffff-ffff-ffff-ffffffffffff/files',
+      ),
+    ).toBe(false);
     expect(isOfficialPluginSource('https://catalog.msh.team/unrelated/x.zip')).toBe(false);
     expect(isOfficialPluginSource('http://catalog.msh.team/plugins/x/files')).toBe(false);
     // Curated and other Kimi CDN paths are not "official" for the install gate.
