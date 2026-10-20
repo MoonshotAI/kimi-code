@@ -1,5 +1,6 @@
 import type { Feature } from '@moonshot-ai/agent-core/app/index';
 
+import { createCron } from './features/cron/index';
 import { interaction } from './features/interaction/index';
 import { createKimi } from './features/kimi/index';
 import { providerCatalog } from './features/provider-catalog/index';
@@ -18,4 +19,5 @@ export const harnessPreset: readonly Feature[] = [
   usage,
   createKimi(),
   interaction,
+  createCron(),
 ];

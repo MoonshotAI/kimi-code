@@ -84,7 +84,7 @@ export function syncAgentTools(agent: Agent, runtime: AgentRuntime): void {
   const unsubscribe = agent.loop.subscribe((event) => {
     if (event.type !== 'step.ended' && event.type !== 'turn.ended') return;
     unsubscribe();
-    syncAgentTools(agent, runtime);
+    queueMicrotask(() => syncAgentTools(agent, runtime));
   });
 }
 
