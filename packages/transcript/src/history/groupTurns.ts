@@ -51,7 +51,7 @@ export function isSkillActivationPart(part: { readonly type: string }): boolean 
   );
 }
 
-function annotateBundledSkillParts<T extends { readonly type: string }>(
+export function annotateBundledSkillParts<T extends { readonly type: string }>(
   content: readonly T[],
   bundledActivations: readonly BundledSkillActivation[],
 ): T[] {
@@ -571,7 +571,7 @@ function mapOrigin(message: HistoryMessage): TurnOrigin {
   }
 }
 
-interface BundledSkillActivation {
+export interface BundledSkillActivation {
   readonly activationId: string;
   readonly skillName: string;
   readonly skillArgs?: string;

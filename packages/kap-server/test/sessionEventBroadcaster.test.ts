@@ -995,6 +995,64 @@ describe('SessionEventBroadcaster', () => {
     },
   );
 
+  it('strips durable-only timestamps from steered and terminal prompt events (live + tail replay)', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('prompt.steered', {
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+        content: [{ type: 'text', text: 'add this' }],
+        createdAts: { p2: '2026-01-01T00:00:01.000Z' },
+      }),
+    );
+    main.bus.emit(
+      agentEvent('prompt.completed', {
+        promptId: 'p1',
+        finishedAt: '2026-01-01T00:00:03.000Z',
+        reason: 'completed',
+        createdAt: '2026-01-01T00:00:00.500Z',
+      }),
+    );
+    main.bus.emit(
+      agentEvent('prompt.aborted', {
+        promptId: 'p3',
+        abortedAt: '2026-01-01T00:00:04.000Z',
+        createdAt: '2026-01-01T00:00:03.500Z',
+      }),
+    );
+    await bc.getCursor('s1');
+
+    const steered = envelopes.find((e) => e.type === 'prompt.steered');
+    expect(steered).toBeDefined();
+    expect(steered!.payload).not.toHaveProperty('createdAts');
+    expect(steered!.payload).toHaveProperty('steeredAt');
+    const completed = envelopes.find((e) => e.type === 'prompt.completed');
+    expect(completed).toBeDefined();
+    expect(completed!.payload).not.toHaveProperty('createdAt');
+    expect(completed!.payload).toHaveProperty('finishedAt');
+    const aborted = envelopes.find((e) => e.type === 'prompt.aborted');
+    expect(aborted).toBeDefined();
+    expect(aborted!.payload).not.toHaveProperty('createdAt');
+    expect(aborted!.payload).toHaveProperty('abortedAt');
+
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    for (const [type, key] of [
+      ['prompt.steered', 'createdAts'],
+      ['prompt.completed', 'createdAt'],
+      ['prompt.aborted', 'createdAt'],
+    ] as const) {
+      const replayed = replay.events.find((e) => e.envelope.type === type);
+      expect(replayed).toBeDefined();
+      expect(replayed!.envelope.payload).not.toHaveProperty(key);
+    }
+  });
+
   it('returns epoch_changed for a mismatched epoch', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');

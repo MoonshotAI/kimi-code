@@ -1030,12 +1030,20 @@ export class SessionEventBroadcaster {
       };
       wireEvent = Object.assign({}, wireFields, { agentId, sessionId }) as unknown as Event;
     } else if (event.type === 'prompt.steered' || event.type === 'prompt.queued' || event.type === 'prompt.submitted') {
-      const content = (event as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
-      wireEvent = Object.assign({}, event, {
+      const { createdAts: _durable, ...publicEvent } = event as typeof event & {
+        createdAts?: unknown;
+      };
+      const content = (publicEvent as unknown as { content: Parameters<typeof projectPromptContentParts>[0] }).content;
+      wireEvent = Object.assign({}, publicEvent, {
         content: projectPromptContentParts(content),
         agentId,
         sessionId,
       }) as unknown as Event;
+    } else if (event.type === 'prompt.completed' || event.type === 'prompt.aborted') {
+      const { createdAt: _durable, ...publicEvent } = event as typeof event & {
+        createdAt?: unknown;
+      };
+      wireEvent = Object.assign({}, publicEvent, { agentId, sessionId }) as unknown as Event;
     } else {
       wireEvent = Object.assign({}, event, { agentId, sessionId }) as unknown as Event;
     }
