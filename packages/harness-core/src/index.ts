@@ -8,3 +8,4 @@ export * from './features/timing/index';
 export * from './features/provider-catalog/index';
 export * from './features/wait-for/index';
 export * from './features/undo/index';
+export * from './features/kimi/index';
