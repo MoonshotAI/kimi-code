@@ -16,6 +16,7 @@ interface ModelsDevCacheEntry {
 export interface ModelsDevUpstreamProps {
   readonly userAgent?: string;
   readonly builtinCatalog?: () => unknown;
+  readonly allowFallback?: boolean;
 }
 
 let cache: ModelsDevCacheEntry | undefined;
@@ -64,8 +65,8 @@ async function fetchAndCache(props: ModelsDevUpstreamProps): Promise<ModelsDevCa
     cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
     return cache.catalog;
   } catch (error) {
-    if (cache !== undefined) return cache.catalog;
-    const builtIn = loadBuiltinCatalog(props);
+    if (props.allowFallback !== false && cache !== undefined) return cache.catalog;
+    const builtIn = props.allowFallback === false ? undefined : loadBuiltinCatalog(props);
     if (builtIn !== undefined) {
       cache = { catalog: builtIn, fetchedAt: now };
       return builtIn;

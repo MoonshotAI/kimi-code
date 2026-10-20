@@ -27,6 +27,7 @@ import {
   type ExternalHooksRunner,
   type HookDef,
 } from '#/features/externalHooks/index';
+import { createPtc } from '#/features/ptc/index';
 import { indexHooks, runMatchedHooks } from '#/features/externalHooks/internal/match';
 import { runHook } from '#/features/externalHooks/internal/run';
 import type { OsHost, OsProcess, OsSpawnOptions } from '#/features/os/index';
@@ -669,19 +670,25 @@ describe('externalHooks feature', () => {
     expect(executed).toHaveLength(1);
   });
 
-  it('denies a tool through a PreToolUse hook exit 2 and lets it run when unmatched', async () => {
+  it('denies direct and PTC-nested tools through PreToolUse and lets unmatched calls run', async () => {
     const executed: ExecutedTool[] = [];
     const fake = createFakeHost((command) =>
       command === 'deny bash' ? { exitCode: 2, stderr: 'no bash today\n' } : { exitCode: 0 },
     );
+    const ptcDir = await mkdtemp(join(tmpdir(), 'external-hooks-ptc-'));
+    tmpDirs.push(ptcDir);
+    const code = "const denied = await tools.Bash({ command: 'ls -la' }); console.log(denied);";
     const t = await startApp({
       host: fake.host,
       requester: createMockRequester([
         { toolCall: { name: 'Bash', arguments: '{"command":"ls -la"}' } },
         { text: 'first turn done' },
         { toolCall: { name: 'Bash', arguments: '{"command":"ls -la"}' } },
+        { text: 'second turn done' },
+        { toolCall: { name: 'Code', arguments: JSON.stringify({ code }) } },
       ]),
       executed,
+      extraFeatures: [createPtc({ dir: ptcDir, enabled: () => true })],
     });
     const config = t.capture.config?.value;
     await config?.set('hooks', [{ event: 'PreToolUse', matcher: 'Bash', command: 'deny bash' }], 'memory');
@@ -701,7 +708,18 @@ describe('externalHooks feature', () => {
     });
     await config?.set('hooks', [{ event: 'PreToolUse', matcher: 'Write', command: 'deny write' }], 'memory');
     await t.runTurn('run bash again');
+    expect(executed).toEqual([{ name: 'Bash', arguments: '{"command":"ls -la"}' }]);
+
+    await config?.set('hooks', [{ event: 'PreToolUse', matcher: 'Bash', command: 'deny bash' }], 'memory');
+    await t.runTurn('orchestrate bash');
     expect(executed).toHaveLength(1);
+    expect((await toolResultTexts(t.main)).at(-1)).toContain('no bash today');
+    const nested = fake.spawns.map(spawnPayload).find((payload) => payload['tool_call_id'] === 'ptc-run-1-1');
+    expect(nested).toMatchObject({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'ls -la' },
+    });
   });
 
   it('fires PostToolUse on success and PostToolUseFailure on an isError result', async () => {
@@ -869,9 +887,7 @@ describe('externalHooks feature', () => {
     const failing: LoopLlmRequester = {
       with: () => failing,
       request: (part) => part as unknown as LlmRequest,
-      generate: async () => {
-        throw { kind: 'rate_limit', message: 'slow down' };
-      },
+      generate: () => Promise.reject({ kind: 'rate_limit', message: 'slow down' }),
     };
     const t = await startApp({ host: fake.host, requester: failing });
     const config = t.capture.config?.value;

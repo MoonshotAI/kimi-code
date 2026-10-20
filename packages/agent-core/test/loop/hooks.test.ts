@@ -12,7 +12,12 @@ import {
   type StepStartingEvent,
   type ToolBatchStartingEvent,
 } from '#/loop/index';
-import type { ToolExecuteInput } from '#/tool/index';
+import {
+  createToolExecutor,
+  type ToolExecuteInput,
+  type ToolHookRegistration,
+  type ToolResult,
+} from '#/tool/index';
 
 function requester(outcomes: (() => LlmOutcome)[], onGenerate?: () => void): LoopLlmRequester {
   const self: LoopLlmRequester = {
@@ -166,6 +171,17 @@ describe('step.starting', () => {
   });
 });
 
+function createExecutor(
+  registrations: readonly ToolHookRegistration[],
+  execute: (input: ToolExecuteInput) => Promise<ToolResult> = async () => ({ content: [] }),
+) {
+  const tools = createToolExecutor();
+  tools.register('alpha', { execute });
+  tools.register('beta', { execute });
+  for (const registration of registrations) tools.hooks.add(registration);
+  return tools;
+}
+
 describe('tool.batch-starting', () => {
   it('settles every call of a denied batch as blocked and continues the turn', async () => {
     const executed: string[] = [];
@@ -173,15 +189,24 @@ describe('tool.batch-starting', () => {
     const continuing: number[] = [];
     const stopping: number[] = [];
     const events: LoopEmitted[] = [];
+    const tools = createExecutor(
+      [
+        {
+          point: 'tool.starting',
+          hook: (event) => {
+            perCall.push(event.toolCall.id);
+          },
+        },
+      ],
+      async ({ toolCall }) => {
+        executed.push(toolCall.name);
+        return { content: [] };
+      },
+    );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
       requester: () => scripted,
-      executor: {
-        execute: async ({ toolCall }: ToolExecuteInput) => {
-          executed.push(toolCall.name);
-          return { content: [] };
-        },
-      },
+      executor: tools,
       hooks: [
         {
           point: 'tool.batch-starting',
@@ -190,12 +215,6 @@ describe('tool.batch-starting', () => {
             blocked: { reason: 'denied' },
             result: { content: [{ type: 'text' as const, text: 'nope' }] },
           }),
-        },
-        {
-          point: 'tool.starting',
-          hook: (event) => {
-            perCall.push(event.toolCall.id);
-          },
         },
         {
           point: 'step.continuing',
@@ -236,9 +255,9 @@ describe('tool.batch-starting', () => {
       'tool',
       'assistant',
     ]);
-    const tools = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(tools.map((entry) => extractText(entry.message))).toEqual(['nope', 'nope']);
-    expect(tools.every((entry) => entry.meta?.isError === true)).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(entries.map((entry) => extractText(entry.message))).toEqual(['nope', 'nope']);
+    expect(entries.every((entry) => entry.meta?.isError === true)).toBe(true);
     expect(continuing).toEqual([1]);
     expect(stopping).toEqual([2]);
     await loop.close();
@@ -249,26 +268,29 @@ describe('tool.batch-starting', () => {
     const perCall: string[] = [];
     const batches: ToolBatchStartingEvent[] = [];
     const events: LoopEmitted[] = [];
+    const tools = createExecutor(
+      [
+        {
+          point: 'tool.starting',
+          hook: (event) => {
+            perCall.push(event.toolCall.id);
+          },
+        },
+      ],
+      async ({ toolCall }) => {
+        executed.push(toolCall.name);
+        return { content: [{ type: 'text' as const, text: 'ok' }] };
+      },
+    );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
       requester: () => scripted,
-      executor: {
-        execute: async ({ toolCall }: ToolExecuteInput) => {
-          executed.push(toolCall.name);
-          return { content: [{ type: 'text' as const, text: 'ok' }] };
-        },
-      },
+      executor: tools,
       hooks: [
         {
           point: 'tool.batch-starting',
           hook: (event) => {
             batches.push(event);
-          },
-        },
-        {
-          point: 'tool.starting',
-          hook: (event) => {
-            perCall.push(event.toolCall.id);
           },
         },
       ],
@@ -287,22 +309,14 @@ describe('tool.batch-starting', () => {
 });
 
 describe('tool.permitting', () => {
-  it('runs permitting hooks after all starting hooks regardless of registration order', async () => {
+  it('runs permitting after starting, emits the rewritten call, and stops on the result', async () => {
     const order: string[] = [];
     const seen: ToolCall[] = [];
     const executed: ToolCall[] = [];
     const events: LoopEmitted[] = [];
     const rewritten: ToolCall = { type: 'function', id: 'c1', name: 'alpha', arguments: '{"safe":true}' };
-    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({
-      requester: () => scripted,
-      executor: {
-        execute: async ({ toolCall }: ToolExecuteInput) => {
-          executed.push(toolCall);
-          return { content: [{ type: 'text' as const, text: 'ok' }] };
-        },
-      },
-      hooks: [
+    const tools = createExecutor(
+      [
         {
           point: 'tool.permitting',
           id: 'permission',
@@ -320,34 +334,39 @@ describe('tool.permitting', () => {
           },
         },
       ],
-    });
+      async ({ toolCall }) => {
+        executed.push(toolCall);
+        return { content: [{ type: 'text' as const, text: 'ok' }], stopTurn: true };
+      },
+    );
+    const scripted = requester([done('', [call('c1', 'alpha')])]);
+    const loop = createLoop({ requester: () => scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(order).toEqual(['starting', 'permitting']);
     expect(seen).toEqual([rewritten]);
     expect(executed).toEqual([rewritten]);
+    expect(events.filter((event) => event.type === 'tool.started')).toHaveLength(1);
     expect(events.find((event) => event.type === 'tool.started')).toMatchObject({ toolCall: rewritten });
+    expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
+      outcome: { type: 'succeeded', stopTurn: true },
+    });
     await loop.close();
   });
 
-  it('skips permitting hooks and the executor when a starting hook blocks', async () => {
+  it('skips permitting and execution on a starting block and honors blocked stopTurn', async () => {
     const permitting: string[] = [];
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({
-      requester: () => scripted,
-      executor: {
-        execute: async ({ toolCall }: ToolExecuteInput) => {
-          executed.push(toolCall.name);
-          return { content: [] };
-        },
-      },
-      hooks: [
+    const tools = createExecutor(
+      [
         {
           point: 'tool.starting',
           id: 'guard',
-          hook: () => ({ blocked: { reason: 'dirty' } }),
+          hook: () => ({
+            blocked: { reason: 'dirty' },
+            result: { content: [{ type: 'text' as const, text: 'nope' }], stopTurn: true },
+          }),
         },
         {
           point: 'tool.permitting',
@@ -356,13 +375,23 @@ describe('tool.permitting', () => {
           },
         },
       ],
-    });
+      async ({ toolCall }) => {
+        executed.push(toolCall.name);
+        return { content: [] };
+      },
+    );
+    const scripted = requester([done('', [call('c1', 'alpha')])]);
+    const loop = createLoop({ requester: () => scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
     expect(executed).toEqual([]);
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
-      outcome: { type: 'blocked', cause: { by: 'guard', reason: 'dirty' } },
+      outcome: {
+        type: 'blocked',
+        cause: { by: 'guard', reason: 'dirty' },
+        entry: { meta: { stopTurn: true } },
+      },
     });
     await loop.close();
   });
@@ -370,16 +399,8 @@ describe('tool.permitting', () => {
   it('settles a permitting block with attribution and lands the result in the history', async () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({
-      requester: () => scripted,
-      executor: {
-        execute: async ({ toolCall }: ToolExecuteInput) => {
-          executed.push(toolCall.name);
-          return { content: [] };
-        },
-      },
-      hooks: [
+    const tools = createExecutor(
+      [
         {
           point: 'tool.permitting',
           id: 'permission',
@@ -389,27 +410,30 @@ describe('tool.permitting', () => {
           }),
         },
       ],
-    });
+      async ({ toolCall }) => {
+        executed.push(toolCall.name);
+        return { content: [] };
+      },
+    );
+    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
+    const loop = createLoop({ requester: () => scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(executed).toEqual([]);
     expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
       outcome: { type: 'blocked', cause: { by: 'permission', reason: 'denied' } },
     });
-    const tools = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
-    expect(tools).toHaveLength(1);
-    expect(extractText(tools[0]!.message)).toBe('nope');
-    expect(tools[0]?.meta?.isError).toBe(true);
+    const entries = loop.state.messages.filter((entry): entry is ToolEntry => entry.message.role === 'tool');
+    expect(entries).toHaveLength(1);
+    expect(extractText(entries[0]!.message)).toBe('nope');
+    expect(entries[0]?.meta?.isError).toBe(true);
     await loop.close();
   });
 
-  it('reports permitting hook failures under the tool.permitting point', async () => {
+  it('reports hook failures and honors stopTurn on a failed outcome', async () => {
     const events: LoopEmitted[] = [];
-    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({
-      requester: () => scripted,
-      executor: { execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }) },
-      hooks: [
+    const tools = createExecutor(
+      [
         {
           point: 'tool.permitting',
           id: 'flaky-permission',
@@ -418,14 +442,35 @@ describe('tool.permitting', () => {
           },
         },
       ],
-    });
+      async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
+    );
+    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
+    const loop = createLoop({ requester: () => scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     const failed = events.filter((event) => event.type === 'hook.failed');
     expect(failed).toHaveLength(1);
     expect(failed[0]).toMatchObject({ point: 'tool.permitting', hookId: 'flaky-permission', paused: true });
-    expect(loop.hooks.list().find((hook) => hook.id === 'flaky-permission')?.paused).toBe(true);
+    expect(tools.hooks.list().find((hook) => hook.id === 'flaky-permission')?.paused).toBe(true);
+    const entry = loop.state.messages.find((item): item is ToolEntry => item.message.role === 'tool');
+    expect(extractText(entry!.message)).toContain('[hook failed] tool.permitting: oops');
     await loop.close();
+
+    const failedTools = createExecutor(
+      [{ point: 'tool.ending', hook: () => ({ stopTurn: true }) }],
+      async () => {
+        throw new Error('boom');
+      },
+    );
+    const failedScript = requester([done('', [call('c1', 'alpha')])]);
+    const failedLoop = createLoop({ requester: () => failedScript, executor: failedTools });
+    const failedEvents: LoopEmitted[] = [];
+    failedLoop.subscribe((event) => failedEvents.push(event));
+    expect((await failedLoop.runTurn(prompt('work'))).type).toBe('done');
+    expect(failedEvents.find((event) => event.type === 'tool.ended')).toMatchObject({
+      outcome: { type: 'failed', entry: { meta: { stopTurn: true } } },
+    });
+    await failedLoop.close();
   });
 });
 

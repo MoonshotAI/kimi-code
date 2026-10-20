@@ -74,7 +74,7 @@ async function openAgent(
   enabled: boolean,
 ): Promise<{ seen: ToolDescription[][]; harness: Harness; runTurn: () => Promise<unknown> }> {
   const harness = createHarness({ space: memoryHarnessSpace() });
-  await harness.app.features.add(
+  harness.app.features.add(
     createToolSelect({ loadable: () => [fakeTool], enabled: () => enabled }),
   );
   const session = await harness.app.create({ sessionId: 's1' });

@@ -24,7 +24,7 @@ await harness.app.features.add(
 
 | Option | Default | Meaning |
 |---|---|---|
-| `server` | created via `createHttpServer({ corsOrigins })` | bring your own `Http` — then the feature neither calls `listen` nor closes it |
+| `server` | created via `createHttpServer` | bring your own `Http` — then the feature neither calls `listen` nor closes it |
 | `listen` | — | `{ port?, host? }`; tracked with `useReady` (only when the feature owns the server), so startup failures surface |
 | `prefix` | `'/api/v1'` (`DEFAULT_HTTP_PREFIX`) | base path of the v1 API |
 | `version` | — | reported by the meta route |
@@ -33,6 +33,68 @@ await harness.app.features.add(
 | `openInApps` | — | advertised "open in" applications on the meta route |
 | `corsOrigins` | — | CORS allow-list (only when the feature owns the server) |
 | `wsHeartbeatMs` | — | WebSocket heartbeat interval |
+| `authTokenService` | created from `homeDir` | custom credential service (`isValid(candidate)`; `getToken()` is optional) |
+| `disableAuth` | `false` | disable REST and WebSocket checks without disabling token-service creation |
+| `homeDir` | `KIMI_CODE_HOME` or `~/.kimi-code` | home of the persistent `server.token` |
+| `rpcToken` | — | additional timing-safe Bearer credential |
+| `allowedHosts` | `KIMI_CODE_ALLOWED_HOSTS` | extra exact or leading-dot Host allow-list entries; option and env are merged |
+| `disableHostCheck` | `KIMI_CODE_DISABLE_HOST_CHECK=1` | disable Host validation; the explicit option takes precedence |
+| `bindClass` | `'public'` for wildcard binds | optional `'lan'/'public'` override for wildcard addresses only |
+
+## Bearer Auth
+
+By default, `listen` creates `<homeDir>/server.token` before binding and enables
+authentication. The file is written atomically with mode `0600` and reused on
+subsequent starts. `rotateServerToken(homeDir)` rotates it atomically; the next
+credential check rereads the file, so the old token stops working without a
+restart. `KIMI_CODE_PASSWORD` adds a bcrypt-hashed password credential, and
+`rpcToken` adds a separate timing-safe credential.
+
+```ts
+await harness.app.features.add(
+  createHttp({
+    homeDir,
+    rpcToken,
+    listen: { port: 8787, host: '127.0.0.1' },
+  }),
+);
+```
+
+A custom `authTokenService` replaces the default persistent/password service;
+`rpcToken` still applies. Its `getToken()` method is optional, but Remote Control
+needs it. After `listen`, read it through `server.authTokenService?.getToken?.()`
+so rotation is observed rather than captured once.
+
+Protected API routes require `Authorization: Bearer <token>`. Missing or invalid
+credentials return HTTP 401 with error code `40101`. `OPTIONS`, the v1 health
+check, and non-API static assets remain public. Both WebSocket endpoints accept
+the same Authorization header; `/api/v1/ws` also accepts the
+`kimi-code.bearer.<token>` subprotocol.
+
+`disableAuth: true` disables checks but still initializes the default service.
+The `/meta` route reports this as `dangerous_bypass_auth: true`.
+
+When bringing your own server, configure security on that server instead of
+passing the same options again to `createHttp`:
+
+```ts
+const server = createHttpServer({ homeDir, rpcToken, corsOrigins: ['app://renderer'] });
+await server.listen();
+await harness.app.features.add(createHttp({ server }));
+```
+
+## Transport Protections
+
+- HTTP validates Host before CORS and auth; invalid Host returns HTTP 403 with
+  `40301`. `allowedHosts` and `KIMI_CODE_ALLOWED_HOSTS` are merged.
+- WebSocket upgrades check Host, then Origin, then credentials. Host or Origin
+  rejection returns raw HTTP 403; credential rejection returns raw HTTP 401.
+- Non-loopback REST auth allows 10 failures per source IP in 60 seconds, then
+  bans for 60 seconds. The next request returns HTTP 429 with `42901`, even with
+  a valid credential. WS upgrades are not rate-limited.
+- Non-loopback HTTP responses carry `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer`, and the kap-compatible CSP. Loopback responses
+  omit them. The built-in plain-HTTP server does not emit HSTS.
 
 ## What Gets Registered
 
@@ -43,7 +105,7 @@ One `createHttp` mounts four route layers plus WebSocket endpoints:
   `config`, `tools`, `shutdown`, `connections` — the core session/agent API.
 - **Feature facade routes** (`useFeatureFacadeRoutes`, at `<prefix>`): one
   route group per product feature — `sessionTitle`, `sessionExport`,
-  `status`, `goal`, `skill`, `task`, `interaction`, `remote-control`,
+  `status`, `skill`, `task`, `interaction`, `remote-control`,
   `models-dev`, `plugin`, `mcp`, `compaction`, `btw`, `workspaces`, `fs`,
   `capabilities`, `auth`, `fileHistory`, `files`, `sessionMedia`,
   `transcript`. Each group degrades to an error response when its feature
@@ -56,8 +118,8 @@ One `createHttp` mounts four route layers plus WebSocket endpoints:
   `WsV1BroadcasterRef`.
 
 The server itself is exposed as `HttpRef` (`route`, `upgrade`, `listen`,
-`close`, `origin`) — other features (ACP, remote-control) inject it the
-same way route handlers do.
+`close`, `origin`, `dangerousBypassAuth`, `authTokenService`) — other features
+(ACP, remote-control) inject it the same way route handlers do.
 
 ## Add Your Own Routes
 
@@ -157,7 +219,7 @@ your own channels.
 
 ## See Also
 
-- `example/app.ts` mounts `createHttp` with CORS and port env handling.
+- `example/app.ts` mounts `createHttp` with its persistent-token home, CORS, and port env handling; `example/index.ts` prints a token-bearing access URL.
 - [Facades](../reference/facades.md) — the tokens your handlers will resolve.
 - [Events](../reference/events.md) — for push channels, `app.on` inside the
   transport feature beats polling facades.

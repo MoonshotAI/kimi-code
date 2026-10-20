@@ -58,15 +58,58 @@ const reply =
   });
 
 describe('createToolExecutor', () => {
-  it('dispatches a registered handler and leaves a short result untouched', async () => {
+  it('adjudicates once before execution and short-circuits blocked calls', async () => {
     const tools = createToolExecutor();
     const result: ToolResult = { content: [{ type: 'text', text: 'ok' }], stopTurn: false };
-    tools.register('lookup', { execute: async () => result });
+    let calls = 0;
+    tools.register('lookup', {
+      execute: async () => {
+        calls += 1;
+        return result;
+      },
+    });
     await expect(tools.execute(input('lookup'))).resolves.toBe(result);
     await expect(tools.execute(input('missing'))).resolves.toEqual({
       content: [{ type: 'text', text: 'unknown tool: missing' }],
       isError: true,
     });
+
+    const rewritten = { ...call('lookup'), arguments: '{"safe":true}' };
+    const adjudicated: Array<{ toolCall: ToolCall; blocked?: string }> = [];
+    const failures: Array<{ point: string; paused: boolean; blocking: boolean }> = [];
+    tools.hooks.add({ point: 'tool.starting', hook: () => ({ toolCall: rewritten }) });
+    const execute = (name: string) =>
+      tools.execute({
+        ...input(name),
+        onAdjudicated: (toolCall, blocked) => adjudicated.push({ toolCall, blocked: blocked?.reason }),
+        onHookFailure: (point, failure) =>
+          failures.push({ point, paused: failure.paused, blocking: failure.blocking }),
+      });
+    await expect(execute('lookup')).resolves.toBe(result);
+    tools.hooks.add({ point: 'tool.permitting', id: 'deny', hook: () => ({ blocked: { reason: 'no' } }) });
+    await expect(execute('lookup')).resolves.toMatchObject({
+      isError: true,
+      blocked: { by: 'deny', reason: 'no' },
+    });
+    tools.hooks.add({
+      point: 'tool.starting',
+      id: 'strict',
+      onFailure: 'block',
+      hook: () => {
+        throw new Error('bad');
+      },
+    });
+    await expect(execute('lookup')).resolves.toMatchObject({
+      isError: true,
+      blocked: { by: 'strict', reason: 'hook_failed' },
+    });
+    expect(calls).toBe(2);
+    expect(adjudicated).toEqual([
+      { toolCall: rewritten, blocked: undefined },
+      { toolCall: rewritten, blocked: 'no' },
+      { toolCall: rewritten, blocked: 'hook_failed' },
+    ]);
+    expect(failures).toEqual([{ point: 'tool.starting', paused: false, blocking: true }]);
   });
 
   it('skips an invalidated handler until restore', async () => {
@@ -119,14 +162,19 @@ describe('createToolExecutor', () => {
     expect(idle).toEqual(['old']);
   });
 
-  it('truncates text parts and keeps the rest of the result', async () => {
+  it('applies ending replacements before truncating and preserves result metadata', async () => {
     const image: ContentPart = { type: 'image_url', source: { kind: 'url', url: 'https://example.test/a.png' } };
     const tools = createToolExecutor({ policy: { maxResultChars: 5 } });
-    tools.register('lookup', {
-      execute: async () => ({
-        content: [{ type: 'text', text: 'hello world' }, image, { type: 'text', text: 'tail' }],
-        isError: true,
-        stopTurn: true,
+    tools.register('lookup', { execute: async () => ({ content: [{ type: 'text', text: 'discard' }] }) });
+    tools.hooks.add({
+      point: 'tool.ending',
+      hook: () => ({
+        result: {
+          content: [{ type: 'text' as const, text: 'hello world' }, image, { type: 'text' as const, text: 'tail' }],
+          isError: true as const,
+          stopTurn: true,
+          blocked: { reason: 'policy' },
+        },
       }),
     });
     const truncated = await tools.execute(input('lookup'));
@@ -137,6 +185,7 @@ describe('createToolExecutor', () => {
     ]);
     expect(truncated.isError).toBe(true);
     expect(truncated.stopTurn).toBe(true);
+    expect(truncated.blocked).toEqual({ reason: 'policy' });
     expect(() => createToolExecutor({ policy: { maxResultChars: -1 } })).toThrow(TypeError);
   });
 

@@ -7,6 +7,7 @@ import {
 } from '@moonshot-ai/agent-core/history/index';
 import { extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopHooks } from '@moonshot-ai/agent-core/loop/index';
+import type { ToolHooks } from '@moonshot-ai/agent-core/tool/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 import { parse } from '@moonshot-ai/tree-sitter-bash';
 
@@ -63,7 +64,7 @@ export interface OpenAgentsMdReminderDeps {
 
 export interface AgentsMdReminderService {
   seed(paths: readonly string[]): void;
-  readonly toolEnding: LoopHooks['tool.ending'];
+  readonly toolEnding: ToolHooks['tool.ending'];
   readonly stepStarting: LoopHooks['step.starting'];
 }
 

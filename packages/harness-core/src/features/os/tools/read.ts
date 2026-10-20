@@ -1,6 +1,13 @@
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
+  isKimiFileUrl,
+  readStoredFile,
+  type KimiFileRegistry,
+  type StoredFile,
+} from '#/features/files/index';
+import { readUtf8Lines } from '#/features/os/host/execEnv/decodeText';
+import {
   unwrapErrorCause,
   type HostFileStat,
   type OsFsPort,
@@ -38,6 +45,7 @@ export interface CreateReadToolProps {
     readonly additionalDirs?: readonly string[];
   };
   readonly limits?: () => ReadToolLimits;
+  readonly files?: () => Pick<KimiFileRegistry, 'open'> | undefined;
 }
 
 interface ResolvedReadLimits {
@@ -238,8 +246,18 @@ function composeResultText(output: string, note: string | undefined): string {
   return note === undefined || note.length === 0 ? body : `${body}\n${note}`;
 }
 
+type ReadFs = Pick<OsFsPort, 'stat' | 'readBytes' | 'readLines'>;
+
+function attachmentReadFs(file: StoredFile): ReadFs {
+  return {
+    stat: () => Promise.resolve({ isFile: true, isDirectory: false, size: file.meta.size }),
+    readBytes: (_path, n) => readStoredFile(file, n),
+    readLines: () => readUtf8Lines(file.stream(), 'strict'),
+  };
+}
+
 async function executeRead(
-  fs: OsFsPort,
+  fs: ReadFs,
   args: ReadArguments,
   path: string,
   limits: ResolvedReadLimits,
@@ -646,23 +664,36 @@ export function createReadTool(props: CreateReadToolProps): ToolDefinition {
         return errorText('column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.');
       }
       await props.host.environment.ready;
+      let fs: ReadFs = props.host.fs;
       let path: string;
-      try {
-        path = resolvePathAccessPath(args.path, {
-          env: props.host.environment,
-          workspace: {
-            workspaceDir: props.workspace.workDir,
-            additionalDirs: props.workspace.additionalDirs ?? [],
-          },
-          operation: 'read',
-        });
-      } catch (error) {
-        if (error instanceof PathSecurityError) {
-          return errorText(error.message);
+      if (isKimiFileUrl(args.path)) {
+        const files = props.files?.();
+        const file = files === undefined ? undefined : await files.open(args.path);
+        if (file === undefined) {
+          return errorText(
+            `Attachment ${JSON.stringify(args.path)} is not available in the current session.`,
+          );
         }
-        throw error;
+        fs = attachmentReadFs(file);
+        path = file.meta.name;
+      } else {
+        try {
+          path = resolvePathAccessPath(args.path, {
+            env: props.host.environment,
+            workspace: {
+              workspaceDir: props.workspace.workDir,
+              additionalDirs: props.workspace.additionalDirs ?? [],
+            },
+            operation: 'read',
+          });
+        } catch (error) {
+          if (error instanceof PathSecurityError) {
+            return errorText(error.message);
+          }
+          throw error;
+        }
       }
-      const result = await executeRead(props.host.fs, args, path, limits());
+      const result = await executeRead(fs, args, path, limits());
       if (result.isError === true) {
         const failure = result.note !== undefined ? `${result.output}\n${result.note}` : result.output;
         return errorText(failure);

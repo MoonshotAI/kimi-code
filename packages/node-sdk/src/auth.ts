@@ -1,4 +1,12 @@
 import {
+  loadRuntimeConfigSafe,
+  readConfigFile,
+  readConfigFileForUpdate,
+  writeConfigFile,
+  type KimiConfig,
+  type OAuthRef,
+} from '#/config/index';
+import {
   applyManagedKimiCodeConfig,
   applyManagedKimiCodeLogoutConfig,
   KIMI_CODE_PROVIDER_NAME,
@@ -16,17 +24,10 @@ import {
   type KimiOAuthLoginOptions,
   type KimiRegion,
   type ManagedKimiConfigShape,
-  type ManagedKimiOAuthRefInput,
   type OAuthRefreshOutcome,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import {
-  createStandaloneKimiAuthConfigAccessor,
-  type KimiAuthConfigAccessor,
-} from '#/config-accessor';
 import { mapOAuthTokenError } from '#/oauth-error';
-
-export type OAuthRef = ManagedKimiOAuthRefInput;
 
 export interface KimiAuthSubmitFeedbackInput {
   readonly content: string;
@@ -73,6 +74,13 @@ export type KimiAuthCreateFeedbackUploadUrlResult =
   | FetchFeedbackUploadError;
 
 export type KimiAuthLoginOptions = Omit<KimiOAuthLoginOptions, 'provisionConfig'> & {
+  /**
+   * Explicit region choice from the login UI ('mainland-cn' / 'global'). Maps
+   * to the region profile's OAuth/API hosts — including for 'mainland-cn', so
+   * switching back overrides a persisted global login. Yields to
+   * `KIMI_CODE_OAUTH_HOST` / `KIMI_CODE_BASE_URL` env overrides and to
+   * explicit `oauthHost` / `baseUrl` options.
+   */
   readonly region?: KimiRegion;
 };
 
@@ -92,27 +100,29 @@ export interface KimiAuthLogoutResult {
 export interface KimiAuthFacadeOptions {
   readonly homeDir: string;
   readonly configPath: string;
-  readonly config?: KimiAuthConfigAccessor;
   readonly identity?: KimiHostIdentity | undefined;
+  readonly onConfigUpdated?: ((config: KimiConfig) => void) | undefined;
   readonly onRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 }
 
-type SDKManagedConfig = ManagedKimiConfigShape;
+type SDKManagedConfig = KimiConfig & ManagedKimiConfigShape;
 
 export class KimiAuthFacade {
   private readonly toolkit: KimiOAuthToolkit<SDKManagedConfig>;
-  private readonly config: KimiAuthConfigAccessor;
 
   constructor(private readonly options: KimiAuthFacadeOptions) {
-    this.config = options.config ?? createStandaloneKimiAuthConfigAccessor(options.configPath);
     this.toolkit = new KimiOAuthToolkit<SDKManagedConfig>({
       homeDir: options.homeDir,
       identity: options.identity,
       onRefresh: options.onRefresh,
       configAdapter: {
         configPath: options.configPath,
-        read: () => this.config.read(),
-        write: (config) => this.config.write(config),
+        // Write-path base read: strict (a salvaged base would drop the user's
+        // broken-but-fixable sections on rewrite) with an actionable message.
+        read: () => readConfigFileForUpdate(options.configPath) as SDKManagedConfig,
+        write: async (config) => {
+          await writeConfigFile(options.configPath, config);
+        },
         apply: applyManagedKimiCodeConfig,
         remove: applyManagedKimiCodeLogoutConfig,
       },
@@ -120,10 +130,7 @@ export class KimiAuthFacade {
   }
 
   async status(providerName?: string | undefined): Promise<AuthStatus> {
-    return this.toolkit.status(
-      providerName,
-      (await this.resolveRuntimeManagedAuth(providerName)).oauthRef,
-    );
+    return this.toolkit.status(providerName, this.resolveRuntimeManagedAuth(providerName).oauthRef);
   }
 
   async login(
@@ -132,7 +139,7 @@ export class KimiAuthFacade {
   ): Promise<KimiAuthLoginResult> {
     const { region, ...loginOptions } = options;
     const regionHosts = region === undefined ? undefined : kimiRegionLoginHosts(region);
-    const auth = await this.resolveManagedAuth(providerName);
+    const auth = this.resolveManagedAuth(providerName);
     const loginAuth = resolveKimiCodeLoginAuth({
       configuredBaseUrl: auth.baseUrl,
       configuredOAuthRef: auth.oauthRef,
@@ -149,6 +156,8 @@ export class KimiAuthFacade {
     if (result.provision === undefined) {
       throw new Error('Kimi auth login did not provision model config.');
     }
+    const updated = readConfigFile(this.options.configPath);
+    this.options.onConfigUpdated?.(updated);
     return {
       providerName: result.providerName,
       ok: true,
@@ -161,8 +170,10 @@ export class KimiAuthFacade {
   async logout(providerName?: string | undefined): Promise<KimiAuthLogoutResult> {
     const result = await this.toolkit.logout(
       providerName,
-      (await this.resolveRuntimeManagedAuth(providerName)).oauthRef,
+      this.resolveRuntimeManagedAuth(providerName).oauthRef,
     );
+    const updated = readConfigFile(this.options.configPath);
+    this.options.onConfigUpdated?.(updated);
     return {
       providerName: result.providerName,
       ok: result.ok,
@@ -170,7 +181,7 @@ export class KimiAuthFacade {
   }
 
   async getManagedUsage(providerName?: string | undefined): Promise<AuthManagedUsageResult> {
-    const auth = await this.resolveRuntimeManagedAuth(providerName);
+    const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.getManagedUsage(providerName, {
       oauthRef: auth.oauthRef,
       baseUrl: auth.baseUrl,
@@ -181,7 +192,7 @@ export class KimiAuthFacade {
     input: KimiAuthSubmitFeedbackInput,
     providerName?: string | undefined,
   ): Promise<FetchSubmitFeedbackResult> {
-    const auth = await this.resolveRuntimeManagedAuth(providerName);
+    const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.submitFeedback(
       {
         session_id: input.sessionId,
@@ -204,7 +215,7 @@ export class KimiAuthFacade {
     input: KimiAuthCreateFeedbackUploadUrlInput,
     providerName?: string | undefined,
   ): Promise<KimiAuthCreateFeedbackUploadUrlResult> {
-    const auth = await this.resolveRuntimeManagedAuth(providerName);
+    const auth = this.resolveRuntimeManagedAuth(providerName);
     const result = await this.toolkit.createFeedbackUploadUrl(
       {
         file_hash: input.sha256,
@@ -235,7 +246,7 @@ export class KimiAuthFacade {
     input: KimiAuthCompleteFeedbackUploadInput,
     providerName?: string | undefined,
   ): Promise<FetchCompleteFeedbackUploadResult> {
-    const auth = await this.resolveRuntimeManagedAuth(providerName);
+    const auth = this.resolveRuntimeManagedAuth(providerName);
     return this.toolkit.completeFeedbackUpload(
       {
         upload_id: input.uploadId,
@@ -255,7 +266,7 @@ export class KimiAuthFacade {
   ): Promise<string | undefined> {
     return this.toolkit.getCachedAccessToken(
       providerName,
-      await this.runtimeOAuthRef(providerName, oauthRef),
+      this.runtimeOAuthRef(providerName, oauthRef),
     );
   }
 
@@ -263,53 +274,56 @@ export class KimiAuthFacade {
     providerName: string,
     oauthRef?: OAuthRef | undefined,
   ): BearerTokenProvider => {
+    const provider = this.toolkit.tokenProvider(
+      providerName,
+      this.runtimeOAuthRef(providerName, oauthRef),
+    );
     return {
       getAccessToken: async (options) => {
         try {
-          const provider = this.toolkit.tokenProvider(
-            providerName,
-            await this.runtimeOAuthRef(providerName, oauthRef),
-          );
           return await provider.getAccessToken(options);
         } catch (error) {
+          // Classify OAuth token failures into the public KimiError protocol;
+          // unrecognized errors are rethrown raw (see mapOAuthTokenError).
           throw mapOAuthTokenError(error, providerName) ?? error;
         }
       },
     };
   };
 
-  private async resolveManagedAuth(providerName?: string | undefined): Promise<{
+  private resolveManagedAuth(providerName?: string | undefined): {
     readonly oauthRef?: OAuthRef | undefined;
     readonly baseUrl?: string | undefined;
-  }> {
+  } {
     const name = providerName ?? KIMI_CODE_PROVIDER_NAME;
-    const config = await this.config.read();
-    const provider = config.providers[name] as
-      | { readonly oauth?: OAuthRef | undefined; readonly baseUrl?: string | undefined }
-      | undefined;
+    // Read path: token/status resolution must work off a degraded config
+    // instead of failing the session when an unrelated section is broken.
+    // Write paths (the toolkit's configAdapter.read) stay strict.
+    const config = loadRuntimeConfigSafe(this.options.configPath).config;
+    const provider = config.providers[name];
     return {
       oauthRef: provider?.oauth,
       baseUrl: provider?.baseUrl,
     };
   }
 
-  private async resolveRuntimeManagedAuth(providerName?: string | undefined): Promise<{
+  private resolveRuntimeManagedAuth(providerName?: string | undefined): {
     readonly oauthRef: OAuthRef;
     readonly baseUrl?: string | undefined;
-  }> {
-    const auth = await this.resolveManagedAuth(providerName);
+  } {
+    const auth = this.resolveManagedAuth(providerName);
     return resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: auth.baseUrl,
       configuredOAuthRef: auth.oauthRef,
     });
   }
 
-  private async runtimeOAuthRef(
+  private runtimeOAuthRef(
     providerName: string | undefined,
     oauthRef?: OAuthRef | undefined,
-  ): Promise<OAuthRef | undefined> {
+  ): OAuthRef | undefined {
     if ((providerName ?? KIMI_CODE_PROVIDER_NAME) !== KIMI_CODE_PROVIDER_NAME) return oauthRef;
-    const auth = await this.resolveManagedAuth(providerName);
+    const auth = this.resolveManagedAuth(providerName);
     return resolveKimiCodeRuntimeAuth({
       configuredBaseUrl: auth.baseUrl,
       configuredOAuthRef: oauthRef ?? auth.oauthRef,

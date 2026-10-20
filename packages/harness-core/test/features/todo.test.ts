@@ -87,8 +87,8 @@ describe('todo feature', () => {
   it('writes todos through the TodoList tool, folds state, fires events and reminds when stale', async () => {
     const harness = createHarness({ space: memoryHarnessSpace() });
     const probe = captureFacade();
-    await harness.app.features.add(todo);
-    await harness.app.features.add(probe.feature);
+    harness.app.features.add(todo);
+    harness.app.features.add(probe.feature);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', todoTurnsRequester([['read code', 'add tests'], null, null, null]));
@@ -139,8 +139,8 @@ describe('todo feature', () => {
     const space = memoryHarnessSpace();
     const harness = createHarness({ space });
     const probe = captureFacade();
-    await harness.app.features.add(todo);
-    await harness.app.features.add(probe.feature);
+    harness.app.features.add(todo);
+    harness.app.features.add(probe.feature);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', todoTurnsRequester([['task-a'], ['task-b']]));

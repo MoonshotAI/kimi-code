@@ -1,9 +1,7 @@
 import type { HistoryMessage, UserEntry } from '#/history/message';
 import type { ToolDescription } from '#/llm/message';
 import { isEntry, isObject } from '../guards';
-import type { LoopAck } from './emitted';
 import type { RemindEntry, TurnTrigger } from './inbox';
-import type { TurnOutcome } from './outcome';
 
 export interface UnfinishedTurn {
   readonly turnId: number;
@@ -30,36 +28,18 @@ export interface LoopInput {
   readonly unfinished?: UnfinishedTurn;
 }
 
-export type TurnReply = (outcome?: TurnOutcome) => void;
-
 export type LoopCommand =
-  | { type: 'input.run_turn'; entry: UserEntry; reply: TurnReply }
-  | { type: 'input.submit'; entry: UserEntry; reply?: (event: LoopAck<'prompt.submitted'>) => void }
-  | { type: 'input.cancel'; promptId: string; reply?: (event: LoopAck<'prompt.canceled'>) => void }
-  | { type: 'input.steer'; promptIds: readonly string[]; reply?: (event: LoopAck<'prompt.steered'>) => void }
-  | { type: 'input.notify'; entry: UserEntry; reply?: (event: LoopAck<'prompt.notified'>) => void }
-  | { type: 'input.remind'; entry: RemindEntry; reply?: (event: LoopAck<'prompt.reminded'>) => void }
-  | { type: 'input.abort_turn'; reason?: unknown }
-  | { type: 'input.abort_tool'; toolCallId: string; reason?: unknown }
+  | { type: 'input.run_turn'; entry: UserEntry }
+  | { type: 'input.submit'; entry: UserEntry }
+  | { type: 'input.cancel'; promptId: string }
+  | { type: 'input.steer'; promptIds: readonly string[] }
+  | { type: 'input.notify'; entry: UserEntry }
+  | { type: 'input.remind'; entry: RemindEntry }
+  | { type: 'input.abort_tool'; toolCallId: string }
   | { type: 'input.detach_tool'; toolCallId: string }
-  | {
-      type: 'input.set_context';
-      messages: HistoryMessage[];
-      reason?: string;
-      reply?: (event: LoopAck<'context.settled' | 'context.rejected'>) => void;
-    }
-  | {
-      type: 'input.set_system_prompt';
-      systemPrompt?: string;
-      reply?: (event: LoopAck<'system_prompt.settled' | 'system_prompt.rejected'>) => void;
-    }
-  | {
-      type: 'input.set_tools';
-      tools: readonly ToolDescription[];
-      reply?: (event: LoopAck<'tools.settled' | 'tools.rejected'>) => void;
-    }
-  | { type: 'input.continue' }
-  | { type: 'input.close' };
+  | { type: 'input.set_context'; messages: HistoryMessage[] }
+  | { type: 'input.set_system_prompt'; systemPrompt?: string }
+  | { type: 'input.set_tools'; tools: readonly ToolDescription[] };
 
 function isUserEntry(value: unknown): value is UserEntry {
   return isEntry(value) && value.message.role === 'user';

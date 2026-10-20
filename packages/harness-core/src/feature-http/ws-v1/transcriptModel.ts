@@ -243,14 +243,6 @@ export interface TranscriptPrompt {
   readonly steeredAt?: string;
 }
 
-export interface GoalMeta {
-  readonly objective: string;
-  readonly status: 'active' | 'paused' | 'blocked' | 'complete';
-  readonly completionCriterion?: string;
-  readonly budgetUsed?: number;
-  readonly budgetLimit?: number;
-}
-
 export interface ModesMetaMerge {
   readonly plan?: { readonly reviewPath?: string; readonly version?: number } | null;
   readonly swarm?: { readonly trigger?: string } | null;
@@ -277,7 +269,6 @@ export interface AgentStatusMeta {
 }
 
 export interface TranscriptMeta {
-  readonly goal?: GoalMeta;
   readonly modes?: {
     readonly plan?: { readonly reviewPath?: string; readonly version?: number };
     readonly swarm?: { readonly trigger?: string };
@@ -287,9 +278,8 @@ export interface TranscriptMeta {
   readonly agent?: AgentStatusMeta;
 }
 
-export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes' | 'goal'> & {
+export type TranscriptMetaMerge = Omit<TranscriptMeta, 'modes'> & {
   readonly modes?: ModesMetaMerge;
-  readonly goal?: GoalMeta | null;
 };
 
 export interface AgentTranscriptSnapshot {

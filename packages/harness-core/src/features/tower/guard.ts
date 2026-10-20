@@ -1,6 +1,6 @@
 import { isAbsolute, join, resolve } from 'pathe';
 
-import type { LoopHooks, ToolStartingDecision } from '@moonshot-ai/agent-core/loop/index';
+import type { ToolHooks, ToolStartingDecision } from '@moonshot-ai/agent-core/tool/index';
 
 import { isWithinDirectory } from '#/features/os/path-access';
 
@@ -28,7 +28,7 @@ export function createTowerGuard(deps: {
   readonly isTowerWorker: () => boolean;
   readonly backgroundAvailable: () => boolean;
   readonly newStore: () => TowerStore;
-}): LoopHooks['tool.starting'] {
+}): ToolHooks['tool.starting'] {
   const { ready, agentId, workDir, isActive, isTowerWorker, backgroundAvailable, newStore } = deps;
   return async ({ toolCall }) => {
     await ready;

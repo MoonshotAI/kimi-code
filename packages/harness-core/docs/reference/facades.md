@@ -17,7 +17,6 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 | `InteractionRef` | interaction | session | `Interactions` — request/enqueue/respond/findAll/wait for approval, question, and user-tool interactions (helper: `useInteractions()`) |
 | `PermissionRef` | permission | agent | `{ state, mode, setMode, setModeAndBroadcast, addRules }` — permission mode and rules |
 | `PlanRef` | plan | agent | `{ state, enter, cancel, clear, exit, recordRevision, status }` — plan mode control |
-| `GoalRef` | goal | agent | `{ state, getGoal, createGoal, pauseGoal, resumeGoal, setBudgetLimits, cancelGoal, markBlocked, markComplete, pauseOnInterrupt }` |
 | `CronRef` | cron | agent | `{ tasks, now, isDisabled, addTask, removeTasks, getTask, list, isStale, getNextFireForTask, computeDisplayNextFire, tick }` |
 | `TaskRef` | task | agent | `{ records, stop, detach }` — background task tracking |
 | `SkillCatalogRef` | skill | app | `{ ready, list, get, renderSkillPrompt, getModelSkillListing, getKimiSkillsDescription, listInvocableSkills, roots, skipped, reload }` — the skill catalog |
@@ -45,7 +44,8 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 | `SessionIndexRef` | sessionIndex | app | `{ get, list, listByWorkspace, listAll }` — the searchable session index |
 | `SessionExportRef` | sessionExport | app | `{ export }` — export a session archive |
 | `SessionInitRef` | sessionInit | session | `{ generateAgentsMd, cancelInit }` — AGENTS.md initialization |
-| `FilesRef` | files | app | `{ save, open }` — the session file library |
+| `FilesRef` | files | app | `{ save, open }` — the global staged upload library |
+| `KimiFileRegistryRef` | files | session | `{ put, get, open, materialize }` — session-owned `kimi-file://` references, backed by durable ID-to-blob mappings |
 | `FileHistoryRef` | fileHistory | agent | `{ history, settled, captureForActiveTurn, changes, turnRecorded }` — per-turn file snapshots |
 | `ProfileCatalogRef` | profiles | app | the agent-profile catalog (`ready`, `reload`, plus `ProfileCatalog`) |
 | `ModelsDevRef` | models-dev | app | `{ listProviders, getProvider, importProvider, importRegistry, refreshRegistries }` — models.dev imports |
@@ -81,8 +81,9 @@ Not facades, but part of the contribution surface (`useContribute` /
 
 | Token | Feature | Content |
 |---|---|---|
-| `Providers` | provider-catalog | `ProviderContribution`s — provider handles, info, model seeds |
+| `Providers` | provider-catalog | `ProviderContribution`s — provider handles and optional init info |
 | `ProviderProtocols` | provider-catalog | protocol factories per provider `type` |
+| `ProviderRefreshers` | provider-catalog | refresh channels returning `config key → complete model record` |
 | `CatalogModels` | provider-catalog | the resolved `CatalogModelBinding` list |
 | `CredentialResolvers` | provider-catalog | credential providers per provider info |
 | `ConfigSections` / `ConfigOverlays` | config | declared config sections / env overlays |

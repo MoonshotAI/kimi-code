@@ -244,7 +244,7 @@ export class UnitNode {
   deliver(event: RuntimeEvent): boolean {
     const enriched = { ...Object.assign({}, ...this.fold(EventContext)), ...event } as RuntimeEvent;
     let handled = false;
-    for (const unit of [...lineage(this)]) {
+    for (const unit of Array.from(lineage(this))) {
       if (unit.state !== 'active') {
         continue;
       }
@@ -253,7 +253,7 @@ export class UnitNode {
         if (list === undefined) {
           continue;
         }
-        for (const listener of [...list]) {
+        for (const listener of list.slice()) {
           if (!listener.live || unit.state !== 'active') {
             continue;
           }
@@ -396,7 +396,7 @@ export class UnitNode {
     for (;;) {
       if (this.state === 'disposing' || this.state === 'disposed') {
         await this.releaseOnce();
-        throw this.reason ?? new Error(`unit '${this.name}' is unmounted`);
+        await Promise.reject(this.reason ?? new Error(`unit '${this.name}' is unmounted`));
       }
       const version = this.version;
       await Promise.all([

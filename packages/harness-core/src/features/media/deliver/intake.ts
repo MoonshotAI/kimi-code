@@ -13,6 +13,7 @@ import { persistOriginalImage } from '../transform/originals';
 
 export interface CreateMediaIntakeProps {
   readonly putMedia: (content: MediaContent) => Promise<string>;
+  readonly materialize: (reference: string) => Promise<void>;
   readonly limits: () => ImageLimits;
   readonly originalsDir?: string;
   readonly fs?: OsFsPort;
@@ -28,6 +29,9 @@ export function createMediaIntake(
     const content: ContentPart[] = [];
     let changed = false;
     for (const part of entry.message.content) {
+      if (part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url') {
+        if (part.source.kind === 'store') await props.materialize(part.source.ref);
+      }
       if (part.type !== 'image_url' || part.source.kind !== 'inline') {
         content.push(part);
         continue;

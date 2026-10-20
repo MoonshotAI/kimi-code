@@ -915,17 +915,17 @@ async function startApp(opts?: {
   const harness = createHarness({ space: memoryHarnessSpace() });
   const planProbe = capturePlanFaces();
   if (opts?.withPlan === true) {
-    await harness.app.features.add(interaction);
-    await harness.app.features.add(createPlan());
+    harness.app.features.add(interaction);
+    harness.app.features.add(createPlan());
   }
-  await harness.app.features.add(createTask());
-  await harness.app.features.add(tower);
+  harness.app.features.add(createTask());
+  harness.app.features.add(tower);
   const probe = captureTowerFaces();
-  await harness.app.features.add(probe.feature);
-  if (opts?.withPlan === true) await harness.app.features.add(planProbe.feature);
-  await harness.app.features.add(bindTestTools());
+  harness.app.features.add(probe.feature);
+  if (opts?.withPlan === true) harness.app.features.add(planProbe.feature);
+  harness.app.features.add(bindTestTools());
   const calls: LlmCall[] = [];
-  await harness.app.features.add(bindTestLlm(calls, opts?.script ?? routingScript));
+  harness.app.features.add(bindTestLlm(calls, opts?.script ?? routingScript));
   const session = await harness.app.create({ sessionId });
   const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   const face = (): TowerFace => {
@@ -1144,12 +1144,12 @@ describe('enter and exit', () => {
     const host = createNodeOsHost();
     const tower = createTower({ workDir: repo, host, available: () => true });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(createTask());
-    await harness.app.features.add(tower);
+    harness.app.features.add(createTask());
+    harness.app.features.add(tower);
     const probe = captureTowerFaces();
-    await harness.app.features.add(probe.feature);
+    harness.app.features.add(probe.feature);
     const calls: LlmCall[] = [];
-    await harness.app.features.add(bindTestLlm(calls, routingScript));
+    harness.app.features.add(bindTestLlm(calls, routingScript));
     try {
       const sessionA = await harness.app.create({ sessionId: 'sess-a' });
       await harness.ensureAgent(sessionA, MAIN_AGENT_ID, { systemPrompt: 'a' });

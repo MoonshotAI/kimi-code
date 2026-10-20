@@ -1,17 +1,12 @@
 import {
   createFeature,
   useAgent,
-  useStepContinuing,
   useStepStarting,
   useToolEnding,
   useToolStarting,
   type Feature,
 } from '@moonshot-ai/agent-core/app/index';
-import {
-  createUserEntry,
-  systemReminderText,
-  type ToolMeta,
-} from '@moonshot-ai/agent-core/history/index';
+import { createUserEntry, systemReminderText } from '@moonshot-ai/agent-core/history/index';
 import { useInject } from '@moonshot-ai/agent-core/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolResult } from '@moonshot-ai/agent-core/tool/index';
@@ -312,17 +307,6 @@ export function createToolDedupe(): Feature<void> {
         state.stepCalls = [];
         state.originalCallIndex.clear();
         state.callKeyByCallId.clear();
-        return undefined;
-      });
-
-      useStepContinuing(({ messages }) => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const entry = messages[i];
-          if (entry === undefined || entry.message.role !== 'tool') break;
-          if ((entry.meta as ToolMeta | undefined)?.stopTurn === true) {
-            return { type: 'done', cause: { reason: 'stop_turn' } };
-          }
-        }
         return undefined;
       });
 

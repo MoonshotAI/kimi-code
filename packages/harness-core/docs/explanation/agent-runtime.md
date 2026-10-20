@@ -135,21 +135,28 @@ feature binds models to agents through a three-level pipeline, persisting
 the choice as it goes.
 
 **App level — the catalog.** The app unit runs agent-core's
-`createProviderCatalog()` and reconciles three inputs into it:
+`createProviderCatalog()` and projects three inputs into it:
 
 - **config** — the `providers` / `models` / `modelCatalog` / `defaultModel` /
   `thinking` config sections (declared via `useConfigSection`, plus the Kimi
-  env overlay),
-- **contributions** — `useProvider({ handle, info?, models? })` entries from
-  features such as `kimi` (which also contributes its protocol factory via
+  env overlay). Models are restored even when they have no matching
+  `providers` entry,
+- **contributions** — `useProvider({ handle, info? })` entries from features
+  such as `kimi` (which also contributes its protocol factory via
   `useProviderProtocol`), and
 - **credentials** — `CredentialResolvers`, ending in a static env/apiKey
   resolver.
 
+Provider contributions carry only the handle and optional init info; config
+`models` is the only model list. Refresh contributions (`useProviderRefresh`)
+return `config key → complete model record`. A successful refresh, including
+an empty result, replaces only that provider's model records in config. A
+failed refresh leaves both the provider and its previous models unchanged.
+
 Every model with a live requester is published as a `CatalogModelBinding`
 into the `CatalogModels` collection. The app unit exposes two facades:
-`ProviderCatalogRef` (snapshot/providers/models/requester/upsert/bind/
-remove/refresh/ping/onChanged…) and `ModelDefaultsRef`
+`ProviderCatalogRef` (providers/models/requester, `addProvider`, `addModel`,
+`refresh`, `ping`, `onChanged`, `onRefreshFailed`) and `ModelDefaultsRef`
 (`setDefaultModel(alias)`, `setDefaultThinking(effort)` — both persisted to
 config).
 

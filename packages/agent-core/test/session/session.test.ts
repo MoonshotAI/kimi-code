@@ -45,6 +45,7 @@ describe('session', () => {
     ]);
     expect(main).toBe(again);
     expect(main.reopened).toBe(false);
+    expect(main.source).toBe('cli');
     await expect(first.open('bad/id', agentCaps())).rejects.toMatchObject({ reason: 'invalid-agent' });
     await main.loop.runTurn(user('hello'));
     await first.close();
@@ -52,6 +53,7 @@ describe('session', () => {
     expect(second.roster.getState()).toEqual({ agents: { main: { source: 'cli' } } });
     const restored = await second.open('main', agentCaps());
     expect(restored.reopened).toBe(true);
+    expect(restored.source).toBe('cli');
     expect(texts(restored)).toEqual(['hello', 'echo:hello']);
     expect(restored.loop.state.messages).toEqual(restored.view.getState().messages);
     expect(restored.loop.state.nextTurnId).toBe(1);
@@ -115,6 +117,7 @@ describe('session', () => {
     await main.loop.runTurn(user('two'));
     await first.undo('main', 1);
     const child = await first.fork('main', 'child', agentCaps(), { source: 'task' });
+    expect(child.source).toBe('task');
     expect(texts(child)).toEqual(['one', 'echo:one']);
     expect(child.loop.state.messages).toEqual(main.loop.state.messages);
     await expect(first.fork('main', 'child', agentCaps())).rejects.toBeInstanceOf(SessionError);

@@ -76,8 +76,8 @@ async function startApp(opts?: { timeoutMs?: number }) {
       exposed = useInject(ShellCommandRef);
     },
   });
-  await harness.app.features.add(shell);
-  await harness.app.features.add(probe);
+  harness.app.features.add(shell);
+  harness.app.features.add(probe);
   const session = await harness.app.create({ sessionId: 's1' });
   const agent = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 's1', MAIN_AGENT_ID, scriptedRequester(() => textOutcome('done')));

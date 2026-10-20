@@ -110,6 +110,7 @@ async function mountOauthApp(options: {
   fetchImpl?: typeof fetch;
   file: { saved: string[]; persist: ConfigPersist };
 }): Promise<OauthApp> {
+  if (options.fetchImpl !== undefined) vi.stubGlobal('fetch', options.fetchImpl);
   const capture: Capture = {};
   const harness = createHarness({ space: memoryHarnessSpace() });
   harness.app.features.add(createConfig({ persist: options.file.persist }));
@@ -138,7 +139,7 @@ function stubCatalogFetch(payload: readonly unknown[]): {
   const calls: ModelsCall[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({
-      url: String(input),
+      url: typeof input === 'string' ? input : input.url,
       authorization: (init?.headers as Record<string, string> | undefined)?.['Authorization'],
     });
     return new Response(JSON.stringify({ data: payload }), { status: 200 });
@@ -149,18 +150,21 @@ function stubCatalogFetch(payload: readonly unknown[]): {
 const managedModelsPayload = [
   {
     id: 'kimi-for-coding',
-    context_length: 262144,
-    supports_reasoning: true,
-    supports_image_in: true,
-    supports_video_in: false,
+    display_name: 'Kimi Coding',
+    protocol: 'response',
+    limit: { context: 262144 },
+    modalities: { input: ['text', 'image'] },
+    reasoning: {
+      type: 'both',
+      effort: { valid: ['low', 'high'], default: 'low' },
+    },
     supports_tool_use: true,
   },
   {
     id: 'kimi-latest',
-    context_length: 131072,
-    supports_reasoning: false,
-    supports_image_in: false,
-    supports_video_in: false,
+    limit: { context: 131072 },
+    modalities: { input: ['text'] },
+    reasoning: { type: 'none' },
     supports_tool_use: true,
   },
 ];
@@ -168,7 +172,7 @@ const managedModelsPayload = [
 const MANAGED_PROVIDER_TOML =
   '[providers."managed:kimi-code"]\n' +
   'type = "kimi"\n' +
-  'base_url = "https://managed.example.com"\n' +
+  'base_url = "https://api.kimi.com/coding/v1"\n' +
   'model_source = "oauth-catalog"\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
@@ -177,9 +181,8 @@ const MANAGED_PROVIDER_TOML =
 const MANAGED_PROVIDER_LEGACY_TOML =
   '[providers."managed:kimi-code"]\n' +
   'type = "kimi"\n' +
-  'base_url = "https://managed.example.com"\n' +
-  'api_key = ""\n' +
-  'alias_scope = "kimi-code"\n\n' +
+  'base_url = "https://api.kimi.com/coding/v1"\n' +
+  'api_key = ""\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
   'key = "oauth/kimi-code"\n';
@@ -200,43 +203,70 @@ describe('oauth feature', () => {
     await harness.close();
   });
 
-  it('materializes oauth-catalog providers, writes models back under the kimi-code scope, and resolves oauth credentials', async () => {
+  it('materializes oauth-catalog providers, writes models back under the provider id, and resolves oauth credentials', async () => {
     const home = await setupHome();
-    const { calls, fetchImpl } = stubCatalogFetch(managedModelsPayload);
+    const { calls, fetchImpl } = stubCatalogFetch([
+      managedModelsPayload[0],
+      {
+        ...managedModelsPayload[1],
+        protocol: 'anthropic',
+        reasoning: { type: 'only' },
+      },
+    ]);
     const file = fakePersist(
       `${MANAGED_PROVIDER_TOML}\n[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n`,
     );
-    const { harness, capture, catalog } = await mountOauthApp({ home, fetchImpl, file });
+    const { harness, capture, tokens, catalog } = await mountOauthApp({ home, fetchImpl, file });
+    await tokens.refresh();
     await until(() => catalog.models('managed:kimi-code').length === 2);
     expect(catalog.isLive('managed:kimi-code')).toBe(true);
     const models = catalog.models('managed:kimi-code');
     expect(models.map((model) => model.id)).toEqual(['kimi-for-coding', 'kimi-latest']);
     expect(models[0]?.maxContextSize).toBe(262144);
+    expect(models[0]?.displayName).toBe('Kimi Coding');
+    expect(models[0]?.protocol).toBe('openai_responses');
+    expect(models[0]?.thinking).toMatchObject({
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'low',
+    });
     expect(models[0]?.capability.thinking).toBe(true);
     expect(models[0]?.capability.image_in).toBe(true);
-    expect(models[1]?.capability.thinking).toBe(false);
+    expect(models[1]?.capability.thinking).toBe(true);
+    expect(models[1]?.thinking).toMatchObject({
+      alwaysThinking: true,
+      adaptiveThinking: true,
+    });
+    expect(models[1]?.protocolOptions).toMatchObject({ betaApi: true });
 
     const readSaved = (): Record<string, Record<string, Record<string, unknown>>> =>
       parseToml(file.saved.at(-1)!) as Record<string, Record<string, Record<string, unknown>>>;
     await until(
       () =>
         file.saved.length > 0 &&
-        readSaved()['models']?.['kimi-code/kimi-for-coding'] !== undefined &&
-        readSaved()['providers']?.['managed:kimi-code']?.['alias_scope'] === 'kimi-code',
+        readSaved()['models']?.['kimi-code/kimi-for-coding'] !== undefined,
     );
     const saved = readSaved();
     expect(saved['models']?.['kimi-code/kimi-for-coding']).toMatchObject({
       provider: 'managed:kimi-code',
       model: 'kimi-for-coding',
+      display_name: 'Kimi Coding',
+      protocol: 'openai_responses',
+      support_efforts: ['low', 'high'],
+      default_effort: 'low',
       max_context_size: 262144,
     });
-    expect(saved['models']?.['kimi-code/kimi-latest']).toBeDefined();
-    expect(
-      Object.keys(saved['models'] ?? {}).some((key) => key.startsWith('managed:kimi-code/')),
-    ).toBe(false);
+    expect(saved['models']?.['kimi-code/kimi-latest']).toMatchObject({
+      protocol: 'anthropic',
+      always_thinking: true,
+      adaptive_thinking: true,
+      beta_api: true,
+    });
+    expect(Object.keys(saved['models'] ?? {}).some((key) => key.startsWith('kimi-code/'))).toBe(
+      true,
+    );
 
     expect(calls.length).toBeGreaterThan(0);
-    expect(calls[0]?.url).toBe('https://managed.example.com/models');
+    expect(calls[0]?.url).toBe('https://api.kimi.com/coding/v1/models');
     expect(calls[0]?.authorization).toBe('Bearer sk-managed');
 
     const resolvers = capture.credentials?.value ?? [];
@@ -264,11 +294,11 @@ describe('oauth feature', () => {
         `${MANAGED_PROVIDER_TOML}\n[model_catalog]\nrefresh_on_start = true\nrefresh_interval_ms = 0\n`,
       ),
     });
-    await until(() => calls.length >= 2);
-    expect(calls.every((call) => call.url === 'https://managed.example.com/models')).toBe(true);
+    await until(() => calls.length > 0);
+    expect(calls.every((call) => call.url === 'https://api.kimi.com/coding/v1/models')).toBe(true);
 
     void tokens.refresh();
-    await until(() => calls.length >= 3);
+    await until(() => calls.length >= 2);
     await harness.close();
   });
 
@@ -280,6 +310,7 @@ describe('oauth feature', () => {
       `${MANAGED_PROVIDER_TOML}\n[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n`,
     );
     const { harness, tokens, catalog } = await mountOauthApp({ home, fetchImpl, file });
+    await tokens.refresh();
     await until(() => catalog.models('managed:kimi-code').length === 2);
     await until(() => file.saved.at(-1)?.includes('kimi-code/kimi-for-coding') === true);
     const settled = calls.length;
@@ -290,10 +321,8 @@ describe('oauth feature', () => {
 
     payload.splice(1, 1, {
       id: 'kimi-coding-plus',
-      context_length: 131072,
-      supports_reasoning: true,
-      supports_image_in: false,
-      supports_video_in: false,
+      limit: { context: 131072 },
+      reasoning: { type: 'both' },
       supports_tool_use: true,
     });
     const second = await tokens.refresh();
@@ -315,7 +344,7 @@ describe('oauth feature', () => {
     const third = await tokens.refresh();
     expect(third).toEqual({ changed: [], unchanged: ['managed:kimi-code'], failed: [] });
 
-    payload[0] = { ...payload[0]!, context_length: 65536 };
+    payload[0] = { ...payload[0]!, limit: { context: 65536 } };
     const drift = await tokens.refresh();
     expect(drift).toEqual({
       changed: [
@@ -329,6 +358,77 @@ describe('oauth feature', () => {
         catalog.models('managed:kimi-code').find((model) => model.id === 'kimi-for-coding')
           ?.maxContextSize === 65536,
     );
+
+    const managedKey = await mountOauthApp({
+      home,
+      fetchImpl: stubCatalogFetch(managedModelsPayload).fetchImpl,
+      file: fakePersist(
+        '[providers."my-kimi"]\n' +
+          'type = "kimi"\n' +
+          'base_url = "https://api.kimi.com/coding/v1"\n' +
+          'api_key = "sk-distributed"\n\n' +
+          '[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n',
+      ),
+    });
+    const managedKeyResult = await managedKey.catalog.refresh({ providerId: 'my-kimi' });
+    expect(managedKeyResult).toEqual({
+      changed: [{ provider_id: 'my-kimi', provider_name: 'my-kimi', added: 2, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+    await until(() => managedKey.catalog.models('my-kimi').length === 2);
+    expect(managedKey.config.get<Record<string, Record<string, unknown>>>('models')).toHaveProperty(
+      'my-kimi/kimi-for-coding',
+    );
+    await managedKey.harness.close();
+
+    const openPlatform = await mountOauthApp({
+      home,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-k2',
+                context_length: 131072,
+                supports_reasoning: true,
+                supports_tool_use: true,
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      file: fakePersist(
+        '[providers."moonshot-cn"]\n' +
+          'type = "openai"\n' +
+          'api_key = "sk-platform"\n\n' +
+          '[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n',
+      ),
+    });
+    await expect(openPlatform.tokens.refresh()).resolves.toEqual({
+      changed: [],
+      unchanged: [],
+      failed: [],
+    });
+    const openResult = await openPlatform.catalog.refresh({ providerId: 'moonshot-cn' });
+    expect(openResult).toEqual({
+      changed: [
+        {
+          provider_id: 'moonshot-cn',
+          provider_name: 'Kimi Platform (API key · platform.kimi.com)',
+          added: 1,
+          removed: 0,
+        },
+      ],
+      unchanged: [],
+      failed: [],
+    });
+    await until(() => openPlatform.catalog.models('moonshot-cn').length === 1);
+    expect(openPlatform.config.get('defaultModel')).toBe('moonshot-cn/kimi-k2');
+    expect(openPlatform.config.get<Record<string, { type?: string }>>('providers')['moonshot-cn']).toMatchObject({
+      type: 'kimi',
+    });
+    await openPlatform.harness.close();
     await harness.close();
   });
 
@@ -367,13 +467,14 @@ describe('oauth feature', () => {
       `${MANAGED_PROVIDER_LEGACY_TOML}\n[model_catalog]\nrefresh_on_start = false\nrefresh_interval_ms = 0\n`,
     );
     const { harness, tokens, catalog } = await mountOauthApp({ home, fetchImpl, file });
+    await tokens.refresh();
     await until(() => catalog.models('managed:kimi-code').length === 2);
     expect(catalog.isLive('managed:kimi-code')).toBe(true);
     await until(() => file.saved.at(-1)?.includes('kimi-code/kimi-for-coding') === true);
 
     const report = await tokens.refresh();
     expect(report).toEqual({ changed: [], unchanged: ['managed:kimi-code'], failed: [] });
-    expect(calls.every((call) => call.url === 'https://managed.example.com/models')).toBe(true);
+    expect(calls.every((call) => call.url === 'https://api.kimi.com/coding/v1/models')).toBe(true);
     await harness.close();
   });
 });
@@ -400,7 +501,7 @@ function stubLoginFetch(options: {
   const calls: LoginFetchCall[] = [];
   let pollIndex = 0;
   vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
+    const url = typeof input === 'string' ? input : input.url;
     const headers = (init?.headers ?? {}) as Record<string, string>;
     calls.push({
       url,

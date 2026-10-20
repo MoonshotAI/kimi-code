@@ -49,8 +49,7 @@ const MANAGED_PROVIDER_LEGACY_TOML =
   '[providers."managed:kimi-code"]\n' +
   'type = "kimi"\n' +
   'base_url = "https://managed.example.com"\n' +
-  'api_key = ""\n' +
-  'alias_scope = "kimi-code"\n\n' +
+  'api_key = ""\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
   'key = "oauth/kimi-code"\n';
@@ -134,12 +133,12 @@ function stubTitleFetch(): TitleCall[] {
   const calls: TitleCall[] = [];
   respond = () => Response.json({ title: '生成标题' });
   vi.stubGlobal('fetch', (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = String(input);
+    const url = String(input as unknown);
     if (!url.startsWith('https://managed.example.com/')) {
       return realFetch(input, init);
     }
     const headers = new Headers(init?.headers);
-    const body = JSON.parse(String(init?.body ?? '{}')) as {
+    const body = JSON.parse(String((init?.body ?? '{}') as unknown)) as {
       method?: string;
       params?: { chat_content?: string };
     };

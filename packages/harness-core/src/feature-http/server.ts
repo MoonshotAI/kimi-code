@@ -9,7 +9,10 @@ import express, {
   type Response,
 } from 'express';
 
+import type { HttpAuthOptions, HttpAuthTokenService } from './auth';
 import { ErrorCode, sendErr } from './route/http';
+import { createHttpSecurity } from './security';
+import { isOriginAllowed } from './security/origin';
 
 export type HttpHandler = (request: Request, response: Response) => void | Promise<void>;
 
@@ -20,7 +23,7 @@ export interface HttpListen {
   readonly host?: string;
 }
 
-export interface CreateHttpServerOptions {
+export interface CreateHttpServerOptions extends HttpAuthOptions {
   readonly corsOrigins?: readonly string[];
 }
 
@@ -31,6 +34,8 @@ const CORS_ALLOW_HEADERS =
 export interface Http {
   readonly app: Express;
   readonly origin: string | undefined;
+  readonly dangerousBypassAuth: boolean;
+  readonly authTokenService: HttpAuthTokenService | undefined;
   route(method: string | readonly string[], path: string, handler: HttpHandler): () => void;
   upgrade(handler: HttpUpgradeHandler): () => void;
   listen(options?: HttpListen): Promise<string>;
@@ -42,8 +47,9 @@ interface Slot {
 }
 
 export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
+  const security = createHttpSecurity(options);
   const app = express();
-  app.use(express.json());
+  app.use(security.hostMiddleware);
   const corsOrigins = options.corsOrigins ?? [];
   app.use((request, response, next) => {
     const origin = request.get('origin');
@@ -66,6 +72,8 @@ export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
     }
     next();
   });
+  app.use(security.authMiddleware);
+  app.use(express.json());
   const slots = new Map<string, Slot>();
   const upgrades: HttpUpgradeHandler[] = [];
   let server: Server | undefined;
@@ -96,6 +104,10 @@ export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
 
   return {
     app,
+    dangerousBypassAuth: options.disableAuth === true,
+    get authTokenService() {
+      return security.authTokenService;
+    },
     get origin() {
       return origin;
     },
@@ -117,12 +129,15 @@ export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
         }
       };
     },
-    listen(options = {}) {
+    async listen(options = {}) {
       const port = options.port ?? 0;
       const host = options.host ?? '127.0.0.1';
+      await security.listen(host);
       return new Promise((resolve, reject) => {
         const onError = (error: Error): void => {
           listening.off('listening', onListening);
+          security.close();
+          server = undefined;
           reject(error);
         };
         const onListening = (): void => {
@@ -148,12 +163,23 @@ export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
         });
         server = listening;
         listening.on('upgrade', (request, socket, head) => {
-          for (const handler of upgrades) {
-            if (handler(request, socket, head)) {
-              return;
-            }
-          }
-          socket.destroy();
+          void security
+            .authorizeUpgrade(request)
+            .then((status) => {
+              if (status !== null) {
+                const text = status === 403 ? 'Forbidden' : 'Unauthorized';
+                socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\n\r\n`);
+                socket.destroy();
+                return;
+              }
+              for (const handler of upgrades) {
+                if (handler(request, socket, head)) return;
+              }
+              socket.destroy();
+            })
+            .catch(() => {
+              socket.destroy();
+            });
         });
         listening.once('error', onError);
         listening.once('listening', onListening);
@@ -161,6 +187,7 @@ export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
       });
     },
     close() {
+      security.close();
       return new Promise((resolve, reject) => {
         origin = undefined;
         const current = server;
@@ -262,51 +289,3 @@ function formatOrigin(address: AddressInfo): string {
   return `http://${host}:${String(address.port)}`;
 }
 
-function isOriginAllowed(origin: string, host: string | undefined, allowed: readonly string[]): boolean {
-  let originHost: string;
-  try {
-    originHost = new URL(origin).host;
-  } catch {
-    return true;
-  }
-  const originStripped = stripPort(originHost);
-  if (host !== undefined) {
-    const hostStripped = stripPort(host);
-    if (originStripped === hostStripped) {
-      return true;
-    }
-    if (isLoopbackHost(originStripped) && isLoopbackHost(hostStripped)) {
-      return true;
-    }
-  }
-  return allowed.includes(origin);
-}
-
-function stripPort(host: string): string {
-  if (host.startsWith('[')) {
-    const end = host.indexOf(']');
-    return (end === -1 ? host : host.slice(0, end + 1)).toLowerCase();
-  }
-  const firstColon = host.indexOf(':');
-  if (firstColon === -1) {
-    return host.toLowerCase();
-  }
-  const lastColon = host.lastIndexOf(':');
-  if (firstColon === lastColon) {
-    const after = host.slice(lastColon + 1);
-    if (after.length > 0 && /^\d+$/.test(after)) {
-      return host.slice(0, lastColon).toLowerCase();
-    }
-  }
-  return host.toLowerCase();
-}
-
-function isLoopbackHost(host: string): boolean {
-  return (
-    host === 'localhost' ||
-    host === '::1' ||
-    host === '[::1]' ||
-    host.startsWith('127.') ||
-    host.endsWith('.localhost')
-  );
-}

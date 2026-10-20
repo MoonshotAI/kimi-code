@@ -3,9 +3,9 @@ import type { Feature } from '@moonshot-ai/agent-core/app/index';
 import { createBtw } from './features/btw/index';
 import { createDateChange } from './features/dateChange/index';
 import { createCron } from './features/cron/index';
-import { createGoal } from './features/goal/index';
 import { interaction } from './features/interaction/index';
 import { createKimi } from './features/kimi/index';
+import { createModelsDev } from './features/models-dev/index';
 import { createPermission } from './features/permission/index';
 import { createPlan } from './features/plan/index';
 import { providerCatalog } from './features/provider-catalog/index';
@@ -21,6 +21,7 @@ import { waitFor } from './features/wait-for/index';
 
 export const harnessPreset: readonly Feature[] = [
   providerCatalog,
+  createModelsDev(),
   waitFor,
   undo,
   todo,
@@ -30,7 +31,6 @@ export const harnessPreset: readonly Feature[] = [
   tokenCounting,
   interaction,
   createPlan(),
-  createGoal(),
   createPermission(),
   createBtw(),
   createCron(),

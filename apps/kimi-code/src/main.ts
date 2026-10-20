@@ -37,8 +37,8 @@ import { createCliTelemetryBootstrap, initializeCliTelemetry } from './cli/telem
 import { runUpdatePreflight } from './cli/update/preflight';
 import { detectNativeInstall } from './cli/update/source';
 import { maybeRelaunchWithStagedNativeUpdate } from './cli/update/native-swap';
-import { getVersion } from './cli/version';
-import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, CLI_USER_AGENT_PRODUCT, PROCESS_NAME } from './constant/app';
+import { createKimiCodeHostIdentity, getVersion } from './cli/version';
+import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE, PROCESS_NAME } from './constant/app';
 import { runHeadlessMigrate, type MigrateCommandOptions } from './migration/index';
 import { cleanupStaleNativeCacheForCurrent } from './native/native-assets';
 import { installMinidbTextBuildWorker } from './native/minidb-worker';
@@ -121,21 +121,15 @@ export async function handleUpgradeCommand(version: string, yes: boolean): Promi
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = await createKimiHarness({
+  const harness = createKimiHarness({
     homeDir: telemetryBootstrap.homeDir,
-    identity: CLI_USER_AGENT_PRODUCT,
-    uiMode: 'print',
-    workDir: process.cwd(),
-    version,
+    identity: createKimiCodeHostIdentity(version),
     telemetry: telemetryClient,
   });
   let exitCode = 1;
   try {
     await harness.ensureConfigFile();
-    const config = {
-      defaultModel: harness.config.get<string | undefined>('defaultModel'),
-      telemetry: harness.config.get<boolean | undefined>('telemetry'),
-    };
+    const config = await harness.getConfig();
     initializeCliTelemetry({
       harness,
       bootstrap: telemetryBootstrap,

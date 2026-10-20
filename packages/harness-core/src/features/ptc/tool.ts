@@ -1,4 +1,3 @@
-import type { ComputedRef } from '@moonshot-ai/agent-core/kernel/index';
 import type { ContentPart, ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
@@ -7,7 +6,6 @@ import type { AgentRuntime } from '#/runtime/index';
 import { createStdoutCapture, runPtcProgram, safeStringify, truncate } from './bridge';
 import { renderCatalog } from './catalog';
 import { createPtcContext, type PtcContextDeps, type PtcContextLevel } from './context';
-import type { PtcToolGuard } from './guards';
 import DESCRIPTION from './code.md?raw';
 
 export const CODE_TOOL_NAME = 'Code';
@@ -26,7 +24,6 @@ export const DEFAULT_PTC_LIMITS: PtcLimits = {
 
 export interface CreateCodeToolProps {
   readonly runtime: AgentRuntime;
-  readonly guards: ComputedRef<readonly PtcToolGuard[]>;
   readonly dir: string;
   readonly agentId: string;
   readonly exclude: ReadonlySet<string>;
@@ -134,30 +131,14 @@ async function callTool(
   if (props.exclude.has(name) || name === CODE_TOOL_NAME) {
     throw new Error(`tool '${name}' is not callable from ${CODE_TOOL_NAME}`);
   }
-  let toolCall: ToolCall = {
+  const toolCall: ToolCall = {
     type: 'function',
     id: `ptc-${budget.execId}-${ordinal}`,
     name,
     arguments: JSON.stringify(args ?? {}),
   };
-  let result: ToolResult | undefined;
-  for (const guard of props.guards.value) {
-    const decision = await guard({ toolCall }, signal);
-    if (decision === undefined) continue;
-    if ('toolCall' in decision) {
-      toolCall = decision.toolCall;
-      continue;
-    }
-    result = decision.result ?? {
-      content: [{ type: 'text', text: decision.blocked.message ?? decision.blocked.reason }],
-      isError: true,
-    };
-    break;
-  }
-  if (result === undefined) {
-    result = await props.runtime.executor.execute({ toolCall, signal });
-    if (isUnknownTool(result, toolCall.name)) throw new Error(`unknown tool: ${toolCall.name}`);
-  }
+  const result = await props.runtime.executor.execute({ toolCall, signal });
+  if (isUnknownTool(result, toolCall.name)) throw new Error(`unknown tool: ${toolCall.name}`);
   return textify(result.content);
 }
 

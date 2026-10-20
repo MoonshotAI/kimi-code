@@ -4,15 +4,18 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useSession } from '@moonshot-ai/agent-core/app/index';
 import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
 
 import {
+  buildKimiFileUrl,
   createFiles,
   FileLibrary,
   FilesRef,
   isFileId,
+  KimiFileRegistryRef,
   type FilesFace,
+  type KimiFileRegistry,
 } from '#/features/files/index';
 import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
 
@@ -119,12 +122,16 @@ describe('files library', () => {
 });
 
 describe('files feature', () => {
-  it('exposes the files facade at app level and reuses the library across remounts', async () => {
+  it('exposes app and session file stores that survive source deletion, remounts, and forks', async () => {
     const dir = await tempDir('files-feature-');
     let exposed: Readonly<ShallowRef<FilesFace | undefined>> | undefined;
+    const registries = new Map<string, Readonly<ShallowRef<KimiFileRegistry | undefined>>>();
     const probe = createFeature('files-probe', {
       app: () => {
         exposed = useInject(FilesRef);
+      },
+      session: () => {
+        registries.set(useSession().id, useInject(KimiFileRegistryRef));
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
@@ -136,10 +143,34 @@ describe('files feature', () => {
     const face = exposed?.value;
     if (face === undefined) throw new Error('files face was not exposed');
 
-    const meta = await face.save(sourceOf(Buffer.from('facade')), 'facade.txt');
+    const meta = await face.save(sourceOf(Buffer.from('facade')), 'facade.txt', {
+      mimeType: 'text/plain',
+    });
     expect(isFileId(meta.id)).toBe(true);
     const file = await face.open(meta.id);
     expect(await collect(file!.stream())).toEqual(Buffer.from('facade'));
+
+    await harness.app.create({ sessionId: 'sess' });
+    const registry = registries.get('sess')?.value;
+    if (registry === undefined) throw new Error('kimi file registry was not exposed');
+    const reference = buildKimiFileUrl(meta.id);
+    const materialized = await registry.materialize(reference);
+    expect(materialized?.meta).toMatchObject({ id: meta.id, name: 'facade.txt', media_type: 'text/plain' });
+    expect(await collect(materialized!.stream())).toEqual(Buffer.from('facade'));
+
+    const generated = await registry.put({
+      bytes: new Uint8Array([0, 1, 2, 3, 4]),
+      mimeType: 'application/octet-stream',
+      filename: 'generated.bin',
+    });
+    expect(generated.ref).toMatch(/^kimi-file:\/\/f_/);
+    const generatedFile = await registry.open(generated.ref);
+    expect(await collect(generatedFile!.stream({ start: 1, end: 3 }))).toEqual(
+      Buffer.from([1, 2, 3]),
+    );
+
+    await rm(join(dir, meta.id));
+    expect(Buffer.from((await registry.get(reference))?.bytes ?? []).toString()).toBe('facade');
 
     await remove();
     await tick();
@@ -150,6 +181,19 @@ describe('files feature', () => {
     const remounted = exposed?.value;
     if (remounted === undefined) throw new Error('files face was not re-exposed');
     expect(remounted).toBe(face);
-    expect((await remounted.open(meta.id))?.meta).toEqual(meta);
+    expect(await remounted.open(meta.id)).toBeUndefined();
+    const restored = registries.get('sess')?.value;
+    if (restored === undefined) throw new Error('kimi file registry was not restored');
+    expect(Buffer.from((await restored.get(generated.ref))?.bytes ?? [])).toEqual(
+      Buffer.from([0, 1, 2, 3, 4]),
+    );
+
+    await harness.app.create({ sessionId: 'fork', from: 'sess' });
+    const forked = registries.get('fork')?.value;
+    if (forked === undefined) throw new Error('forked kimi file registry was not exposed');
+    expect(Buffer.from((await forked.get(reference))?.bytes ?? []).toString()).toBe('facade');
+    expect(Buffer.from((await forked.get(generated.ref))?.bytes ?? [])).toEqual(
+      Buffer.from([0, 1, 2, 3, 4]),
+    );
   });
 });

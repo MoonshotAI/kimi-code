@@ -54,9 +54,9 @@ async function startProfilesApp(
 ): Promise<{ face: ProfileCatalogFace; close: () => Promise<void> }> {
   const harness = createHarness({ space: memoryHarnessSpace() });
   try {
-    await harness.app.features.add(createProfiles(props));
+    harness.app.features.add(createProfiles(props));
     const capture: { face?: Readonly<ShallowRef<ProfileCatalogFace | undefined>> } = {};
-    await harness.app.features.add(
+    harness.app.features.add(
       createFeature('profiles-probe', {
         app() {
           capture.face = useInject(ProfileCatalogRef);

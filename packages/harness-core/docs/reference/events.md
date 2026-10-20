@@ -79,8 +79,6 @@ noted otherwise.
 | permission | `permission.set_mode`, `permission.rules.add`, `permission.record_approval_result` *(store)* | durable permission state changes |
 | plan | `plan_mode.enter` / `plan_mode.cancel` / `plan_mode.exit` *(store)* | plan mode transitions (`id`) |
 | plan | `plan.revision` *(store)* | a plan file revision was recorded (`id`, `version`, `sha256`) |
-| goal | `goal.updated` | the goal snapshot changed (`snapshot`, `change?`) |
-| goal | `goal.create` / `goal.update` / `goal.clear` *(store)* | the durable goal journal |
 | cron | `cron.fired` | a scheduled task fired (`origin`, `prompt`) |
 | cron | `cron.add`, `cron.delete`, `cron.cursor` *(store)* | the durable cron journal |
 | task | `task.started` / `task.settled` | a background task began / settled (`record`) |

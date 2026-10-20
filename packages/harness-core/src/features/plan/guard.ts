@@ -1,4 +1,4 @@
-import type { LoopHooks } from '@moonshot-ai/agent-core/loop/index';
+import type { ToolHooks } from '@moonshot-ai/agent-core/tool/index';
 
 import {
   INTERACTION_TAG_AGENT_ID,
@@ -21,7 +21,7 @@ export function createPlanGuard(deps: {
   readonly sessionId: string;
   readonly agentId: string;
   readonly permissionMode?: () => string | undefined;
-}): LoopHooks['tool.starting'] {
+}): ToolHooks['tool.starting'] {
   const { ready, planPath, status, recordRevision, exit, interactions, sessionId, agentId, permissionMode } =
     deps;
   return async ({ toolCall }) => {

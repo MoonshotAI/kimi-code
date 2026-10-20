@@ -73,5 +73,6 @@ settled 事件是耐用记录（`src/loop/record.ts`），因此在首个 turn �
 ## 下一步
 
 - `loop.state` 是一个普通投影（已设置的 profile、status、held、inbox、messages、正在运行的 turn、含后台工具的工具列表）;`loop.requester` 是用于旁路请求的 requester facade——每次 `request`/`generate` 都会重新读取宿主的 requester getter 并把当前历史填充为 `content`，因此 `.with()` 的覆盖总是落在最新的配置与上下文上;`loop.waitForTasks` 等待后台工具，`loop.waitForIdle()` 等 loop 停稳。
+- 输入命令（`submit`/`notify`/`remind`/`steer`/`cancel`/`setContext`/`setSystemPrompt`/`setTools`）在任何位置都是同步的，包括 `subscribe` 监听器和 hook 内部：调用即返回 ack，返回时 `loop.state` 已经反映了这次修改。事件按唯一的全局顺序投递给监听器，且总在产生它的状态变更之后。
 - loop 本身不做持久化。`src/loop/record.ts` 定义了它的耐用契约（`LoopRecord` / `toLoopRecord` / `loopProjection`）；想要接好的持久化，用 `src/session/`——见「运行一个带 subagent 的 session」。
 - 崩溃后恢复：用 `loopProjection` 回放记录，把 `{ profile, messages, nextTurnId, unfinished, inbox: { notify } }` 作为 `input` 传入。存在 `unfinished` turn 时 loop 以 `interrupted` 状态启动：`continue()` 在历史允许时续跑这个 turn(`turn.resumed`，同一个 turn id，进入下一个 step);其他触发——`abort`、`runTurn`、`submit`、`notify`、`steer`——都会先把它以 `aborted`(reason 为 `CRASHED`)收尾，并为没有结果的工具调用补上 aborted 结果。

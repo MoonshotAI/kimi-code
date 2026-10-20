@@ -21,6 +21,8 @@ export const MODEL_CATALOG_CONFIG_SECTION = 'modelCatalog';
 
 export const DEFAULT_MODEL_CONFIG_SECTION = 'defaultModel';
 
+export const DEFAULT_PROVIDER_CONFIG_SECTION = 'defaultProvider';
+
 export const ENV_MODEL_PROVIDER_KEY = '__kimi_env__';
 
 const StringRecordSchema = z.record(z.string(), z.string());
@@ -45,6 +47,7 @@ export const ModelCapabilitySchema = z.object({
 export const CatalogProviderInfoSchema = z.object({
   type: z.string().optional(),
   apiKey: z.string().optional(),
+  apiKeyEnv: z.string().optional(),
   baseUrl: z.string().optional(),
   customHeaders: StringRecordSchema.optional(),
   defaultModel: z.string().optional(),
@@ -52,7 +55,6 @@ export const CatalogProviderInfoSchema = z.object({
   env: StringRecordSchema.optional(),
   modelSource: z.enum(['static', 'discover', 'oauth-catalog']).optional(),
   source: UnknownRecordSchema.optional(),
-  aliasScope: z.string().optional(),
 });
 
 export const ProvidersSectionSchema = z.record(z.string(), CatalogProviderInfoSchema);
@@ -73,9 +75,16 @@ export const CatalogModelOverridesSchema = z.object({
   alwaysThinking: z.boolean().optional(),
 });
 
+export const CatalogModelUpgradeSchema = z.object({
+  model: z.string().min(1),
+  migrationMarkdown: z.string(),
+  retirementAt: z.string().optional(),
+});
+
 export const CatalogModelConfigSchema = z.object({
-  provider: z.string(),
-  model: z.string(),
+  providerId: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
   capability: ModelCapabilitySchema.optional(),
   maxContextSize: z.number().int().min(1).optional(),
   maxInputSize: z.number().int().min(1).optional(),
@@ -96,9 +105,10 @@ export const CatalogModelConfigSchema = z.object({
   name: z.string().optional(),
   aliases: z.array(z.string()).optional(),
   oauth: CatalogOAuthRefSchema.optional(),
+  upgrade: CatalogModelUpgradeSchema.optional(),
   overrides: CatalogModelOverridesSchema.optional(),
   extras: UnknownRecordSchema.optional(),
-});
+}).passthrough();
 
 export const ModelsSectionSchema = z.record(z.string(), CatalogModelConfigSchema);
 
@@ -154,11 +164,16 @@ const providersToToml = (value: unknown, raw: unknown): unknown => {
   return out;
 };
 
+const PROVIDER_CREDENTIAL_FIELDS = ['apiKey', 'oauth', 'apiKeyEnv'] as const;
+
 function providerEntryToToml(
   provider: Record<string, unknown>,
   rawProvider: unknown,
 ): Record<string, unknown> {
   const out = cloneRecord(rawProvider);
+  for (const key of PROVIDER_CREDENTIAL_FIELDS) {
+    if (provider[key] === undefined) delete out[camelToSnake(key)];
+  }
   for (const [key, value] of Object.entries(provider)) {
     if (key === 'oauth' && isPlainObject(value)) {
       out[camelToSnake(key)] = plainObjectToToml(value, undefined);
@@ -179,11 +194,14 @@ const CAPABILITY_KEY_SET: ReadonlySet<string> = new Set(CAPABILITY_KEYS);
 
 export function capabilityFromArray(
   value: readonly unknown[],
-): { capability: Record<string, unknown>; unknowns: unknown[] } {
+): { capability: Record<string, unknown>; unknowns: unknown[]; alwaysThinking: boolean } {
   const capability: Record<string, unknown> = {};
   const unknowns: unknown[] = [];
+  let alwaysThinking = false;
   for (const item of value) {
-    if (typeof item === 'string' && CAPABILITY_KEY_SET.has(item)) {
+    if (item === 'always_thinking') {
+      alwaysThinking = true;
+    } else if (typeof item === 'string' && CAPABILITY_KEY_SET.has(item)) {
       capability[item] = true;
     } else {
       unknowns.push(item);
@@ -192,7 +210,7 @@ export function capabilityFromArray(
   for (const key of REQUIRED_CAPABILITY_KEYS) {
     capability[key] ??= false;
   }
-  return { capability, unknowns };
+  return { capability, unknowns, alwaysThinking };
 }
 
 function capabilityTrueKeys(capability: Record<string, unknown>): string[] {
@@ -222,8 +240,9 @@ function modelEntryFromToml(entry: Record<string, unknown>): Record<string, unkn
     const targetKey = snakeToCamel(key);
     if (targetKey === 'capabilities') {
       if (Array.isArray(value)) {
-        const { capability, unknowns } = capabilityFromArray(value);
+        const { capability, unknowns, alwaysThinking } = capabilityFromArray(value);
         out['capability'] = capability;
+        if (alwaysThinking) out['alwaysThinking'] = true;
         if (unknowns.length > 0) (extras ??= {})['capabilities'] = unknowns;
       } else {
         out[targetKey] = value;
@@ -232,6 +251,10 @@ function modelEntryFromToml(entry: Record<string, unknown>): Record<string, unkn
     }
     if (targetKey === 'overrides' && isPlainObject(value)) {
       out[targetKey] = modelOverridesFromToml(value);
+      continue;
+    }
+    if (targetKey === 'upgrade' && isPlainObject(value)) {
+      out[targetKey] = transformPlainObject(value);
       continue;
     }
     if (targetKey === 'extras' && isPlainObject(value)) {
@@ -249,7 +272,9 @@ function modelOverridesFromToml(overrides: Record<string, unknown>): Record<stri
   for (const [key, value] of Object.entries(overrides)) {
     const targetKey = snakeToCamel(key);
     if (targetKey === 'capabilities' && Array.isArray(value)) {
-      out['capability'] = capabilityFromArray(value).capability;
+      const { capability, alwaysThinking } = capabilityFromArray(value);
+      out['capability'] = capability;
+      if (alwaysThinking) out['alwaysThinking'] = true;
       continue;
     }
     out[targetKey] = value;
@@ -277,10 +302,15 @@ function modelEntryToToml(
     isPlainObject(extras) && Array.isArray(extras['capabilities'])
       ? (extras['capabilities'] as unknown[])
       : [];
+  if (!Object.prototype.hasOwnProperty.call(entry, 'upgrade')) delete out['upgrade'];
   for (const [key, field] of Object.entries(entry)) {
     if (key === 'capability') {
       if (isPlainObject(field)) {
-        out['capabilities'] = [...capabilityTrueKeys(field), ...preserved];
+        out['capabilities'] = [
+          ...capabilityTrueKeys(field),
+          ...(entry['alwaysThinking'] === true ? ['always_thinking'] : []),
+          ...preserved,
+        ];
       } else {
         setDefined(out, 'capabilities', field);
       }
@@ -288,6 +318,10 @@ function modelEntryToToml(
     }
     if (key === 'overrides' && isPlainObject(field)) {
       out['overrides'] = modelOverridesToToml(field, out['overrides']);
+      continue;
+    }
+    if (key === 'upgrade') {
+      out['upgrade'] = isPlainObject(field) ? plainObjectToToml(field, undefined) : undefined;
       continue;
     }
     if (key === 'extras' && isPlainObject(field)) {
@@ -309,7 +343,11 @@ function modelOverridesToToml(
   for (const [key, value] of Object.entries(overrides)) {
     if (key === 'capability') {
       if (isPlainObject(value)) {
-        out['capabilities'] = [...capabilityTrueKeys(value), ...unknownCapabilitiesOf(out['capabilities'])];
+        out['capabilities'] = [
+          ...capabilityTrueKeys(value),
+          ...(overrides['alwaysThinking'] === true ? ['always_thinking'] : []),
+          ...unknownCapabilitiesOf(out['capabilities']).filter((item) => item !== 'always_thinking'),
+        ];
       } else {
         setDefined(out, 'capabilities', value);
       }
@@ -347,6 +385,7 @@ function collectMalformedModelEntries(rawModels: unknown): readonly ConfigDiagno
   for (const [alias, entry] of Object.entries(rawModels)) {
     if (!isPlainObject(entry)) continue;
     if (entry['model'] !== undefined || entry['name'] !== undefined) continue;
+    if (dottedAliasSuffix(alias, entry) === undefined) continue;
     diagnostics.push({
       section: MODELS_CONFIG_SECTION,
       severity: 'warning',
@@ -366,7 +405,9 @@ function malformedModelMessage(alias: string, entry: Record<string, unknown>): s
 function dottedAliasSuffix(alias: string, entry: Record<string, unknown>): string | undefined {
   for (const [key, value] of Object.entries(entry)) {
     if (MODEL_OBJECT_FIELDS.has(key) || !isPlainObject(value)) continue;
-    return dottedAliasSuffix(`${alias}.${key}`, value) ?? `${alias}.${key}`;
+    if (value['model'] !== undefined || value['name'] !== undefined) return `${alias}.${key}`;
+    const nested = dottedAliasSuffix(`${alias}.${key}`, value);
+    if (nested !== undefined) return nested;
   }
   return undefined;
 }
@@ -425,5 +466,10 @@ export const modelCatalogConfigSection: ConfigSectionContribution<ModelCatalogCo
 
 export const defaultModelConfigSection: ConfigSectionContribution<string> = {
   name: DEFAULT_MODEL_CONFIG_SECTION,
+  schema: z.string().min(1),
+};
+
+export const defaultProviderConfigSection: ConfigSectionContribution<string> = {
+  name: DEFAULT_PROVIDER_CONFIG_SECTION,
   schema: z.string().min(1),
 };

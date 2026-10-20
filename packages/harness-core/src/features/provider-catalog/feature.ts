@@ -8,6 +8,7 @@ import {
   useCollection,
   useContribute,
   useExpose,
+  useFire,
   useInject,
   watch,
   type ShallowRef,
@@ -16,11 +17,19 @@ import { currentUnit } from '@moonshot-ai/agent-core/kernel/runtime';
 import { createProviderCatalog } from '@moonshot-ai/agent-core/llm/catalog/index';
 import type {
   CatalogModel,
-  CatalogModelDefinition,
   CatalogProviderHandle,
   CatalogSnapshot,
   ProviderCatalog,
+  ProviderCatalogChangedEvent,
+  ProviderCatalogRefreshFailedEvent,
 } from '@moonshot-ai/agent-core/llm/catalog/index';
+import {
+  anthropicRequester,
+  googleGenAIRequester,
+  googleVertexRequester,
+  openAIRequester,
+  openAIResponsesRequester,
+} from '@moonshot-ai/agent-core/llm/builtin/provider/index';
 import { createStaticCredentialProvider, credentialsRecovery } from '@moonshot-ai/agent-core/llm/builtin/policy/credentials';
 import type { LlmModelSpec } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/agent-core/llm/requester';
@@ -30,13 +39,13 @@ import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 import {
   ConfigRef,
   DEFAULT_MODEL_CONFIG_SECTION,
+  DEFAULT_PROVIDER_CONFIG_SECTION,
   MODELS_CONFIG_SECTION,
   PROVIDERS_CONFIG_SECTION,
   THINKING_CONFIG_SECTION,
   deepEqual,
-  isPlainObject,
-  omitUndefined,
   defaultModelConfigSection,
+  defaultProviderConfigSection,
   modelCatalogConfigSection,
   modelsConfigSection,
   providersConfigSection,
@@ -69,23 +78,53 @@ import {
   type ModelBoundEvent,
   type SessionModelDefaultsEvent,
 } from './binding';
-import { CredentialResolvers, resolveCredentialProvider, useCredentialResolver } from './credentials';
-import { kimiModelEnvOverlay } from './envOverlay';
-import { invalidThinkingEffortMessage, resolveThinkingEffortForModel } from './thinking';
 import {
-  catalogAliasPrefix,
+  CredentialResolvers,
+  resolveCredentialProvider,
+  useCredentialResolver,
+  type CredentialResolverContribution,
+} from './credentials';
+import { MODEL_OVERRIDES_CONFIG_SECTION, kimiModelEnvOverlay } from './envOverlay';
+import {
+  createRefreshOrchestrator,
+  ProviderOAuthTokenResolvers,
+  ProviderRefreshUserAgents,
+  type ModelCatalogChangedEvent,
+  type ProviderRefreshOptions,
+  type ProviderRefreshReport,
+  type RetiredModel,
+} from './refresh';
+import {
+  invalidThinkingEffortMessage,
+  resolveThinkingEffortForModel,
+  resolveThinkingKeep,
+} from './thinking';
+import {
   catalogModelAlias,
   catalogModelDefinitionOf,
-  isOAuthBackedProvider,
+  catalogProviderIdOf,
+  type AddProviderInput,
   type CatalogModelBinding,
   type CatalogModelConfig,
   type CatalogProviderInfo,
   type ProviderContribution,
+  type ProviderRefreshContribution,
 } from './types';
 
 export const Providers = createCollection<ProviderContribution>('provider-catalog.providers');
 
 export const CatalogModels = createCollection<CatalogModelBinding>('provider-catalog.models');
+
+export const ProviderRefreshers = createCollection<ProviderRefreshContribution>(
+  'provider-catalog.refreshers',
+);
+
+export function useProviderRefresh(
+  contribution: ProviderRefreshContribution,
+  priority = 0,
+): void {
+  useContribute(ProviderRefreshers, contribution, priority);
+}
 
 export interface ProviderProtocolContribution {
   readonly type: string;
@@ -101,21 +140,21 @@ export function useProviderProtocol(contribution: ProviderProtocolContribution, 
 }
 
 export interface ProviderCatalogFace {
-  snapshot(): CatalogSnapshot;
   providers(): readonly string[];
   providerInfo(providerId: string): CatalogProviderInfo | undefined;
   models(providerId: string): readonly CatalogModel[];
   model(providerId: string, modelId: string): CatalogModel | undefined;
+  findByName(name: string): readonly string[];
   requester(providerId: string, modelId: string): LlmRequester<'protocol' | 'model'> | undefined;
-  upsert(input: Parameters<ProviderCatalog['upsert']>[0]): void;
-  bind(handle: CatalogProviderHandle): void;
-  remove(providerId: string): void;
-  refresh(target: Parameters<ProviderCatalog['refresh']>[0]): void;
-  ping(providerId: string, modelId: string): void;
-  onChanged(listener: Parameters<ProviderCatalog['onChanged']>[0]): () => void;
-  onRefreshFailed(listener: Parameters<ProviderCatalog['onRefreshFailed']>[0]): () => void;
   isLive(providerId: string): boolean;
-  close(): void;
+  addProvider(input: AddProviderInput): Promise<void>;
+  addModel(key: string, record: CatalogModelConfig): Promise<void>;
+  refresh(options?: ProviderRefreshOptions): Promise<ProviderRefreshReport>;
+  retiredModelReplacement(alias: string): string | undefined;
+  ping(providerId: string, modelId: string): void;
+  onChanged(listener: (event: ProviderCatalogChangedEvent) => void): () => void;
+  onRefreshFailed(listener: (event: ProviderCatalogRefreshFailedEvent) => void): () => void;
+  onRetiredModel(listener: (event: RetiredModel) => void): () => void;
 }
 
 export const ProviderCatalogRef = createFacadeToken<ProviderCatalogFace>('provider-catalog');
@@ -130,71 +169,127 @@ export function useProviderCatalog(): Readonly<ShallowRef<ProviderCatalogFace | 
 
 const STATIC_CREDENTIAL_RESOLVER_PRIORITY = 1000;
 
-function materializeHandle(
-  providerId: string,
-  info: CatalogProviderInfo | undefined,
+interface ModelOverrides {
+  readonly temperature?: number;
+  readonly topP?: number;
+  readonly thinkingKeep?: string;
+  readonly maxCompletionTokens?: number;
+}
+
+function requesterEntries(
+  info: CatalogProviderInfo,
   contributions: readonly ProviderProtocolContribution[],
-): CatalogProviderHandle | undefined {
-  if (info === undefined || isOAuthBackedProvider(info)) return undefined;
-  const type = info.type;
-  if (type === undefined) return undefined;
-  const factory = contributions.findLast((contribution) => contribution.type === type);
-  if (factory === undefined) return undefined;
-  const protocols = factory.protocols(info);
-  const entries = Object.fromEntries(
-    Object.entries(protocols).filter(
+): Record<string, LlmRequester<'protocol'>> {
+  const factory = contributions.findLast((contribution) => contribution.type === info.type);
+  if (factory === undefined) return {};
+  return Object.fromEntries(
+    Object.entries(factory.protocols(info)).filter(
       (entry): entry is [string, LlmRequester<'protocol'>] => entry[1] !== undefined,
     ),
   );
-  if (Object.keys(entries).length === 0) return undefined;
+}
+
+function materializeProvider(
+  providerId: string,
+  info: CatalogProviderInfo | undefined,
+  records: Readonly<Record<string, CatalogModelConfig>>,
+  contributions: readonly ProviderProtocolContribution[],
+): CatalogProviderHandle | undefined {
+  const requester = info?.type === undefined ? {} : requesterEntries(info, contributions);
+  for (const record of Object.values(records)) {
+    if (record.protocol === undefined) continue;
+    Object.assign(
+      requester,
+      requesterEntries(
+        {
+          ...info,
+          type: record.protocol,
+          baseUrl: record.baseUrl ?? info?.baseUrl,
+          customHeaders: record.defaultHeaders ?? info?.customHeaders,
+          apiKey: record.apiKey ?? info?.apiKey,
+        },
+        contributions,
+      ),
+    );
+  }
+  return Object.keys(requester).length === 0 ? undefined : { id: providerId, requester };
+}
+
+function mergeProviderInfo(
+  init: CatalogProviderInfo | undefined,
+  configured: CatalogProviderInfo | undefined,
+): CatalogProviderInfo | undefined {
+  if (init === undefined) return configured;
+  if (configured === undefined) return init;
   return {
-    id: providerId,
-    requester: entries,
-    listModels:
-      info.modelSource === 'discover' ? () => discoverProviderModels(providerId, info) : undefined,
+    ...init,
+    ...configured,
+    customHeaders:
+      init.customHeaders === undefined && configured.customHeaders === undefined
+        ? undefined
+        : { ...init.customHeaders, ...configured.customHeaders },
+    env:
+      init.env === undefined && configured.env === undefined
+        ? undefined
+        : { ...init.env, ...configured.env },
   };
 }
 
-async function discoverProviderModels(
-  providerId: string,
-  info: CatalogProviderInfo,
-): Promise<readonly CatalogModelDefinition[]> {
-  const baseUrl = info.baseUrl;
-  if (baseUrl === undefined) return [];
-  const headers: Record<string, string> = { ...info.customHeaders };
-  if (info.apiKey !== undefined) {
-    headers['authorization'] = `Bearer ${info.apiKey}`;
-  }
-  const response = await fetch(`${baseUrl.replace(/\/+$/, '')}/models`, { headers });
-  if (!response.ok) {
-    throw new Error(`model discovery failed for '${baseUrl}': HTTP ${response.status}`);
-  }
-  const payload: unknown = await response.json();
-  if (!isPlainObject(payload) || !Array.isArray(payload['data'])) return [];
-  const seeds: CatalogModelDefinition[] = [];
-  for (const item of payload['data']) {
-    if (isPlainObject(item) && typeof item['id'] === 'string') {
-      seeds.push({ id: item['id'], provider: providerId });
-    }
-  }
-  return seeds;
-}
-
-export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefaultsEvent>(
+export const providerCatalog = createFeature<
+  ModelBoundEvent | SessionModelDefaultsEvent | ModelCatalogChangedEvent
+>(
   'provider-catalog',
   {
     app() {
       const node = currentUnit();
+      const fire = useFire();
+      useProviderProtocol({
+        type: 'openai',
+        protocols: () => ({ openai: openAIRequester, openai_responses: openAIResponsesRequester }),
+      });
+      useProviderProtocol({
+        type: 'openai_responses',
+        protocols: () => ({ openai_responses: openAIResponsesRequester }),
+      });
+      useProviderProtocol({ type: 'anthropic', protocols: () => ({ anthropic: anthropicRequester }) });
+      useProviderProtocol({
+        type: 'google-genai',
+        protocols: () => ({ 'google-genai': googleGenAIRequester }),
+      });
+      useProviderProtocol({
+        type: 'vertexai',
+        protocols: () => ({ 'google-genai': googleVertexRequester }),
+      });
       const live = new Set<string>();
-      const glueHandles = new Map<string, CatalogProviderHandle>();
       const configKeys = new Map<string, Map<string, string>>();
+      const requesterErrors = new Map<string, Map<string, unknown>>();
+      const addedProviders = new Set<() => void>();
+      const failedListeners = new Set<(event: ProviderCatalogRefreshFailedEvent) => void>();
+      const retiredListeners = new Set<(event: RetiredModel) => void>();
       let catalog: ProviderCatalog | undefined;
       const ready = shallowRef(false);
       const snapshotRef = shallowRef<CatalogSnapshot>({ providers: {} });
-      const pendingChanged: Parameters<ProviderCatalog['onChanged']>[0][] = [];
-      const pendingFailed: Parameters<ProviderCatalog['onRefreshFailed']>[0][] = [];
+      const pendingChanged: ((event: ProviderCatalogChangedEvent) => void)[] = [];
+      let modelWriteChain: Promise<unknown> = Promise.resolve();
+      const enqueueModelWrite = <T>(task: () => Promise<T>): Promise<T> => {
+        const run = modelWriteChain.then(task, task);
+        modelWriteChain = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      };
+      const requireConfig = (): ConfigStore => {
+        const current = config.value;
+        if (current === undefined) {
+          throw new ModelCatalogError(
+            'config.unavailable',
+            'Cannot persist catalog models: the config feature is not mounted.',
+          );
+        }
+        return current;
+      };
       const face: ProviderCatalogFace = {
-        snapshot: () => snapshotRef.value,
         providers: () => Object.keys(snapshotRef.value.providers).toSorted(),
         providerInfo: (providerId) =>
           snapshotRef.value.providers[providerId]?.info as CatalogProviderInfo | undefined,
@@ -206,46 +301,52 @@ export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefau
           const cat = catalog;
           return cat === undefined ? undefined : cat.model(providerId, modelId);
         },
-        requester: (providerId, modelId) =>
-          catalog === undefined ? undefined : catalog.requester(providerId, modelId),
-        upsert: (input) => {
-          if (catalog === undefined) return;
-          if (input.handle !== undefined) {
-            glueHandles.set(input.providerId ?? input.handle.id, input.handle);
-            live.add(input.providerId ?? input.handle.id);
-          }
-          catalog.upsert(input);
-          if (input.handle !== undefined) bump();
-        },
-        bind: (handle) => {
-          if (catalog === undefined) return;
-          glueHandles.set(handle.id, handle);
-          live.add(handle.id);
-          catalog.bind(handle);
-          bump();
-        },
-        remove: (providerId) => {
-          if (catalog === undefined) return;
-          glueHandles.delete(providerId);
-          live.delete(providerId);
-          catalog.remove(providerId);
-        },
-        refresh: (target) => {
-          if (catalog === undefined) return;
-          let bumped = false;
-          for (const item of Array.isArray(target) ? target : [target]) {
-            if (typeof item !== 'string') {
-              glueHandles.set(item.id, item);
-              live.add(item.id);
-              bumped = true;
+        findByName: (name) => {
+          const keys: string[] = [];
+          for (const entry of projected.values()) {
+            for (const [configKey, record] of Object.entries(entry.records)) {
+              if (record.name === name || record.model === name || record.aliases?.includes(name)) {
+                keys.push(configKey);
+              }
             }
           }
-          catalog.refresh(target);
-          if (bumped) bump();
+          return keys;
         },
+        requester: (providerId, modelId) => {
+          const error = requesterErrors.get(providerId)?.get(modelId);
+          if (error !== undefined) throw error;
+          return catalog === undefined ? undefined : catalog.requester(providerId, modelId);
+        },
+        isLive: (providerId) => live.has(providerId),
+        addProvider: async ({ handle, init }) => {
+          const withdraw = node.register(Providers, { handle, info: init });
+          addedProviders.add(withdraw);
+          try {
+            if (init !== undefined && config.value !== undefined) {
+              const current = config.value;
+              const providers = current.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {};
+              if (providers[handle.id] === undefined) {
+                await current.set(PROVIDERS_CONFIG_SECTION, { [handle.id]: init }, 'user');
+              }
+            }
+          } catch (error) {
+            addedProviders.delete(withdraw);
+            withdraw();
+            throw error;
+          }
+        },
+        addModel: (key, record) =>
+          enqueueModelWrite(async () => {
+            const current = requireConfig();
+            const models = current.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
+            await current.set(MODELS_CONFIG_SECTION, { ...models, [key]: record }, 'user');
+          }),
+        refresh: (options = {}) => orchestrator.refresh(options),
+        retiredModelReplacement: (alias) => orchestrator.retiredModelReplacement(alias),
         ping: (providerId, modelId) => {
           if (catalog === undefined) return;
-          catalog.ping(providerId, modelId);
+          face.requester(providerId, modelId);
+          void catalog.ping(providerId, modelId).catch(() => {});
         },
         onChanged: (listener) => {
           if (catalog === undefined) {
@@ -258,200 +359,198 @@ export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefau
           return catalog.onChanged(listener);
         },
         onRefreshFailed: (listener) => {
-          if (catalog === undefined) {
-            pendingFailed.push(listener);
-            return () => {
-              const index = pendingFailed.indexOf(listener);
-              if (index >= 0) pendingFailed.splice(index, 1);
-            };
-          }
-          return catalog.onRefreshFailed(listener);
+          failedListeners.add(listener);
+          return () => {
+            failedListeners.delete(listener);
+          };
         },
-        isLive: (providerId) => live.has(providerId),
-        close: () => catalog?.close(),
-      };
-      const bump = (): void => {
-        if (catalog === undefined) return;
-        snapshotRef.value = { providers: { ...catalog.snapshot().providers } };
+        onRetiredModel: (listener) => {
+          retiredListeners.add(listener);
+          return () => {
+            retiredListeners.delete(listener);
+          };
+        },
       };
       useExpose(ProviderCatalogRef, face);
 
       const config = useInject(ConfigRef);
       void createProviderCatalog().then((created) => {
         catalog = created;
-        for (const listener of pendingChanged.splice(0)) created.onChanged(listener);
-        for (const listener of pendingFailed.splice(0)) created.onRefreshFailed(listener);
-        created.onChanged((event) => {
+        created.onChanged(() => {
           snapshotRef.value = created.snapshot();
-          const current = config.value;
-          if (current === undefined) return;
-          const currentModels = current.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
-          const next: Record<string, CatalogModelConfig> = { ...currentModels };
-          let changed = false;
-          for (const providerId of event.providers) {
-            const entry = created.snapshot().providers[providerId];
-            if (entry === undefined) continue;
-            const discovered = Object.values(entry.discovered);
-            if (discovered.length === 0) continue;
-            const prefix = catalogAliasPrefix(entry.info as CatalogProviderInfo | undefined, providerId);
-            const upstreamKeys = new Set(
-              discovered.map((definition) => `${prefix}${definition.id}`),
-            );
-            for (const [key, record] of Object.entries(currentModels)) {
-              if (record.provider !== providerId || !key.startsWith(prefix)) continue;
-              if (!upstreamKeys.has(key)) {
-                delete next[key];
-                changed = true;
-              }
-            }
-            for (const definition of discovered) {
-              const record = omitUndefined({
-                provider: definition.provider ?? providerId,
-                model: definition.name ?? definition.id,
-                capability: definition.capability,
-                maxContextSize: definition.maxContextSize,
-                maxInputSize: definition.maxInputSize,
-                baseUrl: definition.endpoint?.baseUrl,
-              }) as CatalogModelConfig;
-              if (!deepEqual(currentModels[`${prefix}${definition.id}`], record)) {
-                next[`${prefix}${definition.id}`] = record;
-                changed = true;
-              }
-            }
-          }
-          if (!changed) return;
-          void current.set(MODELS_CONFIG_SECTION, next, 'user').catch(() => {});
         });
+        for (const listener of pendingChanged.splice(0)) created.onChanged(listener);
         ready.value = true;
       });
       useCleanup(() => {
         catalog?.close();
+        for (const withdraw of addedProviders) withdraw();
+        addedProviders.clear();
+        failedListeners.clear();
+        retiredListeners.clear();
       });
 
       const contributed = useCollection(Providers);
       const protocolFactories = useCollection(ProviderProtocols);
+      const refreshers = useCollection(ProviderRefreshers);
       const bindings = useCollection(CatalogModels);
       const resolvers = useCollection(CredentialResolvers);
+      const oauthTokenResolvers = useCollection(ProviderOAuthTokenResolvers);
+      const refreshUserAgents = useCollection(ProviderRefreshUserAgents);
+      const orchestrator = createRefreshOrchestrator({
+        config: () => config.value,
+        providerIds: () => face.providers(),
+        providerInfo: (providerId) => face.providerInfo(providerId),
+        refreshers: () => refreshers.value,
+        tokenResolvers: () => oauthTokenResolvers.value,
+        userAgents: () => refreshUserAgents.value,
+        onChanged: (report) => {
+          fire({ type: 'event.model_catalog.changed', payload: report });
+        },
+        onFailed: (providerId, error) => {
+          const event = { type: 'refresh-failed', providerId, error } as const;
+          for (const listener of failedListeners) listener(event);
+        },
+        onRetired: (event) => {
+          for (const listener of retiredListeners) listener(event);
+        },
+      });
       useConfigSection(providersConfigSection);
       useConfigSection(modelsConfigSection);
       useConfigSection(thinkingConfigSection);
       useConfigSection(modelCatalogConfigSection);
       useConfigSection(defaultModelConfigSection);
+      useConfigSection(defaultProviderConfigSection);
       useConfigOverlay(kimiModelEnvOverlay);
       useCredentialResolver(
         {
           resolve: (info) => {
-            const apiKey = resolveProviderInfo(info, config.value)?.apiKey;
+            const apiKey = resolveProviderInfo(info)?.apiKey;
             return apiKey === undefined ? undefined : createStaticCredentialProvider(apiKey);
           },
         },
         STATIC_CREDENTIAL_RESOLVER_PRIORITY,
       );
 
-      const credentialsFor = (
-        handle: CatalogProviderHandle | undefined,
-        info: CatalogProviderInfo | undefined,
-      ): CatalogProviderHandle | undefined => {
-        if (handle === undefined) return undefined;
-        const credential =
-          info === undefined ? undefined : resolveCredentialProvider(info, resolvers.value);
-        if (credential === undefined) return handle;
-        return { ...handle, endpoint: { ...handle.endpoint, credentials: credential } };
-      };
-
-      const synced = new Set<string>();
-      const syncContributed = (list: readonly ProviderContribution[]): void => {
-        if (!ready.value) return;
-        const next = new Set(list.map((item) => item.handle.id));
-        for (const item of list) {
-          synced.add(item.handle.id);
-          face.upsert({
-            providerId: item.handle.id,
-            handle: credentialsFor(item.handle, item.info),
-            info: item.info,
-            models: (item.models ?? []).map(catalogModelDefinitionOf),
-          });
+      const projected = new Map<
+        string,
+        {
+          info: CatalogProviderInfo | undefined;
+          records: Record<string, CatalogModelConfig>;
+          contributionHandle: CatalogProviderHandle | undefined;
+          factories: readonly ProviderProtocolContribution[];
+          resolvers: readonly CredentialResolverContribution[];
+          config: ConfigStore | undefined;
         }
-        for (const providerId of Array.from(synced)) {
-          if (!next.has(providerId)) {
-            synced.delete(providerId);
-            face.remove(providerId);
-          }
-        }
-      };
-      watch(
-        () => [ready.value, contributed.value] as const,
-        ([, list]) => {
-          syncContributed(list);
-        },
-        { immediate: true },
-      );
-
-      let managed = new Set<string>();
-      const reconcileConfig = (): void => {
+      >();
+      const reconcile = (): void => {
         const cat = catalog;
         if (!ready.value || cat === undefined) return;
         const current = config.value;
         const providersSection = current?.section<ProvidersSection>(PROVIDERS_CONFIG_SECTION).value ?? {};
         const modelsSection = current?.section<ModelsSection>(MODELS_CONFIG_SECTION).value ?? {};
-        const nextManaged = new Set<string>([
+        const defaultProvider = current?.section<string>(DEFAULT_PROVIDER_CONFIG_SECTION).value;
+        const contributions = new Map(contributed.value.map((item) => [item.handle.id, item]));
+        const normalized = Object.entries(modelsSection).map(([configKey, record]) => ({
+          configKey,
+          record,
+          providerId: catalogProviderIdOf(record, defaultProvider),
+        }));
+        const ids = new Set<string>([
+          ...projected.keys(),
+          ...contributions.keys(),
           ...Object.keys(providersSection),
-          ...Object.values(modelsSection).map((model) => model.provider),
+          ...normalized.map((entry) => entry.providerId),
         ]);
-        const stale = [...managed].filter((providerId) => !nextManaged.has(providerId));
-        managed = nextManaged;
-        for (const providerId of nextManaged) {
-          const info = resolveProviderInfo(providersSection[providerId], current);
-          const prefix = catalogAliasPrefix(info, providerId);
-          const models = Object.entries(modelsSection)
-            .filter(([, model]) => model.provider === providerId)
-            .toSorted((a, b) => Number(b[0].startsWith(prefix)) - Number(a[0].startsWith(prefix)));
+        for (const providerId of ids) {
+          const contribution = contributions.get(providerId);
+          const configured = providersSection[providerId];
+          const info = resolveProviderInfo(mergeProviderInfo(contribution?.info, configured));
+          const prefix = `${providerId}/`;
+          const records = Object.fromEntries(
+            normalized
+              .filter((entry) => entry.providerId === providerId)
+              .toSorted(
+                (a, b) =>
+                  Number(b.configKey.startsWith(prefix)) - Number(a.configKey.startsWith(prefix)),
+              )
+              .map((entry) => [entry.configKey, entry.record]),
+          ) as Record<string, CatalogModelConfig>;
+          if (
+            contribution === undefined &&
+            configured === undefined &&
+            Object.keys(records).length === 0
+          ) {
+            cat.remove(providerId);
+            live.delete(providerId);
+            configKeys.delete(providerId);
+            requesterErrors.delete(providerId);
+            projected.delete(providerId);
+            continue;
+          }
+          const previous = projected.get(providerId);
+          if (
+            previous !== undefined &&
+            previous.contributionHandle === contribution?.handle &&
+            previous.factories === protocolFactories.value &&
+            previous.resolvers === resolvers.value &&
+            previous.config === current &&
+            deepEqual(previous.info, info) &&
+            deepEqual(previous.records, records)
+          ) {
+            continue;
+          }
+          const handle =
+            contribution?.handle ??
+            materializeProvider(providerId, info, records, protocolFactories.value);
+          if (handle === undefined && live.has(providerId)) {
+            cat.remove(providerId);
+          }
+          if (handle === undefined) {
+            live.delete(providerId);
+          } else {
+            live.add(providerId);
+          }
           configKeys.set(
             providerId,
-            new Map(models.map(([key, model]) => [model.model, key])),
+            new Map(
+              Object.entries(records).map(([key, record]) => [record.model ?? key, key]),
+            ),
           );
-          const definitions = models.map(([, model]) => catalogModelDefinitionOf(model));
-          const entry = cat.snapshot().providers[providerId];
-          const drifted =
-            entry === undefined ||
-            !deepEqual(entry.info, info) ||
-            !deepEqual(
-              entry.override,
-              Object.fromEntries(definitions.map((definition) => [definition.id, definition])),
-            );
-          const handle = credentialsFor(
-            materializeHandle(providerId, info, protocolFactories.value),
-            info,
-          );
-          const hadHandle = handle !== undefined && !synced.has(providerId);
-          const shouldRefresh =
-            hadHandle && handle.listModels !== undefined && !face.isLive(providerId);
-          if (drifted || !face.isLive(providerId)) {
-            cat.upsert({
-              providerId,
-              info,
-              models: definitions,
-              handle: hadHandle ? handle : undefined,
-              refresh: hadHandle ? shouldRefresh : undefined,
-            });
-            if (hadHandle) {
-              live.add(providerId);
+          const errors = new Map<string, unknown>();
+          const definitions = Object.entries(records).map(([configKey, record]) => {
+            try {
+              return catalogModelDefinitionOf(configKey, record, {
+                providerId,
+                provider: info,
+                config: current,
+                resolveCredential: (candidate) =>
+                  resolveCredentialProvider(candidate, resolvers.value),
+              });
+            } catch (error) {
+              errors.set(record.model ?? configKey, error);
+              return {
+                ...catalogModelDefinitionOf(configKey, record),
+                provider: providerId,
+              };
             }
-          }
-        }
-        for (const providerId of stale) {
-          configKeys.delete(providerId);
-          const item = contributed.value.find((entry) => entry.handle.id === providerId);
-          if (item === undefined) {
-            face.remove(providerId);
-          } else {
-            face.upsert({
-              providerId,
-              handle: credentialsFor(item.handle, item.info),
-              info: item.info,
-              models: (item.models ?? []).map(catalogModelDefinitionOf),
-            });
-          }
+          });
+          requesterErrors.set(providerId, errors);
+          cat.upsert({
+            providerId,
+            handle,
+            info,
+            models: definitions,
+            refresh: false,
+          });
+          projected.set(providerId, {
+            info,
+            records,
+            contributionHandle: contribution?.handle,
+            factories: protocolFactories.value,
+            resolvers: resolvers.value,
+            config: current,
+          });
         }
       };
       watch(
@@ -459,28 +558,14 @@ export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefau
           ready.value,
           config.value?.section(PROVIDERS_CONFIG_SECTION).value,
           config.value?.section(MODELS_CONFIG_SECTION).value,
+          config.value?.section(DEFAULT_PROVIDER_CONFIG_SECTION).value,
           contributed.value,
           protocolFactories.value,
+          resolvers.value,
         ],
-        reconcileConfig,
+        reconcile,
         { immediate: true, scheduler: coalescedMicrotaskScheduler() },
       );
-      watch(resolvers, () => {
-        const cat = catalog;
-        if (!ready.value || cat === undefined) return;
-        for (const providerId of live) {
-          const handle = glueHandles.get(providerId);
-          const info = face.providerInfo(providerId);
-          if (handle === undefined || info === undefined) continue;
-          const credential = resolveCredentialProvider(info, resolvers.value);
-          cat.bind(
-            credential === undefined
-              ? handle
-              : { ...handle, endpoint: { ...handle.endpoint, credentials: credential } },
-          );
-        }
-        bump();
-      });
 
       const registered = new Map<string, { binding: CatalogModelBinding; withdraw: () => void }>();
       watch(
@@ -490,13 +575,17 @@ export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefau
           const next = new Map<string, CatalogModelBinding>();
           for (const providerId of face.providers()) {
             for (const model of face.models(providerId)) {
-              const requester = face.requester(providerId, model.id);
+              let requester: LlmRequester<'protocol' | 'model'> | undefined;
+              try {
+                requester = face.requester(providerId, model.id);
+              } catch {
+                continue;
+              }
               if (requester === undefined) continue;
-              const info = face.providerInfo(providerId);
               next.set(`${providerId}:${model.id}`, {
                 providerId,
                 model,
-                alias: catalogModelAlias(info, providerId, model.id),
+                alias: catalogModelAlias(providerId, model.id),
                 configKey: configKeys.get(providerId)?.get(model.id),
                 requester,
               });
@@ -636,18 +725,37 @@ export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefau
         const binding = matchCatalogBinding(alias, bindings.value);
         if (binding === undefined) return true;
         const thinkingSection = config.value?.section<ThinkingConfig>(THINKING_CONFIG_SECTION).value;
+        const overrides = config.value?.section<ModelOverrides>(MODEL_OVERRIDES_CONFIG_SECTION).value;
         const requested =
           store.state.value.thinking ??
           sessionStore.state.value.defaultThinking ??
           thinkingSection?.forcedEffort ??
           thinkingSection?.effort;
         const spec = binding.model;
-        const next: LoopLlmRequester =
-          requested === undefined
-            ? binding.requester
-            : binding.requester.with({
-                model: { thinking: { effort: resolveThinkingEffortForModel(requested, spec) } },
-              });
+        const effort = resolveThinkingEffortForModel(
+          requested ?? spec.defaultThinking?.effort,
+          spec,
+        );
+        const keep = resolveThinkingKeep(overrides?.thinkingKeep, thinkingSection?.keep, effort);
+        let next: LoopLlmRequester = binding.requester;
+        if (requested !== undefined || keep !== undefined) {
+          next = next.with({ model: { thinking: { effort, keep } } });
+        }
+        if (overrides?.temperature !== undefined || overrides?.topP !== undefined) {
+          next = next.with({
+            model: {
+              sampling: { temperature: overrides.temperature, topP: overrides.topP },
+            },
+          });
+        }
+        if (overrides?.maxCompletionTokens !== undefined) {
+          next = next.with({
+            model: {
+              maxOutputTokens:
+                overrides.maxCompletionTokens > 0 ? overrides.maxCompletionTokens : 'none',
+            },
+          });
+        }
         runtime.requester = next;
         lastApplied = next;
         lastSpec = spec;
@@ -692,6 +800,7 @@ export const providerCatalog = createFeature<ModelBoundEvent | SessionModelDefau
           config.value,
           config.value?.section(DEFAULT_MODEL_CONFIG_SECTION).value,
           config.value?.section(THINKING_CONFIG_SECTION).value,
+          config.value?.section(MODEL_OVERRIDES_CONFIG_SECTION).value,
           bindings.value,
         ],
         () => {
@@ -717,15 +826,6 @@ function coalescedMicrotaskScheduler(): (job: () => void, isFirstRun: boolean) =
 
 function resolveProviderInfo(
   info: CatalogProviderInfo | undefined,
-  config: ConfigStore | undefined,
 ): CatalogProviderInfo | undefined {
-  if (info === undefined || config === undefined) return info;
-  const readEnvField = (field: string): string | undefined => {
-    const name = info.env?.[field];
-    return name === undefined ? undefined : config.env(name);
-  };
-  const apiKey = info.apiKey ?? readEnvField('apiKey');
-  const baseUrl = info.baseUrl ?? readEnvField('baseUrl');
-  if (apiKey === info.apiKey && baseUrl === info.baseUrl) return info;
-  return omitUndefined({ ...info, apiKey, baseUrl });
+  return info;
 }

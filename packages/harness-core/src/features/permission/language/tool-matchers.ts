@@ -127,10 +127,6 @@ const TOOL_RULE_MATCHERS: Readonly<Record<string, ToolRuleMatcher>> = {
   select_tools: nameOnlyMatcher('select_tools'),
   EnterPlanMode: nameOnlyMatcher('EnterPlanMode'),
   ExitPlanMode: nameOnlyMatcher('ExitPlanMode'),
-  CreateGoal: nameOnlyMatcher('CreateGoal'),
-  GetGoal: nameOnlyMatcher('GetGoal'),
-  SetGoalBudget: nameOnlyMatcher('SetGoalBudget'),
-  UpdateGoal: nameOnlyMatcher('UpdateGoal'),
   AgentSwarm: nameOnlyMatcher('AgentSwarm'),
 };
 

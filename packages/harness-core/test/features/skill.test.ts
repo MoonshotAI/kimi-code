@@ -245,12 +245,12 @@ async function startSkillApp(options?: {
   const capture: ProbeCapture = { skills: new Map() };
   const harness = createHarness({ space: memoryHarnessSpace() });
   if (options?.withConfig !== false) {
-    await harness.app.features.add(
+    harness.app.features.add(
       createConfig({ persist: fakePersist(options?.toml).persist, env: options?.env ?? {} }),
     );
   }
-  await harness.app.features.add(skillFeature);
-  await harness.app.features.add(
+  harness.app.features.add(skillFeature);
+  harness.app.features.add(
     createFeature('skill-probe', {
       app() {
         capture.catalog = useInject(SkillCatalogRef);
@@ -261,7 +261,7 @@ async function startSkillApp(options?: {
       },
     }),
   );
-  for (const feature of options?.extraFeatures ?? []) await harness.app.features.add(feature);
+  for (const feature of options?.extraFeatures ?? []) harness.app.features.add(feature);
   const session = await harness.app.create({ sessionId: 'sess' });
   const catalog = required(capture.catalog?.value, 'SkillCatalogRef');
   await catalog.ready;
@@ -800,7 +800,7 @@ describe('createSkill app slot', () => {
     env.harness.app.on(env.skillFeature, 'skill.changed', (event) => {
       changed.push(event.sourceId);
     });
-    await env.harness.app.features.add(
+    env.harness.app.features.add(
       createFeature('late-skill-source', {
         app() {
           useSkillSource({

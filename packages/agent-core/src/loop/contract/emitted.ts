@@ -1,7 +1,7 @@
 import type { ToolCall, ToolDescription } from '#/llm/message';
 import type { LlmRunEvent } from '#/llm/response';
 import type { HistoryMessage, UserEntry } from '#/history/message';
-import type { ToolUpdate } from '#/tool/index';
+import type { ToolHookPoint, ToolUpdate } from '#/tool/index';
 import type { HookLifecycleEvent, HookPoint } from './hook';
 import type { MessageSource, RemindEntry, TurnTrigger } from './inbox';
 import type { AsyncToolOutcome, Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from './outcome';
@@ -14,7 +14,7 @@ export type ToolEvent =
 
 export type HookFailedEvent = {
   type: 'hook.failed';
-  point: HookPoint;
+  point: HookPoint | ToolHookPoint;
   hookId?: string;
   turnId: number;
   step: number;

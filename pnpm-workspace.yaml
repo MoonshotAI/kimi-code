@@ -11,6 +11,3 @@ catalog:
 overrides:
   "kimi-code>@tailwindcss/vite": "4.1.18"
   "kimi-code>tailwindcss": "4.1.18"
-
-onlyBuiltDependencies:
-  - better-sqlite3

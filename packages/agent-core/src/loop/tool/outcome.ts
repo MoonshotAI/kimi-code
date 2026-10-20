@@ -8,11 +8,6 @@ export function errorResult(text: string): ToolResult {
   return { content: [{ type: 'text', text }], isError: true };
 }
 
-export function withNotes(result: ToolResult, notes: readonly string[]): ToolResult {
-  if (notes.length === 0) return result;
-  return { ...result, content: [...result.content, ...notes.map((text) => ({ type: 'text' as const, text }))] };
-}
-
 export function toolEntry(toolCall: ToolCall, result: ToolResult, detached?: true): ToolEntry {
   return createToolEntry(createToolMessage(toolCall.id, result.content), {
     source: 'tool',

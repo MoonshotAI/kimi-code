@@ -1,5 +1,4 @@
-import { createFeature, useAgent, useSession, useStepContinuing, useStepStarting, useToolStarting, type Feature } from '@moonshot-ai/agent-core/app/index';
-import type { ToolMeta } from '@moonshot-ai/agent-core/history/index';
+import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature } from '@moonshot-ai/agent-core/app/index';
 import { createFacadeToken, useExpose, type ComputedRef } from '@moonshot-ai/agent-core/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
@@ -155,15 +154,6 @@ export function createPlan(props: CreatePlanProps = {}): Feature<void, PlanEvent
           state: injection,
         }),
       );
-      useStepContinuing(({ messages }) => {
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const entry = messages[i];
-          if (entry === undefined || entry.message.role !== 'tool') break;
-          if ((entry.meta as ToolMeta | undefined)?.stopTurn === true) {
-            return { type: 'done', cause: { reason: 'stop_turn' } };
-          }
-        }
-      });
       useExpose(PlanRef, { state: store.state, enter, cancel, clear, exit, recordRevision, status });
     },
   });

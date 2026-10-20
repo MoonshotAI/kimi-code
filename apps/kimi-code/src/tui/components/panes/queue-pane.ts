@@ -1,11 +1,11 @@
 import { Container, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
 import { SELECT_POINTER } from '../../constant/symbols';
-import type { QueuePaneItem } from '../../types';
+import type { QueuedMessage } from '../../types';
 import { currentTheme } from '#/tui/theme';
 
 export interface QueuePaneOptions {
-  readonly messages: readonly QueuePaneItem[];
+  readonly messages: readonly QueuedMessage[];
   readonly isCompacting: boolean;
   readonly isStreaming: boolean;
   readonly canSteerImmediately: boolean;
@@ -14,7 +14,7 @@ export interface QueuePaneOptions {
 const ELLIPSIS = '…';
 
 export class QueuePaneComponent extends Container {
-  private readonly messages: readonly QueuePaneItem[];
+  private readonly messages: readonly QueuedMessage[];
   private readonly hint: string | undefined;
 
   constructor(options: QueuePaneOptions) {
@@ -23,8 +23,8 @@ export class QueuePaneComponent extends Container {
 
     if (options.messages.length > 0) {
       // Bash commands (`! …`) are not steerable, so only advertise Ctrl-S when
-      // there is at least one plain-text prompt steering would send.
-      const hasSteerable = options.messages.some((m) => m.kind === 'prompt');
+      // there is at least one plain-text or skill item steering would send.
+      const hasSteerable = options.messages.some((m) => m.mode !== 'bash');
       const canSteer = options.canSteerImmediately && hasSteerable;
       this.hint =
         options.isCompacting && !options.isStreaming
@@ -44,7 +44,7 @@ export class QueuePaneComponent extends Container {
     for (const item of this.messages) {
       const singleLine = item.text.replaceAll(/\s+/g, ' ').trim();
       const prefix = `  ${SELECT_POINTER} `;
-      if (item.kind === 'bash') {
+      if (item.mode === 'bash') {
         // Shell commands get a `$ ` prompt and the shell-mode hue so they read
         // as commands, not as plain text that would be sent to the model.
         const prompt = '$ ';

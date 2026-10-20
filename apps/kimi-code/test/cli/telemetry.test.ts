@@ -10,13 +10,13 @@ const mocks = vi.hoisted(() => ({
   createKimiDeviceId: vi.fn(() => 'device-123'),
   resolveKimiHome: vi.fn(() => '/home/.kimi-code'),
   resolveConfigPath: vi.fn(() => '/home/.kimi-code/config.toml'),
-  readKimiConfigSnapshot: vi.fn(
+  loadRuntimeConfigSafe: vi.fn(
     (): {
-      sections: { defaultModel?: string; telemetry?: boolean };
-      error: string | undefined;
+      config: { defaultModel?: string; telemetry?: boolean };
+      fileError: Error | undefined;
     } => ({
-      sections: { defaultModel: 'kimi-k2', telemetry: true },
-      error: undefined,
+      config: { defaultModel: 'kimi-k2', telemetry: true },
+      fileError: undefined,
     }),
   ),
   getCachedAccessToken: vi.fn(async () => 'tok'),
@@ -46,7 +46,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
     resolveConfigPath: mocks.resolveConfigPath,
-    readKimiConfigSnapshot: mocks.readKimiConfigSnapshot,
+    loadRuntimeConfigSafe: mocks.loadRuntimeConfigSafe,
     KimiAuthFacade: vi.fn(function () {
       return { getCachedAccessToken: mocks.getCachedAccessToken };
     }),
@@ -56,10 +56,10 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
 describe('initializeServerTelemetry', () => {
   beforeEach(() => {
     mocks.initializeTelemetry.mockClear();
-    mocks.readKimiConfigSnapshot.mockClear();
-    mocks.readKimiConfigSnapshot.mockReturnValue({
-      sections: { defaultModel: 'kimi-k2', telemetry: true },
-      error: undefined,
+    mocks.loadRuntimeConfigSafe.mockClear();
+    mocks.loadRuntimeConfigSafe.mockReturnValue({
+      config: { defaultModel: 'kimi-k2', telemetry: true },
+      fileError: undefined,
     });
   });
 
@@ -92,9 +92,9 @@ describe('initializeServerTelemetry', () => {
   }, 20000);
 
   it('disables telemetry when config.toml sets telemetry = false', async () => {
-    mocks.readKimiConfigSnapshot.mockReturnValue({
-      sections: { defaultModel: 'kimi-k2', telemetry: false },
-      error: undefined,
+    mocks.loadRuntimeConfigSafe.mockReturnValue({
+      config: { defaultModel: 'kimi-k2', telemetry: false },
+      fileError: undefined,
     });
     const { initializeServerTelemetry } = await import('#/cli/telemetry');
     initializeServerTelemetry({ version: '1.2.3' });
@@ -105,9 +105,9 @@ describe('initializeServerTelemetry', () => {
   });
 
   it('degrades to enabled with no model when config is unreadable', async () => {
-    mocks.readKimiConfigSnapshot.mockReturnValue({
-      sections: {},
-      error: 'bad toml',
+    mocks.loadRuntimeConfigSafe.mockReturnValue({
+      config: {},
+      fileError: new Error('bad toml'),
     });
     const { initializeServerTelemetry } = await import('#/cli/telemetry');
     initializeServerTelemetry({ version: '1.2.3' });

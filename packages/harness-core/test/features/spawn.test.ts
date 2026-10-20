@@ -201,14 +201,14 @@ async function startApp(
   tmpDirs.push(workDir);
   const { requester, calls } = createMockRequester(script, opts?.requesterFilled ?? {});
   const harness = createHarness({ space });
-  await harness.app.features.add(
+  harness.app.features.add(
     createSpawn({
       catalog: opts?.withCatalog === false ? undefined : testCatalog(),
       models: opts?.models,
       workDir,
     }),
   );
-  await harness.app.features.add(bindDummyTools());
+  harness.app.features.add(bindDummyTools());
   const session = await harness.app.create({ sessionId: 'sess' });
   const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);

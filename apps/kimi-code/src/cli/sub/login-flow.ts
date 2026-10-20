@@ -8,7 +8,7 @@
 import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
 import { OAuthAccessDeniedError, type KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
-import { CLI_USER_AGENT_PRODUCT } from '#/constant/app';
+import { createKimiCodeHostIdentity } from '#/cli/version';
 import { openUrl } from '#/utils/open-url';
 import { persistedKimiOAuthRef, regionForBareLogin } from '#/utils/region';
 
@@ -27,10 +27,10 @@ export async function runLoginFlow(options: { region?: KimiRegion } = {}): Promi
   // regionForBareLogin — the default slot re-pins mainland-cn, a scoped slot
   // keeps its configured hosts).
   const region = options.region ?? regionForBareLogin(persistedKimiOAuthRef());
-  const harness = await createKimiHarness({
-    identity: CLI_USER_AGENT_PRODUCT,
-    uiMode: 'print',
-    workDir: process.cwd(),
+  const identity = createKimiCodeHostIdentity();
+  const harness = createKimiHarness({
+    identity,
+    uiMode: 'cli',
   });
   const controller = new AbortController();
   process.once('SIGINT', () => {

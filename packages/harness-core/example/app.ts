@@ -139,6 +139,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
   if (options?.http !== false) {
     harness.app.features.add(
       createHttp({
+        homeDir: home,
         listen: {
           port: Number.isFinite(port) ? port : 8787,
           host: process.env['HOST'] ?? '127.0.0.1',

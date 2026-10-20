@@ -29,18 +29,19 @@
     "@anthropic-ai/sdk": "^0.95.2",
     "@google/genai": "^1.49.0",
     "@jsquash/webp": "^1.5.0",
-    "@noble/hashes": "^2.4.0",
+    "@noble/hashes": "^2.0.0",
     "@vue/reactivity": "^3.5.44",
+    "@xstate/store": "4.3.0",
     "jimp": "^1.6.1",
     "openai": "^6.34.0",
     "radashi": "^12.9.1",
-    "undici": "^7.30.0",
+    "undici": "^7.27.1",
     "xstate": "^5.32.5",
-    "zod": "^4.6.7"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
-    "tsx": "^4.23.15",
+    "tsx": "^4.21.0",
     "typescript": "6.0.2",
     "vitest": "4.1.4"
   }

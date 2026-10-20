@@ -1,20 +1,17 @@
 import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
 import { RootRef } from '@moonshot-ai/agent-core/app/units';
 import { useCleanup, useExpose, useInject, watch } from '@moonshot-ai/agent-core/kernel/index';
-import {
-  anthropicRequester,
-  googleGenAIRequester,
-  googleVertexRequester,
-  openAIRequester,
-  openAIResponsesRequester,
-} from '@moonshot-ai/agent-core/llm/builtin/provider/index';
 
 import {
   ConfigRef,
   MODEL_CATALOG_CONFIG_SECTION,
   type ModelCatalogConfig,
 } from '#/features/config/index';
-import { useProviderProtocol } from '#/features/provider-catalog/index';
+import {
+  useProviderCatalog,
+  useProviderRefresh,
+  useProviderRefreshUserAgent,
+} from '#/features/provider-catalog/index';
 
 import { createModelsDevService, ModelsDevRef } from './service';
 
@@ -30,36 +27,23 @@ export function createModelsDev(props: CreateModelsDevProps = {}): Feature<void>
     app() {
       const config = useInject(ConfigRef);
       const root = useInject(RootRef);
+      const catalog = useProviderCatalog();
       const service = createModelsDevService({
         config: () => config.value,
         userAgent: props.userAgent,
         builtinCatalog: props.builtinCatalog,
+        refresh: () => {
+          const store = catalog.value;
+          return store === undefined
+            ? Promise.resolve({ changed: [], unchanged: [], failed: [] })
+            : store.refresh();
+        },
       });
       useExpose(ModelsDevRef, service);
-      useProviderProtocol({
-        type: 'openai',
-        protocols: () => ({
-          openai: openAIRequester,
-          openai_responses: openAIResponsesRequester,
-        }),
-      });
-      useProviderProtocol({
-        type: 'anthropic',
-        protocols: () => ({
-          anthropic: anthropicRequester,
-        }),
-      });
-      useProviderProtocol({
-        type: 'google-genai',
-        protocols: () => ({
-          'google-genai': googleGenAIRequester,
-        }),
-      });
-      useProviderProtocol({
-        type: 'vertexai',
-        protocols: () => ({
-          'google-genai': googleVertexRequester,
-        }),
+      useProviderRefreshUserAgent(props.userAgent);
+      useProviderRefresh({
+        match: (info) => info.source?.['kind'] === 'modelsDev',
+        refresh: (input) => service.refreshProvider(input),
       });
       let timer: ReturnType<typeof setTimeout> | undefined;
       let started = false;

@@ -94,8 +94,8 @@ describe('wait-for feature', () => {
   it('waits for a detached tool inside the same turn and reports its completion', async () => {
     const harness = createHarness({ space: memoryHarnessSpace() });
     const bg = backgroundProbe();
-    await harness.app.features.add(waitFor);
-    await harness.app.features.add(bg.feature);
+    harness.app.features.add(waitFor);
+    harness.app.features.add(bg.feature);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', detachThenWaitRequester());

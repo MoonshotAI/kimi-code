@@ -25,5 +25,9 @@ if (args !== undefined) {
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   await probe.root.ready();
-  process.stdout.write(`${key} ${probe.http()?.origin ?? ''} ${dataRoot}\n`);
+  const http = probe.http();
+  const origin = http?.origin ?? '';
+  const token = http?.authTokenService?.getToken?.();
+  const accessUrl = token === undefined || origin === '' ? origin : `${origin}/#token=${token}`;
+  process.stdout.write(`${key} ${accessUrl} ${dataRoot}\n`);
 }

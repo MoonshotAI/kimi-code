@@ -82,9 +82,8 @@
     "node-pty": "^1.1.0"
   },
   "devDependencies": {
-    "@moonshot-ai/agent-core": "workspace:^",
+    "@moonshot-ai/acp-server": "workspace:^",
     "@moonshot-ai/agent-core-v2": "workspace:^",
-    "@moonshot-ai/harness-core": "workspace:^",
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-product": "workspace:^",

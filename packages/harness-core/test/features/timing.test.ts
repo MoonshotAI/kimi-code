@@ -47,8 +47,8 @@ describe('timing feature', () => {
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(timing);
-    await harness.app.features.add(probe);
+    harness.app.features.add(timing);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', timedRequester(true));
@@ -78,8 +78,8 @@ describe('timing feature', () => {
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(timing);
-    await harness.app.features.add(probe);
+    harness.app.features.add(timing);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', timedRequester(false));

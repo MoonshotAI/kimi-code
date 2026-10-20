@@ -14,6 +14,11 @@ export function unavailableTool(name: string, reason: string): ToolResult {
   return toolError(`tool unavailable: ${name}: ${reason}`);
 }
 
+export function withNotes(result: ToolResult, notes: readonly string[]): ToolResult {
+  if (notes.length === 0) return result;
+  return { ...result, content: [...result.content, ...notes.map((text) => ({ type: 'text' as const, text }))] };
+}
+
 export function truncateResult(result: ToolResult, maxChars: number | undefined): ToolResult {
   if (maxChars === undefined) return result;
   let used = 0;
@@ -40,5 +45,6 @@ export function truncateResult(result: ToolResult, maxChars: number | undefined)
     content,
     ...(result.isError === true ? { isError: true as const } : {}),
     ...(result.stopTurn !== undefined ? { stopTurn: result.stopTurn } : {}),
+    ...(result.blocked !== undefined ? { blocked: result.blocked } : {}),
   };
 }

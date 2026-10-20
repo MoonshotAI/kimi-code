@@ -26,7 +26,8 @@ import { FAILURE_MARK, STATUS_BULLET, SUCCESS_MARK } from '#/tui/constant/symbol
 import { currentTheme } from '#/tui/theme';
 import { createMarkdownTheme } from '#/tui/theme/pi-tui-theme';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
-import type { TokenUsage } from '@moonshot-ai/agent-core';
+import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { createMarkdownOptions } from '#/tui/utils/markdown-options';
 import { notifyResultState } from '#/tui/utils/notify-result';
 import { isExperimentalFlagEnabled } from '#/tui/commands/experimental-flags';
@@ -34,10 +35,12 @@ import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 import { formatTokenCount } from '#/utils/usage/usage-format';
 
+import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
 import { TruncatedHeaderLine, type HeaderContent } from './truncated-header-line';
 import { ShellExecutionComponent } from './shell-execution';
 import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
+import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
@@ -911,6 +914,14 @@ export class ToolCallComponent extends Container {
         // runs past the outcome rows).
         return (
           args['background'] === true && nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
+        );
+      case 'CreateGoal':
+      case 'GetGoal':
+        // A parsed goal renders the same fixed snapshot in both states; only an
+        // unparsable result falls back to the line-count rule.
+        return (
+          parseGoalToolOutput(result.output) === undefined &&
+          nonEmptyLines(result.output).length > OUTCOME_MAX_LINES
         );
       case 'Edit':
       case 'Write':
@@ -1794,6 +1805,14 @@ export class ToolCallComponent extends Container {
       };
     }
 
+    const goalHeader = buildGoalToolHeader({
+      toolCall,
+      result,
+      bullet,
+      chip: isFinished && result !== undefined ? this.buildHeaderChip(result) : '',
+    });
+    if (goalHeader !== undefined) return goalHeader;
+
     const waitForHeader = buildWaitForHeader({
       toolCall,
       result,
@@ -2489,6 +2508,11 @@ export class ToolCallComponent extends Container {
     const { result } = this;
     if (result === undefined) return;
 
+    if (this.toolCall.name === 'AgentSwarm') {
+      this.buildAgentSwarmResultSummary(result);
+      return;
+    }
+
     if (!result.output) return;
 
     if (this.isSingleSubagentView()) {
@@ -2562,6 +2586,42 @@ export class ToolCallComponent extends Container {
     for (const component of components) {
       this.addChild(component);
     }
+  }
+
+  private buildAgentSwarmResultSummary(result: ToolResultBlockData): void {
+    const summary = agentSwarmResultSummaryFromOutput(result.output);
+    const dim = (s: string): string => currentTheme.fg('textDim', s);
+    const segments: string[] = [];
+
+    if (summary.completed > 0) {
+      segments.push(
+        currentTheme.fg('success', `${SUCCESS_MARK.trimEnd()} ${String(summary.completed)} completed`),
+      );
+    }
+    if (summary.failed > 0) {
+      segments.push(
+        currentTheme.fg('error', `${FAILURE_MARK.trimEnd()} ${String(summary.failed)} failed`),
+      );
+    }
+    if (summary.aborted > 0) {
+      segments.push(
+        currentTheme.fg('warning', `${ABORTED_MARK} ${String(summary.aborted)} aborted`),
+      );
+    }
+
+    if (segments.length > 0) {
+      this.addChild(new Text(`${dim('Agent swarm: ')}${segments.join(dim(' · '))}`, 2, 0));
+      return;
+    }
+
+    const isAborted = result.is_error === true && /\b(?:aborted|cancelled)\b/i.test(result.output);
+    const colorToken = isAborted ? 'warning' : result.is_error === true ? 'error' : 'success';
+    const label = isAborted
+      ? `${ABORTED_MARK} Aborted.`
+      : result.is_error === true
+        ? `${FAILURE_MARK.trimEnd()} Failed.`
+        : `${SUCCESS_MARK.trimEnd()} Completed.`;
+    this.addChild(new Text(`${dim('Agent swarm: ')}${currentTheme.fg(colorToken, label)}`, 2, 0));
   }
 
   /**
@@ -2648,15 +2708,4 @@ function formatActivityLine(
 ): string {
   const keyArg = extractKeyArgument(toolName, args, workspaceDir);
   return keyArg ? `${verb} ${toolName} (${keyArg})` : `${verb} ${toolName}`;
-}
-
-function appendStreamingArgsPreview(
-  current: string | undefined,
-  next: string | null | undefined,
-): string {
-  const existing = (current ?? '').slice(0, STREAMING_ARGS_PREVIEW_MAX_CHARS);
-  if (next === null || next === undefined || next.length === 0) return existing;
-  const remaining = STREAMING_ARGS_PREVIEW_MAX_CHARS - existing.length;
-  if (remaining <= 0) return existing;
-  return `${existing}${next.slice(0, remaining)}`;
 }

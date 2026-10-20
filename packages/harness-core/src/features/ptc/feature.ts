@@ -1,5 +1,4 @@
 import { createFeature, useAgent, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { useCollection } from '@moonshot-ai/agent-core/kernel/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
 import {
@@ -12,7 +11,6 @@ import {
 } from '#/runtime/index';
 
 import type { PtcContextLevel, PtcStoreState } from './context';
-import { PtcToolGuards } from './guards';
 import { createCodeTool, DEFAULT_PTC_LIMITS, type PtcLimits } from './tool';
 
 export const PTC_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_PTC';
@@ -41,13 +39,11 @@ export function createPtc(props: CreatePtcProps): Feature<void> {
       if (!enabled()) return;
       const agent = useAgent();
       const runtime = useAgentRuntime();
-      const guards = useCollection(PtcToolGuards);
       const store: FeatureStore<PtcStoreState, FeatureEvent> | undefined =
         contextLevel === 'full' ? useFeatureStore('agent', 'ptc', ptcProjection) : undefined;
       useAgentTools(
         createCodeTool({
           runtime,
-          guards,
           dir: props.dir,
           agentId: agent.id,
           exclude,

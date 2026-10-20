@@ -30,22 +30,6 @@ export interface ToolBatchStartingEvent {
   readonly toolCalls: readonly ToolCall[];
 }
 
-export interface ToolStartingEvent {
-  readonly turnId: number;
-  readonly step: number;
-  readonly toolCall: ToolCall;
-}
-
-export type ToolPermittingEvent = ToolStartingEvent;
-
-export interface ToolEndingEvent {
-  readonly turnId: number;
-  readonly step: number;
-  readonly toolCall: ToolCall;
-  readonly result: ToolResult;
-  readonly failed: boolean;
-}
-
 export interface StepStoppingEvent {
   readonly turnId: number;
   readonly step: number;
@@ -71,14 +55,6 @@ export type StepStartingDecision = {
 
 export type ToolBatchStartingDecision = { readonly blocked: Cause; readonly result?: ToolResult };
 
-export type ToolStartingDecision =
-  | { readonly toolCall: ToolCall }
-  | { readonly blocked: Cause; readonly result?: ToolResult };
-
-export type ToolPermittingDecision = ToolStartingDecision;
-
-export type ToolEndingDecision = { readonly result?: ToolResult; readonly stopTurn?: true };
-
 export type StepStoppingVerdict = { readonly type: 'continue'; readonly cause: Cause };
 
 export type StepContinuingVerdict = { readonly type: 'done' | 'blocked'; readonly cause: Cause };
@@ -90,9 +66,6 @@ export interface LoopHooks {
   readonly 'message.appending': Hook<MessageAppendingEvent, MessageAppendingDecision>;
   readonly 'step.starting': Hook<StepStartingEvent, StepStartingDecision>;
   readonly 'tool.batch-starting': Hook<ToolBatchStartingEvent, ToolBatchStartingDecision>;
-  readonly 'tool.starting': Hook<ToolStartingEvent, ToolStartingDecision>;
-  readonly 'tool.permitting': Hook<ToolPermittingEvent, ToolPermittingDecision>;
-  readonly 'tool.ending': Hook<ToolEndingEvent, ToolEndingDecision>;
   readonly 'step.stopping': Hook<StepStoppingEvent, StepStoppingVerdict>;
   readonly 'step.continuing': Hook<StepContinuingEvent, StepContinuingVerdict>;
 }

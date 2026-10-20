@@ -96,10 +96,10 @@ function stubFetch(handler: (call: FetchCall) => Response): {
   const calls: FetchCall[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const call = {
-      url: String(input),
+      url: String(input as unknown),
       method: init?.method ?? 'GET',
       headers: (init?.headers ?? {}) as Record<string, string>,
-      body: String(init?.body ?? ''),
+      body: String((init?.body ?? '') as unknown),
     };
     calls.push(call);
     return handler(call);

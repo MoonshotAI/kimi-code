@@ -13,6 +13,7 @@ import { createHookRegistry, type HookRegistry } from './hook/registry';
 import { createLoopMachine } from './machine/loop';
 import type { LoopLlmRequester } from './machine/request-actor';
 import { createLoopRequester } from './requester';
+import { createLoopState, type LoopStateEvent, type LoopStateOutput } from './state';
 import { createWaitForTasks, type WaitForTasks } from './tool/tasks';
 
 export interface CreateLoopOptions {
@@ -77,37 +78,74 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
   if (invalid !== undefined) throw new TypeError(invalid);
   const registry = createHookRegistry();
   for (const registration of hooks ?? []) registry.add(registration);
-  const actor = createActor(createLoopMachine({ ...options, hooks: registry }), { input });
+  const state = createLoopState(input);
+  const actor = createActor(createLoopMachine({ ...options, hooks: registry }));
+  const listeners = new Set<(event: LoopEmitted) => void>();
+  const outputs: LoopStateOutput[] = [];
+  let flushing = false;
+  let processing = false;
+  const flush = (): void => {
+    if (flushing || processing) return;
+    flushing = true;
+    try {
+      for (let output = outputs.shift(); output !== undefined; output = outputs.shift()) {
+        if (output.type === 'signal') actor.send(output.signal);
+        else for (const listener of Array.from(listeners)) listener(output.event);
+      }
+    } finally {
+      flushing = false;
+    }
+  };
+  state.on('*', (output) => {
+    outputs.push(output);
+  });
+  actor.on('*', (fact) => {
+    processing = true;
+    state.send({ type: 'fact', fact });
+  });
+  actor.subscribe(() => {
+    processing = false;
+    flush();
+  });
   registry.attach((event) => actor.send({ type: 'hook.changed', event }));
   actor.start();
-  const dispatch = (command: LoopCommand): boolean => {
+
+  const open = (): boolean => state.getSnapshot().context.phase !== 'closed' && actor.getSnapshot().status === 'active';
+  const check = (command: LoopCommand): void => {
     const reason = commandError(command);
     if (reason !== undefined) throw new TypeError(reason);
-    if (actor.getSnapshot().status !== 'active') return false;
-    actor.send(command);
-    return true;
   };
-  const acknowledge = <T extends LoopEmitted['type']>(
-    create: (reply: (event: LoopAck<T>) => void) => LoopCommand,
-  ): LoopAck<T> | undefined => {
-    let ack: LoopAck<T> | undefined;
-    const command = create((event) => {
-      ack = event;
-    });
-    if (!dispatch(command)) return undefined;
-    if (ack === undefined) throw new Error(`loop accepted ${command.type} but produced no ack`);
+  const send = (event: LoopStateEvent): void => {
+    state.send(event);
+    flush();
+  };
+  const acknowledge = <A>(command: LoopCommand, create: (reply: (ack: A) => void) => LoopStateEvent): A | undefined => {
+    check(command);
+    if (!open()) return undefined;
+    let ack: A | undefined;
+    send(
+      create((event) => {
+        ack = event;
+      }),
+    );
     return ack;
   };
+  const abort = (reason?: unknown): void => {
+    if (open()) send({ type: 'abort', reason });
+  };
   const subscribe = (listener: (event: LoopEmitted) => void): (() => void) => {
-    const subscription = actor.on('*', (event: LoopEmitted) => {
+    const deliver = (event: LoopEmitted): void => {
       try {
         listener(event);
       } catch (error) {
         if (onListenerError === undefined) throw error;
         onListenerError(error, event);
       }
-    });
-    return () => subscription.unsubscribe();
+    };
+    listeners.add(deliver);
+    return () => {
+      listeners.delete(deliver);
+    };
   };
   const wait = <T extends LoopEmitted['type']>(type: T, opts?: WaitOpts<LoopAck<T>>): Promise<LoopAck<T>> =>
     waitEvent<LoopAck<T>>(
@@ -119,26 +157,33 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
     );
   return {
     get state(): LoopState {
-      const snapshot = actor.getSnapshot();
-      const { held, messages, inbox, nextTurnId, unfinished, turn, tools, profile } = snapshot.context;
+      const { phase, held, inbox, durable, turn } = state.getSnapshot().context;
       const current =
         turn !== undefined
-          ? { id: turn.id, trigger: turn.trigger, step: turn.step }
-          : unfinished !== undefined
-            ? { id: unfinished.turnId, trigger: unfinished.trigger, step: unfinished.step }
+          ? {
+              id: turn.id,
+              trigger: turn.trigger,
+              step: durable.unfinished?.turnId === turn.id ? durable.unfinished.step : turn.step,
+            }
+          : durable.unfinished !== undefined
+            ? { id: durable.unfinished.turnId, trigger: durable.unfinished.trigger, step: durable.unfinished.step }
             : undefined;
       return {
-        profile,
-        status: snapshot.matches('running') ? 'running' : snapshot.matches('interrupted') ? 'interrupted' : 'idle',
+        profile: durable.profile,
+        status: phase === 'running' ? 'running' : durable.unfinished !== undefined ? 'interrupted' : 'idle',
         held,
-        messages,
+        messages: durable.messages,
         inbox,
-        nextTurnId,
+        nextTurnId: durable.nextTurnId,
         ...(current === undefined ? {} : { turn: current }),
-        tools: Object.values(tools).map(({ toolCall, turnId, detached }) => ({ toolCall, turnId, detached })),
+        tools: Object.values(actor.getSnapshot().context.tools).map(({ toolCall, turnId, detached }) => ({
+          toolCall,
+          turnId,
+          detached,
+        })),
       };
     },
-    requester: createLoopRequester(options.requester, () => actor.getSnapshot().context.messages),
+    requester: createLoopRequester(options.requester, () => state.getSnapshot().context.durable.messages),
     executor: options.executor,
     waitForTasks: createWaitForTasks(actor),
     hooks: {
@@ -148,38 +193,64 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
       remove: (id) => registry.remove(id),
       list: () => registry.list(),
     },
-    submit: (entry) => acknowledge<'prompt.submitted'>((reply) => ({ type: 'input.submit', entry, reply })),
-    notify: (entry) => acknowledge<'prompt.notified'>((reply) => ({ type: 'input.notify', entry, reply })),
-    remind: (entry) => acknowledge<'prompt.reminded'>((reply) => ({ type: 'input.remind', entry, reply })),
-    steer: (promptIds) => acknowledge<'prompt.steered'>((reply) => ({ type: 'input.steer', promptIds, reply })),
-    cancel: (promptId) => acknowledge<'prompt.canceled'>((reply) => ({ type: 'input.cancel', promptId, reply })),
+    submit: (entry) =>
+      acknowledge<LoopAck<'prompt.submitted'>>({ type: 'input.submit', entry }, (reply) => ({
+        type: 'submit',
+        entry,
+        reply,
+      })),
+    notify: (entry) =>
+      acknowledge<LoopAck<'prompt.notified'>>({ type: 'input.notify', entry }, (reply) => ({
+        type: 'notify',
+        entry,
+        reply,
+      })),
+    remind: (entry) =>
+      acknowledge<LoopAck<'prompt.reminded'>>({ type: 'input.remind', entry }, (reply) => ({
+        type: 'remind',
+        entry,
+        reply,
+      })),
+    steer: (promptIds) =>
+      acknowledge<LoopAck<'prompt.steered'>>({ type: 'input.steer', promptIds }, (reply) => ({
+        type: 'steer',
+        promptIds,
+        reply,
+      })),
+    cancel: (promptId) =>
+      acknowledge<LoopAck<'prompt.canceled'>>({ type: 'input.cancel', promptId }, (reply) => ({
+        type: 'cancel',
+        promptId,
+        reply,
+      })),
     continue: () => {
-      dispatch({ type: 'input.continue' });
+      if (open()) send({ type: 'continue' });
     },
-    abort: (reason) => {
-      dispatch({ type: 'input.abort_turn', reason });
-    },
+    abort,
     abortTool: (toolCallId, reason) => {
-      dispatch({ type: 'input.abort_tool', toolCallId, reason });
+      check({ type: 'input.abort_tool', toolCallId });
+      if (open()) send({ type: 'abortTool', toolCallId, reason });
     },
     detachTool: (toolCallId) => {
-      dispatch({ type: 'input.detach_tool', toolCallId });
+      check({ type: 'input.detach_tool', toolCallId });
+      if (open()) send({ type: 'detachTool', toolCallId });
     },
     setContext: (messages, reason) =>
-      acknowledge<'context.settled' | 'context.rejected'>((reply) => ({
-        type: 'input.set_context',
-        messages,
-        reason,
-        reply,
-      })),
+      acknowledge<LoopAck<'context.settled' | 'context.rejected'>>(
+        { type: 'input.set_context', messages },
+        (reply) => ({ type: 'setContext', messages, reason, reply }),
+      ),
     setSystemPrompt: (systemPrompt) =>
-      acknowledge<'system_prompt.settled' | 'system_prompt.rejected'>((reply) => ({
-        type: 'input.set_system_prompt',
-        systemPrompt,
+      acknowledge<LoopAck<'system_prompt.settled' | 'system_prompt.rejected'>>(
+        { type: 'input.set_system_prompt', systemPrompt },
+        (reply) => ({ type: 'setSystemPrompt', systemPrompt, reply }),
+      ),
+    setTools: (tools) =>
+      acknowledge<LoopAck<'tools.settled' | 'tools.rejected'>>({ type: 'input.set_tools', tools }, (reply) => ({
+        type: 'setTools',
+        tools,
         reply,
       })),
-    setTools: (tools) =>
-      acknowledge<'tools.settled' | 'tools.rejected'>((reply) => ({ type: 'input.set_tools', tools, reply })),
     subscribe,
     wait,
     runTurn: (entry, opts) =>
@@ -189,25 +260,31 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
           resolve({ type: 'aborted', reason: signal.reason });
           return;
         }
-        let settled = false;
+        check({ type: 'input.run_turn', entry });
         const onAbort = (): void => {
-          dispatch({ type: 'input.abort_turn', reason: signal?.reason });
+          abort(signal?.reason);
         };
-        const reply = (outcome?: TurnOutcome) => {
-          settled = true;
+        const reply = (outcome?: TurnOutcome): void => {
           signal?.removeEventListener('abort', onAbort);
           if (outcome === undefined) reject(new Error('runTurn is only accepted while idle'));
           else resolve(outcome);
         };
-        if (!dispatch({ type: 'input.run_turn', entry, reply })) reply();
-        if (!settled) signal?.addEventListener('abort', onAbort, { once: true });
+        if (!open()) {
+          reply();
+          return;
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+        send({ type: 'runTurn', entry, reply });
       }),
     waitForIdle: async () => {
-      await waitFor(actor, (snapshot) => snapshot.status !== 'active' || !snapshot.matches('running'));
+      await waitFor(
+        actor,
+        (snapshot) => snapshot.status !== 'active' || state.getSnapshot().context.phase !== 'running',
+      );
     },
     close: async () => {
-      if (actor.getSnapshot().status === 'active') {
-        dispatch({ type: 'input.close' });
+      if (open()) {
+        send({ type: 'close' });
         await waitFor(actor, (snapshot) => snapshot.status !== 'active').catch(() => {});
       }
       actor.stop();

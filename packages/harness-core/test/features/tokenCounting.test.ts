@@ -96,9 +96,9 @@ describe('tokenCounting feature', () => {
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(createConfig({}));
-    await harness.app.features.add(tokenCounting);
-    await harness.app.features.add(probe);
+    harness.app.features.add(createConfig({}));
+    harness.app.features.add(tokenCounting);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
     const runtime = harnessInternals(harness.app).agents.get(session)?.get('main');

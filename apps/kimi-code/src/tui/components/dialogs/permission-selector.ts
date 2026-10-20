@@ -1,4 +1,4 @@
-import type { PermissionMode } from '@moonshot-ai/harness-core';
+import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
 
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '#/tui/utils/permission-mode';
 

@@ -1,14 +1,15 @@
 import { createKimiDeviceId, KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 import {
   KimiAuthFacade,
+  loadRuntimeConfigSafe,
   log,
-  readKimiConfigSnapshot,
   resolveConfigPath,
   resolveKimiHome,
-  type KimiHarness,
+  type KimiConfig,
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import type { PromptHarness } from './prompt-session';
 import {
   initializeTelemetry,
   setTelemetryContext,
@@ -27,15 +28,10 @@ export interface CliTelemetryBootstrap {
   readonly firstLaunch: boolean;
 }
 
-export interface CliTelemetryConfig {
-  readonly defaultModel?: string;
-  readonly telemetry?: boolean;
-}
-
 export interface InitializeCliTelemetryOptions {
-  readonly harness: Pick<KimiHarness, 'homeDir' | 'auth' | 'track'>;
+  readonly harness: PromptHarness;
   readonly bootstrap: CliTelemetryBootstrap;
-  readonly config: CliTelemetryConfig;
+  readonly config: Pick<KimiConfig, 'defaultModel' | 'telemetry'>;
   readonly version: string;
   readonly uiMode: string;
   readonly model?: string;
@@ -122,17 +118,13 @@ export function initializeServerTelemetry(
 
 function readServerTelemetryConfig(
   configPath: string,
-): CliTelemetryConfig {
+): Pick<KimiConfig, 'telemetry' | 'defaultModel'> {
   try {
-    const { sections, error } = readKimiConfigSnapshot(configPath);
+    const { config, fileError } = loadRuntimeConfigSafe(configPath);
     // A broken config fails the server on its own inside KimiCore; for
     // telemetry just degrade to "enabled, no model" so we never block startup.
-    if (error !== undefined) return {};
-    return {
-      defaultModel:
-        typeof sections['defaultModel'] === 'string' ? sections['defaultModel'] : undefined,
-      telemetry: sections['telemetry'] === false ? false : undefined,
-    };
+    if (fileError !== undefined) return {};
+    return config;
   } catch {
     return {};
   }

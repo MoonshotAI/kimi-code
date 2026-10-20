@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
-import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
 import {
   createMemoryProviderCatalogStore,
   createProviderCatalog,
@@ -29,42 +28,60 @@ const modelDef: CatalogModelDefinition = {
 };
 
 function stubProtocol(
-  handler: (module: unknown, endpoint: unknown) => string | LlmRemoteErrorMessage,
-): Protocol<Record<string, unknown>, { module: unknown }, string, string, { endpoint: unknown }> {
+  handler: (
+    module: unknown,
+    endpoint: unknown,
+    signal: AbortSignal,
+  ) => string | LlmRemoteErrorMessage | null,
+  before?: () => Promise<void>,
+): Protocol<
+  Record<string, unknown>,
+  { module: unknown },
+  string | null,
+  string,
+  { endpoint: unknown }
+> {
   return {
     media: { kinds: {} },
     encode: (module) => ({ module }),
     decoder: (_module, sink) => ({
       push: (chunk) => {
         sink.onDelta({ type: 'text', text: chunk });
+        sink.onUsage({ inputOther: 3, output: 4 });
         sink.onFinish({ finishReason: 'completed', rawFinishReason: 'stop' });
       },
       end: () => {},
     }),
-    replay: (response) => [response],
+    replay: (response) => (response === null ? [] : [response]),
     decodeError: (error) => error as LlmRemoteErrorMessage,
     client: (endpoint) => ({ endpoint }),
-    send: async (client, request) => {
-      const out = handler(request.module, client.endpoint);
-      if (typeof out !== 'string') throw out;
-      return { body: out };
-    },
-    sendStream: async (client, request) => {
-      const out = handler(request.module, client.endpoint);
-      if (typeof out !== 'string') throw out;
-      return {
-        body: (async function* () {
-          yield out;
-        })(),
+    send: (client, request, signal) => {
+      const run = () => {
+        const out = handler(request.module, client.endpoint, signal);
+        if (typeof out !== 'string' && out !== null) return Promise.reject(out);
+        return Promise.resolve({ body: out });
       };
+      return before === undefined ? run() : before().then(run);
+    },
+    sendStream: (client, request, signal) => {
+      const run = () => {
+        const out = handler(request.module, client.endpoint, signal);
+        if (typeof out !== 'string' && out !== null) return Promise.reject(out);
+        return Promise.resolve({
+          body: (async function* () {
+            if (out !== null) yield out;
+          })(),
+        });
+      };
+      return before === undefined ? run() : before().then(run);
     },
   };
 }
 
-function remoteStatusError(message: string): LlmRemoteErrorMessage {
+function remoteStatusError(message: string, statusCode = 500): LlmRemoteErrorMessage {
   return {
     kind: 'status',
-    statusCode: 500,
+    statusCode,
     message,
     requestId: null,
     retryAfterMs: null,
@@ -479,93 +496,198 @@ describe('providerCatalog requester resolution', () => {
 });
 
 describe('providerCatalog ping', () => {
-  it('marks a failing model and emits changed, then clears the mark after a successful ping', async () => {
-    let failing = true;
+  it('returns success and failure results while updating ping errors and changed events', async () => {
+    let mode: 'fail' | 'success' | 'empty' = 'fail';
     const requester = createRequester().with({
       protocol: {
-        base: stubProtocol(() => (failing ? remoteStatusError('boom') : 'pong')),
+        base: stubProtocol(() => {
+          if (mode === 'fail') return remoteStatusError('boom');
+          return mode === 'success' ? '  pong  ' : null;
+        }),
       },
     });
     const catalog = await createProviderCatalog();
+    catalog.upsert({
+      handle: stubHandle('test', requester),
+      models: [modelDef],
+      refresh: false,
+    });
     const changed: string[][] = [];
     catalog.onChanged((event) => changed.push([...event.providers]));
-    catalog.upsert({
-      handle: stubHandle('test', requester, async () => []),
-      models: [modelDef],
-    });
-    await until(() => changed.length >= 2);
 
-    changed.length = 0;
-    catalog.ping('test', 'm1');
-    await until(() => catalog.model('test', 'm1')?.pingError === 'boom');
+    const failure = await catalog.ping('test', 'm1');
+    expect(failure).toEqual({
+      ok: false,
+      durationMs: expect.any(Number),
+      error: 'boom',
+    });
+    expect(failure.durationMs).toBeGreaterThanOrEqual(0);
+    expect(catalog.model('test', 'm1')?.pingError).toBe('boom');
     expect(changed).toEqual([['test']]);
 
-    failing = false;
+    mode = 'success';
     changed.length = 0;
-    catalog.ping('test', 'm1');
-    await until(() => changed.length > 0);
+    const success = await catalog.ping('test', 'm1');
+    expect(success).toEqual({
+      ok: true,
+      durationMs: expect.any(Number),
+      text: 'pong',
+      usage: {
+        inputOther: 3,
+        output: 4,
+        inputCacheRead: 0,
+        inputCacheCreation: 0,
+      },
+      finishReason: 'completed',
+    });
+    expect(success.durationMs).toBeGreaterThanOrEqual(0);
     expect(catalog.model('test', 'm1')?.pingError).toBeUndefined();
+    expect(changed).toEqual([['test']]);
+
+    mode = 'empty';
+    changed.length = 0;
+    const empty = await catalog.ping('test', 'm1');
+    expect(empty.ok).toBe(false);
+    expect(empty.error).toContain('empty response');
+    expect(catalog.model('test', 'm1')?.pingError).toContain('empty response');
+    expect(changed).toEqual([['test']]);
     catalog.close();
   });
 
-  it('ignores pings for unknown providers and models', async () => {
+  it('rejects unknown models and models whose requester cannot be materialized', async () => {
     const catalog = await createProviderCatalog();
+    catalog.upsert({
+      handle: stubHandle('test', failingRequester('boom')),
+      models: [modelDef],
+      refresh: false,
+    });
+    catalog.upsert({
+      providerId: 'bare',
+      handle: { id: 'bare' },
+      models: [{ ...modelDef, provider: 'bare' }],
+      refresh: false,
+    });
     const changed: string[][] = [];
     catalog.onChanged((event) => changed.push([...event.providers]));
-    catalog.upsert({
-      handle: stubHandle('test', failingRequester('boom'), async () => []),
-      models: [modelDef],
-    });
-    await until(() => changed.length >= 2);
 
-    changed.length = 0;
-    catalog.ping('nope', 'm1');
-    catalog.ping('test', 'nope');
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await expect(catalog.ping('nope', 'm1')).rejects.toThrow('Unknown model nope/m1');
+    await expect(catalog.ping('test', 'nope')).rejects.toThrow('Unknown model test/nope');
+    await expect(catalog.ping('bare', 'm1')).rejects.toThrow(
+      'No requester configured for bare/m1',
+    );
 
     expect(changed).toEqual([]);
     expect(catalog.model('test', 'm1')?.pingError).toBeUndefined();
     catalog.close();
   });
 
-  it('pings through the latest provider handle after a re-upsert', async () => {
+  it('deduplicates in-flight pings and uses the latest provider handle', async () => {
+    let firstCalls = 0;
+    let starts = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const firstRequester = createRequester().with({
+      protocol: {
+        base: stubProtocol(() => {
+          firstCalls += 1;
+          return remoteStatusError('first');
+        }),
+      },
+    });
+    const latestRequester = createRequester().with({
+      protocol: {
+        base: stubProtocol(
+          () => 'second',
+          async () => {
+            starts += 1;
+            await gate;
+          },
+        ),
+      },
+    });
     const catalog = await createProviderCatalog();
     catalog.upsert({
-      handle: stubHandle('test', failingRequester('first'), async () => []),
+      handle: stubHandle('test', firstRequester),
       models: [modelDef],
+      refresh: false,
     });
     catalog.upsert({
-      handle: stubHandle('test', failingRequester('second'), async () => []),
+      handle: stubHandle('test', latestRequester),
       models: [modelDef],
+      refresh: false,
     });
 
-    catalog.ping('test', 'm1');
+    const pending = catalog.ping('test', 'm1');
+    const duplicate = catalog.ping('test', 'm1');
+    expect(duplicate).toBe(pending);
+    await until(() => starts === 1);
+    expect(firstCalls).toBe(0);
 
-    await until(() => catalog.model('test', 'm1')?.pingError === 'second');
-    expect(catalog.model('test', 'm1')?.pingError).toBe('second');
+    release();
+    await expect(pending).resolves.toMatchObject({ ok: true, text: 'second' });
+    expect(starts).toBe(1);
     catalog.close();
   });
 
-  it('carries the model protocol and protocolOptions into the ping request', async () => {
-    const seen: { protocol?: string; options?: unknown; modelName?: string }[] = [];
+  it('recovers OAuth once with the same signal and preserves the pong request', async () => {
+    const seen: {
+      protocol?: string;
+      options?: unknown;
+      modelName?: string;
+      maxOutputTokens?: number;
+      systemPrompt?: string;
+      tools?: unknown;
+      messages?: unknown;
+      apiKey?: string;
+      signal?: AbortSignal;
+    }[] = [];
+    let attempts = 0;
+    let recoveries = 0;
+    let invalidations = 0;
+    let alwaysFail = false;
+    let apiKey = 'stale';
+    const credentials = {
+      resolve: () => ({ apiKey }),
+      canRecover: (error: unknown) => {
+        recoveries += 1;
+        return (error as { statusCode?: number }).statusCode === 401;
+      },
+      invalidate: () => {
+        invalidations += 1;
+        apiKey = 'fresh';
+      },
+    };
     const catalog = await createProviderCatalog();
     catalog.upsert({
       handle: {
         id: 'test',
+        endpoint: { credentials },
         requester: (protocol) =>
           createRequester().with({
             protocol: {
-              base: stubProtocol((module) => {
+              base: stubProtocol((module, endpoint, signal) => {
+                attempts += 1;
                 const mod = module as {
-                  model: { spec: { name: string } };
+                  model: { spec: { name: string }; maxOutputTokens: number };
                   options: unknown;
+                  profile: { systemPrompt?: string; tools?: unknown };
+                  content: { messages: unknown };
                 };
                 seen.push({
                   protocol,
                   options: mod.options,
                   modelName: mod.model.spec.name,
+                  maxOutputTokens: mod.model.maxOutputTokens,
+                  systemPrompt: mod.profile.systemPrompt,
+                  tools: mod.profile.tools,
+                  messages: mod.content.messages,
+                  apiKey: (endpoint as { apiKey?: string }).apiKey,
+                  signal,
                 });
-                return 'pong';
+                if (attempts === 2 && !alwaysFail) return 'pong';
+                return remoteStatusError('expired', 401);
               }),
             },
           }),
@@ -577,39 +699,106 @@ describe('providerCatalog ping', () => {
           protocolOptions: { betaApi: true },
         },
       ],
+      refresh: false,
     });
 
-    catalog.ping('test', 'm1');
-
-    await until(() => seen.length > 0);
-    expect(seen[0]).toEqual({
+    const recovered = await catalog.ping('test', 'm1');
+    expect(recovered).toMatchObject({ ok: true, text: 'pong' });
+    expect(attempts).toBe(2);
+    expect(recoveries).toBe(1);
+    expect(invalidations).toBe(1);
+    expect(seen[0]).toMatchObject({
       protocol: 'anthropic',
       options: { betaApi: true },
       modelName: 'm1',
+      maxOutputTokens: 512,
+      systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+      tools: [],
+      apiKey: 'stale',
     });
-    expect(openAIProtocol).toBeDefined();
+    expect(seen[0]?.messages).toMatchObject([
+      { role: 'user', content: [{ type: 'text', text: 'ping' }] },
+    ]);
+    expect(seen[1]?.apiKey).toBe('fresh');
+    expect(seen[1]?.signal).toBe(seen[0]?.signal);
+
+    alwaysFail = true;
+    const failed = await catalog.ping('test', 'm1');
+    expect(failed).toMatchObject({ ok: false, error: 'expired' });
+    expect(attempts).toBe(4);
+    expect(recoveries).toBe(2);
+    expect(invalidations).toBe(2);
+    expect(seen[3]?.signal).toBe(seen[2]?.signal);
     catalog.close();
   });
 
-  it('defers a ping sent while refreshing until the refresh completes', async () => {
+  it('defers pings during refresh, times out only when configured, and closes all waiters', async () => {
     let pulls = 0;
+    let starts = 0;
     let resolvePull: (models: readonly CatalogModelDefinition[]) => void = () => {};
-    const handle = stubHandle('test', failingRequester('boom'), () => {
+    const waitingRequester = createRequester().with({
+      protocol: {
+        base: stubProtocol(
+          () => 'pong',
+          () => {
+            starts += 1;
+            return new Promise<void>(() => {});
+          },
+        ),
+      },
+    });
+    const handle = stubHandle('test', waitingRequester, () => {
       pulls += 1;
       return new Promise((resolve) => {
         resolvePull = resolve;
       });
     });
-    const catalog = await createProviderCatalog();
+    const catalog = await createProviderCatalog({ pingTimeoutMs: 5 });
     catalog.upsert({ handle, models: [modelDef] });
     await until(() => pulls === 1);
 
-    catalog.ping('test', 'm1');
+    const deferred = catalog.ping('test', 'm1');
     await new Promise((resolve) => setTimeout(resolve, 5));
-    expect(catalog.model('test', 'm1')?.pingError).toBeUndefined();
-
+    expect(starts).toBe(0);
     resolvePull([]);
-    await until(() => catalog.model('test', 'm1')?.pingError === 'boom');
+    const timedOut = await deferred;
+    expect(timedOut.ok).toBe(false);
+    expect(timedOut.error).toBeTruthy();
+    expect(starts).toBe(1);
     catalog.close();
+
+    let closeStarts = 0;
+    const closeRequester = createRequester().with({
+      protocol: {
+        base: stubProtocol(
+          () => 'pong',
+          () => {
+            closeStarts += 1;
+            return new Promise<void>(() => {});
+          },
+        ),
+      },
+    });
+    const closing = await createProviderCatalog();
+    closing.upsert({
+      handle: stubHandle('test', closeRequester),
+      models: [
+        modelDef,
+        { ...modelDef, id: 'm2' },
+        { ...modelDef, id: 'm3' },
+      ],
+      refresh: false,
+    });
+    const active = closing.ping('test', 'm1');
+    const queued = closing.ping('test', 'm2');
+    const last = closing.ping('test', 'm3');
+    await until(() => closeStarts === 1);
+
+    closing.close();
+    const results = await Promise.all([active, queued, last]);
+    for (const result of results) {
+      expect(result).toMatchObject({ ok: false, error: 'Provider catalog is closed' });
+    }
+    expect(closeStarts).toBe(1);
   });
 });

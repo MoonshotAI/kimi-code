@@ -4,8 +4,7 @@ import { useCleanup, useCollection, useExpose, useInject, useOn } from '@moonsho
 import { WebSocketServer } from 'ws';
 
 import { ConfigRef } from '#/features/config/index';
-import { MediaLibraryRef } from '#/features/media/index';
-import { parseMediaRefUrl } from '#/features/media/ref';
+import { KimiFileRegistryRef, parseKimiFileUrl } from '#/features/files/index';
 import { CatalogModels } from '#/features/provider-catalog/index';
 
 import { sessionFacade, useRootUnit } from '../scope';
@@ -33,11 +32,10 @@ export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
   const config = useInject(ConfigRef);
   const path = `${options.prefix.replace(/\/+$/, '')}/ws`;
   const inlineMediaRef = async (sessionId: string, url: string): Promise<string | undefined> => {
-    const ref = parseMediaRefUrl(url);
-    if (ref === undefined) return undefined;
-    const mediaLibrary = sessionFacade(root, MediaLibraryRef, sessionId);
-    if (mediaLibrary === undefined) return undefined;
-    const file = await mediaLibrary.open(ref);
+    if (parseKimiFileUrl(url) === undefined) return undefined;
+    const registry = sessionFacade(root, KimiFileRegistryRef, sessionId);
+    if (registry === undefined) return undefined;
+    const file = await registry.open(url);
     if (file === undefined) return undefined;
     const chunks: Uint8Array[] = [];
     for await (const chunk of file.stream()) chunks.push(chunk);
@@ -48,7 +46,7 @@ export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
       bytes.set(chunk, offset);
       offset += chunk.length;
     }
-    return `data:${file.mediaType};base64,${Buffer.from(bytes).toString('base64')}`;
+    return `data:${file.meta.media_type};base64,${Buffer.from(bytes).toString('base64')}`;
   };
   const broadcaster = new SessionBroadcaster({
     app,

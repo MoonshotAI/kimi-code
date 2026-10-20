@@ -11,7 +11,12 @@ import {
   type ManagedUserInfoResult,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import type { CatalogOAuthRef } from '#/features/provider-catalog/index';
+import type {
+  CatalogOAuthRef,
+  ProviderRefreshChange,
+  ProviderRefreshFailure,
+  ProviderRefreshReport,
+} from '#/features/provider-catalog/index';
 
 import type {
   AuthSummary,
@@ -22,23 +27,11 @@ import type {
   OAuthLogoutResult,
 } from './auth';
 
-export interface OAuthRefreshChange {
-  readonly provider_id: string;
-  readonly provider_name: string;
-  readonly added: number;
-  readonly removed: number;
-}
+export type OAuthRefreshChange = ProviderRefreshChange;
 
-export interface OAuthRefreshFailure {
-  readonly provider: string;
-  readonly reason: string;
-}
+export type OAuthRefreshFailure = ProviderRefreshFailure;
 
-export interface OAuthRefreshReport {
-  readonly changed: readonly OAuthRefreshChange[];
-  readonly unchanged: readonly string[];
-  readonly failed: readonly OAuthRefreshFailure[];
-}
+export type OAuthRefreshReport = ProviderRefreshReport;
 
 export interface OAuthTokens {
   resolve(ref: CatalogOAuthRef): BearerTokenProvider | undefined;

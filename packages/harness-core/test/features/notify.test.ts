@@ -139,8 +139,8 @@ async function startApp(
 ): Promise<NotifyTestEnv> {
   const { requester, calls } = createMockRequester(script);
   const harness = createHarness({ space: memoryHarnessSpace() });
-  await harness.app.features.add(notify);
-  await harness.app.features.add(bindTestTools());
+  harness.app.features.add(notify);
+  harness.app.features.add(bindTestTools());
   const session = await harness.app.create({ sessionId: 'sess' });
   const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);

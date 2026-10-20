@@ -109,9 +109,9 @@ async function mountTelemetryApp(props?: { enabled?: boolean; context?: Telemetr
   const recorder = createRecorder();
   const faces: CapturedFaces = {};
   const harness = createHarness({ space: memoryHarnessSpace() });
-  await harness.app.features.add(createTelemetry(props));
-  await harness.app.features.add(recorderFeature(recorder));
-  await harness.app.features.add(captureFeature(faces));
+  harness.app.features.add(createTelemetry(props));
+  harness.app.features.add(recorderFeature(recorder));
+  harness.app.features.add(captureFeature(faces));
   await tick();
   return { harness, recorder, faces };
 }
@@ -210,11 +210,11 @@ describe('telemetry feature', () => {
     const faces: CapturedFaces = {};
     const captured: { store?: ConfigStore } = {};
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(createConfig({}));
-    await harness.app.features.add(createTelemetry());
-    await harness.app.features.add(recorderFeature(recorder));
-    await harness.app.features.add(captureFeature(faces));
-    await harness.app.features.add(configCaptureFeature(captured));
+    harness.app.features.add(createConfig({}));
+    harness.app.features.add(createTelemetry());
+    harness.app.features.add(recorderFeature(recorder));
+    harness.app.features.add(captureFeature(faces));
+    harness.app.features.add(configCaptureFeature(captured));
     await tick();
     const telemetry = faces.app!;
     const config = captured.store!;
@@ -232,10 +232,10 @@ describe('telemetry feature', () => {
     const envRecorder = createRecorder();
     const envFaces: CapturedFaces = {};
     const envHarness = createHarness({ space: memoryHarnessSpace() });
-    await envHarness.app.features.add(createConfig({ env: { KIMI_DISABLE_TELEMETRY: '1' } }));
-    await envHarness.app.features.add(createTelemetry());
-    await envHarness.app.features.add(recorderFeature(envRecorder));
-    await envHarness.app.features.add(captureFeature(envFaces));
+    envHarness.app.features.add(createConfig({ env: { KIMI_DISABLE_TELEMETRY: '1' } }));
+    envHarness.app.features.add(createTelemetry());
+    envHarness.app.features.add(recorderFeature(envRecorder));
+    envHarness.app.features.add(captureFeature(envFaces));
     await tick();
     envFaces.app!.track('dropped');
     expect(envRecorder.records).toHaveLength(0);
@@ -304,7 +304,7 @@ describe('telemetry feature', () => {
       },
     });
     const { harness, recorder } = await mountTelemetryApp();
-    await harness.app.features.add(tools);
+    harness.app.features.add(tools);
     const session = await harness.app.create({ sessionId: 'sess' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(
@@ -395,7 +395,7 @@ describe('telemetry feature', () => {
         useTelemetryEvents(defs);
       },
     });
-    await harness.app.features.add(late);
+    harness.app.features.add(late);
     await tick();
     expect(telemetry.events().map((def) => def.name)).toContain('probe_fired');
     const tracker = createTracker(telemetry, defs);
@@ -434,9 +434,9 @@ describe('telemetry feature', () => {
     });
     const faces: CapturedFaces = {};
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(createTelemetry());
-    await harness.app.features.add(probe);
-    await harness.app.features.add(captureFeature(faces));
+    harness.app.features.add(createTelemetry());
+    harness.app.features.add(probe);
+    harness.app.features.add(captureFeature(faces));
     await tick();
     const telemetry = faces.app!;
     expect(() => telemetry.track('survives')).not.toThrow();

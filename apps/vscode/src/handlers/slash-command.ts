@@ -7,7 +7,6 @@ import * as vscode from "vscode";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import {
   buildExportMarkdown,
-  contextMessageFromHistory,
   isImportableTextFile,
   isSensitiveFile,
   stringifyContextHistory,
@@ -53,7 +52,7 @@ export async function runHostSlashCommand(
   if (command.name.startsWith("skill:")) {
     const skillName = command.name.slice("skill:".length);
     const result = await runtime.runTurnAction(command.raw, () =>
-      runtime.activateSkill(skillName, command.args || undefined));
+      runtime.session.activateSkill(skillName, command.args || undefined));
     return result.status === "finished";
   }
 
@@ -71,7 +70,7 @@ export async function runHostSlashCommand(
     } else {
       switch (command.name) {
         case "init":
-          await runtime.init();
+          await runtime.session.init();
           emit("AGENTS.md has been generated.");
           break;
         case "compact":
@@ -80,7 +79,7 @@ export async function runHostSlashCommand(
           break;
         case "clear":
         case "reset":
-          await runtime.clearContext();
+          await runtime.session.clearContext();
           emit("The context has been cleared.");
           break;
         case "yolo":
@@ -94,7 +93,7 @@ export async function runHostSlashCommand(
           await runPlanCommand(runtime, command.args, emit);
           break;
         case "add-dir":
-          await runAddDirCommand();
+          await runAddDirCommand(runtime, command.args, emit);
           break;
         case "export":
           await exportContext(runtime, command.args, emit);
@@ -143,35 +142,46 @@ async function runPlanCommand(
 ): Promise<void> {
   const subcommand = args.trim().toLowerCase();
   if (subcommand === "view") {
-    const plan = await runtime.getPlan();
+    const plan = await runtime.session.getPlan();
     emit(plan?.content.trim() || "No plan file found for this session.");
     return;
   }
   if (subcommand === "clear") {
-    await runtime.clearPlan();
+    await runtime.session.clearPlan();
     emit("Plan cleared.");
     return;
   }
-  const status = runtime.getStatus();
+  const status = await runtime.session.getStatus();
   const enabled = subcommand === "on" ? true : subcommand === "off" ? false : !status.planMode;
   if (subcommand && subcommand !== "on" && subcommand !== "off") {
     throw new Error(`Unknown plan subcommand: ${subcommand}`);
   }
-  if (status.planMode !== enabled) await runtime.setPlanMode(enabled);
+  if (status.planMode !== enabled) await runtime.session.setPlanMode(enabled);
   if (!enabled) {
     emit("Plan mode OFF. All tools are now available.");
     return;
   }
-  const plan = await runtime.getPlan().catch(() => null);
+  const plan = await runtime.session.getPlan().catch(() => null);
   emit(plan?.path
     ? `Plan mode ON. Plan file: ${plan.path}`
     : "Plan mode ON.");
 }
 
-async function runAddDirCommand(): Promise<void> {
-  throw new Error(
-    "/add-dir is unavailable: the v3 engine binds workspace directories when a session starts and cannot add more mid-session.",
-  );
+async function runAddDirCommand(
+  runtime: SessionRuntime,
+  args: string,
+  emit: (text: string) => void,
+): Promise<void> {
+  const input = stripMatchingQuotes(args.trim());
+  if (!input || input.toLowerCase() === "list") {
+    const dirs = runtime.session.summary?.additionalDirs ?? [];
+    emit(dirs.length === 0
+      ? "No additional directories. Usage: /add-dir <path>"
+      : ["Additional directories:", ...dirs.map((path) => `  - ${path}`)].join("\n"));
+    return;
+  }
+  const result = await runtime.session.addAdditionalDir(input, { persist: false });
+  emit(`Added directory to workspace: ${result.additionalDirs.at(-1) ?? input}`);
 }
 
 async function exportContext(
@@ -179,17 +189,17 @@ async function exportContext(
   args: string,
   emit: (text: string) => void,
 ): Promise<void> {
-  const context = runtime.getContext();
+  const context = await runtime.session.getContext();
   if (context.history.length === 0) {
     emit("No messages to export.");
     return;
   }
   const now = new Date();
   const defaultName = defaultExportName(runtime.id, now);
-  const outputPath = await resolveExportPath(args, runtime.workDir, defaultName);
+  const outputPath = await resolveExportPath(args, runtime.session.workDir, defaultName);
   const markdown = buildExportMarkdown({
     sessionId: runtime.id,
-    workDir: runtime.workDir,
+    workDir: runtime.session.workDir,
     history: context.history,
     tokenCount: context.tokenCount,
     now,
@@ -214,7 +224,7 @@ async function importContext(
   const target = stripMatchingQuotes(args.trim());
   if (!target) throw new Error("Usage: /import <file_path or session_id>");
 
-  const candidate = resolveUserPath(target, runtime.workDir);
+  const candidate = resolveUserPath(target, runtime.session.workDir);
   const file = await fileInfo(candidate);
   if (file?.isDirectory()) throw new Error("The specified path is a directory; please provide a file to import.");
   if (file?.isFile()) {
@@ -233,7 +243,7 @@ async function importContext(
     }
     if (!content.trim()) throw new Error("The file is empty, nothing to import.");
     const source = `file '${basename(candidate)}'`;
-    await runtime.importContext(content, source);
+    await runtime.session.importContext(content, source);
     return {
       message: `Imported context from ${source} (${String(content.length)} chars).`,
       sensitive: isSensitiveFile(basename(candidate)),
@@ -241,24 +251,23 @@ async function importContext(
   }
 
   if (target === runtime.id) throw new Error("Cannot import the current session into itself.");
-  const summary = (await ctx.runtime.listSessions(runtime.workDir)).find(
-    (session) => session.id === target,
-  );
+  const summary = (await ctx.harness.listSessions({
+    workDir: runtime.session.workDir,
+    sessionId: target,
+  })).find((session) => session.id === target);
   if (summary === undefined) throw new Error(`'${target}' is not a valid file path or session ID.`);
 
-  const activeSource = ctx.runtime.getSession(target);
-  const sourceSession =
-    activeSource?.engineSession ?? (await ctx.runtime.resumeEngineSession(runtime.workDir, target));
+  const activeSource = ctx.runtime.getSession(target)?.session;
+  const sourceSession = activeSource ?? await ctx.harness.resumeSession({ id: target });
   try {
-    const sourceStore = sourceSession.handle.stores.get("main");
-    const sourceHistory = (sourceStore?.getState().history ?? []).map(contextMessageFromHistory);
-    if (sourceHistory.length === 0) throw new Error("The source session has no messages.");
-    const content = stringifyContextHistory(sourceHistory);
+    const sourceContext = await sourceSession.getContext();
+    if (sourceContext.history.length === 0) throw new Error("The source session has no messages.");
+    const content = stringifyContextHistory(sourceContext.history);
     if (Buffer.byteLength(content, "utf8") > MAX_IMPORT_BYTES) {
       throw new Error("Session content is too large. Maximum import size is 10 MB.");
     }
     const source = `session '${target}'`;
-    await runtime.importContext(content, source);
+    await runtime.session.importContext(content, source);
     return {
       message: `Imported context from ${source} (${String(content.length)} chars).`,
       sensitive: false,

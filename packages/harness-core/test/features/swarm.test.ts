@@ -263,15 +263,15 @@ async function startApp(opts?: {
   const harness = createHarness({ space: memoryHarnessSpace() });
   const configProbe = captureConfig();
   if (opts?.withConfig === true) {
-    await harness.app.features.add(
+    harness.app.features.add(
       createConfig({ persist: fakePersist(opts?.toml).persist, env: opts?.env ?? {} }),
     );
   }
   const catalog = opts?.withCatalog === false ? undefined : testCatalog();
-  await harness.app.features.add(createSpawn({ catalog, workDir }));
-  await harness.app.features.add(createSwarm({ catalog, models: opts?.models, workDir }));
-  await harness.app.features.add(bindTestTools());
-  await harness.app.features.add(configProbe.feature);
+  harness.app.features.add(createSpawn({ catalog, workDir }));
+  harness.app.features.add(createSwarm({ catalog, models: opts?.models, workDir }));
+  harness.app.features.add(bindTestTools());
+  harness.app.features.add(configProbe.feature);
   const session = await harness.app.create({ sessionId: 'sess' });
   const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);

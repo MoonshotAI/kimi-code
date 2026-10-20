@@ -239,7 +239,7 @@ describe('UsagePanelComponent', () => {
     const { showUsage } = await import('#/tui/commands/info');
     const added: string[] = [];
     const host = {
-      mainAgent: () => undefined,
+      session: undefined,
       state: {
         appState: {
           model: 'kimi',

@@ -339,8 +339,8 @@ async function mountCapabilities(
   const harness = createHarness({ space: memoryHarnessSpace() });
   harnesses.push(harness);
   const { feature, capture } = captureCapabilities();
-  await harness.app.features.add(spec);
-  await harness.app.features.add(feature);
+  harness.app.features.add(spec);
+  harness.app.features.add(feature);
   const face = capture.face?.value;
   if (face === undefined) throw new Error('capabilities facade was not exposed');
   return { harness, face, spec };
@@ -594,8 +594,8 @@ describe('capabilities feature', () => {
     const harness = createHarness({ space: memoryHarnessSpace() });
     harnesses.push(harness);
     const { feature, capture } = captureCapabilities();
-    await harness.app.features.add(spec);
-    await harness.app.features.add(feature);
+    harness.app.features.add(spec);
+    harness.app.features.add(feature);
     expect(capture.face?.value).toBeUndefined();
   });
 });

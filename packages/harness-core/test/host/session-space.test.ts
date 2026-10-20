@@ -215,7 +215,7 @@ describe('fs session space with createHarness', () => {
         },
       });
       const harness = createHarness({ space: fsSessionSpace(root) });
-      await harness.app.features.add(probe);
+      harness.app.features.add(probe);
       const session = await harness.app.create({ sessionId: 's1' });
       const agent = await harness.ensureAgent(session, 'main');
       setRequester(harness, 's1', 'main', echoRequester());
@@ -231,7 +231,7 @@ describe('fs session space with createHarness', () => {
       expect(await readdir(join(root, 's1', 'features', 'agents', 'main'))).toContain('probe.jsonl');
 
       const resumed = createHarness({ space: fsSessionSpace(root) });
-      await resumed.app.features.add(probe);
+      resumed.app.features.add(probe);
       const session2 = await resumed.app.create({ sessionId: 's1' });
       const agent2 = await resumed.ensureAgent(session2, 'main');
       setRequester(resumed, 's1', 'main', echoRequester());

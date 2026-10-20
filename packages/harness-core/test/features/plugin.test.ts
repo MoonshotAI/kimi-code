@@ -271,9 +271,9 @@ async function startPluginApp(extraFeatures: readonly Feature<any, any>[] = []):
     },
   });
   const harness = createHarness({ space: memoryHarnessSpace() });
-  for (const feature of extraFeatures) await harness.app.features.add(feature);
-  await harness.app.features.add(pluginFeature);
-  await harness.app.features.add(probe);
+  for (const feature of extraFeatures) harness.app.features.add(feature);
+  harness.app.features.add(pluginFeature);
+  harness.app.features.add(probe);
   const face = captured?.value;
   if (face === undefined) throw new Error('PluginRef was not exposed');
   return { harness, pluginFeature, face };
@@ -297,10 +297,10 @@ async function startAgentApp(): Promise<{
     },
   });
   const harness = createHarness({ space: memoryHarnessSpace() });
-  await harness.app.features.add(createSkill({ workDir, fs: host.fs, home: brandHome }));
-  await harness.app.features.add(pluginFeature);
-  await harness.app.features.add(bindTestTools());
-  await harness.app.features.add(probe);
+  harness.app.features.add(createSkill({ workDir, fs: host.fs, home: brandHome }));
+  harness.app.features.add(pluginFeature);
+  harness.app.features.add(bindTestTools());
+  harness.app.features.add(probe);
   const session = await harness.app.create({ sessionId: 'sess' });
   let main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);

@@ -18,7 +18,16 @@ import {
 } from '#/kernel/index';
 import { currentUnit, report, type UnitNode } from '#/kernel/runtime';
 import type { HookFailurePolicy, HookPoint, HookRegistration, LoopHooks, LoopLlmRequester } from '#/loop/index';
-import { isToolExecutorHost, type ToolDefinition, type ToolHandler } from '#/tool/index';
+import {
+  isToolExecutorHost,
+  type ToolDefinition,
+  type ToolEndingHookEvent,
+  type ToolHandler,
+  type ToolHookPoint,
+  type ToolHookRegistration,
+  type ToolHooks,
+  type ToolStartingHookEvent,
+} from '#/tool/index';
 import type { Agent, Session } from '#/session/index';
 import type { Event, Log } from '#/store/index';
 
@@ -60,13 +69,39 @@ function loopHook<P extends HookPoint>(point: P): (hook: LoopHooks[P], options?:
   };
 }
 
+type ToolHookEvent<P extends ToolHookPoint> = P extends 'tool.ending'
+  ? ToolEndingHookEvent
+  : ToolStartingHookEvent;
+
+type LoopToolHook<P extends ToolHookPoint> = (
+  event: Omit<ToolHookEvent<P>, 'turnId' | 'step'> & { turnId: number; step: number },
+  signal: AbortSignal,
+) => ReturnType<ToolHooks[P]>;
+
+function toolHook<P extends ToolHookPoint>(point: P): (hook: LoopToolHook<P>, options?: LoopHookOptions) => string {
+  return (hook, options) => {
+    const executor = useAgent().loop.executor;
+    if (!isToolExecutorHost(executor)) throw new Error('agent executor has no hook registry');
+    const id = executor.hooks.add({
+      ...options,
+      point,
+      hook: (event: ToolHookEvent<P>, signal: AbortSignal) =>
+        hook({ ...event, turnId: event.turnId as number, step: event.step as number }, signal),
+    } as ToolHookRegistration);
+    onScopeDispose(() => {
+      executor.hooks.remove(id);
+    });
+    return id;
+  };
+}
+
 export const useTurnStarting = loopHook('turn.starting');
 export const useMessageAppending = loopHook('message.appending');
 export const useStepStarting = loopHook('step.starting');
 export const useToolBatchStarting = loopHook('tool.batch-starting');
-export const useToolStarting = loopHook('tool.starting');
-export const useToolPermitting = loopHook('tool.permitting');
-export const useToolEnding = loopHook('tool.ending');
+export const useToolStarting = toolHook('tool.starting');
+export const useToolPermitting = toolHook('tool.permitting');
+export const useToolEnding = toolHook('tool.ending');
 export const useStepStopping = loopHook('step.stopping');
 export const useStepContinuing = loopHook('step.continuing');
 
@@ -200,7 +235,6 @@ function useLevel(
 
 export const AgentUnit = createUnit<{ readonly agent: Agent }>('agent', ({ agent }) => {
   const node = currentUnit();
-  const session = useInject(SessionRef);
   provide(AgentRef, agent);
   useContribute(EventContext, { agentId: agent.id });
   useCleanup(() => {
@@ -208,7 +242,7 @@ export const AgentUnit = createUnit<{ readonly agent: Agent }>('agent', ({ agent
   });
   useForward(agent.log, agent.since);
   useLevel('agent', featureSetOf(agent), AgentFeatures, () => []);
-  node.fire({ type: 'agent.opened', source: session.roster.getState().agents[agent.id]?.source, reopened: agent.reopened });
+  node.fire({ type: 'agent.opened', source: agent.source, reopened: agent.reopened });
 });
 
 export const SessionUnit = createUnit<{ readonly session: Session }>('session', ({ session }) => {

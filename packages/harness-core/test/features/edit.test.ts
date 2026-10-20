@@ -223,7 +223,7 @@ describe('edit feature', () => {
     };
     const { requester, calls } = createMockRequester(script);
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(createEdit({ workDir }));
+    harness.app.features.add(createEdit({ workDir }));
     const session = await harness.app.create({ sessionId: 'sess' });
     const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'main-host' });
     setRequester(harness, 'sess', 'main', requester);

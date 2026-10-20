@@ -86,9 +86,9 @@ function stubSearchFetch(handler: () => Response): { calls: SearchCall[]; fetchI
   const calls: SearchCall[] = [];
   const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
     calls.push({
-      url: String(input),
+      url: String(input as unknown),
       headers: (init?.headers ?? {}) as Record<string, string>,
-      body: String(init?.body ?? ''),
+      body: String((init?.body ?? '') as unknown),
     });
     return handler();
   }) as typeof fetch;

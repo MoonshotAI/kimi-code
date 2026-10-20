@@ -172,10 +172,16 @@ describe('loop record', () => {
     expect(loop.setTools([tool])?.type).toBe('tools.settled');
     expect(loop.state.profile).toEqual({ systemPrompt: 'you are helpful', tools: [tool] });
 
+    let reentrant: string | undefined;
+    const stop = loop.subscribe((event) => {
+      if (event.type !== 'turn.ended') return;
+      stop();
+      reentrant = loop.setSystemPrompt('v2')?.type;
+    });
     expect((await loop.runTurn(prompt('hello'))).type).toBe('done');
     expect(sent).toMatchObject({ profile: { systemPrompt: 'you are helpful', tools: [tool] } });
 
-    expect(loop.setSystemPrompt('v2')?.type).toBe('system_prompt.settled');
+    expect(reentrant).toBe('system_prompt.settled');
     expect(loop.setSystemPrompt()?.type).toBe('system_prompt.settled');
     expect(loop.setTools([])?.type).toBe('tools.settled');
     expect(loop.state.profile).toEqual({ tools: [] });

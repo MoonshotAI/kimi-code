@@ -5,6 +5,7 @@ import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
 import { createFacadeToken, useExpose, useInject, useReady } from '@moonshot-ai/agent-core/kernel/index';
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
+import { KimiFileRegistryRef } from '#/features/files/index';
 import { useAgentTools } from '#/runtime/index';
 
 import {
@@ -49,6 +50,7 @@ export function createOs(props: CreateOsProps): Feature<void> {
         props.spillDir ??
         join(process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code'), 'tool-results');
       const config = useInject(ConfigRef);
+      const files = useInject(KimiFileRegistryRef);
       const readSection = (): ReadSection =>
         config.value?.get<ReadSection>('read') ?? {};
       const taskSection = (): TaskSection | undefined => {
@@ -66,7 +68,7 @@ export function createOs(props: CreateOsProps): Feature<void> {
         bash,
         createGlobTool({ host, workspace }),
         createGrepTool({ host, workspace }),
-        createReadTool({ host, workspace, limits: readSection }),
+        createReadTool({ host, workspace, limits: readSection, files: () => files.value }),
         createWriteTool({ host, workspace }),
       );
       useExpose(BashRef, bash.pending);

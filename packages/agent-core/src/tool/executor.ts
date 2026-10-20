@@ -1,13 +1,25 @@
-import type {
-  ExecutorPolicy,
-  RegisterOptions,
-  ToolDefinition,
-  ToolExecuteInput,
-  ToolExecutorHost,
-  ToolHandler,
-  ToolResult,
+import { errorText } from '#/llm/protocol/errors';
+
+import {
+  isToolResult,
+  type ExecutorPolicy,
+  type RegisterOptions,
+  type ToolDefinition,
+  type ToolExecuteInput,
+  type ToolExecutorHost,
+  type ToolHandler,
+  type ToolHookFailure,
+  type ToolHookPoint,
+  type ToolResult,
 } from './contract';
-import { truncateResult, unavailableTool, unknownTool } from './policy';
+import {
+  createToolHookRegistry,
+  runToolEnding,
+  runToolPermitting,
+  runToolStarting,
+  toolHookFailureText,
+} from './hooks';
+import { toolError, truncateResult, unavailableTool, unknownTool, withNotes } from './policy';
 
 interface Slot {
   handler: ToolHandler;
@@ -21,6 +33,22 @@ interface Slot {
 
 export interface CreateToolExecutorOptions {
   readonly policy?: ExecutorPolicy;
+}
+
+class ToolExecutionError extends Error {
+  readonly original: unknown;
+  readonly result: ToolResult;
+
+  constructor(error: unknown, result: ToolResult) {
+    super(errorText(error), { cause: error });
+    this.name = 'ToolExecutionError';
+    this.original = error;
+    this.result = result;
+  }
+}
+
+export function toolExecutionFailureOf(error: unknown): { error: unknown; result: ToolResult } | undefined {
+  return error instanceof ToolExecutionError ? { error: error.original, result: error.result } : undefined;
 }
 
 function assertName(name: string): void {
@@ -43,6 +71,7 @@ export function createToolExecutor(options: CreateToolExecutorOptions = {}): Too
     throw new TypeError('maxResultChars must be a non-negative integer');
   }
   const slots = new Map<string, Slot>();
+  const hooks = createToolHookRegistry();
 
   const bind = (name: string, handler: ToolHandler, registerOptions?: RegisterOptions): (() => void) => {
     assertName(name);
@@ -87,6 +116,11 @@ export function createToolExecutor(options: CreateToolExecutorOptions = {}): Too
   };
 
   return {
+    hooks: {
+      add: (registration) => hooks.add(registration),
+      remove: (id) => hooks.remove(id),
+      list: () => hooks.list(),
+    },
     register: register as ToolExecutorHost['register'],
     invalidate(name, reason) {
       if (typeof reason !== 'string') throw new TypeError('invalidate reason must be a string');
@@ -102,19 +136,122 @@ export function createToolExecutor(options: CreateToolExecutorOptions = {}): Too
       delete slot.reason;
     },
     async execute(input: ToolExecuteInput): Promise<ToolResult> {
-      const limit = maxResultChars;
-      const name = input.toolCall.name;
-      const slot = slots.get(name);
-      if (slot === undefined) return unknownTool(name);
-      if (slot.status === 'invalid') return unavailableTool(name, slot.reason ?? '');
+      const notes: string[] = [];
+      const report = (point: ToolHookPoint, failures: readonly ToolHookFailure[]): void => {
+        for (const failure of failures) {
+          if (!failure.blocking) notes.push(toolHookFailureText(point, failure.error));
+          if (failure.paused && failure.hookId !== undefined) hooks.suspend(failure.hookId);
+          input.onHookFailure?.(point, failure);
+        }
+      };
+      const settle = (result: ToolResult): ToolResult => truncateResult(withNotes(result, notes), maxResultChars);
+      const finish = async (result: ToolResult, failed: boolean, toolCall: ToolExecuteInput['toolCall']) => {
+        const ending = await runToolEnding(
+          hooks,
+          {
+            toolCall,
+            result,
+            failed,
+            turnId: input.turnId,
+            step: input.step,
+            signal: input.signal,
+          },
+          input.signal,
+        );
+        report('tool.ending', ending.failures);
+        let final = ending.result;
+        if (ending.stopTurn) final = { ...final, stopTurn: true };
+        if (ending.blocked !== undefined) final = { ...final, isError: true, blocked: ending.blocked };
+        return settle(final);
+      };
+
+      const starting =
+        hooks.active('tool.starting').length === 0
+          ? { toolCall: input.toolCall, failures: [] }
+          : await runToolStarting(
+              hooks,
+              {
+                toolCall: input.toolCall,
+                turnId: input.turnId,
+                step: input.step,
+                signal: input.signal,
+              },
+              input.signal,
+            );
+      report('tool.starting', starting.failures);
+      let toolCall = starting.toolCall;
+      let blocked = starting.blocked;
+      let blockedResult = starting.result;
+      if (blocked === undefined && hooks.active('tool.permitting').length > 0) {
+        const permitting = await runToolPermitting(
+          hooks,
+          {
+            toolCall,
+            turnId: input.turnId,
+            step: input.step,
+            signal: input.signal,
+          },
+          input.signal,
+        );
+        report('tool.permitting', permitting.failures);
+        toolCall = permitting.toolCall;
+        blocked = permitting.blocked;
+        blockedResult = permitting.result;
+      }
+      input.onAdjudicated?.(toolCall, blocked);
+      if (blocked !== undefined) {
+        return settle({
+          ...(blockedResult ?? toolError(blocked.message ?? blocked.reason)),
+          isError: true,
+          blocked,
+        });
+      }
+
+      const slot = slots.get(toolCall.name);
+      if (slot === undefined) return finish(unknownTool(toolCall.name), false, toolCall);
+      if (slot.status === 'invalid') {
+        return finish(unavailableTool(toolCall.name, slot.reason ?? ''), false, toolCall);
+      }
+
+      let detached = false;
+      let raw: unknown;
+      let thrown: unknown;
+      let didThrow = false;
       slot.inflight += 1;
       try {
-        const result = await slot.handler.execute(input);
-        return truncateResult(result, limit);
+        raw = await slot.handler.execute({
+          ...input,
+          toolCall,
+          detach:
+            input.detach === undefined
+              ? undefined
+              : (text) => {
+                  detached = true;
+                  input.detach?.(text);
+                },
+        });
+      } catch (error) {
+        didThrow = true;
+        thrown = error;
       } finally {
         slot.inflight -= 1;
         release(slot);
       }
+
+      if (didThrow) {
+        if (input.signal.aborted) throw thrown;
+        if (detached) throw thrown;
+        const result = await finish(toolError(errorText(thrown)), true, toolCall);
+        throw new ToolExecutionError(thrown, result);
+      }
+      if (!isToolResult(raw)) {
+        const error = new Error('invalid tool result');
+        if (detached) throw error;
+        const result = await finish(toolError(errorText(error)), true, toolCall);
+        throw new ToolExecutionError(error, result);
+      }
+      if (detached) return settle(raw);
+      return finish(raw, false, toolCall);
     },
   };
 }

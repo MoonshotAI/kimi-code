@@ -142,11 +142,11 @@ async function startApp(opts?: {
   const { requester, calls } = createMockRequester(() => 'init summary');
   const harness = createHarness({ space: memoryHarnessSpace() });
   const host = testHost(homeDir);
-  await harness.app.features.add(createSessionInit({ workDir, host }));
-  await harness.app.features.add(createAgentsMdReminder({ workDir, host }));
-  await harness.app.features.add(bindCatalog());
+  harness.app.features.add(createSessionInit({ workDir, host }));
+  harness.app.features.add(createAgentsMdReminder({ workDir, host }));
+  harness.app.features.add(bindCatalog());
   let faceRef: Readonly<ShallowRef<SessionInitFace | undefined>> | undefined;
-  await harness.app.features.add(
+  harness.app.features.add(
     createFeature('session-init-probe', {
       session: () => {
         faceRef = useInject(SessionInitRef);
@@ -154,7 +154,7 @@ async function startApp(opts?: {
     }),
   );
   const reminderRefs = new Map<string, Readonly<ShallowRef<AgentsMdReminderFace | undefined>>>();
-  await harness.app.features.add(
+  harness.app.features.add(
     createFeature('agents-md-reminder-probe', {
       agent: () => {
         reminderRefs.set(useAgent().id, useInject(AgentsMdReminderRef));

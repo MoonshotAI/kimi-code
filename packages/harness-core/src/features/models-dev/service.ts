@@ -21,7 +21,10 @@ import {
 } from '#/features/config/index';
 import type {
   CatalogModelConfig,
+  CatalogModelRecords,
   CatalogProviderInfo,
+  ProviderRefreshInput,
+  ProviderRefreshReport,
 } from '#/features/provider-catalog/index';
 
 import { ModelsDevError } from './errors';
@@ -75,28 +78,23 @@ export interface ModelsDevFace {
   getProvider(catalogId: string): Promise<ModelsDevProviderItem>;
   importProvider(options: ImportModelsDevProviderOptions): Promise<ImportModelsDevProviderResult>;
   importRegistry(options: ImportCustomRegistryOptions): Promise<ImportCustomRegistryResult>;
-  refreshRegistries(): Promise<void>;
+  refreshRegistries(): Promise<ProviderRefreshReport>;
 }
 
 export const ModelsDevRef = createFacadeToken<ModelsDevFace>('models-dev');
+
+export interface ModelsDevService extends ModelsDevFace {
+  refreshProvider(input: ProviderRefreshInput): Promise<CatalogModelRecords>;
+}
 
 export interface ModelsDevServiceDeps {
   readonly config: () => ConfigStore | undefined;
   readonly userAgent?: string;
   readonly builtinCatalog?: () => unknown;
+  readonly refresh: () => Promise<ProviderRefreshReport>;
 }
 
-const REGISTRY_MODEL_REMOTE_FIELDS: ReadonlySet<string> = new Set([
-  'provider',
-  'model',
-  'maxContextSize',
-  'capability',
-  'displayName',
-  'supportEfforts',
-  'defaultEffort',
-]);
-
-export function createModelsDevService(deps: ModelsDevServiceDeps): ModelsDevFace {
+export function createModelsDevService(deps: ModelsDevServiceDeps): ModelsDevService {
   let writeChain: Promise<unknown> = Promise.resolve();
 
   const enqueueWrite = <T>(task: () => Promise<T>): Promise<T> => {
@@ -178,6 +176,7 @@ export function createModelsDevService(deps: ModelsDevServiceDeps): ModelsDevFac
           type: resolution.wire,
           baseUrl: resolution.baseUrl,
           apiKey,
+          source: { kind: 'modelsDev', catalogId },
         }),
       },
       'user',
@@ -246,21 +245,23 @@ export function createModelsDevService(deps: ModelsDevServiceDeps): ModelsDevFac
     }
     const nextModels: Record<string, CatalogModelConfig> = {};
     for (const [key, record] of Object.entries(config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {})) {
-      if (surviving.has(record.provider)) continue;
-      if (registrySourceUrl(providers[record.provider]) === url && providers[record.provider]?.oauth === undefined) continue;
+      const provider = record.provider;
+      if (provider !== undefined && surviving.has(provider)) continue;
+      const info = provider === undefined ? undefined : providers[provider];
+      if (registrySourceUrl(info) === url && info?.oauth === undefined) continue;
       nextModels[key] = record;
     }
     for (const entry of entryList) {
       nextProviders[entry.id] = registryProviderInfo(entry, url, apiKey);
-      for (const [modelKey, model] of Object.entries(entry.models)) {
-        nextModels[`${entry.id}/${modelKey}`] = registryModelToConfig(entry.id, model);
+      for (const model of Object.values(entry.models)) {
+        nextModels[`${entry.id}/${model.id}`] = registryModelToConfig(entry.id, model);
       }
     }
     await writeRegistrySections(config, nextProviders, nextModels);
     const firstEntry = entryList[0];
-    const firstModelKey = firstEntry === undefined ? undefined : Object.keys(firstEntry.models)[0];
-    if (firstEntry !== undefined && firstModelKey !== undefined) {
-      await seedDefaultModelWhenUnset(config, `${firstEntry.id}/${firstModelKey}`);
+    const firstModel = firstEntry === undefined ? undefined : Object.values(firstEntry.models)[0];
+    if (firstEntry !== undefined && firstModel !== undefined) {
+      await seedDefaultModelWhenUnset(config, `${firstEntry.id}/${firstModel.id}`);
     }
     return {
       providers: entryList.map((entry) => ({
@@ -293,72 +294,37 @@ export function createModelsDevService(deps: ModelsDevServiceDeps): ModelsDevFac
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   };
 
-  const applyRegistryRefresh = async (
-    config: ConfigStore,
-    url: string,
-    entries: Record<string, CustomRegistryProviderEntry>,
-    apiKey: string,
-    groupProviderIds: readonly string[],
-  ): Promise<void> => {
-    const providers = config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {};
-    const nextProviders: Record<string, CatalogProviderInfo> = { ...providers };
-    const nextModels: Record<string, CatalogModelConfig> = {
-      ...config.get<ModelsSection>(MODELS_CONFIG_SECTION),
-    };
-    const entryList = Object.values(entries);
-    const surviving = new Set(entryList.map((entry) => entry.id));
-    for (const providerId of groupProviderIds) {
-      if (surviving.has(providerId)) continue;
-      const info = nextProviders[providerId];
-      if (info === undefined || registrySourceUrl(info) !== url) continue;
-      delete nextProviders[providerId];
-      for (const [key, record] of Object.entries(nextModels)) {
-        if (record.provider === providerId) delete nextModels[key];
-      }
+  const doRefreshProvider = async ({
+    providerId,
+    info,
+  }: ProviderRefreshInput): Promise<CatalogModelRecords> => {
+    const catalogId = modelsDevSourceCatalogId(info);
+    if (catalogId === undefined) {
+      throw new Error(`No models.dev refresh source is configured for provider '${providerId}'.`);
     }
-    for (const entry of entryList) {
-      nextProviders[entry.id] = registryProviderInfo(entry, url, apiKey);
-      const prefix = `${entry.id}/`;
-      const upstreamKeys = new Set(
-        Object.keys(entry.models).map((modelKey) => `${prefix}${modelKey}`),
+    const catalog = await getModelsDevCatalog({ ...upstreamProps, allowFallback: false });
+    const entry = modelsDevEntry(catalog, catalogId);
+    if (entry === undefined) return {};
+    const resolution = resolveModelsDevImport(entry, info.baseUrl);
+    if (resolution.kind === 'invalid') {
+      throw new ModelsDevError(
+        'modelsDev.import_invalid',
+        `catalog entry ${catalogId} cannot be refreshed: ${resolution.reason}`,
+        { details: { reason: resolution.reason } },
       );
-      for (const [key, record] of Object.entries(nextModels)) {
-        if (record.provider === entry.id && key.startsWith(prefix) && !upstreamKeys.has(key)) {
-          delete nextModels[key];
-        }
-      }
-      for (const [modelKey, model] of Object.entries(entry.models)) {
-        const aliasKey = `${prefix}${modelKey}`;
-        nextModels[aliasKey] = mergeRegistryModel(
-          nextModels[aliasKey],
-          registryModelToConfig(entry.id, model),
-        );
-      }
     }
-    await writeRegistrySections(config, nextProviders, nextModels);
-  };
-
-  const doRefreshRegistries = async (): Promise<void> => {
-    const config = deps.config();
-    if (config === undefined) return;
-    const providers = config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {};
-    const groups = new Map<string, { providerIds: string[]; apiKeys: string[] }>();
-    for (const [providerId, info] of Object.entries(providers)) {
-      const url = registrySourceUrl(info);
-      if (url === undefined) continue;
-      const group = groups.get(url) ?? { providerIds: [], apiKeys: [] };
-      group.providerIds.push(providerId);
-      const apiKey = info?.apiKey ?? '';
-      if (!group.apiKeys.includes(apiKey)) group.apiKeys.push(apiKey);
-      groups.set(url, group);
+    if (resolution.kind === 'needs-base-url') {
+      throw new ModelsDevError(
+        'modelsDev.import_invalid',
+        `catalog entry ${catalogId} requires a base_url`,
+      );
     }
-    for (const [url, group] of groups) {
-      await fetchRegistry(url, group.apiKeys)
-        .then(({ entries, apiKey }) =>
-          applyRegistryRefresh(config, url, entries, apiKey, group.providerIds),
-        )
-        .catch(() => {});
-    }
+    return Object.fromEntries(
+      modelsDevProviderModels(entry).map((model) => [
+        `${providerId}/${model.id}`,
+        modelsDevModelToConfig(providerId, model),
+      ]),
+    );
   };
 
   return {
@@ -379,7 +345,8 @@ export function createModelsDevService(deps: ModelsDevServiceDeps): ModelsDevFac
     },
     importProvider: (options) => enqueueWrite(() => doImportProvider(options)),
     importRegistry: (options) => enqueueWrite(() => doImportRegistry(options)),
-    refreshRegistries: () => enqueueWrite(doRefreshRegistries),
+    refreshProvider: (input) => enqueueWrite(() => doRefreshProvider(input)),
+    refreshRegistries: () => deps.refresh(),
   };
 }
 
@@ -399,7 +366,6 @@ function rewrittenProviderInfo(info: {
     env: undefined,
     modelSource: undefined,
     source: info.source,
-    aliasScope: undefined,
   };
 }
 
@@ -412,7 +378,7 @@ function registryProviderInfo(
     type: entry.type,
     baseUrl: entry.api,
     apiKey: apiKey !== undefined && apiKey.length > 0 ? apiKey : undefined,
-    source: { kind: 'apiJson', url },
+    source: { kind: 'apiJson', url, apiKey: apiKey ?? '' },
   }) as CatalogProviderInfo;
 }
 
@@ -424,10 +390,19 @@ function registrySourceUrl(info: CatalogProviderInfo | undefined): string | unde
   return typeof url === 'string' && url.length > 0 ? url : undefined;
 }
 
+function modelsDevSourceCatalogId(info: CatalogProviderInfo | undefined): string | undefined {
+  const source = info?.source;
+  if (!isPlainObject(source)) return undefined;
+  if (source['kind'] !== 'modelsDev') return undefined;
+  const catalogId = source['catalogId'];
+  return typeof catalogId === 'string' && catalogId.length > 0 ? catalogId : undefined;
+}
+
 function registryKeyFromExisting(providers: ProvidersSection, url: string): string | undefined {
   for (const info of Object.values(providers)) {
     if (registrySourceUrl(info) !== url) continue;
-    const apiKey = info?.apiKey;
+    const source = info?.source;
+    const apiKey = info?.apiKey ?? (isPlainObject(source) ? source['apiKey'] : undefined);
     if (typeof apiKey === 'string' && apiKey.length > 0) return apiKey;
   }
   return undefined;
@@ -444,6 +419,7 @@ function registryModelToConfig(
     provider: providerId,
     model: model.id,
     maxContextSize: registryMaxContextSize(model),
+    maxOutputSize: registryMaxOutputSize(model),
     capability: registryCapability(capabilities),
     displayName: typeof model.name === 'string' && model.name.length > 0 ? model.name : model.id,
     supportEfforts: model.support_efforts,
@@ -468,6 +444,13 @@ function registryMaxContextSize(model: CustomRegistryModelEntry): number {
   return CUSTOM_REGISTRY_DEFAULT_MAX_CONTEXT;
 }
 
+function registryMaxOutputSize(model: CustomRegistryModelEntry): number | undefined {
+  const output = model.limit?.output;
+  return typeof output === 'number' && Number.isInteger(output) && output > 0
+    ? output
+    : undefined;
+}
+
 function registryCapability(capabilities: readonly string[]): ModelCapability {
   return {
     image_in: capabilities.includes('image_in'),
@@ -476,18 +459,6 @@ function registryCapability(capabilities: readonly string[]): ModelCapability {
     thinking: capabilities.includes('thinking'),
     tool_use: capabilities.includes('tool_use'),
   };
-}
-
-function mergeRegistryModel(
-  existing: CatalogModelConfig | undefined,
-  remote: CatalogModelConfig,
-): CatalogModelConfig {
-  if (existing === undefined) return remote;
-  const extras: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(existing)) {
-    if (!REGISTRY_MODEL_REMOTE_FIELDS.has(key)) extras[key] = value;
-  }
-  return { ...extras, ...remote } as CatalogModelConfig;
 }
 
 async function writeRegistrySections(

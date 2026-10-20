@@ -1,8 +1,7 @@
 import { useApp } from '@moonshot-ai/agent-core/app/index';
 import { useInject } from '@moonshot-ai/agent-core/kernel/index';
 
-import { FilesRef } from '#/features/files/index';
-import { MediaLibraryRef } from '#/features/media/index';
+import { FilesRef, KimiFileRegistryRef } from '#/features/files/index';
 
 import { sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, param, sendErr } from '../route/http';
@@ -29,17 +28,26 @@ export function useSessionMediaRoutes(prefix: string): void {
         return;
       }
       await unitsReady(root);
-      const library = sessionFacade(root, MediaLibraryRef, sessionId);
-      if (library === undefined) {
+      const registry = sessionFacade(root, KimiFileRegistryRef, sessionId);
+      if (registry === undefined) {
         sendErr(
           request,
           response,
           ErrorCode.MEDIA_UNAVAILABLE,
-          'session media is unavailable (media feature is not installed)',
+          'session media is unavailable (files feature is not installed)',
         );
         return;
       }
-      let file: BinaryFile | undefined = await library.open(fileId);
+      const stored = await registry.open(`kimi-file://${fileId}`);
+      let file: BinaryFile | undefined =
+        stored === undefined
+          ? undefined
+          : {
+              name: stored.meta.name,
+              mediaType: stored.meta.media_type,
+              size: stored.meta.size,
+              stream: (range) => stored.stream(range),
+            };
       if (file === undefined) {
         const staged = await files.value?.open(fileId);
         if (staged !== undefined) {

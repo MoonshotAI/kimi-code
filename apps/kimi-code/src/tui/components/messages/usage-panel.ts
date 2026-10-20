@@ -7,7 +7,7 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import { formatDuration } from '@moonshot-ai/kimi-code-oauth';
-import type { TokenUsage } from '@moonshot-ai/agent-core';
+import type { SessionUsage, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   formatTokenCount,
@@ -50,12 +50,8 @@ export interface ManagedUsageReport {
   readonly extraUsage?: BoosterWalletInfo | null;
 }
 
-export interface SessionUsageReport {
-  readonly byModel?: Record<string, TokenUsage>;
-}
-
 export interface UsageReportOptions {
-  readonly sessionUsage?: SessionUsageReport;
+  readonly sessionUsage?: SessionUsage;
   readonly sessionUsageError?: string;
   readonly contextUsage: number;
   readonly contextTokens: number;
@@ -82,13 +78,15 @@ function usageInputTotal(usage: TokenUsage): number {
 }
 
 function buildSessionUsageSection(
-  usage: SessionUsageReport | undefined,
+  usage: SessionUsage | undefined,
   error: string | undefined,
   value: Colorize,
   muted: Colorize,
 ): string[] {
   if (error !== undefined) return [muted(`  ${error}`)];
-  const entries = Object.entries(usage?.byModel ?? {});
+  const byModel = (usage as { readonly byModel?: Record<string, TokenUsage> } | undefined)
+    ?.byModel;
+  const entries = Object.entries(byModel ?? {});
   if (entries.length === 0) return [muted('  No token usage recorded yet.')];
 
   const lines: string[] = [];

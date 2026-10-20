@@ -1,5 +1,6 @@
 import { createUserMessage } from '#/llm/message';
 import type { LlmRequester } from '#/llm/requester';
+import { abortReason } from '#/utils/wait';
 
 import { listSnapshotModels, resolveSnapshotModel } from './merge';
 import type {
@@ -11,12 +12,11 @@ import type {
   CreateProviderCatalogOptions,
   ProviderCatalog,
   ProviderCatalogChangedEvent,
+  ProviderCatalogPingResult,
   ProviderCatalogRefreshFailedEvent,
   ProviderCatalogStore,
   ProviderRequesterSource,
 } from './types';
-
-const DEFAULT_PING_TIMEOUT_MS = 30_000;
 
 interface PullResult {
   readonly providerId: string;
@@ -32,6 +32,14 @@ interface RefreshFailure {
 interface PingRequest {
   readonly providerId: string;
   readonly modelId: string;
+}
+
+interface PingTask extends PingRequest {
+  readonly promise: Promise<ProviderCatalogPingResult>;
+  readonly resolve: (result: ProviderCatalogPingResult) => void;
+  readonly reject: (error: unknown) => void;
+  readonly startedAt: number;
+  settled: boolean;
 }
 
 interface PingOutcome {
@@ -173,7 +181,7 @@ export async function createProviderCatalog(
     providers: {},
   };
   const store = options.store;
-  const pingTimeoutMs = options.pingTimeoutMs ?? DEFAULT_PING_TIMEOUT_MS;
+  const pingTimeoutMs = options.pingTimeoutMs;
   const handles = new Map<string, CatalogProviderHandle>();
   for (const handle of options.handles ?? []) {
     handles.set(handle.id, handle);
@@ -181,6 +189,7 @@ export async function createProviderCatalog(
 
   const changedListeners = new Set<(event: ProviderCatalogChangedEvent) => void>();
   const failedListeners = new Set<(event: ProviderCatalogRefreshFailedEvent) => void>();
+  const pingTasks = new Map<string, PingTask>();
 
   let state: 'idle' | 'refreshing' | 'pinging' = 'idle';
   let closed = false;
@@ -190,8 +199,8 @@ export async function createProviderCatalog(
   let queue: string[] = [];
   let dirty: string[] = [];
   let failures: RefreshFailure[] = [];
-  let activePing: PingRequest | undefined;
-  let pingQueue: PingRequest[] = [];
+  let activePing: PingTask | undefined;
+  let pingQueue: PingTask[] = [];
 
   const emitChanged = (providers: readonly string[]): void => {
     if (closed || providers.length === 0) return;
@@ -241,44 +250,95 @@ export async function createProviderCatalog(
     }
   };
 
+  const settlePing = (task: PingTask, result: ProviderCatalogPingResult): void => {
+    if (task.settled) return;
+    task.settled = true;
+    pingTasks.delete(pingKey(task));
+    task.resolve(result);
+  };
+
+  const rejectPing = (task: PingTask, error: unknown): void => {
+    if (task.settled) return;
+    task.settled = true;
+    pingTasks.delete(pingKey(task));
+    task.reject(error);
+  };
+
   const probeOne = async (
-    request: PingRequest,
+    request: PingTask,
     signal: AbortSignal,
-  ): Promise<PingOutcome & { readonly aborted?: boolean }> => {
+  ): Promise<ProviderCatalogPingResult> => {
     const requester = getRequester(request.providerId, request.modelId);
     if (requester === undefined) {
-      return {
-        providerId: request.providerId,
-        modelId: request.modelId,
-        error: `No requester configured for ${request.providerId}/${request.modelId}`,
-      };
+      throw new Error(`No requester configured for ${request.providerId}/${request.modelId}`);
     }
+    const rest = {
+      model: { maxOutputTokens: 512 },
+      profile: {
+        systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+        tools: [],
+      },
+      content: { messages: [createUserMessage('ping')] },
+      policy: { recoveries: [], retry: { maxAttemptsPerStep: 1 } },
+    };
     try {
-      const probeSignal = AbortSignal.any([signal, AbortSignal.timeout(pingTimeoutMs)]);
-      const outcome = await requester.generate(
-        {
-          model: { maxOutputTokens: 512 },
-          profile: {
-            systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
-            tools: [],
-          },
-          content: { messages: [createUserMessage('ping')] },
-          policy: { retry: { maxAttemptsPerStep: 1 } },
-        },
-        { signal: probeSignal },
-      );
-      if (outcome.type === 'aborted') {
-        return { providerId: request.providerId, modelId: request.modelId, aborted: true };
+      const credentials = requester.request(rest).endpoint?.credentials;
+      let removeAbortListener = () => {};
+      const aborted = new Promise<never>((_resolve, reject) => {
+        const onAbort = () => reject(abortReason(signal));
+        if (signal.aborted) {
+          onAbort();
+          return;
+        }
+        signal.addEventListener('abort', onAbort, { once: true });
+        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+      });
+      try {
+        const generate = () => Promise.race([requester.generate(rest, { signal }), aborted]);
+        let outcome = await generate();
+        if (
+          outcome.type === 'failed' &&
+          !signal.aborted &&
+          credentials?.canRecover?.(outcome.error) === true
+        ) {
+          credentials.invalidate?.();
+          outcome = await generate();
+        }
+        const durationMs = Date.now() - request.startedAt;
+        if (outcome.type === 'failed') {
+          return { ok: false, durationMs, error: outcome.error.message };
+        }
+        if (outcome.type === 'aborted') {
+          const reason = outcome.reason ?? signal.reason;
+          return {
+            ok: false,
+            durationMs,
+            error:
+              reason instanceof Error
+                ? reason.message
+                : reason === undefined
+                  ? 'aborted'
+                  : String(reason),
+          };
+        }
+        return {
+          ok: true,
+          durationMs,
+          text: outcome.message.content
+            .flatMap((part) => (part.type === 'text' ? [part.text] : []))
+            .join('')
+            .trim(),
+          usage: outcome.usage,
+          finishReason:
+            outcome.finish?.finishReason ?? outcome.finish?.rawFinishReason ?? undefined,
+        };
+      } finally {
+        removeAbortListener();
       }
-      return {
-        providerId: request.providerId,
-        modelId: request.modelId,
-        error: outcome.type === 'failed' ? outcome.error.message : undefined,
-      };
     } catch (error) {
       return {
-        providerId: request.providerId,
-        modelId: request.modelId,
+        ok: false,
+        durationMs: Date.now() - request.startedAt,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -329,44 +389,62 @@ export async function createProviderCatalog(
     });
   };
 
+  const finishPingStep = (): void => {
+    activePing = undefined;
+    activeController = undefined;
+    if (closed) return;
+    if (pingQueue.length > 0) {
+      activePing = pingQueue[0];
+      pingQueue = pingQueue.slice(1);
+      runPingStep();
+      return;
+    }
+    if (queue.length > 0) {
+      batch = queue;
+      queue = [];
+      dirty = [];
+      failures = [];
+      runRefreshStep();
+      return;
+    }
+    state = 'idle';
+  };
+
   const runPingStep = (): void => {
     if (closed || activePing === undefined) return;
     state = 'pinging';
     const currentPing = activePing;
     const controller = new AbortController();
     activeController = controller;
+    const signals = [controller.signal];
+    if (pingTimeoutMs !== undefined) {
+      signals.push(AbortSignal.timeout(pingTimeoutMs));
+    }
+    const signal = AbortSignal.any(signals);
 
-    void probeOne(currentPing, controller.signal).then((outcome) => {
-      if (closed || controller.signal.aborted) return;
-      activeController = undefined;
-
-      if (outcome.aborted !== true) {
+    void probeOne(currentPing, signal).then(
+      (result) => {
+        if (closed || currentPing.settled) return;
+        activeController = undefined;
+        const outcome: PingOutcome = {
+          providerId: currentPing.providerId,
+          modelId: currentPing.modelId,
+          error: result.ok ? undefined : result.error,
+        };
         const applied = applyPingOutcome(snapshot, outcome);
         snapshot = applied.snapshot;
+        settlePing(currentPing, result);
         if (applied.changed) {
-          emitChanged([outcome.providerId]);
+          emitChanged([currentPing.providerId]);
         }
-      }
-
-      if (pingQueue.length > 0) {
-        activePing = pingQueue[0];
-        pingQueue = pingQueue.slice(1);
-        runPingStep();
-        return;
-      }
-
-      activePing = undefined;
-      if (queue.length > 0) {
-        batch = queue;
-        queue = [];
-        dirty = [];
-        failures = [];
-        runRefreshStep();
-        return;
-      }
-
-      state = 'idle';
-    });
+        finishPingStep();
+      },
+      (error) => {
+        if (closed || currentPing.settled) return;
+        rejectPing(currentPing, error);
+        finishPingStep();
+      },
+    );
   };
 
   const enqueueRefreshIds = (incoming: readonly string[]): void => {
@@ -387,21 +465,45 @@ export async function createProviderCatalog(
     }
   };
 
-  const enqueuePingRequest = (request: PingRequest): void => {
-    if (closed) return;
-    if (getModel(request.providerId, request.modelId) === undefined) return;
-    if (handles.get(request.providerId) === undefined) return;
-
-    if (state === 'idle') {
-      activePing = request;
-      runPingStep();
-      return;
+  const enqueuePingRequest = (request: PingRequest): Promise<ProviderCatalogPingResult> => {
+    if (closed) {
+      return Promise.resolve({
+        ok: false,
+        durationMs: 0,
+        error: 'Provider catalog is closed',
+      });
+    }
+    const key = pingKey(request);
+    const existing = pingTasks.get(key);
+    if (existing !== undefined) return existing.promise;
+    if (getModel(request.providerId, request.modelId) === undefined) {
+      return Promise.reject(
+        new Error(`Unknown model ${request.providerId}/${request.modelId}`),
+      );
     }
 
-    const key = pingKey(request);
-    if (activePing !== undefined && pingKey(activePing) === key) return;
-    if (pingQueue.some((item) => pingKey(item) === key)) return;
-    pingQueue = [...pingQueue, request];
+    let resolvePromise: (result: ProviderCatalogPingResult) => void = () => {};
+    let rejectPromise: (error: unknown) => void = () => {};
+    const promise = new Promise<ProviderCatalogPingResult>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+    });
+    const task: PingTask = {
+      ...request,
+      promise,
+      resolve: resolvePromise,
+      reject: rejectPromise,
+      startedAt: Date.now(),
+      settled: false,
+    };
+    pingTasks.set(key, task);
+    if (state === 'idle') {
+      activePing = task;
+      runPingStep();
+    } else {
+      pingQueue = [...pingQueue, task];
+    }
+    return promise;
   };
 
   return {
@@ -461,9 +563,7 @@ export async function createProviderCatalog(
       }
       enqueueRefreshIds(ids);
     },
-    ping: (providerId, modelId) => {
-      enqueuePingRequest({ providerId, modelId });
-    },
+    ping: (providerId, modelId) => enqueuePingRequest({ providerId, modelId }),
     onChanged: (listener) => {
       changedListeners.add(listener);
       return () => {
@@ -477,9 +577,17 @@ export async function createProviderCatalog(
       };
     },
     close: () => {
+      if (closed) return;
       closed = true;
-      activeController?.abort();
+      activeController?.abort(new Error('Provider catalog is closed'));
       activeController = undefined;
+      for (const task of [...pingTasks.values()]) {
+        settlePing(task, {
+          ok: false,
+          durationMs: Date.now() - task.startedAt,
+          error: 'Provider catalog is closed',
+        });
+      }
       handles.clear();
       changedListeners.clear();
       failedListeners.clear();

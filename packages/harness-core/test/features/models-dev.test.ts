@@ -15,6 +15,7 @@ import {
 import {
   ProviderCatalogRef,
   providerCatalog,
+  type CatalogModelConfig,
   type ProviderCatalogFace,
 } from '#/features/provider-catalog/index';
 import {
@@ -37,6 +38,7 @@ import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index
 const harnesses: Harness[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   resetModelsDevUpstreamForTest();
   vi.unstubAllGlobals();
   await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
@@ -130,7 +132,7 @@ let currentCatalog: unknown = CATALOG;
 
 function stubFailingFetch(): void {
   vi.stubGlobal('fetch', async (input: RequestInfo | URL) => {
-    throw new Error(`unexpected fetch ${String(input)}`);
+    throw new Error(`unexpected fetch ${typeof input === 'string' ? input : input.url}`);
   });
 }
 
@@ -524,7 +526,12 @@ describe('models-dev feature browse and import', () => {
     });
     expect(first.models_imported).toBe(1);
     expect(store.get(PROVIDERS_CONFIG_SECTION)).toEqual({
-      anthropic: { type: 'anthropic', baseUrl: 'https://api.anthropic.com', apiKey: 'sk-ant' },
+      anthropic: {
+        type: 'anthropic',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: 'sk-ant',
+        source: { kind: 'modelsDev', catalogId: 'anthropic' },
+      },
     });
     expect(store.get(MODELS_CONFIG_SECTION)).toEqual({
       'anthropic/claude-sonnet': {
@@ -544,6 +551,14 @@ describe('models-dev feature browse and import', () => {
       },
     });
     expect(store.get(DEFAULT_MODEL_CONFIG_SECTION)).toBe('anthropic/claude-sonnet');
+
+    await face.refreshRegistries();
+    expect(store.get(MODELS_CONFIG_SECTION)).toMatchObject({
+      'anthropic/claude-sonnet': {
+        displayName: 'Claude Sonnet',
+        maxOutputSize: 64000,
+      },
+    });
 
     await face.importProvider({ catalogId: 'acme' });
     expect(store.get(DEFAULT_MODEL_CONFIG_SECTION)).toBe('anthropic/claude-sonnet');
@@ -626,15 +641,17 @@ describe('models-dev custom registry', () => {
 
   let registryPayload: unknown;
   let registryFails: boolean;
-  let registryCalls: Array<{ url: string; authorization?: string }>;
+  let registryCalls: Array<{ url: string; authorization?: string; userAgent?: string }>;
 
   function stubRegistryFetch(): void {
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
+      const url = typeof input === 'string' ? input : input.url;
       if (url === REGISTRY_URL) {
+        const headers = (init?.headers ?? {}) as Record<string, string>;
         registryCalls.push({
           url,
-          authorization: (init?.headers as Record<string, string> | undefined)?.['Authorization'],
+          authorization: headers['Authorization'],
+          userAgent: headers['User-Agent'] ?? headers['user-agent'],
         });
         if (registryFails) return new Response('boom', { status: 500 });
         return new Response(JSON.stringify(registryPayload), { status: 200 });
@@ -651,9 +668,12 @@ describe('models-dev custom registry', () => {
     return { id, name: id, api: `https://${id}.example.com/v1`, type, models };
   }
 
-  async function mountRegistry(toml?: string): Promise<{ harness: Harness; face: ModelsDevFace; config: ConfigStore; catalog: ProviderCatalogFace }> {
+  async function mountRegistry(
+    toml?: string,
+    userAgent?: string,
+  ): Promise<{ harness: Harness; face: ModelsDevFace; config: ConfigStore; catalog: ProviderCatalogFace }> {
     registryPayload = {
-      regone: registryEntry('regone', 'openai', {
+      'upstream-one': registryEntry('regone', 'openai', {
         'reg-a': {
           id: 'reg-a',
           name: 'Reg A',
@@ -677,7 +697,7 @@ describe('models-dev custom registry', () => {
     harnesses.push(harness);
     harness.app.features.add(providerCatalog);
     harness.app.features.add(createConfig({ persist: fakePersist(toml).persist }));
-    harness.app.features.add(createModelsDev({ builtinCatalog: () => currentCatalog }));
+    harness.app.features.add(createModelsDev({ builtinCatalog: () => currentCatalog, userAgent }));
     harness.app.features.add(modelsDevProbe(capture));
     await tick();
     const face = capture.face?.value;
@@ -700,7 +720,7 @@ describe('models-dev custom registry', () => {
       'provider = "manual"\n' +
       'model = "m1"\n' +
       'maxContextSize = 4096\n';
-    const { face, config, catalog } = await mountRegistry(manualToml);
+    const { harness, face, config, catalog } = await mountRegistry(manualToml, 'test-agent');
 
     const imported = await face.importRegistry({ url: REGISTRY_URL, apiKey: 'sk-reg' });
     expect(imported.models_imported).toBe(2);
@@ -720,14 +740,17 @@ describe('models-dev custom registry', () => {
         models: ['reg-b'],
       },
     ]);
-    expect(registryCalls.at(-1)?.authorization).toBe('Bearer sk-reg');
+    expect(registryCalls.at(-1)).toMatchObject({
+      authorization: 'Bearer sk-reg',
+      userAgent: 'test-agent',
+    });
     expect(config.get(PROVIDERS_CONFIG_SECTION)).toMatchObject({
       manual: { type: 'openai', apiKey: 'sk-manual' },
       regone: {
         type: 'openai',
         baseUrl: 'https://regone.example.com/v1',
         apiKey: 'sk-reg',
-        source: { kind: 'apiJson', url: REGISTRY_URL },
+        source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'sk-reg' },
       },
       regtwo: { type: 'anthropic', apiKey: 'sk-reg' },
     });
@@ -736,6 +759,7 @@ describe('models-dev custom registry', () => {
         provider: 'regone',
         model: 'reg-a',
         maxContextSize: 65536,
+        maxOutputSize: 8192,
         displayName: 'Reg A',
         supportEfforts: ['low', 'high'],
         defaultEffort: 'low',
@@ -765,48 +789,217 @@ describe('models-dev custom registry', () => {
 
     await until(() => catalog.isLive('regone') && catalog.isLive('regtwo'));
     expect(catalog.requester('regone', 'reg-a')).toBeDefined();
+    const current = config.get<Record<string, CatalogModelConfig>>(MODELS_CONFIG_SECTION) ?? {};
+    await config.set(
+      MODELS_CONFIG_SECTION,
+      {
+        ...current,
+        'regone/reg-a': {
+          ...current['regone/reg-a'],
+          extras: { custom: 'canonical' },
+          overrides: { displayName: 'canonical-override' },
+        },
+        'my-fav': {
+          provider: 'regone',
+          model: 'reg-a',
+          displayName: 'mine',
+          extras: { custom: 'user' },
+          overrides: { displayName: 'user-override' },
+        },
+      },
+      'user',
+    );
+    const refreshed = await catalog.refresh({ providerId: 'regone' });
+    expect(refreshed).toEqual({ changed: [], unchanged: ['regone'], failed: [] });
+    expect(config.get(MODELS_CONFIG_SECTION)).toHaveProperty('regone/reg-a');
+
+    const retirements: Array<{ from: string; to: string }> = [];
+    const changedPayloads: Array<{ retired_default?: { from: string; to: string } }> = [];
+    catalog.onRetiredModel((event) => {
+      retirements.push(event);
+    });
+    harness.app.on(providerCatalog, 'event.model_catalog.changed', (event) => {
+      changedPayloads.push(event.payload);
+    });
 
     registryPayload = {
-      regone: registryEntry('regone', 'openai', {
-        'reg-a': { id: 'reg-a', name: 'Reg A', limit: { context: 65536 }, tool_call: true },
-        'reg-c': { id: 'reg-c', limit: { context: 2048 } },
+      'upstream-one': registryEntry('regone', 'openai', {
+        'reg-a': {
+          id: 'reg-a',
+          name: 'Reg A',
+          limit: { context: 65536 },
+          tool_call: true,
+          upgrade: { model: 'reg-c', migration_markdown: 'Use C' },
+        },
+        'reg-c': {
+          id: 'reg-c',
+          limit: { context: 2048 },
+          upgrade: { model: 'reg-d', migration_markdown: 'Use D' },
+        },
+        'reg-d': { id: 'reg-d', limit: { context: 1024 } },
       }),
     };
-    await face.refreshRegistries();
+    const second = await face.refreshRegistries();
+    expect(second.changed).toEqual(
+      expect.arrayContaining([
+        { provider_id: 'regone', provider_name: 'regone', added: 2, removed: 0 },
+        { provider_id: 'regtwo', provider_name: 'regtwo', added: 0, removed: 1 },
+      ]),
+    );
+    expect(second.retired_default).toBeUndefined();
     expect(config.get(PROVIDERS_CONFIG_SECTION)).toMatchObject({
       manual: { type: 'openai' },
       regone: { type: 'openai', apiKey: 'sk-reg' },
     });
     expect(config.get(PROVIDERS_CONFIG_SECTION)).not.toHaveProperty('regtwo');
-    const modelsAfterRefresh = config.get(MODELS_CONFIG_SECTION) as Record<string, { provider: string }>;
+    const modelsAfterRefresh = config.get(MODELS_CONFIG_SECTION) as Record<string, CatalogModelConfig>;
     expect(Object.keys(modelsAfterRefresh).toSorted()).toEqual([
       'manual/m1',
+      'my-fav',
       'regone/reg-a',
       'regone/reg-c',
+      'regone/reg-d',
     ]);
-    expect(modelsAfterRefresh['regone/reg-c']).toMatchObject({
-      provider: 'regone',
-      maxContextSize: 2048,
+    expect(modelsAfterRefresh['regone/reg-a']).toMatchObject({
+      extras: { custom: 'canonical' },
+      overrides: { displayName: 'canonical-override' },
+    });
+    expect(modelsAfterRefresh['my-fav']).toMatchObject({
+      displayName: 'mine',
+      extras: { custom: 'user' },
+      overrides: { displayName: 'user-override' },
     });
     expect(config.get(DEFAULT_MODEL_CONFIG_SECTION)).toBe('regone/reg-a');
+    expect(registryCalls.at(-1)).toMatchObject({
+      authorization: 'Bearer sk-reg',
+      userAgent: 'test-agent',
+    });
+
+    registryPayload = {
+      'upstream-one': registryEntry('regone', 'openai', {
+        'reg-a': {
+          id: 'reg-a',
+          name: 'Reg A',
+          limit: { context: 65536 },
+          tool_call: true,
+          upgrade: { model: 'reg-c', migration_markdown: 'Use C' },
+        },
+        'reg-c': {
+          id: 'reg-c',
+          limit: { context: 2048 },
+          upgrade: { model: 'reg-d', migration_markdown: 'Use D' },
+        },
+        'reg-d': { id: 'reg-d', limit: { context: 1024 } },
+      }),
+      other: registryEntry('other', 'openai', { x: { id: 'x' } }),
+    };
+    const discovered = await face.refreshRegistries();
+    expect(discovered.changed).toEqual(
+      expect.arrayContaining([
+        { provider_id: 'other', provider_name: 'other', added: 1, removed: 0 },
+      ]),
+    );
+    expect(config.get(PROVIDERS_CONFIG_SECTION)).toHaveProperty('other');
+
+    registryPayload = {
+      'upstream-one': registryEntry('regone', 'openai', {
+        'reg-c': {
+          id: 'reg-c',
+          limit: { context: 2048 },
+          upgrade: { model: 'reg-d', migration_markdown: 'Use D' },
+        },
+        'reg-d': { id: 'reg-d', limit: { context: 1024 } },
+      }),
+    };
+    const retired = await face.refreshRegistries();
+    expect(retired.changed).toEqual(
+      expect.arrayContaining([
+        { provider_id: 'regone', provider_name: 'regone', added: 0, removed: 1 },
+        { provider_id: 'other', provider_name: 'other', added: 0, removed: 1 },
+      ]),
+    );
+    expect(retired.retired_default).toEqual({
+      from: 'regone/reg-a',
+      to: 'regone/reg-c',
+      from_display_name: 'canonical-override',
+    });
+    expect(config.get(DEFAULT_MODEL_CONFIG_SECTION)).toBe('regone/reg-c');
+    expect(catalog.retiredModelReplacement('regone/reg-a')).toBe('regone/reg-c');
+    expect(catalog.retiredModelReplacement('regone/reg-c')).toBeUndefined();
+
+    registryPayload = {
+      'upstream-one': registryEntry('regone', 'openai', {
+        'reg-d': { id: 'reg-d', limit: { context: 1024 } },
+      }),
+    };
+    const chained = await face.refreshRegistries();
+    expect(changedPayloads.some(
+      (payload) =>
+        payload.retired_default?.from === 'regone/reg-a' &&
+        payload.retired_default.to === 'regone/reg-c',
+    )).toBe(true);
+    expect(chained.retired_default).toEqual({
+      from: 'regone/reg-c',
+      to: 'regone/reg-d',
+      from_display_name: 'reg-c',
+    });
+    expect(config.get(DEFAULT_MODEL_CONFIG_SECTION)).toBe('regone/reg-d');
+    expect(catalog.retiredModelReplacement('regone/reg-a')).toBe('regone/reg-d');
+    expect(catalog.retiredModelReplacement('regone/reg-c')).toBe('regone/reg-d');
+    expect(retirements).toEqual([
+      { from: 'regone/reg-a', to: 'regone/reg-c' },
+      { from: 'regone/reg-c', to: 'regone/reg-d' },
+    ]);
+    const modelsBeforeFailure = config.get(MODELS_CONFIG_SECTION);
 
     registryFails = true;
     registryPayload = { other: registryEntry('other', 'openai', { x: { id: 'x' } }) };
-    await face.refreshRegistries();
-    expect(config.get(PROVIDERS_CONFIG_SECTION)).toMatchObject({ regone: { type: 'openai' } });
+    const failed = await face.refreshRegistries();
+    expect(failed.failed.map((failure) => failure.provider)).toEqual(['regone']);
     expect(config.get(PROVIDERS_CONFIG_SECTION)).not.toHaveProperty('other');
+    expect(config.get(MODELS_CONFIG_SECTION)).toEqual(modelsBeforeFailure);
 
     registryFails = false;
     registryPayload = { other: registryEntry('other', 'openai', { x: { id: 'x' } }) };
     const reimported = await face.importRegistry({ url: REGISTRY_URL });
     expect(reimported.providers.map((provider) => provider.id)).toEqual(['other']);
-    expect(registryCalls.at(-1)?.authorization).toBe('Bearer sk-reg');
+    expect(registryCalls.at(-1)).toMatchObject({
+      authorization: 'Bearer sk-reg',
+      userAgent: 'test-agent',
+    });
     expect(config.get(PROVIDERS_CONFIG_SECTION)).toMatchObject({
       manual: { type: 'openai' },
-      other: { type: 'openai', apiKey: 'sk-reg' },
+      other: {
+        type: 'openai',
+        apiKey: 'sk-reg',
+        source: { kind: 'apiJson', url: REGISTRY_URL, apiKey: 'sk-reg' },
+      },
     });
     expect(config.get(PROVIDERS_CONFIG_SECTION)).not.toHaveProperty('regone');
     expect(config.get(DEFAULT_MODEL_CONFIG_SECTION)).toBe('other/x');
+
+    const timerToml =
+      '[providers.regone]\n' +
+      'type = "openai"\n' +
+      'baseUrl = "https://regone.example.com/v1"\n' +
+      'apiKey = "sk-reg"\n' +
+      '[providers.regone.source]\n' +
+      'kind = "apiJson"\n' +
+      'url = "https://registry.example.com/api.json"\n' +
+      'apiKey = "sk-reg"\n\n' +
+      '[model_catalog]\n' +
+      'refresh_on_start = true\n' +
+      'refresh_interval_ms = 50\n';
+    vi.useFakeTimers();
+    const pending = mountRegistry(timerToml);
+    await vi.advanceTimersByTimeAsync(0);
+    const timed = await pending;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(registryCalls).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(registryCalls).toHaveLength(2);
+    await timed.harness.close();
+    vi.useRealTimers();
   });
 
   it('rejects invalid registries and oauth-managed collisions', async () => {

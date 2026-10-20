@@ -1,0 +1,177 @@
+import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { SlashCommandHost } from '#/tui/commands';
+import { applyExperimentalFeatureChanges } from '#/tui/commands/config';
+import {
+  isExperimentalFlagEnabled,
+  setExperimentalFeatures,
+} from '#/tui/commands/experimental-flags';
+import { darkColors } from '#/tui/theme/colors';
+
+function feature(overrides: Partial<ExperimentalFeatureState> = {}): ExperimentalFeatureState {
+  return {
+    id: 'micro_compaction',
+    title: 'Micro compaction',
+    description: 'Trim older tool results.',
+    surface: 'core',
+    env: 'KIMI_CODE_EXPERIMENTAL_MICRO_COMPACTION',
+    defaultEnabled: true,
+    enabled: true,
+    source: 'default',
+    ...overrides,
+  };
+}
+
+function makeHost() {
+  const session = {
+    id: 'ses-experiments',
+    reloadSession: vi.fn(async () => ({})),
+  };
+  const host = {
+    state: {
+      theme: { palette: darkColors },
+      ui: { requestRender: vi.fn() },
+    },
+    harness: {
+      setConfig: vi.fn(async () => ({ providers: {} })),
+      getExperimentalFeatures: vi.fn(async () => [
+        feature({ enabled: false, source: 'config', configValue: false }),
+      ]),
+      reloadSession: vi.fn(async () => session),
+    },
+    session,
+    refreshSlashCommandAutocomplete: vi.fn(),
+    reloadCurrentSessionView: vi.fn(async () => {}),
+    mountEditorReplacement: vi.fn(),
+    restoreEditor: vi.fn(),
+    showStatus: vi.fn(),
+    showError: vi.fn(),
+    showNotice: vi.fn(),
+    track: vi.fn(),
+  } as unknown as SlashCommandHost & {
+    harness: {
+      setConfig: ReturnType<typeof vi.fn>;
+      getExperimentalFeatures: ReturnType<typeof vi.fn>;
+      reloadSession: ReturnType<typeof vi.fn>;
+    };
+    refreshSlashCommandAutocomplete: ReturnType<typeof vi.fn>;
+    reloadCurrentSessionView: ReturnType<typeof vi.fn>;
+    mountEditorReplacement: ReturnType<typeof vi.fn>;
+    restoreEditor: ReturnType<typeof vi.fn>;
+    showStatus: ReturnType<typeof vi.fn>;
+    showError: ReturnType<typeof vi.fn>;
+    track: ReturnType<typeof vi.fn>;
+    session: typeof session;
+  };
+  return host;
+}
+
+describe('experimental feature command handlers', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
+  it('persists config overrides, refreshes command flags, closes the panel, and reloads', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
+
+    expect(host.harness.setConfig).toHaveBeenCalledWith({
+      experimental: { micro_compaction: false },
+    });
+    expect(host.harness.getExperimentalFeatures).toHaveBeenCalledOnce();
+    expect(isExperimentalFlagEnabled('micro_compaction')).toBe(false);
+    expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalled();
+    expect(host.restoreEditor).toHaveBeenCalled();
+    expect(host.harness.reloadSession).toHaveBeenCalledWith({ id: host.session.id });
+    expect(host.session.reloadSession).not.toHaveBeenCalled();
+    expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
+      host.session,
+      'Experimental features updated. Session reloaded.',
+    );
+    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
+    expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
+      changed: 1,
+      flags: '',
+    });
+    expect(host.showStatus).not.toHaveBeenCalledWith(
+      'Experimental features updated.',
+      darkColors.success,
+    );
+  });
+
+  it.each([true, false])(
+    'toggles notification display without reloading the session: %s',
+    async (enabled) => {
+      const host = makeHost();
+      host.harness.getExperimentalFeatures.mockResolvedValue([
+        feature({ id: 'notify_user', enabled }),
+      ]);
+      await applyExperimentalFeatureChanges(host, [{ id: 'notify_user', enabled }]);
+      expect(host.harness.setConfig).toHaveBeenCalledWith({
+        experimental: { notify_user: enabled },
+      });
+      expect(isExperimentalFlagEnabled('notify_user')).toBe(enabled);
+      expect(host.refreshSlashCommandAutocomplete).toHaveBeenCalledOnce();
+      expect(host.harness.reloadSession).not.toHaveBeenCalled();
+      expect(host.reloadCurrentSessionView).not.toHaveBeenCalled();
+      expect(host.showError).not.toHaveBeenCalled();
+    },
+  );
+
+  it('still reloads when another experimental feature changes alongside notifications', async () => {
+    const host = makeHost();
+    await applyExperimentalFeatureChanges(host, [
+      { id: 'notify_user', enabled: false },
+      { id: 'micro_compaction', enabled: false },
+    ]);
+    expect(host.harness.reloadSession).toHaveBeenCalledOnce();
+  });
+
+  it('reports the post-apply enabled flag set in telemetry', async () => {
+    const host = makeHost();
+    host.harness.getExperimentalFeatures.mockResolvedValue([
+      feature({ id: 'wait_for', enabled: true }),
+      feature({ id: 'subagent_fork', enabled: true }),
+      feature({ id: 'tower', enabled: false }),
+    ]);
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'subagent_fork', enabled: true }]);
+
+    expect(host.track).toHaveBeenCalledWith('experimental_features_apply', {
+      changed: 1,
+      flags: 'subagent_fork,wait_for',
+    });
+  });
+
+  it('does not write config when there are no drafted changes', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, []);
+
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'No experimental feature changes to apply.',
+      'textMuted',
+    );
+  });
+
+  it('notices that tower mode needs a restart when the tower flag changes', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'tower', enabled: true }]);
+
+    expect(host.showNotice).toHaveBeenCalledWith(
+      'Tower mode takes effect after restarting Kimi Code.',
+    );
+  });
+
+  it('does not show the restart notice for non-tower changes', async () => {
+    const host = makeHost();
+
+    await applyExperimentalFeatureChanges(host, [{ id: 'micro_compaction', enabled: false }]);
+
+    expect(host.showNotice).not.toHaveBeenCalled();
+  });
+});

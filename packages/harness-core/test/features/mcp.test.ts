@@ -6,8 +6,6 @@ import { dirname, join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { memoryBlobBackend } from '@moonshot-ai/agent-core/blob/backend/memory';
-import { openBlobStore } from '@moonshot-ai/agent-core/blob/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
 import {
@@ -29,6 +27,12 @@ import {
   type Harness,
 } from '#/runtime/index';
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
+import {
+  createFiles,
+  KimiFileRegistryRef,
+  type KimiFileRegistry,
+} from '#/features/files/index';
+import { createMedia } from '#/features/media/index';
 import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
 import {
   MCP_DYNAMIC_TOOLS_REMIND_KEY,
@@ -163,6 +167,7 @@ interface StartedApp {
   readonly homeDir: string;
   readonly feature: Feature<void, McpEvent>;
   readonly facade: () => McpFacade;
+  readonly registry: () => KimiFileRegistry;
   readonly config: () => ConfigStore;
   readonly dispose: () => Promise<void>;
 }
@@ -192,16 +197,20 @@ async function startApp(opts: {
   });
   let mcpFace: Readonly<ShallowRef<McpFacade | undefined>> | undefined;
   let configFace: Readonly<ShallowRef<ConfigStore | undefined>> | undefined;
+  let registryFace: KimiFileRegistry | undefined;
   const probe = createFeature('mcp-probe', {
     app() {
       mcpFace = useInject(McpRef);
       configFace = useInject(ConfigRef);
     },
+    session() {
+      registryFace = useInject(KimiFileRegistryRef).value;
+    },
   });
-  await harness.app.features.add(createConfig({ persist: fakePersist(), env: opts.env }));
-  for (const extra of opts.features ?? []) await harness.app.features.add(extra);
-  await harness.app.features.add(feature);
-  await harness.app.features.add(probe);
+  harness.app.features.add(createConfig({ persist: fakePersist(), env: opts.env }));
+  for (const extra of opts.features ?? []) harness.app.features.add(extra);
+  harness.app.features.add(feature);
+  harness.app.features.add(probe);
   opts.beforeReady?.(harness, feature);
   const { requester, calls } = createMockRequester(opts.script);
   const session = await harness.app.create({ sessionId: 'sess' });
@@ -213,6 +222,10 @@ async function startApp(opts: {
     return face;
   };
   await facade().listAuthStatuses({ verify: false });
+  const registry = (): KimiFileRegistry => {
+    if (registryFace === undefined) throw new Error('KimiFileRegistryRef was not exposed');
+    return registryFace;
+  };
   const config = (): ConfigStore => {
     const store = configFace?.value;
     if (store === undefined) throw new Error('ConfigRef was not exposed');
@@ -227,6 +240,7 @@ async function startApp(opts: {
     homeDir,
     feature,
     facade,
+    registry,
     config,
     dispose: () => harness.close(),
   };
@@ -463,21 +477,33 @@ describe('mcp feature', () => {
     );
     expect(serverFlagged.isError).toBe(true);
 
-    const store = openBlobStore(memoryBlobBackend(new Map()));
-    const offloaded = await mcpResultToToolResult(
-      { content: [{ type: 'image', data: TINY_PNG_BASE64, mimeType: 'image/png' }], isError: false },
-      'mcp__fake__image',
-      { mediaStore: store },
-    );
-    expect(offloaded.content[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__fake__image">' });
-    const mediaPart = offloaded.content[1];
-    if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
-    expect(mediaPart.source.kind).toBe('store');
-    if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
-    expect(mediaPart.source.ref).toMatch(/^[0-9a-f]{64}$/);
-    const stored = await store.get(mediaPart.source.ref);
-    expect(stored?.mimeType).toBe('image/png');
-    expect(offloaded.content[2]).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+    const filesDir = await tmpDir('mcp-files-');
+    const started = await startApp({
+      script: (_call, index) =>
+        index === 0
+          ? { toolCall: { name: 'mcp__fake__image', arguments: '{}' } }
+          : { text: 'done' },
+      servers: { fake: stdioServer() },
+      features: [createFiles({ dir: filesDir }), createMedia({ workDir: filesDir })],
+    });
+    try {
+      await runTurn(started.agent, 'image');
+      const offloaded = started.calls.at(-1)?.messages.find((message) => message.role === 'tool');
+      expect(offloaded?.content[0]).toEqual({
+        type: 'text',
+        text: '<mcp_tool_result name="mcp__fake__image">',
+      });
+      const mediaPart = offloaded?.content[1];
+      if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
+      expect(mediaPart.source.kind).toBe('store');
+      if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
+      expect(mediaPart.source.ref).toMatch(/^kimi-file:\/\/f_/);
+      const stored = await started.registry().get(mediaPart.source.ref);
+      expect(stored?.mimeType).toBe('image/png');
+      expect(offloaded?.content[2]).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+    } finally {
+      await started.dispose();
+    }
 
     const inline = await mcpResultToToolResult(
       { content: [{ type: 'image', data: TINY_PNG_BASE64, mimeType: 'image/png' }], isError: false },

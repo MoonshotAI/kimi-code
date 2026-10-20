@@ -1,6 +1,6 @@
 import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
-import type { ToolPermittingDecision } from '@moonshot-ai/agent-core/loop/index';
+import type { ToolPermittingDecision } from '@moonshot-ai/agent-core/tool/index';
 
 import {
   INTERACTION_TAG_AGENT_ID,

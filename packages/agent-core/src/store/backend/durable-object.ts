@@ -25,7 +25,7 @@ export function durableObjectJournal(storage: DurableObjectSql): Journal {
   );
   return {
     names: async (prefix) =>
-      Array.from(sql.exec('SELECT log FROM store_logs ORDER BY log'), (row) => String(row['log'])).filter((name) =>
+      Array.from(sql.exec('SELECT log FROM store_logs ORDER BY log'), (row) => String(row['log'] as string | number | null)).filter((name) =>
         name.startsWith(prefix),
       ),
     async *lines(log, from) {
@@ -43,7 +43,7 @@ export function durableObjectJournal(storage: DurableObjectSql): Journal {
           parts = [];
         }
         seq = rowSeq;
-        parts.push(String(row['text']));
+        parts.push(String(row['text'] as string | number | null));
       }
       if (parts.length > 0) lines.push(parts.join(''));
       yield* lines;

@@ -202,7 +202,9 @@ export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
         decodeReasoningDetails(delta, sink, seenReasoningContent);
         inner.push(hoistKimiUsage(chunk));
       },
-      end: inner.end,
+      end() {
+        inner.end();
+      },
     };
   },
   decodeError: withKimiErrors(base),

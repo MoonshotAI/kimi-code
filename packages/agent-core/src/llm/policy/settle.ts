@@ -104,7 +104,7 @@ function mergeInPlace(target: StreamedMessagePart, source: StreamedMessagePart):
 
 export function usableOutputOf(message: AssistantMessage): AssistantMessage | null {
   const content = message.content.filter((part) => !isVacuousContentPart(part));
-  if (content.length === 0 || content.every((part) => part.type === 'think')) {
+  if (content.every((part) => part.type === 'think')) {
     return null;
   }
   return { role: 'assistant', content, toolCalls: [] };

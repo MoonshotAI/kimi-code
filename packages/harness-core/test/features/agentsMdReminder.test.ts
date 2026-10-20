@@ -211,8 +211,8 @@ describe('agentsMdReminder feature', () => {
     fs.set('/ws/sub/more.ts', 'more');
     const harness = createHarness({ space: memoryHarnessSpace() });
     const probe = captureFacade();
-    await harness.app.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
-    await harness.app.features.add(probe.feature);
+    harness.app.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
+    harness.app.features.add(probe.feature);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', readScriptRequester([
@@ -262,8 +262,8 @@ describe('agentsMdReminder feature', () => {
     fs.set('/ws/AGENTS.md', 'root instructions v1');
     const harness = createHarness({ space: memoryHarnessSpace() });
     const probe = captureFacade();
-    await harness.app.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
-    await harness.app.features.add(probe.feature);
+    harness.app.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
+    harness.app.features.add(probe.feature);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', readScriptRequester([null, null, null, null]));

@@ -43,9 +43,7 @@ const mocks = vi.hoisted(() => {
     harness: {
       homeDir: '/tmp/kimi-home',
       ensureConfigFile: vi.fn(),
-      config: {
-        get: vi.fn(),
-      },
+      getConfig: vi.fn(),
       close: vi.fn(),
       track: vi.fn(),
     },
@@ -71,7 +69,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async () => {
   class MockKimiHarness {
     readonly homeDir = mocks.harness.homeDir;
     readonly ensureConfigFile = mocks.harness.ensureConfigFile;
-    readonly config = mocks.harness.config;
+    readonly getConfig = mocks.harness.getConfig;
     readonly close = mocks.harness.close;
     readonly track = mocks.harness.track;
 
@@ -232,9 +230,10 @@ describe('main entry command handling', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.harness.ensureConfigFile.mockResolvedValue(undefined);
-    mocks.harness.config.get.mockImplementation(
-      (name: string) => ({ defaultModel: 'kimi-k2', telemetry: true })[name],
-    );
+    mocks.harness.getConfig.mockResolvedValue({
+      defaultModel: 'kimi-k2',
+      telemetry: true,
+    });
     mocks.harness.close.mockResolvedValue(undefined);
     mocks.shutdownTelemetry.mockResolvedValue(undefined);
     mocks.handleUpgrade.mockResolvedValue(0);

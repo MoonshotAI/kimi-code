@@ -1,5 +1,5 @@
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { createServer as createHttpServer } from 'node:http';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { createServer as createHttpServer, request as httpRequest } from 'node:http';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +13,7 @@ import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
 import { createFeature, useApp, type App, type Feature } from '@moonshot-ai/agent-core/app/index';
 import { createUserEntry, type UserEntry } from '@moonshot-ai/agent-core/history/index';
-import type { FacadeToken } from '@moonshot-ai/agent-core/kernel/index';
+import { useReady, type FacadeToken } from '@moonshot-ai/agent-core/kernel/index';
 import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -26,6 +26,7 @@ import {
   agentFacade,
   createHttp,
   HttpRef,
+  rotateServerToken,
   sessionFacade,
   unitsReady,
   useHttpRoute,
@@ -37,8 +38,13 @@ import { createCapabilities, type CapabilityEntry } from '#/features/capabilitie
 import { createCompaction } from '#/features/compaction/index';
 import { ConfigRef, createConfig, type ConfigPersist } from '#/features/config/index';
 import { createFileHistory } from '#/features/fileHistory/index';
-import { createFiles } from '#/features/files/index';
-import { createGoal, GoalRef } from '#/features/goal/index';
+import {
+  buildKimiFileUrl,
+  createFiles,
+  FilesRef,
+  KimiFileRegistryRef,
+  parseKimiFileUrl,
+} from '#/features/files/index';
 import {
   interaction,
   InteractionRef,
@@ -48,7 +54,6 @@ import {
   INTERACTION_TAG_TURN_ID,
 } from '#/features/interaction/index';
 import { createKimi } from '#/features/kimi/index';
-import { buildMediaRefUrl, parseMediaRefUrl } from '#/features/media/ref';
 import { createMedia } from '#/features/media/index';
 import { createMcp, McpRef } from '#/features/mcp/index';
 import { createModelsDev } from '#/features/models-dev/index';
@@ -59,6 +64,7 @@ import {
   AgentModelRef,
   providerCatalog,
   useProvider,
+  useProviderCatalog,
   type CatalogModelConfig,
   type CatalogProviderHandle,
 } from '#/features/provider-catalog/index';
@@ -210,7 +216,17 @@ async function mountHttp(features: readonly Feature<void>[], options: CreateHttp
   for (const feature of features) {
     harness.app.features.add(feature);
   }
-  harness.app.features.add(createHttp(options));
+  harness.app.features.add(
+    createHttp(
+      options.server === undefined
+        ? {
+            homeDir: await tempDir('http-home-'),
+            disableAuth: options.authTokenService === undefined && options.homeDir === undefined,
+            ...options,
+          }
+        : options,
+    ),
+  );
   const root = rootUnit as UnitNode;
   await root.ready().catch(() => {});
   const origin = root.resolve(HttpRef)?.origin;
@@ -278,6 +294,20 @@ function agentRef<T>(env: HttpEnv, token: FacadeToken<T>, sessionId: string, age
   return agentFacade(env.root, token, sessionId, agentId);
 }
 
+function requestRaw(url: string, headers: Record<string, string>): Promise<{ status: number | undefined; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => {
+        resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString('utf8') });
+      });
+    });
+    request.on('error', reject);
+    request.end();
+  });
+}
+
 const get = (env: HttpEnv, path: string): Promise<Response> =>
   fetch(`${env.origin}/api/v1${path}`);
 
@@ -328,11 +358,18 @@ const m1Def: CatalogModelConfig = {
 function bindTestProvider(): Feature<void> {
   return createFeature('test-provider', {
     app() {
+      const catalog = useProviderCatalog();
       useProvider({
         handle: stubProvider('test'),
-        info: { type: 'openai', apiKey: 'sk-test', baseUrl: 'https://test.example.com' },
-        models: [m1Def],
+        info: { type: 'openai', apiKey: 'sk-test', baseUrl: 'https://test.example.com', modelSource: 'static' },
       });
+      useReady(
+        (async () => {
+          const face = catalog.value;
+          if (face === undefined) throw new Error('provider catalog is unavailable');
+          await face.addModel('test/m1', m1Def);
+        })(),
+      );
     },
   });
 }
@@ -340,11 +377,143 @@ function bindTestProvider(): Feature<void> {
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe('feature-http facade routes', () => {
-  it('serves the health check', async () => {
-    const env = await mountHttp([]);
-    const response = await get(env, '/healthz');
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ code: 0, msg: 'success', data: { ok: true } });
+  it('enforces bearer auth on API and WebSocket routes while leaving health checks and preflight public', async () => {
+    const env = await mountHttp([], {
+      authTokenService: { isValid: (candidate) => candidate === 'test-token' },
+      corsOrigins: ['app://renderer'],
+    });
+
+    const health = await get(env, '/healthz');
+    expect(health.status).toBe(200);
+    expect(await health.json()).toMatchObject({ code: 0, msg: 'success', data: { ok: true } });
+
+    const missing = await fetch(`${env.origin}/api/v1/sessions`, {
+      headers: { 'x-request-id': 'req-auth' },
+    });
+    expect(missing.status).toBe(401);
+    expect(await missing.json()).toEqual({
+      code: 40101,
+      msg: 'Unauthorized',
+      data: null,
+      request_id: 'req-auth',
+    });
+
+    const malformed = await fetch(`${env.origin}/api/v1/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: '{not json',
+    });
+    expect(malformed.status).toBe(401);
+    expect(await malformed.json()).toMatchObject({ code: 40101 });
+
+    const openapi = await fetch(`${env.origin}/openapi.json`);
+    expect(openapi.status).toBe(401);
+
+    const wrong = await fetch(`${env.origin}/api/v1/sessions`, {
+      headers: { authorization: 'Bearer wrong-token' },
+    });
+    expect(wrong.status).toBe(401);
+    expect(await wrong.json()).toMatchObject({ code: 40101 });
+
+    const valid = await fetch(`${env.origin}/api/v1/sessions`, {
+      headers: { authorization: 'Bearer test-token' },
+    });
+    expect(valid.status).toBe(200);
+    expect(await valid.json()).toMatchObject({ code: 0 });
+
+    const preflight = await fetch(`${env.origin}/api/v1/sessions`, {
+      method: 'OPTIONS',
+      headers: { origin: 'app://renderer' },
+    });
+    expect(preflight.status).toBe(204);
+
+    await expect(
+      connectWsPath(env, '/api/v1/ws', { protocols: ['kimi-code.bearer.wrong-token'] }),
+    ).rejects.toThrow();
+    const v1 = await connectWsPath(env, '/api/v1/ws', {
+      protocols: ['kimi-code.bearer.test-token'],
+    });
+    expect(await v1.next((frame) => frame['type'] === 'server_hello')).toMatchObject({
+      type: 'server_hello',
+    });
+    await v1.close();
+
+    await expect(connectWsPath(env, '/api/v2/ws')).rejects.toThrow();
+    const v2 = await connectWsPath(env, '/api/v2/ws', {
+      headers: { authorization: 'Bearer test-token' },
+    });
+    await v2.close();
+
+    const meta = await fetch(`${env.origin}/api/v1/meta`, {
+      headers: { authorization: 'Bearer test-token' },
+    });
+    expect((await meta.json()).data.dangerous_bypass_auth).toBe(false);
+
+    const home = await tempDir('persistent-auth-');
+    vi.stubEnv('KIMI_CODE_PASSWORD', 'test-password');
+    const persistent = await mountHttp([], { homeDir: home, rpcToken: 'rpc-token' });
+    const token = persistent.root.resolve(HttpRef)?.authTokenService?.getToken?.();
+    if (token === undefined) throw new Error('default token service did not expose a token');
+    if (process.platform !== 'win32') {
+      expect((await stat(join(home, 'server.token'))).mode & 0o777).toBe(0o600);
+    }
+    for (const credential of [token, 'test-password', 'rpc-token']) {
+      const accepted = await fetch(`${persistent.origin}/api/v1/sessions`, {
+        headers: { authorization: `Bearer ${credential}` },
+      });
+      expect(accepted.status).toBe(200);
+    }
+
+    const reused = await mountHttp([], { homeDir: home });
+    expect(reused.root.resolve(HttpRef)?.authTokenService?.getToken?.()).toBe(token);
+    const rotated = await rotateServerToken(home);
+    expect(rotated).not.toBe(token);
+    const stale = await fetch(`${persistent.origin}/api/v1/sessions`, {
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(stale.status).toBe(401);
+    const fresh = await fetch(`${persistent.origin}/api/v1/sessions`, {
+      headers: { authorization: `Bearer ${rotated}` },
+    });
+    expect(fresh.status).toBe(200);
+
+    const custom = await mountHttp([], {
+      prefix: '/custom',
+      authTokenService: { isValid: (candidate) => candidate === 'test-token' },
+    });
+    const customMissing = await fetch(`${custom.origin}/custom/sessions`);
+    expect(customMissing.status).toBe(401);
+    const customHealth = await fetch(`${custom.origin}/custom/healthz`);
+    expect(customHealth.status).toBe(200);
+    const customStatic = await fetch(`${custom.origin}/`);
+    expect(customStatic.status).toBe(200);
+
+    const disabled = await mountHttp([], {
+      authTokenService: { isValid: (candidate) => candidate === 'test-token' },
+      disableAuth: true,
+    });
+    const disabledMeta = await get(disabled, '/meta');
+    expect(disabledMeta.status).toBe(200);
+    expect((await disabledMeta.json()).data.dangerous_bypass_auth).toBe(true);
+    const disabledWs = await connectWsPath(disabled, '/api/v2/ws');
+    await disabledWs.close();
+
+    const limited = await mountHttp([], {
+      listen: { host: '0.0.0.0' },
+      authTokenService: { isValid: (candidate) => candidate === 'test-token' },
+    });
+    const limitedOrigin = limited.origin.replace('0.0.0.0', '127.0.0.1');
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const rejected = await fetch(`${limitedOrigin}/api/v1/sessions`, {
+        headers: { authorization: 'Bearer wrong-token' },
+      });
+      expect(rejected.status).toBe(401);
+    }
+    const banned = await fetch(`${limitedOrigin}/api/v1/sessions`, {
+      headers: { authorization: 'Bearer test-token' },
+    });
+    expect(banned.status).toBe(429);
+    expect(await banned.json()).toMatchObject({ code: 42901, msg: 'Too many failed auth attempts' });
   });
 
   it('archives live and cold sessions and projects archived fields', async () => {
@@ -598,7 +767,6 @@ describe('feature-http facade routes', () => {
       bindTestProvider(),
       createPermission(),
       createPlan(),
-      createGoal(),
       bindTestLlm(createMockRequester()),
     ]);
     await env.space.create('ses_prof', { title: 'Original', metadata: { cwd: '/project' } });
@@ -639,23 +807,6 @@ describe('feature-http facade routes', () => {
     });
     expect(planOff.status).toBe(200);
     await expect(agentRef(env, PlanRef, 'ses_prof', MAIN_AGENT_ID)?.status()).resolves.toBeNull();
-
-    const goal = await post(env, '/sessions/ses_prof/profile', {
-      agent_config: { goal_objective: 'finish the migration' },
-    });
-    expect(goal.status).toBe(200);
-    expect(agentRef(env, GoalRef, 'ses_prof', MAIN_AGENT_ID)?.getGoal().goal).not.toBeNull();
-
-    const duplicateGoal = await post(env, '/sessions/ses_prof/profile', {
-      agent_config: { goal_objective: 'again' },
-    });
-    expect(await duplicateGoal.json()).toMatchObject({ code: 40913 });
-
-    const cancelled = await post(env, '/sessions/ses_prof/profile', {
-      agent_config: { goal_control: 'cancel' },
-    });
-    expect(cancelled.status).toBe(200);
-    expect(agentRef(env, GoalRef, 'ses_prof', MAIN_AGENT_ID)?.getGoal().goal).toBeNull();
 
     const got = await get(env, '/sessions/ses_prof/profile');
     expect((await got.json()).data).toMatchObject({
@@ -875,36 +1026,6 @@ describe('feature-http facade routes', () => {
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
-  it('serves the session goal and reports 40935 when the goal feature is absent', async () => {
-    const env = await mountHttp([interaction, createGoal(), bindTestLlm(createMockRequester())]);
-    await openMain(env, 'ses_goal');
-
-    const none = await get(env, '/sessions/ses_goal/goal');
-    expect(none.status).toBe(200);
-    expect((await none.json()).data).toBeNull();
-
-    await agentRef(env, GoalRef, 'ses_goal', MAIN_AGENT_ID)?.createGoal({ objective: 'ship it' });
-    const active = await get(env, '/sessions/ses_goal/goal');
-    const body = await active.json();
-    expect(body.data).toMatchObject({
-      objective: 'ship it',
-      status: 'active',
-      turnsUsed: 0,
-      tokensUsed: 0,
-    });
-    expect(typeof body.data.goalId).toBe('string');
-
-    const bare = await mountHttp([bindTestLlm(createMockRequester())]);
-    await openMain(bare, 'ses_no_goal');
-    const unavailable = await get(bare, '/sessions/ses_no_goal/goal');
-    expect(unavailable.status).toBe(200);
-    expect(await unavailable.json()).toMatchObject({ code: 40935 });
-
-    const missing = await get(env, '/sessions/ses_unknown/goal');
-    expect(missing.status).toBe(200);
-    expect(await missing.json()).toMatchObject({ code: 40401 });
-  });
-
   it('lists session skills and reports 40934 when the catalog is absent', async () => {
     const env = await mountHttp([createSkill({ workDir: '/' }), bindTestLlm(createMockRequester())]);
     await openMain(env, 'ses_skills');
@@ -1115,7 +1236,7 @@ describe('feature-http facade routes', () => {
     expect(await missing.json()).toMatchObject({ code: 40401 });
   });
 
-  it('lists and resolves approvals with the kap-server wire shape', async () => {
+  it('lists and resolves approvals with the HTTP wire shape', async () => {
     const env = await mountHttp([interaction, bindTestLlm(createMockRequester())]);
     await openMain(env, 'ses_approvals');
     const interactions = sessionRef(env, InteractionRef, 'ses_approvals');
@@ -1676,7 +1797,7 @@ describe('feature-http v2 session routes', () => {
   });
 });
 
-describe('feature-http kap-server aligned routes', () => {
+describe('feature-http API routes', () => {
   it('activates a skill and maps skill errors', async () => {
     const env = await mountHttp([createSkill({ workDir: '/' }), bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_skill_activate');
@@ -1727,7 +1848,7 @@ describe('feature-http kap-server aligned routes', () => {
         tasks: false,
         terminal: false,
       },
-      dangerous_bypass_auth: false,
+      dangerous_bypass_auth: true,
       open_in_apps: [],
     });
     expect(typeof body.data.server_id).toBe('string');
@@ -2213,7 +2334,11 @@ describe('feature-http kap-server aligned routes', () => {
   });
 
   it('answers cross-origin requests only for allowed origins', async () => {
-    const env = await mountHttp([], { corsOrigins: ['app://renderer'] });
+    vi.stubEnv('KIMI_CODE_ALLOWED_HOSTS', 'env.example');
+    const env = await mountHttp([], {
+      corsOrigins: ['app://renderer'],
+      allowedHosts: ['allowed.example'],
+    });
 
     const allowed = await fetch(`${env.origin}/api/v1/sessions`, {
       headers: { origin: 'app://renderer' },
@@ -2254,6 +2379,47 @@ describe('feature-http kap-server aligned routes', () => {
 
     const sameOrigin = await fetch(`${env.origin}/api/v1/sessions`);
     expect(sameOrigin.headers.get('access-control-allow-origin')).toBeNull();
+    expect(sameOrigin.headers.get('x-content-type-options')).toBeNull();
+    expect(sameOrigin.headers.get('referrer-policy')).toBeNull();
+    expect(sameOrigin.headers.get('content-security-policy')).toBeNull();
+    expect(sameOrigin.headers.get('strict-transport-security')).toBeNull();
+
+    const invalidHost = await requestRaw(`${env.origin}/api/v1/sessions`, {
+      host: 'evil.example',
+    });
+    expect(invalidHost.status).toBe(403);
+    expect(JSON.parse(invalidHost.body)).toMatchObject({ code: 40301 });
+    for (const host of ['allowed.example', 'env.example']) {
+      const allowedHost = await requestRaw(`${env.origin}/api/v1/sessions`, { host });
+      expect(allowedHost.status).toBe(200);
+    }
+
+    await expect(
+      connectWsPath(env, '/api/v2/ws', { headers: { host: 'evil.example' } }),
+    ).rejects.toThrow('403');
+    await expect(
+      connectWsPath(env, '/api/v2/ws', { headers: { origin: 'https://evil.example.com' } }),
+    ).rejects.toThrow('403');
+    const allowedWs = await connectWsPath(env, '/api/v2/ws', {
+      headers: { origin: 'app://renderer' },
+    });
+    await allowedWs.close();
+
+    const hostDisabled = await mountHttp([], { disableHostCheck: true });
+    const unchecked = await requestRaw(`${hostDisabled.origin}/api/v1/sessions`, {
+      host: 'evil.example',
+    });
+    expect(unchecked.status).toBe(200);
+
+    const publicEnv = await mountHttp([], { listen: { host: '0.0.0.0' } });
+    const secured = await fetch(`${publicEnv.origin.replace('0.0.0.0', '127.0.0.1')}/api/v1/sessions`);
+    expect(secured.status).toBe(200);
+    expect(secured.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(secured.headers.get('referrer-policy')).toBe('no-referrer');
+    expect(secured.headers.get('content-security-policy')).toBe(
+      "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'",
+    );
+    expect(secured.headers.get('strict-transport-security')).toBeNull();
   });
 
   it('shuts the server down after answering ok', async () => {
@@ -2633,8 +2799,14 @@ function rawDataToString(data: RawData): string {
   return Buffer.from(data as ArrayBuffer).toString('utf8');
 }
 
-async function connectWsPath(env: HttpEnv, path: string): Promise<WsTestClient> {
-  const socket = new WebSocket(`${env.origin.replace(/^http/, 'ws')}${path}`);
+async function connectWsPath(
+  env: HttpEnv,
+  path: string,
+  options: { protocols?: string[]; headers?: Record<string, string> } = {},
+): Promise<WsTestClient> {
+  const socket = new WebSocket(`${env.origin.replace(/^http/, 'ws')}${path}`, options.protocols, {
+    headers: options.headers,
+  });
   const frames: WsFrame[] = [];
   const waiters: { match: (frame: WsFrame) => boolean; resolve: (frame: WsFrame) => void }[] = [];
   let resolveClosed: (event: { code: number; reason: string }) => void = () => {};
@@ -4187,6 +4359,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
     };
     let mediaUrl = '';
     const env = await mountHttp([
+      createFiles({ dir: join(dir, 'files') }),
       createMedia({ workDir: dir }),
       createFeature('test-media-tool', {
         agent() {
@@ -4197,9 +4370,17 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
     ]);
     const session = await openMain(env, 'ses_v1_media');
     const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
-    const stored = await session.blobs.put({ bytes: pngBytes, mimeType: 'image/png', filename: 'shot.png' });
-    mediaUrl = buildMediaRefUrl(stored.ref);
-    const fileId = parseMediaRefUrl(mediaUrl) ?? stored.ref;
+    const files = env.root.resolve(FilesRef);
+    if (files === undefined) throw new Error('files facade was not exposed');
+    const stored = await files.save(
+      (async function* () {
+        yield pngBytes;
+      })(),
+      'shot.png',
+      { mimeType: 'image/png' },
+    );
+    mediaUrl = buildKimiFileUrl(stored.id);
+    const fileId = parseKimiFileUrl(mediaUrl)?.fileId ?? stored.id;
 
     const client = await connectWsV1(env);
     await client.next((frame) => frame['type'] === 'server_hello');
@@ -4901,10 +5082,9 @@ describe('feature-http auth/oauth routes', () => {
       current: [
         {
           id: 'kimi-for-coding',
-          context_length: 262144,
-          supports_reasoning: true,
-          supports_image_in: true,
-          supports_video_in: false,
+          limit: { context: 262144 },
+          modalities: { input: ['text', 'image'] },
+          reasoning: { type: 'both' },
           supports_tool_use: true,
         },
       ],
@@ -4913,7 +5093,7 @@ describe('feature-http auth/oauth routes', () => {
     const file = fakePersist(
       '[providers."managed:kimi-code"]\n' +
         'type = "kimi"\n' +
-        'base_url = "https://managed.example.com"\n' +
+        'base_url = "https://api.kimi.com/coding/v1"\n' +
         'model_source = "oauth-catalog"\n\n' +
         '[providers."managed:kimi-code".oauth]\n' +
         'storage = "file"\n' +
@@ -4927,25 +5107,29 @@ describe('feature-http auth/oauth routes', () => {
       providerCatalog,
       createKimi({ oauth: { home } }),
     ]);
-    await vi.waitFor(async () => {
-      expect(file.saved.at(-1)?.includes('kimi-code/kimi-for-coding')).toBe(true);
-    });
-
     const first = await post(env, '/providers:refresh_oauth');
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({
       code: 0,
-      data: { changed: [], unchanged: ['managed:kimi-code'], failed: [] },
+      data: {
+        changed: [
+          { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 },
+        ],
+        unchanged: [],
+        failed: [],
+      },
+    });
+    await vi.waitFor(async () => {
+      expect(file.saved.at(-1)?.includes('kimi-code/kimi-for-coding')).toBe(true);
     });
 
     models.current = [
       ...models.current,
       {
         id: 'kimi-latest',
-        context_length: 131072,
-        supports_reasoning: false,
-        supports_image_in: false,
-        supports_video_in: false,
+        limit: { context: 131072 },
+        modalities: { input: ['text'] },
+        reasoning: { type: 'none' },
         supports_tool_use: true,
       },
     ];
@@ -5110,11 +5294,14 @@ describe('feature-http files and session media routes', () => {
       createFiles({ dir }),
       createMedia({ workDir: dir }),
     ]);
-    const session = await env.app.create({ sessionId: 'ses_media' });
+    await env.app.create({ sessionId: 'ses_media' });
 
     const bytes = Buffer.from('media-bytes-abcdef');
-    const stored = await session.blobs.put({ bytes, mimeType: 'image/png', filename: 'shot.png' });
-    const fileId = stored.ref;
+    const registry = sessionRef(env, KimiFileRegistryRef, 'ses_media');
+    if (registry === undefined) throw new Error('kimi file registry was not exposed');
+    const stored = await registry.put({ bytes, mimeType: 'image/png', filename: 'shot.png' });
+    const fileId = parseKimiFileUrl(stored.ref)?.fileId;
+    if (fileId === undefined) throw new Error('expected a kimi-file reference');
 
     const got = await get(env, `/sessions/ses_media/media/${fileId}`);
     expect(got.status).toBe(200);

@@ -69,9 +69,17 @@ export interface ConfigSectionContribution<T = unknown> {
   readonly collectDiagnostics?: ConfigCollectDiagnostics;
 }
 
+export interface ConfigInspectValue<T = unknown> {
+  readonly value: T | undefined;
+  readonly defaultValue: T | undefined;
+  readonly userValue: T | undefined;
+  readonly memoryValue: T | undefined;
+}
+
 export interface ConfigStore {
   section<T = unknown>(name: string): ShallowRef<T>;
   get<T = unknown>(name: string): T;
+  inspect<T = unknown>(name: string): ConfigInspectValue<T>;
   env(name: string): string | undefined;
   set(name: string, value: unknown, target: ConfigTarget): Promise<void>;
   replace(sections: Readonly<Record<string, unknown>>, target: ConfigTarget): Promise<void>;
@@ -379,6 +387,12 @@ export function createConfigStore(deps: {
       return ref as ShallowRef<T>;
     },
     get: <T,>(name: string): T => deliveredValue(name) as T,
+    inspect: <T,>(name: string): ConfigInspectValue<T> => ({
+      value: deliveredValue(name) as T | undefined,
+      defaultValue: sectionsByName.get(name)?.defaultValue as T | undefined,
+      userValue: fileValues[name] as T | undefined,
+      memoryValue: memory[name] as T | undefined,
+    }),
     env: (name) => getEnv(name),
     set: async (name, value, target) => {
       const section = sectionsByName.get(name);

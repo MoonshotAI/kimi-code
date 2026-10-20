@@ -17,7 +17,10 @@ export interface CreateRemoteControlProps {
   readonly localOrigin: () => string;
   readonly localServerToken: () => string;
   readonly clientVersion: string;
+  readonly urlSource: string;
   readonly relayOrigin?: string;
+  readonly configuredOAuthKey?: () => string | undefined;
+  readonly configuredOAuthHost?: () => string | undefined;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
   readonly start?: (options: RemoteControlOptions) => Promise<RemoteControlHandle>;
 }
@@ -30,7 +33,10 @@ export function createRemoteControl(props: CreateRemoteControlProps): Feature<vo
         localOrigin: props.localOrigin,
         localServerToken: props.localServerToken,
         clientVersion: props.clientVersion,
+        urlSource: props.urlSource,
         relayOrigin: props.relayOrigin,
+        configuredOAuthKey: props.configuredOAuthKey,
+        configuredOAuthHost: props.configuredOAuthHost,
         stderr: props.stderr,
         start: props.start ?? startRemoteControl,
       });

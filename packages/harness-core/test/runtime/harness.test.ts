@@ -111,7 +111,7 @@ describe('harness runtime', () => {
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(probe);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
     setRequester(
@@ -154,12 +154,12 @@ describe('harness runtime', () => {
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(early);
+    harness.app.features.add(early);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
     await tick();
     expect(agent.loop.state.profile.systemPrompt).toBe('HOST\n\nEARLY');
-    await harness.app.features.add(late);
+    harness.app.features.add(late);
     await tick();
     expect(agent.loop.state.profile.systemPrompt).toBe('HOST\n\nEARLY');
     await harness.close();
@@ -178,7 +178,7 @@ describe('harness runtime', () => {
     });
     const space = memoryHarnessSpace();
     const harness = createHarness({ space });
-    await harness.app.features.add(probe);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     setRequester(harness, 's1', 'main', echoRequester());

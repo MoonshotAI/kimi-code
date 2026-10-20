@@ -1,4 +1,4 @@
-import type { ModelAlias } from '#/tui/types';
+import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import chalk from 'chalk';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 

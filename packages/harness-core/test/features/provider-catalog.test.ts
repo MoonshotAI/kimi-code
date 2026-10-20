@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createFeature } from '@moonshot-ai/agent-core/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useCollection, useInject, watch, type ComputedRef, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
-import { openAIRequester } from '@moonshot-ai/agent-core/llm/builtin/provider/index';
+import { anthropicRequester, openAIRequester } from '@moonshot-ai/agent-core/llm/builtin/provider/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type {
   LlmCredentialProvider,
@@ -33,7 +33,6 @@ import {
   ModelDefaultsRef,
   SESSION_MODEL_DEFAULTS,
   SessionModelRef,
-  catalogModelDefinitionOf,
   matchCatalogBinding,
   providerCatalog,
   resolveCredentialProvider,
@@ -42,9 +41,11 @@ import {
   useProvider,
   useProviderCatalog,
   useProviderProtocol,
+  useProviderRefresh,
   type AgentModelFace,
   type CatalogModelBinding,
   type CatalogModelConfig,
+  type CatalogModelRecords,
   type CatalogProviderHandle,
   type ModelDefaultsFace,
   type ProviderCatalogFace,
@@ -97,16 +98,8 @@ const modelDef: CatalogModelConfig = {
 function stubHandle(
   id: string,
   requester: CatalogProviderHandle['requester'],
-  listModels?: () => Promise<readonly CatalogModelConfig[]>,
 ): CatalogProviderHandle {
-  return {
-    id,
-    requester,
-    listModels:
-      listModels === undefined
-        ? undefined
-        : async () => (await listModels()).map(catalogModelDefinitionOf),
-  };
+  return { id, requester };
 }
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -191,6 +184,7 @@ async function mountCatalog(contribute?: () => void): Promise<{
   const capture: ProbeCapture = {};
   const harness = createHarness({ space: memoryHarnessSpace() });
   harness.app.features.add(providerCatalog);
+  harness.app.features.add(createConfig({ persist: fakePersist().persist }));
   harness.app.features.add(catalogProbe(capture, contribute));
   await tick();
   const catalog = capture.catalog?.value;
@@ -239,12 +233,22 @@ function boundModel(
   harness: Harness,
   sessionId: string,
   agentId: string,
-): { spec?: LlmModelSpec; thinking?: ThinkingRequestOptions } {
+): {
+  spec?: LlmModelSpec;
+  thinking?: ThinkingRequestOptions;
+  sampling?: LlmRequestModel['sampling'];
+  maxOutputTokens?: LlmRequestModel['maxOutputTokens'];
+} {
   const request = runtimeOf(harness, sessionId, agentId).requester?.request({
     content: { messages: [] },
   });
   const model = request?.model as LlmRequestModel | undefined;
-  return { spec: model?.spec, thinking: model?.thinking };
+  return {
+    spec: model?.spec,
+    thinking: model?.thinking,
+    sampling: model?.sampling,
+    maxOutputTokens: model?.maxOutputTokens,
+  };
 }
 
 async function writeSessionDefaults(
@@ -278,13 +282,17 @@ async function sessionDefaultsState(
 }
 
 describe('providerCatalog feature', () => {
-  it('contributes a provider, pings through the store, and exposes a requester binding', async () => {
+  it('contributes a provider, adds a model, and exposes a requester binding', async () => {
     let failing = true;
     const requester = fakeRequester(() => (failing ? failedOutcome('boom') : textOutcome('pong')));
     const { harness, catalog, models } = await mountCatalog(() => {
-      useProvider({ handle: stubHandle('test', requester), models: [modelDef] });
+      useProvider({ handle: stubHandle('test', requester) });
     });
-    await until(() => catalog.models('test').length === 1);
+    await Promise.all([
+      catalog.addModel('test/m1', modelDef),
+      catalog.addModel('test/m2', { ...modelDef, model: 'm2' }),
+    ]);
+    await until(() => catalog.models('test').length === 2);
     await until(() => models().some((item) => item.model.id === 'm1'));
     expect(catalog.requester('test', 'm1')).toBeDefined();
 
@@ -299,10 +307,8 @@ describe('providerCatalog feature', () => {
 
   it('ignores pings for unknown providers and models', async () => {
     const { harness, catalog } = await mountCatalog();
-    catalog.upsert({
-      handle: stubHandle('test', failingRequester('boom')),
-      models: [modelDef].map(catalogModelDefinitionOf),
-    });
+    await catalog.addProvider({ handle: stubHandle('test', failingRequester('boom')) });
+    await catalog.addModel('test/m1', modelDef);
     await until(() => catalog.models('test').length === 1);
 
     catalog.ping('nope', 'm1');
@@ -314,16 +320,11 @@ describe('providerCatalog feature', () => {
     await harness.close();
   });
 
-  it('pings through the latest provider instance after a re-upsert', async () => {
+  it('pings through the latest provider instance after adding it again', async () => {
     const { harness, catalog } = await mountCatalog();
-    catalog.upsert({
-      handle: stubHandle('test', failingRequester('first')),
-      models: [modelDef].map(catalogModelDefinitionOf),
-    });
-    catalog.upsert({
-      handle: stubHandle('test', failingRequester('second')),
-      models: [modelDef].map(catalogModelDefinitionOf),
-    });
+    await catalog.addProvider({ handle: stubHandle('test', failingRequester('first')) });
+    await catalog.addProvider({ handle: stubHandle('test', failingRequester('second')) });
+    await catalog.addModel('test/m1', modelDef);
 
     catalog.ping('test', 'm1');
 
@@ -343,10 +344,8 @@ describe('providerCatalog feature', () => {
       requester: { anthropic: requester },
     };
     const { harness, catalog } = await mountCatalog();
-    catalog.upsert({
-      handle,
-      models: [{ ...modelDef, protocol: 'anthropic', betaApi: true }].map(catalogModelDefinitionOf),
-    });
+    await catalog.addProvider({ handle });
+    await catalog.addModel('test/m1', { ...modelDef, protocol: 'anthropic', betaApi: true });
 
     catalog.ping('test', 'm1');
     await until(() => seen.length > 0);
@@ -356,25 +355,83 @@ describe('providerCatalog feature', () => {
     await harness.close();
   });
 
-  it('defers a ping sent while refreshing until the refresh completes', async () => {
-    let pulls = 0;
-    let resolvePull: (models: readonly CatalogModelConfig[]) => void = () => {};
-    const provider = stubHandle('test', failingRequester('boom'), () => {
-      pulls += 1;
-      return new Promise((resolve) => {
-        resolvePull = resolve;
+  it('refreshes through contributions, preserves empty results, and serializes reports', async () => {
+    let upstream: CatalogModelRecords = { 'test/m1': modelDef };
+    let offline = false;
+    let pause: Promise<void> | undefined;
+    const { harness, catalog } = await mountCatalog(() => {
+      useProvider({
+        handle: stubHandle('test', failingRequester('boom')),
+        info: { type: 'test-refresh' },
+      });
+      useProviderRefresh({
+        match: (info) => info.type === 'test-refresh',
+        refresh: async () => {
+          if (offline) throw new Error('offline');
+          const result = upstream;
+          const wait = pause;
+          pause = undefined;
+          if (wait !== undefined) await wait;
+          return result;
+        },
       });
     });
-    const { harness, catalog } = await mountCatalog();
-    catalog.upsert({ handle: provider, models: [modelDef].map(catalogModelDefinitionOf) });
-    await until(() => pulls === 1);
+    const changed: unknown[] = [];
+    const failures: unknown[] = [];
+    harness.app.on(providerCatalog, 'event.model_catalog.changed', (event) => {
+      changed.push(event.payload);
+    });
+    catalog.onRefreshFailed((event) => {
+      failures.push(event);
+    });
 
-    catalog.ping('test', 'm1');
-    await sleep(5);
-    expect(catalog.models('test').at(0)?.pingError).toBeUndefined();
+    const first = await catalog.refresh({ providerId: 'test' });
+    expect(first).toEqual({
+      changed: [{ provider_id: 'test', provider_name: 'test', added: 1, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+    await until(() => catalog.models('test').length === 1);
 
-    resolvePull([]);
-    await until(() => catalog.models('test').at(0)?.pingError === 'boom');
+    upstream = {};
+    const empty = await catalog.refresh({ providerId: 'test' });
+    expect(empty).toEqual({ changed: [], unchanged: ['test'], failed: [] });
+    expect(catalog.models('test').map((model) => model.id)).toEqual(['m1']);
+    expect(catalog.providers()).toContain('test');
+
+    upstream = { 'test/m2': { ...modelDef, model: 'm2' } };
+    const second = await catalog.refresh({ providerId: 'test' });
+    expect(second.changed).toEqual([
+      { provider_id: 'test', provider_name: 'test', added: 1, removed: 1 },
+    ]);
+    await until(() => catalog.models('test').some((model) => model.id === 'm2'));
+
+    offline = true;
+    const failed = await catalog.refresh({ providerId: 'test' });
+    expect(failed).toEqual({
+      changed: [],
+      unchanged: [],
+      failed: [{ provider: 'test', reason: 'offline' }],
+    });
+    expect(failures).toHaveLength(1);
+    expect(catalog.models('test').map((model) => model.id)).toEqual(['m2']);
+
+    offline = false;
+    upstream = { 'test/m3': { ...modelDef, model: 'm3' } };
+    let release = (): void => {};
+    pause = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const older = catalog.refresh({ providerId: 'test' });
+    upstream = { 'test/m4': { ...modelDef, model: 'm4' } };
+    const newer = catalog.refresh({ providerId: 'test' });
+    release();
+    await Promise.all([older, newer]);
+    await until(() => catalog.models('test').map((model) => model.id).join(',') === 'm4');
+    expect(changed.length).toBeGreaterThan(0);
+    await expect(catalog.refresh({ providerId: 'missing' })).rejects.toMatchObject({
+      code: 'provider.not_found',
+    });
     await harness.close();
   });
 });
@@ -382,11 +439,12 @@ describe('providerCatalog feature', () => {
 describe('providerCatalog config integration', () => {
   it('syncs config sections into the catalog and reacts to config changes', async () => {
     const { harness, config, catalog, file } = await mountWithConfig(
-      '[providers.ghost]\nbase_url = "https://api.example.com"\ndefault_model = "g1"\n\n[models.g1]\nprovider = "ghost"\nmodel = "g1"\n',
+      'default_provider = "ghost"\n\n[providers.ghost]\nbase_url = "https://api.example.com"\ndefault_model = "g1"\n\n[models.g1]\nprovider = "ghost"\nmodel = "g1"\n\n[models.anonymous]\nmodel = "a1"\n',
     );
     await until(() => catalog.providers().includes('ghost'));
+    expect(config.get('defaultProvider')).toBe('ghost');
     expect(catalog.providerInfo('ghost')?.baseUrl).toBe('https://api.example.com');
-    expect(catalog.models('ghost').map((model) => model.id)).toEqual(['g1']);
+    expect(catalog.models('ghost').map((model) => model.id)).toEqual(['a1', 'g1']);
 
     await config.set(
       'providers',
@@ -394,6 +452,12 @@ describe('providerCatalog config integration', () => {
       'memory',
     );
     await until(() => catalog.providerInfo('ghost')?.baseUrl === 'https://v2.example.com');
+    expect(config.inspect('providers')).toEqual({
+      value: { ghost: { baseUrl: 'https://v2.example.com', defaultModel: 'g1' } },
+      defaultValue: {},
+      userValue: { ghost: { baseUrl: 'https://api.example.com', defaultModel: 'g1' } },
+      memoryValue: { ghost: { baseUrl: 'https://v2.example.com', defaultModel: 'g1' } },
+    });
 
     await config.replace({ providers: {}, models: {} }, 'memory');
     await until(() => !catalog.providers().includes('ghost'));
@@ -401,53 +465,84 @@ describe('providerCatalog config integration', () => {
     await harness.close();
   });
 
-  it('writes discovered models under provider-prefixed aliases, rebuilds the generated zone on refresh, and preserves user aliases', async () => {
-    let upstream: readonly CatalogModelConfig[] = [
-      { provider: 'test', model: 'm1', capability: testCapability(false), maxContextSize: 4096 },
-      { provider: 'test', model: 'm2', capability: testCapability(false), maxContextSize: 4096 },
-    ];
-    const provider = stubHandle('test', failingRequester('boom'), () => Promise.resolve(upstream));
+  it('writes full refresh records and rebuilds only the target provider model zone', async () => {
+    let upstream: CatalogModelRecords = {
+      'test/m1': {
+        ...modelDef,
+        displayName: 'M one',
+        supportEfforts: ['low', 'high'],
+        defaultEffort: 'low',
+        maxOutputSize: 1024,
+        protocol: 'anthropic',
+        reasoningKey: 'reasoning',
+      },
+      'test/m2': { ...modelDef, model: 'm2' },
+    };
     const { harness, catalog, file } = await mountWithConfig(
-      '[models."my-fav"]\nprovider = "test"\nmodel = "m1"\ndisplay_name = "mine"\n',
+      '[models."test/m1"]\nprovider = "test"\nmodel = "m1"\nextras = { custom = "canonical" }\noverrides = { display_name = "canonical-override" }\n\n[models."my-fav"]\nprovider = "test"\nmodel = "m1"\ndisplay_name = "mine"\nextras = { custom = "user" }\noverrides = { display_name = "user-override" }\n\n[models."other/solo"]\nprovider = "other"\nmodel = "solo"\n',
       {
         contribute: () => {
-          useProvider({ handle: provider, models: [modelDef] });
-          useProvider({
-            handle: stubHandle('test2', failingRequester('boom'), () =>
-              Promise.resolve([
-                { provider: 'test2', model: 'm1', capability: testCapability(false), maxContextSize: 8192 },
-              ]),
-            ),
+          useProvider({ handle: stubHandle('test', failingRequester('boom')), info: { type: 'test-refresh' } });
+          useProvider({ handle: stubHandle('test2', failingRequester('boom')), info: { type: 'test-refresh' } });
+          useProviderRefresh({
+            match: (info) => info.type === 'test-refresh',
+            refresh: async ({ providerId }) =>
+              providerId === 'test'
+                ? upstream
+                : {
+                    'test2/m1': {
+                      ...modelDef,
+                      provider: 'test2',
+                      maxContextSize: 8192,
+                    },
+                  },
           });
         },
       },
     );
     const readModels = (): Record<string, Record<string, unknown>> =>
       (parseToml(file.saved.at(-1)!) as { models: Record<string, Record<string, unknown>> }).models;
+    await catalog.refresh({ providerId: 'test2' });
+    const first = await catalog.refresh({ providerId: 'test' });
+    expect(first.changed).toEqual([
+      { provider_id: 'test', provider_name: 'test', added: 1, removed: 0 },
+    ]);
     await until(() => file.saved.length > 0 && readModels()['test2/m1'] !== undefined);
     expect(readModels()['test/m1']).toMatchObject({
       provider: 'test',
       model: 'm1',
-      max_context_size: 4096,
+      display_name: 'M one',
+      support_efforts: ['low', 'high'],
+      default_effort: 'low',
+      max_output_size: 1024,
+      protocol: 'anthropic',
+      reasoning_key: 'reasoning',
+      extras: { custom: 'canonical' },
+      overrides: { display_name: 'canonical-override' },
     });
-    expect(readModels()['test/m2']).toMatchObject({ provider: 'test', model: 'm2' });
     expect(readModels()['test2/m1']).toMatchObject({
       provider: 'test2',
       model: 'm1',
       max_context_size: 8192,
     });
+    expect(readModels()['other/solo']).toBeDefined();
+
+    upstream = { 'test/m2': { ...modelDef, model: 'm2' } };
+    const second = await catalog.refresh({ providerId: 'test' });
+    expect(second.changed).toEqual([
+      { provider_id: 'test', provider_name: 'test', added: 0, removed: 0 },
+    ]);
+    await until(() => readModels()['test/m1'] === undefined);
+    expect(readModels()['test/m2']).toBeDefined();
+    expect(readModels()['test2/m1']).toBeDefined();
+    expect(readModels()['other/solo']).toBeDefined();
     expect(readModels()['my-fav']).toMatchObject({
       provider: 'test',
       model: 'm1',
       display_name: 'mine',
+      extras: { custom: 'user' },
+      overrides: { display_name: 'user-override' },
     });
-
-    upstream = [{ provider: 'test', model: 'm2', capability: testCapability(false), maxContextSize: 4096 }];
-    catalog.refresh(provider);
-    await until(() => readModels()['test/m1'] === undefined);
-    expect(readModels()['test/m2']).toBeDefined();
-    expect(readModels()['test2/m1']).toBeDefined();
-    expect(readModels()['my-fav']).toBeDefined();
 
     const settled = file.saved.length;
     await sleep(20);
@@ -462,32 +557,63 @@ describe('providerCatalog config integration', () => {
     await until(() => catalog.models('test').length > 0);
     const m1 = catalog.models('test').find((model) => model.id === 'm1');
     expect(m1?.displayName).toBe('mine');
+    expect(m1?.extras?.['record']).toMatchObject({
+      provider: 'test',
+      model: 'm1',
+      displayName: 'mine',
+    });
+    expect(catalog.findByName('m1')).toEqual(['test/m1', 'my-fav']);
     await harness.close();
   });
 
-  it('prefers config-sourced info and models over contributed ones on conflict', async () => {
-    const { harness, catalog } = await mountWithConfig(
-      '[providers.test]\nbase_url = "https://config.example.com"\n',
+  it('uses provider init as a fallback and restores models without a providers section', async () => {
+    const { harness, config, catalog, models } = await mountWithConfig(
+      '[models."solo"]\nprovider_id = "test"\nprovider = "other"\nmodel = "m1"\nname = "wire-m1"\nsupport_efforts = ["low", "high"]\ndefault_effort = "low"\n\n[models."flat"]\nbase_url = "https://anon.example.com/v1"\nprotocol = "openai"\nfuture_field = "preserved"\n',
       {
         contribute: () => {
           useProvider({
             handle: stubHandle('test', failingRequester('boom')),
             info: { baseUrl: 'https://contributed.example.com' },
-            models: [modelDef],
           });
         },
       },
     );
-    await until(() => catalog.providers().includes('test'));
+    await until(() => catalog.models('test').some((model) => model.id === 'm1'));
+    const solo = catalog.model('test', 'm1');
+    expect(solo?.name).toBe('wire-m1');
+    expect(solo?.provider).toBe('test');
+    expect(catalog.models('other')).toEqual([]);
+    expect(catalog.findByName('wire-m1')).toEqual(['solo']);
+    expect(catalog.providerInfo('test')?.baseUrl).toBe('https://contributed.example.com');
+    expect(catalog.requester('test', 'm1')).toBeDefined();
+    expect(models().find((binding) => binding.model.id === 'm1')?.configKey).toBe('solo');
+    expect(solo?.thinking).toMatchObject({
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'low',
+    });
+
+    const flat = catalog.model('anon.example.com', 'flat');
+    expect(flat?.name).toBe('flat');
+    expect(flat?.extras?.['record']).toMatchObject({ futureField: 'preserved' });
+    expect(catalog.requester('anon.example.com', 'flat')).toBeDefined();
+    expect(models().find((binding) => binding.model.id === 'flat')?.configKey).toBe('flat');
+    expect(config.diagnostics().some((entry) => entry.message.includes("entry 'flat'"))).toBe(false);
+
+    await config.set('providers', { test: { baseUrl: 'https://config.example.com' } }, 'memory');
     await until(() => catalog.providerInfo('test')?.baseUrl === 'https://config.example.com');
-    expect(catalog.models('test')).toEqual([]);
+
+    await config.replace({ providers: {} }, 'memory');
+    await until(() => catalog.providerInfo('test')?.baseUrl === 'https://contributed.example.com');
+    expect(catalog.models('test').map((model) => model.id)).toEqual(['m1']);
+    expect(models().find((binding) => binding.model.id === 'm1')?.configKey).toBe('solo');
     await harness.close();
   });
 
   it('loads a v2-format file with [model_catalog] and a capabilities array, then writes the same format back', async () => {
     const { harness, config, catalog, file } = await mountWithConfig(
       '[model_catalog]\nrefresh_interval_ms = 60000\nrefresh_on_start = false\n\n' +
-        '[models."test/m1"]\nprovider = "test"\nmodel = "m1"\nmax_context_size = 4096\ncapabilities = [ "image_in", "tool_use" ]\n',
+        '[providers.test]\napi_key_env = "TEST_KEY"\n\n' +
+        '[models."test/m1"]\nprovider = "test"\nmodel = "m1"\nmax_context_size = 4096\ncapabilities = [ "image_in", "tool_use" ]\nupgrade = { model = "m2", migration_markdown = "Move", retirement_at = "2027-01-01" }\nfuture_field = "preserved"\n',
     );
     expect(config.get('modelCatalog')).toEqual({ refreshIntervalMs: 60000, refreshOnStart: false });
     await until(() => catalog.models('test').length > 0);
@@ -501,6 +627,13 @@ describe('providerCatalog config integration', () => {
       dynamically_loaded_tools: false,
     });
     const loaded = config.get<Record<string, Record<string, unknown>>>('models');
+    expect(loaded['test/m1']).toMatchObject({
+      futureField: 'preserved',
+      upgrade: { model: 'm2', migrationMarkdown: 'Move', retirementAt: '2027-01-01' },
+    });
+    expect(config.get<Record<string, Record<string, unknown>>>('providers')['test']).toMatchObject({
+      apiKeyEnv: 'TEST_KEY',
+    });
     await config.replace(
       { models: { 'test/m1': { ...loaded['test/m1'], maxContextSize: 8192 } } },
       'user',
@@ -508,12 +641,18 @@ describe('providerCatalog config integration', () => {
     const text = file.saved.at(-1)!;
     expect(text).toContain('[model_catalog]');
     expect(text).toContain('refresh_interval_ms = 60000');
+    const providers = (parseToml(text) as { providers: Record<string, Record<string, unknown>> })
+      .providers;
+    expect(providers['test']).toMatchObject({ api_key_env: 'TEST_KEY' });
+    expect(providers['test']!['apiKeyEnv']).toBeUndefined();
     const models = (parseToml(text) as { models: Record<string, Record<string, unknown>> }).models;
     expect(models['test/m1']).toMatchObject({
       provider: 'test',
       model: 'm1',
       max_context_size: 8192,
       capabilities: ['image_in', 'tool_use'],
+      future_field: 'preserved',
+      upgrade: { model: 'm2', migration_markdown: 'Move', retirement_at: '2027-01-01' },
     });
     expect(models['test/m1']!['capability']).toBeUndefined();
     expect(models['test/m1']!['maxContextSize']).toBeUndefined();
@@ -729,31 +868,36 @@ describe('kimiModelEnvOverlay', () => {
 });
 
 describe('provider-catalog materialization', () => {
-  it('materializes a config-declared provider, discovers models, writes them back under the alias scope, and unbinds on removal', async () => {
+  it('materializes a config-declared provider, refreshes models under the provider id, and unbinds on removal', async () => {
     const seen: { url: string; authorization?: string }[] = [];
     let upstream: readonly string[] = ['m1', 'm2'];
+    let malformed = false;
+    let invalidItem = false;
     vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
       seen.push({
         url: typeof input === 'string' ? input : input.url,
         authorization: (init?.headers as Record<string, string> | undefined)?.['authorization'],
       });
-      return new Response(JSON.stringify({ data: upstream.map((id) => ({ id })) }), {
-        status: 200,
-      });
+      const data = invalidItem ? [null] : upstream.map((id) => ({ id }));
+      return new Response(JSON.stringify(malformed ? {} : { data }), { status: 200 });
     });
     try {
       const { harness, config, catalog, file } = await mountWithConfig(
-        '[providers.acme]\ntype = "acme"\nbase_url = "https://acme.example.com"\nmodel_source = "discover"\nalias_scope = "shared"\n\n[providers.acme.env]\napiKey = "ACME_KEY"\n',
+        '[providers.acme]\ntype = "acme"\nbase_url = "https://acme.example.com"\nmodel_source = "discover"\napi_key = "sk-resolved"\n',
         {
-          env: { ACME_KEY: 'sk-resolved' },
           contribute: () => {
             useProviderProtocol({
               type: 'acme',
               protocols: () => ({ openai: openAIRequester }),
             });
+            useProviderProtocol({
+              type: 'anthropic',
+              protocols: () => ({ anthropic: anthropicRequester }),
+            });
           },
         },
       );
+      await catalog.refresh({ providerId: 'acme' });
       await until(() => seen.length > 0);
       expect(seen[0]).toEqual({
         url: 'https://acme.example.com/models',
@@ -765,15 +909,66 @@ describe('provider-catalog materialization', () => {
       const readModels = (): Record<string, Record<string, unknown>> =>
         (parseToml(file.saved.at(-1)!) as { models: Record<string, Record<string, unknown>> })
           .models;
-      await until(() => file.saved.length > 0 && readModels()['shared/m2'] !== undefined);
-      expect(readModels()['shared/m1']).toMatchObject({ provider: 'acme', model: 'm1' });
-      expect(readModels()['shared/m2']).toMatchObject({ provider: 'acme', model: 'm2' });
-      expect(readModels()['shared/m1']!['api_key']).toBeUndefined();
+      await until(() => file.saved.length > 0 && readModels()['acme/m2'] !== undefined);
+      expect(readModels()['acme/m1']).toMatchObject({ provider: 'acme', model: 'm1' });
+      expect(readModels()['acme/m2']).toMatchObject({ provider: 'acme', model: 'm2' });
+      expect(readModels()['acme/m1']!['api_key']).toBeUndefined();
+
+      await config.set(
+        'models',
+        {
+          ...config.get<Record<string, CatalogModelConfig>>('models'),
+          'acme/override': { provider: 'acme', model: 'override', protocol: 'anthropic' },
+        },
+        'user',
+      );
+      await until(() => catalog.requester('acme', 'override') !== undefined);
 
       upstream = ['m2'];
-      catalog.refresh('acme');
-      await until(() => readModels()['shared/m1'] === undefined);
-      expect(readModels()['shared/m2']).toBeDefined();
+      await catalog.refresh({ providerId: 'acme' });
+      await until(() => readModels()['acme/m1'] === undefined);
+      expect(readModels()['acme/m2']).toBeDefined();
+
+      malformed = true;
+      expect((await catalog.refresh({ providerId: 'acme' })).failed).toHaveLength(1);
+      await sleep(20);
+      expect(catalog.models('acme').map((model) => model.id)).toEqual(['m2']);
+
+      malformed = false;
+      invalidItem = true;
+      expect((await catalog.refresh({ providerId: 'acme' })).failed).toHaveLength(1);
+      await sleep(20);
+      expect(catalog.models('acme').map((model) => model.id)).toEqual(['m2']);
+
+      invalidItem = false;
+      upstream = [];
+      expect(await catalog.refresh({ providerId: 'acme' })).toEqual({
+        changed: [],
+        unchanged: ['acme'],
+        failed: [],
+      });
+      expect(catalog.models('acme').map((model) => model.id)).toEqual(['m2']);
+      expect(catalog.providers()).toContain('acme');
+
+      upstream = ['m2'];
+      await catalog.refresh({ providerId: 'acme' });
+      await until(() => catalog.models('acme').length === 1);
+      await config.replace(
+        {
+          providers: {
+            acme: { type: 'acme', modelSource: 'discover' },
+          },
+        },
+        'memory',
+      );
+      await until(() => catalog.providerInfo('acme')?.baseUrl === undefined);
+      expect(await catalog.refresh({ providerId: 'acme' })).toEqual({
+        changed: [],
+        unchanged: ['acme'],
+        failed: [],
+      });
+      await sleep(20);
+      expect(catalog.models('acme').map((model) => model.id)).toEqual(['m2']);
 
       await config.replace({ providers: {}, models: {} }, 'memory');
       await until(() => !catalog.providers().includes('acme'));
@@ -787,12 +982,13 @@ describe('provider-catalog materialization', () => {
     }
   });
 
-  it('does not fetch models for static providers and skips oauth-backed and unknown types', async () => {
+  it('does not fetch models for static providers and materializes oauth-backed providers', async () => {
     const fetchSpy = vi.fn();
     vi.stubGlobal('fetch', fetchSpy);
     try {
       const { harness, catalog } = await mountWithConfig(
-        '[providers.acme]\ntype = "acme"\nbase_url = "https://acme.example.com"\napi_key = "sk-x"\n\n[providers.managed]\ntype = "acme"\nmodel_source = "oauth-catalog"\nbase_url = "https://managed.example.com"\n\n[providers.legacy]\ntype = "acme"\nbase_url = "https://legacy.example.com"\n\n[providers.legacy.oauth]\nstorage = "file"\nkey = "oauth/legacy"\n\n[providers.ghost]\ntype = "nope"\nbase_url = "https://ghost.example.com"\n',
+        '[providers.acme]\ntype = "acme"\nbase_url = "https://acme.example.com"\napi_key = "sk-x"\n\n[providers.managed]\ntype = "acme"\nmodel_source = "oauth-catalog"\nbase_url = "https://managed.example.com"\n\n[providers.legacy]\ntype = "acme"\nbase_url = "https://legacy.example.com"\n\n[providers.legacy.oauth]\nstorage = "file"\nkey = "oauth/legacy"\n\n[providers.ghost]\ntype = "nope"\nbase_url = "https://ghost.example.com"\n\n' +
+          '[providers.openai]\ntype = "openai"\n\n[providers.responses]\ntype = "openai_responses"\n\n[providers.anthropic]\ntype = "anthropic"\n\n[providers.google]\ntype = "google-genai"\n\n[providers.vertex]\ntype = "vertexai"\n',
         {
           contribute: () => {
             useProviderProtocol({
@@ -805,9 +1001,14 @@ describe('provider-catalog materialization', () => {
       await sleep(20);
       expect(fetchSpy).not.toHaveBeenCalled();
       expect(catalog.isLive('acme')).toBe(true);
-      expect(catalog.isLive('managed')).toBe(false);
-      expect(catalog.isLive('legacy')).toBe(false);
+      expect(catalog.isLive('managed')).toBe(true);
+      expect(catalog.isLive('legacy')).toBe(true);
       expect(catalog.isLive('ghost')).toBe(false);
+      expect(catalog.isLive('openai')).toBe(true);
+      expect(catalog.isLive('responses')).toBe(true);
+      expect(catalog.isLive('anthropic')).toBe(true);
+      expect(catalog.isLive('google')).toBe(true);
+      expect(catalog.isLive('vertex')).toBe(true);
       await harness.close();
     } finally {
       vi.unstubAllGlobals();
@@ -816,13 +1017,15 @@ describe('provider-catalog materialization', () => {
 });
 
 describe('provider-catalog credential resolvers', () => {
-  it('resolves contributed resolvers before the static apiKey fallback', async () => {
+  it('resolves model and provider credentials with v2 precedence, conflicts, and live env reads', async () => {
     const sentinel: LlmCredentialProvider = { resolve: () => ({ apiKey: 'sk-sentinel' }) };
-    const { harness, capture } = await mountWithConfig(undefined, {
-      env: { ACME_KEY: 'sk-env' },
+    const env: Record<string, string> = { ACME_KEY: 'sk-env' };
+    const { harness, config, catalog, capture } = await mountWithConfig(undefined, {
+      env,
       contribute: () => {
         useCredentialResolver({
-          resolve: (info) => (info.type === 'sentinel' ? sentinel : undefined),
+          resolve: (info) =>
+            info.type === 'sentinel' || info.oauth?.key === 'oauth/sentinel' ? sentinel : undefined,
         });
       },
     });
@@ -830,13 +1033,112 @@ describe('provider-catalog credential resolvers', () => {
     expect(await resolveCredentialProvider({ apiKey: 'sk-inline' }, resolvers)?.resolve()).toEqual({
       apiKey: 'sk-inline',
     });
-    expect(
-      await resolveCredentialProvider({ env: { apiKey: 'ACME_KEY' } }, resolvers)?.resolve(),
-    ).toEqual({ apiKey: 'sk-env' });
     expect(resolveCredentialProvider({ type: 'sentinel', apiKey: 'sk-x' }, resolvers)).toBe(
       sentinel,
     );
     expect(resolveCredentialProvider({}, resolvers)).toBeUndefined();
+
+    const oauth = { storage: 'file' as const, key: 'oauth/sentinel' };
+    await config.replace(
+      {
+        providers: {
+          live: {
+            type: 'openai',
+            apiKeyEnv: 'ACME_KEY',
+            baseUrl: 'https://provider.example.com',
+            customHeaders: { shared: 'provider', provider: 'yes' },
+            env: { OPENAI_API_KEY: 'sk-direct', OPENAI_BASE_URL: 'https://env.example.com' },
+          },
+          direct: {
+            type: 'openai',
+            env: { OPENAI_API_KEY: 'sk-direct', OPENAI_BASE_URL: 'https://env.example.com' },
+          },
+          inlineDirect: {
+            type: 'openai',
+            apiKey: 'sk-inline-provider',
+            env: { OPENAI_API_KEY: 'sk-direct' },
+          },
+          oauthOnly: { type: 'openai', oauth },
+          conflicted: { type: 'openai', apiKey: 'sk-provider', apiKeyEnv: 'ACME_KEY', oauth },
+          envOauth: { type: 'openai', env: { OPENAI_API_KEY: 'sk-direct' }, oauth },
+          envDeclaredOauth: { type: 'openai', apiKeyEnv: 'ACME_KEY', oauth },
+          inlineOauth: { type: 'openai', apiKey: 'sk-provider', oauth },
+        },
+        models: {
+          'live/m': {
+            provider: 'live',
+            model: 'm',
+            baseUrl: 'https://model.example.com',
+            defaultHeaders: { shared: 'model', model: 'yes' },
+          },
+          'direct/m': { provider: 'direct', model: 'm' },
+          'inlineDirect/m': { provider: 'inlineDirect', model: 'm' },
+          'oauthOnly/m': { provider: 'oauthOnly', model: 'm' },
+          'conflicted/model-inline': {
+            provider: 'conflicted',
+            model: 'model-inline',
+            apiKey: 'sk-model',
+          },
+          'conflicted/model-oauth': { provider: 'conflicted', model: 'model-oauth', oauth },
+          'conflicted/model-conflict': {
+            provider: 'conflicted',
+            model: 'model-conflict',
+            apiKey: 'sk-model',
+            oauth,
+          },
+          'conflicted/provider-fallback': { provider: 'conflicted', model: 'provider-fallback' },
+          'envOauth/m': { provider: 'envOauth', model: 'm' },
+          'envDeclaredOauth/m': { provider: 'envDeclaredOauth', model: 'm' },
+          'inlineOauth/m': { provider: 'inlineOauth', model: 'm' },
+        },
+      },
+      'memory',
+    );
+    await until(() => catalog.models('conflicted').length === 4);
+    expect(catalog.models('conflicted').map((model) => model.id)).toEqual([
+      'model-conflict',
+      'model-inline',
+      'model-oauth',
+      'provider-fallback',
+    ]);
+
+    const request = (providerId: string, modelId: string): LlmRequest => {
+      const requester = catalog.requester(providerId, modelId);
+      if (requester === undefined) throw new Error(`missing requester for ${providerId}/${modelId}`);
+      return requester.request({ content: { messages: [] } });
+    };
+    const apiKey = async (providerId: string, modelId: string): Promise<string | undefined> =>
+      (await request(providerId, modelId).endpoint?.credentials?.resolve())?.apiKey;
+
+    expect(request('live', 'm').endpoint).toMatchObject({
+      baseUrl: 'https://model.example.com',
+      headers: { shared: 'model', provider: 'yes', model: 'yes' },
+    });
+    await expect(apiKey('live', 'm')).resolves.toBe('sk-env');
+    env.ACME_KEY = 'sk-next';
+    await expect(apiKey('live', 'm')).resolves.toBe('sk-next');
+    expect(request('direct', 'm').endpoint?.baseUrl).toBe('https://env.example.com');
+    await expect(apiKey('direct', 'm')).resolves.toBe('sk-direct');
+    await expect(apiKey('inlineDirect', 'm')).resolves.toBe('sk-inline-provider');
+    await expect(apiKey('oauthOnly', 'm')).resolves.toBe('sk-sentinel');
+    await expect(apiKey('conflicted', 'model-inline')).resolves.toBe('sk-model');
+    await expect(apiKey('conflicted', 'model-oauth')).resolves.toBe('sk-sentinel');
+
+    expect(() => catalog.requester('conflicted', 'model-conflict')).toThrow(
+      'Model "conflicted/model-conflict" has both apiKey and oauth',
+    );
+    expect(() => catalog.requester('conflicted', 'provider-fallback')).toThrow(
+      'Provider "conflicted" has both apiKey and apiKeyEnv',
+    );
+    expect(() => catalog.requester('envOauth', 'm')).toThrow(
+      'Provider "envOauth" has both apiKey and oauth',
+    );
+    expect(() => catalog.requester('envDeclaredOauth', 'm')).toThrow(
+      'Provider "envDeclaredOauth" has both apiKeyEnv and oauth',
+    );
+    expect(() => catalog.requester('inlineOauth', 'm')).toThrow(
+      'Provider "inlineOauth" has both apiKey and oauth',
+    );
     await harness.close();
   });
 });
@@ -898,6 +1200,7 @@ const m1Def: CatalogModelConfig = {
   maxContextSize: 4096,
   supportEfforts: ['low', 'high'],
   defaultEffort: 'low',
+  offEffort: 'none',
 };
 
 const m2Def: CatalogModelConfig = {
@@ -950,19 +1253,22 @@ async function mountFixture(initial?: string): Promise<ModelFixture> {
       useProvider({
         handle: stubHandle('test', textRequester(seen.m1)),
         info: { apiKey: 'sk-test' },
-        models: [m1Def],
       });
       useProvider({
         handle: stubHandle('other', textRequester(seen.m2)),
         info: { apiKey: 'sk-other' },
-        models: [m2Def],
       });
     }),
   );
   await tick();
   const config = capture.config?.value;
-  if (config === undefined) throw new Error('config store was not exposed');
+  const catalog = capture.catalog?.value;
+  if (config === undefined || catalog === undefined) {
+    throw new Error('config store or provider catalog was not exposed');
+  }
   await config.reload();
+  await catalog.addModel('test/m1', m1Def);
+  await catalog.addModel('other/m2', m2Def);
   const session = await harness.app.create({ sessionId: 'sess' });
   const main = await harness.ensureAgent(session, 'main');
   return { harness, session, main, file, config, capture, seen };
@@ -970,12 +1276,14 @@ async function mountFixture(initial?: string): Promise<ModelFixture> {
 
 describe('provider-catalog app model defaults', () => {
   it('persists the default model to the user config target as a snake_case scalar', async () => {
-    const { harness, file, capture } = await mountFixture();
+    const { harness, file, config, capture } = await mountFixture();
     await until(() => (capture.models?.value.length ?? 0) === 2);
     const defaults = capture.defaults?.value;
     if (defaults === undefined) throw new Error('model defaults face was not exposed');
     await defaults.setDefaultModel('other/m2');
     expect(file.saved.at(-1)).toContain('default_model = "other/m2"');
+    await config.set('defaultProvider', 'other', 'user');
+    expect(file.saved.at(-1)).toContain('default_provider = "other"');
     await harness.close();
   });
 
@@ -985,7 +1293,7 @@ describe('provider-catalog app model defaults', () => {
     const defaults = capture.defaults?.value;
     if (defaults === undefined) throw new Error('model defaults face was not exposed');
     await defaults.setDefaultModel('other/m2');
-    expect(file.saved.at(-1)).toBe('default_model = "other/m2"   # current pick\n');
+    expect(file.saved.at(-1)).toContain('default_model = "other/m2"   # current pick\n');
     await harness.close();
   });
 
@@ -1006,14 +1314,13 @@ describe('provider-catalog app model defaults', () => {
     harness.app.features.add(providerCatalog);
     harness.app.features.add(
       catalogProbe(capture, () => {
-        useProvider({ handle: stubHandle('test', textRequester([])), models: [m1Def] });
+        useProvider({ handle: stubHandle('test', textRequester([])) });
       }),
     );
     await tick();
-    await until(() => (capture.models?.value.length ?? 0) === 1);
-    const defaults = capture.defaults?.value;
-    if (defaults === undefined) throw new Error('model defaults face was not exposed');
-    await expect(defaults.setDefaultModel('test/m1')).rejects.toMatchObject({
+    const catalog = capture.catalog?.value;
+    if (catalog === undefined) throw new Error('provider catalog face was not exposed');
+    await expect(catalog.addModel('test/m1', m1Def)).rejects.toMatchObject({
       code: 'config.unavailable',
     });
     await harness.close();
@@ -1149,7 +1456,9 @@ describe('provider-catalog agent model binding', () => {
 
 describe('provider-catalog agent thinking effort', () => {
   it('rejects an unsupported effort and applies a valid one durably', async () => {
-    const { harness, session, capture } = await mountFixture('default_model = "test/m1"\n');
+    const { harness, session, config, capture } = await mountFixture(
+      'default_model = "test/m1"\n\n[thinking]\nkeep = "config-keep"\n\n[model_overrides]\ntemperature = 0.25\ntop_p = 0.75\nthinking_keep = "override-keep"\nmax_completion_tokens = 123\n',
+    );
     await until(() => boundModel(harness, 'sess', 'main').spec?.name === 'm1');
     const face = capture.agentFace;
     if (face === undefined) throw new Error('agent model face was not captured');
@@ -1158,11 +1467,48 @@ describe('provider-catalog agent thinking effort', () => {
     });
     await face.setThinking('high');
     await until(() => boundModel(harness, 'sess', 'main').thinking?.effort === 'high');
+    expect(boundModel(harness, 'sess', 'main')).toMatchObject({
+      thinking: { effort: 'high', keep: 'override-keep' },
+      sampling: { temperature: 0.25, topP: 0.75 },
+      maxOutputTokens: 123,
+    });
     expect(face.current.value).toEqual({ alias: null, thinking: 'high' });
     await session.close('main');
     await harness.ensureAgent(session, 'main');
     await until(() => boundModel(harness, 'sess', 'main').thinking?.effort === 'high');
     expect(boundModel(harness, 'sess', 'main').spec?.name).toBe('m1');
+    expect(boundModel(harness, 'sess', 'main').thinking?.keep).toBe('override-keep');
+
+    await config.replace(
+      {
+        modelOverrides: {
+          temperature: 0.25,
+          topP: 0.75,
+          thinkingKeep: 'off',
+          maxCompletionTokens: 0,
+        },
+      },
+      'memory',
+    );
+    await until(() => boundModel(harness, 'sess', 'main').thinking?.keep === undefined);
+    expect(boundModel(harness, 'sess', 'main').thinking?.effort).toBe('high');
+    expect(boundModel(harness, 'sess', 'main').maxOutputTokens).toBe('none');
+
+    await config.replace(
+      {
+        modelOverrides: { temperature: 0.25, topP: 0.75, maxCompletionTokens: 123 },
+      },
+      'memory',
+    );
+    await until(() => boundModel(harness, 'sess', 'main').thinking?.keep === 'config-keep');
+    await config.replace({ thinking: {} }, 'memory');
+    await until(() => boundModel(harness, 'sess', 'main').thinking?.keep === 'all');
+    const reopenedFace = capture.agentFace;
+    if (reopenedFace === undefined) throw new Error('reopened agent model face was not captured');
+    await reopenedFace.setThinking('off');
+    await until(() => boundModel(harness, 'sess', 'main').thinking?.effort === 'off');
+    expect(boundModel(harness, 'sess', 'main').thinking?.keep).toBeUndefined();
+    expect(boundModel(harness, 'sess', 'main').maxOutputTokens).toBe(123);
     await harness.close();
   });
 
@@ -1214,19 +1560,22 @@ describe('provider-catalog session model defaults', () => {
           useProvider({
             handle: stubHandle('test', textRequester(seen.m1)),
             info: { apiKey: 'sk-test' },
-            models: [m1Def],
           });
           useProvider({
             handle: stubHandle('other', textRequester(seen.m2)),
             info: { apiKey: 'sk-other' },
-            models: [m2Def],
           });
         }),
       );
       await tick();
       const config = capture.config?.value;
-      if (config === undefined) throw new Error('config store was not exposed');
+      const catalog = capture.catalog?.value;
+      if (config === undefined || catalog === undefined) {
+        throw new Error('config store or provider catalog was not exposed');
+      }
       await config.reload();
+      await catalog.addModel('test/m1', m1Def);
+      await catalog.addModel('other/m2', m2Def);
       return { harness, capture };
     };
     const first = await mount();
@@ -1243,6 +1592,7 @@ describe('provider-catalog session model defaults', () => {
     const resumed = await second.harness.app.create({ sessionId: 'sess' });
     await second.harness.ensureAgent(resumed, 'main');
     await until(() => boundModel(second.harness, 'sess', 'main').spec?.name === 'm2');
+    expect(boundModel(second.harness, 'sess', 'main').spec?.name).toBe('m2');
     await second.harness.close();
   });
 });

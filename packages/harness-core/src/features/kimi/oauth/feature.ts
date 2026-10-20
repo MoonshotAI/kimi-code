@@ -9,13 +9,10 @@ import {
   watch,
 } from '@moonshot-ai/agent-core/kernel/index';
 import { createOAuthCredentialProvider } from '@moonshot-ai/agent-core/llm/builtin/policy/credentials';
-import type { LlmRequester } from '@moonshot-ai/agent-core/llm/requester';
 import {
-  fetchManagedKimiCodeModels,
   fetchManagedUsage,
   fetchManagedUserInfo,
   KIMI_CODE_FLOW_CONFIG,
-  KIMI_CODE_PLATFORM_ID,
   KIMI_CODE_PROVIDER_NAME,
   kimiCodeBaseUrl,
   kimiCodeUsageUrl,
@@ -38,7 +35,6 @@ import {
 import {
   ConfigRef,
   DEFAULT_MODEL_CONFIG_SECTION,
-  deepEqual,
   MODEL_CATALOG_CONFIG_SECTION,
   MODELS_CONFIG_SECTION,
   PROVIDERS_CONFIG_SECTION,
@@ -49,15 +45,11 @@ import {
 } from '#/features/config/index';
 import {
   CatalogModels,
-  isOAuthBackedProvider,
   matchCatalogBinding,
-  ProviderProtocols,
   useCredentialResolver,
   useProviderCatalog,
-  type CatalogModelConfig,
-  type CatalogModelDefinition,
+  useProviderOAuthTokenResolver,
   type CatalogOAuthRef,
-  type CatalogProviderInfo,
 } from '#/features/provider-catalog/index';
 
 import { SERVICES_CONFIG_SECTION, type ServicesSection } from '../web/configSection';
@@ -74,13 +66,9 @@ import {
   type OAuthFlowStart,
   type OAuthFlowStatus,
 } from './auth';
-import { managedKimiCodeModelSeed } from './models';
 import {
   createOAuthTokenResolver,
   resolveOauthHome,
-  type OAuthRefreshChange,
-  type OAuthRefreshFailure,
-  type OAuthRefreshReport,
   type OAuthTokens,
 } from './tokens';
 
@@ -112,31 +100,10 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
         home === undefined
           ? { resolve: () => undefined, manager: () => undefined }
           : createOAuthTokenResolver(home);
-      const protocolFactories = useCollection(ProviderProtocols);
       const bindings = useCollection(CatalogModels);
-      const aliasScopeWrites = new Map<string, Promise<void>>();
-      const materializing = new Set<string>();
       const flows = new Map<string, LoginFlowState>();
-      const pendingSeeds = new Map<string, readonly CatalogModelDefinition[]>();
       let disposed = false;
       let refreshOnStartPending = false;
-      let refreshChain: Promise<void> = Promise.resolve();
-      const fetchCatalog = async (
-        providerId: string,
-        info: CatalogProviderInfo,
-      ): Promise<readonly CatalogModelDefinition[]> => {
-        const ref = info.oauth;
-        if (ref === undefined) return [];
-        const token = tokens.resolve(ref);
-        if (token === undefined) return [];
-        const accessToken = await token.getAccessToken();
-        const models = await fetchManagedKimiCodeModels({
-          accessToken,
-          baseUrl: info.baseUrl,
-          fetchImpl: props.fetchImpl,
-        });
-        return models.map((model) => managedKimiCodeModelSeed(providerId, model));
-      };
       const setTerminal = (state: LoginFlowState, status: Exclude<OAuthFlowStatus, 'pending'>): void => {
         state.status = status;
         state.resolvedAt = new Date().toISOString();
@@ -222,7 +189,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
         const config = configRef.value;
         if (config === undefined) return;
         const stop = watch(
-          () => catalog.value?.snapshot(),
+          () => catalog.value?.providers(),
           () => {
             const first = catalog.value?.models(KIMI_CODE_PROVIDER_NAME)[0];
             if (first === undefined) return;
@@ -235,10 +202,9 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
                 return;
               }
             }
-            const info = catalog.value?.providerInfo(KIMI_CODE_PROVIDER_NAME);
             void config.set(
               DEFAULT_MODEL_CONFIG_SECTION,
-              `${info?.aliasScope ?? KIMI_CODE_PROVIDER_NAME}/${first.id}`,
+              `${KIMI_CODE_PROVIDER_NAME}/${first.id}`,
               'user',
             ).catch(() => {});
           },
@@ -251,7 +217,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
           await provisionAfterLogin(state.provider, state.oauthRef, state.loginBaseUrl);
           if (disposed || flows.get(state.provider) !== state) return;
           if (state.provider === KIMI_CODE_PROVIDER_NAME) {
-            if (catalog.value?.isLive(KIMI_CODE_PROVIDER_NAME) === true) void facade.refresh();
+            void facade.refresh();
             healDefaultModelAfterManagedLogin();
           }
         } catch {
@@ -280,7 +246,6 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
         if (provider !== KIMI_CODE_PROVIDER_NAME) return;
         const config = configRef.value;
         if (config === undefined) return;
-        await aliasScopeWrites.get(provider);
         const providers = { ...config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) };
         const removedProvider = Object.hasOwn(providers, KIMI_CODE_PROVIDER_NAME);
         delete providers[KIMI_CODE_PROVIDER_NAME];
@@ -343,82 +308,14 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
           return false;
         }
       };
-      const doRefresh = async (): Promise<OAuthRefreshReport> => {
-        const changed: OAuthRefreshChange[] = [];
-        const unchanged: string[] = [];
-        const failed: OAuthRefreshFailure[] = [];
-        const store = catalog.value;
-        if (store === undefined) return { changed, unchanged, failed };
-        const config = configRef.value;
-        for (const providerId of store.providers()) {
-          const info = store.providerInfo(providerId);
-          if (info === undefined || !isOAuthBackedProvider(info)) continue;
-          const ref = info.oauth;
-          const token = ref === undefined ? undefined : tokens.resolve(ref);
-          if (token === undefined) {
-            failed.push({ provider: providerId, reason: 'OAuth token provider is not configured.' });
-            continue;
-          }
-          let seeds: readonly CatalogModelDefinition[];
-          try {
-            const accessToken = await token.getAccessToken();
-            const models = await fetchManagedKimiCodeModels({
-              accessToken,
-              baseUrl: info.baseUrl,
-              fetchImpl: props.fetchImpl,
-            });
-            if (models.length === 0) continue;
-            seeds = models.map((model) => managedKimiCodeModelSeed(providerId, model));
-          } catch (error) {
-            failed.push({
-              provider: providerId,
-              reason: error instanceof Error ? error.message : String(error),
-            });
-            continue;
-          }
-          const prefix = `${info.aliasScope ?? providerId}/`;
-          const before = new Map<string, CatalogModelConfig>();
-          for (const [key, record] of Object.entries(
-            config?.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {},
-          )) {
-            if (record.provider !== providerId || !key.startsWith(prefix)) continue;
-            before.set(record.model, record);
-          }
-          const afterIds = new Set(seeds.map((seed) => seed.id));
-          const added = [...afterIds].filter((id) => !before.has(id)).length;
-          const removed = [...before.keys()].filter((id) => !afterIds.has(id)).length;
-          const drifted = seeds.some((seed) => {
-            const record = before.get(seed.id);
-            return record !== undefined && !managedRecordEqual(record, seed);
-          });
-          if (added === 0 && removed === 0 && !drifted) {
-            unchanged.push(providerId);
-          } else {
-            changed.push({
-              provider_id: providerId,
-              provider_name: providerId === KIMI_CODE_PROVIDER_NAME ? 'Kimi Code' : providerId,
-              added,
-              removed,
-            });
-          }
-          if (store.isLive(providerId)) {
-            pendingSeeds.set(providerId, seeds);
-            store.refresh(providerId);
-          }
-        }
-        return { changed, unchanged, failed };
-      };
-      const refreshModels = (): Promise<OAuthRefreshReport> => {
-        const run = refreshChain.then(doRefresh);
-        refreshChain = run.then(
-          () => undefined,
-          () => undefined,
-        );
-        return run;
-      };
       const facade: OAuthTokens = {
         resolve: (ref) => tokens.resolve(ref),
-        refresh: refreshModels,
+        refresh: () => {
+          const store = catalog.value;
+          return store === undefined
+            ? Promise.resolve({ changed: [], unchanged: [], failed: [] })
+            : store.refresh({ scope: 'oauth' });
+        },
         loginStart: async (input) => {
           const provider = input?.provider ?? KIMI_CODE_PROVIDER_NAME;
           const auth = resolveLoginAuth(provider, input?.region);
@@ -616,11 +513,19 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
         },
       };
       const runStartRefresh = (): void => {
-        if (disposed || !refreshOnStartPending || materializing.size > 0) return;
+        if (disposed || !refreshOnStartPending) return;
         refreshOnStartPending = false;
         void facade.refresh();
       };
       useExpose(OAuthTokensRef, facade);
+      useProviderOAuthTokenResolver({
+        resolve: async (_providerName, ref) => {
+          if (ref === undefined) throw new Error('OAuth token provider is not configured.');
+          const token = tokens.resolve(ref);
+          if (token === undefined) throw new Error('OAuth token provider is not configured.');
+          return token.getAccessToken();
+        },
+      });
       useCredentialResolver({
         resolve: (info) => {
           const ref = info.oauth;
@@ -636,77 +541,6 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
           });
         },
       });
-      watch(
-        () =>
-          configRef.value?.section<ProvidersSection>(PROVIDERS_CONFIG_SECTION)
-            .value,
-        (providers) => {
-          const config = configRef.value;
-          const entry = providers?.[KIMI_CODE_PROVIDER_NAME];
-          if (config === undefined || entry === undefined || entry.aliasScope !== undefined) return;
-          const write = config
-            .set(
-              PROVIDERS_CONFIG_SECTION,
-              { [KIMI_CODE_PROVIDER_NAME]: { aliasScope: KIMI_CODE_PLATFORM_ID } },
-              'user',
-            )
-            .catch(() => {})
-            .finally(() => {
-              aliasScopeWrites.delete(KIMI_CODE_PROVIDER_NAME);
-            });
-          aliasScopeWrites.set(KIMI_CODE_PROVIDER_NAME, write);
-        },
-        { immediate: true },
-      );
-      watch(
-        () => [catalog.value?.snapshot(), protocolFactories.value],
-        () => {
-          const store = catalog.value;
-          if (store === undefined) return;
-          for (const [providerId, entry] of Object.entries(store.snapshot().providers)) {
-            const info = entry.info;
-            if (info === undefined || !isOAuthBackedProvider(info) || info.type === undefined) {
-              continue;
-            }
-            if (store.isLive(providerId) || materializing.has(providerId)) continue;
-            const factory = protocolFactories.value.findLast(
-              (contribution) => contribution.type === info.type,
-            );
-            if (factory === undefined) continue;
-            const protocols: Record<string, LlmRequester<'protocol'> | undefined> = factory.protocols(info);
-            const entries = Object.fromEntries(
-              Object.entries(protocols).filter(
-                (entry): entry is [string, LlmRequester<'protocol'>] => entry[1] !== undefined,
-              ),
-            );
-            if (Object.keys(entries).length === 0) continue;
-            materializing.add(providerId);
-            void (async () => {
-              try {
-                await aliasScopeWrites.get(providerId);
-                if (disposed || store.isLive(providerId)) return;
-                pendingSeeds.delete(providerId);
-                store.refresh({
-                  id: providerId,
-                  requester: entries,
-                  listModels: () => {
-                    const injected = pendingSeeds.get(providerId);
-                    if (injected !== undefined) {
-                      pendingSeeds.delete(providerId);
-                      return Promise.resolve(injected);
-                    }
-                    return fetchCatalog(providerId, info);
-                  },
-                });
-              } finally {
-                materializing.delete(providerId);
-                runStartRefresh();
-              }
-            })();
-          }
-        },
-        { immediate: true },
-      );
       let timer: ReturnType<typeof setTimeout> | undefined;
       let started = false;
       const clearTimer = (): void => {
@@ -766,12 +600,4 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
 
 export function createOauth(props: CreateOauthProps = {}): Feature<void> {
   return createFeature('oauth', createOauthSlots(props));
-}
-
-function managedRecordEqual(record: CatalogModelConfig, seed: CatalogModelDefinition): boolean {
-  return (
-    record.maxContextSize === seed.maxContextSize &&
-    record.maxInputSize === seed.maxInputSize &&
-    deepEqual(record.capability, seed.capability)
-  );
 }

@@ -6,6 +6,16 @@ import type {
   ThinkingRequestOptions,
 } from '#/llm/request';
 import type { LlmRequester } from '#/llm/requester';
+import type { TokenUsage } from '#/llm/response';
+
+export interface ProviderCatalogPingResult {
+  readonly ok: boolean;
+  readonly durationMs: number;
+  readonly text?: string;
+  readonly usage?: TokenUsage;
+  readonly finishReason?: string;
+  readonly error?: string;
+}
 
 export interface CatalogModelDefinition
   extends Partial<LlmModelSpec>,
@@ -106,7 +116,7 @@ export interface ProviderCatalog {
   refresh(
     target: string | CatalogProviderHandle | readonly (string | CatalogProviderHandle)[],
   ): void;
-  ping(providerId: string, modelId: string): void;
+  ping(providerId: string, modelId: string): Promise<ProviderCatalogPingResult>;
   onChanged(listener: (event: ProviderCatalogChangedEvent) => void): () => void;
   onRefreshFailed(listener: (event: ProviderCatalogRefreshFailedEvent) => void): () => void;
   close(): void;

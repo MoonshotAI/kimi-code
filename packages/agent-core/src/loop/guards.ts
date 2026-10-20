@@ -1,7 +1,8 @@
 import type { AssistantMessage, ToolCall } from '#/llm/message';
 import type { LlmOutcome } from '#/llm/response';
 import type { HistoryMessage } from '#/history/message';
-import type { ToolResult } from '#/tool/index';
+
+export { isToolResult } from '#/tool/contract';
 
 export type Fields = Record<string, unknown>;
 
@@ -15,10 +16,6 @@ function isContent(value: unknown): boolean {
 
 export function isToolCall(value: unknown): value is ToolCall {
   return isObject(value) && typeof value['id'] === 'string' && typeof value['name'] === 'string';
-}
-
-export function isToolResult(value: unknown): value is ToolResult {
-  return isObject(value) && isContent(value['content']);
 }
 
 function isAssistantMessage(value: unknown): value is AssistantMessage {

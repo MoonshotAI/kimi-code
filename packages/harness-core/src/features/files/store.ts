@@ -30,6 +30,25 @@ export interface StoredFile {
   stream(range?: FileReadRange): AsyncIterable<Uint8Array>;
 }
 
+export interface FilesFace {
+  save(
+    source: AsyncIterable<Uint8Array>,
+    filename: string,
+    options?: SaveFileOptions,
+  ): Promise<FileMeta>;
+  open(id: string): Promise<StoredFile | undefined>;
+}
+
+export async function readStoredFile(file: StoredFile, n?: number): Promise<Uint8Array> {
+  const size = Math.min(n ?? file.meta.size, file.meta.size);
+  if (size === 0) return new Uint8Array();
+  const chunks: Uint8Array[] = [];
+  for await (const chunk of file.stream({ start: 0, end: size - 1 })) chunks.push(chunk);
+  const bytes = Buffer.concat(chunks);
+  if (bytes.length !== size) throw new Error('Attachment changed or became unavailable while reading.');
+  return bytes;
+}
+
 export const FILE_ID_PATTERN = /^f_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 
 export function isFileId(value: string): boolean {

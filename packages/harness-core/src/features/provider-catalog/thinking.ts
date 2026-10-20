@@ -82,3 +82,25 @@ export function invalidThinkingEffortMessage(
   }
   return undefined;
 }
+
+const KEEP_OFF_VALUES = new Set(['0', 'false', 'no', 'off', 'none', 'null']);
+
+function parseThinkingKeep(raw: string | undefined): { specified: boolean; value?: string } {
+  const trimmed = raw?.trim();
+  if (trimmed === undefined || trimmed.length === 0) return { specified: false };
+  if (KEEP_OFF_VALUES.has(trimmed.toLowerCase())) return { specified: true, value: undefined };
+  return { specified: true, value: trimmed };
+}
+
+export function resolveThinkingKeep(
+  overrideKeep: string | undefined,
+  configKeep: string | undefined,
+  thinkingEffort: ThinkingEffort,
+): string | undefined {
+  if (thinkingEffort === 'off') return undefined;
+  const override = parseThinkingKeep(overrideKeep);
+  if (override.specified) return override.value;
+  const config = parseThinkingKeep(configKeep);
+  if (config.specified) return config.value;
+  return 'all';
+}

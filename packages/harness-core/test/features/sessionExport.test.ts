@@ -74,7 +74,7 @@ async function mountExport(
       face = useInject(SessionExportRef);
     },
   });
-  await harness.app.features.add(
+  harness.app.features.add(
     createSessionExport({
       version: props?.version ?? '1.0.0-test',
       wireProtocolVersion: '1',
@@ -82,7 +82,7 @@ async function mountExport(
       desktopLogPath: props?.desktopLogPath,
     }),
   );
-  await harness.app.features.add(probe);
+  harness.app.features.add(probe);
   return () => face?.value;
 }
 

@@ -169,9 +169,9 @@ async function startBtwTest(opts?: {
   const probe = captureBtw();
   const executed: string[] = [];
   const harness = createHarness({ space: opts?.space ?? memoryHarnessSpace() });
-  await harness.app.features.add(btwFeature);
-  await harness.app.features.add(probe.feature);
-  await harness.app.features.add(bindTestTools(executed));
+  harness.app.features.add(btwFeature);
+  harness.app.features.add(probe.feature);
+  harness.app.features.add(bindTestTools(executed));
   const session = await harness.app.create({ sessionId: 'sess' });
   const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());

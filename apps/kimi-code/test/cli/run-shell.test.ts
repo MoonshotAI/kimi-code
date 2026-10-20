@@ -33,14 +33,12 @@ const mocks = vi.hoisted(() => {
     detectTerminalTheme: vi.fn(),
     kimiHarnessConstructor: vi.fn(),
     harnessEnsureConfigFile: vi.fn(),
-    harnessConfigGet: vi.fn((name: string) => {
-      const values: Record<string, unknown> = {
-        providers: {},
-        defaultModel: 'k2',
-        telemetry: true,
-      };
-      return values[name];
-    }),
+    harnessGetConfig: vi.fn(async () => ({
+      providers: {},
+      defaultModel: 'k2',
+      telemetry: true,
+    })),
+    harnessGetConfigDiagnostics: vi.fn(async () => ({ warnings: [] as readonly string[] })),
     harnessGetCachedAccessToken: vi.fn(),
     harnessClose: vi.fn(),
     detectPendingMigration: vi.fn<() => Promise<unknown>>(async () => null),
@@ -81,10 +79,8 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
         getCachedAccessToken: mocks.harnessGetCachedAccessToken,
       },
       ensureConfigFile: mocks.harnessEnsureConfigFile,
-      config: {
-        get: mocks.harnessConfigGet,
-        diagnostics: vi.fn(() => []),
-      },
+      getConfig: mocks.harnessGetConfig,
+      getConfigDiagnostics: mocks.harnessGetConfigDiagnostics,
       close: mocks.harnessClose,
       track: mocks.harnessTrack,
     };
@@ -135,10 +131,8 @@ vi.mock('../../src/tui/index', () => ({
     onExit?: () => Promise<void>;
 
     readonly state = { ui: { mode: 'regular' as const } };
-    readonly harness: unknown;
 
     constructor(...args: unknown[]) {
-      this.harness = args[0];
       mocks.kimiTuiConstructor(this, ...args);
     }
 
@@ -179,13 +173,10 @@ describe('runShell', () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     refreshKimiRegion();
-    mocks.harnessConfigGet.mockImplementation((name: string) => {
-      const values: Record<string, unknown> = {
-        providers: {},
-        defaultModel: 'k2',
-        telemetry: true,
-      };
-      return values[name];
+    mocks.harnessGetConfig.mockResolvedValue({
+      providers: {},
+      defaultModel: 'k2',
+      telemetry: true,
     });
     mocks.tuiGetStartupMcpMs.mockResolvedValue(0);
     mocks.tuiGetCurrentSessionId.mockReturnValue('');
@@ -279,15 +270,16 @@ describe('runShell', () => {
 
     expect(mocks.kimiHarnessConstructor).toHaveBeenCalledWith(
       expect.objectContaining({
-        identity: 'kimi-code-cli',
-        uiMode: 'interactive',
-        version: '1.2.3-test',
-        additionalDirs: ['../shared', '/tmp/extra'],
+        identity: expect.objectContaining({
+          productName: 'kimi-code-cli',
+          version: '1.2.3-test',
+        }),
+        sessionStartedProperties: { yolo: true, auto: false, plan: true, afk: false },
       }),
     );
     expect(mocks.harnessEnsureConfigFile).toHaveBeenCalledOnce();
     expect(mocks.harnessEnsureConfigFile.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.harnessConfigGet.mock.invocationCallOrder[0]!,
+      mocks.harnessGetConfig.mock.invocationCallOrder[0]!,
     );
     // stty is resolved to an absolute path before the trust gate and skipped
     // entirely on Windows (a bare `stty` name would resolve into the
@@ -328,6 +320,7 @@ describe('runShell', () => {
     expect(harness).toBeTypeOf('object');
     expect(startupInput).toMatchObject({
       cliOptions,
+      additionalDirs: ['../shared', '/tmp/extra'],
       tuiConfig: {
         theme: 'dark',
         editorCommand: null,
@@ -369,7 +362,7 @@ describe('runShell', () => {
     expect(execFileSync).not.toHaveBeenCalled();
   });
 
-  it('passes the --agent option through to the TUI startup input', async () => {
+  it('resolves the --agent profile into the TUI startup input', async () => {
     mocks.loadTuiConfig.mockResolvedValue({
       theme: 'dark',
       editorCommand: null,
@@ -395,20 +388,15 @@ describe('runShell', () => {
     );
 
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
-    expect(startupInput).toMatchObject({
-      cliOptions: expect.objectContaining({ agent: 'reviewer' }),
-    });
+    expect(startupInput).toMatchObject({ agentProfile: 'reviewer' });
   });
 
   it('forwards the telemetry opt-out from config to the TUI startup input', async () => {
     stubTuiStartup();
-    mocks.harnessConfigGet.mockImplementation((name: string) => {
-      const values: Record<string, unknown> = {
-        providers: {},
-        defaultModel: 'k2',
-        telemetry: false,
-      };
-      return values[name];
+    mocks.harnessGetConfig.mockResolvedValue({
+      providers: {},
+      defaultModel: 'k2',
+      telemetry: false,
     });
 
     await runShell(minimalCliOptions, '1.2.3-test');
@@ -670,6 +658,9 @@ describe('runShell', () => {
       theme: 'dark',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.harnessGetConfigDiagnostics.mockResolvedValue({
+      warnings: ['Ignored invalid config in config.toml: loop_control.'],
     });
     mocks.tuiStart.mockResolvedValue(undefined);
 
@@ -947,9 +938,9 @@ describe('runShell', () => {
       notifications: { enabled: true, condition: 'unfocused' },
     });
     mocks.detectPendingMigration.mockResolvedValue({ totalSessions: 1 });
-    mocks.harnessConfigGet.mockImplementation(() => {
-      throw new Error('Invalid configuration in ~/.kimi-code/config.toml');
-    });
+    mocks.harnessGetConfig.mockRejectedValue(
+      new Error('Invalid configuration in ~/.kimi-code/config.toml'),
+    );
 
     // A broken config.toml must fail loudly — `kimi migrate` must not swallow
     // it and proceed, or the user never learns their config is broken.

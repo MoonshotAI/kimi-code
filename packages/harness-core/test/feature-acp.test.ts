@@ -20,6 +20,7 @@ import { createFeature, useAgent, useSession, type Feature } from '@moonshot-ai/
 import {
   useCollection,
   useInject,
+  useReady,
   watch,
   type ComputedRef,
   type ShallowRef,
@@ -43,6 +44,11 @@ import { createAcpOsHost, createAcpOsHostRouter, type AcpOsConnection } from '#/
 import { buildAcpSkillSlashCommands, resolveSkillCommand } from '#/feature-acp/slash';
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
 import {
+  createFiles,
+  KimiFileRegistryRef,
+  type KimiFileRegistry,
+} from '#/features/files/index';
+import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
@@ -58,6 +64,7 @@ import {
   CatalogModels,
   providerCatalog,
   useProvider,
+  useProviderCatalog,
   type CatalogModelBinding,
   type CatalogModelConfig,
   type CatalogProviderHandle,
@@ -172,7 +179,17 @@ function contributeTestProvider(
   };
   return createFeature('test-provider', {
     app() {
-      useProvider({ handle: provider, models });
+      const catalog = useProviderCatalog();
+      useProvider({ handle: provider });
+      useReady(
+        (async () => {
+          const face = catalog.value;
+          if (face === undefined) throw new Error('provider catalog is unavailable');
+          for (const model of models) {
+            await face.addModel(`${model.provider}/${model.model}`, model);
+          }
+        })(),
+      );
     },
   });
 }
@@ -359,6 +376,7 @@ interface AcpTestEnv {
   readonly elicitationRequests: unknown[];
   readonly readPaths: string[];
   readonly probe: ProbeCapture;
+  readonly registry: () => KimiFileRegistry;
   readonly triggerSkillChange: () => void;
   respondPermission(response: RequestPermissionResponse): void;
   respondElicitation(response: unknown): void;
@@ -406,6 +424,9 @@ async function startAcpTest(options?: {
     options?.withMcp !== undefined && options.withMcp !== false
       ? await mkdtemp(join(tmpdir(), 'acp-mcp-home-'))
       : undefined;
+  const mediaHome =
+    options?.withMedia === true ? await mkdtemp(join(tmpdir(), 'acp-media-home-')) : undefined;
+  let registry: KimiFileRegistry | undefined;
   const probe: ProbeCapture = { planByAgent: new Map(), permissionByAgent: new Map() };
   const toAgent = new PassThrough();
   const toClient = new PassThrough();
@@ -430,6 +451,15 @@ async function startAcpTest(options?: {
     harness.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
   }
   if (options?.withMedia === true) {
+    if (mediaHome === undefined) throw new Error('media home was not created');
+    harness.app.features.add(createFiles({ dir: mediaHome }));
+    harness.app.features.add(
+      createFeature('acp-media-registry-probe', {
+        session() {
+          registry = useInject(KimiFileRegistryRef).value;
+        },
+      }),
+    );
     harness.app.features.add(createMedia({ workDir: '/tmp/acp-test' }));
   }
   if (options?.withTodo === true) harness.app.features.add(todoFeature);
@@ -493,6 +523,10 @@ async function startAcpTest(options?: {
     elicitationRequests,
     readPaths,
     probe,
+    registry: () => {
+      if (registry === undefined) throw new Error('kimi file registry was not exposed');
+      return registry;
+    },
     triggerSkillChange: () => {
       skillChange.fire();
     },
@@ -508,6 +542,9 @@ async function startAcpTest(options?: {
       await harness.close();
       if (mcpHome !== undefined) {
         await rm(mcpHome, { recursive: true, force: true });
+      }
+      if (mediaHome !== undefined) {
+        await rm(mediaHome, { recursive: true, force: true });
       }
     },
   };
@@ -977,11 +1014,10 @@ describe('feature-acp', () => {
     expect(images).toHaveLength(1);
     const lowered = images[0] as { source: { kind: string; ref?: string } };
     expect(lowered.source.kind).toBe('store');
-    const session = env.harness.app.sessions.get(created.sessionId);
-    if (session === undefined || lowered.source.ref === undefined) {
+    if (lowered.source.ref === undefined) {
       throw new Error('expected a stored media ref');
     }
-    const stored = await session.blobs.get(lowered.source.ref);
+    const stored = await env.registry().get(lowered.source.ref);
     expect(stored?.mimeType).toBe('image/jpeg');
   }, 60_000);
 

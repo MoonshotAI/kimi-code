@@ -243,7 +243,7 @@ export function wireAcpSession(deps: AcpSessionDeps): AcpSession {
           const current = driver;
           if (current === undefined || current.settled) return;
           if (current.turnId === undefined) {
-            if (!current.boundByPrompt || !current.consumed) return;
+            if (current.boundByPrompt && !current.consumed) return;
             current.turnId = event.turnId;
           } else if (current.turnId !== event.turnId) {
             return;

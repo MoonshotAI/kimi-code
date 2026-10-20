@@ -159,7 +159,9 @@ export const glmProtocol = openAIProtocol.with((base) => ({
         if (failedInference(chunk, sink)) return;
         inner.push(withGlmFinishReasons(chunk));
       },
-      end: inner.end,
+      end() {
+        inner.end();
+      },
     };
   },
   decodeError: withGlmErrors(base),

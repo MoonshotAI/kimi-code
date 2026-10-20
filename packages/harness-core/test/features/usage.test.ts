@@ -59,8 +59,8 @@ describe('usage feature', () => {
       },
     });
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(usage);
-    await harness.app.features.add(probe);
+    harness.app.features.add(usage);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     let calls = 0;
@@ -104,8 +104,8 @@ describe('usage feature', () => {
     });
     const space = memoryHarnessSpace();
     const harness = createHarness({ space });
-    await harness.app.features.add(usage);
-    await harness.app.features.add(probe);
+    harness.app.features.add(usage);
+    harness.app.features.add(probe);
     const session = await harness.app.create({ sessionId: 's1' });
     const agent = await harness.ensureAgent(session, 'main');
     let calls = 0;

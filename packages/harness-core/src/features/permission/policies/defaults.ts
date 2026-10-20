@@ -25,10 +25,6 @@ const DEFAULT_APPROVE_TOOLS: ReadonlySet<string> = new Set([
   'Skill',
   'EnterPlanMode',
   'ExitPlanMode',
-  'CreateGoal',
-  'GetGoal',
-  'SetGoalBudget',
-  'UpdateGoal',
   'select_tools',
 ]);
 

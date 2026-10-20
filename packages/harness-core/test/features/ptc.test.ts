@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createFeature, useToolHandler, type Feature } from '@moonshot-ai/agent-core/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
+import { useInject } from '@moonshot-ai/agent-core/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -19,7 +20,9 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
 
-import { CODE_TOOL_NAME, createPtc, usePtcToolGuard } from '#/features/ptc/index';
+import { interaction } from '#/features/interaction/index';
+import { createPermission, PermissionRef, type PermissionFace } from '#/features/permission/index';
+import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
 import {
   createHarness,
   harnessInternals,
@@ -100,8 +103,8 @@ function bindTestTools(executed: string[]): Feature<void> {
   });
 }
 
-function bindBashVeto(executed: string[]): Feature<void> {
-  return createFeature('test-veto', {
+function bindBashTool(executed: string[]): Feature<void> {
+  return createFeature('test-bash', {
     agent() {
       useAgentTools({
         name: 'Bash',
@@ -112,15 +115,18 @@ function bindBashVeto(executed: string[]): Feature<void> {
           return { content: [{ type: 'text', text: 'bash output' }] };
         },
       });
-      usePtcToolGuard(({ toolCall }) => {
-        if (toolCall.name !== 'Bash') return undefined;
-        return {
-          blocked: { reason: 'denied', message: 'Bash is disabled' },
-          result: { content: [{ type: 'text', text: 'Bash is disabled' }] },
-        };
-      });
     },
   });
+}
+
+function capturePermission(): { feature: Feature<void>; face: () => PermissionFace | undefined } {
+  let face: PermissionFace | undefined;
+  const feature = createFeature('permission-probe', {
+    agent() {
+      face = useInject(PermissionRef).value;
+    },
+  });
+  return { feature, face: () => face };
 }
 
 function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
@@ -144,7 +150,7 @@ async function startEnv(opts: {
   const dir = await mkdtemp(join(tmpdir(), 'ptc-test-'));
   const ptc = (opts.ptcFactory ?? ((d: string) => createPtc({ dir: d, enabled: () => true })))(dir);
   for (const feature of [...(opts.features ?? []), ptc]) {
-    await harness.app.features.add(feature);
+    harness.app.features.add(feature);
   }
   const session = await harness.app.create({ sessionId: 'sess' });
   const agent = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
@@ -227,23 +233,31 @@ return { summary: a.split(' ')[0], count: 3 };
     await env.cleanup();
   });
 
-  it('honors tool guards inside the sandbox without executing the real tool', async () => {
+  it('applies permission vetoes to sandbox calls without executing the real tool', async () => {
     const executed: string[] = [];
+    const permission = capturePermission();
     const script: LlmScript = (call) => {
       if (call.messages.some((message) => message.role === 'tool')) return endAfterTool(call);
       return codeArguments(`
-const denied = await tools.Bash({});
+const denied = await tools.Bash({ command: 'ls' });
 console.log('got:', denied);
 `);
     };
-    const env = await startEnv({ script, features: [bindBashVeto(executed)] });
+    const env = await startEnv({
+      script,
+      features: [interaction, createPermission(), bindBashTool(executed), permission.feature],
+    });
+    const face = permission.face();
+    if (face === undefined) throw new Error('permission facade is not exposed');
+    await face.setMode('auto');
+    await face.addRules([{ decision: 'deny', scope: 'user', pattern: 'Bash(*)', reason: 'Bash is disabled' }]);
     await env.agent.loop.runTurn(user('run bash'));
     await env.agent.flush();
 
     expect(executed).toEqual([]);
     const results = toolTexts(env.agent);
     expect(results).toHaveLength(1);
-    expect(results[0]).toContain('got: Bash is disabled');
+    expect(results[0]).toContain('got: Tool "Bash" was denied by permission rule. Reason: Bash is disabled');
 
     await env.cleanup();
   });

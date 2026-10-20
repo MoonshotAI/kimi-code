@@ -39,6 +39,7 @@ function fakeInitialAppState(): AppState {
   return {
     model: 'test-model',
     workDir: '/tmp/kimi-test',
+    additionalDirs: [],
     sessionId: 'sess-1',
     permissionMode: 'manual',
     planMode: false,

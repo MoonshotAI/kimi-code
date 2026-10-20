@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import type { ContentPart, MediaSource, UserMessage } from '@moonshot-ai/agent-core/llm/message';
 import { SessionSpaceError } from '@moonshot-ai/agent-core/session/index';
 
-import { parseMediaRefUrl } from '#/features/media/ref';
+import { parseKimiFileUrl } from '#/features/files/index';
 
 export const ErrorCode = {
   SUCCESS: 0,
@@ -11,6 +11,9 @@ export const ErrorCode = {
   PROVIDER_OAUTH_MANAGED: 40003,
   CATALOG_IMPORT_INVALID: 40004,
   REGISTRY_IMPORT_INVALID: 40005,
+  UNAUTHORIZED: 40101,
+  INVALID_HOST: 40301,
+  AUTH_RATE_LIMIT: 42901,
   SESSION_NOT_FOUND: 40401,
   PROMPT_NOT_FOUND: 40402,
   APPROVAL_NOT_FOUND: 40404,
@@ -40,12 +43,6 @@ export const ErrorCode = {
   COMPACTION_UNABLE: 40910,
   SESSION_UNDO_UNAVAILABLE: 40911,
   SKILL_NOT_ACTIVATABLE: 40912,
-  GOAL_ALREADY_EXISTS: 40913,
-  GOAL_NOT_FOUND: 40914,
-  GOAL_STATUS_INVALID: 40915,
-  GOAL_NOT_RESUMABLE: 40916,
-  GOAL_OBJECTIVE_EMPTY: 40917,
-  GOAL_OBJECTIVE_TOO_LONG: 40918,
   FS_ALREADY_EXISTS: 40919,
   PROVIDER_ALREADY_EXISTS: 40921,
   PAGE_TOKEN_MISMATCH: 40922,
@@ -58,7 +55,6 @@ export const ErrorCode = {
   INTERACTION_UNAVAILABLE: 40932,
   TASK_UNAVAILABLE: 40933,
   SKILL_CATALOG_UNAVAILABLE: 40934,
-  GOAL_UNAVAILABLE: 40935,
   SESSION_EXPORT_UNAVAILABLE: 40936,
   REMOTE_CONTROL_UNAVAILABLE: 40937,
   MODELS_DEV_UNAVAILABLE: 40938,
@@ -195,7 +191,7 @@ function toContentPart(value: unknown): ContentPart | undefined {
 }
 
 function mediaSourceFromUrl(url: string): MediaSource {
-  if (parseMediaRefUrl(url) !== undefined) return { kind: 'store', ref: url };
+  if (parseKimiFileUrl(url) !== undefined) return { kind: 'store', ref: url };
   const match = /^data:([^;]+);base64,(.*)$/.exec(url);
   if (match !== null) return { kind: 'inline', mimeType: match[1] as string, data: match[2] as string };
   return { kind: 'url', url };

@@ -1,32 +1,39 @@
-import { assign, enqueueActions, fromCallback, fromPromise, sendParent, setup, type ActorRefFrom } from 'xstate';
+import { assign, enqueueActions, fromCallback, sendParent, setup, type ActorRefFrom } from 'xstate';
 
 import type { ToolCall } from '#/llm/message';
 import { errorText } from '#/llm/protocol/errors';
-import type { ToolExecutor, ToolResult, ToolUpdate } from '#/tool/index';
+import {
+  isToolExecutorHost,
+  isToolResult,
+  type ToolExecutor,
+  type ToolHookFailure,
+  type ToolHookPoint,
+  type ToolResult,
+  type ToolUpdate,
+} from '#/tool/index';
+import { toolExecutionFailureOf } from '#/tool/executor';
 import { withAbort, type AbortScope } from '#/utils/abort';
 import type { ToolEvent } from '../contract/emitted';
-import type { HookPoint, ToolEndingEvent, ToolStartingEvent } from '../contract/hook';
-import type { AsyncToolOutcome, Cause, ToolCallOutcome } from '../contract/outcome';
-import { isToolResult } from '../guards';
-import { hookFailedEvent, hookFailureCause, hookFailureText, type HookFailure } from '../hook/failure';
-import type { HookSource } from '../hook/registry';
-import { runToolEnding, runToolPermitting, runToolStarting, type ToolEndingRun, type ToolStartingRun } from '../hook/run';
-import { blockedToolOutcome, completionEntry, errorResult, toolEntry, withNotes } from './outcome';
+import type { AsyncToolOutcome, ToolCallOutcome } from '../contract/outcome';
+import { hookFailedEvent } from '../hook/failure';
+import { blockedToolOutcome, completionEntry, errorResult, toolEntry } from './outcome';
 
 type ExecOutput =
   | { type: 'succeeded'; result: ToolResult }
-  | { type: 'failed'; error: unknown }
+  | { type: 'failed'; error: unknown; result?: ToolResult }
   | { type: 'aborted'; reason?: unknown };
 
 export type ToolActorEvent =
   | { type: 'tool.abort'; reason?: unknown }
   | { type: 'tool.detach'; text?: string }
+  | { type: 'exec.adjudicated'; toolCall: ToolCall }
+  | { type: 'exec.hook_failed'; point: ToolHookPoint; failure: ToolHookFailure }
   | { type: 'exec.update'; update: ToolUpdate }
   | { type: 'exec.done'; output: ExecOutput };
 
 export type ToolSignal = ToolEvent & { key: string };
 
-type ToolStatus = 'succeeded' | 'failed' | 'aborted' | 'blocked';
+type ToolStatus = 'succeeded' | 'failed' | 'aborted';
 
 export interface ToolMachineInput {
   key: string;
@@ -45,17 +52,10 @@ export interface ToolMachineContext {
   result?: ToolResult;
   error?: unknown;
   reason?: unknown;
-  cause?: Cause;
-  stopTurn?: true;
-  notes: string[];
 }
 
-function causeText(cause: Cause): string {
-  return cause.message ?? cause.reason;
-}
-
-function failedPatch(error: unknown): Partial<ToolMachineContext> {
-  return { status: 'failed', error, result: errorResult(errorText(error)) };
+function failedPatch(error: unknown, result?: ToolResult): Partial<ToolMachineContext> {
+  return { status: 'failed', error, result: result ?? errorResult(errorText(error)) };
 }
 
 function abortedPatch(reason: unknown): Partial<ToolMachineContext> {
@@ -65,16 +65,14 @@ function abortedPatch(reason: unknown): Partial<ToolMachineContext> {
 function execPatch(output: ExecOutput): Partial<ToolMachineContext> {
   if (output.type === 'succeeded') return { status: 'succeeded', result: output.result };
   if (output.type === 'aborted') return abortedPatch(output.reason);
-  return failedPatch(output.error);
+  return failedPatch(output.error, output.result);
 }
 
 function outcomeOf(context: ToolMachineContext): ToolCallOutcome {
-  const result = withNotes(context.result ?? errorResult('missing tool result'), context.notes);
-  if (context.status === 'blocked') {
-    return blockedToolOutcome(context.toolCall, context.cause ?? { reason: 'blocked' }, result);
-  }
-  const stops = context.status === 'succeeded' && (context.stopTurn === true || result.stopTurn === true);
-  const entry = toolEntry(context.toolCall, { ...result, stopTurn: stops });
+  const result = context.result ?? errorResult('missing tool result');
+  if (result.blocked !== undefined) return blockedToolOutcome(context.toolCall, result.blocked, result);
+  const stops = context.status !== 'aborted' && result.stopTurn === true;
+  const entry = toolEntry(context.toolCall, stops ? { ...result, stopTurn: true } : result);
   switch (context.status) {
     case 'succeeded':
       return stops ? { type: 'succeeded', entry, stopTurn: true } : { type: 'succeeded', entry };
@@ -92,38 +90,43 @@ function asyncOutcomeOf(context: ToolMachineContext): AsyncToolOutcome {
 }
 
 function createExecuteActor(executor: ToolExecutor) {
-  return fromCallback<ToolActorEvent, { toolCall: ToolCall; signal: AbortSignal }>(
-    ({ input, sendBack }) => {
-      Promise.resolve()
-        .then(() =>
-          executor.execute({
-            toolCall: input.toolCall,
-            signal: input.signal,
-            onUpdate: (update) => sendBack({ type: 'exec.update', update }),
-            detach: (text) => sendBack({ type: 'tool.detach', text }),
+  return fromCallback<ToolActorEvent, ToolMachineInput>(({ input, sendBack }) => {
+    Promise.resolve()
+      .then(() =>
+        executor.execute({
+          toolCall: input.toolCall,
+          signal: input.signal,
+          turnId: input.turnId,
+          step: input.step,
+          onAdjudicated: (toolCall) => sendBack({ type: 'exec.adjudicated', toolCall }),
+          onHookFailure: (point, failure) => sendBack({ type: 'exec.hook_failed', point, failure }),
+          onUpdate: (update) => sendBack({ type: 'exec.update', update }),
+          detach: (text) => sendBack({ type: 'tool.detach', text }),
+        }),
+      )
+      .then(
+        (result: unknown) =>
+          sendBack({
+            type: 'exec.done',
+            output: isToolResult(result)
+              ? { type: 'succeeded', result }
+              : { type: 'failed', error: new Error('invalid tool result') },
           }),
-        )
-        .then(
-          (result: unknown) =>
-            sendBack({
-              type: 'exec.done',
-              output: isToolResult(result)
-                ? { type: 'succeeded', result }
-                : { type: 'failed', error: new Error('invalid tool result') },
-            }),
-          (error: unknown) =>
-            sendBack({
-              type: 'exec.done',
-              output: input.signal.aborted
-                ? { type: 'aborted', reason: input.signal.reason }
-                : { type: 'failed', error },
-            }),
-        );
-    },
-  );
+        (error: unknown) => {
+          const failure = toolExecutionFailureOf(error);
+          sendBack({
+            type: 'exec.done',
+            output: input.signal.aborted
+              ? { type: 'aborted', reason: input.signal.reason }
+              : { type: 'failed', error: failure?.error ?? error, result: failure?.result },
+          });
+        },
+      );
+  });
 }
 
-export function createToolMachine(executor: ToolExecutor, hooks: HookSource) {
+export function createToolMachine(executor: ToolExecutor) {
+  const adjudicates = isToolExecutorHost(executor);
   return setup({
     types: {
       input: {} as ToolMachineInput,
@@ -132,183 +135,57 @@ export function createToolMachine(executor: ToolExecutor, hooks: HookSource) {
     },
     actors: {
       executeActor: createExecuteActor(executor),
-      startingActor: fromPromise<ToolStartingRun, { event: ToolStartingEvent; signal: AbortSignal }>(
-        ({ input }) => runToolStarting(hooks, input.event, input.signal),
-      ),
-      permittingActor: fromPromise<ToolStartingRun, { event: ToolStartingEvent; signal: AbortSignal }>(
-        ({ input }) => runToolPermitting(hooks, input.event, input.signal),
-      ),
-      endingActor: fromPromise<ToolEndingRun, { event: ToolEndingEvent; signal: AbortSignal }>(
-        ({ input }) => runToolEnding(hooks, input.event, input.signal),
-      ),
-    },
-    actions: {
-      reportFailures: enqueueActions(
-        ({ context, enqueue }, params: { point: HookPoint; failures: readonly HookFailure[] }) => {
-          const notes = params.failures
-            .filter((failure) => !failure.blocking)
-            .map((failure) => hookFailureText(params.point, failure.error));
-          if (notes.length > 0) enqueue.assign({ notes: [...context.notes, ...notes] });
-          for (const failure of params.failures) {
-            enqueue.sendParent(hookFailedEvent(params.point, context.input.turnId, context.input.step, failure));
-          }
-        },
-      ),
     },
   }).createMachine({
     id: 'tool',
-    initial: 'starting',
+    initial: 'started',
     context: ({ input }) => ({
       input,
       toolCall: input.toolCall,
       scope: withAbort(input.signal),
       detached: false,
-      notes: [],
     }),
     states: {
-      starting: {
-        invoke: {
-          src: 'startingActor',
-          input: ({ context }) => ({
-            event: { turnId: context.input.turnId, step: context.input.step, toolCall: context.toolCall },
-            signal: context.scope.signal,
-          }),
-          onDone: [
-            {
-              guard: ({ event }) => event.output.blocked !== undefined,
-              target: 'started',
-              actions: [
-                assign(({ event }) => {
-                  const { toolCall, blocked, result } = event.output;
-                  const cause = blocked ?? { reason: 'blocked' };
-                  return {
-                    toolCall,
-                    status: 'blocked' as const,
-                    cause,
-                    result: { ...(result ?? errorResult(causeText(cause))), isError: true as const },
-                  };
-                }),
-                {
-                  type: 'reportFailures',
-                  params: ({ event }) => ({ point: 'tool.starting' as const, failures: event.output.failures }),
-                },
-              ],
-            },
-            {
-              target: 'permitting',
-              actions: [
-                assign(({ event }) => ({ toolCall: event.output.toolCall })),
-                {
-                  type: 'reportFailures',
-                  params: ({ event }) => ({ point: 'tool.starting' as const, failures: event.output.failures }),
-                },
-              ],
-            },
-          ],
-          onError: {
-            target: 'started',
-            actions: [
-              assign(({ event }) => {
-                const cause = hookFailureCause('tool.starting', event.error);
-                return { status: 'blocked' as const, cause, result: errorResult(causeText(cause)) };
-              }),
-              {
-                type: 'reportFailures',
-                params: ({ event }) => ({
-                  point: 'tool.starting' as const,
-                  failures: [{ error: event.error, paused: false, blocking: true }],
-                }),
-              },
-            ],
-          },
-        },
-        on: {
-          'tool.abort': {
-            target: 'started',
-            actions: assign(({ event }) => abortedPatch(event.reason)),
-          },
-        },
-      },
-      permitting: {
-        invoke: {
-          src: 'permittingActor',
-          input: ({ context }) => ({
-            event: { turnId: context.input.turnId, step: context.input.step, toolCall: context.toolCall },
-            signal: context.scope.signal,
-          }),
-          onDone: {
-            target: 'started',
-            actions: [
-              assign(({ event }) => {
-                const { toolCall, blocked, result } = event.output;
-                if (blocked === undefined) return { toolCall };
-                return {
-                  toolCall,
-                  status: 'blocked' as const,
-                  cause: blocked,
-                  result: { ...(result ?? errorResult(causeText(blocked))), isError: true as const },
-                };
-              }),
-              {
-                type: 'reportFailures',
-                params: ({ event }) => ({ point: 'tool.permitting' as const, failures: event.output.failures }),
-              },
-            ],
-          },
-          onError: {
-            target: 'started',
-            actions: [
-              assign(({ event }) => {
-                const cause = hookFailureCause('tool.permitting', event.error);
-                return { status: 'blocked' as const, cause, result: errorResult(causeText(cause)) };
-              }),
-              {
-                type: 'reportFailures',
-                params: ({ event }) => ({
-                  point: 'tool.permitting' as const,
-                  failures: [{ error: event.error, paused: false, blocking: true }],
-                }),
-              },
-            ],
-          },
-        },
-        on: {
-          'tool.abort': {
-            target: 'started',
-            actions: assign(({ event }) => abortedPatch(event.reason)),
-          },
-        },
-      },
       started: {
-        entry: sendParent(({ context }) => ({
-          type: 'tool.started',
-          key: context.input.key,
-          turnId: context.input.turnId,
-          step: context.input.step,
-          toolCall: context.toolCall,
-        })),
-        always: [
-          { guard: ({ context }) => context.status !== undefined, target: 'done' },
-          { target: 'executing' },
-        ],
+        entry: enqueueActions(({ context, enqueue }) => {
+          if (adjudicates) return;
+          enqueue.sendParent({
+            type: 'tool.started',
+            key: context.input.key,
+            turnId: context.input.turnId,
+            step: context.input.step,
+            toolCall: context.toolCall,
+          });
+        }),
+        always: 'executing',
       },
       executing: {
         invoke: {
           src: 'executeActor',
-          input: ({ context }) => ({ toolCall: context.toolCall, signal: context.scope.signal }),
-          onError: [
-            {
-              guard: ({ context }) => context.detached,
-              target: 'done',
-              actions: assign(({ event }) => failedPatch(event.error)),
-            },
-            {
-              target: 'ending',
-              actions: assign(({ event }) => failedPatch(event.error)),
-            },
-          ],
+          input: ({ context }) => ({ ...context.input, signal: context.scope.signal }),
+          onError: {
+            target: 'done',
+            actions: assign(({ event }) => failedPatch(event.error)),
+          },
         },
         on: {
+          'exec.adjudicated': {
+            actions: [
+              assign(({ event }) => ({ toolCall: event.toolCall })),
+              sendParent(({ context, event }) => ({
+                type: 'tool.started',
+                key: context.input.key,
+                turnId: context.input.turnId,
+                step: context.input.step,
+                toolCall: event.toolCall,
+              })),
+            ],
+          },
+          'exec.hook_failed': {
+            actions: sendParent(({ context, event }) =>
+              hookFailedEvent(event.point, context.input.turnId, context.input.step, event.failure),
+            ),
+          },
           'exec.update': {
             guard: ({ context }) => !context.detached,
             actions: sendParent(({ context, event }) => ({
@@ -353,54 +230,9 @@ export function createToolMachine(executor: ToolExecutor, hooks: HookSource) {
               context.scope.abort(event.reason);
             },
           },
-          'exec.done': [
-            {
-              guard: ({ context, event }) => context.detached || event.output.type === 'aborted',
-              target: 'done',
-              actions: assign(({ event }) => execPatch(event.output)),
-            },
-            {
-              target: 'ending',
-              actions: assign(({ event }) => execPatch(event.output)),
-            },
-          ],
-        },
-      },
-      ending: {
-        invoke: {
-          src: 'endingActor',
-          input: ({ context }) => ({
-            event: {
-              turnId: context.input.turnId,
-              step: context.input.step,
-              toolCall: context.toolCall,
-              result: context.result ?? errorResult('missing tool result'),
-              failed: context.status === 'failed',
-            },
-            signal: context.scope.signal,
-          }),
-          onDone: {
+          'exec.done': {
             target: 'done',
-            actions: [
-              assign(({ event }) => ({
-                result: event.output.result,
-                stopTurn: event.output.stopTurn ? (true as const) : undefined,
-              })),
-              {
-                type: 'reportFailures',
-                params: ({ event }) => ({ point: 'tool.ending' as const, failures: event.output.failures }),
-              },
-            ],
-          },
-          onError: {
-            target: 'done',
-            actions: {
-              type: 'reportFailures',
-              params: ({ event }) => ({
-                point: 'tool.ending' as const,
-                failures: [{ error: event.error, paused: false, blocking: false }],
-              }),
-            },
+            actions: assign(({ event }) => execPatch(event.output)),
           },
         },
       },
@@ -414,11 +246,7 @@ export function createToolMachine(executor: ToolExecutor, hooks: HookSource) {
               key: context.input.key,
               toolCallId: context.toolCall.id,
               outcome,
-              entry: completionEntry(
-                context.toolCall,
-                outcome,
-                context.result === undefined ? undefined : withNotes(context.result, context.notes),
-              ),
+              entry: completionEntry(context.toolCall, outcome, context.result),
             });
             return;
           }

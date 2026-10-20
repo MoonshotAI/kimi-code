@@ -1,4 +1,4 @@
-import type { ToolStartingDecision } from '@moonshot-ai/agent-core/loop/index';
+import type { ToolStartingDecision } from '@moonshot-ai/agent-core/tool/index';
 
 import {
   isInteractionCancellation,

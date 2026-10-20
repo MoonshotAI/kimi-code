@@ -17,6 +17,7 @@ import { useMetaRoutes, type MetaOpenInApps } from './route-builtin/meta';
 import { useWebAssetRoutes } from './route-builtin/web-assets';
 import { useFeatureFacadeRoutes } from './route-features/index';
 import { useV2SessionRoutes, V2_HTTP_PREFIX } from './route-v2/index';
+import type { HttpAuthTokenService } from './auth';
 import { createHttpServer, type Http, type HttpListen } from './server';
 import {
   HttpRef,
@@ -52,6 +53,13 @@ export interface CreateHttpOptions {
   readonly openInApps?: MetaOpenInApps;
   readonly corsOrigins?: readonly string[];
   readonly wsHeartbeatMs?: number;
+  readonly authTokenService?: HttpAuthTokenService;
+  readonly disableAuth?: boolean;
+  readonly homeDir?: string;
+  readonly rpcToken?: string;
+  readonly allowedHosts?: readonly string[];
+  readonly disableHostCheck?: boolean;
+  readonly bindClass?: 'lan' | 'public';
 }
 
 const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
@@ -73,14 +81,39 @@ const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
 export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
   return createFeature('http', {
     app() {
+      const prefix = options.prefix ?? DEFAULT_HTTP_PREFIX;
+      if (
+        options.server !== undefined &&
+        (options.authTokenService !== undefined ||
+          options.disableAuth !== undefined ||
+          options.homeDir !== undefined ||
+          options.rpcToken !== undefined ||
+          options.allowedHosts !== undefined ||
+          options.disableHostCheck !== undefined ||
+          options.bindClass !== undefined)
+      ) {
+        throw new Error('server security options must be configured on the supplied HTTP server');
+      }
       const owned = options.server === undefined;
-      const server = options.server ?? createHttpServer({ corsOrigins: options.corsOrigins });
+      const server =
+        options.server ??
+        createHttpServer({
+          corsOrigins: options.corsOrigins,
+          authTokenService: options.authTokenService,
+          disableAuth: options.disableAuth,
+          homeDir: options.homeDir,
+          rpcToken: options.rpcToken,
+          allowedHosts: options.allowedHosts,
+          disableHostCheck: options.disableHostCheck,
+          bindClass: options.bindClass,
+          apiPrefixes: [prefix, V2_HTTP_PREFIX],
+          healthPath: `${prefix.replace(/\/+$/, '')}/healthz`,
+        });
       if (owned) {
         useCleanup(() => server.close());
         useReady(server.listen(options.listen));
       }
       useExpose(HttpRef, server);
-      const prefix = options.prefix ?? DEFAULT_HTTP_PREFIX;
       useFacadeRoutes(prefix);
       useFeatureFacadeRoutes(prefix);
       useV2SessionRoutes(V2_HTTP_PREFIX);
@@ -89,6 +122,7 @@ export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
         serverId: randomUUID(),
         startedAt: new Date().toISOString(),
         openInApps: options.openInApps,
+        dangerousBypassAuth: server.dangerousBypassAuth,
       });
       useGuiStoreRoutes(prefix, { persistPath: options.guiStorePath });
       const wsRegistry = createWsRegistry();

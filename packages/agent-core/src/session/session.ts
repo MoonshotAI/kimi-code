@@ -30,6 +30,7 @@ export type AgentCaps = Omit<CreateLoopOptions, 'input'>;
 
 export interface Agent {
   readonly id: string;
+  readonly source?: string;
   readonly reopened: boolean;
   readonly loop: Loop;
   readonly log: Log<LoopRecord>;
@@ -106,6 +107,7 @@ function openAgent(
   log: Log<LoopRecord>,
   caps: AgentCaps,
   reopened: boolean,
+  info: AgentInfo,
   onError: (error: unknown) => void = console.error,
 ): Agent {
   const view = log.replica.view(loopProjection());
@@ -132,6 +134,7 @@ function openAgent(
   });
   return {
     id,
+    source: info.source,
     reopened,
     loop,
     log,
@@ -191,7 +194,8 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     };
 
     const attach = (agentId: string, agentLog: Log<LoopRecord>, caps: AgentCaps, reopened: boolean): Agent => {
-      const agent = openAgent(agentId, agentLog, caps, reopened);
+      const info = roster.getState().agents[agentId] ?? {};
+      const agent = openAgent(agentId, agentLog, caps, reopened, info);
       agents.set(agentId, agent);
       if (agentId === MAIN_AGENT_ID) {
         settleLastTurn(lastTurnOf(agent.view.getState()));

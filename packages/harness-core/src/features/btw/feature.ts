@@ -94,10 +94,9 @@ export function createBtw(props: CreateBtwProps = {}): Feature<void, BtwEvent> {
       });
     },
     agent() {
-      const session = useSession();
       const agent = useAgent();
       useToolStarting(({ toolCall }) => {
-        if (session.roster.getState().agents[agent.id]?.source !== BTW_SOURCE) return undefined;
+        if (agent.source !== BTW_SOURCE) return undefined;
         if (readonlyTools.has(toolCall.name)) return undefined;
         return {
           blocked: { reason: 'denied', message: deniedMessage },

@@ -18,6 +18,7 @@ import {
   ConfigRef,
   type ConfigStore,
 } from '#/features/config/index';
+import { buildKimiFileUrl, type KimiFileRegistry } from '#/features/files/index';
 import {
   BashRef,
   createBashTool,
@@ -355,17 +356,43 @@ describe('write', () => {
 });
 
 describe('read', () => {
-  const readTool = (): ReturnType<typeof createReadTool> =>
-    createReadTool({ host, workspace: { workDir } });
+  const readTool = (files?: Pick<KimiFileRegistry, 'open'>): ReturnType<typeof createReadTool> =>
+    createReadTool({ host, workspace: { workDir }, files: () => files });
 
-  const readResult = async (args: Record<string, unknown>): Promise<ToolResult> =>
-    readTool().execute({
+  const readResult = async (
+    args: Record<string, unknown>,
+    files?: Pick<KimiFileRegistry, 'open'>,
+  ): Promise<ToolResult> =>
+    readTool(files).execute({
       toolCall: callTool('Read', args),
       signal: new AbortController().signal,
     });
 
-  const read = async (args: Record<string, unknown>): Promise<string> =>
-    resultText(await readResult(args));
+  const read = async (
+    args: Record<string, unknown>,
+    files?: Pick<KimiFileRegistry, 'open'>,
+  ): Promise<string> => resultText(await readResult(args, files));
+
+  const textAttachments = (content?: string): Pick<KimiFileRegistry, 'open'> => ({
+    open: async () => {
+      if (content === undefined) return undefined;
+      const bytes = new TextEncoder().encode(content);
+      return {
+        meta: {
+          id: 'f_note',
+          name: 'note.txt',
+          media_type: 'text/plain',
+          size: bytes.byteLength,
+          created_at: '2026-01-01T00:00:00.000Z',
+        },
+        stream: async function* (range) {
+          const start = range?.start ?? 0;
+          const end = range?.end ?? bytes.byteLength - 1;
+          yield bytes.slice(start, end + 1);
+        },
+      };
+    },
+  });
 
   it('renders lines with line numbers and a complete status block', async () => {
     await host.fs.writeText(join(workDir, 'note.txt'), 'alpha\nbeta\n');
@@ -377,6 +404,10 @@ describe('read', () => {
     expect(text).toContain('Effective max_chars: 100000.');
     expect(text).toContain('End of file reached.');
     expect(text.endsWith('</system>')).toBe(true);
+
+    const reference = buildKimiFileUrl('f_note');
+    const attachment = await read({ path: reference, n_lines: 1 }, textAttachments('alpha\nbeta\n'));
+    expect(attachment.startsWith('1\talpha\n<system>')).toBe(true);
   });
 
   it('pages with line_offset and n_lines', async () => {
@@ -401,6 +432,17 @@ describe('read', () => {
     expect(typeof next['line_offset']).toBe('number');
     expect(next['max_chars']).toBe(400);
     expect('column_offset' in next).toBe(false);
+
+    const reference = buildKimiFileUrl('f_note');
+    const attachment = await read(
+      { path: reference, line_offset: 2, n_lines: 10, max_chars: 400 },
+      textAttachments(`${lines}\n`),
+    );
+    const attachmentMatch = /Next Read: (\{[^}]*\})/.exec(attachment);
+    expect(attachmentMatch).not.toBeNull();
+    const attachmentNext = JSON.parse(attachmentMatch![1]!) as Record<string, unknown>;
+    expect(attachmentNext['path']).toBe(reference);
+    expect(attachmentNext['line_offset']).toBe(next['line_offset']);
   });
 
   it('reads the tail with a negative line_offset', async () => {
@@ -472,6 +514,13 @@ describe('read', () => {
     const result = await readResult({ path: 'missing.txt' });
     expect(result.isError).toBe(true);
     expect(resultText(result)).toBe('"missing.txt" does not exist.');
+
+    const reference = buildKimiFileUrl('f_missing');
+    const missingAttachment = await readResult({ path: reference }, textAttachments());
+    expect(missingAttachment.isError).toBe(true);
+    expect(resultText(missingAttachment)).toBe(
+      `Attachment ${JSON.stringify(reference)} is not available in the current session.`,
+    );
   });
 
   it('rejects column_offset together with a negative line_offset', async () => {
@@ -966,9 +1015,9 @@ describe('os feature', () => {
       save: () => Promise.resolve(),
     };
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(probe);
-    await harness.app.features.add(createConfig({ persist }));
-    await harness.app.features.add(createOs({ workDir }));
+    harness.app.features.add(probe);
+    harness.app.features.add(createConfig({ persist }));
+    harness.app.features.add(createOs({ workDir }));
     const session = await harness.app.create({ sessionId: 'sess' });
     const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'main-host' });
     setRequester(harness, 'sess', 'main', requester);

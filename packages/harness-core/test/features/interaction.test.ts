@@ -70,8 +70,8 @@ function interactionsOf(refs: InteractionRefs, sessionId: string): Interactions 
 async function start(sessionIds: readonly string[]): Promise<{ harness: Harness; refs: InteractionRefs }> {
   const harness = createHarness({ space: memoryHarnessSpace() });
   const { feature, refs } = captureInteractions();
-  await harness.app.features.add(interaction);
-  await harness.app.features.add(feature);
+  harness.app.features.add(interaction);
+  harness.app.features.add(feature);
   for (const sessionId of sessionIds) await harness.app.create({ sessionId });
   return { harness, refs };
 }

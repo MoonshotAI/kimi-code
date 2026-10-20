@@ -16,6 +16,7 @@ export interface MetaRouteOptions {
   readonly serverId: string;
   readonly startedAt: string;
   readonly openInApps?: MetaOpenInApps;
+  readonly dangerousBypassAuth: boolean;
 }
 
 export interface MetaFeatureView {
@@ -54,7 +55,7 @@ export function useMetaRoutes(prefix: string, options: MetaRouteOptions): void {
         server_id: options.serverId,
         started_at: options.startedAt,
         open_in_apps: [...openInApps],
-        dangerous_bypass_auth: false,
+        dangerous_bypass_auth: options.dangerousBypassAuth,
         features,
       });
     },

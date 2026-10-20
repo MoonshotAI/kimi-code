@@ -1,16 +1,10 @@
 import { createFeature, useApp, type App, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, useExpose, useInject } from '@moonshot-ai/agent-core/kernel/index';
 
-import { FileLibrary, type FileMeta, type SaveFileOptions, type StoredFile } from './store';
+import { useBlobs, useFeatureStore } from '#/runtime/index';
 
-export interface FilesFace {
-  save(
-    source: AsyncIterable<Uint8Array>,
-    filename: string,
-    options?: SaveFileOptions,
-  ): Promise<FileMeta>;
-  open(id: string): Promise<StoredFile | undefined>;
-}
+import { createKimiFileRegistry, kimiFileProjection, KimiFileRegistryRef } from './registry';
+import { FileLibrary, type FilesFace } from './store';
 
 export const FilesRef = createFacadeToken<FilesFace>('files');
 
@@ -29,6 +23,18 @@ export function createFiles(props: CreateFilesProps): Feature<void> {
         libraries.set(app, library);
       }
       useExpose(FilesRef, library);
+    },
+    session() {
+      const files = useInject(FilesRef);
+      const store = useFeatureStore('session', 'files', kimiFileProjection);
+      useExpose(
+        KimiFileRegistryRef,
+        createKimiFileRegistry({
+          blobs: useBlobs(),
+          store,
+          files: () => files.value,
+        }),
+      );
     },
   });
 }

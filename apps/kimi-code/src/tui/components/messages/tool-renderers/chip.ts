@@ -12,6 +12,7 @@ import { computeDiffLines } from '#/tui/components/media/diff-preview';
 import { OUTCOME_MAX_LINES } from '#/tui/constant/rendering';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
+import { goalStatusChip } from './goal';
 import { parseGlobOutput, parseGrepOutput, searchNoticeOnly } from './grep-output';
 import { readMediaChip } from './media';
 import { nonEmptyLines } from './outcome';
@@ -144,6 +145,8 @@ const webSearchChip: ChipProvider = (_toolCall, result) => {
   return pluralize(count, 'result');
 };
 
+const goalStatusOutputChip: ChipProvider = (_toolCall, result) =>
+  result.is_error ? '' : goalStatusChip(result.output);
 
 const REGISTRY: Record<string, ChipProvider> = {
   Bash: bashChip,
@@ -155,6 +158,8 @@ const REGISTRY: Record<string, ChipProvider> = {
   Glob: globChip,
   FetchURL: fetchChip,
   WebSearch: webSearchChip,
+  CreateGoal: goalStatusOutputChip,
+  GetGoal: goalStatusOutputChip,
   WaitFor: waitForChip,
 };
 

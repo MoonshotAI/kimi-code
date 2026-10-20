@@ -67,7 +67,8 @@ export function matchCatalogBinding(
 export type ModelCatalogErrorCode =
   | 'model.unknown_alias'
   | 'model.invalid_thinking'
-  | 'config.unavailable';
+  | 'config.unavailable'
+  | 'provider.not_found';
 
 export class ModelCatalogError extends Error {
   readonly code: ModelCatalogErrorCode;

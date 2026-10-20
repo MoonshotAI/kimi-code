@@ -5,7 +5,7 @@ import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { ConfigStore } from '#/features/config/index';
-import { parseMediaRefUrl } from '#/features/media/ref';
+import { parseKimiFileUrl } from '#/features/files/index';
 import { PlanRef } from '#/features/plan/index';
 import { PermissionRef } from '#/features/permission/index';
 import {
@@ -100,7 +100,6 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'cron.fired',
   'error',
   'warning',
-  'goal.updated',
   'context.spliced',
   'agent.status.updated',
   'prompt.submitted',
@@ -742,7 +741,7 @@ export class SessionBroadcaster {
         }
         const source = record['source'] as { kind?: unknown; ref?: unknown } | undefined;
         if (source?.kind !== 'store' || typeof source.ref !== 'string') return part;
-        if (parseMediaRefUrl(source.ref) === undefined) return part;
+        if (parseKimiFileUrl(source.ref) === undefined) return part;
         const inlined = await inline(sessionId, source.ref).catch(() => undefined);
         return inlined === undefined ? part : { ...record, source: { kind: 'url', url: inlined } };
       }),
@@ -835,7 +834,6 @@ export class SessionBroadcaster {
       }
       case 'todo.updated':
       case 'skill.activated':
-      case 'goal.updated':
       case 'cron.fired': {
         if (type !== 'todo.updated') {
           this.dispatch(state, type, { ...withoutAgentId(event), agentId, sessionId: state.sessionId }, false);

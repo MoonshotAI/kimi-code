@@ -14,17 +14,17 @@
 import { mkdirSync } from 'node:fs';
 import process from 'node:process';
 
-import { createUserMessage } from '@moonshot-ai/agent-core';
-import { createKimiHarness } from '@moonshot-ai/kimi-code-sdk';
+import { createKimiHarness, type Event } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, test } from 'vitest';
 
-import { getVersion } from '#/cli/version';
+import { createKimiCodeHostIdentity, getVersion } from '#/cli/version';
 
 const DEFAULT_PROMPT = 'Reply with a single word: hi';
 const DEFAULT_WORKDIR = '/tmp/kimi-e2e';
 const TURN_TIMEOUT_MS = 60_000;
 
 const ENABLED = process.env['KIMI_E2E_REAL'] === '1';
+type TurnEndedEvent = Extract<Event, { readonly type: 'turn.ended' }>;
 
 describe.skipIf(!ENABLED)('SDK e2e — real LLM smoke', () => {
   test(
@@ -41,28 +41,37 @@ describe.skipIf(!ENABLED)('SDK e2e — real LLM smoke', () => {
           `[smoke] prompt=${JSON.stringify(prompt)}\n`,
       );
 
-      const harness = await createKimiHarness({
-        identity: 'kimi-code-cli',
-        uiMode: 'print',
-        workDir,
-        version,
+      const harness = createKimiHarness({
+        identity: createKimiCodeHostIdentity(version),
       });
 
       try {
-        const session = await harness.createSession();
-        process.stderr.write(`[smoke] session created: ${session.id}\n`);
-        if (modelAlias !== undefined) {
-          const { AgentModelRef } = await import('@moonshot-ai/agent-core');
-          const agentModel = session.main.resolve(AgentModelRef);
-          if (agentModel === undefined) throw new Error('provider-catalog agent model is not available');
-          await agentModel.setModel(modelAlias);
-        }
-
-        const result = await session.main.run(createUserMessage(prompt), {
-          timeoutMs: TURN_TIMEOUT_MS,
+        const session = await harness.createSession({
+          workDir,
+          model: modelAlias,
         });
-        process.stderr.write(`[smoke] turn done outcome=${result.outcome.type}\n`);
-        expect(result.outcome.type).toBe('done');
+        process.stderr.write(`[smoke] session created: ${session.id}\n`);
+
+        const turnEnded = new Promise<TurnEndedEvent>((resolve) => {
+          const off = session.onEvent((event) => {
+            const payload = JSON.stringify(event).slice(0, 500);
+            process.stdout.write(`[smoke][event:${event.type}] ${payload}\n`);
+            if (event.type === 'turn.ended') {
+              off();
+              resolve(event);
+            }
+          });
+        });
+
+        await session.prompt(prompt);
+        process.stderr.write('[smoke] prompt dispatched\n');
+
+        const event = await turnEnded;
+        process.stderr.write(`[smoke] turn.ended reason=${event.reason}\n`);
+        if (event.error !== undefined) {
+          process.stderr.write(`[smoke] error=${event.error.message}\n`);
+        }
+        expect(event.reason).toBe('completed');
       } finally {
         await harness.close().catch(() => {});
       }

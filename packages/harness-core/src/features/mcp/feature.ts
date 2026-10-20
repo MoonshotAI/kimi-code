@@ -20,7 +20,8 @@ import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 import { join } from 'pathe';
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
-import { useAgentRuntime, useBlobs, useLoopEvent } from '#/runtime/index';
+import { KimiFileRegistryRef } from '#/features/files/index';
+import { useAgentRuntime, useLoopEvent } from '#/runtime/index';
 import type { AgentRuntime } from '#/runtime/index';
 
 import { loadMcpServers } from './config/loader';
@@ -242,10 +243,12 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, McpEvent> {
       const fire = useFire();
       useReady(initialLoad);
 
-      const blobs = useBlobs();
+      const registry = useInject(KimiFileRegistryRef);
       const mediaStore = (): McpMediaStore | undefined => {
         if (props.mediaStore !== undefined) return props.mediaStore;
-        return runtime.resolvers.some((resolver) => resolver.id === 'store-ref') ? blobs : undefined;
+        return runtime.resolvers.some((resolver) => resolver.id === 'store-ref')
+          ? registry.value
+          : undefined;
       };
 
       let disposed = false;

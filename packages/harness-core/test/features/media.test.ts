@@ -31,12 +31,11 @@ import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core
 
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
 import {
-  createMedia,
-  IMAGE_CONFIG_SECTION,
-  MediaLibraryRef,
-  type ImageConfig,
-  type MediaLibraryFace,
-} from '#/features/media/index';
+  createFiles,
+  KimiFileRegistryRef,
+  type KimiFileRegistry,
+} from '#/features/files/index';
+import { createMedia, IMAGE_CONFIG_SECTION, type ImageConfig } from '#/features/media/index';
 import { createNodeOsHost } from '#/features/os/host/index';
 import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/index';
 
@@ -148,7 +147,7 @@ interface StartedApp {
   readonly session: Session;
   readonly main: Agent;
   readonly calls: LlmCall[];
-  readonly library: MediaLibraryFace;
+  readonly library: KimiFileRegistry;
   readonly config: ConfigStore | undefined;
   readonly workDir: string;
 }
@@ -163,7 +162,7 @@ async function startApp(opts: {
   const workDir = await mkdtemp(join(tmpdir(), 'media-work-'));
   tmpDirs.push(workDir);
   const { requester, calls } = createMockRequester(opts.script, opts.model ?? visionModel);
-  let library: MediaLibraryFace | undefined;
+  let library: KimiFileRegistry | undefined;
   let config: ConfigStore | undefined;
   const probe = createFeature('media-probe', {
     app() {
@@ -177,7 +176,7 @@ async function startApp(opts: {
     },
     session() {
       watch(
-        useInject(MediaLibraryRef),
+        useInject(KimiFileRegistryRef),
         (value) => {
           library = value;
         },
@@ -189,6 +188,7 @@ async function startApp(opts: {
   if (opts.withConfig !== false) {
     harness.app.features.add(createConfig({ persist: fakePersist(opts.toml) }));
   }
+  harness.app.features.add(createFiles({ dir: join(workDir, 'files') }));
   harness.app.features.add(
     createMedia({
       workDir,
@@ -248,19 +248,20 @@ function solidPngBytes(width: number, height: number): Promise<Buffer> {
 }
 
 describe('media feature', () => {
-  it('exposes a media library facade that reads stored media by id', async () => {
+  it('stores media behind kimi-file references and reads byte ranges through the registry', async () => {
     const started = await startApp({ script: () => ({ text: 'ok' }) });
     try {
       const bytes = new Uint8Array([10, 20, 30, 40, 50]);
-      const { ref } = await started.session.blobs.put({
+      const { ref } = await started.library.put({
         bytes,
         mimeType: 'image/png',
         filename: 'pix.png',
       });
+      expect(ref).toMatch(/^kimi-file:\/\/f_/);
       const face = started.library;
 
       const file = await face.open(ref);
-      expect(file).toMatchObject({ name: 'pix.png', mediaType: 'image/png', size: bytes.length });
+      expect(file?.meta).toMatchObject({ name: 'pix.png', media_type: 'image/png', size: bytes.length });
       const whole: Uint8Array[] = [];
       for await (const chunk of file!.stream()) whole.push(chunk);
       expect(Buffer.concat(whole)).toEqual(Buffer.from(bytes));
@@ -297,7 +298,18 @@ describe('media feature', () => {
   }, 30_000);
 
   it('reads an image, downsamples it into the store, and wraps it with image tags and a system note', async () => {
-    const started = await startApp({ script: readMediaScript({ path: 'noise.png' }) });
+    let attachment: string | undefined;
+    const started = await startApp({
+      script: (call) => {
+        if (call.messages.at(-1)?.role === 'tool') return { text: 'done' };
+        return {
+          toolCall: {
+            name: 'ReadMediaFile',
+            arguments: JSON.stringify({ path: attachment ?? 'noise.png' }),
+          },
+        };
+      },
+    });
     const png = await noisePngBytes(1200, 900);
     await writeFile(join(started.workDir, 'noise.png'), png);
     const toolMessage = await runToolTurn(started.main, started.calls);
@@ -307,8 +319,8 @@ describe('media feature', () => {
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
     expect(mediaPart.source.kind).toBe('store');
     if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
-    expect(mediaPart.source.ref).toMatch(/^[0-9a-f]{64}$/);
-    const stored = await started.session.blobs.get(mediaPart.source.ref);
+    expect(mediaPart.source.ref).toMatch(/^kimi-file:\/\/f_/);
+    const stored = await started.library.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/jpeg');
     expect(stored?.bytes.length ?? 0).toBeGreaterThan(0);
     expect(stored?.bytes.length ?? Number.MAX_SAFE_INTEGER).toBeLessThanOrEqual(256 * 1024);
@@ -320,6 +332,19 @@ describe('media feature', () => {
     expect(note.text).toContain('Original dimensions: 1200x900 pixels.');
     expect(note.text).toContain('downsampled');
     expect(note.text).toContain('read the result back immediately before continuing.');
+
+    const reference = (
+      await started.library.put({ bytes: png, mimeType: 'image/png', filename: 'attachment.png' })
+    ).ref;
+    attachment = reference;
+    await started.main.loop.runTurn(user('read the attachment'));
+    const attachmentEntry = await lastToolEntry(started.main);
+    const [attachmentOpen, attachmentMedia] = attachmentEntry.message.content;
+    expect(attachmentOpen).toEqual({ type: 'text', text: `<image path="${reference}">` });
+    if (attachmentMedia?.type !== 'image_url') throw new Error('expected an attachment image part');
+    if (attachmentMedia.source.kind !== 'store') throw new Error('expected a store source');
+    expect(attachmentMedia.source.ref).toMatch(/^kimi-file:\/\/f_/);
+    expect((await started.library.get(attachmentMedia.source.ref))?.mimeType).toBe('image/jpeg');
     await started.harness.close();
   }, 60_000);
 
@@ -332,7 +357,7 @@ describe('media feature', () => {
     const mediaPart = toolMessage.content.find((part) => part.type === 'image_url');
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
     if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
-    const stored = await started.session.blobs.get(mediaPart.source.ref);
+    const stored = await started.library.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/png');
     expect(stored?.bytes.slice(0, 8)).toEqual(
       new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -359,7 +384,7 @@ describe('media feature', () => {
     const mediaPart = toolMessage.content.find((part) => part.type === 'image_url');
     if (mediaPart?.type !== 'image_url') throw new Error('expected an image_url part');
     if (mediaPart.source.kind !== 'store') throw new Error('expected a store source');
-    const stored = await started.session.blobs.get(mediaPart.source.ref);
+    const stored = await started.library.get(mediaPart.source.ref);
     expect(stored?.mimeType).toBe('image/png');
     expect(Buffer.from(stored?.bytes ?? []).equals(png)).toBe(true);
     expect(
@@ -475,7 +500,7 @@ describe('media feature', () => {
     if (stored?.type !== 'image_url' || stored.source.kind !== 'store') {
       throw new Error('expected a stored image in the recorded history');
     }
-    expect((await started.session.blobs.get(stored.source.ref))?.mimeType).toBe('image/jpeg');
+    expect((await started.library.get(stored.source.ref))?.mimeType).toBe('image/jpeg');
     await started.harness.close();
   }, 60_000);
 
@@ -510,7 +535,7 @@ describe('media feature', () => {
   it('materializes media refs to inline base64 by the time the requester sees them', async () => {
     const started = await startApp({ script: () => ({ text: 'ok' }) });
     const png = await solidPngBytes(64, 48);
-    const { ref } = await started.session.blobs.put({
+    const { ref } = await started.library.put({
       bytes: new Uint8Array(png),
       mimeType: 'image/png',
       filename: 'small.png',

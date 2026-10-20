@@ -288,8 +288,6 @@
   "dependencies": {
     "@base-ui/react": "^1.0.0",
     "@fontsource-variable/inter": "5.2.8",
-    "@moonshot-ai/agent-core": "workspace:^",
-    "@moonshot-ai/harness-core": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",

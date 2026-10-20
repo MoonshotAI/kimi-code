@@ -1,11 +1,9 @@
 /**
  * `kimi acp` sub-command.
  *
- * Starts the Agent Client Protocol (ACP) server over stdio so ACP-compatible
- * clients can drive a kimi-code session. The engine is composed locally in
- * `#/cli/sub/acp-harness` from agent-core + harness-core features (including
- * the feature-acp transport) — intentionally not via the SDK's
- * `createKimiHarness`.
+ * Starts the Agent Client Protocol (ACP) server backed directly by the
+ * DI × Scope agent engine (`agent-core-v2`) over stdio, so ACP-compatible
+ * clients can drive a kimi-code session.
  *
  * Wire-up:
  *  - `--login` pivots into the shared device-code login flow (the entry point
@@ -16,8 +14,9 @@
  *    reads from, and `process.argv[1]` is advertised as the legacy
  *    `_meta['terminal-auth'].command` fallback.
  *
- * The harness is loaded via a lazy dynamic import so parsing the CLI does not
- * initialize the engine.
+ * `@moonshot-ai/acp-server` (and its `agent-core-v2` engine) is loaded via a
+ * lazy dynamic import so parsing the CLI does not initialize the ACP engine —
+ * mirroring the `kimi server run` v2 routing in `#/cli/sub/server/run.ts`.
  */
 
 import type { Command } from 'commander';
@@ -58,12 +57,14 @@ export function registerAcpCommand(parent: Command): void {
       // path to this very binary so the client can spawn it for login.
       const legacyCommand = process.argv[1];
       try {
-        const { runAcpHarness } = await import('#/cli/sub/acp-harness');
-        await runAcpHarness({
+        const { runAcpServer } = await import('@moonshot-ai/acp-server');
+        await runAcpServer({
           homeDir: getDataDir(),
           agentInfo: { name: 'Kimi Code CLI', version: getVersion() },
-          terminalAuthEnv,
-          terminalAuthLegacyCommand: legacyCommand,
+          ...(terminalAuthEnv ? { terminalAuthEnv } : {}),
+          ...(legacyCommand !== undefined && legacyCommand.length > 0
+            ? { terminalAuthLegacyCommand: legacyCommand }
+            : {}),
         });
         process.exit(0);
       } catch (error) {

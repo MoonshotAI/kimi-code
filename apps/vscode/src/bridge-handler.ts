@@ -45,12 +45,6 @@ export class BridgeHandler {
           this.captureFileBaseline(session, filePath, webviewIds);
         },
         log: (message, error) => this.logRuntimeError(message, error),
-        knownWorkDirs: () => {
-          const root = this.workspaceRoot;
-          const dirs = new Set<string>(this.customWorkDirs.values());
-          if (root !== null) dirs.add(root);
-          return [...dirs];
-        },
       });
     } catch (error) {
       throw new Error(
@@ -58,7 +52,7 @@ export class BridgeHandler {
         { cause: error },
       );
     }
-    this.baselineManager = new BaselineManager(globalStoragePath, this.runtime.homeDir);
+    this.baselineManager = new BaselineManager(globalStoragePath, this.runtime.harness.homeDir);
     this.fileManager = new FileManager(this.baselineManager, broadcast);
   }
 
@@ -158,6 +152,7 @@ export class BridgeHandler {
       fileManager: this.fileManager,
       baselineManager: this.baselineManager,
       runtime: this.runtime,
+      harness: this.runtime.harness,
       reloadWebview: () => this.reloadWebview(webviewId),
       showLogs: this.showLogs,
       logError: (message, error) => this.logRuntimeError(message, error),
@@ -176,17 +171,21 @@ export class BridgeHandler {
         return runtime;
       },
       resumeSession: async (sessionId) => {
-        const workDir = this.requireWorkDir(webviewId);
         const current = this.runtime.getSession(sessionId);
-        if (current !== undefined && !areSameFsPath(current.workDir, workDir)) {
+        const session =
+          current?.session ??
+          (await this.runtime.harness.resumeSession({ id: sessionId, includeSubagents: true }));
+        if (!areSameFsPath(session.workDir, this.requireWorkDir(webviewId))) {
+          if (current === undefined) {
+            await session.close().catch((error: unknown) => {
+              this.logRuntimeError("Unable to close a rejected session", error);
+            });
+          }
           throw new Error("The selected session belongs to a different working directory.");
         }
-        const session =
-          current?.engineSession ?? (await this.runtime.resumeEngineSession(workDir, sessionId));
         const runtime = await this.runtime.attachResumedSession(
           webviewId,
           session,
-          workDir,
           VSCodeSettings.yoloMode,
         );
         this.fileManager.setSession(webviewId, baselineSession(runtime));
@@ -290,9 +289,7 @@ export class BridgeHandler {
 
   async getBaselineContent(sessionId: string, filePath: string): Promise<string> {
     const active = this.runtime.getSession(sessionId)?.summary;
-    const summaries = active === undefined ? await this.runtime.listSessions() : [];
-    const summary =
-      active ?? summaries.find((candidate) => candidate.id === sessionId);
+    const summary = active ?? (await this.runtime.harness.listSessions({ sessionId }))[0];
     if (summary === undefined) throw new Error("Session was not found.");
     return this.baselineManager.getContent(baselineSummary(summary), filePath);
   }
@@ -323,7 +320,11 @@ function errorDetail(error: unknown): string {
 }
 
 function baselineSession(runtime: SessionRuntime): BaselineSession {
-  return baselineSummary(runtime.summary);
+  return baselineSummary({
+    id: runtime.id,
+    workDir: runtime.session.workDir,
+    metadata: runtime.summary?.metadata,
+  });
 }
 
 function baselineSummary(summary: Pick<BaselineSession, "id" | "workDir" | "metadata">): BaselineSession {

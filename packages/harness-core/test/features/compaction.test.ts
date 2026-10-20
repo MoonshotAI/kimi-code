@@ -113,14 +113,14 @@ async function startCompactionTest(options: {
     maxAutoAttempts: options.maxAutoAttempts,
     onEvent: (event) => events.push(event),
   });
-  await harness.app.features.add(feature);
+  harness.app.features.add(feature);
   let face: Readonly<ShallowRef<CompactionFace | undefined>> | undefined;
   const probe = createFeature('compaction-probe', {
     agent: () => {
       face = useInject(CompactionRef);
     },
   });
-  await harness.app.features.add(probe);
+  harness.app.features.add(probe);
   const session = await harness.app.create({ sessionId: 's1' });
   const agent = await harness.ensureAgent(session, 'main');
   setRequester(harness, 's1', 'main', options.requester);

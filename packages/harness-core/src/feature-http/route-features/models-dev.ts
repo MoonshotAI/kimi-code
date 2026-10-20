@@ -94,11 +94,7 @@ export function useModelsDevRoutes(prefix: string): void {
           );
           return;
         }
-        const providers = store.providers();
-        for (const providerId of providers) {
-          store.refresh(providerId);
-        }
-        sendOk(request, response, { changed: [], unchanged: providers, failed: [] });
+        sendOk(request, response, await store.refresh());
         return;
       }
       if (action === 'refresh_oauth') {
@@ -112,7 +108,17 @@ export function useModelsDevRoutes(prefix: string): void {
           );
           return;
         }
-        sendOk(request, response, await tokens.refresh());
+        const store = catalog.value;
+        if (store === undefined) {
+          sendErr(
+            request,
+            response,
+            ErrorCode.PROVIDER_CATALOG_UNAVAILABLE,
+            'model catalog is unavailable (provider-catalog feature is not installed)',
+          );
+          return;
+        }
+        sendOk(request, response, await store.refresh({ scope: 'oauth' }));
         return;
       }
       const facade = modelsDevFacade(request, response);

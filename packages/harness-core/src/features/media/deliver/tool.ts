@@ -12,7 +12,13 @@ import type { ContentPart } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmModelSpec } from '@moonshot-ai/agent-core/llm/request';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
-import type { OsHost } from '#/features/os/host/index';
+import {
+  isKimiFileUrl,
+  readStoredFile,
+  type KimiFileRegistry,
+  type StoredFile,
+} from '#/features/files/index';
+import type { OsFsPort, OsHost } from '#/features/os/host/index';
 import { renderPrompt } from '#/features/os/text/render-prompt';
 
 import type { MediaContent } from '../store';
@@ -40,6 +46,16 @@ export interface CreateReadMediaFileToolProps {
   readonly modelSpec: () => LlmModelSpec | undefined;
   readonly limits: () => ImageLimits;
   readonly host?: OsHost;
+  readonly files?: () => Pick<KimiFileRegistry, 'open'> | undefined;
+}
+
+type ReadMediaFs = Pick<OsFsPort, 'stat' | 'readBytes'>;
+
+function attachmentReadFs(file: StoredFile): ReadMediaFs {
+  return {
+    stat: () => Promise.resolve({ isFile: true, isDirectory: false, size: file.meta.size }),
+    readBytes: (_path, n) => readStoredFile(file, n),
+  };
 }
 
 interface ReadMediaArgs {
@@ -209,8 +225,8 @@ export function createReadMediaFileTool(
         path: {
           type: 'string',
           description:
-            'Path to an image or video file. Relative paths resolve against the working directory; ' +
-            'a path outside the working directory must be absolute. ' +
+            'Path to an image or video file, or a kimi-file:// attachment reference in the current session. ' +
+            'Relative filesystem paths resolve against the working directory; a path outside the working directory must be absolute. ' +
             'Directories and text files are not supported.',
         },
         region: {
@@ -266,12 +282,34 @@ export function createReadMediaFileTool(
         return { content: [{ type: 'text', text: READ_MEDIA_HOST_UNAVAILABLE }], isError: true };
       }
       await host.environment.ready;
-      const filePath = path.resolve(props.workDir, args.path);
+      let fs: ReadMediaFs = host.fs;
+      let filePath = args.path;
+      let sourceName = args.path;
+      if (isKimiFileUrl(args.path)) {
+        const files = props.files?.();
+        const file = files === undefined ? undefined : await files.open(args.path);
+        if (file === undefined) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: `Attachment ${JSON.stringify(args.path)} is not available in the current session.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        fs = attachmentReadFs(file);
+        sourceName = file.meta.name;
+      } else {
+        filePath = path.resolve(props.workDir, args.path);
+        sourceName = filePath;
+      }
       const model = props.modelSpec();
       const providerType = model?.provider;
       try {
-        const header = await host.fs.readBytes(filePath, MEDIA_SNIFF_BYTES);
-        const fileType = detectFileType(filePath, header, 'media');
+        const header = await fs.readBytes(filePath, MEDIA_SNIFF_BYTES);
+        const fileType = detectFileType(sourceName, header, 'media');
         if (fileType.kind === 'text') {
           return {
             content: [
@@ -340,7 +378,7 @@ export function createReadMediaFileTool(
             isError: true,
           };
         }
-        const stat = await host.fs.stat(filePath);
+        const stat = await fs.stat(filePath);
         if (stat.size === 0) {
           return { content: [{ type: 'text', text: `"${args.path}" is empty.` }], isError: true };
         }
@@ -414,7 +452,7 @@ export function createReadMediaFileTool(
             isError: true,
           };
         }
-        const data = await host.fs.readBytes(filePath);
+        const data = await fs.readBytes(filePath);
         let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
         let outBytes: Uint8Array = data;
         let outMime = fileType.mimeType;
@@ -531,7 +569,7 @@ export function createReadMediaFileTool(
         const ref = await props.putMedia({
           bytes: outBytes,
           mimeType: outMime,
-          filename: path.basename(filePath),
+          filename: path.basename(sourceName),
         });
         const tag = fileType.kind === 'image' ? 'image' : 'video';
         const mediaPart: ContentPart =

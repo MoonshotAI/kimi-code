@@ -15,17 +15,7 @@ import {
 } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, type ConfigStore } from '#/features/config/index';
-import {
-  GOAL_ALREADY_EXISTS,
-  GOAL_NOT_FOUND,
-  GOAL_NOT_RESUMABLE,
-  GOAL_OBJECTIVE_EMPTY,
-  GOAL_OBJECTIVE_TOO_LONG,
-  GOAL_STATUS_INVALID,
-  GoalError,
-  GoalRef,
-} from '#/features/goal/index';
-import { parseMediaRefUrl } from '#/features/media/ref';
+import { parseKimiFileUrl } from '#/features/files/index';
 import { PermissionRef, type PermissionMode } from '#/features/permission/index';
 import { PlanRef } from '#/features/plan/index';
 import {
@@ -620,25 +610,6 @@ export function useSessionRoutes(prefix: string): void {
           }
         }
       }
-      if (config.goalObjective !== undefined) {
-        await agentFacade(root, GoalRef, session.id, MAIN_AGENT_ID)?.createGoal({ objective: config.goalObjective });
-      }
-      if (config.goalControl !== undefined) {
-        const goal = agentFacade(root, GoalRef, session.id, MAIN_AGENT_ID);
-        if (goal !== undefined) {
-          switch (config.goalControl) {
-            case 'pause':
-              await goal.pauseGoal({});
-              break;
-            case 'resume':
-              await goal.resumeGoal({ continueIfPaused: true, continueIfBlocked: true });
-              break;
-            case 'cancel':
-              await goal.cancelGoal({});
-              break;
-          }
-        }
-      }
     } catch (error) {
       if (sendAgentConfigErr(request, response, error)) return false;
       throw error;
@@ -694,8 +665,6 @@ interface SessionAgentConfigInput {
   readonly planMode?: boolean;
   readonly towerMode?: boolean;
   readonly towerBase?: string;
-  readonly goalObjective?: string;
-  readonly goalControl?: 'pause' | 'resume' | 'cancel';
 }
 
 export async function sessionView(
@@ -891,8 +860,6 @@ function readAgentConfig(body: unknown): SessionAgentConfigInput | string | unde
     planMode?: boolean;
     towerMode?: boolean;
     towerBase?: string;
-    goalObjective?: string;
-    goalControl?: 'pause' | 'resume' | 'cancel';
   } = {};
   if (record['model'] !== undefined) {
     if (typeof record['model'] !== 'string') return 'agent_config.model must be a string';
@@ -937,19 +904,6 @@ function readAgentConfig(body: unknown): SessionAgentConfigInput | string | unde
     }
     input.towerBase = record['tower_base'];
   }
-  if (record['goal_objective'] !== undefined) {
-    if (typeof record['goal_objective'] !== 'string') {
-      return 'agent_config.goal_objective must be a string';
-    }
-    input.goalObjective = record['goal_objective'];
-  }
-  if (record['goal_control'] !== undefined) {
-    const control = record['goal_control'];
-    if (control !== 'pause' && control !== 'resume' && control !== 'cancel') {
-      return 'agent_config.goal_control must be one of pause, resume, cancel';
-    }
-    input.goalControl = control;
-  }
   return input;
 }
 
@@ -970,32 +924,7 @@ function sendAgentConfigErr(request: Request, response: Response, error: unknown
     sendErr(request, response, ErrorCode.CONFIG_UNAVAILABLE, error.message);
     return true;
   }
-  if (error instanceof GoalError) {
-    const code = goalErrorCodeOf(error.code);
-    if (code !== undefined) {
-      sendErr(request, response, code, error.message);
-      return true;
-    }
-  }
   return false;
-}
-
-function goalErrorCodeOf(code: string): number | undefined {
-  switch (code) {
-    case GOAL_ALREADY_EXISTS:
-      return ErrorCode.GOAL_ALREADY_EXISTS;
-    case GOAL_NOT_FOUND:
-      return ErrorCode.GOAL_NOT_FOUND;
-    case GOAL_STATUS_INVALID:
-      return ErrorCode.GOAL_STATUS_INVALID;
-    case GOAL_NOT_RESUMABLE:
-      return ErrorCode.GOAL_NOT_RESUMABLE;
-    case GOAL_OBJECTIVE_EMPTY:
-      return ErrorCode.GOAL_OBJECTIVE_EMPTY;
-    case GOAL_OBJECTIVE_TOO_LONG:
-      return ErrorCode.GOAL_OBJECTIVE_TOO_LONG;
-  }
-  return undefined;
 }
 
 function undoErrorDetails(error: UndoFeatureError): { requested?: number; undoable?: number } | null {
@@ -1098,7 +1027,7 @@ function mapContentPart(part: ContentPart): unknown {
 function wireMediaSourceOf(source: MediaSource): unknown {
   switch (source.kind) {
     case 'store': {
-      const ref = parseMediaRefUrl(source.ref);
+      const ref = parseKimiFileUrl(source.ref)?.fileId;
       return ref === undefined
         ? { kind: 'url', url: source.ref }
         : { kind: 'session_media', file_id: ref };
@@ -1113,7 +1042,7 @@ function wireMediaSourceOf(source: MediaSource): unknown {
 }
 
 function wireMediaSourceFromUrl(url: string): unknown {
-  const ref = parseMediaRefUrl(url);
+  const ref = parseKimiFileUrl(url)?.fileId;
   if (ref !== undefined) return { kind: 'session_media', file_id: ref };
   const match = /^data:([^;]+);base64,(.*)$/.exec(url);
   return match === null

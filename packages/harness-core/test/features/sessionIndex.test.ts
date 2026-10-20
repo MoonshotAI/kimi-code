@@ -121,14 +121,14 @@ async function mountSessionIndex(options: {
   });
   const harness = createHarness({ space: options.space });
   harnesses.push(harness);
-  await harness.app.features.add(
+  harness.app.features.add(
     createSessionIndex({
       dbPath: options.dbPath ?? ':memory:',
       sessionDir: options.sessionDir,
       now: options.now,
     }),
   );
-  await harness.app.features.add(probe);
+  harness.app.features.add(probe);
   await harness.app.features.delete('session-index-settle-noop');
   const face = capture.face?.value;
   if (face === undefined) throw new Error('session index face is not exposed');

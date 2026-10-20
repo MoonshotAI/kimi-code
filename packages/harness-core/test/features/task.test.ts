@@ -160,10 +160,10 @@ async function startTaskTest(options?: {
   const probe = captureTask();
   const bg = new Map<string, BgHandle>();
   const harness = createHarness({ space: memoryHarnessSpace() });
-  await harness.app.features.add(taskFeature);
-  await harness.app.features.add(probe.feature);
-  await harness.app.features.add(bindTestBgTool(bg));
-  if (options?.fg !== undefined) await harness.app.features.add(bindTestFgTool(options.fg));
+  harness.app.features.add(taskFeature);
+  harness.app.features.add(probe.feature);
+  harness.app.features.add(bindTestBgTool(bg));
+  if (options?.fg !== undefined) harness.app.features.add(bindTestFgTool(options.fg));
   const session = await harness.app.create({ sessionId: 'sess' });
   let main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());

@@ -6,7 +6,7 @@ import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
-import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
 
 import { createConfig, ConfigRef, type ConfigStore } from '#/features/config/index';
@@ -132,7 +132,7 @@ interface PlanTestEnv {
   readonly blobs: Session['blobs'];
   readonly puts: { bytes: Uint8Array; ref: string }[];
   readonly agent: () => Agent;
-  runTurn(text?: string): Promise<void>;
+  runTurn(text?: string): Promise<TurnOutcome>;
   remount(): Promise<void>;
 }
 
@@ -143,14 +143,14 @@ async function startPlanTest(options?: {
 }): Promise<PlanTestEnv> {
   const harness = createHarness({ space: memoryHarnessSpace() });
   const storage = createMemoryPlanStorage();
-  if (options?.withConfig === true) await harness.app.features.add(createConfig({}));
-  if (options?.withInteraction !== false) await harness.app.features.add(interaction);
+  if (options?.withConfig === true) harness.app.features.add(createConfig({}));
+  if (options?.withInteraction !== false) harness.app.features.add(interaction);
   const probe = capturePlan();
   const interactionsProbe = captureInteractions();
-  await harness.app.features.add(createPlan({ storage, permissionMode: options?.permissionMode }));
-  await harness.app.features.add(probe.feature);
-  await harness.app.features.add(interactionsProbe.feature);
-  await harness.app.features.add(bindTestTools());
+  harness.app.features.add(createPlan({ storage, permissionMode: options?.permissionMode }));
+  harness.app.features.add(probe.feature);
+  harness.app.features.add(interactionsProbe.feature);
+  harness.app.features.add(bindTestTools());
   const session = await harness.app.create({ sessionId: 's1' });
   const puts: { bytes: Uint8Array; ref: string }[] = [];
   const basePut = session.blobs.put.bind(session.blobs);
@@ -174,6 +174,7 @@ async function startPlanTest(options?: {
       const outcome = await agent.loop.runTurn(user(text));
       expect(outcome.type).toBe('done');
       await agent.flush();
+      return outcome;
     },
     remount: async () => {
       await session.close('main');
@@ -263,10 +264,10 @@ describe('plan feature', () => {
   it('registers the defaultPlanMode config section and fails agent setup without the interaction feature', async () => {
     const configProbe = captureConfig();
     const harness = createHarness({ space: memoryHarnessSpace() });
-    await harness.app.features.add(createConfig({}));
-    await harness.app.features.add(configProbe.feature);
-    await harness.app.features.add(interaction);
-    await harness.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
+    harness.app.features.add(createConfig({}));
+    harness.app.features.add(configProbe.feature);
+    harness.app.features.add(interaction);
+    harness.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
     await tick();
     expect(configProbe.face()?.get('defaultPlanMode')).toBe(false);
     await harness.close();
@@ -276,7 +277,7 @@ describe('plan feature', () => {
     broken.app.on('unit.error', (event) => {
       errors.push((event as { error?: unknown }).error);
     });
-    await broken.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
+    broken.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
     const session = await broken.app.create({ sessionId: 's1' });
     await broken.ensureAgent(session, 'main');
     await tick();
@@ -465,7 +466,11 @@ describe('plan feature', () => {
 
     response = { decision: 'rejected', selectedLabel: 'Reject and Exit' };
     queue = [{ toolCall: { name: 'ExitPlanMode', arguments: '{}' } }, { text: 'done' }];
-    await env.runTurn();
+    const rejectAndExit = await env.runTurn();
+    expect(rejectAndExit).toMatchObject({
+      type: 'done',
+      cause: { reason: 'stop_turn', by: expect.stringMatching(/^call-\d+$/) },
+    });
     expect(lastResult()).toBe('Plan rejected by user. Plan mode deactivated.');
     expect(queue).toHaveLength(1);
     expect(await plan.status()).toBeNull();
@@ -473,7 +478,11 @@ describe('plan feature', () => {
     response = { decision: 'rejected' };
     await enterWithContent('p-reject', '# Plan Reject');
     queue = [{ toolCall: { name: 'ExitPlanMode', arguments: '{}' } }, { text: 'done' }];
-    await env.runTurn();
+    const rejected = await env.runTurn();
+    expect(rejected).toMatchObject({
+      type: 'done',
+      cause: { reason: 'stop_turn', by: expect.stringMatching(/^call-\d+$/) },
+    });
     expect(lastResult()).toBe('Plan rejected by user. Plan mode remains active.');
     expect(queue).toHaveLength(1);
     expect((await plan.status())?.id).toBe('p-reject');

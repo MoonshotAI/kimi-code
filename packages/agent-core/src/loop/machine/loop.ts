@@ -1,12 +1,11 @@
 import { assign, emit, enqueueActions, fromCallback, fromPromise, raise, setup } from 'xstate';
 
-import type { HistoryMessage, ToolEntry } from '#/history/message';
+import type { UserEntry } from '#/history/message';
 import { toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmOutcome } from '#/llm/response';
 import type { ToolExecutor } from '#/tool/index';
 import type { AbortScope } from '#/utils/abort';
-import type { LoopCommand, LoopInput, UnfinishedTurn } from '../contract/command';
-import type { LoopEmitted, HookFailedEvent } from '../contract/emitted';
+import type { HookFailedEvent } from '../contract/emitted';
 import type {
   HookLifecycleEvent,
   HookPoint,
@@ -15,7 +14,8 @@ import type {
   TurnStartingEvent,
 } from '../contract/hook';
 import type { QueuedItem } from '../contract/inbox';
-import { CLOSED, CRASHED, type Cause, type StepOutcome } from '../contract/outcome';
+import { CLOSED, type Cause, type TurnOutcome } from '../contract/outcome';
+import type { LoopFact, LoopSignal } from '../contract/process';
 import {
   hookFailedEvent,
   hookFailureEntry,
@@ -43,30 +43,16 @@ import {
   abortReason,
   allSettled,
   assistantEntryOf,
-  canContinue,
-  cancel,
+  beginTurn,
   decide,
-  dequeueTurn,
   draftOutcome,
-  drainPatch,
-  hasTrigger,
   initialContext,
   isAborted,
-  isResumable,
-  newTurn,
-  notifyPatch,
-  releasePending,
-  remindPatch,
-  resumedTurn,
-  runTurnPatch,
   settle,
-  steer,
   stepOf,
-  submitPatch,
-  trailingCalls,
   turnOf,
-  type LoopMachineContext,
   type AppendedItem,
+  type LoopMachineContext,
   type TurnState,
 } from './context';
 import { createRequestActor, type LoopLlmRequester, type RequestActorEvent } from './request-actor';
@@ -79,7 +65,7 @@ export interface CreateLoopMachineOptions {
 }
 
 type LoopEvent =
-  | LoopCommand
+  | LoopSignal
   | ToolSignal
   | RequestActorEvent
   | HookFailedEvent
@@ -88,27 +74,23 @@ type LoopEvent =
   | { type: 'loop.close' }
   | { type: `xstate.error.actor.${string}`; error: unknown; actorId: string };
 
-interface FailureEnqueue {
+interface FactEnqueue {
   (action: () => void): void;
-  emit(event: LoopEmitted): void;
+  emit(event: LoopFact): void;
 }
 
-function settleUnfinished(
+function queueNotify(enqueue: FactEnqueue, entries: readonly UserEntry[]): void {
+  if (entries.length > 0) enqueue.emit({ type: 'inbox.notify', entries });
+}
+
+function release(
+  enqueue: FactEnqueue & { assign(patch: Partial<LoopMachineContext>): void },
   context: LoopMachineContext,
-  unfinished: UnfinishedTurn,
-  outcome: StepOutcome,
-): { events: LoopEmitted[]; messages: HistoryMessage[] } {
-  const { turnId, step } = unfinished;
-  const events: LoopEmitted[] = [];
-  const entries: ToolEntry[] = [];
-  for (const toolCall of trailingCalls(context.messages).unresolved) {
-    const result = abortedToolOutcome(toolCall, CRASHED);
-    entries.push(result.entry);
-    events.push({ type: 'tool.ended', toolCallId: toolCall.id, outcome: result, detached: false });
-    events.push({ type: 'message.appended', turnId, step, source: 'tool', entry: result.entry });
-  }
-  if (unfinished.stepUnfinished) events.push({ type: 'step.ended', turnId, step, outcome });
-  return { events, messages: [...context.messages, ...entries] };
+  outcome: TurnOutcome,
+): void {
+  const turn = turnOf(context);
+  enqueue.assign({ turn: { ...turn, pending: [], outcome } });
+  enqueue.emit({ type: 'turn.released', pending: turn.pending });
 }
 
 export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: CreateLoopMachineOptions) {
@@ -116,7 +98,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
     if (failure.paused && failure.hookId !== undefined) hooks.suspend(failure.hookId);
   };
   const reportHookFailures = (
-    enqueue: FailureEnqueue,
+    enqueue: FactEnqueue,
     point: HookPoint,
     turn: TurnState,
     reports: readonly HookFailureReport[],
@@ -130,14 +112,13 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
 
   return setup({
     types: {
-      input: {} as LoopInput,
       context: {} as LoopMachineContext,
       events: {} as LoopEvent,
-      emitted: {} as LoopEmitted,
+      emitted: {} as LoopFact,
     },
     actors: {
       requestActor: createRequestActor(requester),
-      toolActor: createToolMachine(executor, hooks),
+      toolActor: createToolMachine(executor),
       scopeGuard: fromCallback<LoopEvent, { scope: AbortScope }>(({ input }) => () => input.scope.abort()),
       turnStartingActor: fromPromise<TurnStartingRun, { event: TurnStartingEvent; signal: AbortSignal }>(
         ({ input }) => runTurnStarting(hooks, input.event, input.signal),
@@ -174,30 +155,6 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       aborted: ({ context }) => isAborted(context),
     },
     actions: {
-      setContext: enqueueActions(({ event, enqueue }) => {
-        if (event.type !== 'input.set_context') return;
-        const { reply } = event;
-        enqueue.assign({ messages: event.messages });
-        const ack = { type: 'context.settled' as const, messages: event.messages, reason: event.reason };
-        enqueue.emit(ack);
-        if (reply !== undefined) enqueue(() => reply(ack));
-      }),
-      setSystemPrompt: enqueueActions(({ context, event, enqueue }) => {
-        if (event.type !== 'input.set_system_prompt') return;
-        const { reply } = event;
-        enqueue.assign({ profile: { ...context.profile, systemPrompt: event.systemPrompt } });
-        const ack = { type: 'system_prompt.settled' as const, systemPrompt: event.systemPrompt };
-        enqueue.emit(ack);
-        if (reply !== undefined) enqueue(() => reply(ack));
-      }),
-      setTools: enqueueActions(({ context, event, enqueue }) => {
-        if (event.type !== 'input.set_tools') return;
-        const { reply } = event;
-        enqueue.assign({ profile: { ...context.profile, tools: [...event.tools] } });
-        const ack = { type: 'tools.settled' as const, tools: [...event.tools] };
-        enqueue.emit(ack);
-        if (reply !== undefined) enqueue(() => reply(ack));
-      }),
       turnStartingFailed: enqueueActions(({ context, enqueue }, params: { failures: readonly HookFailure[] }) => {
         const turn = turnOf(context);
         const reports = hookFailureReports('turn.starting', params.failures);
@@ -206,6 +163,9 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
           turn: { ...turn, pending: [...turn.pending, ...reports.map(({ entry }) => ({ kind: 'notify' as const, entry }))] },
         });
         reportHookFailures(enqueue, 'turn.starting', turn, reports);
+      }),
+      turnStartingBlocked: enqueueActions(({ context, enqueue }, params: { cause: Cause }) => {
+        release(enqueue, context, { type: 'blocked', at: 'turn.starting', cause: params.cause });
       }),
       appendItems: enqueueActions(({ context, enqueue }, params: { items: readonly AppendedItem[] }) => {
         const turn = turnOf(context);
@@ -233,32 +193,26 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
           point,
           reports: hookFailureReports(point, [failure]),
         }));
-        enqueue.assign({
-          ...decide(context, params.outcome),
-          ...notifyPatch(context, groups.flatMap(({ reports }) => reports.map(({ entry }) => entry))),
-        });
+        enqueue.assign(decide(context, params.outcome));
         for (const { point, reports } of groups) reportHookFailures(enqueue, point, turn, reports);
+        queueNotify(enqueue, groups.flatMap(({ reports }) => reports.map(({ entry }) => entry)));
       }),
       stepStartingSettled: enqueueActions(({ context, enqueue }, params: StepStartingRun) => {
         const turn = turnOf(context);
         const reports = hookFailureReports('step.starting', params.failures);
-        enqueue.assign({
-          ...(params.rewrittenBy === undefined ? {} : { messages: [...params.messages] }),
-          ...notifyPatch(context, reports.map(({ entry }) => entry)),
-        });
         if (params.rewrittenBy !== undefined) {
+          enqueue.assign({ messages: [...params.messages] });
           enqueue.emit({ type: 'context.settled', messages: [...params.messages], reason: params.rewrittenBy });
         }
         reportHookFailures(enqueue, 'step.starting', turn, reports);
+        queueNotify(enqueue, reports.map(({ entry }) => entry));
       }),
       stepStartingBlocked: enqueueActions(({ context, enqueue }, params: StepStartingRun) => {
         const turn = turnOf(context);
         const reports = hookFailureReports('step.starting', params.failures);
-        enqueue.assign({
-          ...decide(context, { type: 'blocked', at: 'step.starting', cause: params.blocked as Cause }),
-          ...notifyPatch(context, reports.map(({ entry }) => entry)),
-        });
+        enqueue.assign(decide(context, { type: 'blocked', at: 'step.starting', cause: params.blocked as Cause }));
         reportHookFailures(enqueue, 'step.starting', turn, reports);
+        queueNotify(enqueue, reports.map(({ entry }) => entry));
       }),
       abortTurn: enqueueActions(({ context, enqueue }, params: { reason: unknown }) => {
         if (context.turn === undefined) return;
@@ -270,41 +224,14 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
         }
         const outcome = { type: 'aborted' as const, reason: params.reason };
         enqueue(() => turn.scope.abort(params.reason));
-        enqueue.assign({
-          ...releasePending(context, outcome),
-          step: context.step === undefined ? undefined : { ...context.step, outcome },
-        });
+        release(enqueue, context, outcome);
+        if (context.step !== undefined) enqueue.assign({ step: { ...context.step, outcome } });
         for (const slot of Object.values(context.tools)) {
           if (slot.turnId === turn.id && !slot.detached) {
             enqueue.sendTo(slot.ref, { type: 'tool.abort', reason: params.reason });
           }
         }
         enqueue.raise({ type: 'turn.abort_grace' }, { id: 'abortGrace', delay: 'abortGrace' });
-      }),
-      closeUnfinished: enqueueActions(({ context, enqueue }) => {
-        const unfinished = context.unfinished;
-        if (unfinished === undefined) return;
-        const outcome = { type: 'aborted' as const, reason: CRASHED };
-        const settled = settleUnfinished(context, unfinished, outcome);
-        enqueue.assign({
-          messages: settled.messages,
-          unfinished: undefined,
-          nextTurnId: Math.max(context.nextTurnId, unfinished.turnId + 1),
-        });
-        for (const event of settled.events) enqueue.emit(event);
-        enqueue.emit({ type: 'turn.ended', turnId: unfinished.turnId, outcome });
-      }),
-      resumeUnfinished: enqueueActions(({ context, enqueue }) => {
-        const unfinished = context.unfinished;
-        if (unfinished === undefined) return;
-        const settled = settleUnfinished(context, unfinished, { type: 'continue', cause: CRASHED });
-        enqueue.assign({
-          messages: settled.messages,
-          unfinished: undefined,
-          held: false,
-          turn: resumedTurn(context, unfinished),
-        });
-        for (const event of settled.events) enqueue.emit(event);
       }),
       finishTurn: enqueueActions(({ context, enqueue }) => {
         enqueue.cancel('abortGrace');
@@ -316,13 +243,8 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
             delete tools[key];
           }
         }
-        enqueue.assign({
-          tools,
-          turn: undefined,
-          step: undefined,
-          nextTurnId: turn === undefined ? context.nextTurnId : Math.max(context.nextTurnId, turn.id + 1),
-        });
-        enqueue(() => turn?.reply?.(turn.outcome ?? { type: 'aborted' }));
+        enqueue.assign({ tools, turn: undefined, step: undefined });
+        enqueue.emit({ type: 'turn.finished', outcome: turn?.outcome ?? { type: 'aborted' } });
       }),
       recordLlm: enqueueActions(({ context, event, enqueue }) => {
         const turn = turnOf(context);
@@ -356,18 +278,15 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
           enqueue.emit({ type: 'tool.ended', toolCallId: toolCall.id, outcome, detached: false });
         }
         const reports = hookFailureReports('tool.batch-starting', params.failures);
-        enqueue.assign({
-          step: { ...step, settled },
-          ...notifyPatch(context, reports.map(({ entry }) => entry)),
-        });
+        enqueue.assign({ step: { ...step, settled } });
         reportHookFailures(enqueue, 'tool.batch-starting', turn, reports);
+        queueNotify(enqueue, reports.map(({ entry }) => entry));
       }),
       toolBatchStartingFailed: enqueueActions(({ context, enqueue }, params: { failures: readonly HookFailure[] }) => {
         const turn = turnOf(context);
         const reports = hookFailureReports('tool.batch-starting', params.failures);
-        if (reports.length === 0) return;
-        enqueue.assign(notifyPatch(context, reports.map(({ entry }) => entry)));
         reportHookFailures(enqueue, 'tool.batch-starting', turn, reports);
+        queueNotify(enqueue, reports.map(({ entry }) => entry));
       }),
       spawnTools: enqueueActions(({ context, enqueue }) => {
         const turn = turnOf(context);
@@ -437,61 +356,17 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
   }).createMachine({
     id: 'loop',
     initial: 'idle',
-    context: ({ input }) => initialContext(input),
+    context: () => initialContext(),
     invoke: {
       src: 'scopeGuard',
       input: ({ context }) => ({ scope: context.scope }),
     },
     on: {
-      'input.run_turn': {
-        actions: ({ event }) => event.reply(),
+      'context.set': {
+        actions: assign(({ event }) => ({ messages: [...event.messages] })),
       },
-      'input.submit': {
-        actions: enqueueActions(({ context, event, enqueue }) => {
-          const { reply } = event;
-          enqueue.assign(submitPatch(context, event.entry));
-          const ack = { type: 'prompt.submitted' as const, entry: event.entry };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
-      },
-      'input.notify': {
-        actions: enqueueActions(({ context, event, enqueue }) => {
-          const { reply } = event;
-          enqueue.assign(notifyPatch(context, [event.entry]));
-          const ack = { type: 'prompt.notified' as const, entry: event.entry };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
-      },
-      'input.remind': {
-        actions: enqueueActions(({ context, event, enqueue }) => {
-          const { reply } = event;
-          enqueue.assign(remindPatch(context, event.entry));
-          const ack = { type: 'prompt.reminded' as const, entry: event.entry };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
-      },
-      'input.steer': {
-        actions: enqueueActions(({ context, event, enqueue }) => {
-          const { reply } = event;
-          const { promptIds, entry, patch } = steer(context, event.promptIds);
-          enqueue.assign(patch);
-          const ack = { type: 'prompt.steered' as const, promptIds, ...(entry === undefined ? {} : { entry }) };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
-      },
-      'input.cancel': {
-        actions: enqueueActions(({ context, event, enqueue }) => {
-          const { reply } = event;
-          const { canceled, patch } = cancel(context, event.promptId);
-          enqueue.assign(patch);
-          const ack = { type: 'prompt.canceled' as const, promptId: event.promptId, canceled };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
+      'profile.set': {
+        actions: assign(({ event }) => ({ profile: event.profile })),
       },
       'input.abort_tool': {
         actions: enqueueActions(({ context, event, enqueue }) => {
@@ -511,30 +386,6 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
               text: `moved to background by the user: ${slot.toolCall.name} (tool_call_id=${event.toolCallId})`,
             });
           }
-        }),
-      },
-      'input.set_context': {
-        actions: enqueueActions(({ event, enqueue }) => {
-          const { reply } = event;
-          const ack = { type: 'context.rejected' as const, messages: event.messages, reason: event.reason };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
-      },
-      'input.set_system_prompt': {
-        actions: enqueueActions(({ event, enqueue }) => {
-          const { reply } = event;
-          const ack = { type: 'system_prompt.rejected' as const, systemPrompt: event.systemPrompt };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
-        }),
-      },
-      'input.set_tools': {
-        actions: enqueueActions(({ event, enqueue }) => {
-          const { reply } = event;
-          const ack = { type: 'tools.rejected' as const, tools: [...event.tools] };
-          enqueue.emit(ack);
-          if (reply !== undefined) enqueue(() => reply(ack));
         }),
       },
       'hook.failed': {
@@ -583,20 +434,19 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
         ],
       },
       'tool.async_ended': {
-        actions: [
-          assign(({ context, event }) => {
-            const tools = { ...context.tools };
-            delete tools[event.key];
-            return { tools };
-          }),
-          emit(({ event }) => ({
-            type: 'tool.async_ended' as const,
+        actions: enqueueActions(({ context, event, enqueue }) => {
+          const tools = { ...context.tools };
+          delete tools[event.key];
+          enqueue.assign({ tools });
+          enqueue.emit({
+            type: 'tool.async_ended',
             toolCallId: event.toolCallId,
             outcome: event.outcome,
             entry: event.entry,
-          })),
-          raise(({ event }) => ({ type: 'input.notify' as const, entry: event.entry })),
-        ],
+          });
+          enqueue.emit({ type: 'prompt.notified', entry: event.entry });
+          queueNotify(enqueue, [event.entry]);
+        }),
       },
       'xstate.error.actor.*': [
         {
@@ -611,7 +461,8 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
               const entry = completionEntry(slot.toolCall, outcome);
               enqueue.assign({ tools });
               enqueue.emit({ type: 'tool.async_ended', toolCallId: slot.toolCall.id, outcome, entry });
-              enqueue.raise({ type: 'input.notify', entry });
+              enqueue.emit({ type: 'prompt.notified', entry });
+              queueNotify(enqueue, [entry]);
               return;
             }
             const outcome = failedToolOutcome(slot.toolCall, event.error);
@@ -630,61 +481,18 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
     },
     states: {
       idle: {
-        always: [
-          { guard: ({ context }) => context.unfinished !== undefined, target: 'interrupted' },
-          {
-            guard: ({ context }) => !context.held && hasTrigger(context),
-            target: 'running',
-            actions: assign(({ context }) => dequeueTurn(context)),
-          },
-        ],
         on: {
-          'input.run_turn': {
-            target: 'running',
-            actions: [
-              emit(({ event }) => ({ type: 'prompt.submitted' as const, entry: event.entry })),
-              assign(({ context, event }) => runTurnPatch(context, event.entry, event.reply)),
-            ],
-          },
-          'input.continue': [
+          'turn.start': [
             {
-              guard: ({ context }) => !hasTrigger(context) && canContinue(context.messages),
-              target: 'running',
-              actions: assign(({ context }) => ({ held: false, turn: newTurn(context, 'continue', []) })),
-            },
-            { actions: assign({ held: false }) },
-          ],
-          'input.set_context': { actions: 'setContext' },
-          'input.set_system_prompt': { actions: 'setSystemPrompt' },
-          'input.set_tools': { actions: 'setTools' },
-        },
-      },
-      interrupted: {
-        always: {
-          guard: ({ context }) => !context.held,
-          target: 'idle',
-          actions: 'closeUnfinished',
-        },
-        on: {
-          'input.run_turn': {
-            target: 'idle',
-            actions: ['closeUnfinished', raise(({ event }) => event)],
-          },
-          'input.continue': [
-            {
-              guard: ({ context }) => isResumable(context),
+              guard: ({ event }) => event.resumed === true,
               target: '#loop.running.turn.draining',
-              actions: 'resumeUnfinished',
+              actions: assign(({ context, event }) => beginTurn(context, event)),
             },
             {
-              target: 'idle',
-              actions: ['closeUnfinished', raise({ type: 'input.continue' })],
+              target: 'running',
+              actions: assign(({ context, event }) => beginTurn(context, event)),
             },
           ],
-          'input.abort_turn': {
-            target: 'idle',
-            actions: 'closeUnfinished',
-          },
         },
       },
       running: {
@@ -719,13 +527,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
                   target: 'turn.finished',
                   actions: [
                     { type: 'turnStartingFailed', params: ({ event }) => ({ failures: event.output.failures }) },
-                    assign(({ context, event }) =>
-                      releasePending(context, {
-                        type: 'blocked',
-                        at: 'turn.starting',
-                        cause: event.output.blocked as Cause,
-                      }),
-                    ),
+                    { type: 'turnStartingBlocked', params: ({ event }) => ({ cause: event.output.blocked as Cause }) },
                   ],
                 },
                 {
@@ -968,6 +770,8 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
                     },
                   },
                   ending: {
+                    entry: emit({ type: 'ending.entered' as const }),
+                    exit: emit({ type: 'ending.exited' as const }),
                     invoke: {
                       src: 'stepEndingActor',
                       input: ({ context }) => {
@@ -1002,11 +806,6 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
                       guard: 'aborted',
                       target: 'decided',
                     },
-                    on: {
-                      'input.set_context': { actions: 'setContext' },
-                      'input.set_system_prompt': { actions: 'setSystemPrompt' },
-                      'input.set_tools': { actions: 'setTools' },
-                    },
                   },
                   decided: {
                     always: [
@@ -1020,11 +819,24 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
                 },
               },
               draining: {
-                entry: assign(({ context }) => drainPatch(context)),
-                always: [
-                  { guard: ({ context }) => (context.turn?.pending.length ?? 0) > 0, target: 'appending' },
-                  { target: 'step' },
-                ],
+                entry: emit({ type: 'turn.draining' as const }),
+                on: {
+                  'turn.drained': [
+                    {
+                      guard: 'aborted',
+                      target: 'finished',
+                      actions: emit(({ event }) => ({ type: 'turn.released' as const, pending: event.pending })),
+                    },
+                    {
+                      guard: ({ event }) => event.pending.length > 0,
+                      target: 'appending',
+                      actions: assign(({ context, event }) => ({
+                        turn: { ...turnOf(context), pending: [...event.pending] },
+                      })),
+                    },
+                    { target: 'step' },
+                  ],
+                },
               },
               finished: {
                 always: '#loop.idle',

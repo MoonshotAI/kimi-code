@@ -135,10 +135,10 @@ async function startApp(opts: {
   telemetry: TelemetryAppenderRecord[];
 }) {
   const harness = createHarness({ space: memoryHarnessSpace() });
-  await harness.app.features.add(createTelemetry());
-  await harness.app.features.add(bindTelemetryRecorder(opts.telemetry));
-  await harness.app.features.add(createToolDedupe());
-  await harness.app.features.add(bindTestTools(opts.tools));
+  harness.app.features.add(createTelemetry());
+  harness.app.features.add(bindTelemetryRecorder(opts.telemetry));
+  harness.app.features.add(createToolDedupe());
+  harness.app.features.add(bindTestTools(opts.tools));
   const session = await harness.app.create({ sessionId: 'sess' });
   const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'host' });
   const { requester, calls } = createMockRequester(opts.responses);
@@ -349,7 +349,10 @@ describe('toolDedupe feature', () => {
     expect(executed).toHaveLength(12);
     const texts = await toolTexts(h.main);
     expect(texts[12]).toBe(HANDOFF_VETO_TEXT);
-    expect(dones.outcomes.map((outcome) => outcome.type)).toEqual(['done', 'done']);
+    expect(dones.outcomes).toEqual([
+      { type: 'done', cause: { by: 'call-12-0', reason: 'stop_turn' } },
+      { type: 'done', cause: { by: 'call-13-0', reason: 'stop_turn' } },
+    ]);
     expect(
       records.find((record) => record.event === 'tool_call_repeat_handoff')?.properties,
     ).toMatchObject({ outcome: 'vetoed' });

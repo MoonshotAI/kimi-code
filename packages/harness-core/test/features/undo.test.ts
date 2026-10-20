@@ -121,10 +121,10 @@ async function testEnv(requester: LoopLlmRequester = echoRequester()): Promise<T
       store = useFeatureStore('agent', 'undo-probe', probeProjection);
     },
   });
-  await harness.app.features.add(createTelemetry());
-  await harness.app.features.add(recorder);
-  await harness.app.features.add(undo);
-  await harness.app.features.add(probe);
+  harness.app.features.add(createTelemetry());
+  harness.app.features.add(recorder);
+  harness.app.features.add(undo);
+  harness.app.features.add(probe);
   const session = await harness.app.create({ sessionId: 's1' });
   const agent = await harness.ensureAgent(session, 'main');
   setRequester(harness, 's1', 'main', requester);

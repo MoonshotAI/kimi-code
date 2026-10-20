@@ -1,11 +1,7 @@
 import type { ToolEntry } from '#/history/message';
+import type { Cause } from '#/tool/index';
 
-export interface Cause {
-  readonly by?: string;
-  readonly reason: string;
-  readonly message?: string;
-  readonly details?: Readonly<Record<string, unknown>>;
-}
+export type { Cause } from '#/tool/index';
 
 export const INTERRUPTED: Cause = { by: 'loop', reason: 'interrupted' };
 

@@ -391,8 +391,15 @@ export function useModelCatalogRoutes(prefix: string): void {
         );
         return;
       }
-      resolved.store.refresh(parsed.id);
-      sendOk(request, response, { changed: [], unchanged: [parsed.id], failed: [] });
+      try {
+        sendOk(request, response, await resolved.store.refresh({ providerId: parsed.id }));
+      } catch (error) {
+        if (error instanceof ModelCatalogError && error.code === 'provider.not_found') {
+          sendErr(request, response, ErrorCode.PROVIDER_NOT_FOUND, error.message);
+          return;
+        }
+        throw error;
+      }
     },
   });
 
@@ -406,7 +413,7 @@ export function useModelCatalogRoutes(prefix: string): void {
       const items = resolved.store
         .providers()
         .flatMap((providerId) =>
-          resolved.store.models(providerId).map((model) => modelCatalogItemView(providerId, model, resolved.store.providerInfo(providerId))),
+          resolved.store.models(providerId).map((model) => modelCatalogItemView(providerId, model)),
         );
       sendOk(request, response, { items });
     },
@@ -678,7 +685,7 @@ function buildProviderView(
 
 function providerView(providerId: string, config: ConfigStore, store: ProviderStore): ProviderView {
   const info = store.providerInfo(providerId);
-  const aliasIds = store.models(providerId).map((model) => `${info?.aliasScope ?? providerId}/${model.id}`);
+  const aliasIds = store.models(providerId).map((model) => `${providerId}/${model.id}`);
   const modelsSection = config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
   return buildProviderView(providerId, info, aliasIds, config, modelsSection);
 }
@@ -696,14 +703,10 @@ function capabilityStrings(model: CatalogModel): readonly string[] | undefined {
   return out.length === 0 ? undefined : out;
 }
 
-function modelCatalogItemView(
-  providerId: string,
-  model: CatalogModel,
-  info?: CatalogProviderInfo,
-): ModelCatalogItemView {
+function modelCatalogItemView(providerId: string, model: CatalogModel): ModelCatalogItemView {
   return {
     provider: providerId,
-    model: catalogModelAlias(info, providerId, model.id),
+    model: catalogModelAlias(providerId, model.id),
     display_name: model.displayName ?? model.name,
     max_context_size: model.maxContextSize ?? 0,
     capabilities: capabilityStrings(model),

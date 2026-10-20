@@ -11,7 +11,7 @@ import type {
   ToolCall,
 } from '@moonshot-ai/agent-core/llm/message';
 
-import { parseMediaRefUrl } from '#/features/media/ref';
+import { parseKimiFileUrl } from '#/features/files/index';
 
 import type {
   AgentTranscriptSnapshot,
@@ -207,13 +207,13 @@ function attachmentFromPart(
 function attachmentSourceOf(source: MediaSource): TranscriptAttachment['source'] {
   switch (source.kind) {
     case 'store': {
-      const ref = parseMediaRefUrl(source.ref);
+      const ref = parseKimiFileUrl(source.ref)?.fileId;
       return ref === undefined
         ? { kind: 'url', url: source.ref }
         : { kind: 'session_media', fileId: ref };
     }
     case 'url': {
-      const ref = parseMediaRefUrl(source.url);
+      const ref = parseKimiFileUrl(source.url)?.fileId;
       return ref === undefined
         ? { kind: 'url', url: source.url }
         : { kind: 'session_media', fileId: ref };
@@ -295,13 +295,13 @@ export function projectPromptContent(parts: readonly ContentPart[]): unknown[] {
 function promptMediaSourceOf(source: MediaSource): unknown {
   switch (source.kind) {
     case 'store': {
-      const ref = parseMediaRefUrl(source.ref);
+      const ref = parseKimiFileUrl(source.ref)?.fileId;
       return ref === undefined
         ? { kind: 'url', url: source.ref }
         : { kind: 'session_media', file_id: ref };
     }
     case 'url': {
-      const ref = parseMediaRefUrl(source.url);
+      const ref = parseKimiFileUrl(source.url)?.fileId;
       return ref === undefined
         ? { kind: 'url', url: source.url }
         : { kind: 'session_media', file_id: ref };
@@ -696,7 +696,6 @@ function mergeMeta(base: TranscriptMeta, patch: TranscriptMetaMerge): Transcript
   } = { ...base };
   if (patch.activity !== undefined) next.activity = patch.activity;
   if (patch.agent !== undefined) next.agent = { ...next.agent, ...patch.agent };
-  if ('goal' in patch) next.goal = patch.goal === null ? undefined : patch.goal;
   if (patch.modes !== undefined) {
     const modes: {
       plan?: { readonly reviewPath?: string; readonly version?: number };
@@ -793,8 +792,6 @@ export class AgentTranscriptProjector {
         return [this.markerOp('skill', restOf(event))];
       case 'cron.fired':
         return [this.markerOp('cron.fired', restOf(event))];
-      case 'goal.updated':
-        return this.onGoalUpdated(event);
       case 'shell.started':
         return this.onShellStarted(event);
       case 'shell.output':
@@ -1477,38 +1474,6 @@ export class AgentTranscriptProjector {
         });
       }
     }
-    return ops;
-  }
-
-  private onGoalUpdated(event: { [key: string]: unknown }): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [];
-    const snapshot = event['snapshot'] as
-      | {
-          objective: string;
-          status: 'active' | 'paused' | 'blocked' | 'complete';
-          completionCriterion?: string;
-          tokensUsed: number;
-          budget: { tokenBudget: number | null };
-        }
-      | null
-      | undefined;
-    if (snapshot === null || snapshot === undefined) {
-      ops.push({ op: 'meta.merge', meta: { goal: null } });
-    } else {
-      ops.push({
-        op: 'meta.merge',
-        meta: {
-          goal: {
-            objective: snapshot.objective,
-            status: snapshot.status,
-            completionCriterion: snapshot.completionCriterion,
-            budgetUsed: snapshot.tokensUsed,
-            budgetLimit: snapshot.budget.tokenBudget ?? undefined,
-          },
-        },
-      });
-    }
-    ops.push(this.markerOp('goal', restOf(event)));
     return ops;
   }
 

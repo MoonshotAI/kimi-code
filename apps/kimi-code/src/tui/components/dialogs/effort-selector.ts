@@ -7,7 +7,7 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
-import type { ThinkingEffort } from '../../types';
+import type { ThinkingEffort } from '@moonshot-ai/kimi-code-sdk';
 
 import { currentTheme } from '#/tui/theme';
 

@@ -7,7 +7,6 @@ import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import type { FeedbackAttachmentLevel } from '#/tui/commands/prompts';
 import { getLogDir } from '#/utils/paths';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
-import { sanitizeWorkDirKey } from '@moonshot-ai/kimi-code-sdk';
 
 import { createFeedbackArchivePath, type FeedbackArchive } from './archive';
 import { packageCodebase, scanCodebase, type FeedbackCodebaseScanResult } from './codebase';
@@ -65,10 +64,12 @@ async function prepareAndUploadSessionArchive(
     return false;
   }
   return uploadProducedArchive(api, feedbackId, SESSION_ARCHIVE_FILENAME, async (archivePath) => {
-    const exported = await host.harness.exportSession(host.state.appState.sessionId, {
+    const exported = await host.harness.exportSession({
+      id: host.state.appState.sessionId,
       outputPath: archivePath,
       includeGlobalLog: true,
-      installSource: String(await detectInstallSource()),
+      version: host.state.appState.version,
+      installSource: await detectInstallSource(),
       shellEnv: detectShellEnvironment(),
     });
     return archiveFromExportedSession(exported.zipPath);
@@ -131,17 +132,13 @@ async function archiveFromExportedSession(zipPath: string): Promise<FeedbackArch
   };
 }
 
-function resolveCurrentSessionDir(host: SlashCommandHost): Promise<string | undefined> {
-  const sessionId = host.state.appState.sessionId;
-  if (sessionId.length === 0) return Promise.resolve(undefined);
-  return Promise.resolve(
-    join(
-      host.harness.homeDir,
-      'sessions-v3',
-      sanitizeWorkDirKey(host.state.appState.workDir),
-      sessionId,
-    ),
-  );
+async function resolveCurrentSessionDir(host: SlashCommandHost): Promise<string | undefined> {
+  try {
+    const sessions = await host.harness.listSessions({ workDir: host.state.appState.workDir });
+    return sessions.find((session) => session.id === host.state.appState.sessionId)?.sessionDir;
+  } catch {
+    return undefined;
+  }
 }
 
 async function scanCodebaseForFeedback(

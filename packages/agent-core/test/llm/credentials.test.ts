@@ -220,11 +220,11 @@ function statusError(
 
 function failingThenDone(failures: readonly LlmRemoteErrorMessage[]): LlmProtocolBinding {
   let calls = 0;
-  const reply = async <T>(body: T) => {
+  const reply = <T>(body: T) => {
     const error = failures[calls];
     calls += 1;
-    if (error !== undefined) throw error;
-    return { body };
+    if (error !== undefined) return Promise.reject(error);
+    return Promise.resolve({ body });
   };
   const base: Protocol<unknown, unknown, string, string, unknown> = {
     media: { kinds: {} },

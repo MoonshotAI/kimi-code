@@ -1,4 +1,3 @@
-import type { ToolCall } from '#/llm/message';
 import type { HistoryMessage } from '#/history/message';
 import type { ToolResult } from '#/tool/index';
 import type {
@@ -11,16 +10,12 @@ import type {
   StepStoppingVerdict,
   ToolBatchStartingDecision,
   ToolBatchStartingEvent,
-  ToolEndingDecision,
-  ToolEndingEvent,
-  ToolStartingDecision,
-  ToolStartingEvent,
   TurnStartingEvent,
   TurnStartingVerdict,
 } from '../contract/hook';
 import type { QueuedItem } from '../contract/inbox';
 import type { Cause, StepEndingPoint, StepOutcome } from '../contract/outcome';
-import { isEntry, isObject, isToolCall, isToolResult } from '../guards';
+import { isEntry, isObject, isToolResult } from '../guards';
 import { hookFailureCause, type HookFailure } from './failure';
 import type { HookItem, HookSource } from './registry';
 
@@ -64,20 +59,6 @@ function isToolBatchStartingDecision(value: unknown): value is ToolBatchStarting
     isObject(value) &&
     isCause(value['blocked']) &&
     (value['result'] === undefined || isToolResult(value['result']))
-  );
-}
-
-function isToolStartingDecision(value: unknown): value is ToolStartingDecision {
-  if (!isObject(value)) return false;
-  if ('toolCall' in value) return isToolCall(value['toolCall']);
-  return isCause(value['blocked']) && (value['result'] === undefined || isToolResult(value['result']));
-}
-
-function isToolEndingDecision(value: unknown): value is ToolEndingDecision {
-  return (
-    isObject(value) &&
-    (value['result'] === undefined || isToolResult(value['result'])) &&
-    (value['stopTurn'] === undefined || value['stopTurn'] === true)
   );
 }
 
@@ -230,76 +211,6 @@ export async function runToolBatchStarting(
     if (run.blocked !== undefined) return { blocked: { cause: run.blocked }, failures };
   }
   return { failures };
-}
-
-export interface ToolStartingRun {
-  toolCall: ToolCall;
-  blocked?: Cause;
-  result?: ToolResult;
-  failures: HookFailure[];
-}
-
-export type ToolPermittingRun = ToolStartingRun;
-
-async function runToolCallChain(
-  source: HookSource,
-  point: 'tool.starting' | 'tool.permitting',
-  event: ToolStartingEvent,
-  signal: AbortSignal,
-): Promise<ToolStartingRun> {
-  const failures: HookFailure[] = [];
-  let toolCall = event.toolCall;
-  for (const item of source.active(point)) {
-    const run = await runItem(item, () => item.hook({ ...event, toolCall }, signal), isToolStartingDecision);
-    if (run.failure !== undefined) failures.push(run.failure);
-    const decision = run.decision;
-    if (decision !== undefined && 'toolCall' in decision) {
-      toolCall = decision.toolCall;
-    } else if (decision !== undefined) {
-      return { toolCall, blocked: signed(decision.blocked, item), result: decision.result, failures };
-    }
-    if (run.blocked !== undefined) return { toolCall, blocked: run.blocked, failures };
-  }
-  return { toolCall, failures };
-}
-
-export function runToolStarting(
-  source: HookSource,
-  event: ToolStartingEvent,
-  signal: AbortSignal,
-): Promise<ToolStartingRun> {
-  return runToolCallChain(source, 'tool.starting', event, signal);
-}
-
-export function runToolPermitting(
-  source: HookSource,
-  event: ToolStartingEvent,
-  signal: AbortSignal,
-): Promise<ToolPermittingRun> {
-  return runToolCallChain(source, 'tool.permitting', event, signal);
-}
-
-export interface ToolEndingRun {
-  result: ToolResult;
-  stopTurn: boolean;
-  failures: HookFailure[];
-}
-
-export async function runToolEnding(
-  source: HookSource,
-  event: ToolEndingEvent,
-  signal: AbortSignal,
-): Promise<ToolEndingRun> {
-  const failures: HookFailure[] = [];
-  let result = event.result;
-  let stopTurn = false;
-  for (const item of source.active('tool.ending')) {
-    const run = await runItem(item, () => item.hook({ ...event, result }, signal), isToolEndingDecision);
-    if (run.failure !== undefined) failures.push(run.failure);
-    result = run.decision?.result ?? result;
-    stopTurn ||= run.decision?.stopTurn === true;
-  }
-  return { result, stopTurn, failures };
 }
 
 export interface StepEndingInput {
