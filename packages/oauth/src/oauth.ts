@@ -53,6 +53,13 @@ function tokenFromResponse(payload: Record<string, unknown>): TokenInfo {
   };
 }
 
+function positiveNumber(value: unknown): number | undefined {
+  if (typeof value !== 'number' && typeof value !== 'string') return undefined;
+  if (typeof value === 'string' && value.trim().length === 0) return undefined;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /** HTTP client default timeout for OAuth requests. */
 const DEFAULT_HTTP_TIMEOUT_MS = 30_000;
 
@@ -152,8 +159,8 @@ export async function requestDeviceAuthorization(
     deviceCode,
     verificationUri: typeof data['verification_uri'] === 'string' ? data['verification_uri'] : '',
     verificationUriComplete,
-    expiresIn: data['expires_in'] !== undefined ? Number(data['expires_in']) : null,
-    interval: Number(data['interval'] ?? 5),
+    expiresIn: positiveNumber(data['expires_in']) ?? null,
+    interval: positiveNumber(data['interval']) ?? 5,
   };
 }
 
