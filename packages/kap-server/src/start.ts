@@ -7,6 +7,7 @@ import {
   ConfigWarning,
   CapabilityChanged,
   IAppendLogStore,
+  IBootstrapService,
   IConfigService,
   IEventService,
   IMcpOAuthService,
@@ -80,6 +81,7 @@ import {
   shutdownServerTelemetry,
 } from './services/telemetry';
 import { TranscriptService } from './services/transcript/transcriptService';
+import { refreshClientConfigs } from './services/clientConfigs';
 import { ModelCatalogRefreshScheduler } from './services/modelCatalog/modelCatalogRefreshScheduler';
 import { startConfigChangedPublisher } from './services/config/configChangedPublisher';
 import { createAuthFailureLimiter } from './middleware/rateLimit';
@@ -626,6 +628,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       { err: error instanceof Error ? error.message : String(error) },
       'provider-model catalog auto-refresh failed to start',
     );
+  });
+
+  void refreshClientConfigs(core.accessor.get(IOAuthService).getRegion(), {
+    baseUrlOverride:
+      core.accessor.get(IBootstrapService).getEnv('KIMI_CODE_BASE_URL') ??
+      process.env['KIMI_CODE_BASE_URL'],
   });
 
   process.on('unhandledRejection', onUnhandledRejection);

@@ -44,6 +44,7 @@ import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
+import { refreshModelSwitchConfirmConfig } from '#/utils/model-switch-confirm-config';
 import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
@@ -772,6 +773,7 @@ export class KimiTUI {
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     this.applyRecommendedEffortInBackground();
+    this.refreshModelSwitchConfirmConfigInBackground();
     return shouldReplayHistory;
   }
 
@@ -832,6 +834,19 @@ export class KimiTUI {
         },
       });
     });
+  }
+
+  private refreshModelSwitchConfirmConfigInBackground(): void {
+    void (async () => {
+      try {
+        await refreshModelSwitchConfirmConfig({
+          accessToken: await this.harness.auth.getCachedAccessToken(),
+        });
+      } catch {
+        // Best-effort warm-up: a failed token lookup or fetch just leaves the
+        // dialog gated off.
+      }
+    })();
   }
 
   private async refreshProviderModelsInBackground(): Promise<void> {
@@ -4087,6 +4102,7 @@ export class KimiTUI {
 
   mountEditorReplacement(panel: Component & Focusable): void {
     this.surveyController.notifyDisplaced();
+    if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);
