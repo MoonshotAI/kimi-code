@@ -64,6 +64,7 @@ export interface SessionForkedEvent {
 
 export interface SessionWillCreateEvent {
   readonly sessionId: string;
+  readonly onDidCreateScope: Event<ISessionScopeHandle>;
   readSeed<T>(id: ServiceIdentifier<T>): T;
   contributeSeed<T>(id: ServiceIdentifier<T>, value: T): void;
   onSessionDispose(dispose: () => void): void;

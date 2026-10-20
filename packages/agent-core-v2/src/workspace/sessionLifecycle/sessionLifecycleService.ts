@@ -263,6 +263,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       session_id: opts.sessionId,
     });
     let handle: ISessionScopeHandle;
+    const scopeCreated = new Emitter<ISessionScopeHandle>();
     try {
       handle = createScopedChildHandle(
         this.instantiation,
@@ -289,6 +290,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             );
             this._onWillCreateSession.fire({
               sessionId: opts.sessionId,
+              onDidCreateScope: scopeCreated.event,
               readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
               contributeSeed: (id, value) => {
                 container.provide(id, value);
@@ -300,9 +302,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           },
         },
       ) as ISessionScopeHandle;
+      scopeCreated.fire(handle);
     } catch (error) {
       telemetryBinding.dispose();
       throw error;
+    } finally {
+      scopeCreated.dispose();
     }
     try {
       await handle.accessor.get(ISessionMetadata).ready;

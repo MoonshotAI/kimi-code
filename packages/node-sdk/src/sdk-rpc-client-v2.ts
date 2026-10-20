@@ -254,6 +254,7 @@ import {
   SDKRpcClientBase,
   type ActivatePluginCommandRpcInput,
   type ActivateSkillRpcInput,
+  type ConfigSectionChange,
   type ImportContextRpcInput,
   type ReconnectMcpServerRpcInput,
   type ReloadSessionRpcInput,
@@ -324,6 +325,7 @@ import type {
   SuggestFilesInput,
   SuggestFilesResult,
   TelemetryClient,
+  Unsubscribe,
   UploadFileOptions,
   WorkspaceTrustInfo,
   WorkspaceTrustInstructionSources,
@@ -750,6 +752,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   override async getConfigDiagnostics(): Promise<ConfigDiagnostics> {
     await this.configReady;
     return diagnosticsToConfigDiagnostics(await this.klient.global.config.diagnostics());
+  }
+
+  override onConfigSectionChanged(
+    listener: (change: ConfigSectionChange) => void,
+  ): Unsubscribe {
+    const subscription = this.klient.events.on('config.sectionChanged', listener);
+    return () => {
+      subscription.dispose();
+    };
   }
 
   /**

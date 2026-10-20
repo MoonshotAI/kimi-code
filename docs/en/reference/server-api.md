@@ -366,6 +366,7 @@ On success, `data` is the config object; its fields mirror the top-level domains
 | `experimental` | object | Experimental flag id → enabled |
 | `telemetry` | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | boolean | Whether clients may automatically generate session titles |
+| `disable_feedback_survey` | boolean | Whether the session rating prompt is turned off |
 | `raw` | object | Raw parsed `config.toml` content, unmodeled fields included |
 
 #### `POST /api/v1/config`
@@ -399,6 +400,7 @@ The body is a partial config object — any subset of the response domains above
 | `experimental` | body | object | Experimental flag id → enabled |
 | `telemetry` | body | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | body | boolean | Whether clients may automatically generate session titles |
+| `disable_feedback_survey` | body | boolean | Whether the session rating prompt is turned off |
 
 On success, `data` is the full updated config in the same shape as `GET /api/v1/config`.
 

@@ -45,6 +45,7 @@ const KIMI_CONFIG_DOMAINS = [
   'modelCatalog',
   'experimental',
   'telemetry',
+  'disableFeedbackSurvey',
 ] as const;
 
 /**
