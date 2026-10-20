@@ -1,6 +1,6 @@
 # Documentation Agent Guide
 
-This repository uses VitePress for the documentation site. Most user-facing pages under `docs/en/` and `docs/zh/` are fully written; New or updated content should keep both locales in sync.
+This repository uses VitePress for the documentation site. Most user-facing pages under `docs/en/` and `docs/zh/` are fully written.
 
 ## Structure
 
@@ -18,24 +18,22 @@ This repository uses VitePress for the documentation site. Most user-facing page
 - **Changelog page**: The English version (`docs/en/release-notes/changelog.md`) is the source of truth; the Chinese changelog should be translated from it. The changelog is currently generated manually by a skill that syncs from the CLI package's `CHANGELOG.md` after each release.
 - **All other pages**: `docs/en/` and `docs/zh/` are mirrored pairs with the same paths, headings, and section structure. Edit whichever locale you are working in, and update the other locale in the same change.
 
-Keep both locales in sync before release. Machine-assisted translation is fine; review the locale you changed and its mirror for accuracy, terminology, and broken links.
+Keep both locales in sync before release. Machine-assisted translation is fine; review the locale you changed and its mirror for accuracy, terminology, and broken links. If the two locales fall out of sync, say so in the PR description — never silently drop or rewrite one side.
 
 Additional sourcing rules:
 
 - **Document only what the current released version does.** Released opt-in experiments are in scope when the docs state their default and how to enable them; code that is unreleased or internal-only must not appear in user docs. When release status is unclear, document the current released version.
 - **One fact, one authoritative home.** When a mechanism is fully defined on one page, other pages state only what it is and how it relates to the current task, then link to the exact section. Never expand the same fact in two places.
-- **Confirm the source of truth before editing.** Know which locale owns the page (see above), edit the source, and sync the mirror in the same change. If the two locales fall out of sync, say so in the PR description — never silently drop or rewrite one side.
 
 ## Authoring workflow
 
 - Each page should keep the section ordering established by surrounding pages. Changelog is the exception because it is generated from release history.
-- For other pages: edit either locale, then update its mirror in the same change.
 
 Before rewriting a page, always: (1) understand why the original is structured the way it is — what question each block answers and whether facts, dependencies, or ordering are tangled together, (2) review necessity — what the reader genuinely needs to know, meaning what they could not act, decide, or troubleshoot without, (3) sketch the section structure, then (4) fill in the content. Skip steps 1–3 and you will lose content while rearranging format.
 
 ## Page responsibilities
 
-Decide the page's job before writing or restructuring it; the job decides what the page keeps and which format it uses.
+Decide the page's job before writing or restructuring it; the job decides what the page keeps, what it leaves out, and which format it uses.
 
 | Page type | Primary job |
 | --- | --- |
@@ -45,7 +43,7 @@ Decide the page's job before writing or restructuring it; the job decides what t
 | Configuration | Fields, precedence, overrides, and when they take effect |
 | FAQ / error reference | Problem, cause, and fix |
 
-Each type also implies what it leaves out — an overview omits full parameter details, a guide omits the complete command contract. Keep those facts on the page that owns them and link there.
+Keep out-of-scope facts on the page that owns them and link there.
 
 ## Readers
 
@@ -76,7 +74,6 @@ Both groups share the same behavior: they arrive with a specific goal, scan head
 - Do not change H1 titles or nav/sidebar labels.
 - English H2+ headings use sentence case (only the first word capitalized unless it is a proper noun). Treat "Wire", "Plan mode", "Thinking mode", and the permission mode names "Always Ask", "Ask When Needed", and "Never Ask" as proper nouns; do not treat "agent" as a proper noun.
 - Chinese H2+ headings keep English words in sentence case; preserve proper nouns listed in the term table below.
-- Use `API key` in English and `API 密钥` in Chinese; keep `JSON`, `JSONL`, `OAuth`, `macOS`, `Node.js`, `npm`, `pnpm`, and `TypeScript` as-is.
 - Use curly double quotes `“”` for quoted content in Chinese body text (not straight quotes). Reserve corner brackets `「」` for genuinely special terms and use them sparingly — if they appear more than a few times on one page, reconsider.
 - Use “终端” for the runtime environment or interface (“终端界面”, “终端操作”); use “命令行” for the CLI product form and for command-line options.
 - Use "工具调用" / "tool call", not "工具使用" / "tool use".
@@ -171,10 +168,8 @@ Rules:
 
 ## Writing style
 
-- **Natural narrative**: Organize content like writing an article, guiding readers smoothly through the material.
-- **Avoid fragmentation**: Don't turn every point into a subheading; use paragraph transitions instead. This applies to narrative content — explanations, motivations, and sequential reasoning that flow as connected prose.
-- **Global perspective**: "Getting Started" introduces core concepts only; detailed usage belongs in later pages.
-- **Progressive depth**: Guides → Customization → Configuration → Reference, information deepens gradually.
+- **Natural narrative, no fragmentation**: Organize content like an article; don't turn every point into a subheading — use paragraph transitions for narrative content (explanations, motivations, and sequential reasoning that flow as connected prose).
+- **Progressive depth**: "Getting Started" introduces core concepts only; information deepens gradually across Guides → Customization → Configuration → Reference.
 - **No nav tip blocks**: VitePress provides automatic prev/next navigation; don't add `::: tip 接下来` blocks at page end. A `## Next steps` section is appropriate when there are closely related follow-on pages — see [Page structure](#page-structure).
 - **One idea per paragraph**: Each paragraph makes one point. 3–4 sentences is the target; split when a paragraph exceeds 5 sentences.
 - **Map before detail**: Every page and every major section should open with one "map" sentence — what this section covers and how it relates to what came before — before expanding into details. Readers should know where they are before they dive in.
@@ -183,10 +178,7 @@ Rules:
   >
   > ✓ Map then detail: "Provider credentials follow a separate resolution path from ordinary runtime parameters — the CLI reads only from `config.toml` and never falls back to shell environment variables. The priority order is:…"
 
-- **Parallel content needs formatting**: This is the counterpart to "avoid fragmentation" — the distinction is what kind of content you have. Multiple items of the same kind (file descriptions, config field explanations, caveats) written as separate paragraphs with no visual distinction force readers to parse shape instead of meaning. Fix:
-  - Each item is "name + one sentence": use an unordered list: `- **Name**: description`
-  - Multiple dimensions (name + type + description): use a table
-  - Each item is longer than two sentences: use a `###` subheading
+- **Parallel content needs formatting**: This is the counterpart to "avoid fragmentation" — the distinction is what kind of content you have. Multiple items of the same kind (file descriptions, config field explanations, caveats) written as separate paragraphs with no visual distinction force readers to parse shape instead of meaning. Fix: "name + one sentence" items → unordered list `- **Name**: description`; multiple dimensions (name + type + description) → table; items longer than two sentences → `###` subheading.
 - **Sections follow a discernible sequence**: order sections by the reader's task flow or by a classification of one concept. The next section should answer the question the previous one naturally raises; do not park loosely related features in the same section.
 
 ### Chinese prose rules
@@ -214,16 +206,9 @@ Outline prompt:
 
 ### System requirements
 
-- Node.js 24.15.0+
-- Recommend pnpm
-
 ### Install
 
-...
-
 ### Upgrade
-
-...
 ```
 
 **Good** (natural narrative):
@@ -248,9 +233,7 @@ Upgrade to the latest version:
 
 ## Format decisions
 
-Choose the format that matches the content's structure, not the one that looks most thorough.
-
-**Most suitable format** — use formatting deliberately, not sparingly by default. Choose the format that best matches the content and the reader's task: sentence, list, table, subheading, or `<details>`. Use formatting when it improves scanning, lookup, or comparison; do not upgrade just because a richer format looks more thorough.
+**Most suitable format** — use formatting deliberately: choose the format that best matches the content's structure and the reader's task (sentence, list, table, subheading, or `<details>`), not the one that looks most thorough. Use formatting when it improves scanning, lookup, or comparison.
 
 **Ordered list** — steps that must happen in sequence (installation, configuration, migration). Do not nest sub-lists inside steps.
 
@@ -278,7 +261,6 @@ Readers never read just one page. A complete understanding is usually spread acr
 **Do not write:**
 - "See related documentation" — which one? Readers skip this.
 - Link only in a "Next steps" list at the bottom — readers who hit a blocker mid-page won't scroll to the end to find the link.
-- First mention without a link, linked on second or third mention — the first mention is when the reader most wants to click.
 
 **Inline links vs "Next steps":** Inline links serve readers who need supplemental information mid-page. A closing "Next steps" section serves readers who finished the page and want natural follow-on reading. Both have a place; neither replaces the other.
 
@@ -357,7 +339,6 @@ Before shipping, verify these values match the rest of the docs:
 - **Model ID**: use `kimi-for-coding`, not a versioned model name
 - **Login command**: `/login`, not `/setup`
 - **Product full name**: **Kimi Code CLI** or **Kimi Code for VS Code** — never "Kimi CLI"
-- **Platform URLs**: Kimi Code platform `api.kimi.com/coding/…` (mainland China) / `api.kimi.ai/coding/…` (global); Open Platform `api.moonshot.cn/v1` (mainland China) / `api.moonshot.ai/v1` (global) — never mix the two
 
 ## Build and preview
 
