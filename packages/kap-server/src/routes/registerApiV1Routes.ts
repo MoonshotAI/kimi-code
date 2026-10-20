@@ -3,6 +3,7 @@ import { FiberState } from '@moonshot-ai/agent-core-v2/_base/di/fiber';
 import { IFeatureManager } from '@moonshot-ai/agent-core-v2/app/feature/featureManager';
 import { IFlagService } from '@moonshot-ai/agent-core-v2/app/flag/flag';
 import type { KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
@@ -32,6 +33,7 @@ import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from './r
 import { registerRuntimeRoutes } from './runtime';
 import { registerSearchRoutes } from './search';
 import { registerSessionMediaRoutes } from './sessionMedia';
+import { registerSessionRatingRoutes } from './sessionRating';
 import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
@@ -70,6 +72,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly connectionRegistry: IConnectionRegistry;
   readonly broadcaster: SessionEventBroadcaster;
   readonly transcriptService: TranscriptService;
+  readonly sessionRating: SessionRatingHost;
   readonly pluginMarketplaceUrl: () => string;
   readonly pluginMarketplaceIsDefault: boolean;
   readonly remoteControl: RemoteControlRouteOptions;
@@ -128,6 +131,11 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
         { sessionEventCursor: (sessionId) => opts.broadcaster.getCursor(sessionId) },
+      );
+      registerSessionRatingRoutes(
+        apiV1 as unknown as Parameters<typeof registerSessionRatingRoutes>[0],
+        opts.sessionRating,
+        opts.transcriptService,
       );
       registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(

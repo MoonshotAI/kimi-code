@@ -19,6 +19,7 @@ import type {
   TokenUsage,
   TurnEndedEvent,
   TurnStartedEvent,
+  Unsubscribe,
   WorkspaceTrustInfo,
 } from '@moonshot-ai/kimi-code-sdk';
 import { isTelemetryDisabledByEnv } from '@moonshot-ai/kimi-telemetry';
@@ -45,6 +46,7 @@ import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
 import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
+import { migrateLegacySurveySetting } from '#/utils/survey-setting';
 import { detectFdPath, ensureFdPath } from '#/utils/process/fd-detect';
 import { quoteShellArg } from '#/utils/shell-quote';
 import { restoreTerminalModes } from '#/utils/terminal-restore';
@@ -79,6 +81,7 @@ import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
+import { ChoicePickerComponent } from './components/dialogs/choice-picker';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
@@ -112,7 +115,7 @@ import {
 } from './components/messages/user-message';
 import { ActivityPaneComponent, type ActivityPaneMode } from './components/panes/activity-pane';
 import { QueuePaneComponent } from './components/panes/queue-pane';
-import type { TuiConfig } from './config';
+import { removeLegacySurveySetting, type TuiConfig } from './config';
 import {
   LLM_NOT_SET_MESSAGE,
   MAIN_AGENT_ID,
@@ -192,6 +195,8 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
+import { isSessionOccupiedError, occupiedHolderClientId } from './utils/session-lock-errors';
+import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { lazyModelSelection } from './utils/model-switch';
@@ -328,21 +333,6 @@ interface SendMessageOptions {
 /** How long the one-shot "moved to background" footer hint stays visible. */
 const DETACH_HINT_DISPLAY_MS = 4_000;
 
-function isUserSubmittedTurnOrigin(origin: TurnStartedEvent['origin'] | undefined): boolean {
-  if (origin === undefined) return false;
-  switch (origin.kind) {
-    case 'user':
-      return true;
-    case 'skill_activation':
-    case 'plugin_command':
-      return origin.trigger === 'user-slash';
-    case 'shell_command':
-      return origin.phase === 'input';
-    default:
-      return false;
-  }
-}
-
 export class KimiTUI {
   readonly harness: KimiHarness;
   readonly options: KimiTUIOptions;
@@ -356,10 +346,12 @@ export class KimiTUI {
   /** Staged prompt media lifecycle (daemon uploads + cache copies) — see StagingLeaseTracker. */
   private readonly staging: StagingLeaseTracker;
   private readonly steeringQueuedMessages = new Set<QueuedMessage>();
+  private readonly pendingPromptEntries = new Set<TranscriptEntry>();
   private readonly autoTitleAttempts = new Map<string, { attempts: number; done: boolean }>();
   private readonly approvalController = new ApprovalController();
   private readonly questionController = new QuestionController();
   private readonly reverseRpcDisposers: Array<() => void> = [];
+  private surveySettingSubscription: Unsubscribe | undefined;
   private skillCommands: readonly KimiSlashCommand[] = [];
   readonly skillCommandMap = new Map<string, string>();
   private pluginCommands: readonly KimiSlashCommand[] = [];
@@ -511,6 +503,10 @@ export class KimiTUI {
         },
       }),
     );
+    this.surveySettingSubscription = this.harness.onConfigSectionChanged((change) => {
+      if (change.domain !== 'disableFeedbackSurvey') return;
+      this.setAppState({ disableFeedbackSurvey: change.value === true ? true : undefined });
+    });
     this.streamingUI = new StreamingUIController(this);
     this.authFlow = new AuthFlowController(this);
     this.btwPanelController = new BtwPanelController(this, this.imageStore, this.staging);
@@ -855,12 +851,35 @@ export class KimiTUI {
     }
   }
 
+  private async migrateLegacySurveySetting(): Promise<void> {
+    const legacyValue = this.state.appState.disableFeedbackSurvey;
+    try {
+      const outcome = await migrateLegacySurveySetting({
+        legacyValue,
+        getConfig: () => this.harness.getConfig(),
+        setConfig: (patch) => this.harness.setConfig(patch),
+        dropLegacy: removeLegacySurveySetting,
+        warn: (message) => {
+          this.showStatus(message, 'warning');
+        },
+      });
+      this.setAppState({ disableFeedbackSurvey: outcome.value });
+      if (outcome.action === undefined) return;
+      this.track('survey_setting_migration', {
+        legacy: legacyValue,
+        configured: outcome.configured ?? 'absent',
+        action: outcome.action,
+      });
+    } catch {}
+  }
+
   private async finishStartup(shouldReplayHistory: boolean): Promise<void> {
     if (this.startupNotice !== undefined) {
       this.showStatus(this.startupNotice);
       this.startupNotice = undefined;
     }
     void this.showTmuxKeyboardWarningIfNeeded();
+    void this.migrateLegacySurveySetting();
     // Config diagnostics (deprecated keys/env vars, invalid sections) in
     // warning yellow at boot; `run-prompt`/`run-v2-print` print them to
     // stderr for non-interactive runs.
@@ -1067,6 +1086,8 @@ export class KimiTUI {
     this.disposeTranscriptChildren();
     this.editorKeyboard.dispose();
     this.surveyController.dispose();
+    this.surveySettingSubscription?.();
+    this.surveySettingSubscription = undefined;
     this.state.footer.dispose();
     for (const dispose of this.reverseRpcDisposers) {
       dispose();
@@ -1683,7 +1704,7 @@ export class KimiTUI {
       prepared.stagingPaths,
       'user',
     );
-    this.appendTranscriptEntry({
+    const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
@@ -1692,9 +1713,27 @@ export class KimiTUI {
       skillNames: activations.map((activation) => activation.skillName),
       imageAttachmentIds:
         extraction.imageAttachmentIds.length > 0 ? extraction.imageAttachmentIds : undefined,
-    });
-    const request = session.promptWithSkills(input, prepared.skills);
+    };
+    this.appendTranscriptEntry(entry);
+    const request = this.trackPendingEntries([entry], session.promptWithSkills(input, prepared.skills));
     this.staging.trackDispatch(stagingLease, request, (error) => {
+      const recovered = this.handlePromptConflict({
+        session,
+        error,
+        entries: [entry],
+        retry: () => this.runInlineSkillActivations(session, text, activations, extraction),
+        restore: () => {
+          this.staging.releaseRecalled([
+            ...extraction.imageAttachmentIds,
+            ...extraction.videoAttachmentIds,
+          ]);
+          this.restoreInputText(text);
+        },
+      });
+      if (recovered) {
+        this.staging.defer(stagingLease);
+        return;
+      }
       if (this.session === session && stagingLease !== undefined && stagingLease.turnId === undefined) {
         this.staging.defer(stagingLease);
         for (const id of stagingLease.mediaAttachmentIds) this.staging.releaseRecalled([id]);
@@ -1915,7 +1954,7 @@ export class KimiTUI {
 
   handleTurnStarted(event: TurnStartedEvent): void {
     this.staging.handleTurnStarted(event);
-    this.surveyController.notifyTurnStarted(isUserSubmittedTurnOrigin(event.origin));
+    this.surveyController.notifyTurnStarted(event.origin);
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
@@ -1965,14 +2004,15 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
-    this.appendTranscriptEntry({
+    const entry: TranscriptEntry = {
       id: nextTranscriptId(),
       kind: 'user',
       turnId: undefined,
       renderMode: 'plain',
       content: input,
       imageAttachmentIds,
-    });
+    };
+    this.appendTranscriptEntry(entry);
     // A goal-active steer is buffered into the running goal turn — no new
     // turn.started will fire for handleTurnStarted to claim the lease — so
     // bind it to that turn here. The turn context must be read BEFORE
@@ -2020,6 +2060,15 @@ export class KimiTUI {
         !goalActive && stagingIds.length > 0 ? randomUUID() : undefined,
       );
     const submissionId = stagingLease?.submissionId;
+    const resend = (): void => {
+      this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+      this.updateQueueDisplay();
+      this.drainQueueIfIdle();
+    };
+    const restoreInput = (): void => {
+      this.staging.releaseRecalled(stagingIds);
+      this.restoreInputText(input);
+    };
     // While a goal is being pursued the engine holds its active turn across the
     // whole continuation loop, so a fresh prompt races the goal driver at every
     // continuation boundary and is rejected with `turn.agent_busy`, dropping
@@ -2027,18 +2076,118 @@ export class KimiTUI {
     // turn, or launches a turn of its own if the loop just ended.
     if (goalActive) {
       if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
-      this.staging.trackDispatch(stagingLease, session.steer(sdkInput), (error) => {
-        // Same reset as the prompt path: beginSessionRequest already moved the
-        // TUI to the waiting phase, and no turn events may follow a failed
-        // steer (e.g. the session is gone), which would leave the UI stuck
-        // queueing input behind a request that never completes.
+      const request = this.trackPendingEntries([entry], session.steer(sdkInput));
+      this.staging.trackDispatch(stagingLease, request, (error) => {
+        const recovered = this.handlePromptConflict({
+          session,
+          error,
+          entries: [entry],
+          retry: resend,
+          restore: restoreInput,
+        });
+        if (recovered) {
+          this.staging.defer(stagingLease);
+          return;
+        }
         this.failSessionRequest(`Failed to steer: ${formatErrorMessage(error)}`);
       });
       return;
     }
-    this.staging.trackDispatch(stagingLease, session.prompt(sdkInput, { promptId: submissionId }), (error) => {
+    const request = this.trackPendingEntries(
+      [entry],
+      session.prompt(sdkInput, { promptId: submissionId }),
+    );
+    this.staging.trackDispatch(stagingLease, request, (error) => {
+      const recovered = this.handlePromptConflict({
+        session,
+        error,
+        entries: [entry],
+        retry: resend,
+        restore: restoreInput,
+      });
+      if (recovered) {
+        this.staging.defer(stagingLease);
+        return;
+      }
       this.failSessionRequest(`Failed to send: ${formatErrorMessage(error)}`);
     });
+  }
+
+  private trackPendingEntries(
+    entries: readonly TranscriptEntry[],
+    request: Promise<void>,
+  ): Promise<void> {
+    for (const entry of entries) this.pendingPromptEntries.add(entry);
+    const settle = (): void => {
+      for (const entry of entries) this.pendingPromptEntries.delete(entry);
+    };
+    void request.then(settle, settle);
+    return request;
+  }
+
+  private handlePromptConflict(args: {
+    session: Session;
+    error: unknown;
+    entries?: readonly TranscriptEntry[];
+    retry: () => void;
+    restore: () => void;
+  }): boolean {
+    const { session, error, entries, retry, restore } = args;
+    if (this.session?.id !== session.id || !isSessionOccupiedError(error)) return false;
+    if (entries !== undefined) this.removeTranscriptEntries(entries);
+    this.setAppState({ streamingPhase: 'idle' });
+    this.resetLivePane();
+    this.showSessionOccupied(error, retry, restore);
+    return true;
+  }
+
+  private showSessionOccupied(error: unknown, retry: () => void, restore: () => void): void {
+    const holderClient = occupiedHolderClientId(error);
+    this.track('occupied_prompt_shown', {
+      holder_client: holderClient,
+      opener_client: CLI_MSH_PLATFORM,
+    });
+    const cancel = (): void => {
+      this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
+      restore();
+    };
+    this.mountEditorReplacement(
+      new ChoicePickerComponent({
+        title: 'Session in use',
+        notice: formatErrorMessage(error),
+        noticeTone: 'warning',
+        options: [
+          { value: 'retry', label: 'Retry', description: 'send again now' },
+          { value: 'cancel', label: 'Cancel', description: 'get your message back' },
+        ],
+        spaceSelect: false,
+        onSelect: (action) => {
+          if (action !== 'retry') {
+            cancel();
+            return;
+          }
+          this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
+          this.restoreEditor();
+          retry();
+        },
+        onCancel: cancel,
+      }),
+    );
+  }
+
+  // The SDK reloads a stale session and retries the rejected call once this
+  // resolves; the request stays in flight meanwhile, so input submitted during
+  // the reload queues against the reloaded session.
+  private async refreshAfterStaleReload(session: Session): Promise<void> {
+    if (this.session !== session) return;
+    const pending = this.state.transcriptEntries.filter((entry) =>
+      this.pendingPromptEntries.has(entry),
+    );
+    await this.reloadCurrentSessionView(session, 'Loaded updates from another client.', {
+      replayHistory: true,
+    });
+    for (const entry of pending) this.appendTranscriptEntry(entry);
+    this.track('session_stale_reload');
   }
 
   activatePluginCommand(
@@ -2068,6 +2217,19 @@ export class KimiTUI {
       stagingLease,
       session.activatePluginCommand(pluginId, commandName, rewrite.text),
       (error) => {
+        const recovered = this.handlePromptConflict({
+          session,
+          error,
+          retry: () => this.activatePluginCommand(session, pluginId, commandName, args),
+          restore: () => {
+            this.staging.releaseRecalled(rewrite.imageAttachmentIds);
+            this.restoreInputText(`/${pluginId}:${commandName}${args.length > 0 ? ` ${args}` : ''}`);
+          },
+        });
+        if (recovered) {
+          this.staging.defer(stagingLease);
+          return;
+        }
         this.failSessionRequest(
           `Command "${pluginId}:${commandName}" failed: ${formatErrorMessage(error)}`,
         );
@@ -2293,13 +2455,16 @@ export class KimiTUI {
     // the submission's own turn.started claims them; a merged steer simply
     // retires its media at session close instead.
     if (currentTurnId !== undefined && prepared === undefined) this.staging.bindToTurn(stagingLease, currentTurnId);
-    const request = prepared === undefined
-      ? session.steer(combineSteerInput(resolvedInput))
-      : session.promptWithSkills(
-          combineSteerInput(resolvedInput),
-          prepared.skills,
-          { steerIfActive: true },
-        );
+    const request = this.trackPendingEntries(
+      steeredEntries,
+      prepared === undefined
+        ? session.steer(combineSteerInput(resolvedInput))
+        : session.promptWithSkills(
+            combineSteerInput(resolvedInput),
+            prepared.skills,
+            { steerIfActive: true },
+          ),
+    );
     if (onSettled !== undefined) {
       void request.then(
         () => onSettled(true),
@@ -2309,6 +2474,21 @@ export class KimiTUI {
     this.staging.trackDispatch(stagingLease, request, (error) => {
       if (this.session !== session) {
         onSettled?.(false);
+        return;
+      }
+      const recovered = this.handlePromptConflict({
+        session,
+        error,
+        entries: prepared === undefined && !manual ? steeredEntries : undefined,
+        retry: () => this.steerMessage(session, input, onSettled, manual),
+        restore: () => {
+          this.staging.releaseRecalled(mediaAttachmentIds);
+          this.restoreInputText(input.map((item) => item.text).join('\n'));
+          onSettled?.(false);
+        },
+      });
+      if (recovered) {
+        this.staging.defer(stagingLease);
         return;
       }
       const message = `Failed to steer: ${formatErrorMessage(error)}`;
@@ -2710,6 +2890,7 @@ export class KimiTUI {
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
     this.clearReverseRpcPanels();
+    previous?.setStaleReloadHandler(undefined);
     previous?.setApprovalHandler(undefined);
     previous?.setQuestionHandler(undefined);
     this.approvalController.cancelAll(reason);
@@ -2729,6 +2910,7 @@ export class KimiTUI {
   }
 
   private registerSessionHandlers(session: Session): void {
+    session.setStaleReloadHandler(() => this.refreshAfterStaleReload(session));
     session.setApprovalHandler(
       createApprovalRequestHandler(this.approvalController, (request, response) => {
         this.appendApprovalTranscriptEntry(request, response);
@@ -2844,12 +3026,12 @@ export class KimiTUI {
     this.state.terminal.setTitle(label);
   }
 
-  resetSessionRuntime(): void {
+  resetSessionRuntime(options?: { readonly keepQueuedMessages?: boolean }): void {
     this.aborted = false;
     this.cacheHint.resetRuntime();
     this.surveyController.reset();
     this.streamingUI.discardPending();
-    this.clearQueuedMessages();
+    if (options?.keepQueuedMessages !== true) this.clearQueuedMessages();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -2942,7 +3124,11 @@ export class KimiTUI {
     void this.cacheHint.maybeShowOnResume();
   }
 
-  async reloadCurrentSessionView(session: Session, statusMessage: string): Promise<void> {
+  async reloadCurrentSessionView(
+    session: Session,
+    statusMessage: string,
+    options?: { readonly replayHistory?: boolean },
+  ): Promise<void> {
     this.sessionEventUnsubscribe?.();
     this.sessionEventUnsubscribe = undefined;
     this.clearReverseRpcPanels();
@@ -2951,7 +3137,8 @@ export class KimiTUI {
     this.approvalController.cancelAll('reloading session');
     this.questionController.cancelAll('reloading session');
 
-    this.resetSessionRuntime();
+    // The same session reloads in place, so its queued messages stay queued.
+    this.resetSessionRuntime({ keepQueuedMessages: true });
     this.session = session;
     this.surveyController.seedUserTurnCount(
       session.getResumeState()?.agents[MAIN_AGENT_ID]?.userTurnCount,
@@ -2965,6 +3152,14 @@ export class KimiTUI {
       await this.refreshPluginCommands(session);
     } catch {
       /* keep the reloaded session usable even if dynamic skills fail */
+    }
+    if (options?.replayHistory === true) {
+      this.clearTranscriptView();
+      try {
+        await this.sessionReplay.hydrateFromReplay(session);
+      } catch (error) {
+        this.showError(`Failed to replay session history: ${formatErrorMessage(error)}`);
+      }
     }
     this.sessionEventHandler.startSubscription();
     const resumeState = session.getResumeState();
@@ -3236,6 +3431,11 @@ export class KimiTUI {
   }
 
   private clearTranscriptAndRedraw(): void {
+    this.staging.deleteStaged(this.imageStore.clear());
+    this.clearTranscriptView();
+  }
+
+  private clearTranscriptView(): void {
     this.streamingUI.discardPending();
     this.state.transcriptEntries = [];
     this.streamingUI.disposeActiveCompactionBlock();
@@ -3249,8 +3449,6 @@ export class KimiTUI {
     this.state.todoPanel.clear();
     this.state.todoPanelContainer.clear();
     this.sessionEventHandler.notifications.clear();
-    const stagingFileIds = this.imageStore.clear();
-    this.staging.deleteStaged(stagingFileIds);
     this.renderWelcome();
     // No forced full render on session reset: let the differential renderer
     // converge on its own (a mass change above the viewport still makes the

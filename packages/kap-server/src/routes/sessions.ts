@@ -23,15 +23,16 @@ import {
   SessionCreated,
   IWorkspaceAliases,
   ISessionManager,
+  IDefaultWorkspace,
   IWorkspaceInstanceManager,
   IWorkspaceService,
   closeSessionById,
   getLiveSessionById,
   programForSession,
   resolveSubagentModelPool,
+  reloadOnStale,
   resumeSessionById,
   setSessionArchived,
-  isError2,
   Error2,
   type ContextMessage,
   type IAgentScopeHandle,
@@ -41,6 +42,7 @@ import {
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { defaultWorkspaceUnavailableDataSchema } from '../protocol/default-workspace';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
 import { toProtocolMessage } from '../services/messages/messageProjection';
@@ -77,6 +79,7 @@ import { defineRoute } from '../middleware/defineRoute';
 import { readLegacyStatus } from '../services/legacyStatus/legacyStatus';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, dispatchAction } from './action-dispatch';
+import { sendMappedError, sessionConflictErrors } from './sessionErrors';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
 
@@ -195,15 +198,34 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.DEFAULT_WORKSPACE_UNAVAILABLE]: {
+          dataSchema: defaultWorkspaceUnavailableDataSchema,
+        },
       },
-      description: 'Create a new session',
+      description:
+        'Create a new session. default_workspace=true places it in the default workspace (the configured custom location, or KimiCode/Default under the home folder) and cannot be combined with workspace_id or metadata.',
       tags: ['sessions'],
     },
     async (req, reply) => {
       const body = req.body;
       const callerCwd = typeof body.metadata?.cwd === 'string' ? body.metadata.cwd : undefined;
       const workspaceId = body.workspace_id;
-      if (workspaceId === undefined && callerCwd === undefined) {
+      const useDefault = body.default_workspace === true;
+      if (useDefault && (workspaceId !== undefined || body.metadata !== undefined)) {
+        reply.send(
+          buildValidationEnvelope(
+            [
+              {
+                path: 'default_workspace',
+                message: 'default_workspace cannot be combined with workspace_id or metadata',
+              },
+            ],
+            req.id,
+          ),
+        );
+        return;
+      }
+      if (!useDefault && workspaceId === undefined && callerCwd === undefined) {
         reply.send(
           buildValidationEnvelope(
             [{ path: 'metadata.cwd', message: 'either workspace_id or metadata.cwd is required' }],
@@ -214,7 +236,7 @@ export function registerSessionsRoutes(
       }
 
       const registry = core.accessor.get(IWorkspaceService);
-      let workDir: string;
+      let workDir: string | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -243,10 +265,11 @@ export function registerSessionsRoutes(
         }
         workDir = workspace.root;
       } else {
-        workDir = callerCwd as string;
+        workDir = callerCwd;
       }
 
       try {
+        workDir ??= await core.accessor.get(IDefaultWorkspace).ensure();
         const touched = await registry.createOrTouch(workDir);
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: touched.id,
@@ -510,6 +533,7 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
+        ...sessionConflictErrors,
       },
       description: 'Update session profile (title, metadata, agent_config)',
       tags: ['sessions'],
@@ -563,6 +587,7 @@ export function registerSessionsRoutes(
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_TITLE_UNAVAILABLE]: {},
+        ...sessionConflictErrors,
       },
       description: 'Generate the session title via the managed chat_title tool',
       tags: ['sessions'],
@@ -623,6 +648,7 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
+        ...sessionConflictErrors,
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
       },
@@ -723,6 +749,7 @@ export function registerSessionsRoutes(
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.SESSION_BUSY]: {},
+        ...sessionConflictErrors,
       },
       description: 'Create a child session',
       tags: ['sessions'],
@@ -931,10 +958,12 @@ async function compactSessionAction(
   ctx: SessionActionCtx<z.infer<typeof compactSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  const agent = await resolveMainAgent(core, id);
-  agent.accessor
-    .get(IAgentFullCompactionService)
-    .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  await reloadOnStale(core.accessor, id, async () => {
+    const agent = await resolveMainAgent(core, id);
+    agent.accessor
+      .get(IAgentFullCompactionService)
+      .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+  });
   requestLog(req)?.info({ session_id: id, action: 'compact' }, 'session action completed');
   reply.send(okEnvelope({}, req.id));
 }
@@ -944,7 +973,12 @@ async function undoSessionAction(
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
   const agent = await resolveMainAgent(core, id);
-  await agent.accessor.get(IAgentConversationUndoService).undo(body.count);
+  await reloadOnStale(
+    core.accessor,
+    id,
+    () => agent.accessor.get(IAgentConversationUndoService).undo(body.count),
+    { retry: false },
+  );
   const history = agent.accessor.get(IAgentContextMemoryService).get();
   requestLog(req)?.info({ session_id: id, action: 'undo' }, 'session action completed');
   const legacy = core.accessor.get(ISessionLegacyService);
@@ -1279,74 +1313,4 @@ function buildValidationEnvelope(
     request_id: requestId,
     details,
   };
-}
-
-function sendMappedError(
-  reply: { send(payload: unknown): unknown },
-  req: { id: string },
-  err: unknown,
-): void {
-  const requestId = req.id;
-  const log = requestLog(req);
-  if (isError2(err)) {
-    switch (err.code) {
-      case 'session.not_found':
-      case 'agent.not_found':
-        reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'session.fork_active_turn':
-      case ErrorCodes.SESSION_BUSY:
-        reply.send(errEnvelope(ErrorCode.SESSION_BUSY, err.message, requestId, err.stack));
-        return;
-      case 'compaction.unable':
-        reply.send(errEnvelope(ErrorCode.COMPACTION_UNABLE, err.message, requestId, err.stack));
-        return;
-      case 'session.undo_unavailable':
-        reply.send({
-          code: ErrorCode.SESSION_UNDO_UNAVAILABLE,
-          msg: err.message,
-          data: (err as { details?: unknown }).details ?? null,
-          request_id: requestId,
-          stack: err.stack,
-        });
-        return;
-      case ErrorCodes.GOAL_ALREADY_EXISTS:
-        reply.send(errEnvelope(ErrorCode.GOAL_ALREADY_EXISTS, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.GOAL_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_STATUS_INVALID:
-        reply.send(errEnvelope(ErrorCode.GOAL_STATUS_INVALID, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_NOT_RESUMABLE:
-        reply.send(errEnvelope(ErrorCode.GOAL_NOT_RESUMABLE, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_OBJECTIVE_EMPTY:
-        reply.send(errEnvelope(ErrorCode.GOAL_OBJECTIVE_EMPTY, err.message, requestId, err.stack));
-        return;
-      case ErrorCodes.GOAL_OBJECTIVE_TOO_LONG:
-        reply.send(
-          errEnvelope(ErrorCode.GOAL_OBJECTIVE_TOO_LONG, err.message, requestId, err.stack),
-        );
-        return;
-      case ErrorCodes.FS_PATH_NOT_FOUND:
-        reply.send(errEnvelope(ErrorCode.FS_PATH_NOT_FOUND, err.message, requestId, err.stack));
-        return;
-      case 'request.invalid':
-      case 'validation.failed':
-      case ErrorCodes.CONFIG_INVALID:
-        reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, err.message, requestId, err.stack));
-        return;
-    }
-  }
-  log?.error({ err }, 'session request failed');
-  reply.send(
-    errEnvelope(
-      ErrorCode.INTERNAL_ERROR,
-      err instanceof Error ? err.message : String(err),
-      requestId,
-      err instanceof Error ? err.stack : undefined,
-    ),
-  );
 }

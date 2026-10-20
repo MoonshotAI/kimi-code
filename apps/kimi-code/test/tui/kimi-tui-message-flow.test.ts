@@ -14,6 +14,8 @@ import {
 } from '@moonshot-ai/pi-tui';
 import {
   createKimiHarness,
+  ErrorCodes,
+  KimiError,
   type ApprovalRequest,
   type ApprovalResponse,
   type Event,
@@ -61,7 +63,6 @@ import type { SurveyController } from '#/tui/controllers/survey-controller';
 import { handleFeedbackCommand } from '#/tui/commands/info';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { openUrl } from '#/utils/open-url';
-import { readSurveyLastShownTime } from '#/utils/survey-state-store';
 import { createFeedbackArchivePath } from '../../src/feedback/archive';
 import { packageCodebase, scanCodebase } from '../../src/feedback/codebase';
 import { uploadArchive } from '../../src/feedback/upload';
@@ -228,6 +229,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setStaleReloadHandler: vi.fn(),
     setModel: vi.fn(async (alias: string) => {
       model = alias;
     }),
@@ -309,6 +311,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
       },
     })),
     setConfig: vi.fn(async () => ({ providers: {} })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     forkSession: vi.fn(async () => session),
@@ -954,6 +957,97 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toMatchObject([
       { content: 'please /skill:review', skillNames: ['review'] },
     ]);
+  });
+
+  it('refreshes the view through the stale-reload handler while the prompt stays in flight (v2 engine)', async () => {
+    let staleReload!: () => Promise<void>;
+    let releasePrompt!: () => void;
+    const session = makeSession({
+      id: 'ses-1',
+      setStaleReloadHandler: vi.fn((handler: () => Promise<void>) => {
+        staleReload = handler;
+      }),
+      prompt: vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            releasePrompt = resolve;
+          }),
+      ),
+    });
+    const { driver, harness } = await makeDriver(session, { reloadSession: vi.fn() });
+
+    driver.handleUserInput('original message');
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledTimes(1);
+    });
+    driver.handleUserInput('queued while reloading');
+    driver.state.editor.setText('typed during reload');
+
+    await staleReload();
+
+    expect(driver.state.appState.streamingPhase).not.toBe('idle');
+    expect(driver.state.transcriptEntries.filter((entry) => entry.kind === 'user')).toMatchObject([
+      { content: 'original message' },
+    ]);
+    expect(driver.state.queuedMessages).toMatchObject([{ text: 'queued while reloading' }]);
+    expect(driver.state.editor.getText()).toBe('typed during reload');
+    expect(harness.reloadSession).not.toHaveBeenCalled();
+    expect(session.close).not.toHaveBeenCalled();
+    expect(session.prompt).toHaveBeenCalledTimes(1);
+    releasePrompt();
+  });
+
+  it('asks to rerun /undo after the SDK reloaded a stale session (v2 engine)', async () => {
+    const session = makeSession({
+      id: 'ses-1',
+      undoHistory: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.SESSION_STALE, 'stale');
+      }),
+    });
+    const { driver, harness } = await makeDriver(session, { reloadSession: vi.fn() });
+
+    driver.handleUserInput('hello');
+    driver.state.appState.streamingPhase = 'idle';
+    driver.handleUserInput('/undo');
+    await confirmUndoSelection(driver);
+
+    await vi.waitFor(() => {
+      expect(stripSgr(renderTranscript(driver))).toContain('run /undo again');
+    });
+    expect(harness.reloadSession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['two words', '/plug:cmd two words'],
+    ['', '/plug:cmd'],
+  ])('shows a wrapped occupied notice and restores the plugin command after cancellation', async (args, expected) => {
+    const message =
+      'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.';
+    const session = makeSession({
+      activatePluginCommand: vi.fn(async () => {
+        throw new KimiError(ErrorCodes.SESSION_OCCUPIED, message);
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    (
+      driver as unknown as {
+        activatePluginCommand(s: unknown, pluginId: string, command: string, value: string): void;
+      }
+    ).activatePluginCommand(session, 'plug', 'cmd', args);
+    await vi.waitFor(() => {
+      expect(driver.state.editorReplacementMounted).toBe(true);
+    });
+    const picker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+      render(width: number): string[];
+    };
+    const output = stripSgr(picker.render(40).join(' ')).replaceAll(/\s+/g, ' ');
+    expect(output).toContain('Session in use');
+    expect(output).toContain(message);
+    picker.handleInput('\u001B');
+
+    expect(driver.state.editor.getText()).toBe(expected);
   });
 
   it('renders a bundled replay submission as a single turn', async () => {
@@ -11299,7 +11393,6 @@ describe('KimiTUI session rating survey', () => {
           emitTurn(driver, 1);
           await driver.reloadCurrentSessionView(session as unknown as Session, 'Reloaded session.');
         }
-        await readSurveyLastShownTime();
         vi.useFakeTimers();
         harness.trackWithContext.mockClear();
         emitTurn(driver, 41, () => {
@@ -11340,7 +11433,6 @@ describe('KimiTUI session rating survey', () => {
         } else {
           await driver.createNewSession();
         }
-        await readSurveyLastShownTime();
         vi.useFakeTimers();
         harness.trackWithContext.mockClear();
         emitTurn(driver, 1, () => {
@@ -11371,15 +11463,15 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver, harness } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       harness.track.mockClear();
 
       for (let turn = 1; turn <= 4; turn++) emitTurn(driver, turn);
       vi.advanceTimersByTime(600_000);
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       emitTurn(driver, 5, () => {
@@ -11408,7 +11500,7 @@ describe('KimiTUI session rating survey', () => {
           () => {},
         );
       });
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       const docked = stripSgr(driver.state.surveyContainer.render(120).join('\n'));
       expect(docked).toContain('How is Kimi doing this session? (optional)');
       expect(docked).toContain('1: Bad  2: Fine  3: Good  0: Dismiss');
@@ -11513,8 +11605,8 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver, harness } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       harness.track.mockClear();
@@ -11538,7 +11630,7 @@ describe('KimiTUI session rating survey', () => {
           () => {},
         );
       });
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
 
       expect(stripSgr(driver.state.surveyContainer.render(120).join('\n'))).toContain(
         'How is Kimi doing this session? (optional)',
@@ -11583,8 +11675,8 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       const emit = (event: Event) => {
@@ -11604,11 +11696,11 @@ describe('KimiTUI session rating survey', () => {
         emit({ type: 'turn.started', agentId: 'main', turnId: turn, origin: cronOrigin } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       for (let turn = 6; turn <= 10; turn++) emitTurn(driver, turn);
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).not.toHaveLength(0);
 
       vi.useRealTimers();
@@ -11630,8 +11722,8 @@ describe('KimiTUI session rating survey', () => {
     try {
       const { driver } = await makeDriver();
       vi.useRealTimers();
-      await vi.waitFor(() => {
-        expect((driver.surveyController as unknown as { cooldownReady: boolean }).cooldownReady).toBe(true);
+      await new Promise((resolve) => {
+        setImmediate(resolve);
       });
       vi.useFakeTimers();
       const emit = (event: Event) => {
@@ -11653,7 +11745,7 @@ describe('KimiTUI session rating survey', () => {
         } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).toHaveLength(0);
 
       for (let turn = 6; turn <= 8; turn++) {
@@ -11685,7 +11777,7 @@ describe('KimiTUI session rating survey', () => {
         } as Event);
         emit({ type: 'turn.ended', agentId: 'main', turnId: turn, reason: 'completed' } as Event);
       }
-      vi.advanceTimersByTime(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
       expect(driver.state.surveyContainer.children).not.toHaveLength(0);
 
       vi.useRealTimers();
@@ -11698,6 +11790,27 @@ describe('KimiTUI session rating survey', () => {
       vi.useRealTimers();
       vi.restoreAllMocks();
     }
+  });
+
+  it('mirrors disable_feedback_survey config changes into appState', async () => {
+    let listener: ((change: { domain: string; value: unknown }) => void) | undefined;
+    const unsubscribe = vi.fn();
+    const { driver } = await makeDriver(makeSession(), {
+      onConfigSectionChanged: vi.fn(
+        (fn: (change: { domain: string; value: unknown }) => void) => {
+          listener = fn;
+          return unsubscribe;
+        },
+      ),
+    });
+    expect(listener).toBeDefined();
+    expect(unsubscribe).not.toHaveBeenCalled();
+    listener?.({ domain: 'disableFeedbackSurvey', value: true });
+    expect(driver.state.appState.disableFeedbackSurvey).toBe(true);
+    listener?.({ domain: 'disableFeedbackSurvey', value: false });
+    expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
+    listener?.({ domain: 'telemetry', value: false });
+    expect(driver.state.appState.disableFeedbackSurvey).toBeUndefined();
   });
 });
 

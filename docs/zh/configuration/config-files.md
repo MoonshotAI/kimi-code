@@ -104,6 +104,7 @@ timeout = 5
 | `builtin_product_skills` | `boolean` | `true` | 是否向模型提供介绍 Kimi Code 自身的内置 Skills |
 | `telemetry` | `boolean` | `true` | 是否启用匿名遥测；显式设为 `false` 时关闭 |
 | `auto_session_title` | `boolean` | `true` | 是否允许客户端自动生成会话标题；显式设为 `false` 时关闭 |
+| `disable_feedback_survey` | `boolean` | `false` | 关闭 CLI 和桌面端偶尔出现的会话评分提示 |
 | [`providers`](#providers) | `table` | `{}` | API 供应商表 |
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
@@ -484,6 +485,21 @@ max_chars = 500000
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
 
+## `default_workspace`
+
+`default_workspace` 设置未选择工作区时对话存放的位置，例如桌面端不选项目直接新建的对话。未设置时为主目录下的 `KimiCode/Default`（`~/KimiCode/Default`）。
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `path` | `string` | — | 绝对路径，或以 `~/` 表示的主目录下路径。首次使用时创建 |
+
+```toml
+[default_workspace]
+path = "~/Projects/Chats"
+```
+
+更改位置不会移动已有对话，原目录保留为普通工作区。
+
 <!--
 ## `experimental`
 
@@ -565,7 +581,6 @@ MCP server 的声明配置写在 `~/.kimi-code/mcp.json` 或项目内 `.kimi-cod
 | `render_latex` | `boolean` | `true` | 将 Markdown 中的 LaTeX 公式渲染为 Unicode 文本；`false` 保留原始源码 |
 | `disable_paste_burst` | `boolean` | `false` | 禁用非 bracketed paste 的粘贴突发兜底；默认开启，避免快速多行粘贴被逐行提交 |
 | `cache_expiry_hint` | `boolean` | `true` | resume 或长时间空闲后发消息时，若上下文缓存可能过期则提醒，可先压缩或新建会话（仅 v2 引擎） |
-| `disable_feedback_survey` | `boolean` | `false` | 关闭输入框上方偶尔出现的会话评分提示 |
 | `auto_session_title` | `boolean` | `true` | 首个完成的轮次后由 TUI 自动生成会话标题；设为 `false` 只关闭 TUI 的触发，不影响 `config.toml` 中的全局 `auto_session_title` |
 | `[editor].command` | `string` | `""` | 编写长输入用的外部编辑器命令；留空则回退到 `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | 是否发送桌面通知 |
@@ -588,7 +603,6 @@ tui_mode = "regular" # "regular" | "fullscreen"（"fullscreen" 为实验性）
 render_latex = true # false 表示消息中的 LaTeX 公式保留原始源码
 disable_paste_burst = false # true 表示禁用非 bracketed paste 的粘贴突发兜底
 cache_expiry_hint = true # false 表示关闭 resume / 空闲提交时的"缓存已过期"提醒弹窗
-disable_feedback_survey = false # true 表示关闭偶发的会话评分提示
 auto_session_title = true # false 表示 TUI 不在首个完成的轮次后自动生成会话标题
 
 [editor]

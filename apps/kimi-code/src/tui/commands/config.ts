@@ -27,6 +27,7 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { isSessionOccupiedError } from '../utils/session-lock-errors';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
   effectiveModelForHost,
@@ -56,8 +57,7 @@ export function currentTuiConfig(host: Pick<SlashCommandHost, 'state'>): TuiConf
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     renderLatex: host.state.appState.renderLatex ?? DEFAULT_TUI_CONFIG.renderLatex ?? true,
     cacheExpiryHint: host.state.appState.cacheExpiryHint ?? DEFAULT_TUI_CONFIG.cacheExpiryHint,
-    disableFeedbackSurvey:
-      host.state.appState.disableFeedbackSurvey ?? DEFAULT_TUI_CONFIG.disableFeedbackSurvey,
+    autoSessionTitle: host.state.appState.autoSessionTitle ?? DEFAULT_TUI_CONFIG.autoSessionTitle,
     notifications: host.state.appState.notifications,
     upgrade: host.state.appState.upgrade,
     statusLine: host.state.appState.statusLine ?? DEFAULT_TUI_CONFIG.statusLine,
@@ -124,7 +124,12 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
     return;
   }
   const customInstruction = args.trim() || undefined;
-  await session.compact({ instruction: customInstruction });
+  try {
+    await session.compact({ instruction: customInstruction });
+  } catch (error) {
+    if (!isSessionOccupiedError(error)) throw error;
+    host.showError(formatErrorMessage(error));
+  }
 }
 
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -701,10 +706,10 @@ export function showSurveyPreferencePicker(host: SlashCommandHost): void {
 
 type SurveyPreferenceHost = {
   readonly state: {
-    readonly appState: Pick<
-      SlashCommandHost['state']['appState'],
-      'theme' | 'editorCommand' | 'notifications' | 'upgrade' | 'disableFeedbackSurvey'
-    >;
+    readonly appState: Pick<SlashCommandHost['state']['appState'], 'disableFeedbackSurvey'>;
+  };
+  readonly harness: {
+    setConfig(patch: { disableFeedbackSurvey: boolean }): Promise<unknown>;
   };
   setAppState(
     patch: Pick<SlashCommandHost['state']['appState'], 'disableFeedbackSurvey'>,
@@ -723,10 +728,7 @@ export async function applySurveyPreferenceChoice(
   }
 
   try {
-    await saveTuiConfig({
-      ...currentTuiConfig(host as unknown as SlashCommandHost),
-      disableFeedbackSurvey,
-    });
+    await host.harness.setConfig({ disableFeedbackSurvey });
   } catch (error) {
     host.showStatus(
       `Failed to save session rating setting: ${formatErrorMessage(error)}`,
