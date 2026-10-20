@@ -22,7 +22,6 @@ interface WorkspaceWire {
   id: string;
   root: string;
   name: string;
-  is_default: boolean;
   created_at: string;
   last_opened_at: string;
   session_count: number;
@@ -120,7 +119,6 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(body.code).toBe(0);
     expect(body.data.root).toBe(root);
     expect(body.data.name).toBe('proj');
-    expect(body.data.is_default).toBe(false);
     expect(body.data.id).toMatch(/^wd_[a-z0-9._-]+_[0-9a-f]{12}$/);
     expect(typeof body.data.session_count).toBe('number');
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);

@@ -11,11 +11,9 @@ import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-c
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
-  DefaultWorkspaceUnavailableError,
   Error2,
   ErrorCodes,
   IBootstrapService,
-  IDefaultWorkspace,
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
@@ -134,7 +132,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  async function restartWithFreshHome(seeds?: ScopeSeed): Promise<void> {
+  async function restartWithFreshHome(): Promise<void> {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -151,7 +149,6 @@ describe('server-v2 /api/v1/sessions', () => {
       homeDir: home,
       logLevel: 'silent',
       debugEndpoints: true,
-      seeds,
     });
     base = `http://127.0.0.1:${server.port}`;
   }
@@ -389,78 +386,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const { body } = await postJson<null>('/api/v1/sessions', { title: 'no cwd' });
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('metadata.cwd');
-  });
-
-  describe('default workspace', () => {
-    function defaultWorkspaceStub(
-      root: string,
-      ensure: () => Promise<string> = async () => {
-        await mkdir(root, { recursive: true });
-        return root;
-      },
-    ): ScopeSeed {
-      const stub: IDefaultWorkspace = {
-        _serviceBrand: undefined,
-        ensure,
-        isDefault: async (candidate) => candidate === root,
-      };
-      return [[IDefaultWorkspace, stub]];
-    }
-
-    it('creates sessions in the default workspace and flags it on the workspace wire', async () => {
-      const root = join(tmpdir(), `kimi-default-workspace-${randomBytes(4).toString('hex')}`);
-      await restartWithFreshHome(defaultWorkspaceStub(root));
-      try {
-        const first = await postJson<SessionWire>('/api/v1/sessions', { default_workspace: true });
-        const second = await postJson<SessionWire>('/api/v1/sessions', { default_workspace: true });
-
-        expect(first.body.code).toBe(0);
-        expect(first.body.data.metadata.cwd).toBe(root);
-        expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
-
-        const workspaces = await getJson<{ items: { id: string; is_default: boolean }[] }>(
-          '/api/v1/workspaces',
-        );
-        expect(workspaces.body.data.items).toEqual([
-          expect.objectContaining({ id: first.body.data.workspace_id, is_default: true }),
-        ]);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    });
-
-    it.each([
-      ['workspace_id', { workspace_id: 'wd_missing_000000000000' }],
-      ['metadata', { metadata: { cwd: '/x' } }],
-    ])('rejects default_workspace combined with %s (40001)', async (_label, extra) => {
-      const { body } = await postJson<null>('/api/v1/sessions', {
-        default_workspace: true,
-        ...extra,
-      });
-      expect(body.code).toBe(40001);
-      expect(body.details?.[0]?.path).toBe('default_workspace');
-    });
-
-    it('reports an unusable default workspace as 40930 with path and reason', async () => {
-      const root = join(tmpdir(), 'kimi-default-workspace-denied');
-      await restartWithFreshHome(
-        defaultWorkspaceStub(root, async () => {
-          throw new DefaultWorkspaceUnavailableError(
-            { path: root, reason: 'permission_denied' },
-            `default workspace ${root} is unavailable: permission denied`,
-          );
-        }),
-      );
-
-      const { body } = await postJson<{ path: string; reason: string }>('/api/v1/sessions', {
-        default_workspace: true,
-      });
-      expect(body.code).toBe(40930);
-      expect(body.data).toEqual({ path: root, reason: 'permission_denied' });
-
-      const workspaces = await getJson<{ items: unknown[] }>('/api/v1/workspaces');
-      expect(workspaces.body.data.items).toEqual([]);
-    });
   });
 
   it('rejects create with unknown workspace_id (40410)', async () => {

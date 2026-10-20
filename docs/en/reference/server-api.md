@@ -618,7 +618,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 
 | Method and path | Description |
 | --- | --- |
-| `POST /api/v1/sessions` | Create a session (requires `workspace_id`, `metadata.cwd`, or `default_workspace`) |
+| `POST /api/v1/sessions` | Create a session (requires `workspace_id` or `metadata.cwd`) |
 | `GET /api/v1/sessions` | List sessions; cursor pagination with filters such as `busy` and `archived_only` |
 | `GET /api/v1/sessions/{session_id}` | Read one session |
 | `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
@@ -662,22 +662,20 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 
 #### `POST /api/v1/sessions`
 
-Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace), from `metadata.cwd` (the workspace is registered on first use), or from `default_workspace`; passing both `workspace_id` and `metadata.cwd` requires them to agree. Creation broadcasts the global `event.session.created` event.
+Creates a session and returns it. The target directory comes from `workspace_id` (an already-registered workspace) or from `metadata.cwd` (the workspace is registered on first use); passing both requires them to agree. Creation broadcasts the global `event.session.created` event.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | **Required** when neither `metadata.cwd` nor `default_workspace` is given. Registered workspace id; the session is created at that workspace's root |
-| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when neither `workspace_id` nor `default_workspace` is given; with both given, it must equal the workspace root |
-| `default_workspace` | body | boolean | When `true`, the session is created in the default workspace — `~/KimiCode/Default` unless [`default_workspace.path`](../configuration/config-files.md#default-workspace) is set — which is created on demand and registered as an ordinary workspace. Cannot be combined with `workspace_id` or `metadata` |
+| `workspace_id` | body | string | **Required** when `metadata.cwd` is absent. Registered workspace id; the session is created at that workspace's root |
+| `metadata` | body | object | Custom metadata. `metadata.cwd` is the working directory and is **required** when `workspace_id` is absent; with both given, it must equal the workspace root |
 | `title` | body | string | Initial title (at least 1 character); the session is untitled otherwise |
 | `agent_config` | body | object | Accepted by the schema but currently not applied — set the model and modes through `POST /api/v1/sessions/{session_id}/profile` |
 
 On success, `data` is [the session object](#the-session-object) of the new session.
 
-- `40001`: none of `workspace_id`, `metadata.cwd`, and `default_workspace` given, `default_workspace` combined with `workspace_id` or `metadata`, or `metadata.cwd` does not match the workspace root (`details` lists the field)
+- `40001`: neither `workspace_id` nor `metadata.cwd` given, or `metadata.cwd` does not match the workspace root (`details` lists the field)
 - `40409`: the working directory does not exist or is not a directory
 - `40410`: no registered workspace with that `workspace_id`
-- `40930`: the default workspace folder cannot be created or used. `data` is `{ path, reason }`, where `reason` is one of `blocked_by_file` (a file sits where a folder is needed), `permission_denied`, `missing_parent` (a parent folder or drive is unavailable), `no_space`, `read_only`, `invalid_path` (not absolute, or too long), or `unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -1650,7 +1648,6 @@ Every endpoint that returns a workspace uses this wire shape. Registration and r
 | `id` | string | Workspace id, a `wd_<slug>_<hash12>` string derived from the root path |
 | `root` | string | Absolute path of the project directory |
 | `name` | string | Display name, 1–100 characters; defaults to the root's base name |
-| `is_default` | boolean | Whether the root is the current [default workspace](../configuration/config-files.md#default-workspace); computed on every response |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -2461,7 +2458,7 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 | Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
 | Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
 
-Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, is_default, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
+Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 
