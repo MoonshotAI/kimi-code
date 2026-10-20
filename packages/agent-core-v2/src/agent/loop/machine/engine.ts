@@ -53,7 +53,13 @@ export type MachineEngineDelta =
 export type MachineTurnOutcome = 'done' | 'failed' | 'aborted';
 
 export type MachineEngineEvent =
-  | { readonly type: 'turnStarted'; readonly machineTurnId: number; readonly queueItemId?: string; readonly entry?: UserEntry }
+  | {
+      readonly type: 'turnStarted';
+      readonly machineTurnId: number;
+      readonly queueItemId?: string;
+      readonly entry?: UserEntry;
+      readonly entries: readonly UserEntry[];
+    }
   | {
       readonly type: 'turnSettled';
       readonly outcome: MachineTurnOutcome;
@@ -366,7 +372,13 @@ export function attachMachineEngine(
       split = createDeltaSplitter();
       pendingFailure = undefined;
       lastRetry = undefined;
-      publish({ type: 'turnStarted', machineTurnId: event.turnId, queueItemId: event.queueItemId, entry: event.entry });
+      publish({
+        type: 'turnStarted',
+        machineTurnId: event.turnId,
+        queueItemId: event.queueItemId,
+        entry: event.entry,
+        entries: event.entries,
+      });
     }),
     ref.on('step.started', (event) => {
       currentStep = event.step;

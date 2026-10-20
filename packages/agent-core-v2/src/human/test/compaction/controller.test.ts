@@ -228,15 +228,15 @@ describe('compaction controller manual', () => {
 
     const result = await compactPromise;
     expect(result.branchId).toBe('main~2');
-    await waitFor(actor, (s) => s.matches('idle') && main.getState().history.length === 6, {
+    await waitFor(actor, (s) => s.matches('idle') && main.getState().history.length === 5, {
       timeout: 5000,
     });
 
     const texts = historyTexts(main);
     expect(texts[0]).toBe('first');
     expect(texts[1]).toContain('SUMMARY TEXT');
-    expect(texts.slice(2)).toEqual(['q1', 'echo:q1', 'q2', 'echo:q2']);
-    expect(main.getState().turnIndex.nextTurnId).toBe(4);
+    expect(texts.slice(2)).toEqual(['q1', 'q2', 'echo:q2']);
+    expect(main.getState().turnIndex.nextTurnId).toBe(3);
     expect(harness.summarizeCalls[0]?.historyLength).toBe(2);
 
     harness.controller.dispose();

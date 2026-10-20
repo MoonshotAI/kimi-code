@@ -890,21 +890,46 @@ describe('Agent loop', () => {
     expect(record).toMatchObject({ turnId: 0, reason: 'completed', stopReason: 'demo_reason' });
   });
 
-  it('queues consecutive nextTurn requests in FIFO order without overlapping turns', async () => {
+  it('launches queued prompts together in FIFO order on one following turn', async () => {
     const events: string[] = [];
     const subscription = ctx.get(IEventBus).subscribe((event) => {
       if (event instanceof TurnStarted || event instanceof TurnEnded) {
         events.push(`${event.type}:${event.turnId}`);
       }
     });
+    let firstStarted!: () => void;
+    const firstReady = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('batch-queue', async (hookContext, next) => {
+      if (hookContext.turnId === 0) {
+        firstStarted();
+        await firstCanFinish;
+      }
+      await next();
+    });
     ctx.mockNextResponse({ type: 'text', text: 'one' });
     ctx.mockNextResponse({ type: 'text', text: 'two' });
-    ctx.mockNextResponse({ type: 'text', text: 'three' });
 
-    const first = submitTurn(loop, 'first').turn;
-    const second = submitTurn(loop, 'second').turn;
-    const third = submitTurn(loop, 'third').turn;
-    loop.notify();
+    const first = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
+      meta: { promptId: 'batch-first', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    await firstReady;
+    const second = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
+      meta: { promptId: 'batch-second', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    const third = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'third' }] },
+      meta: { promptId: 'batch-third', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    hook.dispose();
+    releaseFirst();
 
     await Promise.all([first.result, second.result, third.result]);
     subscription.dispose();
@@ -912,15 +937,155 @@ describe('Agent loop', () => {
     await expect(first.result).resolves.toMatchObject({ type: 'completed' });
     await expect(second.result).resolves.toMatchObject({ type: 'completed' });
     await expect(third.result).resolves.toMatchObject({ type: 'completed' });
+    expect(second.id).toBe(1);
+    expect(third.id).toBe(1);
     expect(events).toEqual([
       'turn.started:0',
-      'turn.ended:0',
       'turn.started:1',
+      'turn.ended:0',
       'turn.ended:1',
-      'turn.started:2',
-      'turn.ended:2',
     ]);
-    expect(ctx.llmCalls).toHaveLength(3);
+    expect(ctx.llmCalls).toHaveLength(2);
+    const history = ctx.contextData().history;
+    const secondIndex = history.findIndex((message) => message.id === 'batch-second');
+    expect(history.slice(secondIndex, secondIndex + 2)).toMatchObject([
+      { role: 'user', id: 'batch-second', content: [{ type: 'text', text: 'second' }] },
+      { role: 'user', id: 'batch-third', content: [{ type: 'text', text: 'third' }] },
+    ]);
+    await vi.waitFor(() => {
+      const lifecycle = ctx.allEvents
+        .filter(
+          (event) =>
+            event.type === '[rpc]' &&
+            (event.event === 'prompt.started' || event.event === 'prompt.completed'),
+        )
+        .map((event) => `${event.event}:${(event.args as { promptId: string }).promptId}`);
+      expect(lifecycle).toEqual([
+        'prompt.started:batch-first',
+        'prompt.started:batch-second',
+        'prompt.started:batch-third',
+        'prompt.completed:batch-first',
+        'prompt.completed:batch-second',
+        'prompt.completed:batch-third',
+      ]);
+    });
+  });
+
+  it('promotes the next live batched prompt when the drained head is cancelled before binding', async () => {
+    let firstStarted!: () => void;
+    const firstReady = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('batch-promote', async (hookContext, next) => {
+      if (hookContext.turnId === 0) {
+        firstStarted();
+        await firstCanFinish;
+      }
+      await next();
+    });
+    const internals = loop as unknown as {
+      projectMachineEvent(event: { readonly type: string; readonly machineTurnId?: number }): void;
+    };
+    const projectMachineEvent = internals.projectMachineEvent.bind(loop);
+    let cancelledHead = false;
+    internals.projectMachineEvent = (event) => {
+      if (event.type === 'turnStarted' && event.machineTurnId === 1) {
+        cancelledHead = loop.cancel({ promptId: 'promote-head' }, new Error('cancel drained head'));
+      }
+      projectMachineEvent(event);
+    };
+    ctx.mockNextResponse({ type: 'text', text: 'first done' });
+    ctx.mockNextResponse({ type: 'text', text: 'promoted done' });
+
+    const first = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
+      meta: { promptId: 'promote-first', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    await firstReady;
+    const head = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'head' }] },
+      meta: { promptId: 'promote-head', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    const next = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'next' }] },
+      meta: { promptId: 'promote-next', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    hook.dispose();
+    releaseFirst();
+
+    await expect(first.result).resolves.toMatchObject({ type: 'completed' });
+    await expect(head.result).resolves.toMatchObject({ type: 'cancelled' });
+    await expect(next.result).resolves.toMatchObject({ type: 'completed' });
+    expect(cancelledHead).toBe(true);
+    expect(next.id).toBe(1);
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(ctx.contextData().history).toContainEqual(
+      expect.objectContaining({
+        role: 'user',
+        id: 'promote-next',
+        content: [{ type: 'text', text: 'next' }],
+      }),
+    );
+  });
+
+  it('cancels a shared turn when cancelling a batched prompt', async () => {
+    let firstStarted!: () => void;
+    const firstReady = new Promise<void>((resolve) => {
+      firstStarted = resolve;
+    });
+    let releaseFirst!: () => void;
+    const firstCanFinish = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let batchStarted!: () => void;
+    const batchReady = new Promise<void>((resolve) => {
+      batchStarted = resolve;
+    });
+    let releaseBatch!: () => void;
+    const batchCanFinish = new Promise<void>((resolve) => {
+      releaseBatch = resolve;
+    });
+    const hook = loop.hooks.onWillBeginStep.register('batch-cancel', async (hookContext, next) => {
+      if (hookContext.turnId === 0) {
+        firstStarted();
+        await firstCanFinish;
+      } else if (hookContext.turnId === 1) {
+        batchStarted();
+        await batchCanFinish;
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'first done' });
+
+    const first = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'first' }] },
+      meta: { promptId: 'cancel-first', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    await firstReady;
+    const second = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'second' }] },
+      meta: { promptId: 'cancel-second', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    const third = submitPromptTurn(loop, {
+      message: { role: 'user', content: [{ type: 'text', text: 'third' }] },
+      meta: { promptId: 'cancel-third', origin: { kind: 'user' }, tracked: true },
+    }).turn;
+    releaseFirst();
+    await batchReady;
+
+    expect(second.id).toBe(1);
+    expect(third.id).toBe(1);
+    expect(third.cancel(new Error('cancel shared batch'))).toBe(true);
+    hook.dispose();
+    releaseBatch();
+
+    await expect(first.result).resolves.toMatchObject({ type: 'completed' });
+    await expect(second.result).resolves.toMatchObject({ type: 'cancelled' });
+    await expect(third.result).resolves.toMatchObject({ type: 'cancelled' });
   });
 
   it('refuses a quiescence lease while a turn is active without cancelling it', async () => {
