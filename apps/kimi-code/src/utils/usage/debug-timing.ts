@@ -36,6 +36,21 @@ export interface StepTimingInput {
 // instead of a meaningless ratio.
 const MIN_STREAM_MS_FOR_TPS = 50;
 
+/**
+ * Decode TPS for a single step: output tokens over the decode window. Null when
+ * the step reported no output or drained too fast to measure (see
+ * `MIN_STREAM_MS_FOR_TPS`). Shared by the debug timing line and the footer's
+ * `tps` slot so both report the same number from the same window.
+ */
+export function stepDecodeTps(
+  outputTokens: number | undefined,
+  streamMs: number | undefined,
+): number | null {
+  if (outputTokens === undefined || outputTokens <= 0) return null;
+  if (streamMs === undefined || streamMs < MIN_STREAM_MS_FOR_TPS) return null;
+  return outputTokens / (streamMs / 1000);
+}
+
 export function formatStepDebugTiming(input: StepTimingInput): string | undefined {
   const latency = input.llmFirstTokenLatencyMs;
   const streamMs = input.llmStreamDurationMs;
@@ -44,10 +59,10 @@ export function formatStepDebugTiming(input: StepTimingInput): string | undefine
   const parts: string[] = [`TTFT: ${formatTtft(input)}`];
   const outputTokens = input.usage?.output;
   if (outputTokens !== undefined && outputTokens > 0) {
-    if (streamMs >= MIN_STREAM_MS_FOR_TPS) {
-      const tps = (outputTokens / (streamMs / 1000)).toFixed(1);
+    const tps = stepDecodeTps(outputTokens, streamMs);
+    if (tps !== null) {
       parts.push(
-        `TPS: ${tps} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)}${formatDecodeSplit(input)})`,
+        `TPS: ${tps.toFixed(1)} tok/s (${outputTokens} tokens in ${formatDuration(streamMs)}${formatDecodeSplit(input)})`,
       );
     } else {
       parts.push(
