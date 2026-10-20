@@ -143,7 +143,7 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
       'old-model': { model: 'upstream-old', displayName: 'Old' },
       k2: { model: 'upstream-new', displayName: 'New' },
     };
-    (host.state as unknown as Record<string, unknown>)['transcriptEntries'] = [
+    (host as unknown as { state: Record<string, unknown> }).state['transcriptEntries'] = [
       { kind: 'user', bullet: 'hi' },
     ];
     const mountEditorReplacement = vi.fn();
