@@ -1149,6 +1149,62 @@ describe('OpenAILegacyChatProvider', () => {
       // Default behavior: two text parts stay as a content-part array.
       expect(Array.isArray(toolMsg['content'])).toBe(true);
     });
+
+    it.each([
+      ['empty content', []],
+      ['only an empty text part', [{ type: 'text', text: '' }]],
+      [
+        'only empty text parts',
+        [
+          { type: 'text', text: '' },
+          { type: 'text', text: '' },
+        ],
+      ],
+      ['only a think part', [{ type: 'think', think: 'reasoning' }]],
+    ] as Array<[string, ContentPart[]]>)(
+      'tool result with %s lowers to placeholder text instead of empty content',
+      async (_label, content) => {
+        const provider = createProvider();
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Run tool' }], toolCalls: [] },
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'ok' }],
+            toolCalls: [
+              { type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' },
+            ],
+          },
+          { role: 'tool', content, toolCallId: 'call_1', toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
+        const toolMsg = (body['messages'] as Record<string, unknown>[])[2]!;
+        expect(toolMsg['role']).toBe('tool');
+        expect(toolMsg['content']).toBe('Tool output is empty.');
+      },
+    );
+
+    it('empty tool result lowers to placeholder text with extract_text conversion', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'gpt-4.1',
+        apiKey: 'test-key',
+        stream: false,
+        toolMessageConversion: 'extract_text',
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run tool' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'ok' }],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' },
+          ],
+        },
+        { role: 'tool', content: [], toolCallId: 'call_1', toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+      const toolMsg = (body['messages'] as Record<string, unknown>[])[2]!;
+      expect(toolMsg['content']).toBe('Tool output is empty.');
+    });
   });
 
   describe('with thinking', () => {
