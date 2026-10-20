@@ -15,3 +15,8 @@ export * from './features/mcp/index';
 export * from './features/media/index';
 export * from './features/tool-select/index';
 export * from './features/cron/index';
+export * from './features/permission/index';
+export * from './features/plan/index';
+export * from './features/goal/index';
+export * from './features/task/index';
+export * from './features/skill/index';
