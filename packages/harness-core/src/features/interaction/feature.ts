@@ -1,16 +1,14 @@
+import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
 import {
   createFacadeToken,
-  createFeature,
-  useAgent,
-  useAgentTools,
   useCleanup,
+  useExpose,
+  useFire,
   useInject,
-  useSession,
-} from '@moonshot-ai/agent-core';
-import { useExpose, useFire, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+  type ShallowRef,
+} from '@moonshot-ai/agent-core/kernel/index';
 
 import { openInteractions, type InteractionEvent, type Interactions } from './interaction';
-import { createAskUserQuestionTool } from './tool';
 
 export const InteractionRef = createFacadeToken<Interactions>('interaction');
 
@@ -30,16 +28,9 @@ export const interaction = createFeature<InteractionEvent>('interaction', {
     if (interactions === undefined) {
       throw new Error('interaction feature session slot is not installed');
     }
-    const session = useSession();
     const agent = useAgent();
-    useAgentTools(
-      createAskUserQuestionTool(interactions, {
-        sessionId: session.sessionId,
-        agentId: agent.agentId,
-      }),
-    );
     useCleanup(() => {
-      interactions.cancelAgent(agent.agentId, 'agent_closed');
+      interactions.cancelAgent(agent.id, 'agent_closed');
     });
   },
 });

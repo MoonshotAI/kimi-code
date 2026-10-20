@@ -1,49 +1,44 @@
-import {
-  createFacadeToken,
-  createFeature,
-  createHistoryMessageBuilder,
-  useAgent,
-  useAgentStore,
-  useAgentTools,
-} from '@moonshot-ai/agent-core';
-import { computed, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
+import { createHistoryMessageBuilder } from '@moonshot-ai/agent-core/history/index';
+import { computed, createFacadeToken, useExpose, type ComputedRef } from '@moonshot-ai/agent-core/kernel/index';
 
-import { todos, type TodoState } from './projection';
+import { useAgentTools, useFeatureStore, useLoopEvent } from '#/runtime/index';
+
+import { todos, type TodoEvent, type TodoState } from './projection';
 import { createTodoListTool } from './tool';
 import { renderTodoList, type TodoItem } from './todoItem';
 
 const STALE_TURNS = 2;
 
 export interface TodoFace {
-  readonly items: Ref<readonly TodoItem[]>;
-  readonly state: Ref<TodoState>;
+  readonly items: ComputedRef<readonly TodoItem[]>;
+  readonly state: ComputedRef<TodoState>;
 }
 
 export const TodoRef = createFacadeToken<TodoFace>('todo');
 
-export const todo = createFeature('todo', {
+export const todo = createFeature<TodoEvent>('todo', {
   agent() {
-    const store = useAgentStore();
-    const state = store.fold(todos);
+    const store = useFeatureStore('agent', 'todo', todos);
+    useAgentTools(createTodoListTool(store));
     const agent = useAgent();
-    useAgentTools(createTodoListTool(store, state));
-    agent.on('turn.started', () => {
-      const current = state.value;
+    useLoopEvent('turn.started', ({ turnId }) => {
+      const current = store.state.value;
       if (current.todos.length === 0) return;
       if (current.todos.every((item) => item.status === 'done')) return;
-      if (current.currentTurn - current.lastWriteTurn !== STALE_TURNS) return;
-      agent.remind(
-        createHistoryMessageBuilder()
-          .systemReminder(
-            `The todo list has not been updated recently. If the work is still in progress, update the list to reflect the current progress.\n${renderTodoList(current.todos)}`,
-          )
-          .userMessage(),
-        { key: 'todo-stale' },
-      );
+      if (turnId - current.lastWriteTurnId !== STALE_TURNS) return;
+      const message = createHistoryMessageBuilder()
+        .systemReminder(
+          `The todo list has not been updated recently. If the work is still in progress, update the list to reflect the current progress.\n${renderTodoList(current.todos)}`,
+        )
+        .userMessage();
+      queueMicrotask(() => {
+        agent.loop.remind({ message, meta: { key: 'todo-stale' } });
+      });
     });
     useExpose(TodoRef, {
-      items: computed(() => state.value.todos),
-      state,
+      items: computed(() => store.state.value.todos),
+      state: store.state,
     });
   },
 });

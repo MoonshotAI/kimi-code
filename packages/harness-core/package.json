@@ -40,6 +40,7 @@
     "@mozilla/readability": "^0.6.0",
     "@noble/hashes": "^2.0.0",
     "@types/express": "^5.0.6",
+    "@vue/reactivity": "^3.5.44",
     "better-sqlite3": "^13.0.3",
     "express": "^5.2.1",
     "jimp": "^1.6.1",

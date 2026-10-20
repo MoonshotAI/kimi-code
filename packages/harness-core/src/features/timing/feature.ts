@@ -1,5 +1,7 @@
-import { createFacadeToken, createFeature, useAgent } from '@moonshot-ai/agent-core';
-import { shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFacadeToken, shallowRef, useExpose, type Ref } from '@moonshot-ai/agent-core/kernel/index';
+
+import { useLoopEvent } from '#/runtime/index';
 
 export interface LlmRequestTiming {
   readonly requestBuildMs?: number;
@@ -37,18 +39,14 @@ export const timing = createFeature('timing', {
       clientConsumeMs = 0;
     };
 
-    const mark = (): void => {
-      lastEventAt = now();
-    };
-
-    const agent = useAgent();
-    agent.on('turn.started', () => {
+    useLoopEvent('turn.started', () => {
       retryAnchor = undefined;
       lastEventAt = now();
     });
-    agent.on('tool.detached', mark);
-    agent.on('tool.done', mark);
-    agent.on('llm.started', () => {
+    useLoopEvent('tool.ended', () => {
+      lastEventAt = now();
+    });
+    useLoopEvent('llm.started', () => {
       const t = now();
       attemptStartedAt =
         retryAnchor === undefined ? lastEventAt : retryAnchor.at + retryAnchor.delayMs;
@@ -59,7 +57,7 @@ export const timing = createFeature('timing', {
       clientConsumeMs = 0;
       lastEventAt = t;
     });
-    agent.on('llm.streaming.part', () => {
+    useLoopEvent('llm.streaming.part', () => {
       const arrivedAt = now();
       if (sentAt === undefined) return;
       if (firstDeltaAt === undefined) {
@@ -72,9 +70,16 @@ export const timing = createFeature('timing', {
       lastHandledAt = handledAt;
       lastEventAt = handledAt;
     });
-    agent.on('llm.done', () => {
+    useLoopEvent('llm.retrying', (event) => {
       const t = now();
-      if (sentAt !== undefined && firstDeltaAt !== undefined) {
+      retryAnchor = event.reason === 'backoff' ? { at: t, delayMs: event.delayMs } : undefined;
+      resetWindow();
+      lastEventAt = t;
+    });
+    useLoopEvent('llm.ended', (event) => {
+      if (event.outcome.type === 'aborted') return;
+      const t = now();
+      if (event.outcome.type === 'done' && sentAt !== undefined && firstDeltaAt !== undefined) {
         serverDecodeMs += t - lastHandledAt;
         current.value = {
           requestBuildMs:
@@ -86,19 +91,7 @@ export const timing = createFeature('timing', {
           clientConsumeMs: Math.max(0, clientConsumeMs),
         };
       }
-      resetWindow();
-      lastEventAt = t;
-    });
-    agent.on('llm.retrying', (event) => {
-      const t = now();
-      retryAnchor = event.reason === 'backoff' ? { at: t, delayMs: event.delayMs } : undefined;
-      resetWindow();
-      lastEventAt = t;
-    });
-    agent.on('llm.ended', (event) => {
-      if (event.outcome.type !== 'failed') return;
-      const t = now();
-      retryAnchor = undefined;
+      if (event.outcome.type === 'failed') retryAnchor = undefined;
       resetWindow();
       lastEventAt = t;
     });
