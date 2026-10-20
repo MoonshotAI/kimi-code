@@ -46,6 +46,11 @@ import {
   IAgentTodoService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentConversationUndoService,
+  IAgentFullCompactionService,
+  IAgentPluginCommandService,
+  IAgentPromptChannel,
+  IAgentSkillService,
   IAgentToolActivationService,
   IAgentToolRegistryService,
   INotifyUserTool,
@@ -298,6 +303,157 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       } finally {
         listSpy.mockRestore();
       }
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('restates engine session-lock Error2s as KimiError on the conflict-handled entry points', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.createSession({ id: 'ses_lock', workDir });
+      // The main agent materializes lazily on the first agent-scoped call;
+      // the spies below need its DI instances to exist beforehand.
+      await client.getSessionWarnings({ sessionId: 'ses_lock' });
+      const main = getLiveSessionById(client.engineAccessor, 'ses_lock')!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!;
+      const submitSpy = vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submit');
+      const steerSpy = vi.spyOn(main.accessor.get(IAgentPromptChannel), 'submitSteer');
+      const skillsSpy = vi.spyOn(main.accessor.get(IAgentSkillService), 'promptWithSkills');
+      const beginSpy = vi.spyOn(main.accessor.get(IAgentFullCompactionService), 'begin');
+      const undoSpy = vi.spyOn(main.accessor.get(IAgentConversationUndoService), 'undo');
+      const activateSpy = vi.spyOn(main.accessor.get(IAgentPluginCommandService), 'activate');
+
+      const lockCause = new Error('lock held');
+      const occupied = new Error2('session.occupied', 'held by another client', {
+        details: { sessionId: 'ses_lock', holder: { clientIdentity: 'other-client' } },
+        cause: lockCause,
+      });
+      const captureRejection = async (promise: Promise<unknown>): Promise<unknown> => {
+        try {
+          await promise;
+        } catch (error) {
+          return error;
+        }
+        return expect.unreachable('expected the call to reject');
+      };
+
+      const entryPoints: ReadonlyArray<{
+        name: string;
+        rejectWith: (error: Error2) => void;
+        call: () => Promise<unknown>;
+      }> = [
+        {
+          name: 'prompt',
+          rejectWith: (error) => submitSpy.mockRejectedValueOnce(error),
+          call: () =>
+            client.prompt({ sessionId: 'ses_lock', input: [{ type: 'text', text: 'hi' }] }),
+        },
+        {
+          name: 'steer',
+          rejectWith: (error) => steerSpy.mockRejectedValueOnce(error),
+          call: () =>
+            client.steer({ sessionId: 'ses_lock', input: [{ type: 'text', text: 'hi' }] }),
+        },
+        {
+          name: 'promptWithSkills',
+          rejectWith: (error) => skillsSpy.mockRejectedValueOnce(error),
+          call: () =>
+            client.promptWithSkills({
+              sessionId: 'ses_lock',
+              input: [{ type: 'text', text: 'hi' }],
+              skills: [{ name: 'skill-a' }],
+            }),
+        },
+        {
+          name: 'compact',
+          rejectWith: (error) =>
+            beginSpy.mockImplementationOnce(() => {
+              throw error;
+            }),
+          call: () => client.compact({ sessionId: 'ses_lock' }),
+        },
+        {
+          name: 'undoHistory',
+          rejectWith: (error) => undoSpy.mockRejectedValueOnce(error),
+          call: () => client.undoHistory({ sessionId: 'ses_lock', count: 1 }),
+        },
+        {
+          name: 'activatePluginCommand',
+          rejectWith: (error) => activateSpy.mockRejectedValueOnce(error),
+          call: () =>
+            client.activatePluginCommand({
+              sessionId: 'ses_lock',
+              pluginId: 'plugin-a',
+              commandName: 'cmd',
+              args: '',
+            }),
+        },
+      ];
+      for (const { name, rejectWith, call } of entryPoints) {
+        rejectWith(occupied);
+        const error = await captureRejection(call());
+        expect(isKimiError(error), name).toBe(true);
+        expect(error, name).toMatchObject({
+          code: occupied.code,
+          message: occupied.message,
+          details: occupied.details,
+        });
+        expect((error as { cause?: unknown }).cause, name).toBe(lockCause);
+      }
+
+      // Non-Error2 failures (DI resolution bugs, aborts) pass through untouched.
+      const plain = new Error('not an engine error');
+      undoSpy.mockRejectedValueOnce(plain);
+      expect(
+        await captureRejection(client.undoHistory({ sessionId: 'ses_lock', count: 1 })),
+      ).toBe(plain);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it('reloads a stale session, runs the stale-reload handler, then retries or rethrows', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    tempDirs.push(homeDir, workDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const mainOf = async () => {
+      await client.getSessionWarnings({ sessionId: 'ses_stale' });
+      return getLiveSessionById(client.engineAccessor, 'ses_stale')!
+        .accessor.get(IAgentLifecycleService)
+        .handleOf('main')!;
+    };
+    const stale = () => new Error2('session.stale', 'modified by another client');
+    try {
+      await client.createSession({ id: 'ses_stale', workDir });
+      const handler = vi.fn(async (_summary: unknown) => {});
+      client.setStaleReloadHandler('ses_stale', handler);
+
+      const before = getLiveSessionById(client.engineAccessor, 'ses_stale');
+      vi.spyOn((await mainOf()).accessor.get(IAgentConversationUndoService), 'undo')
+        .mockRejectedValueOnce(stale());
+      await expect(client.undoHistory({ sessionId: 'ses_stale', count: 1 })).rejects.toMatchObject({
+        code: 'session.stale',
+      });
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler.mock.calls[0]?.[0]).toMatchObject({ id: 'ses_stale' });
+      expect(getLiveSessionById(client.engineAccessor, 'ses_stale')).not.toBe(before);
+
+      const begin = vi
+        .spyOn((await mainOf()).accessor.get(IAgentFullCompactionService), 'begin')
+        .mockImplementationOnce(() => {
+          throw stale();
+        });
+      await expect(client.compact({ sessionId: 'ses_stale' })).rejects.toMatchObject({
+        code: 'compaction.unable',
+      });
+      expect(begin).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledTimes(2);
     } finally {
       await client.close();
     }

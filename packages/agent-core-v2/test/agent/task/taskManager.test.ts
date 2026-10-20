@@ -1300,6 +1300,12 @@ describe('AgentTaskService', () => {
   it('clears task deadline timers when completion wins the race', async () => {
     vi.useFakeTimers();
     const { manager } = createAgentTaskService();
+    const warmupId = manager.registerTask(
+      agentTask(Promise.resolve({ result: 'done' }), 'warmup task', {
+        timeoutMs: 60_000,
+      }),
+    );
+    await expect(manager.wait(warmupId, 60_000)).resolves.toMatchObject({ status: 'completed' });
     const baselineTimerCount = vi.getTimerCount();
     const taskId = manager.registerTask(
       agentTask(Promise.resolve({ result: 'done' }), 'fast deadline task', {
@@ -1308,7 +1314,7 @@ describe('AgentTaskService', () => {
     );
 
     await expect(manager.wait(taskId, 60_000)).resolves.toMatchObject({ status: 'completed' });
-    expect(vi.getTimerCount()).toBeLessThanOrEqual(baselineTimerCount);
+    expect(vi.getTimerCount()).toBe(baselineTimerCount);
   });
 
   it('returns undefined or empty output for unknown task ids', async () => {

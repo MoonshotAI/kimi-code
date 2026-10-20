@@ -119,6 +119,7 @@ interface SessionState {
   readonly tracker: InFlightTurnTracker;
   readonly roster: SubagentRosterTracker;
   deferredWork?: SessionActivityState;
+  detached?: true;
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
   readonly targets: Map<BroadcastTarget, TargetSubscription>;
   queue: Promise<void>;
@@ -153,6 +154,7 @@ export class SessionEventBroadcaster {
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private readonly deletionSubscription: IDisposable | undefined;
+  private readonly createSubscription: IDisposable | undefined;
   private readonly lifecycleSubscription: IDisposable;
   private closed = false;
 
@@ -166,14 +168,15 @@ export class SessionEventBroadcaster {
     },
   ) {
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
-    this.deletionSubscription = opts.core.accessor.get(ISessionManager).onWillDeleteSession?.(
+    const sessionManager = opts.core.accessor.get(ISessionManager);
+    this.deletionSubscription = sessionManager.onWillDeleteSession?.(
       (event) => {
         event.waitUntil(this.purgeSession(event.sessionId));
       },
     );
     this.lifecycleSubscription = followSessionLifecycles(opts.core.accessor, (service) => {
       const closeSubscription = service.onDidCloseSession((event) => {
-        this.evictSession(event.sessionId);
+        this.detachSession(event.sessionId);
       });
       const archiveSubscription = service.onDidArchiveSession((event) => {
         this.evictSession(event.sessionId);
@@ -184,6 +187,14 @@ export class SessionEventBroadcaster {
           archiveSubscription.dispose();
         },
       };
+    });
+    this.createSubscription = sessionManager.onDidCreateSession?.((event) => {
+      void this.reattachSession(event.sessionId).catch((error: unknown) =>
+        this.opts.logger?.warn(
+          { sessionId: event.sessionId, err: error },
+          'session event reattach failed',
+        ),
+      );
     });
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
@@ -544,6 +555,7 @@ export class SessionEventBroadcaster {
     this.closed = true;
     this.coreEventSubscription.dispose();
     this.deletionSubscription?.dispose();
+    this.createSubscription?.dispose();
     this.lifecycleSubscription.dispose();
     const disposals: Promise<void>[] = [];
     for (const [sessionId, state] of this.sessions) {
@@ -615,11 +627,51 @@ export class SessionEventBroadcaster {
     this.opts.transcriptService?.dropSession(sessionId);
   }
 
+  private detachSession(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached === true) return;
+    state.detached = true;
+    for (const disposable of state.lifecycleDisposables) disposable.dispose();
+    state.lifecycleDisposables.length = 0;
+    for (const disposable of state.agentDisposables.values()) disposable.dispose();
+    state.agentDisposables.clear();
+    state.knownInteractions.clear();
+    state.tracker.clear(sessionId);
+    state.roster.clear(sessionId);
+    state.deferredWork = undefined;
+    state.transcriptSeeded.clear();
+    state.deferredTranscriptSeeds.clear();
+    state.transcriptStream = undefined;
+    this.dropActivityTrackers(sessionId);
+    this.opts.transcriptService?.dropSession(sessionId);
+  }
+
+  private async reattachSession(sessionId: string): Promise<void> {
+    await this.pendingStates.get(sessionId);
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached !== true) return;
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
+    if (session === undefined) return;
+    state.detached = undefined;
+    this.attachWorkView(session, state);
+    this.attachAgents(sessionId, session, state);
+    this.attachInteractions(sessionId, state);
+    for (const [target, subscription] of state.targets) {
+      if (subscription.transcriptGrades === undefined) continue;
+      await this.subscribeTranscript(state, target, subscription.transcriptGrades, undefined);
+      if (state.targets.has(target)) state.transcriptSeeded.add(target);
+    }
+  }
+
   private async ensureState(sessionId: string): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
     await this.evictions.get(sessionId);
     const existing = this.sessions.get(sessionId);
-    if (existing !== undefined) return existing;
+    if (existing !== undefined) {
+      if (existing.detached !== true) return existing;
+      await this.reattachSession(sessionId);
+      return existing.detached === true ? undefined : existing;
+    }
     let pending = this.pendingStates.get(sessionId);
     if (pending === undefined) {
       pending = this.createSessionState(sessionId).finally(() => {

@@ -14,6 +14,8 @@ import {
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import {
   setSessionArchived,
@@ -90,6 +92,7 @@ function coldPathAccessor(options: ColdPathOptions): ServicesAccessor {
       { record: (recorded: SessionSummary) => options.onMirrorRecord?.(recorded) },
     ],
     [IEventService, { publish: () => {} }],
+    [ISessionLockService, new InMemorySessionLockService()],
   ]);
 }
 

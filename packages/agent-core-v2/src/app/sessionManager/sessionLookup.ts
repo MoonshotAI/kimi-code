@@ -4,7 +4,7 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager, type ISessionManager as SessionManager } from '#/app/sessionManager/sessionManager';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { isError2 } from '#/errors';
+import { ErrorCodes, isError2 } from '#/errors';
 import type { Program } from '#/program/program';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ResumeSessionOptions } from '#/workspace/sessionLifecycle/sessionLifecycle';
@@ -59,6 +59,30 @@ export async function closeSessionById(
   sessionId: string,
 ): Promise<void> {
   await accessor.get(ISessionManager).close(sessionId);
+}
+
+export interface StaleReloadOptions {
+  readonly retry?: boolean;
+  readonly onReloaded?: (session: ISessionScopeHandle) => Promise<void>;
+}
+
+export async function reloadOnStale<T>(
+  accessor: ServicesAccessor,
+  sessionId: string,
+  run: () => Promise<T>,
+  options?: StaleReloadOptions,
+): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (!isError2(error) || error.code !== ErrorCodes.SESSION_STALE) throw error;
+    await closeSessionById(accessor, sessionId);
+    const session = await resumeSessionById(accessor, sessionId);
+    if (session === undefined) throw error;
+    await options?.onReloaded?.(session);
+    if (options?.retry === false) throw error;
+  }
+  return run();
 }
 
 type SessionLifecycleEvents = Required<

@@ -1242,6 +1242,39 @@ describe('SessionEventBroadcaster', () => {
     expect(next.subagents).toEqual([]);
   });
 
+  it('clears the in-flight turn and subagent roster across a close and reattach', async () => {
+    const managerEvents = new FakeManagerEvents();
+    await bc.close();
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus, {}, managerEvents),
+      maxBufferSize: 3,
+    });
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    lc.addAgent('agent-1');
+    sessions.set('s1', lc);
+    await bc.subscribe('s1', collectingTarget().target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    main.bus.emit(
+      agentEvent('subagent.spawned', {
+        subagentId: 'agent-1',
+        subagentName: 'kimi-subagent',
+        description: 'task agent-1',
+      }),
+    );
+    const before = await bc.getSnapshotState('s1');
+    expect(before.inFlightTurn).toMatchObject({ turn_id: 1 });
+    expect(before.subagents).toHaveLength(1);
+
+    managerEvents.fireDidClose('s1');
+
+    const after = await bc.getSnapshotState('s1');
+    expect(after.inFlightTurn).toBeNull();
+    expect(after.subagents).toEqual([]);
+  });
+
   it('subscribe returns false for an unknown session', async () => {
     const { target } = collectingTarget();
     expect(await bc.subscribe('nope', target)).toBe(false);

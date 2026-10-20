@@ -41,6 +41,7 @@ import {
   type AppendLogTruncation,
   IAppendLogStore,
 } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
@@ -166,6 +167,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @ILogService private readonly log: ILogService,
@@ -434,23 +436,28 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async archive(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    const meta = handle.accessor.get(ISessionMetadata);
-    await meta.setArchived(true);
-    await this.drainAgents(handle);
-    await this.appendLogStore.drainRetirements();
-    this.event.publish(
-      new SessionArchived({
-        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
-      }),
-    );
-    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
-    this.sessions.delete(sessionId);
-    await drainSessionMetadataWrites();
-    await this.indexMirror.drain();
-    void handle.dispose();
-    await drainLogCloses();
-    this._onDidArchiveSession.fire({ sessionId });
-    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
+    const lease = this.sessionLocks.lease(sessionId);
+    try {
+      const meta = handle.accessor.get(ISessionMetadata);
+      await meta.setArchived(true);
+      await this.drainAgents(handle);
+      await this.appendLogStore.drainRetirements();
+      this.event.publish(
+        new SessionArchived({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+      await this.announceWillClose({ sessionId, handle, reason: 'archive' });
+      this.sessions.delete(sessionId);
+      await drainSessionMetadataWrites();
+      await this.indexMirror.drain();
+      void handle.dispose();
+      await drainLogCloses();
+      this._onDidArchiveSession.fire({ sessionId });
+      this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
+    } finally {
+      lease.release();
+    }
   }
 
   async restore(
@@ -474,19 +481,24 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined && !persistedHere) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
-    if (handle !== undefined) {
-      await this.close(sessionId);
+    const lease = this.sessionLocks.lease(sessionId);
+    try {
+      if (handle !== undefined) {
+        await this.close(sessionId);
+      }
+      await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+      await this.index.remove(sessionId);
+      await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
+      this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
+      await this.appendLogStore.flush();
+      this.event.publish(
+        new SessionDeleted({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+    } finally {
+      lease.release();
     }
-    await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
-    await this.index.remove(sessionId);
-    await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
-    this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
-    await this.appendLogStore.flush();
-    this.event.publish(
-      new SessionDeleted({
-        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
-      }),
-    );
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {
@@ -532,6 +544,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetId: string | undefined;
     let targetSessionDir: string | undefined;
     const quiescenceHolds: IDisposable[] = [];
+    const sourceLease = this.sessionLocks.lease(sourceId);
     try {
       if (sourceHandle !== undefined) {
         const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
@@ -687,6 +700,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw error;
     } finally {
       for (const hold of quiescenceHolds) hold.dispose();
+      sourceLease.release();
     }
   }
 

@@ -115,6 +115,14 @@ class ScopedAppendLogStore implements IAppendLogStore {
   drainRetirements(): Promise<void> {
     return Promise.resolve();
   }
+
+  externallyModified(): boolean {
+    return false;
+  }
+
+  bindWriteGuard(): IDisposable {
+    return { dispose: () => undefined };
+  }
 }
 
 class TestRuntimeResolver implements IRuntimeResolver {

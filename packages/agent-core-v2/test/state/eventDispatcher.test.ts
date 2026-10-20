@@ -69,6 +69,7 @@ function stubWireJournal(journal: WireRecord[]): IWireService {
     lineCount: () => journal.length,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,
+    externallyModified: () => false,
   };
 }
 

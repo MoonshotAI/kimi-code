@@ -181,6 +181,10 @@ export abstract class SDKRpcClientBase {
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+  private readonly staleReloadHandlers = new Map<
+    string,
+    (summary: ResumedSessionSummary) => Promise<void>
+  >();
 
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
@@ -498,9 +502,28 @@ export abstract class SDKRpcClientBase {
     this.questionHandlers.set(sessionId, handler);
   }
 
+  setStaleReloadHandler(
+    sessionId: string,
+    handler: ((summary: ResumedSessionSummary) => Promise<void>) | undefined,
+  ): void {
+    if (handler === undefined) {
+      this.staleReloadHandlers.delete(sessionId);
+      return;
+    }
+    this.staleReloadHandlers.set(sessionId, handler);
+  }
+
   clearSessionHandlers(sessionId: string): void {
     this.approvalHandlers.delete(sessionId);
     this.questionHandlers.delete(sessionId);
+    this.staleReloadHandlers.delete(sessionId);
+  }
+
+  protected async notifyStaleReload(
+    sessionId: string,
+    summary: ResumedSessionSummary,
+  ): Promise<void> {
+    await this.staleReloadHandlers.get(sessionId)?.(summary);
   }
 
   async requestApproval(
