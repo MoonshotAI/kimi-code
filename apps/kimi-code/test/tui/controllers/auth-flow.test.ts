@@ -1,9 +1,13 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, afterEach } from 'vitest';
 
 import {
   AuthFlowController,
   type AuthFlowHost,
 } from '#/tui/controllers/auth-flow';
+import {
+  refreshModelSwitchConfirmConfig,
+  resetModelSwitchConfirmConfigCache,
+} from '#/utils/model-switch-confirm-config';
 
 function makeHost(
   options: {
@@ -124,5 +128,46 @@ describe('refreshConfigAfterLogin', () => {
     const reachedLazy = await new AuthFlowController(lazy.host).refreshConfigAfterLogin();
     expect(reachedLazy).toBe(false);
     expect(lazy.host.harness.createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('refreshConfigAfterLogin with a matching cloud rule', () => {
+  afterEach(() => {
+    resetModelSwitchConfirmConfigCache();
+  });
+
+  it('gates the activation through the confirmation dialog and skips setModel', async () => {
+    const { host, session, appState } = makeHost({ withSession: true, defaultModel: 'k2' });
+    (appState as Record<string, unknown>)['streamingPhase'] = 'idle';
+    (appState as Record<string, unknown>)['availableModels'] = {
+      'old-model': { model: 'upstream-old', displayName: 'Old' },
+      k2: { model: 'upstream-new', displayName: 'New' },
+    };
+    (host.state as unknown as Record<string, unknown>)['transcriptEntries'] = [
+      { kind: 'user', bullet: 'hi' },
+    ];
+    const mountEditorReplacement = vi.fn();
+    (host as unknown as Record<string, unknown>)['mountEditorReplacement'] = mountEditorReplacement;
+    (host as unknown as Record<string, unknown>)['restoreEditor'] = vi.fn();
+    await refreshModelSwitchConfirmConfig({
+      fetchImpl: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              name: 'model_switch_confirm',
+              config: {
+                enable: true,
+                rules: [{ from: 'upstream-old', to: 'upstream-new' }],
+              },
+            }),
+          ),
+      ) as unknown as typeof fetch,
+    });
+
+    const result = await new AuthFlowController(host).refreshConfigAfterLogin();
+
+    expect(result).toBe(true);
+    expect(session!.setModel).not.toHaveBeenCalled();
+    expect(mountEditorReplacement).toHaveBeenCalledTimes(1);
   });
 });

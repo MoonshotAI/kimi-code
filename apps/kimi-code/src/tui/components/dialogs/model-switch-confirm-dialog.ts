@@ -104,7 +104,9 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
       '',
     ];
     if (this.opts.hint !== undefined) {
-      lines.push(currentTheme.fg('text', ` ${this.opts.hint}`));
+      for (const hintLine of this.opts.hint.split(/\r\n|\r|\n/)) {
+        lines.push(currentTheme.fg('text', ` ${hintLine}`));
+      }
     }
 
     const maxLabelWidth = Math.max(...OPTIONS.map((o) => visibleWidth(o.label)));

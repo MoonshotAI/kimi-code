@@ -837,7 +837,7 @@ export class KimiTUI {
   }
 
   private refreshModelSwitchConfirmConfigInBackground(): void {
-    void this.backgroundRefreshPromise?.then(async () => {
+    void (async () => {
       try {
         await refreshModelSwitchConfirmConfig({
           accessToken: await this.harness.auth.getCachedAccessToken(),
@@ -846,7 +846,7 @@ export class KimiTUI {
         // Best-effort warm-up: a failed token lookup or fetch just leaves the
         // dialog gated off.
       }
-    });
+    })();
   }
 
   private async refreshProviderModelsInBackground(): Promise<void> {
@@ -4102,6 +4102,7 @@ export class KimiTUI {
 
   mountEditorReplacement(panel: Component & Focusable): void {
     this.surveyController.notifyDisplaced();
+    if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.state.editorReplacementMounted = true;
     this.state.editorContainer.clear();
     this.state.editorContainer.addChild(panel);

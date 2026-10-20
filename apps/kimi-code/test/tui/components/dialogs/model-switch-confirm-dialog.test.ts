@@ -100,6 +100,14 @@ describe('ModelSwitchConfirmDialogComponent', () => {
     }
   });
 
+  it('renders each line of a multi-line hint as its own row', () => {
+    const { lines } = renderDialog('AAA', 'BBB', 'First line.\r\nSecond line.\nThird line.');
+    expect(lines.some((l) => l.includes('First line.'))).toBe(true);
+    expect(lines.some((l) => l.includes('Second line.'))).toBe(true);
+    expect(lines.some((l) => l.includes('Third line.'))).toBe(true);
+    expect(lines.some((l) => l.includes('\r') || l.includes('\n'))).toBe(false);
+  });
+
   it('renders a Chinese hint, truncating within narrow widths', () => {
     const { lines } = renderDialog(
       'Kimi K2.5',

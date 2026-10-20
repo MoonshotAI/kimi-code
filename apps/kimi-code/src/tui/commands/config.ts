@@ -418,7 +418,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
  * how the switch happens before any state changes. Cancel is a no-op by
  * construction — nothing was applied yet.
  */
-function confirmThenPerformModelSwitch(
+export function confirmThenPerformModelSwitch(
   host: SlashCommandHost,
   alias: string,
   thinking: ThinkingEffort,
@@ -439,22 +439,32 @@ function confirmThenPerformModelSwitch(
     host.state.activeDialog = null;
     host.restoreEditor();
   };
-  host.state.activeDialog = 'model-switch-confirm';
+  let settled = false;
   host.mountEditorReplacement(
     new ModelSwitchConfirmDialogComponent({
       fromModel,
       toModel,
       hint: resolveModelSwitchHint(rule),
       onSelect: (action) => {
+        if (settled) return;
+        settled = true;
+        if (action === 'new') {
+          // Keep the dialog (and its input lock) mounted until the new session
+          // is ready — restoring the editor mid-flight would let a prompt race
+          // the swap, same as the session-picker swap.
+          void runModelSwitchAction(host, action, alias, thinking, persist).finally(dismiss);
+          return;
+        }
         dismiss();
         void runModelSwitchAction(host, action, alias, thinking, persist);
       },
       onCancel: dismiss,
     }),
   );
+  host.state.activeDialog = 'model-switch-confirm';
 }
 
-function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
+export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
   const prevAlias = host.state.appState.model;
   // Effort-only switches and re-picks of the live alias lose no cache. A
   // streaming switch keeps the existing behavior: performModelSwitch rejects
@@ -532,10 +542,17 @@ async function runModelSwitchAction(
     case 'continue':
       await performModelSwitch(host, alias, thinking, persist);
       return;
-    case 'new':
+    case 'new': {
+      // createNewSession reports failures (replay active, creation/setup
+      // errors) and returns normally — only switch when the session id
+      // actually changed, otherwise the switch would land on the session the
+      // user chose to leave untouched.
+      const prevSessionId = host.state.appState.sessionId;
       await host.createNewSession();
+      if (host.state.appState.sessionId === prevSessionId) return;
       await performModelSwitch(host, alias, thinking, persist);
       return;
+    }
     case 'compact': {
       // Compact with the current model first, then switch: the new model
       // starts from the compacted context.
