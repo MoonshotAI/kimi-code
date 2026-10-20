@@ -1,0 +1,70 @@
+import { TOWER_WORKER_PROFILE } from './ops';
+import TOWER_WORKER_ROLE_OVERLAY from './tower-worker-overlay.md?raw';
+
+export const TASK_AGENT_ROLE_PREFIX =
+  'You are now running as a subagent. All the `user` messages are sent by the main agent. ' +
+  'The main agent cannot see your context, it can only see your last message when you finish the task. ' +
+  'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
+  'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
+
+const TOWER_WORKER_TOOLS = [
+  'Agent',
+  'Bash',
+  'TowerFinding',
+  'TowerInbox',
+  'TowerMission',
+  'TowerReview',
+  'TowerSend',
+  'TowerStatus',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'Edit',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'Glob',
+  'Grep',
+  'Read',
+  'ReadMediaFile',
+  'Skill',
+  'TaskList',
+  'TaskOutput',
+  'TaskStop',
+  'TodoList',
+  'NotifyUser',
+  'WaitFor',
+  'WebSearch',
+  'FetchURL',
+  'Write',
+  'mcp__*',
+] as const;
+
+const CODER_ROLE =
+  `${TASK_AGENT_ROLE_PREFIX}\n\n` +
+  'Your final message is the entire handoff — the parent sees nothing else from your run. ' +
+  'Make it technically complete: what you changed and why, the path of every file you touched, ' +
+  'how you verified the change (tests or commands run, with results), and anything left undone ' +
+  'or worth follow-up. If you are stopped before finishing, the parent receives only what ' +
+  'you have written so far, so keep the handoff current.';
+
+const TOWER_WORKER_ROLE = `${CODER_ROLE}\n\n${TOWER_WORKER_ROLE_OVERLAY.trim()}`;
+
+export interface TowerWorkerProfile {
+  readonly name: string;
+  readonly description: string;
+  readonly whenToUse: string;
+  readonly tools: readonly string[];
+  readonly subagents: readonly string[];
+  readonly systemPrompt: string;
+}
+
+export const TOWER_WORKER_PROFILE_DEF: TowerWorkerProfile = {
+  name: TOWER_WORKER_PROFILE,
+  description:
+    'Tower worker/reviewer agent — executes one tower mission in its own git worktree (or reviews one branch), coordinating only through Tower* tools. Spawned via the TowerSpawn tool.',
+  whenToUse:
+    'Use this agent for non-trivial software engineering work that may require reading files, editing code, running commands, and returning a compact but technically complete summary to the parent agent.',
+  tools: TOWER_WORKER_TOOLS,
+  subagents: ['explore', 'plan'],
+  systemPrompt: TOWER_WORKER_ROLE,
+};
