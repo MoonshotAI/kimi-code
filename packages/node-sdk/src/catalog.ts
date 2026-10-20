@@ -4,6 +4,7 @@ import {
   catalogProviderModels,
   inferWireType,
   resolveCatalogImport,
+  withCurrentMiniMaxModels,
   type Catalog,
   type CatalogImportInvalidReason,
   type CatalogImportResolution,
@@ -53,7 +54,9 @@ export async function fetchCatalog(
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
     throw new Error(`Unexpected catalog response from ${url}.`);
   }
-  return payload as Catalog;
+  return url === DEFAULT_CATALOG_URL
+    ? withCurrentMiniMaxModels(payload as Catalog)
+    : (payload as Catalog);
 }
 
 function capabilityToStrings(capability: ModelCapability): string[] | undefined {
@@ -86,6 +89,7 @@ export function catalogModelToAlias(providerId: string, model: CatalogModel): Mo
     reasoningKey: model.reasoningKey,
     supportEfforts: model.supportEfforts === undefined ? undefined : [...model.supportEfforts],
     offEffort: model.offEffort,
+    ...(model.defaultEffort === undefined ? {} : { defaultEffort: model.defaultEffort }),
     protocol: model.protocol,
     baseUrl: model.baseUrl,
   };
@@ -109,7 +113,7 @@ export interface ApplyCatalogProviderOptions {
 export function loadBuiltInCatalog(text?: string): Catalog | undefined {
   if (typeof text !== 'string' || text.length === 0) return undefined;
   try {
-    return JSON.parse(text) as Catalog;
+    return withCurrentMiniMaxModels(JSON.parse(text) as Catalog);
   } catch {
     return undefined;
   }
@@ -121,6 +125,8 @@ export function loadBuiltInCatalog(text?: string): Catalog | undefined {
  * comes from the catalog, so the user does not hand-write it. Returns the
  * default model key.
  *
+ * MiniMax catalog refreshes retain saved aliases, including legacy IDs and
+ * custom limits; the release policy only governs choices for new imports.
  * NOTE: the same-provider cleanup below mutates the passed-in `config` only.
  * It clears stale aliases on disk solely when the caller overwrites the whole
  * config. Callers persisting via `setConfig` — a deep-merge patch that cannot
@@ -138,11 +144,17 @@ export function applyCatalogProvider(
   };
 
   const models = config.models ?? {};
+  const preserveSavedModels = options.models.some((model) =>
+    /^(?:minimax(?:ai)?\/)?minimax-m(?:3|3\.1-flash)(?::free|-free)?$/i.test(model.id),
+  );
   for (const [key, alias] of Object.entries(models)) {
-    if (alias.provider === options.providerId) delete models[key];
+    if (alias.provider === options.providerId && !preserveSavedModels) delete models[key];
   }
   for (const model of options.models) {
-    models[`${options.providerId}/${model.id}`] = catalogModelToAlias(options.providerId, model);
+    const key = `${options.providerId}/${model.id}`;
+    if (!preserveSavedModels || models[key] === undefined) {
+      models[key] = catalogModelToAlias(options.providerId, model);
+    }
   }
   config.models = models;
 

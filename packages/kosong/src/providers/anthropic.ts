@@ -1228,7 +1228,19 @@ export class AnthropicChatProvider implements ChatProvider {
     let thinking: MessageCreateParams['thinking'];
     let outputConfig: MessageCreateParams['output_config'] | undefined;
 
-    if (effort === 'off') {
+    const miniMax =
+      (this._model === 'MiniMax-M3.1-Flash' || this._model === 'MiniMax-M3') &&
+      /^https:\/\/api\.(?:minimax\.io|minimaxi\.com)(?:\/|$)/.test(this._baseUrl ?? '');
+    if (miniMax) {
+      const flash = this._model === 'MiniMax-M3.1-Flash';
+      if (flash && !['on', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
+        throw new ChatProviderError(`MiniMax-M3.1-Flash does not support thinking effort: ${effort}`);
+      }
+      thinking = { type: effort === 'off' ? 'disabled' : 'adaptive' };
+      outputConfig = flash && effort !== 'on'
+        ? ({ effort } as MessageCreateParams['output_config'])
+        : undefined;
+    } else if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else if (this._kimiThinking) {
       thinking = { type: 'enabled' } as MessageCreateParams['thinking'];
@@ -1253,7 +1265,7 @@ export class AnthropicChatProvider implements ChatProvider {
     }
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-    if (profile.mode === 'adaptive') {
+    if (miniMax || profile.mode === 'adaptive') {
       newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
     }
     const clone = this._withGenerationKwargs({

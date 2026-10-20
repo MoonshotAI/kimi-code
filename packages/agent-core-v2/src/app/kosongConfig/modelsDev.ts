@@ -89,6 +89,7 @@ export interface ModelsDevModel {
   readonly reasoningKey?: string;
   /** Declared thinking effort levels from `reasoning_options`, when present. */
   readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
   /**
    * The effort value that encodes "thinking off" for this model (models.dev
    * declares it as the `'none'` entry in `reasoning_options`). Undefined when
@@ -447,6 +448,18 @@ export function modelsDevProviderModels(entry: ModelsDevProviderEntry): ModelsDe
     .map((raw) => applyModelProviderOverride(modelsDevModelToCapability(raw), raw, entry, providerWire))
     .filter((model): model is ModelsDevModel => model !== undefined)
     .map((model) => {
+      if (
+        model.id === 'MiniMax-M3.1-Flash' &&
+        /^https:\/\/api\.(?:minimax\.io|minimaxi\.com)(?:\/|$)/.test(model.baseUrl ?? entry.api ?? '')
+      ) {
+        return {
+          ...model,
+          alwaysThinking: true,
+          supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+          defaultEffort: 'max',
+          offEffort: undefined,
+        };
+      }
       // The always-thinking inference ("effort levels, no toggle, no 'none'
       // — reasoning cannot be turned off") must not fire where the wire has
       // a true protocol-level disable the effort list can never show:

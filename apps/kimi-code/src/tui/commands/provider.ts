@@ -225,7 +225,10 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   // entered. The model selector that follows is just a convenience to pick the
   // default model; ESC leaves the provider in place without a default selection.
   const existingConfig = await host.harness.getConfig();
-  if (existingConfig.providers[providerId] !== undefined) {
+  const preserveSavedModels = models.some((model) =>
+    /^(?:minimax(?:ai)?\/)?minimax-m(?:3|3\.1-flash)(?::free|-free)?$/i.test(model.id),
+  );
+  if (existingConfig.providers[providerId] !== undefined && !preserveSavedModels) {
     await host.harness.removeProvider(providerId);
   }
 

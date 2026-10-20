@@ -176,6 +176,22 @@ describe('IModelsDevImportService', () => {
     resetModelsDevUpstreamForTest();
   });
 
+  it('keeps saved legacy and customized models during a MiniMax directory refresh', async () => {
+    const legacy = { provider: 'minimax', model: 'MiniMax-M2.7', maxContextSize: 12345 };
+    const custom = { provider: 'minimax', model: 'MiniMax-M3', maxOutputSize: 987 };
+    const { config, imports } = createHost({
+      [MODELS_SECTION]: { legacy, 'minimax/MiniMax-M3': custom },
+    });
+    setModelsDevUpstreamForTest({ fetchImpl: fetchJson({ minimax: {
+      id: 'minimax', api: 'https://api.minimax.io/anthropic', models: {},
+    } }) });
+    await imports.importModelsDevProvider({ catalogId: 'minimax', apiKey: 'fixture-only' });
+    const models = config.inspect<ModelsSection>(MODELS_SECTION).userValue!;
+    expect(models['legacy']).toEqual(legacy);
+    expect(models['minimax/MiniMax-M3']).toEqual(custom);
+    expect(models['minimax/MiniMax-M3.1-Flash']!.model).toBe('MiniMax-M3.1-Flash');
+  });
+
   it('lists pruned directory entries with import eligibility resolved', async () => {
     setModelsDevUpstreamForTest({ fetchImpl: fetchJson(CATALOG) });
     const { imports } = createHost();

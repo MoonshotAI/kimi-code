@@ -374,7 +374,10 @@ export async function handleCatalogAdd(
   const previousDefaultModel = config.defaultModel;
   const previousThinking = config.thinking;
 
-  if (config.providers[providerId] !== undefined) {
+  const preserveSavedModels = models.some((model) =>
+    /^(?:minimax(?:ai)?\/)?minimax-m(?:3|3\.1-flash)(?::free|-free)?$/i.test(model.id),
+  );
+  if (config.providers[providerId] !== undefined && !preserveSavedModels) {
     config = await harness.removeProvider(providerId);
   }
 

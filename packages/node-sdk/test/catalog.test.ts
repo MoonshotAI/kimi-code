@@ -31,6 +31,34 @@ const model: CatalogModel = {
   },
 };
 
+describe('MiniMax public catalog boundary', () => {
+  it('filters the public source while leaving the same private catalog untouched', async () => {
+    const catalog = { minimax: { id: 'minimax', api: 'https://api.minimax.io/anthropic', models: {
+      old: { id: 'MiniMax-M2.7', limit: { context: 204800 } },
+    } } };
+    const fetchImpl = (async () => catalogResponse(catalog)) as typeof fetch;
+    const publicCatalog = await fetchCatalog('https://models.dev/api.json', { fetchImpl });
+    expect(catalogProviderModels(publicCatalog['minimax']!).map((model) => model.id)).toEqual([
+      'MiniMax-M3.1-Flash', 'MiniMax-M3',
+    ]);
+    expect(await fetchCatalog('https://private.example/api.json', { fetchImpl })).toEqual(catalog);
+  });
+
+  it('keeps saved legacy and customized aliases when refreshing current MiniMax choices', () => {
+    const legacy = { provider: 'minimax', model: 'MiniMax-M2.7', maxContextSize: 12345 };
+    const custom = { provider: 'minimax', model: 'MiniMax-M3', maxOutputSize: 987 };
+    const config = { providers: {}, models: { legacy, 'minimax/MiniMax-M3': custom } } as KimiConfig;
+    applyCatalogProvider(config, {
+      providerId: 'minimax', wire: 'anthropic', apiKey: 'fixture-only',
+      models: [{ ...model, id: 'MiniMax-M3.1-Flash' }, { ...model, id: 'MiniMax-M3' }],
+      selectedModelId: 'MiniMax-M3.1-Flash', thinking: true,
+    });
+    expect(config.models!['legacy']).toEqual(legacy);
+    expect(config.models!['minimax/MiniMax-M3']).toEqual(custom);
+    expect(config.models!['minimax/MiniMax-M3.1-Flash']!.model).toBe('MiniMax-M3.1-Flash');
+  });
+});
+
 describe('fetchCatalog', () => {
   it('fetches and returns the catalog map', async () => {
     const catalog = { anthropic: { id: 'anthropic', models: { x: { id: 'x', limit: { context: 1000 } } } } };

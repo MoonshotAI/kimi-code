@@ -201,15 +201,22 @@ export class ModelsDevImportService implements IModelsDevImportService {
     // Two-pass alias swap: pass 1 drops the provider's aliases for real
     // (entry-level deletes ARE honored by the TOML overlay), pass 2 writes
     // the fresh records onto clean slots — a kept alias id would otherwise
-    // keep stale on-disk fields the upstream no longer lists.
+    // keep stale on-disk fields the upstream no longer lists. MiniMax release
+    // filtering only governs new choices, so retain existing aliases there.
     const records = config.inspect<ModelsSection>(MODELS_SECTION).userValue ?? {};
+    const preserveSavedModels = models.some((model) =>
+      /^(?:minimax(?:ai)?\/)?minimax-m(?:3|3\.1-flash)(?::free|-free)?$/i.test(model.id),
+    );
     const withoutTarget = Object.fromEntries(
-      Object.entries(records).filter(([, record]) => record.provider !== targetId),
+      Object.entries(records).filter(([, record]) => preserveSavedModels || record.provider !== targetId),
     );
     await config.replace(MODELS_SECTION, withoutTarget);
     const nextModels = { ...withoutTarget };
     for (const model of models) {
-      nextModels[`${targetId}/${model.id}`] = modelsDevModelToRecord(targetId, model);
+      const key = `${targetId}/${model.id}`;
+      if (!preserveSavedModels || nextModels[key] === undefined) {
+        nextModels[key] = modelsDevModelToRecord(targetId, model);
+      }
     }
     await config.replace(MODELS_SECTION, nextModels);
 

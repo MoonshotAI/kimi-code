@@ -1078,6 +1078,23 @@ export class AnthropicChatProvider implements ChatProvider {
       newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
     }
 
+    const miniMax =
+      (this._model === 'MiniMax-M3.1-Flash' || this._model === 'MiniMax-M3') &&
+      /^https:\/\/api\.(?:minimax\.io|minimaxi\.com)(?:\/|$)/.test(this._baseUrl ?? '');
+    if (miniMax) {
+      const flash = this._model === 'MiniMax-M3.1-Flash';
+      if (flash && !['on', 'low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) {
+        throw new ChatProviderError(`MiniMax-M3.1-Flash does not support thinking effort: ${effort}`);
+      }
+      return {
+        thinking: { type: effort === 'off' ? 'disabled' : 'adaptive' },
+        output_config: flash && effort !== 'on'
+          ? ({ effort } as MessageCreateParams['output_config'])
+          : undefined,
+        betaFeatures: newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA),
+      };
+    }
+
     if (effort === 'off') {
       return {
         thinking: { type: 'disabled' },

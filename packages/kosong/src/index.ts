@@ -39,6 +39,7 @@ export { isUnknownCapability, UNKNOWN_CAPABILITY } from './capability';
 export type { ModelCapability } from './capability';
 
 // Model catalog (models.dev-style) metadata
+export { withCurrentMiniMaxModels } from './minimax-catalog';
 export {
   catalogBaseUrl,
   catalogModelToCapability,

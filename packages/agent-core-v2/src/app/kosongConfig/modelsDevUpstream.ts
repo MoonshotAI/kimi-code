@@ -26,6 +26,7 @@ import {
   type ModelsDevProviderEntry,
 } from './modelsDev';
 import type { ModelsDevModelItem, ModelsDevProviderItem } from './modelsDevImport';
+import { withCurrentMiniMaxModels } from './modelsDevMiniMax';
 
 export const MODELS_DEV_URL = 'https://models.dev/api.json';
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -36,7 +37,7 @@ export const UPSTREAM_FETCH_TIMEOUT_MS = 10_000;
 export function loadBuiltInModelsDevCatalog(text?: string): ModelsDevCatalog | undefined {
   if (typeof text !== 'string' || text.length === 0) return undefined;
   try {
-    return JSON.parse(text) as ModelsDevCatalog;
+    return withCurrentMiniMaxModels(JSON.parse(text) as ModelsDevCatalog);
   } catch {
     return undefined;
   }
@@ -108,7 +109,7 @@ async function fetchAndCache(): Promise<ModelsDevCatalog> {
     if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
       throw new Error('unexpected catalog payload shape');
     }
-    cache = { catalog: payload as ModelsDevCatalog, fetchedAt: now };
+    cache = { catalog: withCurrentMiniMaxModels(payload as ModelsDevCatalog), fetchedAt: now };
     return cache.catalog;
   } catch (err) {
     if (cache !== undefined) return cache.catalog;
@@ -246,6 +247,7 @@ export function modelsDevModelToRecord(providerId: string, model: ModelsDevModel
   if (model.reasoningKey !== undefined) record.reasoningKey = model.reasoningKey;
   if (model.supportEfforts !== undefined) record.supportEfforts = [...model.supportEfforts];
   if (model.offEffort !== undefined) record.offEffort = model.offEffort;
+  if (model.defaultEffort !== undefined) record.defaultEffort = model.defaultEffort;
   if (model.protocol !== undefined) record.protocol = model.protocol;
   if (model.baseUrl !== undefined) record.baseUrl = model.baseUrl;
   return record;
