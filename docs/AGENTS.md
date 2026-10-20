@@ -37,13 +37,15 @@ Before rewriting a page, always: (1) understand why the original is structured t
 
 Decide the page's job before writing or restructuring it; the job decides what the page keeps and which format it uses.
 
-| Page type | Primary job | Out of scope |
-| --- | --- | --- |
-| Overview | Capability summary and entry points | Full parameter and operation details |
-| Guide | Complete one task on the shortest path | The complete command contract |
-| Reference | The single complete definition of commands, parameters, return values, and limits | Tutorials and marketing copy |
-| Configuration | Fields, precedence, overrides, and when they take effect | Use cases already covered on other pages |
-| FAQ / error reference | Problem, cause, and fix | Re-explaining the whole mechanism |
+| Page type | Primary job |
+| --- | --- |
+| Overview | Capability summary and entry points |
+| Guide | Complete one task on the shortest path |
+| Reference | The single complete definition of commands, parameters, return values, and limits |
+| Configuration | Fields, precedence, overrides, and when they take effect |
+| FAQ / error reference | Problem, cause, and fix |
+
+Each type also implies what it leaves out — an overview omits full parameter details, a guide omits the complete command contract. Keep those facts on the page that owns them and link there.
 
 ## Readers
 
@@ -123,13 +125,7 @@ Term mapping (Chinese <-> English, and proper noun handling):
 | Prompt Flow | Prompt Flow | yes | yes |
 | Diff | diff | yes | no |
 
-Chinese UI wording — prefer natural Chinese over transliterated UI nouns:
-
-| Use (zh) | Avoid | Note |
-| --- | --- | --- |
-| 桌面端 | Desktop | The Kimi Code desktop app form |
-| 命令行 | CLI | The CLI product form; the full product name stays Kimi Code CLI |
-| 输入框 | composer | The command input area |
+Chinese UI wording — prefer natural Chinese over transliterated UI nouns: write 桌面端 (not Desktop), 命令行 (not CLI; the full product name stays Kimi Code CLI), and 输入框 (not composer).
 
 ### Kimi platform rules
 
@@ -362,16 +358,6 @@ Before shipping, verify these values match the rest of the docs:
 - **Login command**: `/login`, not `/setup`
 - **Product full name**: **Kimi Code CLI** or **Kimi Code for VS Code** — never "Kimi CLI"
 - **Platform URLs**: Kimi Code platform `api.kimi.com/coding/…` (mainland China) / `api.kimi.ai/coding/…` (global); Open Platform `api.moonshot.cn/v1` (mainland China) / `api.moonshot.ai/v1` (global) — never mix the two
-
-### Acceptance order
-
-Run these in order after any doc change; report done only after every step passes.
-
-1. `git diff --check`.
-2. `npm run build` (see [Build and preview](#build-and-preview)).
-3. On the built output, verify internal links, anchors, and template literals on every changed page — target page, heading, and generated fragment must all match. Do not trust the Markdown source alone.
-4. View each changed page at ~1440px and ~390px: tables, inline code, long headings, callouts, and `<details>` blocks.
-5. Compare zh and en side by side: headings, code blocks, images, links, and key facts.
 
 ## Build and preview
 
