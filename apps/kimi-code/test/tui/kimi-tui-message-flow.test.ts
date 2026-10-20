@@ -1020,10 +1020,12 @@ describe('KimiTUI message flow', () => {
   it.each([
     ['two words', '/plug:cmd two words'],
     ['', '/plug:cmd'],
-  ])('restores the complete plugin command after occupied cancellation', async (args, expected) => {
+  ])('shows a wrapped occupied notice and restores the plugin command after cancellation', async (args, expected) => {
+    const message =
+      'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.';
     const session = makeSession({
       activatePluginCommand: vi.fn(async () => {
-        throw new KimiError(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+        throw new KimiError(ErrorCodes.SESSION_OCCUPIED, message);
       }),
     });
     const { driver } = await makeDriver(session);
@@ -1036,9 +1038,14 @@ describe('KimiTUI message flow', () => {
     await vi.waitFor(() => {
       expect(driver.state.editorReplacementMounted).toBe(true);
     });
-    (driver.state.editorContainer.children[0] as { handleInput(data: string): void }).handleInput(
-      '\u001B',
-    );
+    const picker = driver.state.editorContainer.children[0] as {
+      handleInput(data: string): void;
+      render(width: number): string[];
+    };
+    const output = stripSgr(picker.render(40).join(' ')).replaceAll(/\s+/g, ' ');
+    expect(output).toContain('Session in use');
+    expect(output).toContain(message);
+    picker.handleInput('\u001B');
 
     expect(driver.state.editor.getText()).toBe(expected);
   });

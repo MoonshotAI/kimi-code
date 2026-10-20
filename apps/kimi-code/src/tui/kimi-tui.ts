@@ -2136,7 +2136,9 @@ export class KimiTUI {
     };
     this.mountEditorReplacement(
       new ChoicePickerComponent({
-        title: formatErrorMessage(error),
+        title: 'Session in use',
+        notice: formatErrorMessage(error),
+        noticeTone: 'warning',
         options: [
           { value: 'retry', label: 'Retry', description: 'send again now' },
           { value: 'cancel', label: 'Cancel', description: 'get your message back' },
