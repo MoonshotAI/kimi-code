@@ -68,7 +68,6 @@ export const sessionCreateSchema = z.object({
   metadata: sessionMetadataSchema.optional(),
   agent_config: sessionAgentConfigPartialSchema.optional(),
   workspace_id: workspaceIdSchema.optional(),
-  default_workspace: z.boolean().optional(),
 });
 
 export type SessionCreate = z.infer<typeof sessionCreateSchema>;

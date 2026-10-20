@@ -618,7 +618,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `POST /api/v1/sessions` | 创建会话（需 `workspace_id`、`metadata.cwd` 或 `default_workspace`） |
+| `POST /api/v1/sessions` | 创建会话（需 `workspace_id` 或 `metadata.cwd`） |
 | `GET /api/v1/sessions` | 列出会话，游标分页，支持 `busy` / `archived_only` 等过滤 |
 | `GET /api/v1/sessions/{session_id}` | 读取单个会话 |
 | `GET /api/v1/sessions/{session_id}/profile` | 读取会话档案 |
@@ -662,22 +662,20 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/sessions`
 
-创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）、`metadata.cwd`（首次使用时注册该工作区）或 `default_workspace`；`workspace_id` 与 `metadata.cwd` 同时提供时必须一致。创建时会广播全局 `event.session.created` 事件。
+创建会话并返回。目标目录来自 `workspace_id`（已注册的工作区）或 `metadata.cwd`（首次使用时注册该工作区）；两者同时提供时必须一致。创建时会广播全局 `event.session.created` 事件。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `workspace_id` | body | string | 未提供 `metadata.cwd` 和 `default_workspace` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
-| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 和 `default_workspace` 时**必填**；与 `workspace_id` 同时提供时必须等于工作区根目录 |
-| `default_workspace` | body | boolean | 为 `true` 时会话创建于默认工作区——未设置 [`default_workspace.path`](../configuration/config-files.md#default-workspace) 时为 `~/KimiCode/Default`——目录按需创建并注册为普通工作区。不能与 `workspace_id` 或 `metadata` 同时提供 |
+| `workspace_id` | body | string | 未提供 `metadata.cwd` 时**必填**。已注册的工作区 id；会话创建于该工作区的根目录 |
+| `metadata` | body | object | 自定义元数据。`metadata.cwd` 为工作目录，未提供 `workspace_id` 时**必填**；两者同时提供时必须等于工作区根目录 |
 | `title` | body | string | 初始标题（至少 1 个字符）；否则会话无标题 |
 | `agent_config` | body | object | schema 接受该字段但当前不会应用——模型与各模式请通过 `POST /api/v1/sessions/{session_id}/profile` 设置 |
 
 成功时，`data` 为新会话的 [session 对象](#session-对象)。
 
-- `40001`：`workspace_id`、`metadata.cwd`、`default_workspace` 都未提供，`default_workspace` 与 `workspace_id` 或 `metadata` 同时提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
+- `40001`：`workspace_id` 与 `metadata.cwd` 都未提供，或 `metadata.cwd` 与工作区根目录不一致（`details` 会列出该字段）
 - `40409`：工作目录不存在或不是目录
 - `40410`：没有以该 `workspace_id` 注册的工作区
-- `40930`：默认工作区目录无法创建或使用。`data` 为 `{ path, reason }`，`reason` 取值：`blocked_by_file`（需要目录的位置被文件占用）、`permission_denied`、`missing_parent`（上级目录或盘符不可用）、`no_space`、`read_only`、`invalid_path`（非绝对路径或过长）、`unknown`
 
 #### `GET /api/v1/sessions`
 
@@ -1650,7 +1648,6 @@ PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳�
 | `id` | string | 工作区 id，由根路径派生的 `wd_<slug>_<hash12>` 字符串 |
 | `root` | string | 项目目录的绝对路径 |
 | `name` | string | 显示名，1–100 个字符；默认取根目录的基名 |
-| `is_default` | boolean | 根目录是否为当前的[默认工作区](../configuration/config-files.md#default-workspace)；每次响应时计算 |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
@@ -2461,7 +2458,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
 
-有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, is_default, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
+有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
 

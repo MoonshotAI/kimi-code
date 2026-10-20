@@ -2,7 +2,6 @@ export interface Workspace {
   id: string;
   root: string;
   name: string;
-  is_default: boolean;
   created_at: string;
   last_opened_at: string;
   session_count: number;
