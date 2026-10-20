@@ -12,6 +12,9 @@ export type PluginTrustLabel = 'official' | 'curated' | 'third-party';
 // either deployment is still an official build.
 const CODE_CDN_HOSTS = new Set(['code.kimi.com', 'code.kimi.ai']);
 const CONTENT_CDN_HOSTS = new Set(['cdn.kimi.com', 'cdn.kimi.ai']);
+// The internal plugin catalog is an official publication channel on par with
+// the CDNs (the WebBridge team ships kimi-browser-extension there).
+const OFFICIAL_CATALOG_HOSTS = new Set(['catalog.msh.team']);
 
 /**
  * Human-readable provenance label for a plugin, suitable for inline display
@@ -95,7 +98,8 @@ function isOfficialPluginUrl(url: URL): boolean {
       url.pathname.startsWith('/kimi-code/plugins/official/')) ||
     (CONTENT_CDN_HOSTS.has(url.hostname) &&
       (url.pathname.startsWith('/kimi-computer-use/') ||
-        url.pathname.startsWith('/kimi-computer-use-windows/')))
+        url.pathname.startsWith('/kimi-computer-use-windows/'))) ||
+    (OFFICIAL_CATALOG_HOSTS.has(url.hostname) && url.pathname.startsWith('/plugins/'))
   );
 }
 

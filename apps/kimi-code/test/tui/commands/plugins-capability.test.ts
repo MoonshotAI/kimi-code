@@ -11,6 +11,7 @@ const {
   isDefaultMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
+  collapseAliasedCatalogEntries,
 } = __pluginsCommandInternals;
 
 function fakeHost(overrides: {
@@ -180,6 +181,50 @@ describe('plugins command capability surface', () => {
       }),
     ).toBe(false);
     expect(isDefaultMarketplaceCatalog('https://example.test/marketplace.json', {})).toBe(false);
+  });
+
+  it('collapses catalog rows that alias a built-in capability wiring plugin', () => {
+    const capabilities = [
+      {
+        id: 'kimi-webbridge',
+        pluginId: 'kimi-browser-extension',
+        displayName: 'Kimi Browser Extension',
+        description: 'browser',
+        supported: true,
+        state: 'not_installed',
+        steps: [],
+        install: { running: false },
+      },
+      {
+        id: 'kimi-cu',
+        pluginId: 'kimi-cu',
+        displayName: 'Kimi Computer Use',
+        description: 'cu',
+        supported: true,
+        state: 'not_installed',
+        steps: [],
+        install: { running: false },
+      },
+    ] as never;
+    const marketplace = {
+      source: 'test',
+      plugins: [
+        { id: 'kimi-browser-extension', displayName: 'Kimi Browser Extension', source: 'https://catalog.msh.team/plugins/x/files' },
+        { id: 'kimi-webbridge', displayName: 'Legacy WebBridge', source: 'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip' },
+        { id: 'kimi-datasource', displayName: 'Kimi Datasource', source: './official/kimi-datasource' },
+      ],
+    } as never;
+
+    const collapsed = collapseAliasedCatalogEntries(marketplace, capabilities);
+
+    // The renamed wiring plugin collapses into the built-in capability row;
+    // the legacy id is not a pluginId alias and stays visible (the promo
+    // dedupe handles that layer), and unrelated entries are untouched.
+    expect(collapsed.plugins.map((entry: { id: string }) => entry.id)).toEqual([
+      'kimi-webbridge',
+      'kimi-datasource',
+    ]);
+    expect(collapseAliasedCatalogEntries(marketplace, [])).toBe(marketplace);
   });
 
   it('removePlugin stays quiet for non-capability plugins', async () => {

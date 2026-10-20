@@ -280,10 +280,11 @@ describe('plugins selector dialogs', () => {
       },
       {
         ...superpowers,
-        id: 'kimi-webbridge',
+        id: 'kimi-browser-extension',
         displayName: 'Kimi Browser Extension',
         source: 'zip-url',
-        originalSource: 'https://code.kimi.com/kimi-code/plugins/official/kimi-webbridge.zip',
+        originalSource:
+          'https://catalog.msh.team/plugins/1a0a4778-7732-85f9-8000-000017acd03b/files',
       },
     ];
 
@@ -292,8 +293,8 @@ describe('plugins selector dialogs', () => {
 
     expect(out).toContain('id kimi-cu');
     expect(out).toContain('via cdn.kimi.com · official');
-    expect(out).toContain('id kimi-webbridge');
-    expect(out).toContain('via code.kimi.com · official');
+    expect(out).toContain('id kimi-browser-extension');
+    expect(out).toContain('via catalog.msh.team · official');
   });
 
   it('treats only the official Kimi CDN path as a trusted install source', () => {
@@ -314,6 +315,14 @@ describe('plugins selector dialogs', () => {
     ).toBe(true);
     expect(isOfficialPluginSource('https://code.kimi.ai/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://cdn.kimi.ai/unrelated/plugin.zip')).toBe(false);
+    // The internal plugin catalog is an official publication channel.
+    expect(
+      isOfficialPluginSource(
+        'https://catalog.msh.team/plugins/1a0a4778-7732-85f9-8000-000017acd03b/files',
+      ),
+    ).toBe(true);
+    expect(isOfficialPluginSource('https://catalog.msh.team/unrelated/x.zip')).toBe(false);
+    expect(isOfficialPluginSource('http://catalog.msh.team/plugins/x/files')).toBe(false);
     // Curated and other Kimi CDN paths are not "official" for the install gate.
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/curated/superpowers.zip')).toBe(false);
     expect(isOfficialPluginSource('https://code.kimi.com/kimi-code/plugins/foo.zip')).toBe(false);

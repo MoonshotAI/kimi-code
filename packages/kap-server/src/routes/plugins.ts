@@ -166,10 +166,15 @@ export function registerPluginsRoutes(
       }
       if (opts.marketplaceIsDefault === true) {
         const presentIds = new Set(marketplace.plugins.map((entry) => entry.id));
+        const satisfied = (capabilityId: string): boolean =>
+          presentIds.has(capabilityId) ||
+          [...presentIds].some(
+            (entryId) => CAPABILITY_ROW_IDS[entryId]?.capabilityId === capabilityId,
+          );
         const missing = core.accessor
           .get(ICapabilityService)
           .describeCapabilities()
-          .filter((descriptor) => descriptor.supported && !presentIds.has(descriptor.id))
+          .filter((descriptor) => descriptor.supported && !satisfied(descriptor.id))
           .map((descriptor) => ({
             id: descriptor.id,
             tier: 'official' as const,

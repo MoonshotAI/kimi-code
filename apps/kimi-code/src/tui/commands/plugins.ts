@@ -325,6 +325,32 @@ function capabilityMarketplaceEntry(capability: CapabilityStatus): PluginMarketp
 }
 
 /**
+ * Drop catalog rows whose id aliases a built-in capability's wiring plugin
+ * (the capability's pluginId differs from its own id, e.g. a renamed plugin).
+ * The built-in capability row stands in for them — selecting an aliased
+ * catalog copy would route through a plain plugin install and skip the
+ * capability's runtime setup.
+ */
+function collapseAliasedCatalogEntries(
+  marketplace: PluginMarketplace,
+  capabilities: readonly CapabilityStatus[],
+): PluginMarketplace {
+  const aliasedIds = new Set(
+    capabilities
+      .filter(
+        (capability) =>
+          capability.pluginId !== undefined && capability.pluginId !== capability.id,
+      )
+      .map((capability) => capability.pluginId as string),
+  );
+  if (aliasedIds.size === 0) return marketplace;
+  return {
+    ...marketplace,
+    plugins: marketplace.plugins.filter((entry) => !aliasedIds.has(entry.id)),
+  };
+}
+
+/**
  * Injection is part of the DEFAULT catalog experience only: any explicit
  * replacement (the slash-command source or a user-set env override) opts out
  * wholesale. The dev marketplace server started by scripts/dev.mjs serves
@@ -361,8 +387,13 @@ async function loadMarketplaceCatalog(
       source,
       skipLatestVersions: true,
     });
+    // A catalog row that aliases a built-in capability's wiring plugin (the
+    // capability's pluginId differs from its id) collapses into the built-in
+    // row — installing it directly would skip the capability's runtime setup.
     marketplace =
-      builtInEntries !== undefined ? withBuiltInEntries(catalog, builtInEntries) : catalog;
+      builtInEntries !== undefined
+        ? withBuiltInEntries(collapseAliasedCatalogEntries(catalog, capabilities), builtInEntries)
+        : catalog;
     panel.setMarketplace(marketplace.plugins, marketplace.source);
     host.state.ui.requestRender();
   } catch (error) {
@@ -382,7 +413,10 @@ async function loadMarketplaceCatalog(
     const enrichedCatalog = await withMarketplaceLatestVersions(catalog);
     const enriched =
       builtInEntries !== undefined
-        ? withBuiltInEntries(enrichedCatalog, builtInEntries)
+        ? withBuiltInEntries(
+            collapseAliasedCatalogEntries(enrichedCatalog, capabilities),
+            builtInEntries,
+          )
         : enrichedCatalog;
     panel.setMarketplace(enriched.plugins, enriched.source);
   } catch (error) {
@@ -518,6 +552,7 @@ export const __pluginsCommandInternals = {
   isDefaultMarketplaceCatalog,
   pollCapabilityInstall,
   removePlugin,
+  collapseAliasedCatalogEntries,
 };
 
 async function installCapabilityFromPanel(

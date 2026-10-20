@@ -527,6 +527,11 @@ describe('server-v2 /api/v1 plugins', () => {
     expect(datasource?.source.endsWith(join('plugins', 'official', 'kimi-datasource'))).toBe(true);
     const webbridge = body.data.entries.find((e) => e.id === 'kimi-browser-extension');
     expect(webbridge?.capabilityId).toBe('kimi-webbridge');
+    expect(
+      body.data.entries.filter(
+        (e) => e.id === 'kimi-webbridge' || e.id === 'kimi-browser-extension',
+      ),
+    ).toHaveLength(1);
     const cuSupported = process.platform === 'darwin' || (process.platform === 'win32' && process.arch === 'x64');
     const cu = body.data.entries.find((e) => e.id === 'kimi-cu');
     if (!cuSupported) {
