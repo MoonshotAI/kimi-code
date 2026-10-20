@@ -995,7 +995,7 @@ export interface AgentStateSnapshot {
     readonly startedAt: number;
     readonly finishedAt: number;
   } | undefined;
-  'llmRequester.mediaDegradedTurns': Set<number>;
+  'llmRequester.mediaDegradedTurns': Map<number, /* MediaDegradeCause — packages/agent-core-v2/src/agent/contextProjector/mediaProjection.ts */ 'size-limit' | 'unsupported-media'>;
   'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
     readonly "__@mediaStripSnapshotBrand": undefined;
   }>;

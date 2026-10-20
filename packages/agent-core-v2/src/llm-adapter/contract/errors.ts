@@ -262,7 +262,11 @@ export function isRetryableGenerateError(error: unknown): boolean {
     }
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  return (
+    error instanceof ChatProviderError &&
+    !isImageFormatError(error) &&
+    !isUnsupportedMediaError(error)
+  );
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;

@@ -633,8 +633,9 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('keeps the too-large wording for size rejections', async () => {
     const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
     const { service, dispatcher, events } = createService(
-      createRequester(calls, BODY_TOO_LARGE_413),
+      createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
       undefined,
     );
     const imageMessage = (data: string): Message => ({
@@ -657,6 +658,13 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
           'Provider rejected the request as too large; older media were dropped and the request was retried.',
       }),
     ]);
+    const retriedTexts = (capturedInputs[1]?.messages ?? [])
+      .flatMap((message) => message.content)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+    expect(retriedTexts).toContain(
+      '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    );
   });
 
   it('attaches display paths to degraded older media', async () => {
@@ -958,7 +966,7 @@ describe('AgentLLMRequesterService unsupported-media resend', () => {
     expect(calls.value).toBe(2);
     expect(partsOf(capturedInputs[1]).some((part) => part.type === 'video_url')).toBe(false);
     expect(textsOf(capturedInputs[1])).toContain(
-      '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+      '[video omitted: not supported by this endpoint; re-read the file to view it]',
     );
     const imageUrls = partsOf(capturedInputs[1])
       .filter((part) => part.type === 'image_url')
@@ -1043,7 +1051,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(policies).toEqual([
       undefined,
       { structure: 'strict' },
-      { structure: 'strict', media: 'degraded' },
+      { structure: 'strict', media: 'degraded', mediaDegradeCause: 'size-limit' },
       { structure: 'strict', media: { strip: expect.anything() } },
     ]);
     await dispatcher.flush();
@@ -1100,8 +1108,8 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(calls.value).toBe(3);
     expect(policies).toEqual([
       undefined,
-      { media: 'degraded' },
-      { structure: 'strict', media: 'degraded' },
+      { media: 'degraded', mediaDegradeCause: 'size-limit' },
+      { structure: 'strict', media: 'degraded', mediaDegradeCause: 'size-limit' },
     ]);
     expect(events.filter((event) => event.type === 'warning')).toEqual([
       expect.objectContaining({ type: 'warning', code: 'media-degraded' }),

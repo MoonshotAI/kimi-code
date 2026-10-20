@@ -132,6 +132,18 @@ describe('isRetryableGenerateError', () => {
     ).toBe(true);
     expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
   });
+
+  it('leaves media rejections to the projection ladder', () => {
+    expect(
+      isRetryableGenerateError(new ChatProviderError('unsupported media type for base64 image')),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError('Unsupported media type for base64 video: video/avi'),
+      ),
+    ).toBe(false);
+    expect(isRetryableGenerateError(new ChatProviderError('some other problem'))).toBe(true);
+  });
 });
 
 describe('isUnsupportedMediaError', () => {
