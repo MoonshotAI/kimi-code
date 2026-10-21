@@ -194,6 +194,7 @@ export class SessionManager implements ISessionManager {
 
   private async archiveInner(sessionId: string): Promise<void> {
     await (await this.controllerForSession(sessionId))?.archive(sessionId);
+    this.reclaimed.delete(sessionId);
   }
 
   async archive(sessionId: string): Promise<void> {
