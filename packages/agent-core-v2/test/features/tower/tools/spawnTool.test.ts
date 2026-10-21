@@ -340,9 +340,9 @@ describe('TowerSpawnTool', () => {
     expect(state.roster.agents).toHaveLength(0);
   });
 
-  it('aborts the launched run when post-registration setup fails', async () => {
+  it('aborts the launched run without a partial roster or mission claim when spawn persistence fails', async () => {
     const forced = vi
-      .spyOn(TowerStore.prototype, 'updateMission')
+      .spyOn(TowerStore.prototype, 'registerSpawnedAgent')
       .mockRejectedValueOnce(new TowerProtocolError('forced post-launch failure'));
     try {
       const result = await execute(WORKER_ARGS);
@@ -350,7 +350,10 @@ describe('TowerSpawnTool', () => {
       expect(result.isError).toBe(true);
       expect(result.output).toContain('forced post-launch failure');
       expect(runAgent.mock.calls[0]?.[2]?.signal.aborted).toBe(true);
-      expect((await store.load()).roster.agents.some((agent) => agent.agentId === 'agent-7')).toBe(true);
+      const state = await store.load();
+      expect(state.roster.agents.some((agent) => agent.agentId === 'agent-7')).toBe(false);
+      expect(state.missions[0]?.status).toBe('planned');
+      expect(state.missions[0]?.owner).toBeUndefined();
     } finally {
       forced.mockRestore();
     }

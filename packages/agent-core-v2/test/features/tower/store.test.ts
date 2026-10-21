@@ -1,10 +1,11 @@
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   MAX_REVIEW_ROUNDS,
@@ -15,6 +16,7 @@ import {
   commitPaths,
   isAncestor,
   isWorktreeDirty,
+  mapWithConcurrency,
   mergeNoFf,
   parseFrontmatter,
   scopesOverlap,
@@ -2337,7 +2339,10 @@ describe('rebaseMission', () => {
     });
     const locked = new TowerStore(repo, { stateLockTimeoutMs: 100, stateLockPollMs: 10 });
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
-    await writeFile(lockPath, 'pid=999999 since=2026-09-30T00:00:00.000Z token=other');
+    await writeFile(
+      lockPath,
+      `pid=${String(process.pid)} since=2026-09-30T00:00:00.000Z token=other`,
+    );
     try {
       await expect(locked.rebaseMission('tower', mission.id)).rejects.toThrow(
         /timed out.*tower state lock/,
@@ -3152,16 +3157,18 @@ describe('concurrent state writes', () => {
     await expectNoLockOrTmpLeftovers();
   });
 
-  it('surfaces a held state lock as a clear error instead of a hang or a silent skip', async () => {
+  it('surfaces a same-process held state lock clearly without stealing it', async () => {
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
-    await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z', 'utf8');
+    const content = `pid=${String(process.pid)} since=2026-09-26T00:00:00.000Z token=live`;
+    await writeFile(lockPath, content, 'utf8');
     const blocked = new TowerStore(repo, { stateLockTimeoutMs: 200, stateLockPollMs: 20 });
 
     await expect(blocked.updateMission('tower', 'M1', { note: 'x' })).rejects.toThrow(
-      /timed out.*tower state lock.*held by pid=999999/s,
+      /timed out.*tower state lock.*another tower tool call in this process/s,
     );
 
     expect((await store.load()).missions[0]?.notes).toEqual([]);
+    expect(await readFile(lockPath, 'utf8')).toBe(content);
 
     await rm(lockPath, { force: true });
     await store.updateMission('tower', 'M1', { note: 'after stale lock removed' });
@@ -3998,5 +4005,313 @@ describe('scopesOverlap', () => {
     expect(scopesOverlap(['**'], ['src/a/**'])).toBe(false);
     expect(scopesOverlap([], ['src/a/**'])).toBe(false);
     expect(scopesOverlap(['src/a/**'], [])).toBe(false);
+  });
+});
+
+describe('state lock recovery and prepared writes', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  async function lockExists(path: string): Promise<boolean> {
+    return stat(path).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  it('reclaims a dead holder after matching its lock content even at the timeout boundary', async () => {
+    await store.plan([{ title: 'alpha', scope: ['src/alpha/**'] }]);
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
+
+    await new TowerStore(repo, { stateLockTimeoutMs: 1, stateLockPollMs: 1 }).updateMission(
+      'tower',
+      'M1',
+      { note: 'reclaimed' },
+    );
+
+    expect((await store.load()).missions[0]?.notes).toEqual(['reclaimed']);
+    await expect(stat(lockPath)).rejects.toThrow(/ENOENT/);
+  });
+
+  it('sends without waiting for the state lock and preserves concurrent roster writes', async () => {
+    await store.registerAgent(rosterEntry({ name: 'w1', kind: 'worker' }));
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    await writeFile(lockPath, `pid=${String(process.pid)} since=2026-09-26T00:00:00.000Z token=live`);
+    try {
+      const rel = await store.send('tower', { to: 'w1', subject: 'lock free', body: 'x' });
+      expect(parseFrontmatter(await readFile(store.abs(rel), 'utf8')).fields['subject']).toBe(
+        'lock free',
+      );
+    } finally {
+      await rm(lockPath, { force: true });
+    }
+
+    const other = new TowerStore(repo);
+    const subjects = Array.from({ length: 16 }, (_, index) => `message-${String(index)}`);
+    await Promise.all([
+      ...subjects.map((subject) => store.send('tower', { to: 'w1', subject, body: subject })),
+      ...Array.from({ length: 8 }, (_, index) =>
+        other.registerAgent(rosterEntry({ name: `other-${String(index)}`, kind: 'worker' })),
+      ),
+    ]);
+
+    const inbox = await store.readInbox('w1', 50);
+    expect(
+      inbox.filter((item) => item.subject !== 'lock free').map((item) => item.subject).toSorted(),
+    ).toEqual(subjects.toSorted());
+    const roster = (await store.load()).roster.agents.map((agent) => agent.name);
+    expect(roster).toEqual(expect.arrayContaining(['w1', ...Array.from({ length: 8 }, (_, i) => `other-${String(i)}`)]));
+  });
+
+  it('runs updateMission completion Git checks outside the state lock', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const observed: boolean[] = [];
+    const original = TowerStore.prototype.diffBase;
+    const spy = vi.spyOn(TowerStore.prototype, 'diffBase').mockImplementation(
+      async function (this: TowerStore, state, target) {
+        observed.push(await lockExists(lockPath));
+        return original.call(this, state, target);
+      },
+    );
+    try {
+      await store.updateMission('tower', mission.id, { status: 'completed' });
+      expect(observed.length).toBeGreaterThan(0);
+      expect(observed).not.toContain(true);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('runs TowerComplete validation outside the state lock and stays idempotent under concurrency', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const observed: boolean[] = [];
+    const original = TowerStore.prototype.diffBase;
+    const spy = vi.spyOn(TowerStore.prototype, 'diffBase').mockImplementation(
+      async function (this: TowerStore, state, target) {
+        observed.push(await lockExists(lockPath));
+        return original.call(this, state, target);
+      },
+    );
+    try {
+      const results = await Promise.all([
+        store.complete('w1', 'same completion report'),
+        store.complete('w1', 'same completion report'),
+      ]);
+      expect(observed.length).toBeGreaterThan(0);
+      expect(observed).not.toContain(true);
+      expect(results.filter((result) => result.notificationCreated)).toHaveLength(1);
+      const messages = await store.readInbox('tower', 20);
+      expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('scans reviews outside the state lock and allocates unique seq values concurrently', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-a', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    await store.registerAgent(
+      rosterEntry({ name: 'rev-b', kind: 'reviewer', reviewTarget: mission.branch }),
+    );
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const observed: boolean[] = [];
+    const original = TowerStore.prototype.reviewsFor;
+    const spy = vi.spyOn(TowerStore.prototype, 'reviewsFor').mockImplementation(
+      async function (this: TowerStore, target) {
+        observed.push(await lockExists(lockPath));
+        return original.call(this, target);
+      },
+    );
+    try {
+      await Promise.all([cleanReview('rev-a', mission.branch), cleanReview('rev-b', mission.branch)]);
+      expect(observed.length).toBeGreaterThan(0);
+      expect(observed).not.toContain(true);
+      const reviews = await store.reviewsFor(mission.branch);
+      expect(reviews.map((review) => review.seq)).toEqual([1, 2]);
+      expect(reviews.map((review) => review.round)).toEqual([1, 1]);
+      expect(new Set(reviews.map((review) => review.file)).size).toBe(2);
+      const messages = await store.readInbox('tower', 20);
+      expect(messages.filter((item) => item.action === 'review-result')).toHaveLength(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('persists spawn roster and ownership atomically when mission validation fails', async () => {
+    const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
+    const entry = rosterEntry({ name: 'w1', kind: 'worker', missionId: mission!.id });
+
+    await expect(store.registerSpawnedAgent(entry, { id: 'M99', owner: 'w1' })).rejects.toThrow(
+      /unknown mission/,
+    );
+    let state = await store.load();
+    expect(state.roster.agents).toEqual([]);
+    expect(state.missions[0]?.status).toBe('planned');
+    expect(state.missions[0]?.owner).toBeUndefined();
+
+    await store.registerSpawnedAgent(entry, { id: mission!.id, owner: 'w1' });
+    state = await store.load();
+    expect(state.roster.agents.map((agent) => agent.name)).toEqual(['w1']);
+    expect(state.missions[0]?.status).toBe('active');
+    expect(state.missions[0]?.owner).toBe('w1');
+  });
+});
+
+describe('bounded protocol IO', () => {
+  beforeEach(async () => {
+    await store.init();
+  });
+
+  it('reads a large inbox with bounded parallel work while preserving order and acknowledgements', async () => {
+    const inboxDir = join(repo, '.tower/comms/inbox');
+    for (let index = 0; index < 80; index += 1) {
+      const subject = `message-${String(index)}`;
+      await writeFile(
+        join(inboxDir, `bulk-${String(index).padStart(3, '0')}.md`),
+        [
+          '---',
+          'type: inbox',
+          `message_id: bulk-${String(index)}`,
+          'from: tower',
+          'to: w1',
+          `subject: ${subject}`,
+          `sent_at: ${new Date(1000 + index).toISOString()}`,
+          '---',
+          '',
+          subject,
+          '',
+        ].join('\n'),
+      );
+    }
+    await writeFile(join(inboxDir, 'not-inbox.md'), '# not an inbox message\n');
+    await mkdir(join(inboxDir, 'unreadable.md'));
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', spawnedAt: '1970-01-01T00:00:00.000Z' }),
+    );
+
+    const history = await store.readInbox('w1', 100);
+    expect(history).toHaveLength(80);
+    expect(history.map((item) => item.subject)).toEqual(
+      Array.from({ length: 80 }, (_, index) => `message-${String(79 - index)}`),
+    );
+    const firstPage = await store.readUnreadInbox('w1', 10);
+    expect(firstPage.map((item) => item.subject)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `message-${String(79 - index)}`),
+    );
+    expect(await store.ackInbox('w1', firstPage.map((item) => item.messageId))).toBe(70);
+    expect((await store.readUnreadInbox('w1', 1))[0]?.subject).toBe('message-69');
+
+    let active = 0;
+    let maximum = 0;
+    const values = await mapWithConcurrency(
+      Array.from({ length: 64 }, (_, index) => index),
+      4,
+      async (index) => {
+        active += 1;
+        maximum = Math.max(maximum, active);
+        await delay(3);
+        active -= 1;
+        return index;
+      },
+    );
+    expect(maximum).toBe(4);
+    expect(values).toEqual(Array.from({ length: 64 }, (_, index) => index));
+  });
+
+  it('finds recent, old, and chunk-crossing activity refs without a fixed tail cutoff', async () => {
+    type ActivityDriver = { hasActivityLogRef(action: string, rel: string): Promise<boolean> };
+    const drive = (action: string, rel: string): Promise<boolean> =>
+      (store as unknown as ActivityDriver).hasActivityLogRef(action, rel);
+    const logPath = join(repo, '.tower/comms/log/activity.log');
+    const oldRel = '.tower/comms/inbox/old.md';
+    await appendFile(logPath, `2026-01-01T00:00:00.000Z tower inbox.send to=w1 ref=${oldRel}\n`);
+    for (let index = 0; index < 4; index += 1) {
+      await appendFile(logPath, `${'x'.repeat(16 * 1024)}\n`);
+    }
+    expect(await drive('inbox.send', oldRel)).toBe(true);
+    expect(await drive('inbox.send', '.tower/comms/inbox/missing.md')).toBe(false);
+
+    const recentRel = '.tower/comms/inbox/recent.md';
+    await store.appendLog('tower', 'inbox.send', { to: 'w1' }, recentRel);
+    expect(await drive('inbox.send', recentRel)).toBe(true);
+
+    const crossingRel = '.tower/comms/inbox/crossing.md';
+    const prefix = '2026-01-01T00:00:00.000Z tower inbox.send ';
+    const padding = 16 * 1024 - Buffer.byteLength(prefix) - 2;
+    await writeFile(logPath, `${prefix}${'x'.repeat(padding)}ref=${crossingRel}\n`);
+    expect(await drive('inbox.send', crossingRel)).toBe(true);
+  });
+
+  it('reads complete long frontmatter and ignores unterminated or unreadable review files', async () => {
+    const reviewsDir = join(repo, '.tower/comms/reviews');
+    const reviewedCommit = await git(repo, 'rev-parse', 'main');
+    const fields = [
+      '---',
+      'date: 2026-01-01',
+      'reviewer: previous',
+      'target: feat/x',
+      'round: 1',
+      'seq: 42',
+      'status: clean',
+      'merge: merge',
+      `reviewed_commit: ${reviewedCommit}`,
+      `padding: ${'x'.repeat(20_000)}`,
+      '---',
+      '',
+      'a body that must not be needed for metadata',
+      '',
+    ].join('\n');
+    await writeFile(join(reviewsDir, 'review-feat-x-previous-1.md'), fields);
+    await writeFile(
+      join(reviewsDir, 'review-feat-x-binary-1.md'),
+      Buffer.concat([
+        Buffer.from(
+          `---\nreviewer: binary\ntarget: feat/x\nround: 1\nseq: 41\nstatus: clean\nmerge: merge\nreviewed_commit: ${reviewedCommit}\npadding: `,
+        ),
+        Buffer.from([0xff, 0xfe, 0xfd]),
+        Buffer.from('\n---\n\nbody\n'),
+      ]),
+    );
+    await writeFile(
+      join(reviewsDir, 'review-feat-x-unterminated-1.md'),
+      '---\nreviewer: invalid\ntarget: feat/x\nround: 9\nseq: 99\nstatus: clean\n',
+    );
+    await mkdir(join(reviewsDir, 'review-feat-x-broken-1.md'));
+    await git(repo, 'branch', 'feat/x');
+    await store.registerAgent(
+      rosterEntry({ name: 'rev', kind: 'reviewer', reviewTarget: 'feat/x' }),
+    );
+
+    await cleanReview('rev', 'feat/x');
+
+    const reviews = await store.reviewsFor('feat/x');
+    expect(reviews.map((review) => review.seq)).toEqual([41, 42, 43]);
+    expect(reviews.map((review) => review.reviewer)).toEqual(['binary', 'previous', 'rev']);
   });
 });
