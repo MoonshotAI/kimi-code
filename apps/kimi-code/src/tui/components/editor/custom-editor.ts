@@ -172,6 +172,7 @@ export class CustomEditor extends Editor {
   private readonly pasteInputQueue: string[] = [];
   private argumentHints: ReadonlyMap<string, string> = new Map();
   private skillCommandNames: ReadonlySet<string> = new Set();
+  private knownCommandNames: ReadonlySet<string> = new Set();
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
     this.argumentHints = hints;
@@ -179,6 +180,10 @@ export class CustomEditor extends Editor {
 
   setSkillCommandNames(names: ReadonlySet<string>): void {
     this.skillCommandNames = names;
+  }
+
+  setKnownCommandNames(names: ReadonlySet<string>): void {
+    this.knownCommandNames = names;
   }
 
   constructor(tui: TUI, options: CustomEditorOptions = {}) {
@@ -292,7 +297,7 @@ export class CustomEditor extends Editor {
         let leadingRange: { start: number; end: number } | null = null;
         if (text.startsWith('/')) {
           leadingRange = leadingSlashTokenRange(stripSgr(original));
-          const leading = highlightFirstSlashToken(original, 'primary');
+          const leading = highlightFirstSlashToken(original, 'primary', this.knownCommandNames);
           if (leading !== undefined) {
             highlighted = leading;
           }
@@ -664,16 +669,25 @@ export class CustomEditor extends Editor {
 }
 
 /**
- * Return a copy of `line` with the first `/token` coloured using `hex`.
- * For `/goal next manage`, also colour the command-path tokens.
- * `line` may already contain SGR escapes (cursor inverse, etc.); we
- * locate `/` via visible-index math so ANSI pass-through survives.
- * Returns `undefined` if no token is found.
+ * Return a copy of `line` with the first `/token` coloured using `hex`, but
+ * only when the token names a currently-known command (built-in name or
+ * alias, skill, or plugin command — the same pool did-you-mean uses); an
+ * unknown token stays unpainted. For `/goal next manage`, also colour the
+ * command-path tokens. `line` may already contain SGR escapes (cursor
+ * inverse, etc.); we locate `/` via visible-index math so ANSI pass-through
+ * survives. Returns `undefined` if no known token is found.
  */
-export function highlightFirstSlashToken(line: string, token: 'primary'): string | undefined {
+export function highlightFirstSlashToken(
+  line: string,
+  token: 'primary',
+  knownCommandNames: ReadonlySet<string>,
+): string | undefined {
   const visible = stripSgr(line);
   const range = leadingSlashTokenRange(visible);
   if (range === null) return undefined;
+  // Validity is judged on the command-name token alone: `/usage anything`
+  // paints because `usage` is known, whatever the arguments are.
+  if (!knownCommandNames.has(visible.slice(range.start + 1, range.end))) return undefined;
   const ranges = [range];
   if (visible.slice(range.start, range.end) === '/goal') {
     ranges.push(...goalCommandPathRanges(visible, range.end));

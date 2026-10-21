@@ -56,6 +56,7 @@ import {
   type SlashCommandIntent,
   slashBusyMessage,
   slashCommandBusyReason,
+  unknownSlashCommandMessage,
 } from './resolve';
 import {
   handleExportDebugZipCommand,
@@ -263,11 +264,17 @@ async function executeSlashCommand(
       host.restoreInputText(input);
       return;
     case 'invalid':
+      // Unknown slash command: let /dance claim it before showing the error.
+      // This runs *after* builtin and skill resolution, so a real command or
+      // a same-named skill always wins.
+      if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
+        return;
+      }
       host.track('input_command_invalid', {
         reason: intent.reason,
         command: intent.commandName,
       });
-      host.showError(`Invalid slash command: /${intent.commandName}`);
+      host.showError(unknownSlashCommandMessage(intent.commandName, intent.suggestions));
       return;
     case 'plugin-command': {
       if (host.state.appState.model.trim().length === 0) {
@@ -292,9 +299,11 @@ async function executeSlashCommand(
       return;
     }
     case 'message':
-      // Unknown slash command: let /dance claim it before it falls through to
-      // the model as a normal message. This runs *after* builtin and skill
-      // resolution, so a real command or a same-named skill always wins.
+      // Text that starts with '/' but is not a single-token command attempt
+      // (e.g. a multi-line paste): let /dance claim it before it falls
+      // through to the model as a normal message. This runs *after* builtin
+      // and skill resolution, so a real command or a same-named skill always
+      // wins.
       if (parsedCommand !== null && tryHandleDanceCommand(host, parsedCommand)) {
         return;
       }

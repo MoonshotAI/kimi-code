@@ -4,7 +4,8 @@ import type {
   AutocompleteSuggestions,
   TUI,
 } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
@@ -875,5 +876,79 @@ describe('CustomEditor bash mode file completion', () => {
     // request force:true path completion.
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call.force === true)).toBe(true);
+  });
+});
+
+describe('CustomEditor slash token highlight', () => {
+  const previousChalkLevel = chalk.level;
+
+  beforeAll(() => {
+    // Vitest runs without a TTY; force full colour so the highlighter emits
+    // the SGR escapes asserted below.
+    chalk.level = 3;
+  });
+
+  afterAll(() => {
+    chalk.level = previousChalkLevel;
+  });
+
+  it('paints the leading token when it names a known command', () => {
+    const editor = makeEditor();
+    editor.setKnownCommandNames(new Set(['add-dir']));
+
+    for (const char of '/add-dir foo') {
+      editor.handleInput(char);
+    }
+
+    const contentLine = editor.render(90)[1] ?? '';
+    const tokenIdx = contentLine.indexOf('/add-dir');
+    expect(tokenIdx).toBeGreaterThan(-1);
+    // The token is wrapped in a primary-colour SGR sequence that abuts it.
+    // oxlint-disable-next-line no-control-regex -- ESC (\u001B) matches ANSI SGR escape sequences
+    expect(contentLine.slice(0, tokenIdx)).toMatch(/\u001B\[[0-9;]*m$/);
+  });
+
+  it('leaves the leading token unpainted when it names no known command', () => {
+    const editor = makeEditor();
+    editor.setKnownCommandNames(new Set(['add-dir']));
+
+    for (const char of '/usgae foo') {
+      editor.handleInput(char);
+    }
+
+    const contentLine = editor.render(90)[1] ?? '';
+    const tokenIdx = contentLine.indexOf('/usgae');
+    expect(tokenIdx).toBeGreaterThan(-1);
+    // Unpainted: the byte right before the token is the plain prompt space.
+    expect(contentLine[tokenIdx - 1]).toBe(' ');
+  });
+
+  it('paints a known command regardless of the arguments that follow', () => {
+    const editor = makeEditor();
+    editor.setKnownCommandNames(new Set(['usage']));
+
+    for (const char of '/usage anything') {
+      editor.handleInput(char);
+    }
+
+    const contentLine = editor.render(90)[1] ?? '';
+    const tokenIdx = contentLine.indexOf('/usage');
+    expect(tokenIdx).toBeGreaterThan(-1);
+    // oxlint-disable-next-line no-control-regex -- ESC (\u001B) matches ANSI SGR escape sequences
+    expect(contentLine.slice(0, tokenIdx)).toMatch(/\u001B\[[0-9;]*m$/);
+  });
+
+  it('still leaves a multi-segment path unpainted even when a command is known', () => {
+    const editor = makeEditor();
+    editor.setKnownCommandNames(new Set(['tmp', 'add-dir']));
+
+    for (const char of '/tmp/foo') {
+      editor.handleInput(char);
+    }
+
+    const contentLine = editor.render(90)[1] ?? '';
+    const tokenIdx = contentLine.indexOf('/tmp/foo');
+    expect(tokenIdx).toBeGreaterThan(-1);
+    expect(contentLine[tokenIdx - 1]).toBe(' ');
   });
 });

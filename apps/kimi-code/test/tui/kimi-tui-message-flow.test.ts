@@ -811,7 +811,7 @@ describe('KimiTUI message flow', () => {
     expect(session.prompt).not.toHaveBeenCalled();
   });
 
-  it('scans inline skills in messages that start with an unknown slash token (v2 engine)', async () => {
+  it('blocks a message that starts with an unknown slash command, inline skills included (v2 engine)', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
       ...makeStartupInput(),
@@ -831,15 +831,30 @@ describe('KimiTUI message flow', () => {
       driver as unknown as { refreshSkillCommands(): Promise<void> }
     ).refreshSkillCommands();
 
-    driver.handleUserInput('/dance please use /skill:review');
+    driver.handleUserInput('/unknown please use /skill:review');
 
     await vi.waitFor(() => {
-      expect(session.promptWithSkills).toHaveBeenCalledWith(
-        '/dance please use /skill:review',
-        [{ name: 'review' }],
-      );
+      expect(stripSgr(renderTranscript(driver))).toContain('Unknown command: /unknown.');
     });
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
     expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('sends a slash-prefixed line as a normal message when it starts with a space (v2 engine)', async () => {
+    const session = makeSession({ id: 'ses-lazy' });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const { driver } = await makeDriver(session, {}, startupInput);
+
+    driver.handleUserInput(' /tmp');
+
+    // The leading space bypasses slash-command parsing; the text reaches the
+    // model verbatim (sendNormalUserInput does not trim it).
+    await vi.waitFor(() => {
+      expect(session.prompt).toHaveBeenCalledWith(' /tmp', { promptId: undefined });
+    });
   });
 
   it.each([

@@ -62,6 +62,7 @@ import {
   buildSkillSlashCommands,
   goalObjectiveLengthWarning,
   isExperimentalFlagEnabled,
+  knownSlashCommandNames,
   setExperimentalFeatures,
   sortSlashCommands,
   type KimiSlashCommand,
@@ -574,6 +575,9 @@ export class KimiTUI {
     }
     this.state.editor.setArgumentHints(argumentHints);
     this.state.editor.setSkillCommandNames(skillCommandNames);
+    this.state.editor.setKnownCommandNames(
+      knownSlashCommandNames(this.skillCommandMap, this.pluginCommandMap),
+    );
   }
 
   refreshSlashCommandAutocomplete(): void {
