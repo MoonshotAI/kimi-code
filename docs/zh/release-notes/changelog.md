@@ -21,7 +21,6 @@ outline: 2
 - `/compact` 在 Agent 忙碌时改为排队执行，不再报错。
 - 会话评分开关从 tui.toml 迁移至 config.toml。
 - `dangerous_command_guard = false` 现在关闭全部内建确认护栏，不再仅限危险命令。
-- VS Code 0.8.3：提问交互新增「返回」导航，不丢失已填内容。
 
 ### 修复
 

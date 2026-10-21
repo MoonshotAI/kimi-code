@@ -21,7 +21,6 @@ This page documents the changes in each Kimi Code CLI release.
 - `/compact` now queues while the agent is busy instead of failing with an error.
 - The session rating toggle moves from tui.toml to config.toml.
 - `dangerous_command_guard = false` now disables all built-in confirmation guardrails, not only dangerous commands.
-- VS Code 0.8.3: the question interaction gains a "Back" navigation that preserves what you have already filled in.
 
 ### Bug Fixes
 
