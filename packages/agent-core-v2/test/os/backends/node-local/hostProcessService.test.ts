@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Readable } from 'node:stream';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -10,7 +13,7 @@ import {
   HostProcessErrorCode,
   IHostProcessService,
 } from '#/os/interface/hostProcess';
-import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
+import { HostProcessService, resolveWindowsBatchCommand } from '#/os/backends/node-local/hostProcessService';
 
 async function collect(stream: Readable): Promise<string> {
   const chunks: Buffer[] = [];
@@ -94,6 +97,20 @@ describe('HostProcessService on Windows', () => {
   let spawnedCommands: string[];
   let taskkills: Array<{ kill: ReturnType<typeof vi.fn>; unref: ReturnType<typeof vi.fn> }>;
 
+  const fakeChild = (command: string) => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 4242,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      kill: vi.fn(() => true),
+      unref: vi.fn(),
+    });
+    if (command === 'taskkill') taskkills.push(child);
+    else queueMicrotask(() => child.emit('spawn'));
+    return child;
+  };
+
   beforeEach(() => {
     savedPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -103,17 +120,7 @@ describe('HostProcessService on Windows', () => {
       ...(await importOriginal<typeof import('node:child_process')>()),
       spawn: (command: string, args: readonly string[]) => {
         spawnedCommands.push([command, ...args].join(' '));
-        const child = Object.assign(new EventEmitter(), {
-          pid: 4242,
-          stdin: new PassThrough(),
-          stdout: new PassThrough(),
-          stderr: new PassThrough(),
-          kill: vi.fn(() => true),
-          unref: vi.fn(),
-        });
-        if (command === 'taskkill') taskkills.push(child);
-        else queueMicrotask(() => child.emit('spawn'));
-        return child;
+        return fakeChild(command);
       },
     }));
     vi.resetModules();
@@ -145,5 +152,91 @@ describe('HostProcessService on Windows', () => {
     expect(taskkills[0]?.kill).toHaveBeenCalled();
     expect(taskkills[0]?.unref).toHaveBeenCalled();
     await kill;
+  });
+});
+
+describe('resolveWindowsBatchCommand', () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), 'kimi-host-process-'));
+    await writeFile(join(dir, 'kimi-probe.cmd'), '@echo off\r\necho ok\r\n');
+    await writeFile(join(dir, 'kimi-probe.bat'), '@echo off\r\necho ok\r\n');
+    await mkdir(join(dir, 'bin'), { recursive: true });
+    await writeFile(join(dir, 'bin', 'kimi-probe.cmd'), '@echo off\r\necho ok\r\n');
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const env = (): NodeJS.ProcessEnv => ({ PATH: dir, PATHEXT: '.COM;.EXE;.BAT;.CMD' });
+
+  it('resolves a bare command to the batch shim on PATH, in PATHEXT order', () => {
+    expect(resolveWindowsBatchCommand('kimi-probe', env())).toBe(join(dir, 'kimi-probe.bat'));
+  });
+
+  it('resolves a command that only exists as a .bat shim', () => {
+    const onlyBat = { PATH: dir, PATHEXT: '.BAT' };
+    expect(resolveWindowsBatchCommand('kimi-probe', onlyBat)).toBe(join(dir, 'kimi-probe.bat'));
+  });
+
+  it('keeps an explicit batch path', () => {
+    const shim = join(dir, 'kimi-probe.cmd');
+    expect(resolveWindowsBatchCommand(shim, env())).toBe(shim);
+  });
+
+  it('returns undefined when no batch shim matches', () => {
+    expect(resolveWindowsBatchCommand('kimi-missing', env())).toBeUndefined();
+  });
+
+  it('returns undefined for a non-batch command', () => {
+    expect(resolveWindowsBatchCommand('git', env())).toBeUndefined();
+  });
+
+  it('returns undefined for an explicit non-batch path', () => {
+    expect(resolveWindowsBatchCommand(join(dir, 'kimi-probe'), env())).toBeUndefined();
+  });
+
+  it('returns undefined when PATH does not contain the shim', () => {
+    expect(resolveWindowsBatchCommand('kimi-probe', { PATH: '', PATHEXT: '.CMD' })).toBeUndefined();
+  });
+
+  it('returns undefined when PATHEXT has no batch extension', () => {
+    expect(resolveWindowsBatchCommand('kimi-probe', { PATH: dir, PATHEXT: '.COM;.EXE' })).toBeUndefined();
+  });
+
+  it('resolves through a quoted PATH entry', () => {
+    expect(resolveWindowsBatchCommand('kimi-probe', { PATH: `"${dir}"`, PATHEXT: '.CMD' })).toBe(
+      join(dir, 'kimi-probe.cmd'),
+    );
+  });
+
+  it('resolves a relative PATH entry against the spawn cwd', () => {
+    const nested = join(dir, 'bin');
+    expect(
+      resolveWindowsBatchCommand('kimi-probe', { PATH: 'bin', PATHEXT: '.CMD' }, dir),
+    ).toBe(join(nested, 'kimi-probe.cmd'));
+  });
+
+  it('returns undefined for a batch path that does not exist', () => {
+    expect(resolveWindowsBatchCommand(join(dir, 'missing.cmd'), env())).toBeUndefined();
+  });
+});
+
+describe('HostProcessService on a Windows host', () => {
+  it.skipIf(process.platform !== 'win32')('runs a batch shim command through PATHEXT', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-host-process-'));
+    const shim = join(dir, 'kimi-probe.cmd');
+    await writeFile(shim, '@echo off\r\necho ok\r\n');
+    try {
+      const svc = new HostProcessService();
+      const proc = await svc.spawn(shim, []);
+      const out = await collect(proc.stdout);
+      expect(out.trim()).toBe('ok');
+      expect(await proc.wait()).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

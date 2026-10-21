@@ -1,5 +1,9 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
+import { statSync } from 'node:fs';
+import { resolve } from 'node:path';
 import type { Readable, Writable } from 'node:stream';
+
+import crossSpawn from 'cross-spawn';
 
 import { BufferedReadable } from '#/_base/execEnv/bufferedReadable';
 import { LifecycleScope } from '#/app/scopes';
@@ -15,6 +19,59 @@ import {
 
 const isWindows: boolean = process.platform === 'win32';
 const TASKKILL_TIMEOUT_MS = 5_000;
+
+export function resolveWindowsBatchCommand(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  cwd: string = process.cwd(),
+): string | undefined {
+  const lowerCommand = command.toLowerCase();
+  if (lowerCommand.endsWith('.bat') || lowerCommand.endsWith('.cmd')) {
+    return isFile(command) ? command : undefined;
+  }
+  if (command.includes('/') || command.includes('\\')) return undefined;
+  const pathExt = (env['PATHEXT'] ?? '.COM;.EXE;.BAT;.CMD')
+    .split(';')
+    .map((ext) => stripQuotes(ext.trim()).toLowerCase())
+    .filter((ext) => ext === '.bat' || ext === '.cmd');
+  if (pathExt.length === 0) return undefined;
+  const dirs = (env['PATH'] ?? '')
+    .split(';')
+    .map((dir) => stripQuotes(dir.trim()))
+    .filter((dir) => dir.length > 0);
+  for (const dir of dirs) {
+    for (const ext of pathExt) {
+      const candidate = resolve(cwd, dir, `${command}${ext}`);
+      if (isFile(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+function stripQuotes(value: string): string {
+  return value.replaceAll(/^"|"$/g, '');
+}
+
+function isFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function spawnProcess(
+  command: string,
+  args: readonly string[],
+  spawnOptions: SpawnOptions,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): ChildProcess {
+  if (!isWindows) return spawn(command, args as string[], spawnOptions);
+  const batchCommand = resolveWindowsBatchCommand(command, env, cwd);
+  if (batchCommand === undefined) return spawn(command, args as string[], spawnOptions);
+  return crossSpawn(batchCommand, args as string[], spawnOptions);
+}
 
 function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
   const detached = options.detached ?? !isWindows;
@@ -188,7 +245,13 @@ export class HostProcessService implements IHostProcessService {
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
     const spawnOptions = buildSpawnOptions(options);
-    const child = spawn(command, args as string[], spawnOptions);
+    const child = spawnProcess(
+      command,
+      args,
+      spawnOptions,
+      buildEnv(options.env) ?? process.env,
+      resolve(options.cwd ?? process.cwd()),
+    );
     try {
       await waitForSpawn(child);
     } catch (error) {
