@@ -616,6 +616,13 @@ export interface LlmRequestProjectionFallbackEvent {
   turn_id?: number;
 }
 
+export interface LlmOutputLimitRecoveryEvent {
+  turn_id: number;
+  step_no: number;
+  action: 'nudged' | 'exhausted';
+  attempt: number;
+}
+
 export interface SessionIndexDegradedEvent {
   reason: string;
   degraded_count: number;
@@ -1424,6 +1431,18 @@ export const telemetryEventDefinitions = {
       error_type: 'Classified error category of the rejection',
       model: 'Model that rejected the request',
       turn_id: 'Per-agent turn index; pair with agent_id to locate a turn within a session',
+    },
+  }),
+  llm_output_limit_recovery: defineAgentTelemetryEvent<LlmOutputLimitRecoveryEvent>({
+    owner: 'kimi-code',
+    comment:
+      'A response cut off by the output token limit while still reasoning is retried with a reminder, or fails the turn once the consecutive reminder limit is reached.',
+    properties: {
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      step_no: 'Step index within the turn',
+      action:
+        "How the truncated response was handled: 'nudged' when the step is retried with a reminder, or 'exhausted' when the turn fails at the reminder limit",
+      attempt: 'Consecutive reminders within the turn, including this one when nudged',
     },
   }),
   session_index_degraded: defineTelemetryEvent<SessionIndexDegradedEvent>({
