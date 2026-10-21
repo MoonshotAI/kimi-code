@@ -162,7 +162,7 @@ export class SessionRatingHost implements IDisposable {
     const created = manager.onDidCreateSession?.((event) => {
       this.mountSession(event.sessionId, event.handle);
       const session = this.sessions.get(event.sessionId);
-      if (session !== undefined) session.recover = event.source === 'reload';
+      if (session !== undefined) session.recover = event.source === 'reclaimed';
     });
     const closing = manager.onWillCloseSession?.((event) => {
       this.unmountSession(event.sessionId);

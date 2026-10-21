@@ -949,7 +949,7 @@ describe('IExternalHooksRunnerService integration', () => {
 
       await lifecycle.fireDidCreate('startup');
       await lifecycle.fireDidCreate('resume');
-      await lifecycle.fireDidCreate('reload');
+      await lifecycle.fireDidCreate('reclaimed');
       await lifecycle.fireDidCreate('fork');
       await lifecycle.fireWillClose('reclaim');
       await lifecycle.fireWillClose('exit');

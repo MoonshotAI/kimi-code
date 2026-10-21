@@ -5,9 +5,13 @@ import type { BindAgentInput } from '#/agent/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
-export type SessionCreateSource = 'startup' | 'resume' | 'reload' | 'fork';
+export type SessionCreateSource = 'startup' | 'resume' | 'reclaimed' | 'fork';
+
+export type SessionResumeSource = Extract<SessionCreateSource, 'resume' | 'reclaimed'>;
 
 export type SessionCloseReason = 'exit' | 'reclaim' | 'archive';
+
+export type SessionExitReason = Exclude<SessionCloseReason, 'archive'>;
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;
@@ -82,8 +86,12 @@ export interface ISessionLifecycleService {
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   get(sessionId: string): ISessionScopeHandle | undefined;
   list(): readonly ISessionScopeHandle[];
-  resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
-  close(sessionId: string): Promise<void>;
+  resume(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+    source?: SessionResumeSource,
+  ): Promise<ISessionScopeHandle | undefined>;
+  close(sessionId: string, reason?: SessionExitReason): Promise<void>;
   archive(sessionId: string): Promise<void>;
   restore(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined>;
   delete(sessionId: string): Promise<void>;

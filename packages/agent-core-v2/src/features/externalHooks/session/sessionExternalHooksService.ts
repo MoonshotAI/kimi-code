@@ -20,7 +20,7 @@ import {
 import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
 
-type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reload'>;
+type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reclaimed'>;
 type SessionEndHookReason = Exclude<SessionCloseReason, 'reclaim'>;
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
@@ -66,7 +66,7 @@ export class SessionExternalHooksService
       this._register(
         onDidCreate((event) => {
           if (event.sessionId !== this.context.sessionId) return;
-          if (event.source !== 'fork' && event.source !== 'reload') {
+          if (event.source !== 'fork' && event.source !== 'reclaimed') {
             event.waitUntil(this.triggerSessionStart(event.source));
           }
         }),

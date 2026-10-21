@@ -22,6 +22,8 @@ import type {
   SessionArchivedEvent,
   SessionClosedEvent,
   SessionCreatedEvent,
+  SessionExitReason,
+  SessionResumeSource,
   SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -564,12 +566,12 @@ describe('SessionManager closeIfIdle', () => {
     const resume = vi.fn(async (
       sessionId: string,
       _options: unknown,
-      source: 'resume' | 'reload' = 'resume',
+      source: SessionResumeSource = 'resume',
     ) => {
       if (manager.get(sessionId) === undefined) didCreate.fire({ sessionId, handle, source });
       return handle;
     });
-    const close = vi.fn(async (sessionId: string, _reason: 'exit' | 'reclaim' = 'exit') => {
+    const close = vi.fn(async (sessionId: string, _reason: SessionExitReason = 'exit') => {
       didClose.fire({ sessionId });
     });
     const service = {
@@ -625,7 +627,7 @@ describe('SessionManager closeIfIdle', () => {
     await fake.manager.close('session-1');
     await fake.manager.resume('session-1');
     expect(fake.close.mock.calls[0]?.[1]).toBe('reclaim');
-    expect(fake.resume.mock.calls.map((call) => call[2])).toEqual(['resume', 'reload', 'resume']);
+    expect(fake.resume.mock.calls.map((call) => call[2])).toEqual(['resume', 'reclaimed', 'resume']);
   });
 
   const eligibilityCases: Array<[string, Guards]> = [
