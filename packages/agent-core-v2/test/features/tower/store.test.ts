@@ -1,5 +1,17 @@
 import { execFile } from 'node:child_process';
-import { appendFile, mkdir, mkdtemp, readdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  type FileHandle,
+  mkdir,
+  mkdtemp,
+  open,
+  readdir,
+  readFile,
+  rm,
+  stat,
+  utimes,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -4020,6 +4032,14 @@ describe('state lock recovery and prepared writes', () => {
     );
   }
 
+  function deferred(): { readonly promise: Promise<void>; resolve(): void } {
+    let resolve!: () => void;
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
   it('reclaims a dead holder after matching its lock content even at the timeout boundary', async () => {
     await store.plan([{ title: 'alpha', scope: ['src/alpha/**'] }]);
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
@@ -4032,6 +4052,75 @@ describe('state lock recovery and prepared writes', () => {
     );
 
     expect((await store.load()).missions[0]?.notes).toEqual(['reclaimed']);
+    await expect(stat(lockPath)).rejects.toThrow(/ENOENT/);
+  });
+
+  it('never deletes a replacement lock when stale reapers interleave', async () => {
+    type LockDriver = {
+      reapStaleStateLock(lockPath: string): Promise<boolean>;
+      stateLockHolderIsDead(pid: number): Promise<boolean>;
+      tryAcquireStateLock(lockPath: string, token: string): Promise<boolean>;
+      withStateLock<T>(fn: () => Promise<T>): Promise<T>;
+    };
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
+    const driver = store as unknown as LockDriver;
+    const originalCheck = driver.stateLockHolderIsDead;
+    const confirmationGates = [deferred(), deferred()];
+    let checks = 0;
+    driver.stateLockHolderIsDead = async (pid) => {
+      if (pid !== 999999) return originalCheck(pid);
+      const index = checks;
+      checks += 1;
+      if (index < 2) return originalCheck(pid);
+      await confirmationGates[index - 2]!.promise;
+      return originalCheck(pid);
+    };
+    const first = driver.reapStaleStateLock(lockPath);
+    const second = driver.reapStaleStateLock(lockPath);
+    try {
+      await vi.waitFor(() => {
+        expect(checks).toBe(4);
+      });
+      expect(await driver.tryAcquireStateLock(lockPath, 'too-early-1')).toBe(false);
+      confirmationGates[0]!.resolve();
+      await Promise.race([first, second]);
+      expect(await driver.tryAcquireStateLock(lockPath, 'too-early-2')).toBe(false);
+      confirmationGates[1]!.resolve();
+      await Promise.all([first, second]);
+    } finally {
+      confirmationGates.forEach((gate) => {
+        gate.resolve();
+      });
+      await Promise.allSettled([first, second]);
+      driver.stateLockHolderIsDead = originalCheck;
+    }
+
+    const other = new TowerStore(repo) as unknown as LockDriver;
+    const hold = deferred();
+    const entered = deferred();
+    let active = 0;
+    let maximum = 0;
+    const firstCritical = driver.withStateLock(async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      entered.resolve();
+      await hold.promise;
+      active -= 1;
+    });
+    await entered.promise;
+    const replacement = await readFile(lockPath, 'utf8');
+    const secondCritical = other.withStateLock(async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      active -= 1;
+    });
+    await delay(20);
+    expect(active).toBe(1);
+    expect(await readFile(lockPath, 'utf8')).toBe(replacement);
+    hold.resolve();
+    await Promise.all([firstCritical, secondCritical]);
+    expect(maximum).toBe(1);
     await expect(stat(lockPath)).rejects.toThrow(/ENOENT/);
   });
 
@@ -4123,6 +4212,74 @@ describe('state lock recovery and prepared writes', () => {
       expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it('publishes a completion notification atomically while another complete prepares', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    const report = 'atomic completion report'.repeat(2000);
+    const writeGate = deferred();
+    const writeStarted = deferred();
+    const secondPrepared = deferred();
+    const probe = await open(store.abs(STATE_FILE), 'r');
+    const fileHandlePrototype = Object.getPrototypeOf(probe) as FileHandle;
+    await probe.close();
+    const originalWrite = fileHandlePrototype.writeFile;
+    let paused = false;
+    const writeSpy = vi.spyOn(fileHandlePrototype, 'writeFile').mockImplementation(
+      (async function (this: FileHandle, data: string, options?: BufferEncoding) {
+        if (!paused && data.includes(report)) {
+          paused = true;
+          const split = data.indexOf('\n\n') + 34;
+          await originalWrite.call(this, data.slice(0, split), options);
+          writeStarted.resolve();
+          await writeGate.promise;
+          return originalWrite.call(this, data.slice(split), options);
+        }
+        return originalWrite.call(this, data, options);
+      }) as typeof originalWrite,
+    );
+    type InboxDriver = {
+      listInboxSnapshot(): Promise<{ readonly items: unknown[]; readonly files: readonly string[] }>;
+    };
+    const driver = store as unknown as InboxDriver;
+    const originalSnapshot = driver.listInboxSnapshot;
+    let snapshots = 0;
+    driver.listInboxSnapshot = async () => {
+      const result = await originalSnapshot.call(store);
+      snapshots += 1;
+      if (snapshots === 2) secondPrepared.resolve();
+      return result;
+    };
+    const first = store.complete('w1', report);
+    await writeStarted.promise;
+    const during = await readdir(join(repo, '.tower/comms/inbox'));
+    expect(during.some((file) => file.includes('.tmp-'))).toBe(true);
+    expect(during.filter((file) => file.endsWith('.md'))).toEqual([]);
+    const second = store.complete('w1', report);
+    try {
+      await secondPrepared.promise;
+      writeGate.resolve();
+      const [firstResult, secondResult] = await Promise.all([first, second]);
+      expect(firstResult.notificationCreated).toBe(true);
+      expect(secondResult.notificationCreated).toBe(false);
+      const messages = await store.readInbox('tower', 20);
+      expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
+      expect(messages[0]?.body).toBe(report);
+    } finally {
+      writeGate.resolve();
+      await Promise.allSettled([first, second]);
+      writeSpy.mockRestore();
+      driver.listInboxSnapshot = originalSnapshot;
     }
   });
 
