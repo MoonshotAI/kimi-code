@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code-product",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "description": "Kimi Code product logic shared by clients and hosts.",
   "license": "MIT",

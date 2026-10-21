@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.21.1
+
+### Patch Changes
+
+- [#4242](https://github.com/MoonshotAI/kimi-code/pull/4242) [`c1459a6`](https://github.com/MoonshotAI/kimi-code/commit/c1459a61845056832b85a0a220ee11a2bc5132f8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Run hooks such as `PreToolUse` and `Stop` in the session's project directory, as documented, instead of the directory the server was started from.
+
 ## 0.21.0
 
 ### Minor Changes
