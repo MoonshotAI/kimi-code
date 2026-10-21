@@ -10,6 +10,15 @@ import type { SessionLockHolder } from '#/persistence/interface/sessionLock';
 import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
 import { noopLogger } from '../../../wire/stubs';
 
+const mocks = vi.hoisted(() => ({
+  execFileSync: vi.fn(),
+}));
+
+vi.mock('node:child_process', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:child_process')>()),
+  execFileSync: mocks.execFileSync,
+}));
+
 const SID = 'session-1';
 
 function bootstrapStub(homeDir: string, platform = 'test_client'): IBootstrapService {
@@ -33,6 +42,7 @@ describe('SessionLockService', () => {
   let serviceB: SessionLockService;
 
   beforeEach(() => {
+    mocks.execFileSync.mockReturnValue('S\n');
     homeDir = mkdtempSync(join(tmpdir(), 'session-lock-'));
     serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
     serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'), noopLogger);
@@ -42,6 +52,7 @@ describe('SessionLockService', () => {
     serviceA.dispose();
     serviceB.dispose();
     rmSync(homeDir, { recursive: true, force: true });
+    mocks.execFileSync.mockReset();
   });
 
   it('hold publishes a lock and release removes it', () => {
@@ -95,6 +106,30 @@ describe('SessionLockService', () => {
     expect(() => serviceA.hold(SID)).not.toThrow();
     expect(readLockFile(homeDir, SID).token).not.toBe('dead-token');
     serviceA.release(SID);
+  });
+
+  it.skipIf(process.platform === 'win32')('reclaims a lock whose owner is a zombie', () => {
+    const stale: SessionLockHolder = {
+      version: 1,
+      token: 'zombie-token',
+      pid: process.pid,
+      hostname: '',
+      startedAt: Date.now(),
+      clientIdentity: 'ghost',
+    };
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
+    writeFileSync(lockPath(homeDir, SID), JSON.stringify(stale), { mode: 0o600 });
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
+    mocks.execFileSync.mockReturnValue('Z\n');
+    try {
+      expect(() => serviceA.hold(SID)).not.toThrow();
+      expect(readLockFile(homeDir, SID).token).not.toBe('zombie-token');
+      expect(mocks.execFileSync).toHaveBeenCalled();
+      serviceA.release(SID);
+    } finally {
+      killSpy.mockRestore();
+    }
   });
 
   it('treats a lock from another hostname as occupied even when the pid is dead', () => {
