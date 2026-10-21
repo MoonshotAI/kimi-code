@@ -404,8 +404,8 @@ export class TowerStore {
         } catch {
         }
         const explanation = sameProcess
-          ? 'another tower tool call in this process is writing state.json; wait for it to finish or increase KIMI_CODE_TOWER_STATE_LOCK_TIMEOUT_MS'
-          : 'another tower process may be writing state.json; a confirmed dead holder is reclaimed automatically, so inspect the holder if this persists or increase KIMI_CODE_TOWER_STATE_LOCK_TIMEOUT_MS';
+          ? 'another tower tool call in this process is writing state.json; wait for it to finish'
+          : 'another tower process may be writing state.json; a confirmed dead holder is reclaimed automatically, so inspect the holder if this persists';
         throw new TowerProtocolError(
           `timed out after ${String(this.stateLockTimeoutMs)}ms waiting for the tower state lock "${lockPath}"${holder} — ${explanation}`,
         );

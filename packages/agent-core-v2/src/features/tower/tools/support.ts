@@ -1,4 +1,3 @@
-import { parseNumberEnv } from '#/_base/utils/env';
 import {
   GitError,
   TowerProtocolError,
@@ -9,16 +8,8 @@ import {
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 
-export const TOWER_STATE_LOCK_TIMEOUT_ENV = 'KIMI_CODE_TOWER_STATE_LOCK_TIMEOUT_MS';
-
 export function newTowerStore(sessionContext: ISessionContext): TowerStore {
-  const configured = parseNumberEnv(process.env[TOWER_STATE_LOCK_TIMEOUT_ENV]);
-  return new TowerStore(resolveTowerRepoRoot(sessionContext.cwd), {
-    stateLockTimeoutMs:
-      configured !== undefined && Number.isInteger(configured) && configured >= 1
-        ? configured
-        : undefined,
-  });
+  return new TowerStore(resolveTowerRepoRoot(sessionContext.cwd));
 }
 
 export const TOWER_MAIN_AGENT_ONLY =

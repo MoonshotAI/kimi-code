@@ -57,11 +57,7 @@ import { TowerStatusTool } from '#/features/tower/tools/status/statusTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import {
-  newTowerStore,
-  TOWER_MODE_USER_ENABLED_ONLY,
-  TOWER_STATE_LOCK_TIMEOUT_ENV,
-} from '#/features/tower/tools/support';
+import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -1818,28 +1814,6 @@ describe('tower state loss degradation', () => {
     expect(rebase.output).not.toContain('tower is not initialized');
 
     expect(await new TowerStore(repo).isInitialized()).toBe(false);
-  });
-});
-
-describe('tower tool store configuration', () => {
-  it('applies the state lock timeout environment variable at tool store creation', async () => {
-    await initViaTool();
-    const setup = new TowerStore(repo);
-    await setup.plan([{ title: 'alpha', scope: ['src/alpha/**'] }]);
-    const lockPath = join(repo, '.tower/comms/state.json.lock');
-    await writeFile(lockPath, `pid=${String(process.pid)} since=2026-01-01T00:00:00.000Z token=live`);
-    const previous = process.env[TOWER_STATE_LOCK_TIMEOUT_ENV];
-    try {
-      process.env[TOWER_STATE_LOCK_TIMEOUT_ENV] = '40';
-      const configured = newTowerStore(ix.get(ISessionContext));
-      await expect(configured.updateMission('tower', 'M1', { note: 'blocked' })).rejects.toThrow(
-        /40ms.*another tower tool call in this process/s,
-      );
-    } finally {
-      if (previous === undefined) delete process.env[TOWER_STATE_LOCK_TIMEOUT_ENV];
-      else process.env[TOWER_STATE_LOCK_TIMEOUT_ENV] = previous;
-      await rm(lockPath, { force: true });
-    }
   });
 });
 
