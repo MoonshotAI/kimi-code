@@ -4,8 +4,8 @@ import {
   createCollection,
   useCleanup,
   useCollection,
-} from '@moonshot-ai/agent-core/kernel/index';
-import { currentUnit, lineage } from '@moonshot-ai/agent-core/kernel/runtime';
+} from '#/kernel/index';
+import { currentUnit, lineage } from '#/kernel/runtime';
 
 import { useHttpRoute } from '../scope';
 import { parseActionSuffix } from './action-suffix';

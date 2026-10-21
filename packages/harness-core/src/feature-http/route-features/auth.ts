@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 
 import { OAuthTokensRef, type OAuthTokens } from '#/features/kimi/oauth/index';
 

@@ -1,5 +1,5 @@
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useCleanup, useExpose } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, type Feature } from '#/app/index';
+import { createFacadeToken, useCleanup, useExpose } from '#/kernel/index';
 
 import { startRemoteControl, type RemoteControlHandle, type RemoteControlOptions } from './client';
 import { createRemoteControlManager, type RemoteControlStatusInfo } from './manager';

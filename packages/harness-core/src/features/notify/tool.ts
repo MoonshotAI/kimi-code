@@ -1,5 +1,6 @@
-import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
+
+import type { NotifyShownEvent } from './feature';
 
 import DESCRIPTION from './notify-user.md?raw';
 
@@ -12,7 +13,7 @@ export const NOTIFY_USER_SUPPRESSED_OUTPUT =
 
 export interface NotifyUserToolDeps {
   readonly available: () => boolean;
-  readonly fire: (event: RuntimeEvent) => void;
+  readonly fire: (event: NotifyShownEvent) => void;
 }
 
 export function createNotifyUserTool(deps: NotifyUserToolDeps): ToolDefinition {

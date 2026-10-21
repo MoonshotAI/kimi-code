@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  createApp,
+  type App,
+} from '#/app/index';
 import { openBlobStore, type BlobBackend } from '@moonshot-ai/agent-core/blob/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session, type SessionSpace } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
@@ -19,12 +24,7 @@ import {
 } from '#/features/fileHistory/index';
 import type { OsFsPort } from '#/features/os/host/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
-  type HarnessSessionSpace,
 } from '#/runtime/index';
 
 const WORK_DIR = '/ws';
@@ -137,9 +137,9 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -227,8 +227,8 @@ function writeStep(path: string, content: string): ScriptStep {
   };
 }
 
-function blobSpace(blobFiles: Map<string, Uint8Array>): HarnessSessionSpace {
-  const base = memoryHarnessSpace();
+function blobSpace(blobFiles: Map<string, Uint8Array>): SessionSpace {
+  const base = memorySessionSpace();
   const backend: BlobBackend = {
     has: async (key) => blobFiles.has(key),
     read: async (key) => blobFiles.get(key),
@@ -238,15 +238,18 @@ function blobSpace(blobFiles: Map<string, Uint8Array>): HarnessSessionSpace {
   };
   const blobs = openBlobStore(backend);
   return {
-    ...base,
+    list: () => base.list(),
+    get: (id) => base.get(id),
     create: async (id, record) => ({ ...(await base.create(id, record)), blobs }),
     open: async (id) => ({ ...(await base.open(id)), blobs }),
+    update: (id, patch) => base.update(id, patch),
+    delete: (id) => base.delete(id),
     copy: async (from, to) => ({ ...(await base.copy(from, to)), blobs }),
   };
 }
 
 interface HistoryTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly fs: FakeFs;
   readonly blobFiles: Map<string, Uint8Array>;
@@ -260,7 +263,7 @@ interface HistoryTestEnv {
 
 async function startHistoryTest(): Promise<HistoryTestEnv> {
   const blobFiles = new Map<string, Uint8Array>();
-  const harness = createHarness({ space: blobSpace(blobFiles) });
+  const harness = createApp({ space: blobSpace(blobFiles) });
   const fs = createFakeFs();
   const block: { current?: BlockHandle } = {};
   const faces = new Map<string, Readonly<ShallowRef<FileHistoryFace | undefined>>>();
@@ -269,11 +272,11 @@ async function startHistoryTest(): Promise<HistoryTestEnv> {
       faces.set(useAgent().id, useInject(FileHistoryRef));
     },
   });
-  harness.app.features.add(createFileHistory({ workDir: WORK_DIR, fs }));
-  harness.app.features.add(bindTestFsTools(fs, block));
-  harness.app.features.add(probe);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  let main = await harness.ensureAgent(session, MAIN_AGENT_ID);
+  harness.features.add(createFileHistory({ workDir: WORK_DIR, fs }));
+  harness.features.add(bindTestFsTools(fs, block));
+  harness.features.add(probe);
+  const session = await harness.open('sess');
+  let { agent: main } = await session.ensureAgent(MAIN_AGENT_ID);
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
   const face = (agentId: string = MAIN_AGENT_ID): FileHistoryFace => {
     const resolved = faces.get(agentId)?.value;
@@ -286,8 +289,8 @@ async function startHistoryTest(): Promise<HistoryTestEnv> {
     await face().settled();
   };
   const remount = async (): Promise<void> => {
-    await session.close(MAIN_AGENT_ID);
-    main = await harness.ensureAgent(session, MAIN_AGENT_ID);
+    await session.closeAgent(MAIN_AGENT_ID);
+    (main = (await session.ensureAgent(MAIN_AGENT_ID)).agent);
     setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
     await face().settled();
   };
@@ -507,7 +510,7 @@ describe('fileHistory feature', () => {
     const mainTurn = env.main().loop.runTurn(user('main go'));
     await mainStarted;
 
-    const sub = await env.harness.ensureAgent(env.session, 'sub-1');
+    const { agent: sub } = await env.session.ensureAgent('sub-1');
     setRequester(env.harness, 'sess', 'sub-1', createMockRequester());
     await sub.loop.runTurn(user('sub go'));
     await sub.flush();

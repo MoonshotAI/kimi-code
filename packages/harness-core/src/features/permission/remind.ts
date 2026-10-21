@@ -3,7 +3,7 @@ import {
   type HistoryMessage,
   type UserEntry,
 } from '@moonshot-ai/agent-core/history/index';
-import type { ComputedRef } from '@moonshot-ai/agent-core/kernel/index';
+import type { ComputedRef } from '#/kernel/index';
 import type { LoopHooks } from '@moonshot-ai/agent-core/loop/index';
 
 import AUTO_MODE_ENTER_REMINDER from './permission-mode-auto-enter-reminder.md?raw';

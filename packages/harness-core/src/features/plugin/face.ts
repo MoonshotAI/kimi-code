@@ -1,4 +1,4 @@
-import { createFacadeToken, type RuntimeEvent, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, type RuntimeEvent, type ShallowRef } from '#/kernel/index';
 
 import type { McpServerConfig } from '#/features/mcp/core/config-schema';
 import type { OsHost } from '#/features/os/host/index';

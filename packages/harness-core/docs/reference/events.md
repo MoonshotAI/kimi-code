@@ -63,15 +63,16 @@ From each agent's loop log (the `LoopRecord` set — see
 
 ## Feature Events
 
-Each feature declares its contract with `createFeature<E>(...)`; the typed
-`app.on(feature, type, handler)` form narrows to exactly these unions.
-Events marked *(store)* are turn-stamped journal events re-fired by
+Each feature declares its contract as a level-keyed event map with
+`createFeature<{ session: MyEvent }>(...)`; the typed
+`app.on(feature, type, handler)` form narrows to the union across levels.
+Events marked *(store)* are durable journal events re-fired by
 `useFeatureStore.dispatch` — they also satisfy the declared union unless
 noted otherwise.
 
 | Feature | Event | Semantics |
 |---|---|---|
-| todo | `todo.updated` *(store)* | the TodoList tool wrote a new list (`todos`, `turnId`) |
+| todo | `todo.updated` *(store)* | the TodoList tool wrote a new list (`todos`, `turn`) |
 | interaction | `interaction.requested` | an approval/question/user-tool request awaits a response (`interaction`) |
 | interaction | `interaction.resolved` | a request resolved (`id`, `response`, `interaction`) |
 | permission | `permission.approval.requested` | a tool call needs an approval decision |
@@ -96,7 +97,7 @@ noted otherwise.
 | undo | `context.undone` | turns were rewound (`agentId`, `turns`, `fromTurnId?`) |
 | btw | `btw.created` | a by-the-way side agent was created (`agentId`, `sourceId`) |
 | provider-catalog | `event.model_catalog.changed` | a refresh changed at least one provider (`payload` is the `ProviderRefreshReport`) |
-| provider-catalog | `model.bound` *(store)* | an agent's model binding changed (`alias`, `thinking`, `turnId`) |
+| provider-catalog | `model.bound` *(store)* | an agent's model binding changed (`alias`, `thinking`) |
 | provider-catalog | `session.model_defaults` *(store)* | the session's default model/thinking changed |
 | workspaces | `workspace.created` / `workspace.updated` / `workspace.deleted` / `workspace.trust.changed` | workspace registry and trust changes |
 | capabilities | `capability.changed` | a capability install progressed (`id`, `install`) |
@@ -125,7 +126,7 @@ and `session.feature_missing` (a UI-facing notice that a feature was
 absent). Neither exists now:
 
 - there is no ambient "current agent" — address agents explicitly through
-  `session.agents` and match events by their enriched `agentId`;
+  `session.liveAgents` and match events by their enriched `agentId`;
 - a missing feature is visible as an **absent facade** — `useInject(Token)`
   is `undefined`, and `sessionFacade` / `agentFacade` return `undefined` —
   not as an event.

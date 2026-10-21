@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { createApp, createFeature, useToolHandler } from '#/app/index';
 import { createUserEntry, type ToolEntry } from '#/history/message';
 import { createAssistantMessage, createUserMessage, extractText, type ContentPart, type ToolCall } from '#/llm/message';
 import type { LlmRequest } from '#/llm/request';
@@ -14,8 +13,6 @@ import {
   type ToolExecuteInput,
   type ToolResult,
 } from '#/tool/index';
-
-import { agentCaps } from '../app/fake-llm';
 
 function call(name: string, args = '{}'): ToolCall {
   return { type: 'function', id: `call_${name}`, name, arguments: args };
@@ -243,24 +240,4 @@ describe('createToolExecutor', () => {
     await missing.close();
   });
 
-  it('registers from an agent feature and drops the handler when the feature is removed', async () => {
-    const tools = createToolExecutor();
-    const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
-    await session.open('main', agentCaps(tools));
-    const remove = app.features.add(
-      createFeature('ping', {
-        agent: () => {
-          useToolHandler('ping', {
-            execute: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
-          });
-        },
-      }),
-      { session: 'sess', agent: 'main' },
-    );
-    expect(text(await tools.execute(input('ping')))).toBe('pong');
-    await remove();
-    expect((await tools.execute(input('ping'))).isError).toBe(true);
-    await app.close();
-  });
 });

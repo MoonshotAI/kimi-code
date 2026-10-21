@@ -1,9 +1,15 @@
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+  type EnsuredAgent,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useCollection, useInject, watch, type ComputedRef, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useCollection, useInject, watch, type ComputedRef, type ShallowRef } from '#/kernel/index';
 import { anthropicRequester, openAIRequester } from '@moonshot-ai/agent-core/llm/builtin/provider/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type {
@@ -17,6 +23,7 @@ import type {
 import { mergeFields } from '@moonshot-ai/agent-core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import type { Log } from '@moonshot-ai/agent-core/store/index';
 
 import {
   ENV_MODEL_PROVIDER_KEY,
@@ -50,15 +57,11 @@ import {
   type ModelDefaultsFace,
   type ProviderCatalogFace,
   type SessionModelDefaults,
+  type SessionModelDefaultsEvent,
   type SessionModelFace,
 } from '#/features/provider-catalog/index';
 import {
-  createHarness,
-  featureWriterOf,
-  harnessInternals,
-  memoryHarnessSpace,
   type AgentRuntime,
-  type Harness,
 } from '#/runtime/index';
 
 type Fields = Record<string, unknown>;
@@ -177,15 +180,15 @@ function catalogProbe(capture: ProbeCapture, contribute?: () => void) {
 }
 
 async function mountCatalog(contribute?: () => void): Promise<{
-  harness: Harness;
+  harness: App;
   catalog: ProviderCatalogFace;
   models: () => readonly CatalogModelBinding[];
 }> {
   const capture: ProbeCapture = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(providerCatalog);
-  harness.app.features.add(createConfig({ persist: fakePersist().persist }));
-  harness.app.features.add(catalogProbe(capture, contribute));
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(providerCatalog);
+  harness.features.add(createConfig({ persist: fakePersist().persist }));
+  harness.features.add(catalogProbe(capture, contribute));
   await tick();
   const catalog = capture.catalog?.value;
   if (catalog === undefined) throw new Error('provider catalog face was not exposed');
@@ -196,7 +199,7 @@ async function mountWithConfig(
   initial: string | undefined,
   options: { env?: Record<string, string>; contribute?: () => void } = {},
 ): Promise<{
-  harness: Harness;
+  harness: App;
   file: { saved: string[]; persist: ConfigPersist };
   config: ConfigStore;
   catalog: ProviderCatalogFace;
@@ -205,10 +208,10 @@ async function mountWithConfig(
 }> {
   const file = fakePersist(initial);
   const capture: ProbeCapture = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(providerCatalog);
-  harness.app.features.add(createConfig({ persist: file.persist, env: options.env }));
-  harness.app.features.add(catalogProbe(capture, options.contribute));
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(providerCatalog);
+  harness.features.add(createConfig({ persist: file.persist, env: options.env }));
+  harness.features.add(catalogProbe(capture, options.contribute));
   await tick();
   const config = capture.config?.value;
   const catalog = capture.catalog?.value;
@@ -219,18 +222,18 @@ async function mountWithConfig(
   return { harness, file, config, catalog, capture, models: () => capture.models?.value ?? [] };
 }
 
-function runtimeOf(harness: Harness, sessionId: string, agentId: string): AgentRuntime {
-  const session = harness.app.sessions.get(sessionId);
+function runtimeOf(harness: App, sessionId: string, agentId: string): AgentRuntime {
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   return runtime;
 }
 
 function boundModel(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
 ): {
@@ -251,14 +254,18 @@ function boundModel(
   };
 }
 
+function sessionDefaultsLog(harness: App, sessionId: string): Log<SessionModelDefaultsEvent> {
+  const session = harness.sessions.get(sessionId);
+  if (session === undefined) throw new Error(`session '${sessionId}' is not open`);
+  return session.log as unknown as Log<SessionModelDefaultsEvent>;
+}
+
 async function writeSessionDefaults(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   patch: { defaultModel?: string; defaultThinking?: string },
 ): Promise<void> {
-  const writer = featureWriterOf(harnessInternals(harness.app), sessionId);
-  const log = await writer.open('provider-catalog');
-  await log.commit({
+  await sessionDefaultsLog(harness, sessionId).commit({
     events: [
       {
         type: SESSION_MODEL_DEFAULTS,
@@ -270,12 +277,10 @@ async function writeSessionDefaults(
 }
 
 async function sessionDefaultsState(
-  harness: Harness,
+  harness: App,
   sessionId: string,
 ): Promise<SessionModelDefaults> {
-  const writer = featureWriterOf(harnessInternals(harness.app), sessionId);
-  const log = await writer.open('provider-catalog');
-  const view = log.replica.view(sessionModelDefaultsProjection);
+  const view = sessionDefaultsLog(harness, sessionId).replica.view(sessionModelDefaultsProjection);
   const state = view.getState();
   view.dispose();
   return state;
@@ -382,7 +387,7 @@ describe('providerCatalog feature', () => {
     });
     const changed: unknown[] = [];
     const failures: unknown[] = [];
-    harness.app.on(providerCatalog, 'event.model_catalog.changed', (event) => {
+    harness.on(providerCatalog, 'event.model_catalog.changed', (event) => {
       changed.push(event.payload);
     });
     catalog.onRefreshFailed((event) => {
@@ -1169,8 +1174,8 @@ describe('provider-catalog default model restore', () => {
         },
       },
     );
-    const session = await harness.app.create({ sessionId: 'sess' });
-    await harness.ensureAgent(session, 'main');
+    const session = await harness.open('sess');
+    await session.ensureAgent('main');
     await until(() => boundModel(harness, 'sess', 'main').spec?.name === 'm1');
     expect(boundModel(harness, 'sess', 'main').spec?.provider).toBe('test');
     expect(boundModel(harness, 'sess', 'main').spec?.maxContextSize).toBe(4096);
@@ -1198,8 +1203,8 @@ describe('provider-catalog default model restore', () => {
         },
       },
     );
-    const session = await harness.app.create({ sessionId: 'sess' });
-    await harness.ensureAgent(session, 'main');
+    const session = await harness.open('sess');
+    await session.ensureAgent('main');
     await sleep(20);
     expect(boundModel(harness, 'sess', 'main').spec).toBeUndefined();
     await harness.close();
@@ -1245,9 +1250,9 @@ async function resolveApiKey(call: SeenCall | undefined): Promise<string | undef
 }
 
 interface ModelFixture {
-  readonly harness: Harness;
-  readonly session: Awaited<ReturnType<Harness['app']['create']>>;
-  readonly main: Awaited<ReturnType<Harness['ensureAgent']>>;
+  readonly harness: App;
+  readonly session: Awaited<ReturnType<App['app']['create']>>;
+  readonly main: EnsuredAgent;
   readonly file: { saved: string[]; persist: ConfigPersist };
   readonly config: ConfigStore;
   readonly capture: ProbeCapture;
@@ -1258,10 +1263,10 @@ async function mountFixture(initial?: string): Promise<ModelFixture> {
   const file = fakePersist(initial);
   const seen = { m1: [] as SeenCall[], m2: [] as SeenCall[] };
   const capture: ProbeCapture = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(providerCatalog);
-  harness.app.features.add(createConfig({ persist: file.persist }));
-  harness.app.features.add(
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(providerCatalog);
+  harness.features.add(createConfig({ persist: file.persist }));
+  harness.features.add(
     catalogProbe(capture, () => {
       useProvider({
         handle: stubHandle('test', textRequester(seen.m1)),
@@ -1282,8 +1287,8 @@ async function mountFixture(initial?: string): Promise<ModelFixture> {
   await config.reload();
   await catalog.addModel('test/m1', m1Def);
   await catalog.addModel('other/m2', m2Def);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, 'main');
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent('main');
   return { harness, session, main, file, config, capture, seen };
 }
 
@@ -1323,9 +1328,9 @@ describe('provider-catalog app model defaults', () => {
 
   it('rejects when the config feature is not mounted', async () => {
     const capture: ProbeCapture = {};
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(providerCatalog);
-    harness.app.features.add(
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(providerCatalog);
+    harness.features.add(
       catalogProbe(capture, () => {
         useProvider({ handle: stubHandle('test', textRequester([])) });
       }),
@@ -1379,8 +1384,8 @@ describe('provider-catalog agent model binding', () => {
     if (face === undefined) throw new Error('agent model face was not captured');
     await face.setModel('other/m2');
     await until(() => boundModel(harness, 'sess', 'main').spec?.name === 'm2');
-    await session.close('main');
-    await harness.ensureAgent(session, 'main');
+    await session.closeAgent('main');
+    await session.ensureAgent('main');
     await until(() => boundModel(harness, 'sess', 'main').spec?.name === 'm2');
     expect(capture.agentFace?.current.value).toEqual({ alias: 'other/m2', thinking: null });
     await harness.close();
@@ -1486,8 +1491,8 @@ describe('provider-catalog agent thinking effort', () => {
       maxOutputTokens: 123,
     });
     expect(face.current.value).toEqual({ alias: null, thinking: 'high' });
-    await session.close('main');
-    await harness.ensureAgent(session, 'main');
+    await session.closeAgent('main');
+    await session.ensureAgent('main');
     await until(() => boundModel(harness, 'sess', 'main').thinking?.effort === 'high');
     expect(boundModel(harness, 'sess', 'main').spec?.name).toBe('m1');
     expect(boundModel(harness, 'sess', 'main').thinking?.keep).toBe('override-keep');
@@ -1560,15 +1565,15 @@ describe('provider-catalog session model defaults', () => {
   });
 
   it('restores session defaults for a reopened session', async () => {
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const file = fakePersist('default_model = "test/m1"\n');
     const seen = { m1: [] as SeenCall[], m2: [] as SeenCall[] };
-    const mount = async (): Promise<{ harness: Harness; capture: ProbeCapture }> => {
+    const mount = async (): Promise<{ harness: App; capture: ProbeCapture }> => {
       const capture: ProbeCapture = {};
-      const harness = createHarness({ space });
-      harness.app.features.add(providerCatalog);
-      harness.app.features.add(createConfig({ persist: file.persist }));
-      harness.app.features.add(
+      const harness = createApp({ space });
+      harness.features.add(providerCatalog);
+      harness.features.add(createConfig({ persist: file.persist }));
+      harness.features.add(
         catalogProbe(capture, () => {
           useProvider({
             handle: stubHandle('test', textRequester(seen.m1)),
@@ -1592,8 +1597,8 @@ describe('provider-catalog session model defaults', () => {
       return { harness, capture };
     };
     const first = await mount();
-    const session = await first.harness.app.create({ sessionId: 'sess' });
-    await first.harness.ensureAgent(session, 'main');
+    const session = await first.harness.open('sess');
+    await session.ensureAgent('main');
     await until(() => boundModel(first.harness, 'sess', 'main').spec?.name === 'm1');
     const face = first.capture.sessionFace;
     if (face === undefined) throw new Error('session model face was not captured');
@@ -1602,8 +1607,8 @@ describe('provider-catalog session model defaults', () => {
     await first.harness.close();
 
     const second = await mount();
-    const resumed = await second.harness.app.create({ sessionId: 'sess' });
-    await second.harness.ensureAgent(resumed, 'main');
+    const resumed = await second.harness.open('sess');
+    await resumed.ensureAgent('main');
     await until(() => boundModel(second.harness, 'sess', 'main').spec?.name === 'm2');
     expect(boundModel(second.harness, 'sess', 'main').spec?.name).toBe('m2');
     await second.harness.close();

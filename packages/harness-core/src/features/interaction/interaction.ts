@@ -1,4 +1,4 @@
-import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
+import type { RuntimeEvent } from '#/kernel/index';
 
 import { withQuestionIds } from './question-payload';
 

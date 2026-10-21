@@ -6,16 +6,18 @@ result. Everything below is real API — the test suite drives exactly this
 flow (`test/features/todo.test.ts`), and the product-shaped version of it is
 `example/cli.ts`.
 
-## 1. Create the Harness
+## 1. Create the App
 
 ```ts
-import { createHarness, memoryHarnessSpace } from '@moonshot-ai/harness-core';
+import { createApp } from '@moonshot-ai/harness-core';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
-const harness = createHarness({ space: memoryHarnessSpace() });
+const app = createApp({ space: memorySessionSpace() });
 ```
 
-`memoryHarnessSpace()` keeps everything in memory — right for tests and
-one-shot runs. For a durable host use `fsSessionSpace(dataRoot)` (see
+`memorySessionSpace()` keeps everything in memory — right for tests and
+one-shot runs. For a durable host use `nodeSessionSpace(dataRoot)` from
+`@moonshot-ai/agent-core/session/backend/node` (see
 [Persistence](../explanation/persistence.md)).
 
 ## 2. Add Features
@@ -24,10 +26,10 @@ one-shot runs. For a durable host use `fsSessionSpace(dataRoot)` (see
 import { todo, interaction } from '@moonshot-ai/harness-core';
 import { harnessPreset } from '@moonshot-ai/harness-core/preset';
 
-await harness.app.features.add(todo);
-await harness.app.features.add(interaction);
+await app.features.add(todo);
+await app.features.add(interaction);
 // or the whole default bundle in one go:
-for (const feature of harnessPreset) await harness.app.features.add(feature);
+for (const feature of harnessPreset) await app.features.add(feature);
 ```
 
 `features.add(feature)` with no scope mounts the feature's app unit once and
@@ -40,27 +42,26 @@ for scoped registration.
 ```ts
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
-const session = await harness.app.create({ sessionId: 's1' });
-const agent = await harness.ensureAgent(session, MAIN_AGENT_ID, {
+const session = await app.open('s1');
+const { agent } = await session.ensureAgent(MAIN_AGENT_ID, {
   systemPrompt: 'You are a helpful assistant.',
   maxSteps: 20,
 });
 ```
 
-`app.create` is startup/resume/fork in one call: an id that already exists
-in the space resumes. `ensureAgent` opens the agent with a harness-managed
+`app.open` is startup/resume/fork in one call: an id that already exists
+in the space resumes. `session.ensureAgent` opens the agent with a harness-managed
 `AgentRuntime` (see [Agent Runtime](../explanation/agent-runtime.md)).
 
 ## 4. Attach a Requester
 
 The agent needs an LLM requester in its runtime slot. The direct way — what
-tests do — is to assign the slot through `harnessInternals`:
+tests do — is to look the runtime up from the session and assign the slot:
 
 ```ts
-import { harnessInternals } from '@moonshot-ai/harness-core';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 
-const runtime = harnessInternals(harness.app).agents.get(session)?.get(MAIN_AGENT_ID);
+const runtime = session.agentRuntime(MAIN_AGENT_ID);
 if (runtime === undefined) throw new Error('no runtime');
 runtime.requester = myRequester;
 ```
@@ -139,31 +140,26 @@ and HTTP clients read it through `agentFacade` (see
 ## 7. Close
 
 ```ts
-await harness.close();
+await app.close();
 ```
 
-This closes the app (every session, agent, and feature unit) and then the
-feature-journal writers. Reopening the same `sessionId` later resumes from
+This closes every session, agent, and feature unit, and with them the
+sessions' journals. Reopening the same `sessionId` later resumes from
 the logs — messages, profile, feature stores, and any unfinished turn.
 
 ## Complete Script
 
 ```ts
-import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  todo,
-} from '@moonshot-ai/harness-core';
+import { createApp, todo } from '@moonshot-ai/harness-core';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
-const harness = createHarness({ space: memoryHarnessSpace() });
-await harness.app.features.add(todo);
-const session = await harness.app.create({ sessionId: 's1' });
-const agent = await harness.ensureAgent(session, MAIN_AGENT_ID);
+const app = createApp({ space: memorySessionSpace() });
+await app.features.add(todo);
+const session = await app.open('s1');
+const { agent } = await session.ensureAgent(MAIN_AGENT_ID);
 
 const scripted: LoopLlmRequester = {
   with() { return this; },
@@ -173,11 +169,11 @@ const scripted: LoopLlmRequester = {
     message: createAssistantMessage([{ type: 'text', text: 'hi' }]),
   }),
 };
-harnessInternals(harness.app).agents.get(session)!.get(MAIN_AGENT_ID)!.requester = scripted;
+session.agentRuntime(MAIN_AGENT_ID)!.requester = scripted;
 
 const outcome = await agent.loop.runTurn(
   createUserEntry(createUserMessage('hello'), { source: 'input' }),
 );
 console.log(outcome.type); // 'done'
-await harness.close();
+await app.close();
 ```

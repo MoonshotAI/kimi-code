@@ -16,7 +16,14 @@ import {
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, useAgent, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  useSession,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   useCollection,
   useInject,
@@ -24,7 +31,7 @@ import {
   watch,
   type ComputedRef,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import {
   createAssistantMessage,
   type AssistantMessage,
@@ -37,7 +44,7 @@ import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import { mergeFields } from '@moonshot-ai/agent-core/llm/requester';
 import type { LlmOutcome, LlmRemoteErrorMessage } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import { createAcp } from '#/feature-acp/index';
 import { createAcpOsHost, createAcpOsHostRouter, type AcpOsConnection } from '#/feature-acp/os-host';
@@ -79,10 +86,7 @@ import {
 import { todo as todoFeature } from '#/features/todo/index';
 import { usage } from '#/features/usage/index';
 import {
-  createHarness,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 const fixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
@@ -368,7 +372,7 @@ function acpTestProbe(capture: ProbeCapture): Feature<void> {
 }
 
 interface AcpTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly conn: ClientSideConnection;
   readonly initializeResponse: InitializeResponse;
   readonly updates: SessionNotification[];
@@ -432,8 +436,8 @@ async function startAcpTest(options?: {
   const toClient = new PassThrough();
   const agentStream = ndJsonStream(Writable.toWeb(toClient), Readable.toWeb(toAgent));
   const clientStream = ndJsonStream(Writable.toWeb(toAgent), Readable.toWeb(toClient));
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(
     createAcp({
       streams: agentStream,
       disableAuth: true,
@@ -441,34 +445,34 @@ async function startAcpTest(options?: {
       onSessionClose: options?.onSessionClose,
     }),
   );
-  harness.app.features.add(createConfig({ persist: fakeConfigPersist('default_model = "test/test-model"\n').persist, env: {} }));
-  harness.app.features.add(providerCatalog);
-  harness.app.features.add(contributeTestProvider(requester, options?.extraModels));
-  harness.app.features.add(interaction);
-  harness.app.features.add(usage);
-  if (options?.withPermission === true) harness.app.features.add(createPermission());
+  harness.features.add(createConfig({ persist: fakeConfigPersist('default_model = "test/test-model"\n').persist, env: {} }));
+  harness.features.add(providerCatalog);
+  harness.features.add(contributeTestProvider(requester, options?.extraModels));
+  harness.features.add(interaction);
+  harness.features.add(usage);
+  if (options?.withPermission === true) harness.features.add(createPermission());
   if (options?.withPlan === true) {
-    harness.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
+    harness.features.add(createPlan({ storage: createMemoryPlanStorage() }));
   }
   if (options?.withMedia === true) {
     if (mediaHome === undefined) throw new Error('media home was not created');
-    harness.app.features.add(createFiles({ dir: mediaHome }));
-    harness.app.features.add(
+    harness.features.add(createFiles({ dir: mediaHome }));
+    harness.features.add(
       createFeature('acp-media-registry-probe', {
         session() {
           registry = useInject(KimiFileRegistryRef).value;
         },
       }),
     );
-    harness.app.features.add(createMedia({ workDir: '/tmp/acp-test' }));
+    harness.features.add(createMedia({ workDir: '/tmp/acp-test' }));
   }
-  if (options?.withTodo === true) harness.app.features.add(todoFeature);
-  if (options?.withSkill === true) harness.app.features.add(createSkill({ workDir: '/tmp/acp-test' }));
+  if (options?.withTodo === true) harness.features.add(todoFeature);
+  if (options?.withSkill === true) harness.features.add(createSkill({ workDir: '/tmp/acp-test' }));
   if (options?.testSkills !== undefined) {
-    harness.app.features.add(contributeTestSkillSource(options.testSkills, skillChange));
+    harness.features.add(contributeTestSkillSource(options.testSkills, skillChange));
   }
   if (mcpHome !== undefined) {
-    harness.app.features.add(
+    harness.features.add(
       createMcp({
         workDir: options?.mcpHost === true ? mcpHome : '/tmp/acp-test',
         home: mcpHome,
@@ -477,9 +481,9 @@ async function startAcpTest(options?: {
       }),
     );
   }
-  harness.app.features.add(bindTestTools(options?.withTerminalBash));
-  if (options?.withQuestionTool === true) harness.app.features.add(bindQuestionTool());
-  harness.app.features.add(acpTestProbe(probe));
+  harness.features.add(bindTestTools(options?.withTerminalBash));
+  if (options?.withQuestionTool === true) harness.features.add(bindQuestionTool());
+  harness.features.add(acpTestProbe(probe));
   await until(() => probe.models?.value.some((binding) => binding.alias === 'test/test-model') === true);
   const updates: SessionNotification[] = [];
   const permissionRequests: RequestPermissionRequest[] = [];
@@ -1746,10 +1750,10 @@ describe('feature-acp', () => {
     const closed: string[] = [];
     env = await startAcpTest({ onSessionClose: (sessionId) => closed.push(sessionId) });
     const created = await env.conn.newSession({ cwd: '/tmp/acp-test', mcpServers: [] });
-    expect(await env.harness.app.space.get(created.sessionId)).toBeDefined();
+    expect(await env.harness.space.get(created.sessionId)).toBeDefined();
     await expect(env.conn.deleteSession({ sessionId: created.sessionId })).resolves.toEqual({});
-    expect(await env.harness.app.space.get(created.sessionId)).toBeUndefined();
-    expect(env.harness.app.sessions.get(created.sessionId)).toBeUndefined();
+    expect(await env.harness.space.get(created.sessionId)).toBeUndefined();
+    expect(env.harness.sessions.get(created.sessionId)).toBeUndefined();
     expect(closed).toEqual([created.sessionId]);
     await expect(
       env.conn.prompt({

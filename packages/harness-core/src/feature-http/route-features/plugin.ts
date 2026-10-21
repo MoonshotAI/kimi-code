@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 
 import type { Request, Response } from 'express';
 
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 
 import type { OsFsPort } from '#/features/os/host/index';
 import {

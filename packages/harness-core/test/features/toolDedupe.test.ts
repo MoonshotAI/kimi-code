@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -12,7 +17,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
@@ -26,11 +31,7 @@ import {
   type TelemetryAppenderRecord,
 } from '#/features/telemetry/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 interface LlmCall {
@@ -122,9 +123,9 @@ function countingTool(
   };
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -134,13 +135,13 @@ async function startApp(opts: {
   tools: readonly ToolDefinition[];
   telemetry: TelemetryAppenderRecord[];
 }) {
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createTelemetry());
-  harness.app.features.add(bindTelemetryRecorder(opts.telemetry));
-  harness.app.features.add(createToolDedupe());
-  harness.app.features.add(bindTestTools(opts.tools));
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'host' });
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createTelemetry());
+  harness.features.add(bindTelemetryRecorder(opts.telemetry));
+  harness.features.add(createToolDedupe());
+  harness.features.add(bindTestTools(opts.tools));
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'host' });
   const { requester, calls } = createMockRequester(opts.responses);
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   const dispose = async (): Promise<void> => {

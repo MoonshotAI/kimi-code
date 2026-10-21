@@ -1,4 +1,4 @@
-import { createFacadeToken } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken } from '#/kernel/index';
 
 export interface FileBackupEntry {
   readonly key: string | null;

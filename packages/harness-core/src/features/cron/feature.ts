@@ -1,6 +1,6 @@
 import { onScopeDispose } from '@vue/reactivity';
 
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent, type Feature } from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   computed,
@@ -11,7 +11,7 @@ import {
   watch,
   type RuntimeEvent,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
@@ -70,8 +70,8 @@ export const CronRef = createFacadeToken<CronFace>('cron');
 
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 
-export function createCron(): Feature<void, CronFiredEvent> {
-  return createFeature<CronFiredEvent>('cron', {
+export function createCron(): Feature<void, { agent: CronFiredEvent }> {
+  return createFeature<{ agent: CronFiredEvent }>('cron', {
     app() {
       useConfigSection(cronConfigSection);
     },

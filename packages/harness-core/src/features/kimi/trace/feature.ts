@@ -1,10 +1,10 @@
-import { createFeature, type Feature, type FeatureUnits } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, type Feature, type FeatureUnits } from '#/app/index';
 import {
   createFacadeToken,
   shallowRef,
   useExpose,
   type Ref,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import { llmStatusErrorMessage } from '@moonshot-ai/agent-core/llm/response';
 
 import { useLoopEvent } from '#/runtime/index';

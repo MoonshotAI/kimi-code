@@ -1,5 +1,5 @@
-import { createCollection, useCleanup } from '@moonshot-ai/agent-core/kernel/index';
-import { currentUnit, lineage, type UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+import { createCollection, useCleanup } from '#/kernel/index';
+import { currentUnit, lineage, type UnitNode } from '#/kernel/runtime';
 
 import type { AgentProfile } from '../definition/types';
 

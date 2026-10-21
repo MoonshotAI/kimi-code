@@ -30,7 +30,7 @@ import {
   type SetSessionModeRequest,
   type SetSessionModeResponse,
 } from '@agentclientprotocol/sdk';
-import type { App } from '@moonshot-ai/agent-core/app/index';
+import type { App, AppSession } from '#/app/index';
 import {
   SessionSpaceError,
   type Agent,
@@ -78,7 +78,7 @@ export interface AcpServerDeps {
   readonly config: () => ConfigStore | undefined;
   readonly agentSlot: (agent: Agent) => AcpAgentSlot | undefined;
   readonly sessionSlot: (session: Session) => AcpSessionSlot | undefined;
-  readonly ensureMainAgent: (session: Session) => Promise<Agent>;
+  readonly ensureMainAgent: (session: AppSession) => Promise<Agent>;
   readonly options: AcpHostOptions;
 }
 
@@ -192,7 +192,7 @@ export function openAcpServer(deps: AcpServerDeps): AcpServerHandlers {
     return acpSession;
   };
 
-  const activateSession = async (session: Session): Promise<AcpSession> => {
+  const activateSession = async (session: AppSession): Promise<AcpSession> => {
     const agent = await deps.ensureMainAgent(session);
     const acpSession = await wireSession(session, agent);
     deps.options.onSessionActive?.({
@@ -212,7 +212,7 @@ export function openAcpServer(deps: AcpServerDeps): AcpServerHandlers {
     }, 0);
   };
 
-  const openExisting = async (sessionId: string): Promise<Session> => {
+  const openExisting = async (sessionId: string): Promise<AppSession> => {
     let record: SessionRecord | undefined;
     try {
       record = await deps.app.space.get(sessionId);
@@ -225,7 +225,7 @@ export function openAcpServer(deps: AcpServerDeps): AcpServerHandlers {
     if (record === undefined) {
       throw RequestError.invalidParams({ sessionId }, `Unknown sessionId: ${sessionId}`);
     }
-    return deps.app.create({ sessionId });
+    return deps.app.open(sessionId);
   };
 
   const requireSession = (sessionId: string): AcpSession => {
@@ -322,7 +322,7 @@ export function openAcpServer(deps: AcpServerDeps): AcpServerHandlers {
     async forkSession(params) {
       await deps.ready();
       ensureAuthed();
-      let session: Session;
+      let session: AppSession;
       try {
         session = await deps.app.create({ from: params.sessionId });
       } catch (error) {

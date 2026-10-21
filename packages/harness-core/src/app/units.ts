@@ -17,7 +17,8 @@ import {
   type UnitRecipe,
 } from '#/kernel/index';
 import { currentUnit, report, type UnitNode } from '#/kernel/runtime';
-import type { HookFailurePolicy, HookPoint, HookRegistration, LoopHooks, LoopLlmRequester } from '#/loop/index';
+import type { HookFailurePolicy, HookPoint, HookRegistration, LoopHooks, LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { isLoopRecord } from '@moonshot-ai/agent-core/loop/index';
 import {
   isToolExecutorHost,
   type ToolDefinition,
@@ -27,16 +28,17 @@ import {
   type ToolHookRegistration,
   type ToolHooks,
   type ToolStartingHookEvent,
-} from '#/tool/index';
-import type { Agent, Session } from '#/session/index';
-import type { Event, Log } from '#/store/index';
+} from '@moonshot-ai/agent-core/tool/index';
+import type { Agent } from '@moonshot-ai/agent-core/session/index';
+import type { Event, Log } from '@moonshot-ai/agent-core/store/index';
 
 import type { App } from './app';
-import { featureSetOf, type FeatureEntry, type FeatureLevel, type FeatureSet } from './features';
-import { useSystemPromptAssembly } from './system-prompt';
+import { createFeature, featureSetOf, type Feature, type FeatureEntry, type FeatureLevel, type FeatureSet } from './features';
+import type { AppSession } from './session';
+import { useSystemPrompt, useSystemPromptAssembly } from './system-prompt';
 
 const AppRef: CertainToken<App> = createToken('app');
-const SessionRef: CertainToken<Session> = createToken('session');
+const SessionRef: CertainToken<AppSession> = createToken('session');
 const AgentRef: CertainToken<Agent> = createToken('agent');
 export const RootRef: CertainToken<UnitNode> = createToken('app.root');
 const SessionFeatures: CollectionToken<FeatureEntry> = createCollection('session.features');
@@ -46,12 +48,22 @@ export function useApp(): App {
   return useInject(AppRef);
 }
 
-export function useSession(): Session {
+export function useSession(): AppSession {
   return useInject(SessionRef);
 }
 
 export function useAgent(): Agent {
   return useInject(AgentRef);
+}
+
+export function createHostFeature(): Feature<void> {
+  return createFeature('host', {
+    agent() {
+      const text = useSession().agentRuntime(useAgent().id)?.hostSystemPrompt;
+      if (text === undefined) return;
+      useSystemPrompt({ id: 'host', text, priority: -100 });
+    },
+  });
 }
 
 export interface LoopHookOptions {
@@ -189,10 +201,12 @@ function useMirror(source: () => readonly Child[]): void {
   useMounted(() => apply(source()));
 }
 
-function useForward(log: Log<Event>, since: number): void {
+function useForward(log: Log<Event>, since: number, match: (event: Event) => boolean): void {
   const node = currentUnit();
   const forwarding = log.subscribe(since, (commit) => {
-    for (const event of commit.events ?? []) node.fire({ ...event });
+    for (const event of commit.events ?? []) {
+      if (match(event)) node.fire({ ...event });
+    }
   });
   useCleanup(() => forwarding.then((unsubscribe) => unsubscribe()).catch(() => {}));
 }
@@ -241,20 +255,20 @@ export const AgentUnit = createUnit<{ readonly agent: Agent }>('agent', ({ agent
   useCleanup(() => {
     node.fire({ type: 'agent.closed' });
   });
-  useForward(agent.log, agent.since);
+  useForward(agent.log, agent.since, isLoopRecord);
   useLevel('agent', featureSetOf(agent), AgentFeatures, () => []);
   useSystemPromptAssembly(agent);
   node.fire({ type: 'agent.opened', source: agent.source, reopened: agent.reopened });
 });
 
-export const SessionUnit = createUnit<{ readonly session: Session }>('session', ({ session }) => {
+export const SessionUnit = createUnit<{ readonly session: AppSession }>('session', ({ session }) => {
   const features = featureSetOf(session);
   provide(SessionRef, session);
   useContribute(EventContext, { sessionId: session.id });
-  useForward(session.log, session.since);
+  useForward(session.log, session.since, (event) => event.type === 'agent.registered');
   useContributeEach(AgentFeatures, () => features.entries());
   useLevel('session', features, SessionFeatures, () =>
-    [...session.agents.values()].map((agent) => childOf(agent, `agent:${agent.id}`, AgentUnit, { agent })),
+    [...session.liveAgents.values()].map((agent) => childOf(agent, `agent:${agent.id}`, AgentUnit, { agent })),
   );
 });
 

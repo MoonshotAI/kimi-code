@@ -1,11 +1,11 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { useHttpRoute } from '../scope';
 import { parseActionSuffix } from '../route/action-suffix';
 import { ErrorCode, param, readAgentId, readUserMessage, sendErr, sendOk } from '../route/http';
-import { ensureSessionAgent, resumeSession } from '../route/resume-session';
+import { resumeSession } from '../route/resume-session';
 
 export function usePromptRoutes(prefix: string): void {
   const app = useApp();
@@ -32,7 +32,7 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId) ?? (await ensureSessionAgent(app, session, agentId));
+      const agent = (await session.ensureAgent(agentId)).agent;
       agent.loop.submit(
         createUserEntry(message, {
           source: 'input',
@@ -81,7 +81,7 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -126,7 +126,7 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -162,7 +162,7 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId) ?? (await ensureSessionAgent(app, session, agentId));
+      const agent = (await session.ensureAgent(agentId)).agent;
       agent.loop.notify(createUserEntry(message, { source: 'input' }));
       sendOk(request, response, { notified: true, agent_id: agent.id });
     },
@@ -198,7 +198,7 @@ export function usePromptRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId) ?? (await ensureSessionAgent(app, session, agentId));
+      const agent = (await session.ensureAgent(agentId)).agent;
       agent.loop.remind(createUserEntry(message, key === undefined ? {} : { key }));
       sendOk(request, response, { reminded: true, key, agent_id: agent.id });
     },

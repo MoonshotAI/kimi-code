@@ -85,7 +85,7 @@ while (!signal.aborted) {
 
 | 事件 | 时机 | 内容 |
 |---|---|---|
-| `llm.started` | `runLlmRequest` 入口，resolver 和媒体上传之前 | 无 |
+| `llm.started` | `runLlmRequest` 入口，resolver 和媒体上传之前 | 请求摘要：`provider`、`model`、`thinkingEffort` / `thinkingKeep`、`temperature` / `topP`、`maxOutputTokens`、`messageCount`，以及 `systemPromptHash` / `toolsHash`（system prompt 与 provider 可见工具签名列表的 SHA-256，`deferred` 工具除外） |
 | `llm.notice` | 任意 pass 或 resolver 做了适配 | `notice` |
 | `llm.streaming.headers` / `part` / `usage` / `finish` / `message_id` / `tool_call_end` | 每次 attempt 的流式过程 | 增量数据；`tool_call_end` 携带拼装好的 `toolCall` |
 | `llm.retrying`，`reason: 'backoff'` | attempt 失败且可重试，等待之前 | `error`、`failedAttempt`、`nextAttempt`、`maxAttempts`、`delayMs` |

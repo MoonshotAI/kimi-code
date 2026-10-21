@@ -4,9 +4,13 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -16,7 +20,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import { mergeFields, type LlmRequester } from '@moonshot-ai/agent-core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
@@ -37,10 +41,6 @@ import {
 } from '#/features/kimi/web/index';
 import { providerCatalog } from '#/features/provider-catalog/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  type Harness,
 } from '#/runtime/index';
 
 const homes: string[] = [];
@@ -141,20 +141,20 @@ function textOutcome(text: string): LlmOutcome {
 async function openSession(
   toml: string | undefined,
   extra: { fetchImpl?: typeof fetch } = {},
-): Promise<{ harness: Harness; seen: ToolDescription[][]; main: Agent }> {
+): Promise<{ harness: App; seen: ToolDescription[][]; main: Agent }> {
   const seen: ToolDescription[][] = [];
   const requester = fakeRequester((rest) => {
     seen.push([...((rest['profile'] as { tools?: ToolDescription[] } | undefined)?.tools ?? [])]);
     return textOutcome('ok');
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createConfig({ persist: fakePersist(toml) }));
-  harness.app.features.add(providerCatalog);
-  harness.app.features.add(createWeb({ fetchImpl: extra.fetchImpl }));
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createConfig({ persist: fakePersist(toml) }));
+  harness.features.add(providerCatalog);
+  harness.features.add(createWeb({ fetchImpl: extra.fetchImpl }));
   await tick();
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
-  const runtime = harnessInternals(harness.app).agents.get(session)?.get(MAIN_AGENT_ID);
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const runtime = session.agentRuntime(MAIN_AGENT_ID);
   if (runtime === undefined) throw new Error('agent runtime not found');
   runtime.requester = requester;
   return { harness, seen, main };
@@ -165,17 +165,17 @@ async function mountWebApp(options: {
   env?: Record<string, string>;
   home?: string;
   fetchImpl?: typeof fetch;
-}): Promise<{ harness: Harness; face: WebSearchFace; config: ConfigStore }> {
+}): Promise<{ harness: App; face: WebSearchFace; config: ConfigStore }> {
   const capture: {
     web?: Readonly<ShallowRef<WebSearchFace | undefined>>;
     config?: Readonly<ShallowRef<ConfigStore | undefined>>;
   } = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createConfig({ persist: fakePersist(options.toml), env: options.env }));
-  harness.app.features.add(providerCatalog);
-  if (options.home !== undefined) harness.app.features.add(createOauth({ home: options.home }));
-  harness.app.features.add(createWeb({ fetchImpl: options.fetchImpl }));
-  harness.app.features.add(
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createConfig({ persist: fakePersist(options.toml), env: options.env }));
+  harness.features.add(providerCatalog);
+  if (options.home !== undefined) harness.features.add(createOauth({ home: options.home }));
+  harness.features.add(createWeb({ fetchImpl: options.fetchImpl }));
+  harness.features.add(
     createFeature('probe', {
       app() {
         capture.web = useInject(WebSearchRef);

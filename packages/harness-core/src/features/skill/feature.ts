@@ -4,7 +4,7 @@ import {
   useSession,
   useSystemPrompt,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -24,8 +24,8 @@ import {
   useReady,
   watch,
   type RuntimeEvent,
-} from '@moonshot-ai/agent-core/kernel/index';
-import { currentUnit } from '@moonshot-ai/agent-core/kernel/runtime';
+} from '#/kernel/index';
+import { currentUnit } from '#/kernel/runtime';
 import type { ContentPart, ContentPartMeta, UserMessage } from '@moonshot-ai/agent-core/llm/message';
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
@@ -153,8 +153,8 @@ export interface BundledSkillPromptOrigin {
 
 type SkillPromptOrigin = SkillActivationOrigin | BundledSkillPromptOrigin;
 
-export function createSkill(props: CreateSkillProps): Feature<void, SkillEvent> {
-  return createFeature<SkillEvent>('skill', {
+export function createSkill(props: CreateSkillProps): Feature<void, { app: SkillChangedEvent; agent: SkillActivatedEvent }> {
+  return createFeature<{ app: SkillChangedEvent; agent: SkillActivatedEvent }>('skill', {
     app() {
       const node = currentUnit();
       const fire = useFire();

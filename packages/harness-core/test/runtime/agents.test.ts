@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, useSystemPrompt } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useSystemPrompt } from '#/app/index';
 import { createUserEntry, type HistoryMessage, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -9,8 +9,13 @@ import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
 import { agentCaps } from '#/runtime/agents';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/harness';
-import { useAgentTools, useFeatureStore, undoAgentTurns, type FeatureStore } from '#/runtime/index';
+import { createApp, type App } from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import {
+  useAgentTools,
+  useFeatureStore,
+  type FeatureStore,
+} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -53,9 +58,9 @@ function userTexts(messages: readonly HistoryMessage[]): string[] {
   return messages.filter((entry) => entry.message.role === 'user').map((entry) => extractText(entry.message));
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -64,7 +69,7 @@ interface ProbeState {
   readonly values: readonly string[];
 }
 
-type ProbeEvent = { readonly type: 'probe.set'; readonly value: string; readonly turnId?: number };
+type ProbeEvent = { readonly type: 'probe.set'; readonly value: string };
 
 const probeProjection: Projection<ProbeState, ProbeEvent> = {
   initial: () => ({ values: [] }),
@@ -74,11 +79,11 @@ const probeProjection: Projection<ProbeState, ProbeEvent> = {
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-describe('harness runtime', () => {
+describe('app agent runtime', () => {
   it('runs a turn through ensureAgent caps', async () => {
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
+    const harness = createApp({ space: memorySessionSpace() });
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
     setRequester(harness, 's1', 'main', echoRequester());
     const outcome = await agent.loop.runTurn(user('hello'));
     expect(outcome.type).toBe('done');
@@ -109,10 +114,10 @@ describe('harness runtime', () => {
         store = useFeatureStore('agent', 'probe', probeProjection);
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
     setRequester(
       harness,
       's1',
@@ -133,7 +138,7 @@ describe('harness runtime', () => {
     expect(executed).toBe(1);
 
     const seen: string[] = [];
-    harness.app.on('probe.set', (event) => seen.push((event as ProbeEvent).value));
+    harness.on('probe.set', (event) => seen.push((event as ProbeEvent).value));
     if (store === undefined) throw new Error('probe store was not captured');
     await store.dispatch([{ type: 'probe.set', value: 'a' }]);
     expect(seen).toEqual(['a']);
@@ -152,13 +157,13 @@ describe('harness runtime', () => {
         useSystemPrompt({ id: 'late', text: 'LATE' });
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(early);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(early);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
     await tick();
     expect(agent.loop.state.profile.systemPrompt).toBe('HOST\n\nEARLY');
-    harness.app.features.add(late);
+    harness.features.add(late);
     await tick();
     expect(agent.loop.state.profile.systemPrompt).toBe('HOST\n\nEARLY');
     await harness.close();
@@ -175,11 +180,11 @@ describe('harness runtime', () => {
         sessionStore = useFeatureStore('session', 'probe-session', probeProjection);
       },
     });
-    const space = memoryHarnessSpace();
-    const harness = createHarness({ space });
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const space = memorySessionSpace();
+    const harness = createApp({ space });
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', echoRequester());
 
     await agent.loop.runTurn(user('one'));
@@ -192,15 +197,15 @@ describe('harness runtime', () => {
     await store.dispatch([{ type: 'probe.set', value: 'turn-2' }]);
     expect(store.state.value.values).toEqual(['turn-1', 'turn-2']);
 
-    await harness.app.close('s1');
-    const resumed = await harness.app.create({ sessionId: 's1' });
-    const agent2 = await harness.ensureAgent(resumed, 'main');
+    await harness.close('s1');
+    const resumed = await harness.open('s1');
+    const { agent: agent2 } = await resumed.ensureAgent('main');
     setRequester(harness, 's1', 'main', echoRequester());
     if (store === undefined) throw new Error('store not captured after resume');
     expect(store.state.value.values).toEqual(['turn-1', 'turn-2']);
     expect(userTexts(agent2.view.getState().messages)).toEqual(['one', 'two']);
 
-    await undoAgentTurns(harness.app, resumed, 'main', 1);
+    await resumed.undo('main', 1);
     expect(store.state.value.values).toEqual(['turn-1']);
     expect(sessionStore?.state.value.values).toEqual(['session-1']);
     expect(userTexts(agent2.view.getState().messages)).toEqual(['one']);
@@ -208,10 +213,10 @@ describe('harness runtime', () => {
   });
 
   it('layers feature policy lists onto the base requester', async () => {
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    const session = await harness.app.create({ sessionId: 's1' });
-    await harness.ensureAgent(session, 'main');
-    const runtime = harnessInternals(harness.app).agents.get(session)?.get('main');
+    const harness = createApp({ space: memorySessionSpace() });
+    const session = await harness.open('s1');
+    await session.ensureAgent('main');
+    const runtime = session.agentRuntime('main');
     if (runtime === undefined) throw new Error('runtime missing');
     expect(() => agentCaps(runtime).requester()).toThrow(/no requester/);
     const resolver = { id: 'probe', resolve: async (messages: readonly never[]) => messages };

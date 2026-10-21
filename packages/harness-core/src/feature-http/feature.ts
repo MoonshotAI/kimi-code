@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, type Feature } from '#/app/index';
 import {
   createUnit,
   useChildren,
@@ -9,7 +9,7 @@ import {
   useExpose,
   useReady,
   watch,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 
 import { DEFAULT_HTTP_PREFIX, useFacadeRoutes } from './route-builtin/index';
 import { useGuiStoreRoutes } from './route-builtin/gui-store';

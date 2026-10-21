@@ -1,4 +1,4 @@
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent, type Feature } from '#/app/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 import {
   createFacadeToken,
@@ -8,7 +8,7 @@ import {
   useFire,
   type RuntimeEvent,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { useAgentTools, useLoopEvent } from '#/runtime/index';
@@ -76,9 +76,9 @@ function setOverlay(tracker: TaskTracker, record: TaskRecord): void {
   tracker.records.value = merge(tracker);
 }
 
-export function createTask(): Feature<void, TaskEvent> {
+export function createTask(): Feature<void, { agent: TaskEvent }> {
   const trackers = new WeakMap<Agent, TaskTracker>();
-  return createFeature<TaskEvent>('task', {
+  return createFeature<{ agent: TaskEvent }>('task', {
     agent() {
       const agent = useAgent();
       const fire = useFire();

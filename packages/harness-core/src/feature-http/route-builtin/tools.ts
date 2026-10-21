@@ -1,4 +1,4 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 import type { ToolDescription } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
@@ -31,7 +31,7 @@ export function useToolsRoutes(prefix: string): void {
         sessionId === undefined
           ? undefined
           : await resumeSession(app, sessionId).catch(() => undefined);
-      const agent = session?.agents.get(MAIN_AGENT_ID);
+      const agent = session?.liveAgents.get(MAIN_AGENT_ID);
       if (session === undefined || agent === undefined) {
         sendOk(request, response, { tools: [] });
         return;

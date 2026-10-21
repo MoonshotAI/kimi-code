@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useCollection, useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useCollection, useInject } from '#/kernel/index';
 
 import {
   ConfigRef,

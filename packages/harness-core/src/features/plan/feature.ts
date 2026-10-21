@@ -1,5 +1,5 @@
-import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose, type ComputedRef } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature } from '#/app/index';
+import { createFacadeToken, useExpose, type ComputedRef } from '#/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { useConfigSection } from '#/features/config/index';
@@ -39,10 +39,10 @@ export interface CreatePlanProps {
   readonly permissionMode?: () => string | undefined;
 }
 
-export function createPlan(props: CreatePlanProps = {}): Feature<void, PlanEvent> {
+export function createPlan(props: CreatePlanProps = {}): Feature<void, { agent: PlanEvent }> {
   const storage = props.storage ?? createMemoryPlanStorage();
   const injections = new WeakMap<Agent, PlanInjectionState>();
-  return createFeature<PlanEvent>('plan', {
+  return createFeature<{ agent: PlanEvent }>('plan', {
     app() {
       useConfigSection(defaultPlanModeSection);
     },

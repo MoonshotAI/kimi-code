@@ -1,6 +1,6 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
-import { useCollection, useInject } from '@moonshot-ai/agent-core/kernel/index';
-import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+import { useApp } from '#/app/index';
+import { useCollection, useInject } from '#/kernel/index';
+import type { UnitNode } from '#/kernel/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { CompactionRef } from '#/features/compaction/index';
@@ -87,7 +87,7 @@ export async function sessionStatusView(
   config?: ConfigStore,
 ): Promise<SessionStatusView | undefined> {
   await unitsReady(root);
-  const main = session.agents.get(MAIN_AGENT_ID);
+  const main = session.liveAgents.get(MAIN_AGENT_ID);
   if (main === undefined) return undefined;
   const alias = effectiveModelAlias(root, config, session.id, MAIN_AGENT_ID);
   const catalog = alias === undefined ? undefined : matchCatalogBinding(alias, bindings);
@@ -115,7 +115,7 @@ export function sessionBusy(root: UnitNode, session: Session): boolean {
 }
 
 function sessionFeatureBusy(root: UnitNode, session: Session): boolean {
-  for (const agentId of session.agents.keys()) {
+  for (const agentId of session.liveAgents.keys()) {
     const tasks = agentFacade(root, TaskRef, session.id, agentId);
     if (
       tasks !== undefined &&

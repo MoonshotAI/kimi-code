@@ -12,7 +12,6 @@ export * from './inspect/commands';
 export * from './state/store';
 export * from './state/managed-env';
 export * from './state/manager';
-export * from './state/service';
 export * from './contribute/mcp';
 export * from './contribute/skills';
 export * from './agent/change';

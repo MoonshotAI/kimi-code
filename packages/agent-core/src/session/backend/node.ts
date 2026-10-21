@@ -1,8 +1,10 @@
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { nodeBlobBackend } from '@moonshot-ai/agent-core/blob/backend/node';
-import { openBlobStore } from '@moonshot-ai/agent-core/blob/index';
+import { nodeBlobBackend } from '#/blob/backend/node';
+import { openBlobStore } from '#/blob/index';
+import { nodeJournal } from '#/store/backend/node';
+
 import {
   assertSessionId,
   isSessionId,
@@ -11,36 +13,14 @@ import {
   type SessionContainer,
   type SessionRecord,
   type SessionRecordDraft,
-} from '@moonshot-ai/agent-core/session/index';
-import { nodeJournal } from '@moonshot-ai/agent-core/store/backend/node';
-import type { Journal } from '@moonshot-ai/agent-core/store/index';
+  type SessionSpace,
+} from '../space';
 
-import type { HarnessSessionSpace } from '#/runtime/index';
-
-export function fsSessionSpace(root: string): HarnessSessionSpace {
-  return new FsSessionSpace(root);
+export function nodeSessionSpace(root: string): SessionSpace {
+  return new NodeSessionSpace(root);
 }
 
-function lazyJournal(open: () => Promise<Journal>): Journal {
-  let inner: Promise<Journal> | undefined;
-  const ready = (): Promise<Journal> => (inner ??= open());
-  return {
-    names: async (prefix) => (await ready()).names(prefix),
-    lines: async function* (log, from) {
-      yield* (await ready()).lines(log, from);
-    },
-    append: async (log, seq, line) => (await ready()).append(log, seq, line),
-    close: async () => {
-      const opened = inner;
-      inner = undefined;
-      if (opened !== undefined) await (await opened).close();
-    },
-  };
-}
-
-class FsSessionSpace implements HarnessSessionSpace {
-  private readonly featureJournals = new Map<string, Journal>();
-
+class NodeSessionSpace implements SessionSpace {
   constructor(private readonly root: string) {}
 
   async list(): Promise<readonly SessionRecord[]> {
@@ -104,11 +84,6 @@ class FsSessionSpace implements HarnessSessionSpace {
     if (!(await this.has(sessionId))) {
       throw new SessionSpaceError('not-found', `session '${sessionId}' does not exist`);
     }
-    const journal = this.featureJournals.get(sessionId);
-    if (journal !== undefined) {
-      this.featureJournals.delete(sessionId);
-      await journal.close();
-    }
     await rm(this.dir(sessionId), { recursive: true, force: true });
   }
 
@@ -124,22 +99,11 @@ class FsSessionSpace implements HarnessSessionSpace {
     await mkdir(this.root, { recursive: true });
     await cp(this.dir(sourceId), this.dir(targetId), { recursive: true });
     await rm(join(this.dir(targetId), 'journal', 'writer.lock'), { force: true });
-    await rm(join(this.dir(targetId), 'features', 'writer.lock'), { force: true });
     const now = new Date().toISOString();
     await this.writeRecord(
       mergeSessionRecord(targetId, await this.readRecord(sourceId), { createdAt: now, updatedAt: now }),
     );
     return this.container(targetId);
-  }
-
-  featureJournal(sessionId: string): Journal {
-    assertSessionId(sessionId);
-    let journal = this.featureJournals.get(sessionId);
-    if (journal === undefined) {
-      journal = lazyJournal(() => nodeJournal(join(this.dir(sessionId), 'features')));
-      this.featureJournals.set(sessionId, journal);
-    }
-    return journal;
   }
 
   private dir(id: string): string {

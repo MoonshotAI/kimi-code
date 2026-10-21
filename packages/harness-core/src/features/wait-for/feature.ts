@@ -1,4 +1,4 @@
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
 
 import { useAgentTools, useWaitForTasks } from '#/runtime/index';
 

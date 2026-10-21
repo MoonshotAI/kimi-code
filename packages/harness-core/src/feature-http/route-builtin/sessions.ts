@@ -1,9 +1,9 @@
 import type { Request, Response } from 'express';
 
-import { useApp, type CreateSessionInput } from '@moonshot-ai/agent-core/app/index';
+import { useApp, type AppSession, type CreateSessionInput } from '#/app/index';
 import type { HistoryMessage, ToolMeta } from '@moonshot-ai/agent-core/history/index';
-import { useCollection, useInject } from '@moonshot-ai/agent-core/kernel/index';
-import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+import { useCollection, useInject } from '#/kernel/index';
+import type { UnitNode } from '#/kernel/runtime';
 import type { ContentPart, MediaSource } from '@moonshot-ai/agent-core/llm/message';
 import {
   MAIN_AGENT_ID,
@@ -41,7 +41,7 @@ import {
 import { agentFacade, sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { useSessionAction, useSessionActionRoutes } from '../route/session-action';
 import { ErrorCode, param, readAgentId, requestId, sendErr, sendFacadeErr, sendOk } from '../route/http';
-import { ensureSessionAgent, resumeSession } from '../route/resume-session';
+import { resumeSession } from '../route/resume-session';
 import {
   effectiveModelAlias,
   sessionBusy,
@@ -136,7 +136,7 @@ export function useSessionRoutes(prefix: string): void {
       if (query.excludeEmpty === true) {
         await Promise.all(
           [...app.sessions.values()].map(async (live) => {
-            const main = live.agents.get(MAIN_AGENT_ID);
+            const main = live.liveAgents.get(MAIN_AGENT_ID);
             if (main === undefined) return;
             await main.flush().catch(() => undefined);
             if (main.view.getState().messages.length === 0) emptyIds.add(live.id);
@@ -200,7 +200,8 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       try {
-        const session = await app.create(readSessionInput(request.body));
+        const { sessionId, ...input } = readSessionInput(request.body);
+        const session = sessionId === undefined ? await app.create(input) : await app.open(sessionId, input);
         if (agentConfig !== undefined && !(await applyAgentConfig(session, agentConfig, request, response))) {
           return;
         }
@@ -273,7 +274,7 @@ export function useSessionRoutes(prefix: string): void {
           });
         }
         if (agentConfig !== undefined) {
-          const session = await app.create({ sessionId });
+          const session = await app.open(sessionId);
           if (!(await applyAgentConfig(session, agentConfig, request, response))) return;
           record = (await app.space.get(sessionId)) ?? record;
         }
@@ -380,8 +381,12 @@ export function useSessionRoutes(prefix: string): void {
       if ((await app.space.get(sessionId)) === undefined) {
         throw new SessionSpaceError('not-found', `session ${sessionId} does not exist`);
       }
-      const session = await app.create({ ...readSessionInput(request.body), from: sessionId });
-      sendOk(request, response, { id: session.id, agent_ids: [...session.agents.keys()] });
+      const { sessionId: forkId, ...input } = readSessionInput(request.body);
+      const session =
+        forkId === undefined
+          ? await app.create({ ...input, from: sessionId })
+          : await app.open(forkId, { ...input, from: sessionId });
+      sendOk(request, response, { id: session.id, agent_ids: [...session.liveAgents.keys()] });
     } catch (error) {
       if (sendFacadeErr(request, response, error)) return;
       throw error;
@@ -396,7 +401,7 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -417,7 +422,7 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -438,7 +443,7 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -491,7 +496,7 @@ export function useSessionRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -569,12 +574,12 @@ export function useSessionRoutes(prefix: string): void {
   }
 
   async function applyAgentConfig(
-    session: Session,
+    session: AppSession,
     config: SessionAgentConfigInput,
     request: Request,
     response: Response,
   ): Promise<boolean> {
-    await ensureSessionAgent(app, session, MAIN_AGENT_ID);
+    await session.ensureAgent(MAIN_AGENT_ID);
     await unitsReady(root);
     try {
       if (config.model !== undefined && config.model !== '') {
@@ -618,7 +623,7 @@ export function useSessionRoutes(prefix: string): void {
   }
 }
 
-function readSessionInput(body: unknown): CreateSessionInput {
+function readSessionInput(body: unknown): CreateSessionInput & { sessionId?: string } {
   const input: {
     sessionId?: string;
     title?: string;
@@ -676,7 +681,7 @@ export async function sessionView(
 ): Promise<SessionView> {
   await unitsReady(root);
   const archivedAt = record.metadata?.['archived_at'];
-  const main = live?.agents.get(MAIN_AGENT_ID);
+  const main = live?.liveAgents.get(MAIN_AGENT_ID);
   if (main !== undefined) await main.flush().catch(() => undefined);
   return {
     id: record.id,
@@ -695,7 +700,7 @@ export async function sessionView(
     usage: sessionUsageOf(root, bindings, record.id, main, config),
     permission_rules: [],
     message_count: main?.view.getState().messages.length ?? 0,
-    agent_ids: [...(live?.agents.keys() ?? [])],
+    agent_ids: [...(live?.liveAgents.keys() ?? [])],
   };
 }
 

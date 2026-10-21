@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 
-import { useApp } from '@moonshot-ai/agent-core/app/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useApp } from '#/app/index';
+import { useInject } from '#/kernel/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import {
@@ -98,7 +98,7 @@ export function useSkillRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
-      const agent = session.agents.get(MAIN_AGENT_ID);
+      const agent = session.liveAgents.get(MAIN_AGENT_ID);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`);
         return;

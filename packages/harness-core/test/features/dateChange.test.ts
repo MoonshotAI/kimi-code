@@ -9,6 +9,7 @@ import {
 } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
   DATE_CHANGE_REMIND_KEY,
@@ -16,21 +17,21 @@ import {
   dateChangeReminder,
   initialDateReminder,
 } from '#/features/dateChange/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/harness';
+import { createApp, type App } from '#/app/index';
 
 function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
-    session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+    session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -66,10 +67,10 @@ function reminderEntries(history: readonly HistoryMessage[]): readonly HistoryMe
 describe('dateChange feature', () => {
   it('injects the initial date reminder into the first request and stays silent while the date is unchanged', async () => {
     const current = new Date('2026-10-19T10:00:00Z');
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createDateChange({ now: () => current, timeZone: 'UTC' }));
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createDateChange({ now: () => current, timeZone: 'UTC' }));
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     const requests: Message[][] = [];
     setRequester(harness, 's1', 'main', capturingRequester(requests));
 
@@ -98,10 +99,10 @@ describe('dateChange feature', () => {
 
   it('injects a date-change reminder when the local date has moved on', async () => {
     let current = new Date('2026-10-19T10:00:00Z');
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createDateChange({ now: () => current, timeZone: 'UTC' }));
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createDateChange({ now: () => current, timeZone: 'UTC' }));
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     const requests: Message[][] = [];
     setRequester(harness, 's1', 'main', capturingRequester(requests));
 

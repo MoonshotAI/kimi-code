@@ -4,8 +4,13 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 
 import {
   CapabilitiesRef,
@@ -36,9 +41,9 @@ import {
   type OsProcess,
   type OsProcessPort,
 } from '#/features/os/host/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
 
-const harnesses: Harness[] = [];
+
+const harnesses: App[] = [];
 const tempDirs: string[] = [];
 
 let root: string;
@@ -302,7 +307,7 @@ function fakeEntry(overrides: {
 }
 
 interface MountedCapabilities {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly face: CapabilitiesFace;
   readonly spec: ReturnType<typeof createCapabilities>;
 }
@@ -336,11 +341,11 @@ async function mountCapabilities(
     entries: options.entries,
     onWarn: options.onWarn,
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   harnesses.push(harness);
   const { feature, capture } = captureCapabilities();
-  harness.app.features.add(spec);
-  harness.app.features.add(feature);
+  harness.features.add(spec);
+  harness.features.add(feature);
   const face = capture.face?.value;
   if (face === undefined) throw new Error('capabilities facade was not exposed');
   return { harness, face, spec };
@@ -527,7 +532,7 @@ describe('capabilities feature', () => {
       ],
     });
     const seen: Array<{ id: string; install: { running: boolean; step?: string; percent?: number } }> = [];
-    harness.app.on(spec, 'capability.changed', (event) => {
+    harness.on(spec, 'capability.changed', (event) => {
       seen.push({ id: event.id, install: event.install });
     });
 
@@ -591,11 +596,11 @@ describe('capabilities feature', () => {
 
   it('exposes no facade when mounted without an os host', async () => {
     const spec = createCapabilities({ homeDir: join(root, 'kimi-home') });
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     harnesses.push(harness);
     const { feature, capture } = captureCapabilities();
-    harness.app.features.add(spec);
-    harness.app.features.add(feature);
+    harness.features.add(spec);
+    harness.features.add(feature);
     expect(capture.face?.value).toBeUndefined();
   });
 });

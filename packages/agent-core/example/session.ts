@@ -8,6 +8,7 @@ import {
   type AssistantMessage,
   type Message,
 } from '#/llm/message';
+import { llmStartedEvent } from '#/llm/policy/policy';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import type { FinishInfo, LlmOutcome, TokenUsage } from '#/llm/response';
 import { mergeFields, type LlmRequestPart } from '#/llm/requester';
@@ -34,7 +35,7 @@ function fakeRequester(
         finishReason: message.toolCalls.length > 0 ? 'tool_calls' : 'completed',
         rawFinishReason: null,
       };
-      control.onEvent?.({ type: 'llm.started' });
+      control.onEvent?.(await llmStartedEvent(complete(rest)));
       for (const part of [...message.content, ...message.toolCalls]) {
         control.onEvent?.({ type: 'llm.streaming.part', part });
       }

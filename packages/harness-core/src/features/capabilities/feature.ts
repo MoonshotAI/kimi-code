@@ -1,4 +1,4 @@
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, type Feature } from '#/app/index';
 import {
   createFacadeToken,
   useExpose,
@@ -6,7 +6,7 @@ import {
   useInject,
   useReady,
   type RuntimeEvent,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiRegion,
@@ -64,10 +64,10 @@ export interface CreateCapabilitiesProps {
 
 const IDLE_PROGRESS: CapabilityInstallProgress = { running: false };
 
-export function createCapabilities(props: CreateCapabilitiesProps): Feature<void, CapabilitiesEvent> {
+export function createCapabilities(props: CreateCapabilitiesProps): Feature<void, { app: CapabilitiesEvent }> {
   const installProgress = new Map<CapabilityId, CapabilityInstallProgress>();
   const runningInstalls = new Set<CapabilityId>();
-  return createFeature<CapabilitiesEvent>('capabilities', {
+  return createFeature<{ app: CapabilitiesEvent }>('capabilities', {
     app() {
       const host = props.host;
       if (host === undefined) return;

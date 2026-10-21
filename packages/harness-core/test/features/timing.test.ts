@@ -1,23 +1,24 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import { timing, TimingRef, type TimingFace } from '#/features/timing/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/harness';
+import { createApp, type App } from '#/app/index';
 
 function user(text: string, meta: UserMeta = {}) {
   return createUserEntry(createUserMessage(text), { source: 'input', ...meta });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
   const runtime =
-    session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+    session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -27,7 +28,7 @@ function timedRequester(streamed: boolean): LoopLlmRequester {
     with: () => self,
     request: (part) => part as unknown as LlmRequest,
     generate: async (_rest, control) => {
-      control.onEvent?.({ type: 'llm.started' });
+      control.onEvent?.({ type: 'llm.started', provider: 'fake', model: 'fake-model', messageCount: 0 });
       if (streamed) {
         control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: 'hello' } });
         control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text: ' world' } });
@@ -46,11 +47,11 @@ describe('timing feature', () => {
         face = useInject(TimingRef);
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(timing);
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(timing);
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', timedRequester(true));
     if (face === undefined) throw new Error('timing facade was not injected');
     expect(face.value?.timing.value).toBeUndefined();
@@ -77,11 +78,11 @@ describe('timing feature', () => {
         face = useInject(TimingRef);
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(timing);
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(timing);
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', timedRequester(false));
 
     const outcome = await agent.loop.runTurn(user('hello'));

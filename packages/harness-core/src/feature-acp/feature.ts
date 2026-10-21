@@ -13,9 +13,9 @@ import {
   useAgent,
   useApp,
   useSession,
-  type App,
+  type AppSession,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -23,8 +23,8 @@ import {
   useExpose,
   useInject,
   useOn,
-} from '@moonshot-ai/agent-core/kernel/index';
-import { currentUnit } from '@moonshot-ai/agent-core/kernel/runtime';
+} from '#/kernel/index';
+import { currentUnit } from '#/kernel/runtime';
 import {
   MAIN_AGENT_ID,
   type Agent,
@@ -45,7 +45,6 @@ import { TaskRef } from '#/features/task/index';
 import { TodoRef } from '#/features/todo/index';
 import { UsageRef } from '#/features/usage/index';
 import { WorkspaceRef } from '#/features/workspaces/index';
-import { agentCaps, createAgentRuntime, harnessInternals } from '#/runtime/index';
 
 import { acpClientFromContext, type AcpClient } from './client';
 import { openAcpServer, type AcpHostOptions, type AcpServerHandlers } from './server';
@@ -113,7 +112,7 @@ export function createAcp(props: CreateAcpProps): Feature<void> {
         config: () => config.value,
         agentSlot: (agent) => agentSlots.get(agent),
         sessionSlot: (session) => sessionSlots.get(session),
-        ensureMainAgent: (session) => ensureMainAgent(app, session),
+        ensureMainAgent,
         options: props,
       });
       const agentApp = createAcpAgentApp(server);
@@ -190,21 +189,8 @@ function createAcpAgentApp(server: AcpServerHandlers): AgentApp {
     );
 }
 
-async function ensureMainAgent(app: App, session: Session): Promise<Agent> {
-  const live = session.agents.get(MAIN_AGENT_ID);
-  if (live !== undefined) return live;
-  const internals = harnessInternals(app);
-  let perSession = internals.agents.get(session);
-  if (perSession === undefined) {
-    perSession = new Map();
-    internals.agents.set(session, perSession);
-  }
-  let runtime = perSession.get(MAIN_AGENT_ID);
-  if (runtime === undefined) {
-    runtime = createAgentRuntime(MAIN_AGENT_ID);
-    perSession.set(MAIN_AGENT_ID, runtime);
-  }
-  return session.open(MAIN_AGENT_ID, agentCaps(runtime));
+async function ensureMainAgent(session: AppSession): Promise<Agent> {
+  return (await session.ensureAgent(MAIN_AGENT_ID)).agent;
 }
 
 export function acpStdioStreams(): AcpStreamPair {

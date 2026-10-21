@@ -3,12 +3,11 @@ import { z } from 'zod';
 import {
   createFeature,
   useAgent,
-  useApp,
   useSession,
   useToolBatchStarting,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose, useInject } from '@moonshot-ai/agent-core/kernel/index';
+} from '#/app/index';
+import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {
@@ -112,7 +111,6 @@ export function createSwarm(props: CreateSwarmProps = {}): Feature<void> {
       const registry = useInject(SpawnRegistryRef).value ?? shared.registry;
       useAgentTools(
         createAgentSwarmTool({
-          app: useApp(),
           catalog,
           models,
           registry,

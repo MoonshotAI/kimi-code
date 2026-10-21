@@ -6,8 +6,14 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, type App, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  type App,
+  type Feature,
+  createApp,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 
 import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
 import {
@@ -23,7 +29,7 @@ import {
   type WorkspacesFace,
   type WorkspacesRecord,
 } from '#/features/workspaces/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
+
 
 const execFileAsync = promisify(execFile);
 
@@ -32,7 +38,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
   return stdout;
 }
 
-const harnesses: Harness[] = [];
+const harnesses: App[] = [];
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -49,11 +55,11 @@ async function tempDir(prefix: string): Promise<string> {
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 interface WorkspacesEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly app: App;
   readonly face: WorkspacesFace;
   readonly homeDir: string;
-  readonly spec: Feature<void, WorkspacesEvent>;
+  readonly spec: Feature<void, { app: WorkspacesEvent }>;
 }
 
 async function mountWorkspaces(
@@ -72,15 +78,15 @@ async function mountWorkspaces(
       exposed = useInject(WorkspaceRef);
     },
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   harnesses.push(harness);
-  harness.app.features.add(spec);
-  harness.app.features.add(probe);
+  harness.features.add(spec);
+  harness.features.add(probe);
   await tick();
   const face = exposed?.value;
   if (face === undefined) throw new Error('workspaces face was not exposed');
   await face.sessionCount('wd_bootstrap_000000000000');
-  return { harness, app: harness.app, face, homeDir, spec };
+  return { harness, app: harness, face, homeDir, spec };
 }
 
 async function expectFsError(work: Promise<unknown>, code: string, message: string): Promise<void> {
@@ -203,7 +209,7 @@ describe('workspaces registry', () => {
     expect(await app.space.get('ses_ws_count_2').then(sessionWorkspaceId)).toBe(ws.id);
     expect(await face.sessionCount(ws.id)).toBe(2);
 
-    const bare = await app.create({ sessionId: 'ses_ws_count_3' });
+    const bare = await app.open('ses_ws_count_3');
     let bound: string | undefined;
     for (let i = 0; i < 100 && bound === undefined; i += 1) {
       bound = sessionWorkspaceId(await app.space.get(bare.id));

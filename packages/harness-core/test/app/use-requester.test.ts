@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { createApp, createFeature, useRequester, type App } from '#/app/index';
-import { extractText } from '#/llm/message';
-import type { LlmModelSpec, LlmRequest } from '#/llm/request';
-import { mergeFields, type LlmRequestPart } from '#/llm/requester';
-import type { LlmOutcome } from '#/llm/response';
-import type { LoopLlmRequester } from '#/loop/index';
-import type { Agent } from '#/session/index';
+import { extractText } from '@moonshot-ai/agent-core/llm/message';
+import type { LlmModelSpec, LlmRequest } from '@moonshot-ai/agent-core/llm/request';
+import { mergeFields, type LlmRequestPart } from '@moonshot-ai/agent-core/llm/requester';
+import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
+import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { noopExecutor, textOutcome, user } from './fake-llm';
 
@@ -32,7 +32,7 @@ interface Setup {
 async function setup(initial: LoopLlmRequester): Promise<Setup> {
   let current = initial;
   const app = createApp();
-  const session = await app.create({ sessionId: 'sess' });
+  const session = await app.open('sess');
   const agent = await session.open('main', { executor: noopExecutor, requester: () => current });
   let captured: LoopLlmRequester | undefined;
   app.features.add(

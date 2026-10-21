@@ -1,4 +1,4 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { BtwRef } from '#/features/btw/index';
@@ -19,7 +19,7 @@ export function useBtwRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
-      if (session.agents.get(MAIN_AGENT_ID) === undefined) {
+      if (session.liveAgents.get(MAIN_AGENT_ID) === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${MAIN_AGENT_ID} does not exist`);
         return;
       }

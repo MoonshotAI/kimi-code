@@ -4,9 +4,15 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, useToolHandler, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useToolHandler,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -18,17 +24,13 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { interaction } from '#/features/interaction/index';
 import { createPermission, PermissionRef, type PermissionFace } from '#/features/permission/index';
 import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
@@ -129,9 +131,9 @@ function capturePermission(): { feature: Feature<void>; face: () => PermissionFa
   return { feature, face: () => face };
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -145,15 +147,15 @@ async function startEnv(opts: {
   calls: LlmCall[];
   cleanup(): Promise<void>;
 }> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const { requester, calls } = createMockRequester(opts.script);
   const dir = await mkdtemp(join(tmpdir(), 'ptc-test-'));
   const ptc = (opts.ptcFactory ?? ((d: string) => createPtc({ dir: d, enabled: () => true })))(dir);
   for (const feature of [...(opts.features ?? []), ptc]) {
-    harness.app.features.add(feature);
+    harness.features.add(feature);
   }
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const agent = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const session = await harness.open('sess');
+  const { agent } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   return {
     agent,

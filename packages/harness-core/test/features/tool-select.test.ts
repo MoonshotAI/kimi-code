@@ -10,13 +10,14 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  type Harness,
+  createApp,
+  type App,
+} from '#/app/index';
+import {
 } from '#/runtime/index';
 import {
   createSelectToolsTool,
@@ -56,15 +57,15 @@ function user(text: string) {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
@@ -72,13 +73,13 @@ function setRequester(
 
 async function openAgent(
   enabled: boolean,
-): Promise<{ seen: ToolDescription[][]; harness: Harness; runTurn: () => Promise<unknown> }> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(
+): Promise<{ seen: ToolDescription[][]; harness: App; runTurn: () => Promise<unknown> }> {
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(
     createToolSelect({ loadable: () => [fakeTool], enabled: () => enabled }),
   );
-  const session = await harness.app.create({ sessionId: 's1' });
-  const agent = await harness.ensureAgent(session, 'main');
+  const session = await harness.open('s1');
+  const { agent } = await session.ensureAgent('main');
   const { requester, seen } = captureTools();
   setRequester(harness, 's1', 'main', requester);
   return {

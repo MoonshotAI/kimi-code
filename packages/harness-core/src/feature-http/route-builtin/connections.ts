@@ -1,4 +1,4 @@
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 
 import { useHttpRoute } from '../scope';
 import { sendOk } from '../route/http';

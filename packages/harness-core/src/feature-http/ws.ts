@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
-import { useApp } from '@moonshot-ai/agent-core/app/index';
-import { useCleanup, useOn } from '@moonshot-ai/agent-core/kernel/index';
+import { useApp } from '#/app/index';
+import { useCleanup, useOn } from '#/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { WebSocket, WebSocketServer, type RawData } from 'ws';
@@ -165,7 +165,7 @@ export function useWsEndpoint(options: { http: Http; prefix: string; registry: W
     }
     const handles = new Map<string, Agent>();
     for (const agentId of Object.keys(agents)) {
-      const handle = session.agents.get(agentId);
+      const handle = session.liveAgents.get(agentId);
       if (handle === undefined) {
         sendError(connection.socket, ErrorCode.VALIDATION_FAILED, `unknown agent ${agentId}`);
         return;

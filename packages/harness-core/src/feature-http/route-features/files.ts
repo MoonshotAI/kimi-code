@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 
 import type { Request, Response } from 'express';
 
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 
 import { FilesRef } from '#/features/files/index';
 

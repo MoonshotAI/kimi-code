@@ -1,12 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { useInject } from '#/kernel/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmErrorMessage, LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
   TelemetryRef,
@@ -20,7 +25,9 @@ import {
   type TelemetryFace,
 } from '#/features/telemetry/index';
 import { ConfigRef, createConfig, type ConfigStore } from '#/features/config/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, useAgentTools, type Harness } from '#/runtime/index';
+import {
+  useAgentTools,
+} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 type GenerateControl = Parameters<LoopLlmRequester['generate']>[1];
@@ -48,9 +55,9 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -108,10 +115,10 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 async function mountTelemetryApp(props?: { enabled?: boolean; context?: TelemetryContextPatch }) {
   const recorder = createRecorder();
   const faces: CapturedFaces = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createTelemetry(props));
-  harness.app.features.add(recorderFeature(recorder));
-  harness.app.features.add(captureFeature(faces));
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createTelemetry(props));
+  harness.features.add(recorderFeature(recorder));
+  harness.features.add(captureFeature(faces));
   await tick();
   return { harness, recorder, faces };
 }
@@ -161,8 +168,8 @@ describe('telemetry feature', () => {
 
   it('shadows the facade per tier with inherited context', async () => {
     const { harness, recorder, faces } = await mountTelemetryApp();
-    const session = await harness.app.create({ sessionId: 'sess' });
-    await harness.ensureAgent(session, 'main');
+    const session = await harness.open('sess');
+    await session.ensureAgent('main');
     const appTelemetry = faces.app!;
     const sessionTelemetry = faces.session!;
     const agentTelemetry = faces.agent!;
@@ -209,12 +216,12 @@ describe('telemetry feature', () => {
     const recorder = createRecorder();
     const faces: CapturedFaces = {};
     const captured: { store?: ConfigStore } = {};
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createConfig({}));
-    harness.app.features.add(createTelemetry());
-    harness.app.features.add(recorderFeature(recorder));
-    harness.app.features.add(captureFeature(faces));
-    harness.app.features.add(configCaptureFeature(captured));
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createConfig({}));
+    harness.features.add(createTelemetry());
+    harness.features.add(recorderFeature(recorder));
+    harness.features.add(captureFeature(faces));
+    harness.features.add(configCaptureFeature(captured));
     await tick();
     const telemetry = faces.app!;
     const config = captured.store!;
@@ -231,11 +238,11 @@ describe('telemetry feature', () => {
     await harness.close();
     const envRecorder = createRecorder();
     const envFaces: CapturedFaces = {};
-    const envHarness = createHarness({ space: memoryHarnessSpace() });
-    envHarness.app.features.add(createConfig({ env: { KIMI_DISABLE_TELEMETRY: '1' } }));
-    envHarness.app.features.add(createTelemetry());
-    envHarness.app.features.add(recorderFeature(envRecorder));
-    envHarness.app.features.add(captureFeature(envFaces));
+    const envHarness = createApp({ space: memorySessionSpace() });
+    envHarness.features.add(createConfig({ env: { KIMI_DISABLE_TELEMETRY: '1' } }));
+    envHarness.features.add(createTelemetry());
+    envHarness.features.add(recorderFeature(envRecorder));
+    envHarness.features.add(captureFeature(envFaces));
     await tick();
     envFaces.app!.track('dropped');
     expect(envRecorder.records).toHaveLength(0);
@@ -246,8 +253,8 @@ describe('telemetry feature', () => {
     const { harness, recorder, faces } = await mountTelemetryApp({
       context: { model: 'test-model' },
     });
-    const session = await harness.app.create({ sessionId: 'sess' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const session = await harness.open('sess');
+    const { agent } = await session.ensureAgent('main');
     let release: () => void = () => {};
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -304,9 +311,9 @@ describe('telemetry feature', () => {
       },
     });
     const { harness, recorder } = await mountTelemetryApp();
-    harness.app.features.add(tools);
-    const session = await harness.app.create({ sessionId: 'sess' });
-    const agent = await harness.ensureAgent(session, 'main');
+    harness.features.add(tools);
+    const session = await harness.open('sess');
+    const { agent } = await session.ensureAgent('main');
     setRequester(
       harness,
       'sess',
@@ -355,8 +362,8 @@ describe('telemetry feature', () => {
     expect(haltCall?.properties['error_type']).toBe('cancelled');
     await harness.close();
     const failed = await mountTelemetryApp();
-    const failSession = await failed.harness.app.create({ sessionId: 'sess' });
-    const failAgent = await failed.harness.ensureAgent(failSession, 'main');
+    const failSession = await failed.harness.open('sess');
+    const { agent: failAgent } = await failSession.ensureAgent('main');
     setRequester(failed.harness, 'sess', 'main', failingRequester({ kind: 'unknown', message: 'boom' }));
     failAgent.loop.submit(user('go'));
     await waitForEvent(failed.recorder.records, 'turn_ended');
@@ -368,8 +375,8 @@ describe('telemetry feature', () => {
     const { harness, recorder } = await mountTelemetryApp({
       context: { model: 'test-model' },
     });
-    const session = await harness.app.create({ sessionId: 'sess' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const session = await harness.open('sess');
+    const { agent } = await session.ensureAgent('main');
     setRequester(
       harness,
       'sess',
@@ -395,7 +402,7 @@ describe('telemetry feature', () => {
         useTelemetryEvents(defs);
       },
     });
-    harness.app.features.add(late);
+    harness.features.add(late);
     await tick();
     expect(telemetry.events().map((def) => def.name)).toContain('probe_fired');
     const tracker = createTracker(telemetry, defs);
@@ -433,10 +440,10 @@ describe('telemetry feature', () => {
       },
     });
     const faces: CapturedFaces = {};
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createTelemetry());
-    harness.app.features.add(probe);
-    harness.app.features.add(captureFeature(faces));
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createTelemetry());
+    harness.features.add(probe);
+    harness.features.add(captureFeature(faces));
     await tick();
     const telemetry = faces.app!;
     expect(() => telemetry.track('survives')).not.toThrow();
@@ -449,8 +456,8 @@ describe('telemetry feature', () => {
 
   it('derives prompt_cache_probe from streaming usage', async () => {
     const { harness, recorder } = await mountTelemetryApp();
-    const session = await harness.app.create({ sessionId: 'sess' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const session = await harness.open('sess');
+    const { agent } = await session.ensureAgent('main');
     setRequester(
       harness,
       'sess',

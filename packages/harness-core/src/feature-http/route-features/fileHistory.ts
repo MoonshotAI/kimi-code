@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import {
@@ -33,7 +33,7 @@ export function useFileHistoryRoutes(prefix: string): void {
     }
     await unitsReady(root);
     const face =
-      session.agents.get(MAIN_AGENT_ID) === undefined
+      session.liveAgents.get(MAIN_AGENT_ID) === undefined
         ? undefined
         : agentFacade(root, FileHistoryRef, sessionId, MAIN_AGENT_ID);
     if (face === undefined) {

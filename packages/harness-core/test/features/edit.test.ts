@@ -10,11 +10,16 @@ import type { Message, ToolCall, ToolDescription } from '@moonshot-ai/agent-core
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import type { ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import { createEdit, createEditTool } from '#/features/edit/index';
-import { createHarness, harnessInternals, memoryHarnessSpace } from '#/runtime/index';
-import type { Harness } from '#/runtime/index';
+import {
+  createApp,
+} from '#/app/index';
+import {
+} from '#/runtime/index';
+import type { App } from '#/runtime/index';
 
 let workDir: string;
 
@@ -201,9 +206,9 @@ function createMockRequester(script: LlmScript): { requester: LoopLlmRequester; 
   return { requester, calls };
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -222,10 +227,10 @@ describe('edit feature', () => {
       };
     };
     const { requester, calls } = createMockRequester(script);
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createEdit({ workDir }));
-    const session = await harness.app.create({ sessionId: 'sess' });
-    const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'main-host' });
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createEdit({ workDir }));
+    const session = await harness.open('sess');
+    const { agent } = await session.ensureAgent('main', { systemPrompt: 'main-host' });
     setRequester(harness, 'sess', 'main', requester);
     try {
       const outcome = await agent.loop.runTurn(

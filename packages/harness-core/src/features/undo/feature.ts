@@ -1,11 +1,11 @@
-import { createFeature, useAgent, useApp, useSession } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent, useSession } from '#/app/index';
 import {
   createFacadeToken,
   useExpose,
   useFire,
   useInject,
   type RuntimeEvent,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import { SessionError } from '@moonshot-ai/agent-core/session/index';
 
 import {
@@ -13,7 +13,6 @@ import {
   useTelemetryEvents,
   type TelemetryEventDefinition,
 } from '#/features/telemetry/index';
-import { undoAgentTurns } from '#/runtime/index';
 
 import {
   computeUndoAvailability,
@@ -65,9 +64,8 @@ function translateUndoError(
   return error;
 }
 
-export const undo = createFeature<UndoEvent>('undo', {
+export const undo = createFeature<{ agent: UndoEvent }>('undo', {
   agent() {
-    const app = useApp();
     const session = useSession();
     const agent = useAgent();
     const fire = useFire();
@@ -97,7 +95,7 @@ export const undo = createFeature<UndoEvent>('undo', {
       const plan = planUndoCut(agent.log.replica.entries(), turns);
       if (!plan.ok) throw undoCompactionBoundaryError();
       try {
-        await undoAgentTurns(app, session, agent.id, plan.machineTurns);
+        await session.undo(agent.id, plan.machineTurns);
       } catch (error) {
         throw translateUndoError(error, turns, availability);
       }

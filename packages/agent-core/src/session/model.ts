@@ -29,6 +29,7 @@ export function sessionProjection(): Projection<SessionState, SessionEvent> {
   return {
     initial: () => ({ agents: {} }),
     reduce: (state, { event }) => {
+      if (event.type !== 'agent.registered') return state;
       const info: AgentInfo = { source: event.source, forkedFrom: event.forkedFrom };
       return { agents: { ...state.agents, [event.agentId]: info } };
     },

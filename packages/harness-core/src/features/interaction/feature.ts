@@ -1,4 +1,4 @@
-import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent } from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -6,7 +6,7 @@ import {
   useFire,
   useInject,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 
 import { openInteractions, type InteractionEvent, type Interactions } from './interaction';
 
@@ -16,7 +16,7 @@ export function useInteractions(): Readonly<ShallowRef<Interactions | undefined>
   return useInject(InteractionRef);
 }
 
-export const interaction = createFeature<InteractionEvent>('interaction', {
+export const interaction = createFeature<{ session: InteractionEvent }>('interaction', {
   session() {
     const fire = useFire();
     const interactions = openInteractions({ fire });

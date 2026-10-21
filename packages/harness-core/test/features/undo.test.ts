@@ -1,17 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   createUserEntry,
   type HistoryMessage,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, LoopRecord } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent } from '@moonshot-ai/agent-core/session/index';
+import { memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 import type { Entry, Projection } from '@moonshot-ai/agent-core/store/index';
 
 import {
@@ -30,12 +34,8 @@ import {
   type UndoFace,
 } from '#/features/undo/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useFeatureStore,
   type FeatureStore,
-  type Harness,
 } from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
@@ -72,9 +72,9 @@ function user(text: string, meta?: UserMeta) {
 
 const summaryEntry = userEntry('summary', { source: 'compaction', key: 'summary' });
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -85,7 +85,7 @@ interface ProbeState {
   readonly values: readonly string[];
 }
 
-type ProbeEvent = { readonly type: 'probe.set'; readonly value: string; readonly turnId?: number };
+type ProbeEvent = { readonly type: 'probe.set'; readonly value: string };
 
 const probeProjection: Projection<ProbeState, ProbeEvent> = {
   initial: () => ({ values: [] }),
@@ -94,7 +94,7 @@ const probeProjection: Projection<ProbeState, ProbeEvent> = {
 };
 
 interface TestEnv {
-  harness: Harness;
+  harness: App;
   agent: Agent;
   face: () => UndoFace | undefined;
   store: () => FeatureStore<ProbeState, ProbeEvent> | undefined;
@@ -102,7 +102,7 @@ interface TestEnv {
 }
 
 async function testEnv(requester: LoopLlmRequester = echoRequester()): Promise<TestEnv> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const records: TelemetryAppenderRecord[] = [];
   const recorder = createFeature('telemetry-recorder', {
     app: () => {
@@ -121,12 +121,12 @@ async function testEnv(requester: LoopLlmRequester = echoRequester()): Promise<T
       store = useFeatureStore('agent', 'undo-probe', probeProjection);
     },
   });
-  harness.app.features.add(createTelemetry());
-  harness.app.features.add(recorder);
-  harness.app.features.add(undo);
-  harness.app.features.add(probe);
-  const session = await harness.app.create({ sessionId: 's1' });
-  const agent = await harness.ensureAgent(session, 'main');
+  harness.features.add(createTelemetry());
+  harness.features.add(recorder);
+  harness.features.add(undo);
+  harness.features.add(probe);
+  const session = await harness.open('s1');
+  const { agent } = await session.ensureAgent('main');
   setRequester(harness, 's1', 'main', requester);
   await tick();
   return { harness, agent, face: () => face?.value, store: () => store, records };
@@ -259,7 +259,7 @@ describe('undo feature', () => {
   it('undo(1) truncates history, fires the event, tracks telemetry and rewinds feature stores', async () => {
     const env = await testEnv();
     const undone: ContextUndoneEvent[] = [];
-    env.harness.app.on(undo, 'context.undone', (event) => {
+    env.harness.on(undo, 'context.undone', (event) => {
       undone.push(event);
     });
     await runTurn(env.agent, 'first');
@@ -283,7 +283,7 @@ describe('undo feature', () => {
     expect(
       env.records.find((record) => record.event === 'conversation_undo')?.properties,
     ).toMatchObject({ count: 1 });
-    expect(env.harness.app.sessions.get('s1')?.agents.get('main')).toBe(env.agent);
+    expect(env.harness.sessions.get('s1')?.liveAgents.get('main')).toBe(env.agent);
     expect(historyTexts(env.agent)).toEqual(['first', 'echo:first']);
     expect(env.agent.view.getState().turns).toHaveLength(1);
     expect(env.agent.view.getState().nextTurnId).toBe(1);
@@ -378,9 +378,9 @@ describe('undo feature', () => {
     await runTurn(env.agent, 'second');
     await env.face()!.undo(1);
 
-    await env.harness.app.close('s1');
-    const resumed = await env.harness.app.create({ sessionId: 's1' });
-    const reopened = await env.harness.ensureAgent(resumed, 'main');
+    await env.harness.close('s1');
+    const resumed = await env.harness.open('s1');
+    const { agent: reopened } = await resumed.ensureAgent('main');
     setRequester(env.harness, 's1', 'main', echoRequester());
     await tick();
 

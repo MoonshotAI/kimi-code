@@ -1,5 +1,5 @@
-import { createFeature, useApp, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, useApp, type Feature } from '#/app/index';
+import { createFacadeToken, useExpose } from '#/kernel/index';
 import { SessionSpaceError } from '@moonshot-ai/agent-core/session/index';
 
 import { SessionExportError } from './errors';
@@ -41,7 +41,7 @@ export function createSessionExport(props: CreateSessionExportProps): Feature {
           }
           const live = app.sessions.get(input.sessionId);
           if (live !== undefined) {
-            for (const agent of live.agents.values()) {
+            for (const agent of live.liveAgents.values()) {
               await agent.flush().catch(() => {});
             }
           }

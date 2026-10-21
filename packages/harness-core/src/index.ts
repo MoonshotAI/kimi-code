@@ -1,3 +1,13 @@
+export {
+  createApp,
+  type App,
+  type AppEvent,
+  type AppSession,
+  type CreateAppOptions,
+  type CreateSessionInput,
+  type EnsuredAgent,
+  type OpenAgentOptions,
+} from './app/index';
 export * from './runtime/index';
 export * from './features/config/index';
 export * from './features/telemetry/index';
@@ -45,4 +55,3 @@ export * from './features/tokenCounting/index';
 export * from './feature-http/index';
 export * from './feature-acp/index';
 export * from './feature-remote-control/index';
-export * from './host/index';

@@ -1,4 +1,4 @@
-import type { Feature } from '@moonshot-ai/agent-core/app/index';
+import type { Feature } from '#/app/index';
 
 import { createBtw } from './features/btw/index';
 import { createDateChange } from './features/dateChange/index';

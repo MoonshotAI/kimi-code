@@ -4,7 +4,13 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   createUserEntry,
   type HistoryMessage,
@@ -12,7 +18,7 @@ import {
   type ToolMeta,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -24,7 +30,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {
   ConfigRef,
@@ -58,10 +64,6 @@ import {
   type SkillFace,
 } from '#/features/skill/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  type Harness,
 } from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
@@ -198,12 +200,12 @@ function required<T>(value: T | undefined, label: string): T {
 }
 
 interface SkillTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly main: Agent;
   readonly calls: readonly LlmCall[];
   readonly requester: LoopLlmRequester;
-  readonly skillFeature: Feature<void, SkillEvent>;
+  readonly skillFeature: Feature<void, { app: SkillChangedEvent; agent: SkillActivatedEvent }>;
   readonly catalog: () => SkillCatalogFace;
   readonly skill: () => SkillFace;
   readonly config: () => ConfigStore;
@@ -212,15 +214,15 @@ interface SkillTestEnv {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
@@ -243,14 +245,14 @@ async function startSkillApp(options?: {
     ...options?.skillProps,
   });
   const capture: ProbeCapture = { skills: new Map() };
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   if (options?.withConfig !== false) {
-    harness.app.features.add(
+    harness.features.add(
       createConfig({ persist: fakePersist(options?.toml).persist, env: options?.env ?? {} }),
     );
   }
-  harness.app.features.add(skillFeature);
-  harness.app.features.add(
+  harness.features.add(skillFeature);
+  harness.features.add(
     createFeature('skill-probe', {
       app() {
         capture.catalog = useInject(SkillCatalogRef);
@@ -261,11 +263,11 @@ async function startSkillApp(options?: {
       },
     }),
   );
-  for (const feature of options?.extraFeatures ?? []) harness.app.features.add(feature);
-  const session = await harness.app.create({ sessionId: 'sess' });
+  for (const feature of options?.extraFeatures ?? []) harness.features.add(feature);
+  const session = await harness.open('sess');
   const catalog = required(capture.catalog?.value, 'SkillCatalogRef');
   await catalog.ready;
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   const runTurn = async (text: string): Promise<void> => {
     await main.loop.runTurn(user(text));
@@ -748,7 +750,7 @@ describe('createSkill app slot', () => {
       expect.arrayContaining(['brand-one', 'generic-one']),
     );
     const changed: string[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.changed', (event) => {
+    env.harness.on(env.skillFeature, 'skill.changed', (event) => {
       changed.push(event.sourceId);
     });
     await env.config().set(MERGE_ALL_AVAILABLE_SKILLS_SECTION, false, 'memory');
@@ -780,7 +782,7 @@ describe('createSkill app slot', () => {
   it('reloads affected sources on config change and fires skill.changed', async () => {
     const env = await startSkillApp();
     const changed: SkillChangedEvent[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.changed', (event) => {
+    env.harness.on(env.skillFeature, 'skill.changed', (event) => {
       changed.push(event);
     });
     const extraDir = join(workDir, 'extra');
@@ -797,10 +799,10 @@ describe('createSkill app slot', () => {
   it('merges late-registered sources via useSkillSource and reload picks up disk changes', async () => {
     const env = await startSkillApp();
     const changed: string[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.changed', (event) => {
+    env.harness.on(env.skillFeature, 'skill.changed', (event) => {
       changed.push(event.sourceId);
     });
-    env.harness.app.features.add(
+    env.harness.features.add(
       createFeature('late-skill-source', {
         app() {
           useSkillSource({
@@ -845,7 +847,7 @@ describe('createSkill agent slot', () => {
     const listing = env.catalog().getModelSkillListing();
     expect(systemPrompt).toContain(`${listing}\n\n`);
 
-    const sub = await env.harness.ensureAgent(env.session, 'sub-1', { systemPrompt: 'sub-host' });
+    const { agent: sub } = await env.session.ensureAgent('sub-1', { systemPrompt: 'sub-host' });
     setRequester(env.harness, 'sess', 'sub-1', env.requester);
     const subDone = waitTurnDone(sub);
     sub.loop.submit(user('hello'));
@@ -886,7 +888,7 @@ describe('createSkill agent slot', () => {
     await makeProjectSkill();
     const env = await startSkillApp();
     const activated: SkillActivatedEvent[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.activated', (event) => {
+    env.harness.on(env.skillFeature, 'skill.activated', (event) => {
       activated.push(event);
     });
     await env.runTurn(`CALL:${JSON.stringify({ name: 'Skill', arguments: JSON.stringify({ skill: 'commit', args: '-m "fix bug"' }) })}`);
@@ -943,7 +945,7 @@ describe('createSkill agent slot', () => {
     );
     const env = await startSkillApp();
     const activated: SkillActivatedEvent[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.activated', (event) => {
+    env.harness.on(env.skillFeature, 'skill.activated', (event) => {
       activated.push(event);
     });
     const call = (skill: string): string =>
@@ -968,7 +970,7 @@ describe('createSkill agent slot', () => {
   it('answers invalid tool arguments as plain-text results without activating', async () => {
     const env = await startSkillApp();
     const activated: SkillActivatedEvent[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.activated', (event) => {
+    env.harness.on(env.skillFeature, 'skill.activated', (event) => {
       activated.push(event);
     });
     const call = (rawArguments: string): string =>
@@ -989,7 +991,7 @@ describe('createSkill agent slot', () => {
     await makeProjectSkill();
     const env = await startSkillApp();
     const activated: SkillActivatedEvent[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.activated', (event) => {
+    env.harness.on(env.skillFeature, 'skill.activated', (event) => {
       activated.push(event);
     });
     const startedIds: number[] = [];
@@ -1056,7 +1058,7 @@ describe('createSkill agent slot', () => {
     await makeProjectSkill();
     const env = await startSkillApp();
     const activated: SkillActivatedEvent[] = [];
-    env.harness.app.on(env.skillFeature, 'skill.activated', (event) => {
+    env.harness.on(env.skillFeature, 'skill.activated', (event) => {
       activated.push(event);
     });
     const done = waitTurnDone(env.main);

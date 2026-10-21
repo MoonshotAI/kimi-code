@@ -13,8 +13,13 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { WebSocket } from 'ws';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useInject } from '#/kernel/index';
 
 import {
   acquireRemoteControlLock,
@@ -37,9 +42,9 @@ import {
   type RemoteControlHandle,
   type RemoteControlOptions,
 } from '#/feature-remote-control/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
 
-const harnesses: Harness[] = [];
+
+const harnesses: App[] = [];
 const tmps: string[] = [];
 
 const TOKEN: TokenInfo = {
@@ -89,9 +94,9 @@ function createFakeTunnel(): FakeTunnel {
 }
 
 async function mountRemoteControl(props?: Partial<CreateRemoteControlProps>): Promise<RemoteControlFace> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   harnesses.push(harness);
-  harness.app.features.add(
+  harness.features.add(
     createRemoteControl({
       homeDir: await makeTmp(),
       localOrigin: () => 'http://127.0.0.1:3000',
@@ -102,7 +107,7 @@ async function mountRemoteControl(props?: Partial<CreateRemoteControlProps>): Pr
     }),
   );
   let face: RemoteControlFace | undefined;
-  harness.app.features.add(
+  harness.features.add(
     createFeature('remote-control-capture', {
       app() {
         face = useInject(RemoteControlRef).value;

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createApp, createFeature, useAgent, useApp, useSession, useSystemPrompt, useTurnStarting } from '#/app/index';
-import { createSystemEntry } from '#/history/message';
+import { createApp, createFeature, useAgent, useApp, useSession, useSystemPrompt, useToolHandler, useTurnStarting } from '#/app/index';
+import { createSystemEntry } from '@moonshot-ai/agent-core/history/message';
 import { useCleanup, useFire, useOn, type RuntimeEvent } from '#/kernel/index';
-import { extractText } from '#/llm/message';
-import { memorySessionSpace } from '#/session/index';
-import type { ToolResult } from '#/tool/index';
+import { extractText } from '@moonshot-ai/agent-core/llm/message';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { createToolExecutor, type ToolExecuteInput, type ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
   agentCaps,
@@ -31,8 +31,8 @@ function gate(): { promise: Promise<void>; resolve: () => void } {
 describe('app units', () => {
   it('mirrors live sessions and agents as units and forwards their log commits with context', async () => {
     const app = createApp();
-    const left = await app.create({ sessionId: 'left' });
-    const right = await app.create({ sessionId: 'right' });
+    const left = await app.open('left');
+    const right = await app.open('right');
     expect([...app.sessions.keys()]).toEqual(['left', 'right']);
     const agent = await left.open('agent-0', agentCaps());
     expect(left.roster.getState().agents['agent-0']).toEqual({});
@@ -53,8 +53,8 @@ describe('app units', () => {
       created.push(String(event['sessionId']));
     }, { once: true });
     const waiting = app.wait('session.created', { match: (event) => event['sessionId'] === 'right' });
-    await app.create({ sessionId: 'left' });
-    await app.create({ sessionId: 'right' });
+    await app.open('left');
+    await app.open('right');
     expect(created).toEqual(['left']);
     await expect(waiting).resolves.toMatchObject({ sessionId: 'right' });
     await app.close();
@@ -64,7 +64,7 @@ describe('app units', () => {
     type ProbeEvent =
       | { readonly type: 'probe.ready'; readonly value: number }
       | { readonly type: 'probe.done'; readonly value: number };
-    const probe = createFeature<ProbeEvent>('probe', {
+    const probe = createFeature<{ app: ProbeEvent }>('probe', {
       app: () => {
         const fire = useFire();
         fire({ type: 'stray.tick' });
@@ -118,9 +118,9 @@ describe('app units', () => {
       execute: async () => ({ content: [{ type: 'text' as const, text: 'pong' }] }),
     };
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const agent = await session.open('main', agentCaps(executor, requester));
-    expect([...session.agents.keys()]).toEqual(['main']);
+    expect([...session.liveAgents.keys()]).toEqual(['main']);
     pending = gate();
     expect(agent.loop.notify(user('note', { source: 'notify' }))?.type).toBe('prompt.notified');
     expect(agent.loop.remind(user('reminder-text', { source: 'reminder', key: 'rk' }))?.type).toBe('prompt.reminded');
@@ -152,10 +152,10 @@ describe('app units', () => {
     await agent.flush();
     expect(texts(agent)).toContain('note');
     const copy = await session.fork('main', 'copy', agentCaps(executor, requester));
-    expect([...session.agents.keys()]).toEqual(['main', 'copy']);
+    expect([...session.liveAgents.keys()]).toEqual(['main', 'copy']);
     expect(texts(copy)).toContain('go');
-    await session.close('main');
-    expect([...session.agents.keys()]).toEqual(['copy']);
+    await session.closeAgent('main');
+    expect([...session.liveAgents.keys()]).toEqual(['copy']);
     expect(Object.keys(session.roster.getState().agents)).toEqual(['main', 'copy']);
     await app.close('sess');
     expect(app.sessions.size).toBe(0);
@@ -165,7 +165,7 @@ describe('app units', () => {
 
   it('waits loop events with match, timeout, and abort signal', async () => {
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const agent = await session.open('main', agentCaps());
     const done = loopEvent(agent.loop, 'turn.ended', { match: (event) => event.outcome.type === 'done' });
     agent.loop.submit(user('hello'));
@@ -181,7 +181,7 @@ describe('app units', () => {
   it('runs a full turn only while idle and settles signal aborts and timeouts as aborted outcomes', async () => {
     const caps = agentCaps();
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const agent = await session.open('main', caps);
     expect((await agent.loop.runTurn(user('hello'))).type).toBe('done');
     expect(agent.loop.state.messages.map((entry) => extractText(entry.message))).toContain('echo:hello');
@@ -232,7 +232,7 @@ describe('app units', () => {
       },
     };
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const agent = await session.open('main', agentCaps(executor, requester));
     const detached = loopEvent(agent.loop, 'tool.ended', {
       match: (event) => event.toolCallId === 'call-bg' && event.detached,
@@ -262,7 +262,7 @@ describe('app units', () => {
         }),
     };
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const agent = await session.open('main', agentCaps(executor, requester));
     agent.loop.detachTool('missing');
     const spawned = loopEvent(agent.loop, 'tool.started', { match: (event) => event.toolCall.id === 'call-fg' });
@@ -307,13 +307,13 @@ describe('app units', () => {
 
   it('mounts the units of a feature per level, attaches them to their level, and keeps per-instance registration', async () => {
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const a1 = await session.open('a1', agentCaps());
     const hookIds = (agent: typeof a1) => agent.loop.hooks.list().map((hook) => hook.id);
     const mounted: string[] = [];
     const fires = new Map<string, (event: RuntimeEvent) => void>();
     const heard: Array<[unknown, unknown]> = [];
-    const Probe = createFeature<RuntimeEvent, { readonly tag: string }>('probe', {
+    const Probe = createFeature<{ agent: RuntimeEvent }, { readonly tag: string }>('probe', {
       session: (props) => {
         expect(() => useAgent()).toThrow("no provider for token 'agent'");
         mounted.push(`+${useSession().id}:${props.tag}`);
@@ -360,7 +360,7 @@ describe('app units', () => {
     expect(() => app.features.add(createFeature('app-only', { app: () => {} }), { session: 'sess' })).toThrow(TypeError);
     expect(() => app.features.add(Probe, { session: 'ghost' })).toThrow("session 'ghost' is not open");
     await offOwn();
-    await session.close('a2');
+    await session.closeAgent('a2');
     expect(hookIds(a2)).toEqual([]);
     expect(hookIds(a1)).toEqual(['probe']);
     await offApp();
@@ -379,10 +379,10 @@ describe('app units', () => {
     expect(fresh.id).toMatch(/^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
     expect(fresh.status().source).toBe('startup');
     expect(created).toEqual([{ sessionId: fresh.id, from: undefined }]);
-    const live = await app.create({ sessionId: fresh.id });
+    const live = await app.open(fresh.id);
     expect(live).toBe(fresh);
     await app.close(fresh.id);
-    const resumed = await app.create({ sessionId: fresh.id });
+    const resumed = await app.open(fresh.id);
     expect(resumed).not.toBe(fresh);
     expect(resumed.status().source).toBe('resume');
     expect(created).toHaveLength(1);
@@ -410,7 +410,7 @@ describe('app units', () => {
     expect(deleted).toEqual([cold.id]);
     await app.delete(live.id);
     expect(app.sessions.get(live.id)).toBeUndefined();
-    await expect(live.open('main', agentCaps())).rejects.toThrow('Writer is closed');
+    await expect(live.open('main', agentCaps())).rejects.toThrow(`session '${live.id}' is closed`);
     expect(await space.get(live.id)).toBeUndefined();
     expect(deleted).toEqual([cold.id, live.id]);
     await expect(app.delete(live.id)).rejects.toThrow(`session '${live.id}' does not exist`);
@@ -440,7 +440,7 @@ describe('app units', () => {
 
   it('fires agent.opened with reopened discrimination and agent.closed as agent units mount and unmount', async () => {
     const app = createApp();
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const opened: Array<{ agentId: unknown; source?: unknown; reopened?: unknown }> = [];
     const closed: unknown[] = [];
     app.on('agent.opened', (event) => {
@@ -453,7 +453,7 @@ describe('app units', () => {
     await session.open('sub-1', agentCaps(), { source: 'spawn:main:coder' });
     await session.fork('main', 'sub-2', agentCaps(), { source: 'btw' });
     const closing = appEvent(app, 'agent.closed');
-    await session.close('sub-1');
+    await session.closeAgent('sub-1');
     await closing;
     await session.open('sub-1', agentCaps());
     expect(opened).toEqual([
@@ -490,7 +490,7 @@ describe('system prompt sections', () => {
         },
       }),
     );
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const agent = await session.open('main', agentCaps());
     await vi.waitFor(() => {
       expect(agent.loop.state.profile.systemPrompt).toBe('EARLY-2\n\nLATE');
@@ -517,7 +517,7 @@ describe('system prompt sections', () => {
         },
       }),
     );
-    const session = await app.create({ sessionId: 'sess' });
+    const session = await app.open('sess');
     const settled: unknown[] = [];
     app.on('system_prompt.settled', (event) => settled.push(event['systemPrompt']));
     const first = await session.open('main', agentCaps());
@@ -525,11 +525,36 @@ describe('system prompt sections', () => {
       expect(first.loop.state.profile.systemPrompt).toBe('TEXT');
     });
     await first.flush();
-    await session.close('main');
+    await session.closeAgent('main');
     const second = await session.open('main', agentCaps());
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(second.loop.state.profile.systemPrompt).toBe('TEXT');
     expect(settled).toEqual(['TEXT']);
+    await app.close();
+  });
+
+  it('registers from an agent feature and drops the handler when the feature is removed', async () => {
+    const tools = createToolExecutor();
+    const app = createApp();
+    const session = await app.open('sess');
+    await session.open('main', agentCaps(tools));
+    const remove = app.features.add(
+      createFeature('ping', {
+        agent: () => {
+          useToolHandler('ping', {
+            execute: async () => ({ content: [{ type: 'text', text: 'pong' }] }),
+          });
+        },
+      }),
+      { session: 'sess', agent: 'main' },
+    );
+    const input: ToolExecuteInput = {
+      toolCall: { type: 'function', id: 'call_ping', name: 'ping', arguments: '{}' },
+      signal: new AbortController().signal,
+    };
+    expect((await tools.execute(input)).content[0]).toMatchObject({ type: 'text', text: 'pong' });
+    await remove();
+    expect((await tools.execute(input)).isError).toBe(true);
     await app.close();
   });
 });

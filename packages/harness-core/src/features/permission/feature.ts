@@ -5,7 +5,7 @@ import {
   useStepStarting,
   useToolPermitting,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -13,7 +13,7 @@ import {
   useFire,
   useInject,
   type ComputedRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
 
@@ -60,9 +60,9 @@ export interface CreatePermissionProps {
   readonly fs?: OsFsPort;
 }
 
-export function createPermission(props: CreatePermissionProps = {}): Feature<void, PermissionEvent> {
+export function createPermission(props: CreatePermissionProps = {}): Feature<void, { agent: PermissionEvent }> {
   const faces = new WeakMap<Agent, PermissionFace>();
-  return createFeature<PermissionEvent>('permission', {
+  return createFeature<{ agent: PermissionEvent }>('permission', {
     app() {
       useConfigSection(permissionConfigSection);
       useConfigSection(defaultPermissionModeConfigSection);
@@ -98,7 +98,7 @@ export function createPermission(props: CreatePermissionProps = {}): Feature<voi
           await setMode(mode);
           if (!isMain) return;
           const pending: Promise<void>[] = [];
-          for (const [id, target] of session.agents) {
+          for (const [id, target] of session.liveAgents) {
             if (id === agent.id) continue;
             const targetFace = faces.get(target);
             if (targetFace !== undefined) pending.push(targetFace.setMode(mode));

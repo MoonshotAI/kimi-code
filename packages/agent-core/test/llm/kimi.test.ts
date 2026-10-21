@@ -503,7 +503,10 @@ describe('kimi provider', () => {
       model: { spec: { ...spec, capability: { image_in: true } }, thinking: { effort: 'high' } },
       profile: {
         systemPrompt: 'be brief',
-        tools: [{ name: 'lookup', description: 'lookup', parameters: { type: 'object' } }],
+        tools: [
+          { name: 'lookup', description: 'lookup', parameters: { type: 'object' } },
+          { name: 'hidden', description: 'hidden', parameters: { type: 'object' }, deferred: true as const },
+        ],
       },
     });
     const content = {
@@ -560,7 +563,15 @@ describe('kimi provider', () => {
       { content },
       { signal: new AbortController().signal, onEvent: (event) => boundary.push(event) },
     );
-    expect(boundary[0]).toEqual({ type: 'llm.started' });
+    expect(boundary[0]).toEqual({
+      type: 'llm.started',
+      provider: 'kimi',
+      model: 'kimi-k2',
+      thinkingEffort: 'high',
+      systemPromptHash: 'b0d336336bae9756708102764ccc977778d8c408df38d7050d69f9e4d22c9a43',
+      toolsHash: 'e64d9f2217675f78c7fdc4e6e37dde883e877eb08e16362bd2f4063c5fb47582',
+      messageCount: 1,
+    });
     expect(boundary.filter((event) => event.type === 'llm.started' || event.type === 'llm.ended')).toHaveLength(2);
     expect(boundary.at(-1)).toEqual({ type: 'llm.ended', outcome: settled });
     expect(settled).toMatchObject({

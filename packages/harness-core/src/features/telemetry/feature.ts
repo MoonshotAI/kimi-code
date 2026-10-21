@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { createFeature, useAgent, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent, useSession, type Feature } from '#/app/index';
 import {
   createCollection,
   createFacadeToken,
@@ -10,7 +10,7 @@ import {
   useInject,
   watch,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 
 import { ConfigRef, useConfigSection, type ConfigSectionContribution } from '#/features/config/index';
 

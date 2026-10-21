@@ -9,26 +9,26 @@ runtime rules (facades, events, remounts) that feature code must respect.
 ```
 your host (CLI, desktop app, server, tests)
 └── @moonshot-ai/harness-core        ← this package: the Kimi product
-    ├── src/runtime/                 ← seam: createHarness, AgentRuntime, hooks, feature stores
-    ├── src/features/ (44 features)  ← product behavior as createFeature units
-    ├── src/feature-http/ -acp/ -remote-control/  ← transports (also features)
-    └── src/host/                    ← fsSessionSpace (Node, on disk)
-└── @moonshot-ai/agent-core          ← the runtime: no product decisions
     ├── src/kernel/                  ← Unit runtime on @vue/reactivity
+    ├── src/app/                     ← createApp + createFeature + level units + agent runtimes
+    ├── src/runtime/                 ← AgentRuntime, hooks, feature stores
+    ├── src/features/ (44 features)  ← product behavior as createFeature units
+    └── src/feature-http/ -acp/ -remote-control/  ← transports (also features)
+└── @moonshot-ai/agent-core          ← the engine: no product decisions, no reactivity
     ├── src/loop/                    ← createLoop: the turn/step machine
     ├── src/session/                 ← sessions, agents, durable logs, SessionSpace port
-    ├── src/app/                     ← createApp + createFeature + level units
     ├── src/store/  src/blob/        ← event-sourced logs; content-addressed blobs
     ├── src/llm/                     ← requester/policy/protocol/provider stack
     └── src/tool/  src/history/      ← tool contract & executor; history entries
 ```
 
-agent-core owns mechanism: how a turn runs, what gets persisted, how units
-mount. It has no root entry — you import domain subpaths
-(`@moonshot-ai/agent-core/app/index`, `.../kernel/index`, …). Its own
+agent-core owns mechanism: how a turn runs, what gets persisted. It carries
+no reactive runtime and no root entry — you import domain subpaths
+(`@moonshot-ai/agent-core/loop/index`, `.../session/index`, …). Its own
 `packages/agent-core/AGENTS.md` is the authoritative description of those
 domains; the agent-core docs cover the LLM boundary, the loop, and sessions
-in depth.
+in depth. The reactive shell — the kernel Unit runtime, the app instance,
+the createFeature seam — lives in this package (`src/kernel/`, `src/app/`).
 
 harness-core owns product: which tools exist, what the system prompt says,
 which events a UI can subscribe to, how models are bound to agents. It has a
@@ -36,31 +36,39 @@ root export (`@moonshot-ai/harness-core`) that re-exports everything public.
 Nothing in harness-core replaces an agent-core mechanism — features are
 composed *on* the agent-core seam, never inside it.
 
-## The Harness Seam
+## The App Seam
 
-`createHarness` (`src/runtime/harness.ts`) is a thin wrapper over
-`createApp`:
+`createApp` (`src/app/app.ts`) is the process root — one object per host:
 
 ```ts
-import { createHarness, memoryHarnessSpace } from '@moonshot-ai/harness-core';
+import { createApp } from '@moonshot-ai/harness-core';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
-const harness = createHarness({ space: memoryHarnessSpace() });
-const session = await harness.app.create({ sessionId: 's1' });
-const agent = await harness.ensureAgent(session); // MAIN_AGENT_ID by default
+const app = createApp({ space: memorySessionSpace() });
+const session = await app.open('s1');
+const { agent } = await session.ensureAgent(); // MAIN_AGENT_ID by default
 ```
 
-It adds three things to the plain `App`:
+The process model is `app → session → agent`, and the `App` carries
+everything the host needs at each step:
 
-1. **A `HarnessSessionSpace`** — a `SessionSpace` that also hands out a
-   per-session feature `Journal` (`featureJournal(sessionId)`), which backs
-   the durable feature stores (see [Persistence](persistence.md)).
-2. **A per-agent `AgentRuntime` registry** — `ensureAgent(session, agentId?)`
-   opens an agent with harness-managed capabilities: a requester slot, live
-   LLM policy arrays, a tool registry, and the `host` system prompt section.
-   Feature units reach this record through `useAgentRuntime()`. See
-   [Agent Runtime](agent-runtime.md).
-3. **Feature journal writers** — one shared `Writer` per session, used by
-   every `useFeatureStore` in that session.
+1. **Session CRUD** — `app.create` / `app.open` / `app.update` /
+   `app.close` / `app.delete` over a `SessionSpace` (agent-core): the
+   session catalog plus the per-session journal and blob container that
+   back every durable store (see [Persistence](persistence.md)).
+2. **Agent open with harness-managed capabilities** — `app.open` /
+   `app.create` return an `AppSession` (`src/app/session.ts`), the session
+   handler that owns agent operations:
+   `session.ensureAgent(agentId?)` / `session.forkAgent(...)` open an agent
+   with a per-agent `AgentRuntime`: a requester slot, live LLM policy
+   arrays, a tool registry, and the `host` system prompt section. Runtimes
+   live in the session handler itself (`session.agentRuntime(agentId)`);
+   feature units reach the current agent's record through
+   `useAgentRuntime()`. See [Agent Runtime](agent-runtime.md).
+3. **Feature stores** — `useFeatureStore` projections over the session's
+   own logs: an agent-scoped store shares the agent's loop log, a
+   session-scoped store shares the session roster log (see
+   [Persistence](persistence.md)).
 
 Everything else in harness-core — all 44 features and all three transports —
 is built as *features* on top of this seam, using the same mechanism you
@@ -74,7 +82,7 @@ A feature is a named bundle of up to three unit setups, one per level of the
 domain tree:
 
 ```ts
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
 
 export const myFeature = createFeature('my-feature', {
   app() {},     // runs once per app
@@ -91,7 +99,7 @@ three, a session unit sees session and app), and every kernel hook
 synchronously at mount and must return `undefined`; asynchronous startup goes
 through `useReady(promise)` so `app.create` / `session.open` await it.
 
-A feature may carry props: `createFeature<E, P>` typing plus
+A feature may carry props: `createFeature<Events, P>` typing plus
 `features.add(feature, { props })`, where the props object is passed to each
 unit setup. Features with constructor options are instead exported as
 factories that close over their props and return `Feature<void>` — the
@@ -129,7 +137,7 @@ Features publish their public surface as **facades**. A facade token is a
 `useExpose(token, face)`; consumers inject it:
 
 ```ts
-import { createFacadeToken, useExpose, useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, useExpose, useInject, type ShallowRef } from '#/kernel/index';
 
 export const TodoRef = createFacadeToken<TodoFace>('todo');
 
@@ -185,21 +193,23 @@ Two more event sources feed the same channel:
   `session.meta_updated`.
 - **Log forwarding** — each session/agent unit forwards the commits of its
   durable log as unit events, starting from the log version the object was
-  opened at (`since`). This is how `message.appended`, `turn.ended`, and
-  `agent.registered` reach `app.on`. Only *recorded* loop events forward —
-  streaming deltas and inbox events stay loop-local; subscribe to
-  `agent.loop` for those.
+  opened at (`since`). The agent unit forwards only `LoopRecord`s and the
+  session unit only roster events — feature events committed to the same
+  logs reach listeners through their store's `dispatch`, not through
+  forwarding. This is how `message.appended`, `turn.ended`, and
+  `agent.registered` reach `app.on`. Streaming deltas and inbox events stay
+  loop-local; subscribe to `agent.loop` for those.
 
 `app.on` has a typed form: `app.on(feature, type, handler)` narrows the
-handler to the feature's declared event union (declared as
-`createFeature<MyEvent>(...)`), and `app.on(feature, '*', handler)`
+handler to the feature's declared event union (declared per level, as
+`createFeature<{ agent: MyEvent }>(...)`), and `app.on(feature, '*', handler)`
 prefix-matches `<feature.name>.`. The full event surface is documented in
 [Events](../reference/events.md).
 
 ### Remounts and the Re-entrancy Discipline
 
 Feature units are not singletons. The level units mirror two reactive
-sources — the live domain children (`app.sessions`, `session.agents`) and
+sources — the live domain children (`app.sessions`, `session.liveAgents`) and
 the folded feature registrations — and apply changes **synchronously inside
 the reactive trigger**, so a session or agent and its feature units are
 fully mounted before `app.create` / `session.open` resolve. Unmounting, by
@@ -252,11 +262,11 @@ agent's `AgentRuntime`:
 
 | Area | Path |
 |---|---|
-| Harness, agent runtimes, hooks, feature stores | `src/runtime/` |
+| App, agent runtimes, hooks, feature stores | `src/app/`, `src/runtime/` |
 | Default feature bundle | `src/preset.ts` (`harnessPreset`) |
 | Product features | `src/features/<name>/feature.ts` |
 | HTTP/WebSocket transport | `src/feature-http/` |
 | ACP transport | `src/feature-acp/` |
 | Remote-control transport | `src/feature-remote-control/` |
-| On-disk session space | `src/host/session-space.ts` |
+| On-disk session space | `packages/agent-core/src/session/backend/node.ts` |
 | Runnable assembly (the tutorial) | `example/app.ts`, `example/cli.ts` |

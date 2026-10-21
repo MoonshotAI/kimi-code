@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 
 import {
   InteractionRef,

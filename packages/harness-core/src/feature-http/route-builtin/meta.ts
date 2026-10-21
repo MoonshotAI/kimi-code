@@ -1,5 +1,5 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useApp } from '#/app/index';
+import { useInject } from '#/kernel/index';
 
 import type { OpenInAppId } from '#/features/os/fileLaunch';
 import { WorkspaceRef } from '#/features/workspaces/index';

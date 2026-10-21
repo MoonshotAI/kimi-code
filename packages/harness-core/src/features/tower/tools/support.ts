@@ -10,7 +10,7 @@ import {
   type TowerIo,
   type TowerState,
 } from '../protocol/index';
-import type { TowerHub } from '../hub';
+import type { TowerHub } from '../feature';
 import type { TowerRateLimiter } from '../rateLimit';
 
 export const TOWER_MAIN_AGENT_ONLY =

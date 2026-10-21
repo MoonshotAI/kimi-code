@@ -7,17 +7,20 @@ runtime primitives — the kernel Unit runtime on `@vue/reactivity`, the
 and blob store, and the app/feature seam (`createApp` / `createFeature`).
 harness-core turns those primitives into a product:
 
-- `src/runtime/` — the seam between agent-core and the product features:
-  `createHarness`, `memoryHarnessSpace`, the per-agent `AgentRuntime`
-  (requester slot, LLM policy arrays, tool registry, host prompt section),
-  the contribution hooks (`useAgentTools`, …) and the
-  durable feature stores (`useFeatureStore`, `undoAgentTurns`).
+- `src/app/` — `createApp`, the process root: session CRUD over a
+  `SessionSpace` (agent-core); `app.open` / `app.create` return the
+  `AppSession` session handler, whose `session.ensureAgent` /
+  `session.forkAgent` open agents with the per-agent
+  `AgentRuntime` registry (requester slot, LLM policy arrays, tool registry,
+  host prompt section).
+- `src/runtime/` — the `AgentRuntime` record and `agentCaps`, the
+  contribution hooks (`useAgentTools`, …) and the durable feature stores
+  (`useFeatureStore`).
 - `src/features/` — every Kimi product feature as a `createFeature` unit
   (todo, plan, permission, skill, mcp, compaction, provider-catalog, …).
 - `src/feature-http/`, `src/feature-acp/`, `src/feature-remote-control/` —
   transport surfaces that expose the harness over HTTP/WebSocket, the Agent
   Client Protocol, and the remote-control tunnel.
-- `src/host/` — `fsSessionSpace`, the on-disk `HarnessSessionSpace`.
 - `src/preset.ts` — `harnessPreset`, the default feature bundle.
 - `example/` — a runnable host that assembles the full stack; it is the
   canonical tutorial for this package.
@@ -29,7 +32,8 @@ harness-core turns those primitives into a product:
 - [Architecture](explanation/architecture.md) — the two packages, the three
   feature levels, facades, event bubbling, and the remount discipline.
 - [Persistence](explanation/persistence.md) — loop logs, the session roster
-  log, feature journals, blobs, and the `SessionSpace` layouts.
+  log, feature events sharing those logs, blobs, and the `SessionSpace`
+  layouts.
 - [Agent Runtime](explanation/agent-runtime.md) — the `AgentRuntime` record,
   `ensureAgent`, tool freeze semantics, the agent-core system prompt
   sections contribution point, and managed model binding through
@@ -51,7 +55,7 @@ harness-core turns those primitives into a product:
 - [Develop a Feature](how-to-guides/02-develop-a-feature.md) — write a
   `createFeature` with units, a facade, events, tools, and tests.
 - [Persist Feature State](how-to-guides/03-persist-feature-state.md) —
-  `useFeatureStore` scopes, dispatch, and undo-synchronized rewind.
+  `useFeatureStore` scopes, dispatch, and the single-rewind undo.
 - [Serve HTTP](how-to-guides/04-serve-http.md) — `createHttp`, the route
   layers, and consuming facades inside handlers.
 
@@ -75,11 +79,11 @@ harness-core has a root entry — everything public is re-exported from
 domain subpath:
 
 ```ts
-import { createHarness, memoryHarnessSpace } from '@moonshot-ai/harness-core';
+import { createApp } from '@moonshot-ai/harness-core';
 import { harnessPreset } from '@moonshot-ai/harness-core/preset';
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, watch } from '@moonshot-ai/agent-core/kernel/index';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import { createFeature } from '#/app/index';
+import { useInject, watch } from '#/kernel/index';
+import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 ```
 
 (The package root re-exports `src/index.ts`; `harnessPreset` lives in

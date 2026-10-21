@@ -1,7 +1,15 @@
+import type { ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import { effectiveModelSpec } from '#/llm/protocol/rules/model';
 import type { LlmRequest } from '#/llm/request';
-import type { LlmErrorMessage, LlmOutcome, LlmRemoteErrorMessage, LlmRunEvent } from '#/llm/response';
+import type {
+  LlmErrorMessage,
+  LlmOutcome,
+  LlmRemoteErrorMessage,
+  LlmRunEvent,
+  LlmRunStarted,
+} from '#/llm/response';
+import { sha256Hex } from '#/utils/hash';
 
 import {
   createRecoveryLedger,
@@ -74,11 +82,45 @@ function abortedOf(result: Extract<LlmOutcome, { type: 'failed' }>): LlmOutcome 
   };
 }
 
+const toolSignature = ({ name, description, parameters }: ToolDescription) => ({
+  name,
+  description,
+  parameters,
+});
+
+export async function llmStartedEvent(request: LlmRequest): Promise<LlmRunStarted> {
+  const { model, profile, content } = request;
+  const encoder = new TextEncoder();
+  const [systemPromptHash, toolsHash] = await Promise.all([
+    profile?.systemPrompt === undefined ? undefined : sha256Hex(encoder.encode(profile.systemPrompt)),
+    profile?.tools === undefined
+      ? undefined
+      : sha256Hex(
+          encoder.encode(
+            JSON.stringify(profile.tools.filter((tool) => tool.deferred !== true).map(toolSignature)),
+          ),
+        ),
+  ]);
+  return {
+    type: 'llm.started',
+    provider: model.spec.provider,
+    model: model.spec.name,
+    thinkingEffort: model.thinking?.effort,
+    thinkingKeep: model.thinking?.keep,
+    temperature: model.sampling?.temperature,
+    topP: model.sampling?.topP,
+    maxOutputTokens: model.maxOutputTokens,
+    systemPromptHash,
+    toolsHash,
+    messageCount: content.messages.length,
+  };
+}
+
 export async function runLlmRequest(
   request: LlmRequest,
   control: LlmRunControl,
 ): Promise<LlmOutcome> {
-  control.onEvent?.({ type: 'llm.started' });
+  control.onEvent?.(await llmStartedEvent(request));
   let outcome: LlmOutcome;
   try {
     outcome = await runAttempts(request, control);

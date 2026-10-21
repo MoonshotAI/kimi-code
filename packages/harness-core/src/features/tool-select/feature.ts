@@ -1,4 +1,4 @@
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent, type Feature } from '#/app/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 

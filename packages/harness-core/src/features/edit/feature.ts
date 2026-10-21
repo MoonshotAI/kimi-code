@@ -1,5 +1,5 @@
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import type { Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
+import type { Feature } from '#/app/index';
 
 import { useAgentTools } from '#/runtime/index';
 

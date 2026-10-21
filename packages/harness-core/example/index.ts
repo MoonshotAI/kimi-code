@@ -16,11 +16,11 @@ if (args !== undefined) {
     process.exitCode = 1;
   }
 } else {
-  const { harness, key, dataRoot, probe } = mountExample();
+  const { app, key, dataRoot, probe } = mountExample();
   const onSignal = (): void => {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
-    void harness.close().then(() => process.exit(0));
+    void app.close().then(() => process.exit(0));
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);

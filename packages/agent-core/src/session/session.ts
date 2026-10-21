@@ -1,8 +1,7 @@
-import { shallowReactive } from '@vue/reactivity';
-
 import type { BlobStore } from '#/blob/index';
 import {
   createLoop,
+  isLoopRecord,
   loopProjection,
   toLoopRecord,
   type CreateLoopOptions,
@@ -59,16 +58,18 @@ export interface SessionStatus {
 export interface Session {
   readonly id: string;
   readonly source: SessionSource;
+  readonly lifecycle: 'open' | 'closing' | 'closed';
   readonly log: Log<SessionEvent>;
   readonly since: number;
   readonly roster: View<SessionState>;
   readonly blobs: BlobStore;
-  readonly agents: ReadonlyMap<string, Agent>;
+  readonly liveAgents: ReadonlyMap<string, Agent>;
   open(agentId: string, caps: AgentCaps, init?: AgentInit): Promise<Agent>;
   fork(sourceId: string, agentId: string, caps: AgentCaps, init?: { readonly source?: string }): Promise<Agent>;
   undo(agentId: string, turns: number): Promise<void>;
   status(): SessionStatus;
-  close(agentId?: string): Promise<void>;
+  closeAgent(agentId: string): Promise<void>;
+  close(): Promise<void>;
 }
 
 export interface CreateSessionOptions {
@@ -77,6 +78,7 @@ export interface CreateSessionOptions {
   readonly blobs: BlobStore;
   readonly source?: SessionSource;
   readonly lastTurn?: LastTurn;
+  readonly liveAgentsMap?: () => Map<string, Agent>;
   readonly onLastTurn?: (lastTurn: LastTurn | undefined) => void;
   readonly onClosed?: () => void;
 }
@@ -87,7 +89,8 @@ export type SessionErrorReason =
   | 'unknown-agent'
   | 'invalid-count'
   | 'insufficient'
-  | 'busy';
+  | 'busy'
+  | 'closed';
 
 export class SessionError extends Error {
   constructor(readonly reason: SessionErrorReason, message: string) {
@@ -175,11 +178,17 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     const log = await writer.open<SessionEvent>(SESSION_LOG);
     const roster = log.replica.view(sessionProjection());
     const source = options.source ?? 'startup';
-    const agents = shallowReactive(new Map<string, Agent>());
+    const liveAgents = options.liveAgentsMap?.() ?? new Map<string, Agent>();
     const opening = new Map<string, Promise<Agent>>();
+    const closingAgents = new Map<string, Promise<void>>();
     const released: Array<() => void> = [];
     let lastTurn = options.lastTurn;
+    let lifecycle: 'open' | 'closing' | 'closed' = 'open';
     let closing: Promise<void> | undefined;
+
+    const assertOpen = (): void => {
+      if (lifecycle !== 'open') throw new SessionError('closed', `session '${options.id}' is ${lifecycle}`);
+    };
 
     const isKnown = (agentId: string): boolean =>
       opening.has(agentId) || roster.getState().agents[agentId] !== undefined;
@@ -196,7 +205,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     const attach = (agentId: string, agentLog: Log<LoopRecord>, caps: AgentCaps, reopened: boolean): Agent => {
       const info = roster.getState().agents[agentId] ?? {};
       const agent = openAgent(agentId, agentLog, caps, reopened, info);
-      agents.set(agentId, agent);
+      liveAgents.set(agentId, agent);
       if (agentId === MAIN_AGENT_ID) {
         settleLastTurn(lastTurnOf(agent.view.getState()));
         released.push(agent.view.subscribe((state) => settleLastTurn(lastTurnOf(state))));
@@ -216,8 +225,15 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
 
     const open: Session['open'] = async (agentId, caps, init = {}) => {
       assertAgentId(agentId);
-      const live = agents.get(agentId) ?? opening.get(agentId);
+      assertOpen();
+      const live = liveAgents.get(agentId) ?? opening.get(agentId);
       if (live !== undefined) return live;
+      const pendingClose = closingAgents.get(agentId);
+      if (pendingClose !== undefined) {
+        await pendingClose;
+        const settled = liveAgents.get(agentId) ?? opening.get(agentId);
+        if (settled !== undefined) return settled;
+      }
       return claim(agentId, async () => {
         const reopened = roster.getState().agents[agentId] !== undefined;
         if (!reopened) await register(agentId, init);
@@ -227,15 +243,16 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
 
     const fork: Session['fork'] = async (sourceId, agentId, caps, init = {}) => {
       assertAgentId(agentId);
+      assertOpen();
       if (isKnown(agentId)) throw new SessionError('agent-exists', `agent '${agentId}' already exists`);
       if (!isKnown(sourceId)) throw new SessionError('unknown-agent', `unknown agent '${sourceId}'`);
       return claim(agentId, async () => {
-        const live = agents.get(sourceId);
+        const live = liveAgents.get(sourceId);
         await live?.flush();
         const sourceLog = live?.log ?? (await writer.open<LoopRecord>(`${AGENT_LOG_PREFIX}${sourceId}`));
         const target = await writer.open<LoopRecord>(`${AGENT_LOG_PREFIX}${agentId}`);
         if (target.version !== 0) throw new SessionError('agent-exists', `agent '${agentId}' already exists`);
-        const events = sourceLog.replica.entries().map((entry) => entry.event);
+        const events = sourceLog.replica.entries().flatMap((entry) => (isLoopRecord(entry.event) ? [entry.event] : []));
         if (events.length > 0) await target.commit({ events });
         await register(agentId, { source: init.source, forkedFrom: { agentId: sourceId, version: sourceLog.version } });
         return attach(agentId, target, caps, false);
@@ -243,10 +260,11 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     };
 
     const undo: Session['undo'] = async (agentId, turns) => {
+      assertOpen();
       if (!Number.isSafeInteger(turns) || turns <= 0) {
         throw new SessionError('invalid-count', `invalid undo count: ${turns}`);
       }
-      const agent = agents.get(agentId);
+      const agent = liveAgents.get(agentId);
       if (agent === undefined) throw new SessionError('unknown-agent', `agent '${agentId}' is not open`);
       if (agent.loop.state.status !== 'idle') throw new SessionError('busy', `agent '${agentId}' is not idle`);
       await agent.flush();
@@ -267,17 +285,31 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
       await agent.flush();
     };
 
-    const closeAgent = async (agentId: string): Promise<void> => {
-      const agent = agents.get(agentId);
+    const removeAgent = async (agentId: string): Promise<void> => {
+      const agent = liveAgents.get(agentId);
       if (agent === undefined) return;
-      agents.delete(agentId);
+      liveAgents.delete(agentId);
       await agent.close();
+    };
+
+    const closeAgent: Session['closeAgent'] = async (agentId) => {
+      assertOpen();
+      const agent = liveAgents.get(agentId);
+      if (agent === undefined) return;
+      liveAgents.delete(agentId);
+      const pending = agent.close();
+      closingAgents.set(agentId, pending);
+      const done = (): void => {
+        if (closingAgents.get(agentId) === pending) closingAgents.delete(agentId);
+      };
+      pending.then(done, done);
+      await pending;
     };
 
     const status: Session['status'] = () => {
       let busy = false;
       let mainTurnActive = false;
-      for (const agent of agents.values()) {
+      for (const agent of liveAgents.values()) {
         const state = agent.loop.state;
         const active = state.status === 'running';
         if (active || state.tools.some((tool) => tool.detached)) busy = true;
@@ -291,14 +323,15 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
       };
     };
 
-    const close: Session['close'] = (agentId) => {
-      if (agentId !== undefined) return closeAgent(agentId);
+    const close: Session['close'] = () => {
       closing ??= (async () => {
+        lifecycle = 'closing';
         await Promise.allSettled(opening.values());
         for (const release of released.splice(0)) release();
-        await Promise.allSettled([...agents.keys()].map(closeAgent));
+        await Promise.allSettled([...liveAgents.keys()].map(removeAgent));
         roster.dispose();
         await writer.close();
+        lifecycle = 'closed';
         options.onClosed?.();
       })();
       return closing;
@@ -312,15 +345,19 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
     return {
       id: options.id,
       source,
+      get lifecycle() {
+        return lifecycle;
+      },
       log,
       since: log.version,
       roster,
       blobs: options.blobs,
-      agents,
+      liveAgents,
       open,
       fork,
       undo,
       status,
+      closeAgent,
       close,
     };
   } catch (error) {

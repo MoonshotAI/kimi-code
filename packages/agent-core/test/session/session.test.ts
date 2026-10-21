@@ -2,8 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { LlmRequest } from '#/llm/request';
 import { mergeFields, type LlmRequestPart } from '#/llm/requester';
-import type { LoopLlmRequester } from '#/loop/index';
+import { isLoopRecord, type LoopLlmRequester } from '#/loop/index';
 import { SessionError } from '#/session/index';
+import type { Log } from '#/store/index';
 import type { ToolResult } from '#/tool/index';
 
 import {
@@ -16,7 +17,7 @@ import {
   textOutcome,
   texts,
   user,
-} from '../app/fake-llm';
+} from '../fake-llm';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -95,8 +96,19 @@ describe('session', () => {
   it('undoes whole turns by rewinding the agent log and resetting its live loop', async () => {
     const opened = await testSession();
     const main = await opened.open('main', agentCaps());
-    for (const text of ['one', 'two', 'three']) await main.loop.runTurn(user(text));
+    const store = main.log as unknown as Log<{ readonly type: string; readonly value?: string }>;
+    await main.loop.runTurn(user('one'));
+    await main.flush();
+    await store.commit({ events: [{ type: 'note', value: 'after-one' }] });
+    for (const text of ['two', 'three']) await main.loop.runTurn(user(text));
+    await main.flush();
+    await store.commit({ events: [{ type: 'note', value: 'after-three' }] });
     await opened.undo('main', 2);
+    const notes = main.log.replica.entries().flatMap((entry) => {
+      const event = entry.event as unknown as { type: string; value?: string };
+      return event.type === 'note' ? [event.value] : [];
+    });
+    expect(notes).toEqual(['after-one']);
     expect(texts(main)).toEqual(['one', 'echo:one']);
     expect(main.loop.state.messages).toEqual(main.view.getState().messages);
     expect(main.view.getState().turns.map((position) => position.turnId)).toEqual([0]);
@@ -116,7 +128,9 @@ describe('session', () => {
     await main.loop.runTurn(user('one'));
     await main.loop.runTurn(user('two'));
     await first.undo('main', 1);
+    await (main.log as unknown as Log<{ readonly type: string }>).commit({ events: [{ type: 'probe.set' }] });
     const child = await first.fork('main', 'child', agentCaps(), { source: 'task' });
+    expect(child.log.replica.entries().every((entry) => isLoopRecord(entry.event))).toBe(true);
     expect(child.source).toBe('task');
     expect(texts(child)).toEqual(['one', 'echo:one']);
     expect(child.loop.state.messages).toEqual(main.loop.state.messages);
@@ -134,7 +148,10 @@ describe('session', () => {
   });
 
   it('registers orphan agent logs on open', async () => {
-    const logs = new Map([['agents/orphan', ['{"seq":0,"time":1,"events":[{"type":"turn.started","turnId":0,"trigger":"normal"}]}']]]);
+    const logs = new Map([
+      ['agents/orphan', ['{"seq":0,"time":1,"events":[{"type":"turn.started","turnId":0,"trigger":"normal"}]}']],
+      ['session', ['{"seq":0,"time":1,"events":[{"type":"feature.ping"}]}']],
+    ]);
     const opened = await testSession(logs);
     expect(opened.roster.getState().agents).toEqual({ orphan: {} });
   });

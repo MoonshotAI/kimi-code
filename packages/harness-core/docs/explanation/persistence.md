@@ -3,24 +3,32 @@
 A harness session is durable by default. This document maps every byte the
 harness writes: what is stored, in which log, and how it is read back.
 
-## Overview: Three Journals, One Blob Store, One Catalog Record
+## Overview: One Journal, One Blob Store, One Catalog Record
 
 Per session, the stack persists:
 
 | What | Where (log name) | Written by | Content |
 |---|---|---|---|
 | Session roster | `session` | `createSession` | `agent.registered` events — which agents exist, with origin info |
+| Session-scoped feature events | `session` | `useFeatureStore('session', …)` | feature events (model defaults, file registry, …) |
 | Agent loop log | `agents/<agentId>` | the `Agent` binding | `LoopRecord`s — the durable subset of loop events |
-| Feature journals | `<name>` or `agents/<agentId>/<name>` | `useFeatureStore` | feature events, turn-stamped at agent scope |
+| Agent-scoped feature events | `agents/<agentId>` | `useFeatureStore('agent', …)` | feature events (todo, plan, cron, …) |
 | Blobs | (blob backend) | `session.blobs` | content-addressed media/files, plus cache entries |
 | Catalog record | `record.json` (fs space) | the space, via `App` | title, metadata, `lastTurn` index, timestamps |
 
-"A session always has a store" — the memory journal and blob backend are
-what "no persistence" means (`memoryHarnessSpace()`); `fsSessionSpace(root)`
-puts the same layout on disk. Nothing else in the stack knows which backend
-is underneath.
+There is **no separate feature journal**. Session-scoped feature events are
+appended to the `session` log, agent-scoped feature events to the agent's
+own log — one journal directory, one writer, one serialized commit queue
+(`openWriter`). Every consumer folds the log through a projection that
+reduces only the event types it knows and ignores the rest, so domain data
+of several kinds shares a log without interfering.
 
-## The Loop Log (`agents/<agentId>`)
+"A session always has a store" — the memory journal and blob backend are
+what "no persistence" means (`memorySessionSpace()`);
+`nodeSessionSpace(root)` puts the same layout on disk. Nothing else in the
+stack knows which backend is underneath.
+
+## The Agent Log (`agents/<agentId>`)
 
 Each open agent binds its loop to one log. The binding (in agent-core's
 `createSession`) subscribes to the loop, selects the durable events with
@@ -44,81 +52,92 @@ Streaming deltas, hook configuration, prompt-queue events, and payload
 duplicates are deliberately not recorded. Unknown errors are converted to
 JSON at the boundary.
 
-On open, the log is folded back by `loopProjection` into the loop's input:
-the settled **profile** (system prompt + tool descriptions), the **messages**,
-`nextTurnId` (monotonic — past every recorded turn id, so ids are never
-reused), per-turn positions with outcomes, the **unfinished turn** (a turn a
-crashed process left without `turn.ended` — the reopened loop starts
-`interrupted` and held, and `continue` can resume it), and pending async-tool
-**notifications**. See agent-core's loop docs for the resume semantics.
+Agent-scoped feature events are interleaved into the same log by
+`useFeatureStore` (below). On open, the log is folded back by
+`loopProjection` into the loop's input — the settled **profile** (system
+prompt + tool descriptions), the **messages**, `nextTurnId` (monotonic —
+past every recorded turn id, so ids are never reused), per-turn positions
+with outcomes, the **unfinished turn** (a turn a crashed process left
+without `turn.ended` — the reopened loop starts `interrupted` and held, and
+`continue` can resume it), and pending async-tool **notifications** — and
+`loopProjection` skips every event type it does not know, so feature events
+never reach loop state. `isLoopRecord` is the runtime guard with the same
+type list; `session.fork` uses it to copy **only loop records** into the
+forked agent's log, so forks never inherit feature state.
 
 ## The Session Log (`session`)
 
-One event type: `agent.registered`, committed before an agent's own log is
-first written (so a roster entry never points at a missing log), carrying
-`source` (e.g. `'btw'` for by-the-way agents) and `forkedFrom` for forks.
-`sessionProjection` folds it into the roster (`session.roster`). Agent logs
-found on disk without a roster entry — orphans from a crash — are registered
-on session open. Session metadata (title, `metadata`) lives **only** in the
-catalog record, never in this log.
+The roster event `agent.registered` is committed before an agent's own log
+is first written (so a roster entry never points at a missing log),
+carrying `source` (e.g. `'btw'` for by-the-way agents) and `forkedFrom` for
+forks. `sessionProjection` folds the log into the roster
+(`session.roster`), reducing `agent.registered` and ignoring everything
+else — session-scoped feature events live in the same log and never reach
+the roster. Agent logs found on disk without a roster entry — orphans from
+a crash — are registered on session open. Session metadata (title,
+`metadata`) lives **only** in the catalog record, never in this log.
 
-## Feature Journals (`useFeatureStore`)
+## Feature Stores (`useFeatureStore`)
 
-Features keep durable state in event-sourced stores too, but on a **separate
-journal** — the one the space hands out via
-`HarnessSessionSpace.featureJournal(sessionId)`. One `Writer` per session is
-shared by all feature stores (`featureWriterOf` in
-`src/runtime/harness.ts`), and `harness.close()` closes these writers after
-the app closes.
+Features keep durable state in event-sourced stores over the session's own
+logs:
 
 ```ts
 const store = useFeatureStore('agent', 'todo', todosProjection);
 ```
 
-- **Scope decides the log name.** `'agent'` → `agents/<agentId>/<name>`;
-  `'session'` → `<name>`. The two scopes sit in the same journal as each
-  other (but a different journal from the loop logs).
+- **Scope decides the log.** `'agent'` → the agent's own log
+  (`agents/<agentId>`, shared with the loop records); `'session'` → the
+  `session` log (shared with the roster). All stores of one scope share one
+  `Log` object — the one the `Session`/`Agent` already exposes — so every
+  commit runs through the same serialized queue, with no extra writer or
+  lock.
 - **State is a projection.** `Projection<S, E>` is `{ initial, reduce }`
-  from `@moonshot-ai/agent-core/store/index`. The store opens the log,
-  builds a replica view, and exposes `state: ComputedRef<S>`; `ready`
-  resolves when the log is open (and is tracked with `useReady`, so
-  `app.create` / `session.open` do not resolve before stores are readable).
+  from `@moonshot-ai/agent-core/store/index`. The store builds a replica
+  view over the shared log and exposes `state: ComputedRef<S>`; the
+  projection **must ignore event types it does not own** (the log carries
+  loop records and other features' events), which every bundled projection
+  does with a type guard. `ready` resolves immediately — the log is already
+  open (and is tracked with `useReady`).
 - **`dispatch(events)` commits, then re-fires.** Events are appended in one
-  commit; at agent scope each event is first stamped with the **current
-  `turnId`** (the running turn, else the last recorded turn of the agent's
-  view). After a successful commit each event is re-fired as a unit event —
-  this is how `app.on('todo.updated', …)` observes durable writes. Dispatch
-  after dispose throws.
-- **`onCommit(listener)`** replays live commits (from the version the store
-  opened at) as `{ seq, time, event }` entries — for features that need the
-  raw stream rather than the folded state.
+  commit; after a successful commit each event is re-fired as a unit event —
+  this is how `app.on('todo.updated', …)` observes durable writes. Log
+  forwarding (the mechanism that replays log commits into the unit tree)
+  filters these out: the agent unit forwards only `LoopRecord`s and the
+  session unit only roster events, so a dispatched feature event is
+  delivered exactly once. Dispatch after dispose throws.
+- **A feature event that carries data for one feature only.** Because all
+  features of a scope share a log, an event type belongs to the feature
+  that defines it; writing foreign-typed events into the shared log is how
+  a feature would corrupt another feature's state. (The `ptc` feature wraps
+  model-authored events in a `ptc.dispatched` envelope for exactly this
+  reason.)
 
 Because dispatch re-fires through the unit tree, feature events participate
 in the same bubbling/enrichment channel as everything else (see
 [Architecture](architecture.md#events-fire-enrich-bubble)).
 
-### Undo: Synchronized Rewind
+### Undo: One Rewind
 
-`undoAgentTurns(app, session, agentId, turns)` rewinds the agent **and** its
-feature stores as one operation:
+`session.undo(agentId, turns)` (idle agents only) rewinds the agent log to
+the target turn's start — one commit that truncates the loop records **and
+the interleaved feature events** of the undone turns in the same operation.
+The loop's messages are handed back to `loop.setContext`, any profile value
+the rewind dropped is re-settled, and every replica view over the log —
+including each feature store's — re-folds from its projection, so feature
+state lands exactly where it was at the cut turn. There is no turn-stamping
+and no second rewind pass to keep in sync.
 
-1. `session.undo(agentId, turns)` (idle agents only) rewinds the loop log to
-   the target turn's start, hands the rewound messages back to
-   `loop.setContext`, and re-settles any profile value the rewind dropped.
-2. Then every feature log under `agents/<agentId>/` is rewound to the first
-   entry whose stamped `turnId` is ≥ the cut turn's id — the `turnId` stamp
-   written by `dispatch` is what makes this alignment possible.
-
-**Session-scoped feature logs are not rewound** — they have no turnId stamp
-and no per-agent meaning. The `undo` feature (`UndoRef`) wraps this with
-anchor bookkeeping and telemetry.
+**Session-scoped feature events are not rewound** — the `session` log has
+no per-agent turn meaning and is never truncated. The `undo` feature
+(`UndoRef`) wraps `session.undo` with anchor bookkeeping and telemetry.
 
 ## Blobs
 
 `session.blobs` is a `BlobStore` from agent-core: `put({ bytes, mimeType?,
 filename? })` stores one record under `data/<ref>` where `ref` is the
-record's sha256, and `get(ref)` returns `undefined` for unknown refs and
-throws `BlobIntegrityError` on a hash mismatch. `openBlobCache(backend,
+record's sha256, and `get` returns `undefined` for unknown refs and throws
+`BlobIntegrityError` on a hash mismatch. `openBlobCache(backend,
 namespace)` layers JSON cache values under
 `cache/<namespace>/<sha256(key)>` on the same backend. Media features use it
 for image originals and upload caches; the LLM store-ref resolver adapts it
@@ -126,7 +145,7 @@ to turn `store:` refs into wire sources.
 
 ## The Space Implementations
 
-### `fsSessionSpace(root)` — `src/host/session-space.ts`
+### `nodeSessionSpace(root)` — agent-core, `src/session/backend/node.ts`
 
 ```
 <root>/<sessionId>/
@@ -135,22 +154,18 @@ to turn `store:` refs into wire sources.
 │   ├── session.jsonl
 │   ├── agents/<agentId>.jsonl
 │   └── writer.lock
-├── blobs/             ← nodeBlobBackend: data/<ref>, cache/<namespace>/<sha256(key)>
-└── features/          ← the feature journal (lazy nodeJournal), same .jsonl layout
-    └── writer.lock
+└── blobs/             ← nodeBlobBackend: data/<ref>, cache/<namespace>/<sha256(key)>
 ```
 
 `record.json` is written atomically (`.tmp` + rename). `copy(from, to)` —
-session fork — copies the whole directory and strips both `writer.lock`
-files so the target can open its journals. `delete` closes the feature
-journal before removing the tree.
+session fork — copies the whole directory and strips `journal/writer.lock`
+so the target can open its journal. Imported by path:
+`@moonshot-ai/agent-core/session/backend/node`.
 
-### `memoryHarnessSpace()` — `src/runtime/harness.ts`
+### `memorySessionSpace()` — agent-core, `src/session/space.ts`
 
-The same port in memory (session container from agent-core's
-`memorySessionSpace()` plus in-memory feature journals), with `copy`
-duplicating journal contents. This is the space every harness test uses —
-see the test pattern in
+The same port in memory, with `copy` duplicating journal contents. This is
+the space every harness test uses — see the test pattern in
 [Develop a Feature](../how-to-guides/02-develop-a-feature.md#testing).
 
 ## The `lastTurn` Catalog Index

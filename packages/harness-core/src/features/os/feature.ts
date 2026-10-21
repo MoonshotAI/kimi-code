@@ -1,8 +1,8 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose, useInject, useReady } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, type Feature } from '#/app/index';
+import { createFacadeToken, useExpose, useInject, useReady } from '#/kernel/index';
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
 import { KimiFileRegistryRef } from '#/features/files/index';

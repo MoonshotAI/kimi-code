@@ -1,8 +1,14 @@
 import { shallowReactive } from '@vue/reactivity';
 
-import { mountRoot, type EventHandler, type ListenOpts, type MountRootOptions, type RuntimeEvent } from '#/kernel/index';
+import {
+  mountRoot,
+  type EventHandler,
+  type ListenOpts,
+  type MountRootOptions,
+  type RuntimeEvent,
+} from '#/kernel/index';
 import type { UnitNode } from '#/kernel/runtime';
-import type { WaitOpts } from '#/utils/wait';
+import type { WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
 import {
   memorySessionSpace,
   createSession,
@@ -13,21 +19,23 @@ import {
   type SessionRecordDraft,
   type SessionSource,
   type SessionSpace,
-} from '#/session/index';
+} from '@moonshot-ai/agent-core/session/index';
 
 import {
   FEATURE_LEVELS,
   featureSetOf,
   type Feature,
+  type FeatureEventMap,
+  type FeatureEvents,
   type FeatureLevel,
   type FeatureScope,
   type FeatureSet,
   type Features,
 } from './features';
-import { AppUnit, RootRef } from './units';
+import { createAppSession, type AppSession } from './session';
+import { AppUnit, createHostFeature, RootRef } from './units';
 
 export interface CreateSessionInput {
-  readonly sessionId?: string;
   readonly title?: string;
   readonly metadata?: Record<string, unknown>;
   readonly from?: string;
@@ -44,22 +52,23 @@ export interface CreateAppOptions extends MountRootOptions {
 
 export interface App {
   readonly space: SessionSpace;
-  readonly sessions: ReadonlyMap<string, Session>;
+  readonly sessions: ReadonlyMap<string, AppSession>;
   readonly features: Features;
-  create(input?: CreateSessionInput): Promise<Session>;
+  create(input?: CreateSessionInput): Promise<AppSession>;
+  open(sessionId: string, input?: CreateSessionInput): Promise<AppSession>;
   update(sessionId: string, patch: SessionRecordDraft): Promise<SessionRecord>;
   close(sessionId?: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
-  on<E extends RuntimeEvent>(
+  on<E extends FeatureEventMap>(
     feature: Feature<any, E>,
     type: '*',
-    handler: (event: E) => void,
+    handler: (event: FeatureEvents<E>) => void,
     opts?: ListenOpts,
   ): () => void;
-  on<E extends RuntimeEvent, T extends E['type']>(
+  on<E extends FeatureEventMap, T extends FeatureEvents<E>['type']>(
     feature: Feature<any, E>,
     type: T,
-    handler: (event: Extract<E, { type: T }>) => void,
+    handler: (event: Extract<FeatureEvents<E>, { type: T }>) => void,
     opts?: ListenOpts,
   ): () => void;
   on<E extends RuntimeEvent = RuntimeEvent>(
@@ -67,12 +76,12 @@ export interface App {
     handler: (event: E) => void,
     opts?: ListenOpts,
   ): () => void;
-  wait<E extends RuntimeEvent>(feature: Feature<any, E>, type: '*', opts?: WaitOpts<E>): Promise<E>;
-  wait<E extends RuntimeEvent, T extends E['type']>(
+  wait<E extends FeatureEventMap>(feature: Feature<any, E>, type: '*', opts?: WaitOpts<FeatureEvents<E>>): Promise<FeatureEvents<E>>;
+  wait<E extends FeatureEventMap, T extends FeatureEvents<E>['type']>(
     feature: Feature<any, E>,
     type: T,
-    opts?: WaitOpts<Extract<E, { type: T }>>,
-  ): Promise<Extract<E, { type: T }>>;
+    opts?: WaitOpts<Extract<FeatureEvents<E>, { type: T }>>,
+  ): Promise<Extract<FeatureEvents<E>, { type: T }>>;
   wait<E extends RuntimeEvent = RuntimeEvent>(type: E['type'] | '*', opts?: WaitOpts<E>): Promise<E>;
 }
 
@@ -99,8 +108,9 @@ async function containerOf(
 
 export function createApp(options: CreateAppOptions = {}): App {
   const space = options.space ?? memorySessionSpace();
-  const sessions = shallowReactive(new Map<string, Session>());
-  const creating = new Map<string, Promise<Session>>();
+  const sessions = shallowReactive(new Map<string, AppSession>());
+  const creating = new Map<string, Promise<AppSession>>();
+  const closingSessions = new Map<string, Promise<void>>();
   const indexing = new Map<string, Promise<void>>();
   let root: UnitNode | undefined;
   let closing: Promise<void> | undefined;
@@ -119,34 +129,30 @@ export function createApp(options: CreateAppOptions = {}): App {
     );
   };
 
-  const start = async (sessionId: string, input: CreateSessionInput): Promise<Session> => {
+  const start = async (sessionId: string, input: CreateSessionInput): Promise<AppSession> => {
     const existed = input.from === undefined && (await space.get(sessionId)) !== undefined;
     const container = await containerOf(space, sessionId, input, existed);
     const source: SessionSource = input.from !== undefined ? 'fork' : existed ? 'resume' : 'startup';
     const record = await space.get(sessionId);
+    let appSession: AppSession;
     const session: Session = await createSession({
       id: sessionId,
       ...container,
       source,
+      liveAgentsMap: () => shallowReactive(new Map()),
       lastTurn: record?.lastTurn,
       onLastTurn: (lastTurn) => index(sessionId, { lastTurn }),
       onClosed: () => {
-        if (sessions.get(sessionId) === session) sessions.delete(sessionId);
+        if (sessions.get(sessionId) === appSession) sessions.delete(sessionId);
       },
     });
-    sessions.set(sessionId, session);
+    appSession = createAppSession(session);
+    sessions.set(sessionId, appSession);
     if (!existed) emit({ type: 'session.created', sessionId, ...(input.from !== undefined ? { from: input.from } : {}) });
-    return session;
+    return appSession;
   };
 
-  const create: App['create'] = (input = {}) => {
-    if (closing !== undefined) return Promise.reject(new Error('app is closed'));
-    if (input.from === undefined && input.sessionId !== undefined) {
-      const live = sessions.get(input.sessionId) ?? creating.get(input.sessionId);
-      if (live !== undefined) return Promise.resolve(live);
-    }
-    const sessionId = input.sessionId ?? `session_${crypto.randomUUID()}`;
-    const pending = start(sessionId, input);
+  const track = (sessionId: string, pending: Promise<AppSession>): Promise<AppSession> => {
     creating.set(sessionId, pending);
     const done = (): void => {
       if (creating.get(sessionId) === pending) creating.delete(sessionId);
@@ -155,11 +161,41 @@ export function createApp(options: CreateAppOptions = {}): App {
     return pending;
   };
 
+  const create: App['create'] = (input = {}) => {
+    if (closing !== undefined) return Promise.reject(new Error('app is closed'));
+    const sessionId = `session_${crypto.randomUUID()}`;
+    return track(sessionId, start(sessionId, input));
+  };
+
+  const open: App['open'] = (sessionId, input = {}) => {
+    if (closing !== undefined) return Promise.reject(new Error('app is closed'));
+    if (input.from === undefined) {
+      const live = sessions.get(sessionId) ?? creating.get(sessionId);
+      if (live !== undefined) return Promise.resolve(live);
+    }
+    const closingSession = closingSessions.get(sessionId);
+    const pending =
+      closingSession === undefined ? start(sessionId, input) : closingSession.then(() => start(sessionId, input));
+    return track(sessionId, pending);
+  };
+
   const closeOne = async (sessionId: string): Promise<void> => {
-    await sessions.get(sessionId)?.close();
-    await indexing.get(sessionId);
-    indexing.delete(sessionId);
-    await settle();
+    const task = (async () => {
+      const session = sessions.get(sessionId);
+      if (session !== undefined) {
+        sessions.delete(sessionId);
+        await session.close();
+      }
+      await indexing.get(sessionId);
+      indexing.delete(sessionId);
+      await settle();
+    })();
+    closingSessions.set(sessionId, task);
+    try {
+      await task;
+    } finally {
+      if (closingSessions.get(sessionId) === task) closingSessions.delete(sessionId);
+    }
   };
 
   const targetOf = (scope: FeatureScope = {}): { readonly set: FeatureSet; readonly level: FeatureLevel } => {
@@ -167,7 +203,7 @@ export function createApp(options: CreateAppOptions = {}): App {
     const session = sessions.get(scope.session);
     if (session === undefined) throw new Error(`session '${scope.session}' is not open`);
     if (scope.agent === undefined) return { set: featureSetOf(session), level: 'session' };
-    const agent = session.agents.get(scope.agent);
+    const agent = session.liveAgents.get(scope.agent);
     if (agent === undefined) throw new Error(`agent '${scope.agent}' of session '${scope.session}' is not open`);
     return { set: featureSetOf(agent), level: 'agent' };
   };
@@ -198,6 +234,7 @@ export function createApp(options: CreateAppOptions = {}): App {
           .map((entry) => entry.feature),
     },
     create,
+    open,
     update: async (sessionId, patch) => {
       const record = await space.update(sessionId, patch);
       emit({ type: 'session.meta_updated', sessionId, meta: record });
@@ -223,7 +260,7 @@ export function createApp(options: CreateAppOptions = {}): App {
       emit({ type: 'session.deleted', sessionId });
     },
     on: ((
-      featureOrType: Feature<any, RuntimeEvent> | string,
+      featureOrType: Feature | string,
       typeOrHandler: string | EventHandler,
       handlerOrOpts?: EventHandler | ListenOpts,
       opts?: ListenOpts,
@@ -245,7 +282,7 @@ export function createApp(options: CreateAppOptions = {}): App {
       return off;
     }) as App['on'],
     wait: ((
-      featureOrType: Feature<any, RuntimeEvent> | string,
+      featureOrType: Feature | string,
       typeOrOpts?: string | WaitOpts<RuntimeEvent>,
       opts?: WaitOpts<RuntimeEvent>,
     ) => {
@@ -263,5 +300,6 @@ export function createApp(options: CreateAppOptions = {}): App {
   };
 
   root = mountRoot(AppUnit, { app }, options).resolve(RootRef);
+  app.features.add(createHostFeature());
   return app;
 }

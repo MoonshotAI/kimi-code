@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import { createApp, type App } from '#/app/index';
-import type { LlmRequest } from '#/llm/request';
-import type { LoopLlmRequester } from '#/loop/index';
-import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '#/session/index';
+import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
+import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { agentCaps, loopEvent, noopExecutor, textOutcome, user } from './fake-llm';
 
@@ -99,7 +99,7 @@ describe('session.status', () => {
     expect(session.status().lastTurnReason).toBe('failed');
     await session.undo(MAIN_AGENT_ID, 1);
     expect(session.status().lastTurnReason).toBe('completed');
-    expect(session.agents.get(MAIN_AGENT_ID)).toBe(main);
+    expect(session.liveAgents.get(MAIN_AGENT_ID)).toBe(main);
     await app.close();
   });
 
@@ -111,8 +111,8 @@ describe('session.status', () => {
     await app.close();
     expect((await space.get(sessionId))?.lastTurn).toEqual({ turnId: 0, outcome: 'done' });
     const reopened = createApp({ space });
-    const session2 = await reopened.create({ sessionId });
-    expect(session2.agents.size).toBe(0);
+    const session2 = await reopened.open(sessionId);
+    expect(session2.liveAgents.size).toBe(0);
     expect(session2.status()).toEqual({
       busy: false,
       mainTurnActive: false,

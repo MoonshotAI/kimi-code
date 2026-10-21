@@ -1,10 +1,9 @@
 import {
   createFeature,
   useAgent,
-  useApp,
   useSession,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -15,7 +14,7 @@ import {
   useExpose,
   useInject,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
@@ -30,7 +29,6 @@ import {
 import type { OsHost } from '#/features/os/host/index';
 import { PermissionRef, type PermissionFace } from '#/features/permission/index';
 import { ProfileCatalogRef } from '#/features/profiles/index';
-import { agentCaps, createAgentRuntime, harnessInternals } from '#/runtime/index';
 
 import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './init';
 
@@ -78,7 +76,6 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
     session() {
       const host = props.host;
       if (host === undefined) return;
-      const app = useApp();
       const session = useSession();
       const catalog = useInject(ProfileCatalogRef);
       const existing = states.get(session);
@@ -89,17 +86,11 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
         if (state.controller !== undefined) {
           throw new SessionInitError(SESSION_INIT_BUSY, 'Session init is already running');
         }
-        const main = session.agents.get(MAIN_AGENT_ID);
+        const main = session.liveAgents.get(MAIN_AGENT_ID);
         if (main === undefined) {
           throw new SessionInitError(AGENT_NOT_FOUND, 'Main agent was not found');
         }
-        const internals = harnessInternals(app);
-        let perSession = internals.agents.get(session);
-        if (perSession === undefined) {
-          perSession = new Map();
-          internals.agents.set(session, perSession);
-        }
-        const mainRequester = perSession.get(MAIN_AGENT_ID)?.requester;
+        const mainRequester = session.agentRuntime(MAIN_AGENT_ID)?.requester;
         if (mainRequester === undefined) {
           throw new SessionInitError(SESSION_INIT_FAILED, 'Main agent has no model bound');
         }
@@ -110,14 +101,9 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
             ?.get(INIT_PROFILE_NAME)
             ?.renderSystemPrompt({ cwd: props.workDir }).text;
           const agentId = `subagent-${crypto.randomUUID().slice(0, 8)}`;
-          let runtime = perSession.get(agentId);
-          if (runtime === undefined) {
-            runtime = createAgentRuntime(agentId);
-            perSession.set(agentId, runtime);
-          }
-          runtime.hostSystemPrompt = systemPrompt;
-          const child = await session.open(agentId, agentCaps(runtime), {
-            source: SESSION_INIT_SOURCE,
+          const { agent: child, runtime } = await session.ensureAgent(agentId, {
+            systemPrompt,
+            init: { source: SESSION_INIT_SOURCE },
           });
           runtime.requester = mainRequester;
           const mode = permissionFaces.get(main)?.value?.mode();

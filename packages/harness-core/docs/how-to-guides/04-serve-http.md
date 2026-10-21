@@ -8,10 +8,10 @@ guide covers mounting it and adding your own routes.
 ## Mount the Transport
 
 ```ts
-import { createHarness, createHttp } from '@moonshot-ai/harness-core';
+import { createApp, createHttp } from '@moonshot-ai/harness-core';
 
-const harness = createHarness();
-await harness.app.features.add(
+const app = createApp();
+await app.features.add(
   createHttp({
     listen: { port: 8787, host: '127.0.0.1' },
     corsOrigins: ['https://example.com'],
@@ -51,7 +51,7 @@ restart. `KIMI_CODE_PASSWORD` adds a bcrypt-hashed password credential, and
 `rpcToken` adds a separate timing-safe credential.
 
 ```ts
-await harness.app.features.add(
+await app.features.add(
   createHttp({
     homeDir,
     rpcToken,
@@ -80,7 +80,7 @@ passing the same options again to `createHttp`:
 ```ts
 const server = createHttpServer({ homeDir, rpcToken, corsOrigins: ['app://renderer'] });
 await server.listen();
-await harness.app.features.add(createHttp({ server }));
+await app.features.add(createHttp({ server }));
 ```
 
 ## Transport Protections
@@ -126,7 +126,7 @@ The server itself is exposed as `HttpRef` (`route`, `upgrade`, `listen`,
 Contribute a route from any feature's app unit with `useHttpRoute`:
 
 ```ts
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
 import { useHttpRoute } from '@moonshot-ai/harness-core';
 
 export const myRoutes = createFeature('my-routes', {
@@ -158,7 +158,7 @@ Handlers run outside the unit tree, so `useInject` is unavailable. Resolve
 facades from the root unit instead:
 
 ```ts
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 import {
   agentFacade,

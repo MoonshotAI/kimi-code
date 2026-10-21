@@ -1,4 +1,4 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 
 import {
   SessionTitleRef,

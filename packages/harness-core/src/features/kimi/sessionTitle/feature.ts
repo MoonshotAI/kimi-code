@@ -5,8 +5,8 @@ import {
   useSession,
   type Feature,
   type FeatureUnits,
-} from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose, useInject } from '@moonshot-ai/agent-core/kernel/index';
+} from '#/app/index';
+import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
 import { MAIN_AGENT_ID, type SessionRecord } from '@moonshot-ai/agent-core/session/index';
 import {
   fetchChatTitle,
@@ -77,7 +77,7 @@ export const sessionTitleSlots: FeatureUnits<void> = {
       return { baseUrl: runtimeAuth.baseUrl, customHeaders: info.customHeaders, tokens };
     };
     const composeForMain = async (source: SessionTitleSource): Promise<string | undefined> => {
-      const main = session.agents.get(MAIN_AGENT_ID);
+      const main = session.liveAgents.get(MAIN_AGENT_ID);
       if (main === undefined) return undefined;
       await main.flush();
       return composeTitleInput(main.view.getState().messages, source);

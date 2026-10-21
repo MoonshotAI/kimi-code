@@ -1,21 +1,13 @@
 import {
   createFeature,
   useAgent,
-  useApp,
   useSession,
   useToolStarting,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import { createHistoryMessageBuilder } from '@moonshot-ai/agent-core/history/index';
-import {
-  createFacadeToken,
-  useExpose,
-  useFire,
-  type RuntimeEvent,
-} from '@moonshot-ai/agent-core/kernel/index';
+import { createFacadeToken, useExpose, type RuntimeEvent } from '#/kernel/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
-
-import { agentCaps, createAgentRuntime, harnessInternals } from '#/runtime/index';
 
 export const BTW_REMIND_KEY = 'btw.side_question';
 
@@ -48,39 +40,26 @@ export interface CreateBtwProps {
   readonly readonlyTools?: readonly string[];
 }
 
-export function createBtw(props: CreateBtwProps = {}): Feature<void, BtwEvent> {
+export function createBtw(props: CreateBtwProps = {}): Feature<void, { session: BtwEvent }> {
   const sourceAgentId = props.sourceAgentId ?? MAIN_AGENT_ID;
   const readonlyTools = new Set(props.readonlyTools ?? BTW_READONLY_TOOLS);
   const reminder = sideQuestionReminder([...readonlyTools]);
   const deniedMessage = toolDeniedMessage([...readonlyTools]);
-  return createFeature<BtwEvent>('btw', {
-    session() {
-      const app = useApp();
+  return createFeature<{ session: BtwEvent }>('btw', {
+    session(_props, { fire }) {
       const session = useSession();
-      const fire = useFire();
       const isBtw = (agentId: string): boolean =>
         session.roster.getState().agents[agentId]?.source === BTW_SOURCE;
       useExpose(BtwRef, {
         ask: async () => {
-          if (session.agents.get(sourceAgentId) === undefined) {
+          if (session.liveAgents.get(sourceAgentId) === undefined) {
             throw new Error(
               `Cannot start a side question: source agent '${sourceAgentId}' does not exist or is not running in this session.`,
             );
           }
           const agentId = `btw-${crypto.randomUUID().slice(0, 8)}`;
-          const internals = harnessInternals(app);
-          let perSession = internals.agents.get(session);
-          if (perSession === undefined) {
-            perSession = new Map();
-            internals.agents.set(session, perSession);
-          }
-          let runtime = perSession.get(agentId);
-          if (runtime === undefined) {
-            runtime = createAgentRuntime(agentId);
-            perSession.set(agentId, runtime);
-          }
-          const child = await session.fork(sourceAgentId, agentId, agentCaps(runtime), {
-            source: BTW_SOURCE,
+          const { agent: child } = await session.forkAgent(sourceAgentId, agentId, {
+            init: { source: BTW_SOURCE },
           });
           child.loop.remind({
             message: createHistoryMessageBuilder().systemReminder(reminder).userMessage(),

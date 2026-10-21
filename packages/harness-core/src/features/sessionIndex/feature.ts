@@ -3,14 +3,14 @@ import { mkdirSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { dirname } from 'pathe';
 
-import { createFeature, useApp, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useApp, type Feature } from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
   useExpose,
   useOn,
   useReady,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import { MAIN_AGENT_ID, type SessionRecord } from '@moonshot-ai/agent-core/session/index';
 
 import {

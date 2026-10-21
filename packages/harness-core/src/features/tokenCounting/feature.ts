@@ -1,5 +1,5 @@
-import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, shallowRef, useExpose, useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, useAgent } from '#/app/index';
+import { createFacadeToken, shallowRef, useExpose, useInject, type ShallowRef } from '#/kernel/index';
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
 import { useLoopEvent } from '#/runtime/index';

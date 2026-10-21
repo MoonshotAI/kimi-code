@@ -4,23 +4,28 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, useSession } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  useSession,
+  createApp,
+  type App,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 
 import {
   buildKimiFileUrl,
   createFiles,
-  FileLibrary,
   FilesRef,
   isFileId,
   KimiFileRegistryRef,
   type FilesFace,
   type KimiFileRegistry,
 } from '#/features/files/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
+
 
 const tmpDirs: string[] = [];
-const harnesses: Harness[] = [];
+const harnesses: App[] = [];
 
 afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
@@ -49,10 +54,28 @@ async function* sourceOf(...chunks: Uint8Array[]): AsyncIterable<Uint8Array> {
   }
 }
 
+async function mountLibrary(dir: string): Promise<FilesFace> {
+  const harness = createApp({ space: memorySessionSpace() });
+  harnesses.push(harness);
+  let exposed: Readonly<ShallowRef<FilesFace | undefined>> | undefined;
+  harness.features.add(createFiles({ dir }));
+  harness.features.add(
+    createFeature('files-library-probe', {
+      app: () => {
+        exposed = useInject(FilesRef);
+      },
+    }),
+  );
+  await tick();
+  const face = exposed?.value;
+  if (face === undefined) throw new Error('files face was not exposed');
+  return face;
+}
+
 describe('files library', () => {
   it('saves a streamed upload to disk and reads it back with inclusive ranges', async () => {
     const dir = await tempDir('files-store-');
-    const library = new FileLibrary(dir);
+    const library = await mountLibrary(dir);
     const bytes = Buffer.from('0123456789');
 
     const meta = await library.save(sourceOf(bytes.subarray(0, 4), bytes.subarray(4)), 'data.bin', {
@@ -77,7 +100,7 @@ describe('files library', () => {
 
   it('defaults the display name and mime type from the upload filename', async () => {
     const dir = await tempDir('files-store-');
-    const library = new FileLibrary(dir);
+    const library = await mountLibrary(dir);
     const meta = await library.save(sourceOf(new Uint8Array([1])), 'photo.png');
     expect(meta.name).toBe('photo.png');
     expect(meta.media_type).toBe('application/octet-stream');
@@ -85,12 +108,12 @@ describe('files library', () => {
 
   it('reloads the index from disk across instances', async () => {
     const dir = await tempDir('files-store-');
-    const first = new FileLibrary(dir);
+    const first = await mountLibrary(dir);
     const meta = await first.save(sourceOf(Buffer.from('persisted')), 'keep.txt', {
       mimeType: 'text/plain',
     });
 
-    const reloaded = new FileLibrary(dir);
+    const reloaded = await mountLibrary(dir);
     const file = await reloaded.open(meta.id);
     expect(file?.meta).toEqual(meta);
     expect(await collect(file!.stream())).toEqual(Buffer.from('persisted'));
@@ -98,7 +121,7 @@ describe('files library', () => {
 
   it('returns undefined for unknown or malformed ids', async () => {
     const dir = await tempDir('files-store-');
-    const library = new FileLibrary(dir);
+    const library = await mountLibrary(dir);
     expect(await library.open('f_00000000-0000-0000-0000-000000000000')).toBeUndefined();
     expect(await library.open('not-a-file-id')).toBeUndefined();
     expect(await library.open('../escape')).toBeUndefined();
@@ -106,7 +129,7 @@ describe('files library', () => {
 
   it('prunes expired files on save and open', async () => {
     const dir = await tempDir('files-store-');
-    const library = new FileLibrary(dir);
+    const library = await mountLibrary(dir);
     const expired = await library.save(sourceOf(Buffer.from('gone')), 'gone.txt', {
       expiresInSec: 0,
     });
@@ -116,7 +139,7 @@ describe('files library', () => {
     expect((await readdir(dir)).filter((name) => name.startsWith('f_'))).toHaveLength(0);
 
     const fresh = await library.save(sourceOf(Buffer.from('alive')), 'alive.txt');
-    const reloaded = new FileLibrary(dir);
+    const reloaded = await mountLibrary(dir);
     expect((await reloaded.open(fresh.id))?.meta.id).toBe(fresh.id);
   });
 });
@@ -134,11 +157,11 @@ describe('files feature', () => {
         registries.set(useSession().id, useInject(KimiFileRegistryRef));
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     harnesses.push(harness);
     const spec = createFiles({ dir });
-    const remove = harness.app.features.add(spec);
-    harness.app.features.add(probe);
+    const remove = harness.features.add(spec);
+    harness.features.add(probe);
     await tick();
     const face = exposed?.value;
     if (face === undefined) throw new Error('files face was not exposed');
@@ -150,7 +173,7 @@ describe('files feature', () => {
     const file = await face.open(meta.id);
     expect(await collect(file!.stream())).toEqual(Buffer.from('facade'));
 
-    await harness.app.create({ sessionId: 'sess' });
+    await harness.open('sess');
     const registry = registries.get('sess')?.value;
     if (registry === undefined) throw new Error('kimi file registry was not exposed');
     const reference = buildKimiFileUrl(meta.id);
@@ -176,7 +199,7 @@ describe('files feature', () => {
     await tick();
     expect(exposed?.value).toBeUndefined();
 
-    harness.app.features.add(spec);
+    harness.features.add(spec);
     await tick();
     const remounted = exposed?.value;
     if (remounted === undefined) throw new Error('files face was not re-exposed');
@@ -188,7 +211,7 @@ describe('files feature', () => {
       Buffer.from([0, 1, 2, 3, 4]),
     );
 
-    await harness.app.create({ sessionId: 'fork', from: 'sess' });
+    await harness.open('fork', { from: 'sess' });
     const forked = registries.get('fork')?.value;
     if (forked === undefined) throw new Error('forked kimi file registry was not exposed');
     expect(Buffer.from((await forked.get(reference))?.bytes ?? []).toString()).toBe('facade');

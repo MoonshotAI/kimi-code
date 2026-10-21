@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 
 import {
   ConfigRef,
@@ -33,9 +38,9 @@ import {
   type ModelsDevFace,
   type ModelsDevProviderEntry,
 } from '#/features/models-dev/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
 
-const harnesses: Harness[] = [];
+
+const harnesses: App[] = [];
 
 afterEach(async () => {
   vi.useRealTimers();
@@ -156,19 +161,19 @@ async function mountModelsDev(options: {
   toml?: string;
   withConfig?: boolean;
   userAgent?: string;
-}): Promise<{ harness: Harness; face: ModelsDevFace; config?: ConfigStore; catalog: ProviderCatalogFace }> {
+}): Promise<{ harness: App; face: ModelsDevFace; config?: ConfigStore; catalog: ProviderCatalogFace }> {
   stubFailingFetch();
   const capture: ModelsDevCapture = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   harnesses.push(harness);
-  harness.app.features.add(providerCatalog);
+  harness.features.add(providerCatalog);
   if (options.withConfig !== false) {
-    harness.app.features.add(createConfig({ persist: fakePersist(options.toml).persist }));
+    harness.features.add(createConfig({ persist: fakePersist(options.toml).persist }));
   }
-  harness.app.features.add(
+  harness.features.add(
     createModelsDev({ builtinCatalog: () => currentCatalog, userAgent: options.userAgent }),
   );
-  harness.app.features.add(modelsDevProbe(capture));
+  harness.features.add(modelsDevProbe(capture));
   await tick();
   const face = capture.face?.value;
   const catalog = capture.catalog?.value;
@@ -671,7 +676,7 @@ describe('models-dev custom registry', () => {
   async function mountRegistry(
     toml?: string,
     userAgent?: string,
-  ): Promise<{ harness: Harness; face: ModelsDevFace; config: ConfigStore; catalog: ProviderCatalogFace }> {
+  ): Promise<{ harness: App; face: ModelsDevFace; config: ConfigStore; catalog: ProviderCatalogFace }> {
     registryPayload = {
       'upstream-one': registryEntry('regone', 'openai', {
         'reg-a': {
@@ -693,12 +698,12 @@ describe('models-dev custom registry', () => {
     registryCalls = [];
     stubRegistryFetch();
     const capture: ModelsDevCapture = {};
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     harnesses.push(harness);
-    harness.app.features.add(providerCatalog);
-    harness.app.features.add(createConfig({ persist: fakePersist(toml).persist }));
-    harness.app.features.add(createModelsDev({ builtinCatalog: () => currentCatalog, userAgent }));
-    harness.app.features.add(modelsDevProbe(capture));
+    harness.features.add(providerCatalog);
+    harness.features.add(createConfig({ persist: fakePersist(toml).persist }));
+    harness.features.add(createModelsDev({ builtinCatalog: () => currentCatalog, userAgent }));
+    harness.features.add(modelsDevProbe(capture));
     await tick();
     const face = capture.face?.value;
     const config = capture.config?.value;
@@ -823,7 +828,7 @@ describe('models-dev custom registry', () => {
     catalog.onRetiredModel((event) => {
       retirements.push(event);
     });
-    harness.app.on(providerCatalog, 'event.model_catalog.changed', (event) => {
+    harness.on(providerCatalog, 'event.model_catalog.changed', (event) => {
       changedPayloads.push(event.payload);
     });
 

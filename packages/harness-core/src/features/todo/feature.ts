@@ -1,6 +1,6 @@
-import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent } from '#/app/index';
 import { createHistoryMessageBuilder } from '@moonshot-ai/agent-core/history/index';
-import { computed, createFacadeToken, useExpose, type ComputedRef } from '@moonshot-ai/agent-core/kernel/index';
+import { computed, createFacadeToken, useExpose, type ComputedRef } from '#/kernel/index';
 
 import { useAgentTools, useFeatureStore, useLoopEvent } from '#/runtime/index';
 
@@ -17,11 +17,23 @@ export interface TodoFace {
 
 export const TodoRef = createFacadeToken<TodoFace>('todo');
 
-export const todo = createFeature<TodoEvent>('todo', {
+export const todo = createFeature<{ agent: TodoEvent }>('todo', {
   agent() {
     const store = useFeatureStore('agent', 'todo', todos);
-    useAgentTools(createTodoListTool(store));
     const agent = useAgent();
+    useAgentTools(
+      createTodoListTool({
+        state: store.state,
+        ready: store.ready,
+        dispatch: (events) =>
+          store.dispatch(
+            events.map((event) => ({
+              ...event,
+              turn: agent.loop.state.turn?.id ?? agent.view.getState().turns.at(-1)?.turnId,
+            })),
+          ),
+      }),
+    );
     useLoopEvent('turn.started', ({ turnId }) => {
       const current = store.state.value;
       if (current.todos.length === 0) return;

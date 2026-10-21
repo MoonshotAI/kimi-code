@@ -6,7 +6,14 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, useAgent, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  useSession,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -14,7 +21,7 @@ import {
   type HistoryMessage,
   type ToolMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -26,7 +33,7 @@ import {
 import type { LlmModelSpec, LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import { interaction } from '#/features/interaction/index';
@@ -37,21 +44,25 @@ import {
   createTower,
   createTowerInjection,
   createTowerInjectionState,
-  createTowerRateLimiter,
   Git,
   TOWER_INBOX_WAKE_VARIANT,
   TOWER_WORKER_PROFILE,
   TOWER_WORKER_PROFILE_DEF,
   TowerProtocolError,
+  TowerRateLimitRef,
   TowerRef,
   TowerStore,
   towerEnterFailureMessage,
   type TowerEnterFailure,
   type TowerFace,
   type TowerIo,
+  type TowerRateLimiter,
 } from '#/features/tower/index';
 import type { SpawnModelEntry } from '#/features/tower/tools/spawn';
-import { createHarness, memoryHarnessSpace, useAgentRuntime, useAgentTools, type Harness } from '#/runtime/index';
+import {
+  useAgentRuntime,
+  useAgentTools,
+} from '#/runtime/index';
 
 import TOWER_MODE_EXIT_REMINDER from '../../src/features/tower/injection/tower-mode-exit-reminder.md?raw';
 import TOWER_MODE_FULL_REMINDER from '../../src/features/tower/injection/tower-mode-full-reminder.md?raw';
@@ -661,44 +672,82 @@ describe('store: addWorktree and teardown', () => {
   });
 });
 
+async function mountRateLimiter(): Promise<{ limiter: TowerRateLimiter; dispose: () => Promise<void> }> {
+  const workDir = await mkdtemp(join(tmpdir(), 'tower-rate-'));
+  tmpDirs.push(workDir);
+  let exposed: Readonly<ShallowRef<TowerRateLimiter | undefined>> | undefined;
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(
+    createTower({ workDir, host: createNodeOsHost(), available: () => true }),
+  );
+  harness.features.add(
+    createFeature('tower-rate-limit-probe', {
+      app() {
+        exposed = useInject(TowerRateLimitRef);
+      },
+    }),
+  );
+  const limiter = exposed?.value;
+  if (limiter === undefined) throw new Error('tower rate limiter was not exposed');
+  return { limiter, dispose: () => harness.close() };
+}
+
 describe('rate limiter', () => {
-  it('gates spawns on budget and pause, recovers on success, resets', () => {
-    let now = 1_000_000;
-    const limiter = createTowerRateLimiter(() => now);
-    expect(limiter.snapshot()).toMatchObject({ budget: 16, inflight: 0, blockedUntil: null });
-    limiter.reportRateLimited();
-    const denied = limiter.acquire();
-    expect(denied.ok).toBe(false);
-    if (!denied.ok) {
-      expect(denied.reason).toContain('provider rate limit hit — new tower spawns paused for ~60s');
+  it('gates spawns on budget and pause, recovers on success, resets', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const { limiter, dispose } = await mountRateLimiter();
+      try {
+        expect(limiter.snapshot()).toMatchObject({ budget: 16, inflight: 0, blockedUntil: null });
+        limiter.reportRateLimited();
+        const denied = limiter.acquire();
+        expect(denied.ok).toBe(false);
+        if (!denied.ok) {
+          expect(denied.reason).toContain('provider rate limit hit — new tower spawns paused for ~60s');
+        }
+        vi.setSystemTime(1_061_000);
+        const ok = limiter.acquire();
+        expect(ok.ok).toBe(true);
+        expect(limiter.snapshot().inflight).toBe(1);
+        limiter.release();
+        expect(limiter.snapshot().inflight).toBe(0);
+        limiter.reportSuccess();
+        expect(limiter.snapshot().blockedUntil).toBeNull();
+        limiter.reset();
+        expect(limiter.snapshot()).toMatchObject({ budget: 16, inflight: 0, blockedUntil: null });
+      } finally {
+        await dispose();
+      }
+    } finally {
+      vi.useRealTimers();
     }
-    now += 61_000;
-    const ok = limiter.acquire();
-    expect(ok.ok).toBe(true);
-    expect(limiter.snapshot().inflight).toBe(1);
-    limiter.release();
-    expect(limiter.snapshot().inflight).toBe(0);
-    limiter.reportSuccess();
-    expect(limiter.snapshot().blockedUntil).toBeNull();
-    limiter.reset();
-    expect(limiter.snapshot()).toMatchObject({ budget: 16, inflight: 0, blockedUntil: null });
   });
 
-  it('shrinks capacity on rate limit reports while agents are inflight', () => {
-    let now = 0;
-    const limiter = createTowerRateLimiter(() => now);
-    for (let i = 0; i < 4; i++) limiter.acquire();
-    limiter.reportRateLimited();
-    expect(limiter.budget()).toBe(3);
-    now = 1_000;
-    limiter.reportRateLimited();
-    expect(limiter.budget()).toBe(3);
-    now = 2_000;
-    limiter.reportRateLimited();
-    expect(limiter.budget()).toBe(2);
-    now = 182_000;
-    limiter.reportSuccess();
-    expect(limiter.budget()).toBe(3);
+  it('shrinks capacity on rate limit reports while agents are inflight', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(0);
+      const { limiter, dispose } = await mountRateLimiter();
+      try {
+        for (let i = 0; i < 4; i++) limiter.acquire();
+        limiter.reportRateLimited();
+        expect(limiter.budget()).toBe(3);
+        vi.setSystemTime(1_000);
+        limiter.reportRateLimited();
+        expect(limiter.budget()).toBe(3);
+        vi.setSystemTime(2_000);
+        limiter.reportRateLimited();
+        expect(limiter.budget()).toBe(2);
+        vi.setSystemTime(182_000);
+        limiter.reportSuccess();
+        expect(limiter.budget()).toBe(3);
+      } finally {
+        await dispose();
+      }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -878,7 +927,7 @@ function user(text: string) {
 }
 
 interface TowerTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly calls: LlmCall[];
   readonly workDir: string;
@@ -912,22 +961,22 @@ async function startApp(opts?: {
     available: opts?.available ?? (() => true),
     models: opts?.models,
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const planProbe = capturePlanFaces();
   if (opts?.withPlan === true) {
-    harness.app.features.add(interaction);
-    harness.app.features.add(createPlan());
+    harness.features.add(interaction);
+    harness.features.add(createPlan());
   }
-  harness.app.features.add(createTask());
-  harness.app.features.add(tower);
+  harness.features.add(createTask());
+  harness.features.add(tower);
   const probe = captureTowerFaces();
-  harness.app.features.add(probe.feature);
-  if (opts?.withPlan === true) harness.app.features.add(planProbe.feature);
-  harness.app.features.add(bindTestTools());
+  harness.features.add(probe.feature);
+  if (opts?.withPlan === true) harness.features.add(planProbe.feature);
+  harness.features.add(bindTestTools());
   const calls: LlmCall[] = [];
-  harness.app.features.add(bindTestLlm(calls, opts?.script ?? routingScript));
-  const session = await harness.app.create({ sessionId });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  harness.features.add(bindTestLlm(calls, opts?.script ?? routingScript));
+  const session = await harness.open(sessionId);
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   const face = (): TowerFace => {
     const value = probe.faceOf(sessionId, MAIN_AGENT_ID);
     if (value === undefined) throw new Error('tower facade was not captured');
@@ -1048,7 +1097,7 @@ describe('feature gating', () => {
   it('reports not-main-agent on a subagent and stays inert', async () => {
     const env = await startApp();
     try {
-      const sub = await env.harness.ensureAgent(env.session, 'sub-1', { systemPrompt: 'sub' });
+      const { agent: sub } = await env.session.ensureAgent('sub-1', { systemPrompt: 'sub' });
       expect(sub.id).toBe('sub-1');
       const face = env.faceOf('sess', 'sub-1');
       expect(face).toBeDefined();
@@ -1143,18 +1192,18 @@ describe('enter and exit', () => {
     await testStore(repo).init();
     const host = createNodeOsHost();
     const tower = createTower({ workDir: repo, host, available: () => true });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createTask());
-    harness.app.features.add(tower);
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createTask());
+    harness.features.add(tower);
     const probe = captureTowerFaces();
-    harness.app.features.add(probe.feature);
+    harness.features.add(probe.feature);
     const calls: LlmCall[] = [];
-    harness.app.features.add(bindTestLlm(calls, routingScript));
+    harness.features.add(bindTestLlm(calls, routingScript));
     try {
-      const sessionA = await harness.app.create({ sessionId: 'sess-a' });
-      await harness.ensureAgent(sessionA, MAIN_AGENT_ID, { systemPrompt: 'a' });
-      const sessionB = await harness.app.create({ sessionId: 'sess-b' });
-      await harness.ensureAgent(sessionB, MAIN_AGENT_ID, { systemPrompt: 'b' });
+      const sessionA = await harness.open('sess-a');
+      await sessionA.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'a' });
+      const sessionB = await harness.open('sess-b');
+      await sessionB.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'b' });
       const faceA = probe.faceOf('sess-a', MAIN_AGENT_ID);
       const faceB = probe.faceOf('sess-b', MAIN_AGENT_ID);
       expect(faceA).toBeDefined();
@@ -1165,7 +1214,7 @@ describe('enter and exit', () => {
         reason: 'owned-by-live-session',
         owner: 'sess-a',
       });
-      await harness.app.close('sess-a');
+      await harness.close('sess-a');
       expect(await faceB!.enter()).toEqual({ entered: true });
       expect((await testStore(repo).load()).sessionId).toBe('sess-b');
     } finally {
@@ -1288,7 +1337,7 @@ describe('worker spawn flow', () => {
       });
       expect(entry?.diedAt).toBeUndefined();
       expect(state.missions[0]).toMatchObject({ status: 'active', owner: 'agent-build' });
-      const worker = env.session.agents.get(agentId);
+      const worker = env.session.liveAgents.get(agentId);
       expect(worker).toBeDefined();
       await worker!.flush();
       const workerResults = toolResultTexts(worker!.view.getState().messages);
@@ -1320,7 +1369,7 @@ describe('worker spawn flow', () => {
     try {
       const store = testStore(repo);
       await store.init('sess');
-      const kid = await env.harness.ensureAgent(env.session, 'kid-1', { systemPrompt: 'kid' });
+      const { agent: kid } = await env.session.ensureAgent('kid-1', { systemPrompt: 'kid' });
       await store.registerAgent({
         name: 'agent-kid',
         agentId: 'kid-1',

@@ -1,6 +1,6 @@
 import { computed, toValue, watch, type ComputedRef, type MaybeRefOrGetter } from '@vue/reactivity';
 
-import type { WaitOpts } from '../utils/wait';
+import type { WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
 
 import type { CertainToken, CollectionToken, FacadeToken, ShallowRef, Token } from './primitives';
 import {
@@ -70,7 +70,7 @@ export function useCleanup(cleanup: () => void | Promise<void>): void {
   currentUnit().own(cleanup);
 }
 
-export function useFire(): (event: RuntimeEvent) => void {
+export function useFire<E extends RuntimeEvent = RuntimeEvent>(): (event: E) => void {
   const node = currentUnit();
   return (event) => {
     node.fire(event);

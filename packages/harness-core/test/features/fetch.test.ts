@@ -5,9 +5,13 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+} from '#/app/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
 import { createConfig, type ConfigPersist } from '#/features/config/index';
@@ -24,7 +28,7 @@ import {
 import { createOauth } from '#/features/kimi/oauth/index';
 import { createWeb } from '#/features/kimi/web/index';
 import { providerCatalog } from '#/features/provider-catalog/index';
-import { createHarness, memoryHarnessSpace } from '#/runtime/index';
+
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
@@ -125,15 +129,15 @@ const SERVICES_FETCH_TOML =
 async function mountFetchApp(
   toml: string | undefined,
   extra: { home?: string; fetchImpl?: typeof fetch } = {},
-): Promise<{ harness: ReturnType<typeof createHarness>; face: WebFetchFace }> {
+): Promise<{ harness: ReturnType<typeof createApp>; face: WebFetchFace }> {
   const capture: { fetch?: Readonly<ShallowRef<WebFetchFace | undefined>> } = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createConfig({ persist: fakePersist(toml) }));
-  harness.app.features.add(providerCatalog);
-  if (extra.home !== undefined) harness.app.features.add(createOauth({ home: extra.home }));
-  harness.app.features.add(createWeb({ fetchImpl: extra.fetchImpl }));
-  harness.app.features.add(createFetch({ fetchImpl: extra.fetchImpl }));
-  harness.app.features.add(
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createConfig({ persist: fakePersist(toml) }));
+  harness.features.add(providerCatalog);
+  if (extra.home !== undefined) harness.features.add(createOauth({ home: extra.home }));
+  harness.features.add(createWeb({ fetchImpl: extra.fetchImpl }));
+  harness.features.add(createFetch({ fetchImpl: extra.fetchImpl }));
+  harness.features.add(
     createFeature('probe', {
       app() {
         capture.fetch = useInject(WebFetchRef);

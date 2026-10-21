@@ -1,5 +1,5 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
-import { useCleanup, useCollection, useExpose, useInject, useOn } from '@moonshot-ai/agent-core/kernel/index';
+import { useApp } from '#/app/index';
+import { useCleanup, useCollection, useExpose, useInject, useOn } from '#/kernel/index';
 
 import { WebSocketServer } from 'ws';
 

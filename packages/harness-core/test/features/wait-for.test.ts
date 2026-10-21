@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -11,13 +16,10 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 import { waitFor } from '#/features/wait-for/index';
 
@@ -83,21 +85,21 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
 
 describe('wait-for feature', () => {
   it('waits for a detached tool inside the same turn and reports its completion', async () => {
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     const bg = backgroundProbe();
-    harness.app.features.add(waitFor);
-    harness.app.features.add(bg.feature);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    harness.features.add(waitFor);
+    harness.features.add(bg.feature);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', detachThenWaitRequester());
     agent.loop.subscribe((event) => {
       if (event.type === 'tool.started' && event.toolCall.name === 'WaitFor') {

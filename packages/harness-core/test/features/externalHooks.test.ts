@@ -4,9 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { shallowRef, useExpose, useFire, useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose, useFire, useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -16,12 +21,11 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, createConfig, type ConfigStore } from '#/features/config/index';
 import {
   createExternalHooks,
-  createExternalHooksRunner,
   ExternalHooksRunnerRef,
   useHookSource,
   type ExternalHooksRunner,
@@ -33,13 +37,7 @@ import { runHook } from '#/features/externalHooks/internal/run';
 import type { OsHost, OsProcess, OsSpawnOptions } from '#/features/os/index';
 import { ProfileCatalogRef, type AgentProfile } from '#/features/profiles/index';
 import {
-  agentCaps,
-  createAgentRuntime,
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 interface FakeProcSpec {
@@ -225,7 +223,7 @@ function probeCapture(): { readonly feature: Feature<void>; capture: Capture } {
 }
 
 interface TestApp {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly main: Agent;
   readonly workDir: string;
@@ -233,9 +231,9 @@ interface TestApp {
   readonly runTurn: (text?: string, meta?: UserMeta) => Promise<TurnOutcome>;
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -251,21 +249,21 @@ async function startApp(options?: {
   const workDir = await mkdtemp(join(tmpdir(), 'external-hooks-'));
   tmpDirs.push(workDir);
   const probe = probeCapture();
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  if (options?.withConfig !== false) harness.app.features.add(createConfig({}));
-  harness.app.features.add(
+  const harness = createApp({ space: memorySessionSpace() });
+  if (options?.withConfig !== false) harness.features.add(createConfig({}));
+  harness.features.add(
     createExternalHooks({
       host: options?.host,
       workDir,
       clientType: options?.clientType ?? 'test_client',
     }),
   );
-  if (options?.executed !== undefined) harness.app.features.add(bindTestTools(options.executed));
-  harness.app.features.add(probe.feature);
-  for (const feature of options?.extraFeatures ?? []) harness.app.features.add(feature);
+  if (options?.executed !== undefined) harness.features.add(bindTestTools(options.executed));
+  harness.features.add(probe.feature);
+  for (const feature of options?.extraFeatures ?? []) harness.features.add(feature);
   await tick();
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, options?.requester ?? createMockRequester());
   await tick();
   disposers.push(async () => {
@@ -293,7 +291,7 @@ async function userTexts(agent: Agent): Promise<string[]> {
 }
 
 interface SessionTestApp {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly workDir: string;
   readonly capture: Capture;
 }
@@ -322,11 +320,11 @@ async function startSessionApp(options: {
   const workDir = await mkdtemp(join(tmpdir(), 'external-hooks-'));
   tmpDirs.push(workDir);
   const probe = probeCapture();
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createConfig({}));
-  harness.app.features.add(createExternalHooks({ host: options.host, workDir, clientType: 'test_client' }));
-  if (options.profile !== undefined) harness.app.features.add(stubProfileCatalog(options.profile));
-  harness.app.features.add(probe.feature);
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createConfig({}));
+  harness.features.add(createExternalHooks({ host: options.host, workDir, clientType: 'test_client' }));
+  if (options.profile !== undefined) harness.features.add(stubProfileCatalog(options.profile));
+  harness.features.add(probe.feature);
   await tick();
   const config = probe.capture.config?.value;
   if (config === undefined) throw new Error('config face was not exposed');
@@ -559,37 +557,43 @@ describe('runMatchedHooks', () => {
   });
 });
 
-describe('createExternalHooksRunner', () => {
+describe('externalHooks runner', () => {
   it('rebuilds the reactive index when the hooks source changes', async () => {
     const { host } = createFakeHost(() => ({ exitCode: 0 }));
-    const hooksRef = shallowRef<readonly HookDef[]>([{ event: 'PreToolUse', command: 'a' }]);
-    const runner = createExternalHooksRunner({
-      host,
-      hooks: () => hooksRef.value,
-      workDir: '/wd',
-      clientType: 'test_client',
-    });
-    expect(runner.hasHooksFor('PreToolUse')).toBe(true);
-    expect(runner.hasHooksFor('Stop')).toBe(false);
-    hooksRef.value = [...hooksRef.value, { event: 'Stop', command: 'b' }];
-    expect(runner.hasHooksFor('Stop')).toBe(true);
-    expect(runner.summary).toEqual({ PreToolUse: 1, Stop: 1 });
+    const t = await startApp({ host });
+    const runner = t.capture.runner?.value;
+    const config = t.capture.config?.value;
+    expect(runner?.hasHooksFor('PreToolUse')).toBe(false);
+    await config?.set('hooks', [{ event: 'PreToolUse', command: 'a' }], 'memory');
+    expect(runner?.hasHooksFor('PreToolUse')).toBe(true);
+    expect(runner?.hasHooksFor('Stop')).toBe(false);
+    await config?.set(
+      'hooks',
+      [
+        { event: 'PreToolUse', command: 'a' },
+        { event: 'Stop', command: 'b' },
+      ],
+      'memory',
+    );
+    expect(runner?.hasHooksFor('Stop')).toBe(true);
+    expect(runner?.summary).toEqual({ PreToolUse: 1, Stop: 1 });
   });
 
   it('fills cwd and client_type defaults and lets the caller override them', async () => {
     const { host, spawns } = createFakeHost(() => ({ exitCode: 0 }));
-    const runner = createExternalHooksRunner({
-      host,
-      hooks: () => [{ event: 'SessionOpened', command: 'noop' }],
-      workDir: '/wd',
-      clientType: 'test_client',
-    });
-    await runner.trigger('SessionOpened', { sessionId: 's1' });
+    const t = await startApp({ host });
+    await t.capture.config?.value?.set(
+      'hooks',
+      [{ event: 'SessionOpened', command: 'noop' }],
+      'memory',
+    );
+    const runner = t.capture.runner?.value;
+    await runner?.trigger('SessionOpened', { sessionId: 's1' });
     expect(JSON.parse(spawns[0]!.stdin!)).toMatchObject({
-      cwd: '/wd',
+      cwd: t.workDir,
       client_type: 'test_client',
     });
-    await runner.trigger('SessionOpened', { sessionId: 's1', inputData: { clientType: 'custom' } });
+    await runner?.trigger('SessionOpened', { sessionId: 's1', inputData: { clientType: 'custom' } });
     expect(JSON.parse(spawns[1]!.stdin!)).toMatchObject({ client_type: 'custom' });
   });
 
@@ -597,27 +601,33 @@ describe('createExternalHooksRunner', () => {
     const { host } = createFakeHost((command) =>
       command === 'block-empty' ? { exitCode: 2 } : { exitCode: 2, stderr: 'blocked' },
     );
-    const runner = createExternalHooksRunner({
-      host,
-      hooks: () => [
+    const t = await startApp({ host });
+    await t.capture.config?.value?.set(
+      'hooks',
+      [
         { event: 'PreToolUse', matcher: 'Read', command: 'block-reason' },
         { event: 'PreToolUse', matcher: 'Grep', command: 'block-empty' },
       ],
-    });
+      'memory',
+    );
+    const runner = t.capture.runner?.value;
     await expect(
-      runner.triggerBlock('PreToolUse', { matcherValue: 'Read' }),
+      runner?.triggerBlock('PreToolUse', { matcherValue: 'Read' }),
     ).resolves.toEqual({ block: true, reason: 'blocked' });
     await expect(
-      runner.triggerBlock('PreToolUse', { matcherValue: 'Grep' }),
+      runner?.triggerBlock('PreToolUse', { matcherValue: 'Grep' }),
     ).resolves.toEqual({ block: true, reason: 'Blocked by PreToolUse hook' });
   });
 
   it('fails open when the trigger input preparation throws', async () => {
     const { host, spawns } = createFakeHost(() => ({ exitCode: 0 }));
-    const runner = createExternalHooksRunner({
-      host,
-      hooks: () => [{ event: 'PreToolUse', command: 'noop' }],
-    });
+    const t = await startApp({ host });
+    await t.capture.config?.value?.set(
+      'hooks',
+      [{ event: 'PreToolUse', command: 'noop' }],
+      'memory',
+    );
+    const runner = t.capture.runner?.value;
     const inputData: Record<string, unknown> = {};
     Object.defineProperty(inputData, 'broken', {
       enumerable: true,
@@ -625,8 +635,8 @@ describe('createExternalHooksRunner', () => {
         throw new Error('broken input');
       },
     });
-    await expect(runner.trigger('PreToolUse', { inputData })).resolves.toEqual([]);
-    await expect(runner.triggerBlock('PreToolUse', { inputData })).resolves.toBeUndefined();
+    await expect(runner?.trigger('PreToolUse', { inputData })).resolves.toEqual([]);
+    await expect(runner?.triggerBlock('PreToolUse', { inputData })).resolves.toBeUndefined();
     expect(spawns).toHaveLength(0);
   });
 });
@@ -853,7 +863,7 @@ describe('externalHooks feature', () => {
   it('fires TurnStarted with the origin payload for displayable and named origins', async () => {
     const fake = createFakeHost(() => ({ exitCode: 0 }));
     const t = await startApp({ host: fake.host });
-    await t.harness.app.update('sess', { title: 'My Session' });
+    await t.harness.update('sess', { title: 'My Session' });
     const config = t.capture.config?.value;
     await config?.set('hooks', [{ event: 'TurnStarted', command: 'rec turn' }], 'memory');
     await t.runTurn('hello hooks', { origin: { kind: 'cron_job' } });
@@ -955,7 +965,7 @@ describe('externalHooks feature', () => {
     vi.useFakeTimers();
     const fake = createFakeHost(() => ({ exitCode: 0 }));
     const t = await startApp({ host: fake.host });
-    await t.harness.app.update('sess', { title: 'Heart Session' });
+    await t.harness.update('sess', { title: 'Heart Session' });
     const config = t.capture.config?.value;
     await config?.set('hooks', [{ event: 'SessionHeartbeat', command: 'rec hb' }], 'memory');
     await vi.advanceTimersByTimeAsync(60_000);
@@ -1160,16 +1170,10 @@ describe('externalHooks feature', () => {
       ],
       'memory',
     );
-    const internals = harnessInternals(t.harness.app);
-    let perSession = internals.agents.get(t.session);
-    if (perSession === undefined) {
-      perSession = new Map();
-      internals.agents.set(t.session, perSession);
-    }
-    const runtime = createAgentRuntime('sub-1');
+    const { agent: child, runtime } = await t.session.ensureAgent('sub-1', {
+      init: { source: 'spawn:main:coder' },
+    });
     runtime.requester = requester;
-    perSession.set('sub-1', runtime);
-    const child = await t.session.open('sub-1', agentCaps(runtime), { source: 'spawn:main:coder' });
     await tick();
     const outcome = await child.loop.runTurn(user('do it', { origin: { kind: 'subagent' } }));
     expect(outcome.type).toBe('done');
@@ -1193,11 +1197,10 @@ describe('externalHooks feature', () => {
     expect(starts()).toHaveLength(1);
     expect(stops()).toHaveLength(1);
 
-    const btwInternals = harnessInternals(t.harness.app).agents.get(t.session)!;
-    const btwRuntime = createAgentRuntime('btw-1');
+    const { agent: btw, runtime: btwRuntime } = await t.session.ensureAgent('btw-1', {
+      init: { source: 'btw' },
+    });
     btwRuntime.requester = requester;
-    btwInternals.set('btw-1', btwRuntime);
-    const btw = await t.session.open('btw-1', agentCaps(btwRuntime), { source: 'btw' });
     await tick();
     await btw.loop.runTurn(user('do it', { origin: { kind: 'subagent' } }));
     await settle();
@@ -1216,7 +1219,7 @@ describe('externalHooks feature', () => {
       model: 'test-alias',
       profile: 'coder',
     });
-    const session = await t.harness.app.create({});
+    const session = await t.harness.create({});
     await waitFor(() => gated.spawns.length === 1);
     expect(gated.spawns[0]!.args[1]).toBe('rec start');
     gated.releaseAll();
@@ -1244,16 +1247,16 @@ describe('externalHooks feature', () => {
     const starts = (): SpawnRecord[] => fake.spawns.filter((spawn) => spawn.args[1] === 'rec start');
     const ends = (): SpawnRecord[] => fake.spawns.filter((spawn) => spawn.args[1] === 'rec end');
 
-    const first = await t.harness.app.create({ title: 'First' });
+    const first = await t.harness.create({ title: 'First' });
     await tick();
     await waitFor(() => starts().length === 1);
     expect(spawnPayload(starts()[0]!)).toMatchObject({ source: 'startup' });
 
-    const forked = await t.harness.app.create({ from: first.id });
+    const forked = await t.harness.create({ from: first.id });
     await tick();
     await settle();
     expect(starts()).toHaveLength(1);
-    await t.harness.app.close(forked.id);
+    await t.harness.close(forked.id);
     expect(ends()).toHaveLength(1);
     expect(spawnPayload(ends()[0]!)).toMatchObject({
       hook_event_name: 'SessionClosed',
@@ -1262,9 +1265,9 @@ describe('externalHooks feature', () => {
       session_title: 'First',
     });
 
-    await t.harness.app.close(first.id);
+    await t.harness.close(first.id);
     expect(ends()).toHaveLength(2);
-    const resumed = await t.harness.app.create({ sessionId: first.id });
+    const resumed = await t.harness.open(first.id);
     await tick();
     await waitFor(() => starts().length === 2);
     expect(spawnPayload(starts()[1]!)).toMatchObject({
@@ -1272,7 +1275,7 @@ describe('externalHooks feature', () => {
       session_title: 'First',
     });
 
-    await t.harness.app.delete(resumed.id);
+    await t.harness.delete(resumed.id);
     expect(ends()).toHaveLength(3);
   });
 
@@ -1282,10 +1285,10 @@ describe('externalHooks feature', () => {
       host: gated.host,
       hooks: [{ event: 'SessionClosed', command: 'rec end' }],
     });
-    const first = await t.harness.app.create({});
+    const first = await t.harness.create({});
     await tick();
     let closeResolved = false;
-    const closing = t.harness.app.close(first.id).then(() => {
+    const closing = t.harness.close(first.id).then(() => {
       closeResolved = true;
     });
     await waitFor(() => gated.spawns.length === 1);
@@ -1295,7 +1298,7 @@ describe('externalHooks feature', () => {
     await closing;
     expect(closeResolved).toBe(true);
 
-    const lingering = await t.harness.app.create({});
+    const lingering = await t.harness.create({});
     await tick();
     let disposed = false;
     const disposing = t.harness.close().then(() => {

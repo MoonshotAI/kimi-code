@@ -1,4 +1,4 @@
-import type { App } from '@moonshot-ai/agent-core/app/index';
+import type { AppSession } from '#/app/index';
 import {
   createUserEntry,
   type HistoryMessage,
@@ -6,7 +6,7 @@ import {
 } from '@moonshot-ai/agent-core/history/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
+import type { Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition, ToolResult, ToolUpdate } from '@moonshot-ai/agent-core/tool/index';
 
 import type { OsProcessPort } from '#/features/os/index';
@@ -26,12 +26,7 @@ import {
   type SpawnPlan,
   type SpawnRegistry,
 } from '#/features/spawn/index';
-import {
-  agentCaps,
-  createAgentRuntime,
-  harnessInternals,
-  type AgentRuntime,
-} from '#/runtime/index';
+import { type AgentRuntime } from '#/runtime/index';
 
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 import {
@@ -62,11 +57,10 @@ export type SwarmItemRegistry = Map<
 >;
 
 export interface AgentSwarmToolDeps {
-  readonly app: App;
   readonly catalog: ProfileCatalog;
   readonly models: readonly SpawnModelEntry[];
   readonly registry: SpawnRegistry;
-  readonly session: Session;
+  readonly session: AppSession;
   readonly agent: Agent;
   readonly runtime: AgentRuntime;
   readonly forkEnabled: () => boolean;
@@ -85,30 +79,17 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
     registry,
     session,
     agent,
-    app: deps.app,
     runtime: deps.runtime,
     process: deps.process,
     workDir: deps.workDir,
   });
 
   const ensureAgent = async (agentId: string): Promise<Agent> => {
-    const live = session.agents.get(agentId);
-    if (live !== undefined) return live;
-    const internals = harnessInternals(deps.app);
-    let perSession = internals.agents.get(session);
-    if (perSession === undefined) {
-      perSession = new Map();
-      internals.agents.set(session, perSession);
-    }
-    let runtime = perSession.get(agentId);
-    if (runtime === undefined) {
-      runtime = createAgentRuntime(agentId);
-      perSession.set(agentId, runtime);
-    }
+    const { agent: opened, runtime } = await session.ensureAgent(agentId);
     if (runtime.requester === undefined) {
       runtime.requester = deps.runtime.requester;
     }
-    return session.open(agentId, agentCaps(runtime));
+    return opened;
   };
 
   const getSwarmItem = (agentId: string): string | undefined => {
@@ -117,7 +98,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
   };
 
   const historyLength = async (agentId: string): Promise<number> => {
-    const target = session.agents.get(agentId);
+    const target = session.liveAgents.get(agentId);
     if (target === undefined) return 0;
     await target.flush();
     return target.view.getState().messages.length;
@@ -127,7 +108,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
     agentId: string,
     historyBefore: number,
   ): Promise<readonly HistoryMessage[]> => {
-    const target = session.agents.get(agentId);
+    const target = session.liveAgents.get(agentId);
     if (target === undefined) return [];
     await target.flush();
     return target.view.getState().messages.slice(historyBefore);
@@ -240,7 +221,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
     },
     retry: async (agentId, options) => {
       options.signal.throwIfAborted();
-      const target = session.agents.get(agentId) ?? (await ensureAgent(agentId));
+      const target = session.liveAgents.get(agentId) ?? (await ensureAgent(agentId));
       const record = registry.get(agentId);
       if (record?.running === true) {
         throw new Error(

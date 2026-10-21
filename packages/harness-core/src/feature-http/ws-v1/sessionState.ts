@@ -1,7 +1,7 @@
-import type { App } from '@moonshot-ai/agent-core/app/index';
-import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
-import { createFacadeToken } from '@moonshot-ai/agent-core/kernel/index';
-import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+import type { App } from '#/app/index';
+import type { RuntimeEvent } from '#/kernel/index';
+import { createFacadeToken } from '#/kernel/index';
+import type { UnitNode } from '#/kernel/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { ConfigStore } from '#/features/config/index';
@@ -556,7 +556,7 @@ export class SessionBroadcaster {
       towerParents: new Map(),
     };
     this.sessions.set(sessionId, state);
-    for (const agentId of handle.agents.keys()) {
+    for (const agentId of handle.liveAgents.keys()) {
       void this.attachAgent(state, agentId).catch(() => {});
     }
     return state;
@@ -564,7 +564,7 @@ export class SessionBroadcaster {
 
   private async attachAgent(state: SessionState, agentId: string): Promise<void> {
     if (state.agentTracks.has(agentId)) return;
-    const agent = state.handle.agents.get(agentId);
+    const agent = state.handle.liveAgents.get(agentId);
     if (agent === undefined) return;
     const track: AgentTrack = { offs: [], promptByTurnId: new Map() };
     state.agentTracks.set(agentId, track);
@@ -584,7 +584,7 @@ export class SessionBroadcaster {
   }
 
   private knownAgentIds(state: SessionState, spec?: TranscriptGradeSpec): string[] {
-    const ids = new Set<string>([...state.transcripts.keys(), ...state.handle.agents.keys()]);
+    const ids = new Set<string>([...state.transcripts.keys(), ...state.handle.liveAgents.keys()]);
     if (spec !== undefined) {
       for (const key of Object.keys(spec)) {
         if (key !== '*') ids.add(key);
@@ -596,7 +596,7 @@ export class SessionBroadcaster {
   private async ensureTranscript(state: SessionState, agentId: string): Promise<TranscriptStream | undefined> {
     const existing = state.transcripts.get(agentId);
     if (existing !== undefined) return existing;
-    const agent = state.handle.agents.get(agentId);
+    const agent = state.handle.liveAgents.get(agentId);
     if (agent === undefined) return undefined;
     const transcript = new AgentTranscript(agentId);
     const stream: TranscriptStream = {

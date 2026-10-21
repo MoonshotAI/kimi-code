@@ -11,15 +11,21 @@ import { WebSocket, type RawData } from 'ws';
 
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
-import { createFeature, useApp, type App, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useApp,
+  type App,
+  type Feature,
+  createApp,
+} from '#/app/index';
 import { createUserEntry, type UserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useReady, type FacadeToken } from '@moonshot-ai/agent-core/kernel/index';
-import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+import { useReady, type FacadeToken } from '#/kernel/index';
+import type { UnitNode } from '#/kernel/runtime';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome, TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session, type SessionSpace } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
@@ -76,7 +82,10 @@ import { tokenCounting } from '#/features/tokenCounting/index';
 import { undo } from '#/features/undo/index';
 import { usage } from '#/features/usage/index';
 import { createWorkspaces, WorkspaceRef } from '#/features/workspaces/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, useAgentRuntime, useAgentTools, type Harness, type HarnessSessionSpace } from '#/runtime/index';
+import {
+  useAgentRuntime,
+  useAgentTools,
+} from '#/runtime/index';
 
 const mcpFixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
 
@@ -182,7 +191,7 @@ function bindTestBgTool(bg: Map<string, BgHandle>): Feature<void> {
   });
 }
 
-const harnesses: Harness[] = [];
+const harnesses: App[] = [];
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -194,19 +203,18 @@ afterEach(async () => {
 });
 
 interface HttpEnv {
-  readonly harness: Harness;
   readonly app: App;
   readonly origin: string;
-  readonly space: HarnessSessionSpace;
+  readonly space: SessionSpace;
   readonly root: UnitNode;
 }
 
 async function mountHttp(features: readonly Feature<void>[], options: CreateHttpOptions = {}): Promise<HttpEnv> {
-  const space = memoryHarnessSpace();
-  const harness = createHarness({ space });
+  const space = memorySessionSpace();
+  const harness = createApp({ space });
   harnesses.push(harness);
   let rootUnit: UnitNode | undefined;
-  harness.app.features.add(
+  harness.features.add(
     createFeature('root-probe', {
       app() {
         rootUnit = useRootUnit();
@@ -214,9 +222,9 @@ async function mountHttp(features: readonly Feature<void>[], options: CreateHttp
     }),
   );
   for (const feature of features) {
-    harness.app.features.add(feature);
+    harness.features.add(feature);
   }
-  harness.app.features.add(
+  harness.features.add(
     createHttp(
       options.server === undefined
         ? {
@@ -231,7 +239,7 @@ async function mountHttp(features: readonly Feature<void>[], options: CreateHttp
   await root.ready().catch(() => {});
   const origin = root.resolve(HttpRef)?.origin;
   if (origin === undefined) throw new Error('http origin unavailable');
-  return { harness, app: harness.app, origin, space, root };
+  return { app: harness, origin, space, root };
 }
 
 async function tempDir(prefix: string): Promise<string> {
@@ -259,14 +267,14 @@ function fakePersist(initial?: string): { saved: string[]; persist: ConfigPersis
 function setRequester(env: HttpEnv, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = env.app.sessions.get(sessionId);
   const runtime =
-    session !== undefined ? harnessInternals(env.app).agents.get(session)?.get(agentId) : undefined;
+    session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
 
 async function openMain(env: HttpEnv, sessionId: string): Promise<Session> {
-  const session = await env.app.create({ sessionId });
-  await env.harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'test' });
+  const session = await env.app.open(sessionId);
+  await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'test' });
   setRequester(env, sessionId, MAIN_AGENT_ID, createMockRequester());
   await unitsReady(env.root);
   return session;
@@ -622,7 +630,7 @@ describe('feature-http facade routes', () => {
     const withoutFilter = await (await get(env, '/sessions')).json();
     expect(ids(withoutFilter)).toEqual(['ses_live_empty', 'ses_b', 'ses_a']);
     queue = [{ text: 'hi' }];
-    await runTurn(session.agents.get(MAIN_AGENT_ID) as Agent);
+    await runTurn(session.liveAgents.get(MAIN_AGENT_ID) as Agent);
     const filled = await (await get(env, '/sessions?exclude_empty=true')).json();
     expect(ids(filled)).toEqual(['ses_live_empty', 'ses_b', 'ses_a']);
   });
@@ -639,7 +647,7 @@ describe('feature-http facade routes', () => {
     ]);
     const session = await openMain(env, 'ses_view');
     queue = [{ text: 'hello' }];
-    await runTurn(session.agents.get(MAIN_AGENT_ID) as Agent);
+    await runTurn(session.liveAgents.get(MAIN_AGENT_ID) as Agent);
 
     const live = await (await get(env, '/sessions/ses_view')).json();
     expect(live.data).toMatchObject({
@@ -892,7 +900,7 @@ describe('feature-http facade routes', () => {
     ]);
     const session = await openMain(env, 'ses_compact');
     queue = [{ text: 'hello' }];
-    await runTurn(session.agents.get(MAIN_AGENT_ID) as Agent);
+    await runTurn(session.liveAgents.get(MAIN_AGENT_ID) as Agent);
 
     const compacted = await post(env, '/sessions/ses_compact:compact', { instruction: '  ' });
     expect(compacted.status).toBe(200);
@@ -916,7 +924,7 @@ describe('feature-http facade routes', () => {
   it('undoes turns, projects messages and status, and reports undo guard errors', async () => {
     const env = await mountHttp([undo, bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_undo');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [{ text: 'first' }];
     await runTurn(agent, 'turn one');
     queue = [{ text: 'second' }];
@@ -951,12 +959,8 @@ describe('feature-http facade routes', () => {
     });
 
     const noFeature = await mountHttp([]);
-    await noFeature.app.create({ sessionId: 'ses_no_undo' });
-    await noFeature.harness.ensureAgent(
-      noFeature.app.sessions.get('ses_no_undo') as Session,
-      MAIN_AGENT_ID,
-      { systemPrompt: 'test' },
-    );
+    const noUndoSession = await noFeature.app.open('ses_no_undo');
+    await noUndoSession.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'test' });
     const unavailable = await post(noFeature, '/sessions/ses_no_undo:undo', {});
     expect(unavailable.status).toBe(200);
     expect(await unavailable.json()).toMatchObject({ code: 40911 });
@@ -1016,7 +1020,7 @@ describe('feature-http facade routes', () => {
     const pending = await get(env, '/sessions/ses_status/status');
     expect((await pending.json()).data.pending_interaction).toBe('approval');
 
-    await env.app.create({ sessionId: 'ses_no_agents' });
+    await env.app.open('ses_no_agents');
     const noAgent = await get(env, '/sessions/ses_no_agents/status');
     expect(noAgent.status).toBe(200);
     expect(await noAgent.json()).toMatchObject({ code: 40421 });
@@ -1054,7 +1058,7 @@ describe('feature-http facade routes', () => {
     const bg = new Map<string, BgHandle>();
     const env = await mountHttp([createTask(), bindTestLlm(createMockRequester()), bindTestBgTool(bg)]);
     const session = await openMain(env, 'ses_tasks');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [
       { toolCall: { name: 'TestBg', arguments: JSON.stringify({ description: 'test task' }) } },
       { text: 'done' },
@@ -1190,7 +1194,7 @@ describe('feature-http facade routes', () => {
       }),
     ]);
     const session = await openMain(env, 'ses_fh');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [
       {
         toolCall: {
@@ -1446,15 +1450,15 @@ describe('feature-http v2 session routes', () => {
       { toolCall: { name: 'TestBg', arguments: JSON.stringify({ description: 'a bg' }) } },
       { text: 'done' },
     ];
-    await runTurn(a.agents.get(MAIN_AGENT_ID) as Agent, 'first task');
+    await runTurn(a.liveAgents.get(MAIN_AGENT_ID) as Agent, 'first task');
     expect(bg.size).toBe(1);
 
     tick(12_000);
-    await env.app.create({ sessionId: 'ses_b', title: 'b title', metadata: { workspaceId: 'wa' } });
+    await env.app.open('ses_b', { title: 'b title', metadata: { workspaceId: 'wa' } });
     await env.app.close('ses_b');
 
     tick(14_000);
-    await env.app.create({ sessionId: 'ses_c', title: 'c title', metadata: { workspaceId: 'wb' } });
+    await env.app.open('ses_c', { title: 'c title', metadata: { workspaceId: 'wb' } });
     tick(15_000);
     env.root.fire({
       type: 'message.appended',
@@ -1472,7 +1476,7 @@ describe('feature-http v2 session routes', () => {
     });
 
     tick(17_000);
-    await env.app.create({ sessionId: 'ses_d' });
+    await env.app.open('ses_d');
     tick(18_000);
     env.root.fire({
       type: 'session.meta_updated',
@@ -1562,7 +1566,7 @@ describe('feature-http v2 session routes', () => {
     const { env, tick } = await mountV2();
     for (const [index, id] of ['s1', 's2', 's3', 's4', 's5'].entries()) {
       tick(20_000 + index * 1_000);
-      await env.app.create({ sessionId: id, title: id });
+      await env.app.open(id, { title: id });
       await env.app.close(id);
     }
 
@@ -1648,8 +1652,8 @@ describe('feature-http v2 session routes', () => {
     const { env } = await mountV2([
       createWorkspaces({ homeDir: await tempDir('v2-git-home-'), host: createNodeOsHost() }),
     ]);
-    await env.app.create({ sessionId: 'ses_repo', metadata: { cwd: root } });
-    await env.app.create({ sessionId: 'ses_plain' });
+    await env.app.open('ses_repo', { metadata: { cwd: root } });
+    await env.app.open('ses_plain');
 
     const body = await (await getV2(env, '/sessions?include=git')).json();
     const byId = new Map<string, { branch: string | null; pull_request: unknown }>(
@@ -1678,16 +1682,16 @@ describe('feature-http v2 session routes', () => {
     const wa = await workspaces.createOrTouch('/work/wa');
 
     tick(21_000);
-    await env.app.create({ sessionId: 'g_a2', title: 'a2', metadata: { workspaceId: wa.id, cwd: '/work/wa/sub' } });
+    await env.app.open('g_a2', { title: 'a2', metadata: { workspaceId: wa.id, cwd: '/work/wa/sub' } });
     await env.app.close('g_a2');
     tick(22_000);
-    await env.app.create({ sessionId: 'g_a1', title: 'a1', metadata: { workspaceId: wa.id } });
+    await env.app.open('g_a1', { title: 'a1', metadata: { workspaceId: wa.id } });
     await env.app.close('g_a1');
     tick(23_000);
-    await env.app.create({ sessionId: 'g_raw', title: 'raw', metadata: { workspaceId: 'ws-unregistered' } });
+    await env.app.open('g_raw', { title: 'raw', metadata: { workspaceId: 'ws-unregistered' } });
     await env.app.close('g_raw');
     tick(24_000);
-    await env.app.create({ sessionId: 'g_free', title: 'free' });
+    await env.app.open('g_free', { title: 'free' });
     await env.app.close('g_free');
 
     const grouped = await (
@@ -1734,7 +1738,7 @@ describe('feature-http v2 session routes', () => {
   it('batch archives and restores sessions with kap per-item semantics', async () => {
     const { env } = await mountV2();
     await openMain(env, 'ses_live');
-    await env.app.create({ sessionId: 'ses_cold', title: 'cold' });
+    await env.app.open('ses_cold', { title: 'cold' });
     await env.app.close('ses_cold');
 
     const archived = await (
@@ -1768,7 +1772,7 @@ describe('feature-http v2 session routes', () => {
 
     await openMain(env, 'ses_stay');
     await postV2(env, '/sessions:archive', { ids: ['ses_stay'] });
-    const revived = await env.app.create({ sessionId: 'ses_stay' });
+    const revived = await env.app.open('ses_stay');
     const restoredLive = await (await postV2(env, '/sessions:restore', { ids: ['ses_stay'] })).json();
     expect(restoredLive.data).toMatchObject({ succeeded: 1, failed: 0 });
     expect(env.app.sessions.get('ses_stay')).toBe(revived);
@@ -1801,7 +1805,7 @@ describe('feature-http API routes', () => {
   it('activates a skill and maps skill errors', async () => {
     const env = await mountHttp([createSkill({ workDir: '/' }), bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_skill_activate');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
 
     const done = agent.loop.wait('turn.ended');
     const activated = await post(env, '/sessions/ses_skill_activate/skills/write-goal:activate', {
@@ -3045,7 +3049,7 @@ describe('feature-http workspaces routes', () => {
     expect(Number.isNaN(Date.parse(createdBody.data.created_at))).toBe(false);
     expect(Number.isNaN(Date.parse(createdBody.data.last_opened_at))).toBe(false);
 
-    await env.app.create({ sessionId: 'ses_ws_http', metadata: { workspaceId } });
+    await env.app.open('ses_ws_http', { metadata: { workspaceId } });
     const listed = await get(env, '/workspaces');
     const listBody = await listed.json();
     expect(listBody.data.items).toHaveLength(1);
@@ -3210,7 +3214,7 @@ describe('feature-http workspaces routes', () => {
     const env = await mountHttp([
       createWorkspaces({ homeDir: await tempDir('ws-http-home-'), host: createNodeOsHost() }),
     ]);
-    await env.app.create({ sessionId: 'ses_fs', metadata: { cwd: root } });
+    await env.app.open('ses_fs', { metadata: { cwd: root } });
 
     const listed = await post(env, '/sessions/ses_fs/fs:list', {});
     expect(listed.status).toBe(200);
@@ -3271,7 +3275,7 @@ describe('feature-http workspaces routes', () => {
     expect(missingSession.status).toBe(200);
     expect(await missingSession.json()).toMatchObject({ code: 40401 });
 
-    await env.app.create({ sessionId: 'ses_unbound' });
+    await env.app.open('ses_unbound');
     const unbound = await post(env, '/sessions/ses_unbound/fs:list', {});
     expect(unbound.status).toBe(200);
     expect(await unbound.json()).toMatchObject({
@@ -3282,7 +3286,7 @@ describe('feature-http workspaces routes', () => {
     const face = env.root.resolve(WorkspaceRef);
     if (face === undefined) throw new Error('workspaces feature missing');
     const ws = await face.createOrTouch(root);
-    await env.app.create({ sessionId: 'ses_bound', metadata: { workspaceId: ws.id } });
+    await env.app.open('ses_bound', { metadata: { workspaceId: ws.id } });
     const boundList = await post(env, '/sessions/ses_bound/fs:list', {});
     expect(boundList.status).toBe(200);
 
@@ -3366,7 +3370,7 @@ describe('feature-http workspaces routes', () => {
     const env = await mountHttp([
       createWorkspaces({ homeDir: await tempDir('ws-http-home-'), host: createNodeOsHost() }),
     ]);
-    await env.app.create({ sessionId: 'ses_git', metadata: { cwd: root } });
+    await env.app.open('ses_git', { metadata: { cwd: root } });
 
     const status = await post(env, '/sessions/ses_git/fs:git_status', {});
     expect(status.status).toBe(200);
@@ -3441,7 +3445,7 @@ describe('feature-http workspaces routes', () => {
       },
     };
     const env = await mountHttp([createWorkspaces({ homeDir: home, host })]);
-    await env.app.create({ sessionId: 'ses_launch', metadata: { cwd: root } });
+    await env.app.open('ses_launch', { metadata: { cwd: root } });
 
     const opened = await post(env, '/sessions/ses_launch/fs:open', { path: 'docs/note.txt' });
     expect(opened.status).toBe(200);
@@ -3491,7 +3495,7 @@ describe('feature-http workspaces routes', () => {
     expect((await escapedOpen.json()).code).toBe(41304);
 
     const hostless = await mountHttp([createWorkspaces({ homeDir: await tempDir('ws-http-mem-') })]);
-    await hostless.app.create({ sessionId: 'ses_no_host', metadata: { cwd: root } });
+    await hostless.app.open('ses_no_host', { metadata: { cwd: root } });
     const unavailable = await post(hostless, '/sessions/ses_no_host/fs:open', {
       path: 'docs/note.txt',
     });
@@ -3675,7 +3679,7 @@ describe('feature-http ws endpoint', () => {
   it('forwards whitelisted session events to subscribers', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_ws');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const client = await connectWs(env);
     client.send({ type: 'subscribe', session_id: 'ses_ws' });
     expect(await client.next((frame) => frame['type'] === 'subscribed')).toMatchObject({
@@ -3706,7 +3710,7 @@ describe('feature-http ws endpoint', () => {
     client.send({ type: 'subscribe', session_id: 'ses_ws_filter' });
     await client.next((frame) => frame['type'] === 'subscribed');
 
-    await env.harness.ensureAgent(session, 'sub', { systemPrompt: 'test' });
+    await session.ensureAgent('sub', { systemPrompt: 'test' });
     await client.next((frame) => frame['event_type'] === 'agent.opened');
     client.send({ type: 'unsubscribe', session_id: 'ses_ws_filter' });
     await client.next((frame) => frame['type'] === 'unsubscribed');
@@ -3727,7 +3731,7 @@ describe('feature-http ws endpoint', () => {
     client.send({ type: 'unsubscribe', session_id: 'ses_ws_unsub' });
     await client.next((frame) => frame['type'] === 'unsubscribed');
 
-    await env.harness.ensureAgent(session, 'sub', { systemPrompt: 'test' });
+    await session.ensureAgent('sub', { systemPrompt: 'test' });
     client.send({ type: 'subscribe', session_id: 'ses_ghost' });
     await client.next((frame) => frame['type'] === 'error');
 
@@ -3771,7 +3775,7 @@ describe('feature-http ws endpoint', () => {
     const bg = new Map<string, BgHandle>();
     const env = await mountHttp([bindTestLlm(createMockRequester()), bindTestBgTool(bg)]);
     const session = await openMain(env, 'ses_ws_turn');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const client = await connectWs(env);
     client.send({ type: 'subscribe', session_id: 'ses_ws_turn', agents: { [MAIN_AGENT_ID]: 'turn' } });
     expect(await client.next((frame) => frame['type'] === 'subscribed')).toMatchObject({
@@ -3810,7 +3814,7 @@ describe('feature-http ws endpoint', () => {
   it('forwards llm.streaming.part only for the delta grade', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_ws_delta');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const client = await connectWs(env);
     client.send({ type: 'subscribe', session_id: 'ses_ws_delta', agents: { [MAIN_AGENT_ID]: 'delta' } });
     await client.next((frame) => frame['type'] === 'subscribed');
@@ -3831,7 +3835,7 @@ describe('feature-http ws endpoint', () => {
   it('delivers turn.started exactly once for a graded agent', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_ws_dedup');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const client = await connectWs(env);
     client.send({ type: 'subscribe', session_id: 'ses_ws_dedup', agents: { [MAIN_AGENT_ID]: 'turn' } });
     await client.next((frame) => frame['type'] === 'subscribed');
@@ -3849,8 +3853,8 @@ describe('feature-http ws endpoint', () => {
   it('replaces agent grades on re-subscribe and lists them in the registry', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_ws_replace');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
-    await env.harness.ensureAgent(session, 'sub', { systemPrompt: 'test' });
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
+    await session.ensureAgent('sub', { systemPrompt: 'test' });
     const client = await connectWs(env);
     client.send({ type: 'subscribe', session_id: 'ses_ws_replace', agents: { [MAIN_AGENT_ID]: 'delta' } });
     await client.next((frame) => frame['type'] === 'subscribed');
@@ -3981,7 +3985,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
   it('streams kap-shaped session events with monotonic seq for a subscription', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_v1_stream');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const client = await connectWsV1(env);
     await client.next((frame) => frame['type'] === 'server_hello');
 
@@ -4081,7 +4085,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
   it('serves transcript.reset then live transcript.ops and suppresses raw projected frames', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_v1_transcript');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const client = await connectWsV1(env);
     await client.next((frame) => frame['type'] === 'server_hello');
     client.send(hello('h1', { subscriptions: [] }));
@@ -4180,7 +4184,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
   it('replays journaled events from a cursor and echoes the server cursor', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_v1_replay');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [{ text: 'replayed turn' }];
     await runTurn(agent);
 
@@ -4230,7 +4234,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
   it('answers resync_required when the cursor epoch mismatches or runs ahead of the journal', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_v1_resync');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [{ text: 'resync turn' }];
     await runTurn(agent);
 
@@ -4310,8 +4314,8 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
   it('filters raw agent events by agent_filter', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_v1_filter');
-    const main = session.agents.get(MAIN_AGENT_ID) as Agent;
-    const sub = await env.harness.ensureAgent(session, 'sub', { systemPrompt: 'test' });
+    const main = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
+    const { agent: sub } = await session.ensureAgent('sub', { systemPrompt: 'test' });
     setRequester(env, 'ses_v1_filter', 'sub', createMockRequester());
     const client = await connectWsV1(env);
     await client.next((frame) => frame['type'] === 'server_hello');
@@ -4523,7 +4527,7 @@ describe('feature-http ws v1 (kap-aligned) endpoint', () => {
       bindTestLlm(createMockRequester()),
     ]);
     const session = await openMain(env, 'ses_v1_media');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     const files = env.root.resolve(FilesRef);
     if (files === undefined) throw new Error('files facade was not exposed');
     const stored = await files.save(
@@ -4631,7 +4635,7 @@ describe('feature-http cold session resume', () => {
   it('resumes a catalog session for prompt submission instead of answering 40401', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_cold_prompt');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [{ text: 'first turn' }];
     await runTurn(agent);
     await closeSession(env, 'ses_cold_prompt');
@@ -4649,7 +4653,7 @@ describe('feature-http cold session resume', () => {
 
     const resumed = env.app.sessions.get('ses_cold_prompt');
     expect(resumed).toBeDefined();
-    const resumedAgent = resumed?.agents.get(MAIN_AGENT_ID);
+    const resumedAgent = resumed?.liveAgents.get(MAIN_AGENT_ID);
     expect(resumedAgent).toBeDefined();
     await vi.waitFor(async () => {
       await resumedAgent?.flush();
@@ -4695,7 +4699,7 @@ describe('feature-http cold session resume', () => {
   it('resumes a catalog session for ws subscriptions and seeds transcript from persisted history', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_cold_ws');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [{ text: 'persisted cold turn' }];
     await runTurn(agent);
     await closeSession(env, 'ses_cold_ws');
@@ -4792,7 +4796,7 @@ describe('feature-http transcript routes', () => {
   }
 
   async function lastToolCallId(session: Session): Promise<string> {
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     await agent.flush();
     const history = agent.view.getState().messages;
     const assistant = history.findLast(
@@ -4809,7 +4813,7 @@ describe('feature-http transcript routes', () => {
   it('serves the baseline transcript page with kap wire shape and turn pagination', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_tr');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     for (const text of ['turn one', 'turn two', 'turn three']) {
       queue = [{ text }];
       await runTurn(agent);
@@ -4879,7 +4883,7 @@ describe('feature-http transcript routes', () => {
   it('serves a cold session transcript from persisted history after resume', async () => {
     const env = await mountHttp([bindTestLlm(createMockRequester())]);
     const session = await openMain(env, 'ses_tr_cold');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
     queue = [{ text: 'cold baseline' }];
     await runTurn(agent);
     await env.app.close('ses_tr_cold');
@@ -4906,7 +4910,7 @@ describe('feature-http transcript routes', () => {
       bindTestLlm(createMockRequester()),
     ]);
     const session = await openMain(env, 'ses_tr_plan');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
 
     queue = [{ toolCall: { name: 'ExitPlanMode', arguments: '{}' } }, { text: 'done one' }];
     await runTurn(agent);
@@ -4986,7 +4990,7 @@ describe('feature-http transcript routes', () => {
       bindTestLlm(createMockRequester()),
     ]);
     const session = await openMain(env, 'ses_tr_review');
-    const agent = session.agents.get(MAIN_AGENT_ID) as Agent;
+    const agent = session.liveAgents.get(MAIN_AGENT_ID) as Agent;
 
     const client = await connectWsV1(env);
     await client.next((frame) => frame['type'] === 'server_hello');
@@ -5480,7 +5484,7 @@ describe('feature-http files and session media routes', () => {
       createFiles({ dir }),
       createMedia({ workDir: dir }),
     ]);
-    await env.app.create({ sessionId: 'ses_media' });
+    await env.app.open('ses_media');
 
     const bytes = Buffer.from('media-bytes-abcdef');
     const registry = sessionRef(env, KimiFileRegistryRef, 'ses_media');
@@ -5520,7 +5524,7 @@ describe('feature-http files and session media routes', () => {
 
   it('reports unavailable codes when the files or media features are not installed', async () => {
     const bare = await mountHttp([]);
-    await bare.app.create({ sessionId: 'ses_bare' });
+    await bare.app.open('ses_bare');
 
     const form = new FormData();
     form.append('file', new Blob([Buffer.from('x')]), 'x.bin');

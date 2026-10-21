@@ -15,7 +15,7 @@ import {
   usedContextTokens,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { watch, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { watch, type ShallowRef } from '#/kernel/index';
 import type { LoopEmitted } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, Session, SessionRecord } from '@moonshot-ai/agent-core/session/index';
 

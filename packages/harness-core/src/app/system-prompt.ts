@@ -5,7 +5,7 @@ import {
   useMounted,
   type CollectionToken,
 } from '#/kernel/index';
-import type { Agent } from '#/session/index';
+import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 export interface SystemPromptSection {
   readonly id: string;

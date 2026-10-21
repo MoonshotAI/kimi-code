@@ -1,20 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
-import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  undoAgentTurns,
-  type Harness,
-} from '#/runtime/index';
 import {
   todo,
   TodoRef,
@@ -64,9 +63,9 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -85,15 +84,15 @@ function captureFacade(): { feature: Feature<void>; face: () => TodoFace | undef
 
 describe('todo feature', () => {
   it('writes todos through the TodoList tool, folds state, fires events and reminds when stale', async () => {
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     const probe = captureFacade();
-    harness.app.features.add(todo);
-    harness.app.features.add(probe.feature);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    harness.features.add(todo);
+    harness.features.add(probe.feature);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', todoTurnsRequester([['read code', 'add tests'], null, null, null]));
     const updated: TodoUpdatedEvent[] = [];
-    harness.app.on(todo, TODO_UPDATED, (event) => updated.push(event));
+    harness.on(todo, TODO_UPDATED, (event) => updated.push(event));
     const reminded: string[] = [];
     agent.loop.subscribe((event) => {
       if (event.type === 'prompt.reminded') reminded.push(extractText(event.entry.message));
@@ -116,7 +115,7 @@ describe('todo feature', () => {
       { title: 'read code', status: 'in_progress' },
       { title: 'add tests', status: 'in_progress' },
     ]);
-    expect(updated[0]?.turnId).toBe(0);
+    expect(updated[0]?.turn).toBe(0);
 
     expect(probe.face()?.items.value).toEqual([
       { title: 'read code', status: 'in_progress' },
@@ -136,26 +135,26 @@ describe('todo feature', () => {
   });
 
   it('restores todos across reopen and rewinds them with undo', async () => {
-    const space = memoryHarnessSpace();
-    const harness = createHarness({ space });
+    const space = memorySessionSpace();
+    const harness = createApp({ space });
     const probe = captureFacade();
-    harness.app.features.add(todo);
-    harness.app.features.add(probe.feature);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    harness.features.add(todo);
+    harness.features.add(probe.feature);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', todoTurnsRequester([['task-a'], ['task-b']]));
     await agent.loop.runTurn(user('one'));
     await agent.loop.runTurn(user('two'));
     await agent.flush();
     expect(probe.face()?.items.value).toEqual([{ title: 'task-b', status: 'in_progress' }]);
 
-    await harness.app.close('s1');
-    const resumed = await harness.app.create({ sessionId: 's1' });
-    const agent2 = await harness.ensureAgent(resumed, 'main');
+    await harness.close('s1');
+    const resumed = await harness.open('s1');
+    const { agent: agent2 } = await resumed.ensureAgent('main');
     await tick();
     expect(probe.face()?.items.value).toEqual([{ title: 'task-b', status: 'in_progress' }]);
 
-    await undoAgentTurns(harness.app, resumed, 'main', 1);
+    await resumed.undo('main', 1);
     expect(probe.face()?.items.value).toEqual([{ title: 'task-a', status: 'in_progress' }]);
     const userTexts = agent2.view
       .getState()

@@ -1,16 +1,16 @@
-import { openBlobStore } from '#/blob/index';
-import { memoryBlobBackend } from '#/blob/backend/memory';
-import { createUserEntry, type UserMeta } from '#/history/message';
+import { openBlobStore } from '@moonshot-ai/agent-core/blob/index';
+import { memoryBlobBackend } from '@moonshot-ai/agent-core/blob/backend/memory';
+import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/message';
 import type { App } from '#/app/index';
 import type { RuntimeEvent } from '#/kernel/index';
-import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#/llm/message';
-import type { LlmRequest } from '#/llm/request';
-import type { LlmOutcome } from '#/llm/response';
-import type { LoopAck, Loop, LoopEmitted, LoopLlmRequester } from '#/loop/index';
-import { createSession, type Agent, type Session } from '#/session/index';
-import { memoryJournal } from '#/store/backend/memory';
-import type { ToolExecutor } from '#/tool/index';
-import { waitEvent, type WaitOpts } from '#/utils/wait';
+import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
+import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
+import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
+import type { LoopAck, Loop, LoopEmitted, LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { createSession, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { memoryJournal } from '@moonshot-ai/agent-core/store/backend/memory';
+import type { ToolExecutor } from '@moonshot-ai/agent-core/tool/index';
+import { waitEvent, type WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 

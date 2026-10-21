@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 import { isAbsolute } from 'pathe';
 
 import {

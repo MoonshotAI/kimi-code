@@ -5,8 +5,13 @@ import { join } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useCollection, useInject, type ComputedRef, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useCollection, useInject, type ComputedRef, type ShallowRef } from '#/kernel/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
@@ -23,7 +28,7 @@ import {
   type CredentialResolverContribution,
   type ProviderCatalogFace,
 } from '#/features/provider-catalog/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
+
 
 const homes: string[] = [];
 
@@ -98,7 +103,7 @@ function oauthProbe(capture: Capture) {
 }
 
 interface OauthApp {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly capture: Capture;
   readonly tokens: OAuthTokens;
   readonly catalog: ProviderCatalogFace;
@@ -112,11 +117,11 @@ async function mountOauthApp(options: {
 }): Promise<OauthApp> {
   if (options.fetchImpl !== undefined) vi.stubGlobal('fetch', options.fetchImpl);
   const capture: Capture = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createConfig({ persist: options.file.persist }));
-  harness.app.features.add(providerCatalog);
-  harness.app.features.add(createKimi({ oauth: { home: options.home, fetchImpl: options.fetchImpl } }));
-  harness.app.features.add(oauthProbe(capture));
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createConfig({ persist: options.file.persist }));
+  harness.features.add(providerCatalog);
+  harness.features.add(createKimi({ oauth: { home: options.home, fetchImpl: options.fetchImpl } }));
+  harness.features.add(oauthProbe(capture));
   await tick();
   const tokens = capture.oauth?.value;
   const catalog = capture.catalog?.value;

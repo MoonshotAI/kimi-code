@@ -5,9 +5,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { basename, dirname, join, resolve } from 'pathe';
 import { open as openZip } from 'yauzl';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -18,9 +22,11 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, LoopRecord } from '@moonshot-ai/agent-core/loop/index';
 import {
   AGENT_LOG_PREFIX,
+  memorySessionSpace,
   SESSION_LOG,
   SessionSpaceError,
   type SessionEvent,
+  type SessionSpace,
 } from '@moonshot-ai/agent-core/session/index';
 import {
   encodeCommit,
@@ -39,17 +45,12 @@ import {
   type SessionExportFace,
 } from '#/features/sessionExport/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  type Harness,
-  type HarnessSessionSpace,
 } from '#/runtime/index';
 
 const SESSION_ID = 'ses_demo';
 
 const tmps: string[] = [];
-const harnesses: Harness[] = [];
+const harnesses: App[] = [];
 
 afterEach(async () => {
   await Promise.all(harnesses.splice(0).map((harness) => harness.close()));
@@ -63,10 +64,10 @@ async function makeTmp(): Promise<string> {
 }
 
 async function mountExport(
-  space: HarnessSessionSpace,
+  space: SessionSpace,
   props?: Partial<CreateSessionExportProps>,
 ): Promise<() => SessionExportFace | undefined> {
-  const harness = createHarness({ space });
+  const harness = createApp({ space });
   harnesses.push(harness);
   let face: Readonly<ShallowRef<SessionExportFace | undefined>> | undefined;
   const probe = createFeature('session-export-probe', {
@@ -74,7 +75,7 @@ async function mountExport(
       face = useInject(SessionExportRef);
     },
   });
-  harness.app.features.add(
+  harness.features.add(
     createSessionExport({
       version: props?.version ?? '1.0.0-test',
       wireProtocolVersion: '1',
@@ -82,7 +83,7 @@ async function mountExport(
       desktopLogPath: props?.desktopLogPath,
     }),
   );
-  harness.app.features.add(probe);
+  harness.features.add(probe);
   return () => face?.value;
 }
 
@@ -130,9 +131,9 @@ function echoRequester(): LoopLlmRequester {
   return self;
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -140,11 +141,11 @@ function setRequester(harness: Harness, sessionId: string, agentId: string, requ
 describe('sessionExport feature', () => {
   it('exports a live session journal with loop activity in the manifest', async () => {
     const tmp = await makeTmp();
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const face = await mountExport(space);
     const harness = harnesses.at(-1)!;
-    const session = await harness.app.create({ sessionId: SESSION_ID, title: 'Demo' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const session = await harness.open(SESSION_ID, { title: 'Demo' });
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, SESSION_ID, 'main', echoRequester());
     await agent.loop.runTurn(createUserEntry(createUserMessage('hello'), { source: 'input' }));
     await agent.flush();
@@ -191,7 +192,7 @@ describe('sessionExport feature', () => {
 
   it('scans fixed-time commits across the session and agent logs', async () => {
     const tmp = await makeTmp();
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const container = await space.create(SESSION_ID, { title: 'Demo' });
     await appendLog(container.journal, SESSION_LOG, [
       commit<SessionEvent>(0, 1_700_000_000_000, [{ type: 'agent.registered', agentId: 'main' }]),
@@ -255,7 +256,7 @@ describe('sessionExport feature', () => {
   });
 
   it('uses a timestamped default output path and never overwrites an earlier export', async () => {
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const container = await space.create(SESSION_ID, { title: 'Demo' });
     await appendLog(container.journal, SESSION_LOG, [
       commit<SessionEvent>(0, 1, [{ type: 'agent.registered', agentId: 'main' }]),
@@ -279,7 +280,7 @@ describe('sessionExport feature', () => {
   });
 
   it('rejects with a SessionSpaceError when the session is unknown', async () => {
-    const face = await mountExport(memoryHarnessSpace());
+    const face = await mountExport(memorySessionSpace());
 
     const error = await face()!.export({ sessionId: 'ses_missing' }).then(
       () => {
@@ -292,7 +293,7 @@ describe('sessionExport feature', () => {
   });
 
   it('rejects with export_not_found when the session has no exportable journal', async () => {
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     await space.create('ses_empty', { title: 'Empty' });
     const face = await mountExport(space);
 
@@ -304,7 +305,7 @@ describe('sessionExport feature', () => {
 
   it('rejects an output path that conflicts with a selected source without modifying it', async () => {
     const tmp = await makeTmp();
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const container = await space.create(SESSION_ID, { title: 'Demo' });
     await appendLog(container.journal, SESSION_LOG, [
       commit<SessionEvent>(0, 1, [{ type: 'agent.registered', agentId: 'main' }]),
@@ -327,7 +328,7 @@ describe('sessionExport feature', () => {
 
   it('bundles optional global, desktop and web logs and omits a missing global log', async () => {
     const tmp = await makeTmp();
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const container = await space.create(SESSION_ID, { title: 'Demo' });
     await appendLog(container.journal, SESSION_LOG, [
       commit<SessionEvent>(0, 1, [{ type: 'agent.registered', agentId: 'main' }]),
@@ -382,7 +383,7 @@ describe('sessionExport feature', () => {
   });
 
   it('rejects when the signal is already aborted', async () => {
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const container = await space.create(SESSION_ID, { title: 'Demo' });
     await appendLog(container.journal, SESSION_LOG, [
       commit<SessionEvent>(0, 1, [{ type: 'agent.registered', agentId: 'main' }]),

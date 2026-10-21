@@ -1,11 +1,11 @@
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, type Feature } from '#/app/index';
 import {
   createFacadeToken,
   useCollection,
   useExpose,
   useReady,
   watch,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 
 import type { OsHost } from '#/features/os/host/index';
 

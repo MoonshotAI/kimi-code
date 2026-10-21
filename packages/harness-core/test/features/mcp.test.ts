@@ -5,9 +5,14 @@ import { dirname, join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -18,13 +23,9 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent } from '@moonshot-ai/agent-core/session/index';
+import { memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  type Harness,
 } from '#/runtime/index';
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
 import {
@@ -47,6 +48,7 @@ import {
   type McpEvent,
   type McpFacade,
   type McpMediaStore,
+  type McpOAuthAuthorizationUrlEvent,
   type McpSection,
   type McpServerConfig,
   type McpServerStdioConfig,
@@ -142,9 +144,9 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -159,13 +161,13 @@ async function waitFor(check: () => boolean, message: string, timeoutMs = 15_000
 }
 
 interface StartedApp {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly agent: Agent;
   readonly calls: LlmCall[];
   readonly requester: LoopLlmRequester;
   readonly workDir: string;
   readonly homeDir: string;
-  readonly feature: Feature<void, McpEvent>;
+  readonly feature: Feature<void, { app: McpEvent; agent: McpOAuthAuthorizationUrlEvent }>;
   readonly facade: () => McpFacade;
   readonly registry: () => KimiFileRegistry;
   readonly config: () => ConfigStore;
@@ -181,11 +183,11 @@ async function startApp(opts: {
   readonly env?: Record<string, string>;
   readonly features?: readonly Feature<any, any>[];
   readonly sessionCwd?: (sessionId: string) => string | undefined;
-  readonly beforeReady?: (harness: Harness, feature: Feature<void, McpEvent>) => void;
+  readonly beforeReady?: (harness: App, feature: Feature<void, { app: McpEvent; agent: McpOAuthAuthorizationUrlEvent }>) => void;
 }): Promise<StartedApp> {
   const workDir = await tmpDir('mcp-work-');
   const homeDir = await tmpDir('mcp-home-');
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const feature = createMcp({
     workDir,
     home: homeDir,
@@ -207,14 +209,14 @@ async function startApp(opts: {
       registryFace = useInject(KimiFileRegistryRef).value;
     },
   });
-  harness.app.features.add(createConfig({ persist: fakePersist(), env: opts.env }));
-  for (const extra of opts.features ?? []) harness.app.features.add(extra);
-  harness.app.features.add(feature);
-  harness.app.features.add(probe);
+  harness.features.add(createConfig({ persist: fakePersist(), env: opts.env }));
+  for (const extra of opts.features ?? []) harness.features.add(extra);
+  harness.features.add(feature);
+  harness.features.add(probe);
   opts.beforeReady?.(harness, feature);
   const { requester, calls } = createMockRequester(opts.script);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'main-host' });
+  const session = await harness.open('sess');
+  const { agent } = await session.ensureAgent('main', { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', 'main', requester);
   const facade = (): McpFacade => {
     const face = mcpFace?.value;
@@ -576,10 +578,10 @@ describe('mcp feature', () => {
         host: null,
         servers: { auth: { transport: 'http', url: `${base.url}/mcp` } },
         beforeReady: (harness, feature) => {
-          const offState = harness.app.on(feature, 'mcp.server.state', (event) => {
+          const offState = harness.on(feature, 'mcp.server.state', (event) => {
             stateEvents.push({ server: event.server, state: event.state });
           });
-          const offAuth = harness.app.on(feature, 'mcp.oauth.authorization_url', (event) => {
+          const offAuth = harness.on(feature, 'mcp.oauth.authorization_url', (event) => {
             authUrlEvents.push({ server: event.server, authorizationUrl: event.authorizationUrl });
             resolveAuthUrl();
           });
@@ -807,8 +809,8 @@ describe('mcp feature', () => {
           : { text: 'done' },
       sessionCwd: (sessionId) => (sessionId === 'sess' ? '/work/alpha' : '/work/beta'),
     });
-    const sessionB = await started.harness.app.create({ sessionId: 'sess-b' });
-    const mainB = await started.harness.ensureAgent(sessionB, 'main', { systemPrompt: 'main-host' });
+    const sessionB = await started.harness.open('sess-b');
+    const { agent: mainB } = await sessionB.ensureAgent('main', { systemPrompt: 'main-host' });
     setRequester(started.harness, 'sess-b', 'main', started.requester);
     try {
       const facade = started.facade();

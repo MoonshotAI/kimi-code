@@ -1,5 +1,5 @@
 import type { HistoryMessage, ToolMeta, UserEntry, UserMeta } from '#/history/message';
-import type { Projection } from '#/store/index';
+import type { Event, Projection } from '#/store/index';
 import type { LoopProfile, UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
 import { INTERRUPTED, type TurnOutcome } from './contract/outcome';
@@ -51,6 +51,10 @@ function toJson(value: unknown, ancestors: Set<object>): unknown {
 
 export function toLoopRecord(event: LoopEmitted): LoopRecord | undefined {
   return recorded.has(event.type) ? (toJson(event, new Set()) as LoopRecord) : undefined;
+}
+
+export function isLoopRecord(event: Event): event is LoopRecord {
+  return recorded.has(event.type);
 }
 
 export interface TurnPosition {

@@ -4,9 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import {
+  createFeature,
+  createApp,
+} from '#/app/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
+import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
@@ -21,7 +24,7 @@ import {
 import { TraceRef, type TraceFace } from '#/features/kimi/trace/index';
 import { SERVICES_CONFIG_SECTION, WebSearchRef, type WebSearchFace } from '#/features/kimi/web/index';
 import { providerCatalog } from '#/features/provider-catalog/index';
-import { createHarness, memoryHarnessSpace } from '#/runtime/index';
+
 
 const homes: string[] = [];
 
@@ -86,11 +89,11 @@ describe('kimi composite feature', () => {
   it('exposes the app-tier facades of the sub features', async () => {
     const home = await setupHome();
     const capture: Capture = {};
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createConfig({ persist: fakePersist() }));
-    harness.app.features.add(providerCatalog);
-    harness.app.features.add(createKimi({ oauth: { home } }));
-    harness.app.features.add(kimiProbe(capture));
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createConfig({ persist: fakePersist() }));
+    harness.features.add(providerCatalog);
+    harness.features.add(createKimi({ oauth: { home } }));
+    harness.features.add(kimiProbe(capture));
     await tick();
     const tokens = capture.oauth?.value;
     const web = capture.web?.value;
@@ -109,14 +112,14 @@ describe('kimi composite feature', () => {
 
   it('exposes the session and agent tier facades of sessionTitle and trace', async () => {
     const capture: Capture = {};
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createConfig({ persist: fakePersist() }));
-    harness.app.features.add(providerCatalog);
-    harness.app.features.add(createKimi());
-    harness.app.features.add(kimiProbe(capture));
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createConfig({ persist: fakePersist() }));
+    harness.features.add(providerCatalog);
+    harness.features.add(createKimi());
+    harness.features.add(kimiProbe(capture));
     await tick();
-    const session = await harness.app.create({ sessionId: 'sess' });
-    await harness.ensureAgent(session, MAIN_AGENT_ID);
+    const session = await harness.open('sess');
+    await session.ensureAgent(MAIN_AGENT_ID);
     await tick();
     const face = capture.title?.value;
     const promptSource = capture.promptSource?.value;

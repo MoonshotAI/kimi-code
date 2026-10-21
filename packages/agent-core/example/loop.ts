@@ -18,6 +18,7 @@ import {
   type Message,
   type ToolCall,
 } from '#/llm/message';
+import { llmStartedEvent } from '#/llm/policy/policy';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import type { FinishInfo, LlmOutcome, TokenUsage } from '#/llm/response';
 import { mergeFields, type LlmRequestPart } from '#/llm/requester';
@@ -66,7 +67,7 @@ function createFakeRequester(filled: LlmRequestPart = {}): LoopLlmRequester {
         finishReason: message.toolCalls.length > 0 ? 'tool_calls' : 'completed',
         rawFinishReason: null,
       };
-      onEvent?.({ type: 'llm.started' });
+      onEvent?.(await llmStartedEvent(complete(rest)));
       const emitted: ContentPart[] = [];
       for (const part of message.content) {
         await sleep(50);

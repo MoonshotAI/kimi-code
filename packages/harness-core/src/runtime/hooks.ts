@@ -1,7 +1,7 @@
 import { onScopeDispose } from '@vue/reactivity';
 
-import { useAgent, useApp, useSession, useToolHandler } from '@moonshot-ai/agent-core/app/index';
-import { useCleanup } from '@moonshot-ai/agent-core/kernel/index';
+import { useAgent, useSession, useToolHandler } from '#/app/index';
+import { useCleanup } from '#/kernel/index';
 import type { MessageResolver } from '@moonshot-ai/agent-core/llm/policy/resolver';
 import type { LlmRecovery } from '@moonshot-ai/agent-core/llm/policy/recovery';
 import type { LlmRetryable } from '@moonshot-ai/agent-core/llm/policy/retry';
@@ -9,18 +9,12 @@ import type { LoopEmitted, WaitForTasks } from '@moonshot-ai/agent-core/loop/ind
 import type { BlobStore } from '@moonshot-ai/agent-core/blob/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
-import {
-  syncAgentTools,
-  type AgentRuntime,
-} from './agents';
-import { harnessInternals } from './harness';
+import { syncAgentTools, type AgentRuntime } from './agents';
 
 export function useAgentRuntime(): AgentRuntime {
-  const app = useApp();
-  const session = useSession();
   const agent = useAgent();
-  const runtime = harnessInternals(app).agents.get(session)?.get(agent.id);
-  if (runtime === undefined) throw new Error(`agent '${agent.id}' was not opened by harness.ensureAgent`);
+  const runtime = useSession().agentRuntime(agent.id);
+  if (runtime === undefined) throw new Error(`agent '${agent.id}' was not opened by session.ensureAgent`);
   return runtime;
 }
 

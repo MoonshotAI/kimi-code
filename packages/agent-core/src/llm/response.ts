@@ -1,4 +1,5 @@
 import type { AssistantMessage, StreamedMessagePart, ToolCall } from '#/llm/message';
+import type { ThinkingEffort } from '#/llm/request';
 
 export type FinishReason =
   | 'completed' // openai: stop; anthropic: end_turn, stop_sequence; google-genai: STOP; openai-responses: completed
@@ -162,8 +163,23 @@ export type LlmOutcome =
   | ({ readonly type: 'failed'; readonly error: LlmErrorMessage; readonly rawError?: unknown } & Partial<LlmOutput>)
   | ({ readonly type: 'aborted'; readonly message: AssistantMessage | null; readonly reason?: unknown } & Omit<LlmOutput, 'message'>);
 
+export interface LlmRequestSummary {
+  readonly provider: string;
+  readonly model: string;
+  readonly thinkingEffort?: ThinkingEffort;
+  readonly thinkingKeep?: string;
+  readonly temperature?: number;
+  readonly topP?: number;
+  readonly maxOutputTokens?: number | 'none';
+  readonly systemPromptHash?: string;
+  readonly toolsHash?: string;
+  readonly messageCount: number;
+}
+
+export type LlmRunStarted = { readonly type: 'llm.started' } & LlmRequestSummary;
+
 export type LlmRunEvent =
-  | { readonly type: 'llm.started' }
+  | LlmRunStarted
   | LlmStreamEvent
   | LlmRetrying
   | { readonly type: 'llm.ended'; readonly outcome: LlmOutcome };

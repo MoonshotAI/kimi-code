@@ -1,5 +1,5 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useApp } from '#/app/index';
+import { useInject } from '#/kernel/index';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {
@@ -52,7 +52,7 @@ export function useTranscriptRoutes(prefix: string): void {
     if (stream !== undefined) {
       return { snapshot: stream.snapshot(), watermark: stream.watermark };
     }
-    const agent = session.agents.get(agentId);
+    const agent = session.liveAgents.get(agentId);
     if (agent === undefined) {
       return { snapshot: EMPTY_SNAPSHOT };
     }

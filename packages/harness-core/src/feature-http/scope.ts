@@ -1,12 +1,12 @@
-import { RootRef } from '@moonshot-ai/agent-core/app/units';
+import { RootRef } from '#/app/units';
 import {
   createCollection,
   createFacadeToken,
   useCleanup,
   useInject,
   type FacadeToken,
-} from '@moonshot-ai/agent-core/kernel/index';
-import { currentUnit, lineage, type UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+} from '#/kernel/index';
+import { currentUnit, lineage, type UnitNode } from '#/kernel/runtime';
 import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { Http, HttpHandler } from './server';

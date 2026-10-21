@@ -1,4 +1,4 @@
-import { createFeature, useApp, useSession } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useSession } from '#/app/index';
 import { onScopeDispose } from '@vue/reactivity';
 import {
   createCollection,
@@ -12,8 +12,8 @@ import {
   useInject,
   watch,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
-import { currentUnit } from '@moonshot-ai/agent-core/kernel/runtime';
+} from '#/kernel/index';
+import { currentUnit } from '#/kernel/runtime';
 import { createProviderCatalog } from '@moonshot-ai/agent-core/llm/catalog/index';
 import type {
   CatalogModel,
@@ -36,6 +36,7 @@ import type { LlmModelSpec } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/agent-core/llm/requester';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import type { Log } from '@moonshot-ai/agent-core/store/index';
 
 import {
   ConfigRef,
@@ -59,13 +60,7 @@ import {
   type ProvidersSection,
   type ThinkingConfig,
 } from '#/features/config/index';
-import {
-  featureWriterOf,
-  harnessInternals,
-  useAgentRuntime,
-  useFeatureStore,
-  useLlmRecovery,
-} from '#/runtime/index';
+import { useAgentRuntime, useFeatureStore, useLlmRecovery } from '#/runtime/index';
 
 import {
   AgentModelRef,
@@ -77,6 +72,7 @@ import {
   matchCatalogBinding,
   modelBindingProjection,
   sessionModelDefaultsProjection,
+  type ModelBindingState,
   type ModelBoundEvent,
   type SessionModelDefaultsEvent,
 } from './binding';
@@ -237,9 +233,11 @@ function mergeProviderInfo(
   };
 }
 
-export const providerCatalog = createFeature<
-  ModelBoundEvent | SessionModelDefaultsEvent | ModelCatalogChangedEvent
->(
+export const providerCatalog = createFeature<{
+  app: ModelCatalogChangedEvent;
+  session: SessionModelDefaultsEvent;
+  agent: ModelBoundEvent | SessionModelDefaultsEvent;
+}>(
   'provider-catalog',
   {
     app() {
@@ -623,14 +621,11 @@ export const providerCatalog = createFeature<
     },
     session() {
       const session = useSession();
-      const app = useApp();
       const bindings = useCollection(CatalogModels);
       const config = useInject(ConfigRef);
       const store = useFeatureStore('session', 'provider-catalog', sessionModelDefaultsProjection);
-      const writer = featureWriterOf(harnessInternals(app), session.id);
-      const mainAgentLog = () => writer.open<ModelBoundEvent>(`agents/${MAIN_AGENT_ID}/provider-catalog`);
-      const mainBoundState = async () => {
-        const log = await mainAgentLog();
+      const mainBoundState = (): ModelBindingState => {
+        const log = session.liveAgents.get(MAIN_AGENT_ID)!.log as unknown as Log<ModelBoundEvent>;
         const view = log.replica.view(modelBindingProjection);
         const state = view.getState();
         view.dispose();
@@ -641,19 +636,15 @@ export const providerCatalog = createFeature<
         return typeof value === 'string' && value.length > 0 ? value : undefined;
       };
       const dualWrite = async (patch: { alias?: string | null; thinking?: string | null }): Promise<void> => {
-        const main = session.agents.get(MAIN_AGENT_ID);
+        const main = session.liveAgents.get(MAIN_AGENT_ID);
         if (main === undefined) return;
-        const current = await mainBoundState();
-        const runningTurn = main.loop.state.turn?.id;
-        const turnId = runningTurn ?? (await main.flush().then(() => main.view.getState().turns.at(-1)?.turnId));
-        const log = await mainAgentLog();
-        await log.commit({
+        const current = mainBoundState();
+        await (main.log as unknown as Log<ModelBoundEvent>).commit({
           events: [
             {
               type: MODEL_BOUND,
               alias: patch.alias !== undefined ? patch.alias : current.alias,
               thinking: patch.thinking !== undefined ? patch.thinking : current.thinking,
-              turnId,
             },
           ],
         });
@@ -668,7 +659,7 @@ export const providerCatalog = createFeature<
         },
         setThinking: async (effort) => {
           const agentBound =
-            session.agents.get(MAIN_AGENT_ID) === undefined ? undefined : await mainBoundState();
+            session.liveAgents.get(MAIN_AGENT_ID) === undefined ? undefined : mainBoundState();
           const alias = agentBound?.alias ?? store.state.value.defaultModel ?? appDefaultAlias();
           const spec =
             alias === undefined ? undefined : matchCatalogBinding(alias, bindings.value)?.model;

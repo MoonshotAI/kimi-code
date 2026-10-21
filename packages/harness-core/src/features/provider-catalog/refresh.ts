@@ -1,4 +1,4 @@
-import { createCollection, useContribute, type RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
+import { createCollection, useContribute, type RuntimeEvent } from '#/kernel/index';
 import {
   isManagedKimiCodeBaseUrl,
   isOpenPlatformId,

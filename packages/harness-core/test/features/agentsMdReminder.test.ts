@@ -1,9 +1,14 @@
 import { dirname, normalize } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -13,6 +18,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
   AGENTS_MD_CHANGE_REMIND_KEY,
@@ -23,11 +29,7 @@ import {
 } from '#/features/agentsMdReminder/index';
 import type { OsFsPort, OsHost } from '#/features/os/host/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 const WORK_DIR = '/ws';
@@ -173,14 +175,14 @@ function user(text: string) {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
-    session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+    session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -210,12 +212,12 @@ describe('agentsMdReminder feature', () => {
     fs.set('/ws/sub/AGENTS.md', 'sub instructions');
     fs.set('/ws/sub/code.ts', 'code');
     fs.set('/ws/sub/more.ts', 'more');
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     const probe = captureFacade();
-    harness.app.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
-    harness.app.features.add(probe.feature);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    harness.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
+    harness.features.add(probe.feature);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', readScriptRequester([
       '/ws/sub/code.ts',
       null,
@@ -264,12 +266,12 @@ describe('agentsMdReminder feature', () => {
   it('reminds when a seeded AGENTS.md changes on disk, dedupes polls and reports deletion', async () => {
     const fs = createFakeFs();
     fs.set('/ws/AGENTS.md', 'root instructions v1');
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     const probe = captureFacade();
-    harness.app.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
-    harness.app.features.add(probe.feature);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    harness.features.add(createAgentsMdReminder({ workDir: WORK_DIR, host: createFakeHost(fs) }));
+    harness.features.add(probe.feature);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', readScriptRequester([null, null, null, null]));
     const reminded: string[] = [];
     agent.loop.subscribe((event) => {

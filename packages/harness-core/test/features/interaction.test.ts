@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useSession,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
   INTERACTION_TAG_AGENT_ID,
@@ -16,7 +23,8 @@ import {
   type InteractionEvent,
   type Interactions,
 } from '#/features/interaction/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/index';
+import {
+} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -42,9 +50,9 @@ function user(text: string, meta: UserMeta = {}) {
   return createUserEntry(createUserMessage(text), { source: 'input', ...meta });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -67,17 +75,17 @@ function interactionsOf(refs: InteractionRefs, sessionId: string): Interactions 
   return interactions;
 }
 
-async function start(sessionIds: readonly string[]): Promise<{ harness: Harness; refs: InteractionRefs }> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+async function start(sessionIds: readonly string[]): Promise<{ harness: App; refs: InteractionRefs }> {
+  const harness = createApp({ space: memorySessionSpace() });
   const { feature, refs } = captureInteractions();
-  harness.app.features.add(interaction);
-  harness.app.features.add(feature);
-  for (const sessionId of sessionIds) await harness.app.create({ sessionId });
+  harness.features.add(interaction);
+  harness.features.add(feature);
+  for (const sessionId of sessionIds) await harness.open(sessionId);
   return { harness, refs };
 }
 
-function liveSession(harness: Harness, sessionId: string) {
-  const session = harness.app.sessions.get(sessionId);
+function liveSession(harness: App, sessionId: string) {
+  const session = harness.sessions.get(sessionId);
   if (session === undefined) throw new Error(`session '${sessionId}' is not live`);
   return session;
 }
@@ -86,8 +94,8 @@ describe('interaction feature', () => {
   it('emits interaction.requested with the full interaction on enqueue', async () => {
     const { harness, refs } = await start(['s1']);
     const events: InteractionEvent[] = [];
-    harness.app.on(interaction, 'interaction.requested', (event) => events.push(event));
-    harness.app.on(interaction, 'interaction.resolved', (event) => events.push(event));
+    harness.on(interaction, 'interaction.requested', (event) => events.push(event));
+    harness.on(interaction, 'interaction.resolved', (event) => events.push(event));
     const interactions = interactionsOf(refs, 's1');
     const item = interactions.enqueue({
       kind: 'question',
@@ -135,7 +143,7 @@ describe('interaction feature', () => {
   it('keeps a pending interaction unresolved across turn boundaries', async () => {
     const { harness, refs } = await start(['s1']);
     const session = liveSession(harness, 's1');
-    const agent = await harness.ensureAgent(session, 'main');
+    const { agent } = await session.ensureAgent('main');
     setRequester(harness, 's1', 'main', echoRequester());
     const interactions = interactionsOf(refs, 's1');
     const promise = interactions.request<unknown, string>({
@@ -162,10 +170,10 @@ describe('interaction feature', () => {
   it('cancels only the closed agent pending interactions with agent_closed', async () => {
     const { harness, refs } = await start(['s1']);
     const session = liveSession(harness, 's1');
-    await harness.ensureAgent(session, 'main');
-    await harness.ensureAgent(session, 'sub');
+    await session.ensureAgent('main');
+    await session.ensureAgent('sub');
     const resolved: Array<{ id: string; response: unknown }> = [];
-    harness.app.on(interaction, 'interaction.resolved', (event) => {
+    harness.on(interaction, 'interaction.resolved', (event) => {
       resolved.push({ id: event.id, response: event.response });
     });
     const interactions = interactionsOf(refs, 's1');
@@ -179,12 +187,12 @@ describe('interaction feature', () => {
       payload: {},
       tags: { [INTERACTION_TAG_AGENT_ID]: 'sub' },
     });
-    await session.close('main');
+    await session.closeAgent('main');
     const mainResponse = await mainPending;
     if (!isInteractionCancellation(mainResponse)) throw new Error('expected a cancellation');
     expect(mainResponse.reason).toBe('agent_closed');
     expect(interactions.findAll({ resolved: false })).toHaveLength(1);
-    await session.close('sub');
+    await session.closeAgent('sub');
     const subResponse = await subPending;
     if (!isInteractionCancellation(subResponse)) throw new Error('expected a cancellation');
     expect(subResponse.reason).toBe('agent_closed');
@@ -196,7 +204,7 @@ describe('interaction feature', () => {
   it('keeps an independent registry per session', async () => {
     const { harness, refs } = await start(['s1', 's2']);
     const requested: Array<{ sessionId: unknown; id: string }> = [];
-    harness.app.on(interaction, 'interaction.requested', (event) => {
+    harness.on(interaction, 'interaction.requested', (event) => {
       requested.push({ sessionId: event['sessionId'], id: event.interaction.id });
     });
     const first = interactionsOf(refs, 's1');
@@ -207,7 +215,7 @@ describe('interaction feature', () => {
     expect(second.findAll()).toHaveLength(0);
     expect(requested).toEqual([{ sessionId: 's1', id: 'interaction-0' }]);
     const other = second.request<unknown, string>({ kind: 'approval', payload: {} });
-    await harness.app.close('s1');
+    await harness.close('s1');
     const response = await pending;
     if (!isInteractionCancellation(response)) throw new Error('expected a cancellation');
     expect(response.reason).toBe('agent_closed');

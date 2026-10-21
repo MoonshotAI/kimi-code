@@ -1,8 +1,8 @@
-import type { App } from '@moonshot-ai/agent-core/app/index';
+import type { AppSession } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import type { OsProcessPort } from '#/features/os/index';
@@ -38,9 +38,8 @@ export interface SpawnToolDeps {
   readonly catalog: ProfileCatalog;
   readonly models: readonly SpawnModelEntry[];
   readonly registry: SpawnRegistry;
-  readonly session: Session;
+  readonly session: AppSession;
   readonly agent: Agent;
-  readonly app: App;
   readonly runtime: AgentRuntime;
   readonly forkEnabled: () => boolean;
   readonly process?: OsProcessPort;
@@ -56,7 +55,6 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
     registry,
     session,
     agent,
-    app: deps.app,
     runtime: deps.runtime,
     process: deps.process,
     workDir: deps.workDir,

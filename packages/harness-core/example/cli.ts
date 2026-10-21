@@ -71,31 +71,30 @@ export function parseCliArgs(argv: readonly string[]): CliArgs | undefined {
 }
 
 export async function runCli(args: CliArgs): Promise<void> {
-  const { harness, key, dataRoot, probe } = mountExample({ http: false });
+  const { app, key, dataRoot, probe } = mountExample({ http: false });
   const onSignal = (): void => {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
-    void harness.close().then(() => process.exit(130));
+    void app.close().then(() => process.exit(130));
   };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
   try {
     await probe.root.ready();
     await waitModelBound(probe, key);
-    if (args.sessionId !== undefined && (await harness.app.space.get(args.sessionId)) === undefined) {
+    if (args.sessionId !== undefined && (await app.space.get(args.sessionId)) === undefined) {
       throw new Error(`session ${args.sessionId} does not exist`);
     }
-    const session = await harness.app.create(
-      args.sessionId === undefined ? {} : { sessionId: args.sessionId },
-    );
-    const agent = await harness.ensureAgent(session, MAIN_AGENT_ID);
+    const session =
+      args.sessionId === undefined ? await app.create() : await app.open(args.sessionId);
+    const { agent } = await session.ensureAgent(MAIN_AGENT_ID);
     writeSession({ sessionId: session.id, model: key, store: join(dataRoot, session.id) }, args.json);
     const interactions = probe.interactions(session.id);
     if (interactions === undefined) {
       throw new Error('interaction feature is not installed');
     }
     const promptOut = args.json ? process.stderr : process.stdout;
-    const offQuestion = harness.app.on(interaction, 'interaction.requested', (event) => {
+    const offQuestion = app.on(interaction, 'interaction.requested', (event) => {
       if (event['sessionId'] !== session.id) return;
       const rl = createInterface({ input: process.stdin, output: promptOut });
       void answerInteraction(rl, event.interaction, promptOut)
@@ -135,7 +134,7 @@ export async function runCli(args: CliArgs): Promise<void> {
   } finally {
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
-    await harness.close();
+    await app.close();
   }
 }
 

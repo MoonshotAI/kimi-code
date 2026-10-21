@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -18,7 +23,7 @@ import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import { mergeFields, type LlmRequestPart } from '@moonshot-ai/agent-core/llm/requester';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import {
@@ -39,11 +44,7 @@ import {
   type SpawnModelEntry,
 } from '#/features/spawn/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 const fastModel: SpawnModelEntry = {
@@ -183,14 +184,14 @@ afterEach(async () => {
 });
 
 interface SpawnTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly main: Agent;
   readonly calls: LlmCall[];
 }
 
 async function startApp(
-  space = memoryHarnessSpace(),
+  space = memorySessionSpace(),
   opts?: {
     models?: readonly SpawnModelEntry[];
     withCatalog?: boolean;
@@ -200,30 +201,30 @@ async function startApp(
   const workDir = await mkdtemp(join(tmpdir(), 'spawn-work-'));
   tmpDirs.push(workDir);
   const { requester, calls } = createMockRequester(script, opts?.requesterFilled ?? {});
-  const harness = createHarness({ space });
-  harness.app.features.add(
+  const harness = createApp({ space });
+  harness.features.add(
     createSpawn({
       catalog: opts?.withCatalog === false ? undefined : testCatalog(),
       models: opts?.models,
       workDir,
     }),
   );
-  harness.app.features.add(bindDummyTools());
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  harness.features.add(bindDummyTools());
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   return { harness, session, main, calls };
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
-    session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+    session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -441,7 +442,7 @@ describe('spawn tool', () => {
     await plain.harness.close();
 
     process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
-    const rich = await startApp(memoryHarnessSpace(), { models: [fastModel] });
+    const rich = await startApp(memorySessionSpace(), { models: [fastModel] });
     await rich.main.loop.runTurn(user('hello'));
     const richTool = rich.calls[0]!.tools.find((tool) => tool.name === 'Agent');
     expect(richTool!.description).toContain('Available models (pass via model):');
@@ -474,7 +475,7 @@ describe('spawn tool', () => {
     expect(results[0]).toContain('echo:do the task');
     expect(results[0]).toContain(`resume_hint: Continue with Agent(resume="${agentId}"`);
 
-    const child = session.agents.get(agentId);
+    const child = session.liveAgents.get(agentId);
     expect(child).toBeDefined();
     expect(userTexts(child!)).toEqual(['SUB:do the task']);
     expect(
@@ -505,7 +506,7 @@ describe('spawn tool', () => {
     expect(subagentIds).toHaveLength(1);
     const agentId = subagentIds[0]!;
     expect(session.roster.getState().agents[agentId]?.source).toBe(`spawn:${MAIN_AGENT_ID}:explore`);
-    const child = session.agents.get(agentId)!;
+    const child = session.liveAgents.get(agentId)!;
     expect(child.loop.state.profile.tools?.map((tool) => tool.name)).toEqual(['Read', 'Glob', 'Grep']);
     const texts = userTexts(child);
     expect(texts[0]).toContain('<git-context>');
@@ -517,7 +518,7 @@ describe('spawn tool', () => {
     await main.flush();
     expect(subagentIds).toHaveLength(2);
     const forkId = subagentIds[1]!;
-    const forkChild = session.agents.get(forkId)!;
+    const forkChild = session.liveAgents.get(forkId)!;
     expect(forkChild.loop.state.profile.tools?.map((tool) => tool.name)).toEqual([
       'Agent',
       'Bash',
@@ -548,7 +549,7 @@ describe('spawn tool', () => {
     expect(results[0]).toContain('status: completed');
     expect(results[0]).toContain('actual_subagent_type: fork');
 
-    const child = session.agents.get(agentId)!;
+    const child = session.liveAgents.get(agentId)!;
     const texts = userTexts(child);
     expect(texts).toContain('hello');
     expect(texts).toContain('SUB:continue it');
@@ -603,7 +604,7 @@ describe('spawn tool', () => {
       user(agentCall({ resume: agentId, prompt: 'SUB:follow up', description: 'follow up' })),
     );
     await main.flush();
-    const child = session.agents.get(agentId)!;
+    const child = session.liveAgents.get(agentId)!;
     expect(userTexts(child)).toEqual(['SUB:first task', 'SUB:follow up']);
     const results = toolResults(main);
     expect(results[1]).toContain('status: completed');
@@ -621,7 +622,7 @@ describe('spawn tool', () => {
   });
 
   it('inherits the caller model when the tool call omits model', async () => {
-    const { harness, main, calls } = await startApp(memoryHarnessSpace(), {
+    const { harness, main, calls } = await startApp(memorySessionSpace(), {
       models: [fastModel],
       requesterFilled: { model: { spec: fastModel.model } },
     });
@@ -637,7 +638,7 @@ describe('spawn tool', () => {
   });
 
   it('resumes a non-live subagent by reopening it from the persisted roster', async () => {
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const first = await startApp(space);
     const subagentIds = trackSubagentIds(first.main);
     await first.main.loop.runTurn(
@@ -651,13 +652,13 @@ describe('spawn tool', () => {
     await first.harness.close();
 
     const second = await startApp(space);
-    expect(second.session.agents.get(agentId)).toBeUndefined();
+    expect(second.session.liveAgents.get(agentId)).toBeUndefined();
     await second.main.loop.runTurn(
       user(agentCall({ resume: agentId, prompt: 'SUB:follow up', description: 'follow up' })),
     );
     await second.main.flush();
 
-    const child = second.session.agents.get(agentId);
+    const child = second.session.liveAgents.get(agentId);
     expect(child).toBeDefined();
     expect(userTexts(child!)).toEqual(['SUB:first task', 'SUB:follow up']);
     const results = toolResults(second.main);
@@ -668,7 +669,7 @@ describe('spawn tool', () => {
   });
 
   it('does not register the Agent tool when no catalog is available', async () => {
-    const plain = await startApp(memoryHarnessSpace(), { withCatalog: false });
+    const plain = await startApp(memorySessionSpace(), { withCatalog: false });
     await plain.main.loop.runTurn(user('hello'));
     expect(plain.calls[0]!.tools.find((tool) => tool.name === 'Agent')).toBeUndefined();
     await plain.harness.close();

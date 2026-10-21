@@ -9,7 +9,7 @@ agent an `IncrementCounter` tool and remembers the count across restarts.
 
 ```ts
 // src/features/counter/feature.ts
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature } from '#/app/index';
 
 export const counter = createFeature('counter', {
   agent() {
@@ -25,7 +25,7 @@ export const counter = createFeature('counter', {
   goes through `useReady(promise)` so `app.create` / `session.open` await
   it.
 - Inside a setup, `useApp()` / `useSession()` / `useAgent()` (from
-  `@moonshot-ai/agent-core/app/index`) give the domain objects of your
+  `#/app/index`) give the domain objects of your
   level, and every kernel hook is available
   ([Contribution Hooks](../reference/contribution-hooks.md)).
 
@@ -33,8 +33,8 @@ Features with options are factories that close over their props and return
 `Feature<void>` — the house style:
 
 ```ts
-export function createCounter(props: { readonly startAt?: number } = {}): Feature<void, CounterEvent> {
-  return createFeature<CounterEvent>('counter', {
+export function createCounter(props: { readonly startAt?: number } = {}): Feature<void, { agent: CounterEvent }> {
+  return createFeature<{ agent: CounterEvent }>('counter', {
     agent() { /* props.startAt is in scope */ },
   });
 }
@@ -46,10 +46,11 @@ factories; follow that.)
 
 ## Declare Events
 
-Pass the event union as the first type parameter and fire with `useFire()`:
+Declare which level fires what: the first type parameter is a map from level
+(`app` / `session` / `agent`) to that level's event union, and the setup
+context carries a matching typed `fire`:
 
 ```ts
-import { useFire } from '@moonshot-ai/agent-core/kernel/index';
 import { type FeatureEvent } from '@moonshot-ai/harness-core';
 
 export interface CounterIncrementedEvent extends FeatureEvent {
@@ -58,13 +59,22 @@ export interface CounterIncrementedEvent extends FeatureEvent {
 }
 export type CounterEvent = CounterIncrementedEvent;
 
-// inside the unit:
-const fire = useFire();
-fire({ type: 'counter.incremented', by: 2 });
+// inside the matching level setup:
+return createFeature<{ agent: CounterEvent }>('counter', {
+  agent(_props, { fire }) {
+    fire({ type: 'counter.incremented', by: 2 });
+  },
+});
 ```
 
-(`FeatureEvent` is a `RuntimeEvent` with an optional `turnId` — the stamp
-`useFeatureStore` adds at dispatch time. Plain transient events can extend
+`fire` in a level setup only accepts that level's union — declaring
+`{ session: X }` and firing `X` from `agent()` is a compile error. The
+context's `on` / `wait` hear the current level plus every level below it
+(events bubble upward). Units without a declared contract (level units,
+host glue) keep using the untyped kernel `useFire<E>()` hook.
+
+(`FeatureEvent` is an alias of `RuntimeEvent` — the base type of events a
+feature store can persist. Plain transient events can extend
 `RuntimeEvent` instead.)
 
 Events bubble to the app root enriched with `sessionId` / `agentId`, so
@@ -74,7 +84,7 @@ handler)` — the handler is narrowed to your union. Name every event type
 
 Two ways to emit, both reaching `app.on` the same way:
 
-- **`useFire()` directly** — for transient signals (task started, a file
+- **`ctx.fire` (or the untyped kernel `useFire<E>()`) directly** — for transient signals (task started, a file
   changed) that are not persisted;
 - **`store.dispatch(...)`** — durable events are re-fired as unit events
   after the commit lands (see below), so one write gives you persistence
@@ -84,7 +94,7 @@ Two ways to emit, both reaching `app.on` the same way:
 ## Expose a Facade
 
 ```ts
-import { computed, createFacadeToken, useExpose, useInject, type ComputedRef, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { computed, createFacadeToken, useExpose, useInject, type ComputedRef, type ShallowRef } from '#/kernel/index';
 
 export interface CounterFace {
   readonly count: ComputedRef<number>;
@@ -160,8 +170,8 @@ The projection type is `Projection<S, E>` from
 `@moonshot-ai/agent-core/store/index` — `{ initial, reduce }` over journal
 entries (`{ seq, time, event }`).
 
-The store survives restarts, stamps every dispatched event with the current
-`turnId`, and rewinds in sync with `undoAgentTurns`. The full semantics are
+The store survives restarts and is rewound together with the conversation
+by `session.undo`. The full semantics are
 in [Persist Feature State](03-persist-feature-state.md); the persistence
 model in [Persistence](../explanation/persistence.md).
 
@@ -187,17 +197,15 @@ probe feature to capture facades (abridged from
 
 ```ts
 import { describe, expect, it } from 'vitest';
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, type Feature } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  undoAgentTurns,
+  createApp,
 } from '@moonshot-ai/harness-core';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 function scriptedRequester(next: (rest: any) => any): LoopLlmRequester {
   const self: LoopLlmRequester = {
@@ -219,13 +227,13 @@ function captureFacade(): { feature: Feature<void>; face: () => CounterFace | un
 }
 
 it('counts across turns and rewinds with undo', async () => {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const app = createApp({ space: memorySessionSpace() });
   const probe = captureFacade();
-  await harness.app.features.add(counter);
-  await harness.app.features.add(probe.feature);
-  const session = await harness.app.create({ sessionId: 's1' });
-  const agent = await harness.ensureAgent(session, 'main');
-  harnessInternals(harness.app).agents.get(session)!.get('main')!.requester =
+  await app.features.add(counter);
+  await app.features.add(probe.feature);
+  const session = await app.open('s1');
+  const { agent } = await session.ensureAgent('main');
+  session.agentRuntime('main')!.requester =
     scriptedRequester(() => ({
       type: 'done',
       message: createAssistantMessage([{ type: 'text', text: 'ok' }], [
@@ -234,7 +242,7 @@ it('counts across turns and rewinds with undo', async () => {
     }));
 
   const seen: number[] = [];
-  harness.app.on(counter, 'counter.incremented', (event) => seen.push(event.by));
+  app.on(counter, 'counter.incremented', (event) => seen.push(event.by));
 
   const outcome = await agent.loop.runTurn(
     createUserEntry(createUserMessage('bump'), { source: 'input' }),
@@ -244,16 +252,16 @@ it('counts across turns and rewinds with undo', async () => {
   expect(seen).toEqual([2]);
   expect(probe.face()?.count.value).toBe(2);
 
-  await undoAgentTurns(harness.app, session, 'main', 1);
+  await session.undo('main', 1);
   expect(probe.face()?.count.value).toBe(0);
-  await harness.close();
+  await app.close();
 });
 ```
 
 Notes on the moving parts:
 
-- **`memoryHarnessSpace()`** makes reopen/undo paths testable — close the
-  session with `harness.app.close('s1')` and re-`app.create` to prove your
+- **`memorySessionSpace()`** makes reopen/undo paths testable — close the
+  session with `app.close('s1')` and re-`app.open` to prove your
   store rehydrates.
 - **The scripted requester** answers per `generate` call; the real tests
   inspect `rest.content.messages` to script multi-turn sequences (tool call
@@ -265,7 +273,7 @@ Notes on the moving parts:
 
 ## Checklist Before You Commit
 
-- [ ] Event types are `<feature>.<thing>` and declared via `createFeature<E>`.
+- [ ] Event types are `<feature>.<thing>` and declared per level in the `createFeature` event map.
 - [ ] Facade exposed with `useExpose`, token created with `createFacadeToken`.
 - [ ] Tools via `useAgentTools`; names unique across the preset.
 - [ ] Durable state in `useFeatureStore`, never in module state.

@@ -5,8 +5,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 
 import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
 import {
@@ -32,7 +36,7 @@ import {
   type ProfileFinder,
 } from '#/features/profiles/index';
 import { FrontmatterError, parseFrontmatter } from '#/frontmatter';
-import { createHarness, memoryHarnessSpace } from '#/runtime/index';
+
 
 let workDir: string;
 let homeDir: string;
@@ -52,11 +56,11 @@ afterEach(async () => {
 async function startProfilesApp(
   props: CreateProfilesProps,
 ): Promise<{ face: ProfileCatalogFace; close: () => Promise<void> }> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   try {
-    harness.app.features.add(createProfiles(props));
+    harness.features.add(createProfiles(props));
     const capture: { face?: Readonly<ShallowRef<ProfileCatalogFace | undefined>> } = {};
-    harness.app.features.add(
+    harness.features.add(
       createFeature('profiles-probe', {
         app() {
           capture.face = useInject(ProfileCatalogRef);

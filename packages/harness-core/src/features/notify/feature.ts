@@ -4,12 +4,12 @@ import {
   useStepStarting,
   useSystemPrompt,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
 } from '@moonshot-ai/agent-core/history/index';
-import { useFire, type RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
+import type { RuntimeEvent } from '#/kernel/index';
 
 import { useAgentTools } from '#/runtime/index';
 
@@ -44,13 +44,13 @@ export interface CreateNotifyProps {
   readonly available?: () => boolean;
 }
 
-export function createNotify(props: CreateNotifyProps = {}): Feature<void, NotifyEvent> {
+export function createNotify(props: CreateNotifyProps = {}): Feature<void, { agent: NotifyEvent }> {
   const available = props.available ?? defaultNotifyAvailable;
-  return createFeature<NotifyEvent>('notify', {
-    agent() {
+  return createFeature<{ agent: NotifyEvent }>('notify', {
+    agent(_props, { fire }) {
       if (!available()) return;
       const agent = useAgent();
-      useAgentTools(createNotifyUserTool({ available, fire: useFire() }));
+      useAgentTools(createNotifyUserTool({ available, fire }));
       useSystemPrompt({ id: 'notify', text: NOTIFY_USER_GUIDANCE });
       useStepStarting(
         ({ messages }) => {

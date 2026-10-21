@@ -1,15 +1,17 @@
 import { join, resolve } from 'node:path';
 
-import { createFeature, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { RootRef } from '@moonshot-ai/agent-core/app/units';
+import { nodeSessionSpace } from '@moonshot-ai/agent-core/session/backend/node';
+
+import { createApp, createFeature, useSession, type App, type Feature } from '#/app/index';
+import { RootRef } from '#/app/units';
 import {
   useCollection,
   useInject,
   watch,
   type ComputedRef,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
-import type { UnitNode } from '@moonshot-ai/agent-core/kernel/runtime';
+} from '#/kernel/index';
+import type { UnitNode } from '#/kernel/runtime';
 
 import { acpStdioStreams, createAcp } from '#/feature-acp/index';
 import { createHttp, HttpRef, type Http } from '#/feature-http/index';
@@ -52,9 +54,7 @@ import { createSkill } from '#/features/skill/index';
 import { createSpawn } from '#/features/spawn/index';
 import { createToolSelect, isToolSelectEnabled } from '#/features/tool-select/index';
 import { createWorkspaces } from '#/features/workspaces/index';
-import { fsSessionSpace } from '#/host/index';
 import { harnessPreset } from '#/preset';
-import { createHarness, type Harness } from '#/runtime/index';
 
 import { loadKimiCodeDefault } from './kimi-code-config';
 
@@ -67,7 +67,7 @@ export interface ExampleProbe {
 }
 
 export interface ExampleApp {
-  readonly harness: Harness;
+  readonly app: App;
   readonly key: string;
   readonly dataRoot: string;
   readonly probe: ExampleProbe;
@@ -82,53 +82,53 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
   const osHost = createNodeOsHost();
   const port = Number(process.env['PORT'] ?? 8787);
   const probe = createExampleProbe();
-  const harness = createHarness({ space: fsSessionSpace(dataRoot) });
+  const app = createApp({ space: nodeSessionSpace(dataRoot) });
   const currentBinding = (): CatalogModelBinding | undefined => {
     const alias = probe.config()?.get<string>(DEFAULT_MODEL_CONFIG_SECTION);
     if (typeof alias !== 'string' || alias.length === 0) return undefined;
     return matchCatalogBinding(alias, probe.models());
   };
-  harness.app.features.add(probe.feature);
-  harness.app.features.add(
+  app.features.add(probe.feature);
+  app.features.add(
     createConfig({
       persist: createTomlConfigPersist(join(home, 'config.toml')),
       env: process.env,
     }),
   );
   for (const feature of harnessPreset) {
-    harness.app.features.add(feature);
+    app.features.add(feature);
   }
-  harness.app.features.add(createPermission({ fs: osHost.fs }));
-  harness.app.features.add(bindExampleDefaultModel(key));
-  harness.app.features.add(createProfiles({ workDir, host: osHost, home }));
-  harness.app.features.add(createSpawn({ host: osHost }));
-  harness.app.features.add(createEdit({ workDir }));
-  harness.app.features.add(createShellCommand({ workDir, host: osHost }));
-  harness.app.features.add(createOs({ workDir, host: osHost }));
-  harness.app.features.add(createFileHistory({ workDir, fs: osHost.fs }));
-  harness.app.features.add(createAgentsMdReminder({ workDir, host: osHost }));
-  harness.app.features.add(createSkill({ workDir, fs: osHost.fs, home }));
-  harness.app.features.add(createWorkspaces({ homeDir: home, host: osHost }));
-  harness.app.features.add(createSessionInit({ workDir, host: osHost }));
-  harness.app.features.add(createExternalHooks({ workDir, host: osHost }));
-  harness.app.features.add(createSessionExport({ version: '0.0.0' }));
-  harness.app.features.add(
+  app.features.add(createPermission({ fs: osHost.fs }));
+  app.features.add(bindExampleDefaultModel(key));
+  app.features.add(createProfiles({ workDir, host: osHost, home }));
+  app.features.add(createSpawn({ host: osHost }));
+  app.features.add(createEdit({ workDir }));
+  app.features.add(createShellCommand({ workDir, host: osHost }));
+  app.features.add(createOs({ workDir, host: osHost }));
+  app.features.add(createFileHistory({ workDir, fs: osHost.fs }));
+  app.features.add(createAgentsMdReminder({ workDir, host: osHost }));
+  app.features.add(createSkill({ workDir, fs: osHost.fs, home }));
+  app.features.add(createWorkspaces({ homeDir: home, host: osHost }));
+  app.features.add(createSessionInit({ workDir, host: osHost }));
+  app.features.add(createExternalHooks({ workDir, host: osHost }));
+  app.features.add(createSessionExport({ version: '0.0.0' }));
+  app.features.add(
     createSessionIndex({
       dbPath: join(dataRoot, '..', 'session-index', 'sessions.db'),
       sessionDir: (sessionId) => join(dataRoot, sessionId),
     }),
   );
-  harness.app.features.add(createFiles({ dir: join(dataRoot, '..', 'files') }));
-  harness.app.features.add(createModelsDev({ userAgent: 'harness-example' }));
-  harness.app.features.add(createMedia({ workDir, host: osHost }));
-  harness.app.features.add(createMcp({ workDir, home, host: osHost, trusted: true }));
-  harness.app.features.add(
+  app.features.add(createFiles({ dir: join(dataRoot, '..', 'files') }));
+  app.features.add(createModelsDev({ userAgent: 'harness-example' }));
+  app.features.add(createMedia({ workDir, host: osHost }));
+  app.features.add(createMcp({ workDir, home, host: osHost, trusted: true }));
+  app.features.add(
     createToolSelect({
       loadable: () => [],
       enabled: () => isToolSelectEnabled(currentBinding()?.model.capability),
     }),
   );
-  harness.app.features.add(
+  app.features.add(
     createCompaction({
       budget: {
         maxContextTokens: () => currentBinding()?.model.maxContextSize ?? 262_144,
@@ -137,7 +137,7 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
     }),
   );
   if (options?.http !== false) {
-    harness.app.features.add(
+    app.features.add(
       createHttp({
         homeDir: home,
         listen: {
@@ -153,9 +153,9 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
     );
   }
   if (options?.acp === true) {
-    harness.app.features.add(createAcp({ streams: acpStdioStreams() }));
+    app.features.add(createAcp({ streams: acpStdioStreams() }));
   }
-  return { harness, key, dataRoot, probe };
+  return { app, key, dataRoot, probe };
 }
 
 function createExampleProbe(): ExampleProbe & { readonly feature: Feature<void> } {

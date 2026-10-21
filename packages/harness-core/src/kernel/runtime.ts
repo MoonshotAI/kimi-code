@@ -1,7 +1,7 @@
 import { effectScope, onScopeDispose, pauseTracking, resetTracking, shallowReactive } from '@vue/reactivity';
 import type { EffectScope } from '@vue/reactivity';
 
-import { waitEvent, type WaitOpts } from '../utils/wait';
+import { waitEvent, type WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
 
 import { createCollection, type CertainToken, type CollectionToken, type FacadeToken, type Token } from './primitives';
 

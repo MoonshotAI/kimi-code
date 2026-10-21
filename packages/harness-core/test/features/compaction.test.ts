@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
+import { memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {
   CompactionRef,
@@ -18,7 +23,8 @@ import {
   type CompactionFace,
   type Summarize,
 } from '#/features/compaction/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/index';
+import {
+} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -82,18 +88,18 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
 
 interface TestEnv {
-  harness: Harness;
+  harness: App;
   session: Session;
   agent: Agent;
-  feature: Feature<void, CompactionEvent>;
+  feature: Feature<void, { agent: CompactionEvent }>;
   face: () => CompactionFace | undefined;
   events: CompactionEvent[];
   dispose: () => Promise<void>;
@@ -105,7 +111,7 @@ async function startCompactionTest(options: {
   maxAutoAttempts?: number;
   requester: LoopLlmRequester;
 }): Promise<TestEnv> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const events: CompactionEvent[] = [];
   const feature = createCompaction({
     summarize: options.summarize,
@@ -113,16 +119,16 @@ async function startCompactionTest(options: {
     maxAutoAttempts: options.maxAutoAttempts,
     onEvent: (event) => events.push(event),
   });
-  harness.app.features.add(feature);
+  harness.features.add(feature);
   let face: Readonly<ShallowRef<CompactionFace | undefined>> | undefined;
   const probe = createFeature('compaction-probe', {
     agent: () => {
       face = useInject(CompactionRef);
     },
   });
-  harness.app.features.add(probe);
-  const session = await harness.app.create({ sessionId: 's1' });
-  const agent = await harness.ensureAgent(session, 'main');
+  harness.features.add(probe);
+  const session = await harness.open('s1');
+  const { agent } = await session.ensureAgent('main');
   setRequester(harness, 's1', 'main', options.requester);
   return {
     harness,
@@ -143,7 +149,7 @@ describe('compaction feature', () => {
       requester: echoRequester(),
     });
     const fired: CompactionCompletedEvent[] = [];
-    env.harness.app.on(env.feature, 'compaction.completed', (event) => {
+    env.harness.on(env.feature, 'compaction.completed', (event) => {
       fired.push(event);
     });
     await env.agent.loop.runTurn(user('first'));

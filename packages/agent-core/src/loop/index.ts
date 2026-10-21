@@ -8,6 +8,7 @@ export type { HookRegistry } from './hook/registry';
 export type { LoopInput, LoopProfile, UnfinishedTurn } from './contract/command';
 export type { TaskWaitInput, TaskWaitOutcome, WaitForTasks } from './tool/tasks';
 export {
+  isLoopRecord,
   loopProjection,
   toLoopRecord,
   type LoopRecord,

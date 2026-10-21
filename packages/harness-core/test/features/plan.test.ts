@@ -1,13 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
+import { memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { createConfig, ConfigRef, type ConfigStore } from '#/features/config/index';
 import {
@@ -26,11 +31,7 @@ import {
   type PlanFace,
 } from '#/features/plan/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
@@ -85,9 +86,9 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -125,7 +126,7 @@ function captureConfig(): { feature: Feature; face: () => ConfigStore | undefine
 }
 
 interface PlanTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly storage: MemoryPlanStorage;
   readonly probe: { face: () => PlanFace | undefined };
   readonly interactionsProbe: { face: () => Interactions | undefined };
@@ -141,17 +142,17 @@ async function startPlanTest(options?: {
   withInteraction?: boolean;
   permissionMode?: () => string | undefined;
 }): Promise<PlanTestEnv> {
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const storage = createMemoryPlanStorage();
-  if (options?.withConfig === true) harness.app.features.add(createConfig({}));
-  if (options?.withInteraction !== false) harness.app.features.add(interaction);
+  if (options?.withConfig === true) harness.features.add(createConfig({}));
+  if (options?.withInteraction !== false) harness.features.add(interaction);
   const probe = capturePlan();
   const interactionsProbe = captureInteractions();
-  harness.app.features.add(createPlan({ storage, permissionMode: options?.permissionMode }));
-  harness.app.features.add(probe.feature);
-  harness.app.features.add(interactionsProbe.feature);
-  harness.app.features.add(bindTestTools());
-  const session = await harness.app.create({ sessionId: 's1' });
+  harness.features.add(createPlan({ storage, permissionMode: options?.permissionMode }));
+  harness.features.add(probe.feature);
+  harness.features.add(interactionsProbe.feature);
+  harness.features.add(bindTestTools());
+  const session = await harness.open('s1');
   const puts: { bytes: Uint8Array; ref: string }[] = [];
   const basePut = session.blobs.put.bind(session.blobs);
   session.blobs.put = async (content) => {
@@ -159,7 +160,7 @@ async function startPlanTest(options?: {
     puts.push({ bytes: content.bytes, ref: result.ref });
     return result;
   };
-  let agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
+  let { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
   setRequester(harness, 's1', 'main', createMockRequester());
   await tick();
   return {
@@ -177,9 +178,9 @@ async function startPlanTest(options?: {
       return outcome;
     },
     remount: async () => {
-      await session.close('main');
+      await session.closeAgent('main');
       await tick();
-      agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
+      (agent = (await session.ensureAgent('main', { systemPrompt: 'HOST' })).agent);
       setRequester(harness, 's1', 'main', createMockRequester());
       await tick();
     },
@@ -263,23 +264,23 @@ describe('plan feature', () => {
 
   it('registers the defaultPlanMode config section and fails agent setup without the interaction feature', async () => {
     const configProbe = captureConfig();
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createConfig({}));
-    harness.app.features.add(configProbe.feature);
-    harness.app.features.add(interaction);
-    harness.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createConfig({}));
+    harness.features.add(configProbe.feature);
+    harness.features.add(interaction);
+    harness.features.add(createPlan({ storage: createMemoryPlanStorage() }));
     await tick();
     expect(configProbe.face()?.get('defaultPlanMode')).toBe(false);
     await harness.close();
 
     const errors: unknown[] = [];
-    const broken = createHarness({ space: memoryHarnessSpace() });
-    broken.app.on('unit.error', (event) => {
+    const broken = createApp({ space: memorySessionSpace() });
+    broken.on('unit.error', (event) => {
       errors.push((event as { error?: unknown }).error);
     });
-    broken.app.features.add(createPlan({ storage: createMemoryPlanStorage() }));
-    const session = await broken.app.create({ sessionId: 's1' });
-    await broken.ensureAgent(session, 'main');
+    broken.features.add(createPlan({ storage: createMemoryPlanStorage() }));
+    const session = await broken.open('s1');
+    await session.ensureAgent('main');
     await tick();
     expect(
       errors.some(
@@ -389,7 +390,7 @@ describe('plan feature', () => {
     if (interactions === undefined) throw new Error('interactions facade is not exposed');
     const captured: Interaction[] = [];
     let response: PlanApprovalResponse = { decision: 'approved' };
-    env.harness.app.on(interaction, 'interaction.requested', (event) => {
+    env.harness.on(interaction, 'interaction.requested', (event) => {
       captured.push(event.interaction);
       interactions.respond(event.interaction.id, response);
     });
@@ -584,7 +585,7 @@ describe('plan feature', () => {
     const env = await startPlanTest({ permissionMode: () => 'auto' });
     const plan = planOf(env);
     const captured: Interaction[] = [];
-    env.harness.app.on(interaction, 'interaction.requested', (event) => {
+    env.harness.on(interaction, 'interaction.requested', (event) => {
       captured.push(event.interaction);
     });
 
@@ -612,7 +613,7 @@ describe('plan feature', () => {
     const interactions = env.interactionsProbe.face();
     if (interactions === undefined) throw new Error('interactions facade is not exposed');
     const captured: Interaction[] = [];
-    env.harness.app.on(interaction, 'interaction.requested', (event) => {
+    env.harness.on(interaction, 'interaction.requested', (event) => {
       captured.push(event.interaction);
       interactions.respond(event.interaction.id, { decision: 'approved' });
     });

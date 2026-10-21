@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
@@ -19,11 +24,7 @@ import {
   type TaskStartedEvent,
 } from '#/features/task/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
@@ -57,9 +58,9 @@ function createMockRequester(): LoopLlmRequester {
   return self;
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -142,9 +143,9 @@ function captureTask(): { feature: Feature<void>; face(): TaskFace | undefined }
 }
 
 interface TaskTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
-  readonly taskFeature: Feature<void, TaskEvent>;
+  readonly taskFeature: Feature<void, { agent: TaskEvent }>;
   readonly bg: Map<string, BgHandle>;
   main(): Agent;
   tasks(): TaskFace;
@@ -159,13 +160,13 @@ async function startTaskTest(options?: {
   const taskFeature = createTask();
   const probe = captureTask();
   const bg = new Map<string, BgHandle>();
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(taskFeature);
-  harness.app.features.add(probe.feature);
-  harness.app.features.add(bindTestBgTool(bg));
-  if (options?.fg !== undefined) harness.app.features.add(bindTestFgTool(options.fg));
-  const session = await harness.app.create({ sessionId: 'sess' });
-  let main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(taskFeature);
+  harness.features.add(probe.feature);
+  harness.features.add(bindTestBgTool(bg));
+  if (options?.fg !== undefined) harness.features.add(bindTestFgTool(options.fg));
+  const session = await harness.open('sess');
+  let { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
   const tasks = (): TaskFace => {
     const face = probe.face();
@@ -177,8 +178,8 @@ async function startTaskTest(options?: {
     await main.flush();
   };
   const remount = async (): Promise<void> => {
-    await session.close(MAIN_AGENT_ID);
-    main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+    await session.closeAgent(MAIN_AGENT_ID);
+    (main = (await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' })).agent);
   };
   const dispose = async (): Promise<void> => {
     await harness.close();
@@ -247,10 +248,10 @@ describe('task feature', () => {
     const env = await startTaskTest();
     const started: TaskStartedEvent[] = [];
     const settled: TaskSettledEvent[] = [];
-    env.harness.app.on(env.taskFeature, 'task.started', (event) => {
+    env.harness.on(env.taskFeature, 'task.started', (event) => {
       started.push(event);
     });
-    env.harness.app.on(env.taskFeature, 'task.settled', (event) => {
+    env.harness.on(env.taskFeature, 'task.settled', (event) => {
       settled.push(event);
     });
 
@@ -482,7 +483,7 @@ describe('task feature', () => {
     const fg = new Map<string, (text: string) => void>();
     const env = await startTaskTest({ fg });
     const started: TaskStartedEvent[] = [];
-    env.harness.app.on(env.taskFeature, 'task.started', (event) => {
+    env.harness.on(env.taskFeature, 'task.started', (event) => {
       started.push(event);
     });
 

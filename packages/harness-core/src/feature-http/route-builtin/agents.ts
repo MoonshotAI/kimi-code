@@ -1,4 +1,4 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 
 import { useHttpRoute } from '../scope';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
@@ -27,7 +27,7 @@ export function useAgentRoutes(prefix: string): void {
         return;
       }
       sendOk(request, response, {
-        items: [...session.agents.keys()].map((id) => ({ id })),
+        items: [...session.liveAgents.keys()].map((id) => ({ id })),
         has_more: false,
       });
     },
@@ -49,7 +49,7 @@ export function useAgentRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
@@ -78,11 +78,11 @@ export function useAgentRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
         return;
       }
-      if (session.agents.get(agentId) === undefined) {
+      if (session.liveAgents.get(agentId) === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;
       }
-      await session.close(agentId);
+      await session.closeAgent(agentId);
       sendOk(request, response, { deleted: true });
     },
   });

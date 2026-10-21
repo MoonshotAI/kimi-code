@@ -1,15 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome, TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import { usage, UsageRef, type UsageFace } from '#/features/usage/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, useAgentTools, type Harness } from '#/runtime/index';
+import {
+  useAgentTools,
+} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -30,9 +37,9 @@ function user(text: string) {
   return createUserEntry(createUserMessage(text), { source: 'input' });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -58,11 +65,11 @@ describe('usage feature', () => {
         face = useInject(UsageRef);
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(usage);
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(usage);
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     let calls = 0;
     setRequester(
       harness,
@@ -102,12 +109,12 @@ describe('usage feature', () => {
         face = useInject(UsageRef);
       },
     });
-    const space = memoryHarnessSpace();
-    const harness = createHarness({ space });
-    harness.app.features.add(usage);
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main');
+    const space = memorySessionSpace();
+    const harness = createApp({ space });
+    harness.features.add(usage);
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main');
     let calls = 0;
     setRequester(
       harness,
@@ -123,9 +130,9 @@ describe('usage feature', () => {
     await agent.flush();
     expect(face?.value?.usage.value).toEqual(SUM_AB);
 
-    await harness.app.close('s1');
-    const resumed = await harness.app.create({ sessionId: 's1' });
-    await harness.ensureAgent(resumed, 'main');
+    await harness.close('s1');
+    const resumed = await harness.open('s1');
+    await resumed.ensureAgent('main');
     expect(face?.value?.usage.value).toEqual(SUM_AB);
     expect(face?.value?.total.value).toBe(172);
     await harness.close();

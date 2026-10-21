@@ -6,9 +6,15 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZipFile } from 'yazl';
 
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useExpose, useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -20,7 +26,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
 
 import { createMcp, McpRef, type McpFacade } from '#/features/mcp/index';
@@ -59,11 +65,7 @@ import {
 } from '#/features/provider-catalog/index';
 import { createSkill, SkillCatalogRef, type SkillCatalogFace } from '#/features/skill/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
@@ -124,15 +126,15 @@ function bindTestTools(): Feature<void> {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
@@ -257,8 +259,8 @@ function mockFetch(handler: (url: string, init?: RequestInit) => Promise<Respons
 }
 
 interface StartedPluginApp {
-  readonly harness: Harness;
-  readonly pluginFeature: Feature<void, PluginEvent>;
+  readonly harness: App;
+  readonly pluginFeature: Feature<void, { app: PluginEvent }>;
   readonly face: PluginFace;
 }
 
@@ -270,17 +272,17 @@ async function startPluginApp(extraFeatures: readonly Feature<any, any>[] = []):
       captured = useInject(PluginRef);
     },
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  for (const feature of extraFeatures) harness.app.features.add(feature);
-  harness.app.features.add(pluginFeature);
-  harness.app.features.add(probe);
+  const harness = createApp({ space: memorySessionSpace() });
+  for (const feature of extraFeatures) harness.features.add(feature);
+  harness.features.add(pluginFeature);
+  harness.features.add(probe);
   const face = captured?.value;
   if (face === undefined) throw new Error('PluginRef was not exposed');
   return { harness, pluginFeature, face };
 }
 
 async function startAgentApp(): Promise<{
-  harness: Harness;
+  harness: App;
   face: PluginFace;
   calls: readonly LlmCall[];
   main: () => Agent;
@@ -296,13 +298,13 @@ async function startAgentApp(): Promise<{
       captured = useInject(PluginRef);
     },
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createSkill({ workDir, fs: host.fs, home: brandHome }));
-  harness.app.features.add(pluginFeature);
-  harness.app.features.add(bindTestTools());
-  harness.app.features.add(probe);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  let main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createSkill({ workDir, fs: host.fs, home: brandHome }));
+  harness.features.add(pluginFeature);
+  harness.features.add(bindTestTools());
+  harness.features.add(probe);
+  const session = await harness.open('sess');
+  let { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   const face = captured?.value;
   if (face === undefined) throw new Error('PluginRef was not exposed');
@@ -316,8 +318,8 @@ async function startAgentApp(): Promise<{
     calls,
     main: () => main,
     recreateMain: async () => {
-      await session.close(MAIN_AGENT_ID);
-      main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+      await session.closeAgent(MAIN_AGENT_ID);
+      (main = (await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' })).agent);
     },
     runTurn,
     dispose: () => harness.close(),
@@ -744,8 +746,8 @@ describe('plugin mutations and consumption plane', () => {
     try {
       const mutations: PluginMutationSummary[] = [];
       const reloads: ReloadSummary[] = [];
-      harness.app.on(pluginFeature, 'plugin.mutated', (event) => mutations.push(event.summary));
-      harness.app.on(pluginFeature, 'plugin.changed', (event) =>
+      harness.on(pluginFeature, 'plugin.mutated', (event) => mutations.push(event.summary));
+      harness.on(pluginFeature, 'plugin.changed', (event) =>
         reloads.push({
           added: event.summary.added,
           removed: event.summary.removed,

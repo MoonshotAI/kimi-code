@@ -3,7 +3,7 @@ import {
   createUserEntry,
   type HistoryMessage,
 } from '@moonshot-ai/agent-core/history/index';
-import { watch } from '@moonshot-ai/agent-core/kernel/index';
+import { watch } from '#/kernel/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { StepStartingEvent } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';

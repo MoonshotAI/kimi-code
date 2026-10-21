@@ -10,8 +10,9 @@ import {
   useToolStarting,
   type App,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
+  computed,
   shallowRef,
   useCleanup,
   useCollection,
@@ -20,7 +21,7 @@ import {
   useOn,
   useReady,
   watch,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -41,13 +42,22 @@ import { useLoopEvent } from '#/runtime/index';
 
 import { HOOKS_SECTION, hooksConfigSection } from './config-section';
 import { HookSources } from './hook-sources';
-import { matcherValueText } from './internal/match';
-import type { HookDef, HookMatcherValue } from './internal/types';
+import { blockDecision, indexHooks, matcherValueText, runMatchedHooks } from './internal/match';
+import type {
+  HookBlockDecision,
+  HookDef,
+  HookMatcherValue,
+  HookResult,
+} from './internal/types';
 import {
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
 } from './internal/userPrompt';
-import { createExternalHooksRunner, ExternalHooksRunnerRef } from './runner';
+import {
+  ExternalHooksRunnerRef,
+  type ExternalHooksRunner,
+  type ExternalHooksRunnerTriggerArgs,
+} from './runner';
 
 export interface CreateExternalHooksProps {
   readonly host?: OsHost;
@@ -123,17 +133,72 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
         for (const unsubscribe of sourceUnsubscribes) unsubscribe();
         sourceUnsubscribes = [];
       });
-      const runner = createExternalHooksRunner({
-        host: props.host,
-        hooks: () => [
+      const host = props.host;
+      const _byEvent = computed(() =>
+        indexHooks([
           ...(configStore.value?.section<HookDef[]>(HOOKS_SECTION).value ?? []),
           ...sourcedHooks.value,
-        ],
-        workDir: props.workDir,
-        clientType: props.clientType,
-        shell: props.shell,
-      });
-      useExpose(ExternalHooksRunnerRef, runner);
+        ]),
+      );
+      const _triggerInner = (
+        event: string,
+        args: ExternalHooksRunnerTriggerArgs,
+      ): Promise<HookResult[]> =>
+        runMatchedHooks(
+          host.process,
+          _byEvent.value,
+          event,
+          {
+            cwd: args.cwd ?? props.workDir,
+            ...args,
+            inputData: {
+              clientType: props.clientType,
+              ...args.inputData,
+            },
+          },
+          {},
+          props.shell,
+        );
+      const trigger = (
+        event: string,
+        args: ExternalHooksRunnerTriggerArgs = {},
+      ): Promise<HookResult[]> => {
+        try {
+          return _triggerInner(event, args).catch((): HookResult[] => []);
+        } catch {
+          return Promise.resolve([]);
+        }
+      };
+      const triggerBlock = async (
+        event: string,
+        args: ExternalHooksRunnerTriggerArgs = {},
+      ): Promise<HookBlockDecision | undefined> => blockDecision(event, await trigger(event, args));
+      const fireAndForgetTrigger = (
+        event: string,
+        args: ExternalHooksRunnerTriggerArgs = {},
+      ): Promise<HookResult[]> => {
+        try {
+          return trigger(event, args).catch((): HookResult[] => []);
+        } catch {
+          return Promise.resolve([]);
+        }
+      };
+      const hasHooksFor = (event: string): boolean =>
+        (_byEvent.value.get(event)?.length ?? 0) > 0;
+      const face: ExternalHooksRunner = {
+        get summary() {
+          const result: Record<string, number> = {};
+          for (const [event, hooks] of _byEvent.value.entries()) {
+            result[event] = hooks.length;
+          }
+          return result;
+        },
+        trigger,
+        triggerBlock,
+        fireAndForgetTrigger,
+        hasHooksFor,
+      };
+      useExpose(ExternalHooksRunnerRef, face);
     },
     session() {
       if (props.host === undefined) return;
@@ -458,7 +523,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
     const attached = byAgent;
     const attach = (agentId: string, agentName: string): void => {
       if (attached.has(agentId)) return;
-      const target = session.agents.get(agentId);
+      const target = session.liveAgents.get(agentId);
       if (target === undefined) return;
       let origins = subagentTurnOrigins.get(target);
       if (origins === undefined) {
@@ -503,7 +568,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
       attached.get(agentId)?.();
       attached.delete(agentId);
     });
-    for (const agentId of session.agents.keys()) {
+    for (const agentId of session.liveAgents.keys()) {
       const agentName = subagentNameOf(session.roster.getState().agents[agentId]?.source);
       if (agentName !== undefined) attach(agentId, agentName);
     }

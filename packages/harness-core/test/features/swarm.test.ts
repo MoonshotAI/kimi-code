@@ -4,12 +4,17 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   createUserEntry,
   type ToolMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -25,7 +30,7 @@ import type {
   ToolBatchStartingDecision,
   ToolBatchStartingEvent,
 } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {
   createConfig,
@@ -63,11 +68,7 @@ import {
   type SwarmTask,
 } from '#/features/swarm/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 const fastModel: SpawnModelEntry = {
@@ -224,22 +225,22 @@ function user(text: string) {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
 
 interface SwarmTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly main: Agent;
   readonly calls: readonly LlmCall[];
@@ -260,20 +261,20 @@ async function startApp(opts?: {
   const workDir = await mkdtemp(join(tmpdir(), 'swarm-work-'));
   tmpDirs.push(workDir);
   const { requester, calls } = createMockRequester(opts?.script ?? script);
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const configProbe = captureConfig();
   if (opts?.withConfig === true) {
-    harness.app.features.add(
+    harness.features.add(
       createConfig({ persist: fakePersist(opts?.toml).persist, env: opts?.env ?? {} }),
     );
   }
   const catalog = opts?.withCatalog === false ? undefined : testCatalog();
-  harness.app.features.add(createSpawn({ catalog, workDir }));
-  harness.app.features.add(createSwarm({ catalog, models: opts?.models, workDir }));
-  harness.app.features.add(bindTestTools());
-  harness.app.features.add(configProbe.feature);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  harness.features.add(createSpawn({ catalog, workDir }));
+  harness.features.add(createSwarm({ catalog, models: opts?.models, workDir }));
+  harness.features.add(bindTestTools());
+  harness.features.add(configProbe.feature);
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   return {
     harness,
@@ -286,7 +287,7 @@ async function startApp(opts?: {
       await main.flush();
     },
     flushAgents: async () => {
-      for (const agent of session.agents.values()) await agent.flush();
+      for (const agent of session.liveAgents.values()) await agent.flush();
     },
     dispose: async () => {
       await harness.close();
@@ -1049,7 +1050,7 @@ describe('AgentSwarm tool', () => {
     const agentId = updates
       .map((update) => update.agentId)
       .find((id) => {
-        const agent = env.session.agents.get(id);
+        const agent = env.session.liveAgents.get(id);
         return (
           agent !== undefined &&
           historyOf(agent).some(
@@ -1058,7 +1059,7 @@ describe('AgentSwarm tool', () => {
         );
       });
     expect(agentId).toBeDefined();
-    const history = historyOf(env.session.agents.get(agentId!)!);
+    const history = historyOf(env.session.liveAgents.get(agentId!)!);
     const retryEntries = history.filter(
       (entry) => entry.message.role === 'user' && entry.meta?.origin?.kind === 'retry',
     );

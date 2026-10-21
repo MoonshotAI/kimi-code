@@ -4,14 +4,20 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { createConfig, useConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
 import {
@@ -28,12 +34,8 @@ import {
   type CronTask,
 } from '#/features/cron/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useFeatureStore,
   type FeatureStore,
-  type Harness,
 } from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
@@ -67,9 +69,9 @@ function createMockRequester(): LoopLlmRequester {
   return self;
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -146,9 +148,9 @@ function captureCron(): CronProbe {
 }
 
 interface CronTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
-  readonly cronFeature: Feature<void, CronFiredEvent>;
+  readonly cronFeature: Feature<void, { agent: CronFiredEvent }>;
   runTurn(text?: string, agent?: Agent): Promise<void>;
   remount(): Promise<void>;
   dispose(): Promise<void>;
@@ -166,14 +168,14 @@ async function startCronTest(options?: {
   const withConfig = options?.withConfig ?? true;
   const cronFeature = createCron();
   const probe = captureCron();
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   if (withConfig) {
-    harness.app.features.add(createConfig({ persist: fakePersist(options?.toml).persist, env: options?.env ?? {} }));
+    harness.features.add(createConfig({ persist: fakePersist(options?.toml).persist, env: options?.env ?? {} }));
   }
-  harness.app.features.add(cronFeature);
-  harness.app.features.add(probe.feature);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  let main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  harness.features.add(cronFeature);
+  harness.features.add(probe.feature);
+  const session = await harness.open('sess');
+  let { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
   await tick();
   const cron = (): CronFace => {
@@ -187,8 +189,8 @@ async function startCronTest(options?: {
     await target.flush();
   };
   const remount = async (): Promise<void> => {
-    await session.close(MAIN_AGENT_ID);
-    main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+    await session.closeAgent(MAIN_AGENT_ID);
+    (main = (await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' })).agent);
     await tick();
     await probe.store()?.ready;
   };
@@ -449,7 +451,7 @@ describe('cron feature', () => {
       toml: `[cron]\nmanual_tick = true\nno_jitter = true\nclock = "file:${clockFile}"\n`,
     });
     const fired: CronJobOrigin[] = [];
-    env.harness.app.on(env.cronFeature, 'cron.fired', (event) => {
+    env.harness.on(env.cronFeature, 'cron.fired', (event) => {
       fired.push(event.origin);
     });
     const cron = env.cron();
@@ -576,7 +578,7 @@ describe('cron feature', () => {
 
   it('restricts cron tools to the main agent', async () => {
     const env = await startCronTest({ toml: MANUAL_TICK_TOML });
-    const sub = await env.harness.ensureAgent(env.session, 'sub-1', { systemPrompt: 'sub-host' });
+    const { agent: sub } = await env.session.ensureAgent('sub-1', { systemPrompt: 'sub-host' });
     setRequester(env.harness, 'sess', 'sub-1', createMockRequester());
 
     queue = [

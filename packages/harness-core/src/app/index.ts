@@ -1,5 +1,6 @@
 export { createApp, type App, type AppEvent, type CreateAppOptions, type CreateSessionInput } from './app';
-export { createFeature, type Feature, type FeatureLevel, type FeatureScope, type FeatureUnits, type Features } from './features';
+export { type AppSession, type EnsuredAgent, type OpenAgentOptions } from './session';
+export { createFeature, type Feature, type FeatureEventMap, type FeatureEvents, type FeatureEventsAt, type FeatureLevel, type FeatureLevelContext, type FeatureLevelSetup, type FeatureScope, type FeatureUnits, type Features } from './features';
 export {
   useAgent,
   useApp,

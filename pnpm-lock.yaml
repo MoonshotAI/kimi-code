@@ -514,9 +514,6 @@ importers:
       '@noble/hashes':
         specifier: ^2.0.0
         version: 2.4.0
-      '@vue/reactivity':
-        specifier: ^3.5.44
-        version: 3.5.44
       '@xstate/store':
         specifier: 4.3.0
         version: 4.3.0(xstate@5.32.5)

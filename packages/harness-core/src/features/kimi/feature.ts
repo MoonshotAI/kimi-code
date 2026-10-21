@@ -1,5 +1,4 @@
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
-import type { UnitSetup } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, type Feature, type FeatureLevelSetup } from '#/app/index';
 
 import { useProvider, useProviderProtocol } from '#/features/provider-catalog/index';
 
@@ -32,7 +31,9 @@ function kimiAppSlot(): void {
   useProviderProtocol({ type: 'kimi', protocols: () => kimiProtocolBindings() });
 }
 
-function composeSlots(...setups: ReadonlyArray<UnitSetup<void> | undefined>): UnitSetup<void> {
+function composeSlots(
+  ...setups: ReadonlyArray<FeatureLevelSetup<void, any, any> | undefined>
+): FeatureLevelSetup<void, any, any> {
   return (props, ctx) => {
     for (const setup of setups) setup?.(props, ctx);
   };

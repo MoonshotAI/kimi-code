@@ -1,4 +1,4 @@
-import { useApp } from '@moonshot-ai/agent-core/app/index';
+import { useApp } from '#/app/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { CompactionRef } from '#/features/compaction/index';
@@ -20,7 +20,7 @@ export function useCompactionRoutes(prefix: string): void {
         return;
       }
       const agentId = readAgentId(request) ?? MAIN_AGENT_ID;
-      const agent = session.agents.get(agentId);
+      const agent = session.liveAgents.get(agentId);
       if (agent === undefined) {
         sendErr(request, response, ErrorCode.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
         return;

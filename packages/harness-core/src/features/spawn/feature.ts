@@ -1,11 +1,10 @@
 import {
   createFeature,
   useAgent,
-  useApp,
   useSession,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useInject, useExpose } from '@moonshot-ai/agent-core/kernel/index';
+} from '#/app/index';
+import { createFacadeToken, useInject, useExpose } from '#/kernel/index';
 import type { Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { OsHost } from '#/features/os/index';
@@ -56,7 +55,6 @@ export function createSpawn(props: CreateSpawnProps = {}): Feature<void> {
           registry,
           session: useSession(),
           agent: useAgent(),
-          app: useApp(),
           runtime: useAgentRuntime(),
           forkEnabled,
           process: host?.process,

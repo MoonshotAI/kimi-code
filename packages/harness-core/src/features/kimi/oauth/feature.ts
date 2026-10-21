@@ -1,5 +1,5 @@
-import { createFeature, type Feature, type FeatureUnits } from '@moonshot-ai/agent-core/app/index';
-import { RootRef } from '@moonshot-ai/agent-core/app/units';
+import { createFeature, type Feature, type FeatureUnits } from '#/app/index';
+import { RootRef } from '#/app/units';
 import {
   createFacadeToken,
   useCleanup,
@@ -7,7 +7,7 @@ import {
   useExpose,
   useInject,
   watch,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import { createOAuthCredentialProvider } from '@moonshot-ai/agent-core/llm/builtin/policy/credentials';
 import {
   fetchManagedUsage,

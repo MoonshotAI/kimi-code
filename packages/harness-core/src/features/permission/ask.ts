@@ -1,4 +1,4 @@
-import type { RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
+import type { RuntimeEvent } from '#/kernel/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { ToolPermittingDecision } from '@moonshot-ai/agent-core/tool/index';
 

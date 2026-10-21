@@ -1,6 +1,6 @@
-import { createFeature, useMessageAppending, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useMessageAppending, type Feature } from '#/app/index';
 import type { BlobCache } from '@moonshot-ai/agent-core/blob/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 import { createMediaDegradeRecovery } from '@moonshot-ai/agent-core/llm/builtin/policy/media-degrade';
 import {
   createBlobUploadCache,

@@ -6,7 +6,7 @@ import {
   useStepStarting,
   useToolStarting,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   createFacadeToken,
@@ -18,7 +18,7 @@ import {
   watch,
   type ComputedRef,
   type RuntimeEvent,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import type { TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
 
@@ -26,17 +26,9 @@ import type { OsHost } from '#/features/os/host/index';
 import { PermissionRef, type PermissionFace } from '#/features/permission/index';
 import { PlanRef } from '#/features/plan/index';
 import { TaskRef } from '#/features/task/index';
-import {
-  agentCaps,
-  createAgentRuntime,
-  harnessInternals,
-  useAgentRuntime,
-  useAgentTools,
-  useFeatureStore,
-} from '#/runtime/index';
+import { useAgentRuntime, useAgentTools, useFeatureStore } from '#/runtime/index';
 
 import { createTowerGuard } from './guard';
-import { createTowerHub, type TowerHub } from './hub';
 import {
   createTowerInjection,
   createTowerInjectionState,
@@ -62,7 +54,13 @@ import {
   type TowerEnterResult,
   type TowerModeState,
 } from './ops';
-import { createTowerRateLimiter, type TowerRateLimiter } from './rateLimit';
+import {
+  RateLimitCapacityGovernor,
+  TOWER_MAX_BUDGET,
+  TOWER_SPAWN_PAUSE_MS,
+  type TowerRateLimiter,
+  type TowerRateLimitSnapshot,
+} from './rateLimit';
 import { createTowerFindingTool } from './tools/finding';
 import { createTowerInboxTool } from './tools/inbox';
 import { createTowerInitTool } from './tools/init';
@@ -124,6 +122,17 @@ export type TowerEvent =
   | TowerFailedEvent
   | TowerCancelledEvent;
 
+export interface TowerInboxSignal {
+  readonly from: string;
+  readonly to: string;
+  readonly subject: string;
+}
+
+export interface TowerHub {
+  publish(signal: TowerInboxSignal): void;
+  subscribe(listener: (signal: TowerInboxSignal) => void): () => void;
+}
+
 export interface TowerFace {
   readonly state: ComputedRef<TowerModeState>;
   isActive(): boolean;
@@ -150,7 +159,7 @@ export interface CreateTowerProps {
   readonly models?: readonly SpawnModelEntry[];
 }
 
-export function createTower(props: CreateTowerProps): Feature<void, TowerEvent> {
+export function createTower(props: CreateTowerProps): Feature<void, { agent: TowerEvent }> {
   const available =
     props.available === undefined
       ? defaultTowerAvailable
@@ -160,14 +169,88 @@ export function createTower(props: CreateTowerProps): Feature<void, TowerEvent> 
   const enabled = (): boolean => available() && props.host !== undefined;
   const injections = new WeakMap<Agent, TowerInjectionState>();
   const permissionFaces = new WeakMap<Agent, PermissionFace | undefined>();
-  return createFeature<TowerEvent>('tower', {
+  return createFeature<{ agent: TowerEvent }>('tower', {
     app() {
       if (!enabled()) return;
-      useExpose(TowerRateLimitRef, createTowerRateLimiter());
+      const governor = new RateLimitCapacityGovernor();
+      let inflight = 0;
+      let blockedUntil: number | null = null;
+      const budget = (): number => {
+        governor.maybeRecover();
+        return Math.max(1, Math.min(TOWER_MAX_BUDGET, governor.getCapacity()));
+      };
+      const reportRateLimited = (): void => {
+        governor.noteRateLimited(inflight);
+        blockedUntil = Date.now() + TOWER_SPAWN_PAUSE_MS;
+      };
+      const reportSuccess = (): void => {
+        blockedUntil = null;
+        governor.maybeRecover();
+      };
+      const acquire = (): { readonly ok: true } | { readonly ok: false; readonly reason: string } => {
+        const at = Date.now();
+        if (blockedUntil !== null) {
+          if (at < blockedUntil) {
+            const retryAfterS = Math.ceil((blockedUntil - at) / 1000);
+            return {
+              ok: false as const,
+              reason:
+                `provider rate limit hit — new tower spawns paused for ~${String(retryAfterS)}s. ` +
+                'Successful requests lift the pause early; wait and retry, or let running agents finish first.',
+            };
+          }
+          blockedUntil = null;
+        }
+        const current = budget();
+        if (inflight >= current) {
+          return {
+            ok: false as const,
+            reason:
+              `tower concurrency budget exhausted (${String(inflight)}/${String(current)} agents running). ` +
+              'Wait for a running agent to complete, then retry.',
+          };
+        }
+        inflight += 1;
+        return { ok: true as const };
+      };
+      const release = (): void => {
+        inflight = Math.max(0, inflight - 1);
+      };
+      const snapshot = (): TowerRateLimitSnapshot => ({
+        budget: budget(),
+        inflight,
+        blockedUntil,
+      });
+      const reset = (): void => {
+        governor.reset();
+        inflight = 0;
+        blockedUntil = null;
+      };
+      useExpose(TowerRateLimitRef, {
+        reportRateLimited,
+        reportSuccess,
+        budget,
+        acquire,
+        release,
+        snapshot,
+        reset,
+      });
     },
     session() {
       if (!enabled()) return;
-      useExpose(TowerSessionRef, { hub: createTowerHub(), registry: new Map() });
+      const listeners = new Set<(signal: TowerInboxSignal) => void>();
+      const hub: TowerHub = {
+        publish: (signal) => {
+          for (const listener of listeners) listener(signal);
+        },
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+      };
+      useExpose(TowerSessionRef, { hub, registry: new Map() });
       const host = props.host!;
       useOn('turn.started', (event) => {
         const agentId = (event as { readonly agentId?: unknown }).agentId;
@@ -449,7 +532,6 @@ export function createTower(props: CreateTowerProps): Feature<void, TowerEvent> 
           hub: shared.hub,
           running,
         };
-        const internals = harnessInternals(app);
         const runtime = useAgentRuntime();
         useAgentTools(
           createTowerInitTool(deps),
@@ -462,23 +544,12 @@ export function createTower(props: CreateTowerProps): Feature<void, TowerEvent> 
             registry,
             running,
             openSubagent: async (agentId, init) => {
-              const live = session.agents.get(agentId);
-              if (live !== undefined) return live;
-              let perSession = internals.agents.get(session);
-              if (perSession === undefined) {
-                perSession = new Map();
-                internals.agents.set(session, perSession);
-              }
-              let child = perSession.get(agentId);
-              if (child === undefined) {
-                child = createAgentRuntime(agentId, { systemPrompt: init.systemPrompt });
-                perSession.set(agentId, child);
-              }
-              if (init.requester !== undefined) child.requester = init.requester;
-              const target = await session.open(agentId, agentCaps(child), {
-                source: init.source,
+              const ensured = await session.ensureAgent(agentId, {
+                systemPrompt: init.systemPrompt,
+                init: { source: init.source },
               });
-              return target;
+              if (init.requester !== undefined) ensured.runtime.requester = init.requester;
+              return ensured.agent;
             },
             parentRequester: () => runtime.requester,
             permissionFor: (target) => permissionFaces.get(target),

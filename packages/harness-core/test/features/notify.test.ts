@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -13,7 +18,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 
 import {
   createNotify,
@@ -27,11 +32,7 @@ import {
   type NotifyShownEvent,
 } from '#/features/notify/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
 } from '#/runtime/index';
 
 interface LlmCall {
@@ -116,33 +117,33 @@ function bindTestTools(): Feature<void> {
   });
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
 
 interface NotifyTestEnv {
-  readonly harness: Harness;
-  readonly notify: Feature<void, NotifyEvent>;
+  readonly harness: App;
+  readonly notify: Feature<void, { agent: NotifyEvent }>;
   readonly main: Agent;
   readonly calls: LlmCall[];
 }
 
 async function startApp(
-  notify: Feature<void, NotifyEvent>,
+  notify: Feature<void, { agent: NotifyEvent }>,
   script: LlmScript = singleCallScript,
 ): Promise<NotifyTestEnv> {
   const { requester, calls } = createMockRequester(script);
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(notify);
-  harness.app.features.add(bindTestTools());
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(notify);
+  harness.features.add(bindTestTools());
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
   return { harness, notify, main, calls };
 }
@@ -227,7 +228,7 @@ describe('notify feature', () => {
   it('acknowledges a delivered update and emits notify.shown', async () => {
     const env = await startApp(createNotify({ available: () => true }));
     const shown: NotifyShownEvent[] = [];
-    env.harness.app.on(env.notify, 'notify.shown', (event) => {
+    env.harness.on(env.notify, 'notify.shown', (event) => {
       shown.push(event);
     });
     await runTurn(env.main, notifyToolCall({ message: 'Found the root cause.' }));
@@ -247,7 +248,7 @@ describe('notify feature', () => {
     let enabled = true;
     const env = await startApp(createNotify({ available: () => enabled }));
     const shown: NotifyShownEvent[] = [];
-    env.harness.app.on(env.notify, 'notify.shown', (event) => {
+    env.harness.on(env.notify, 'notify.shown', (event) => {
       shown.push(event);
     });
     enabled = false;
@@ -263,7 +264,7 @@ describe('notify feature', () => {
   it('rejects an empty message', async () => {
     const env = await startApp(createNotify({ available: () => true }));
     const shown: NotifyShownEvent[] = [];
-    env.harness.app.on(env.notify, 'notify.shown', (event) => {
+    env.harness.on(env.notify, 'notify.shown', (event) => {
       shown.push(event);
     });
     await runTurn(env.main, notifyToolCall({ message: '   \n' }));
@@ -320,10 +321,10 @@ describe('notify feature', () => {
     await runTurn(main, 'work');
     expect(nudgeReminders(main)).toHaveLength(1);
 
-    const session = env.harness.app.sessions.get('sess');
+    const session = env.harness.sessions.get('sess');
     if (session === undefined) throw new Error("session 'sess' is not live");
-    await session.close(MAIN_AGENT_ID);
-    main = await env.harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+    await session.closeAgent(MAIN_AGENT_ID);
+    (main = (await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' })).agent);
     const { requester } = createMockRequester(script);
     setRequester(env.harness, 'sess', MAIN_AGENT_ID, requester);
     await runTurn(main, 'more');

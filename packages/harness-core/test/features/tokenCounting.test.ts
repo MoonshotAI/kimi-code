@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+} from '#/app/index';
+import { useInject } from '#/kernel/index';
 import {
   createAssistantEntry,
   createToolEntry,
@@ -19,9 +22,11 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import { createConfig } from '#/features/config/index';
-import { createHarness, harnessInternals, memoryHarnessSpace } from '#/runtime/index';
+import {
+} from '#/runtime/index';
 import {
   DEFAULT_TOKEN_COUNTING_CONFIG,
   get,
@@ -95,13 +100,13 @@ describe('tokenCounting feature', () => {
         face = { get status() { return { get value() { return ref.value?.status.value ?? -1; } }; } };
       },
     });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(createConfig({}));
-    harness.app.features.add(tokenCounting);
-    harness.app.features.add(probe);
-    const session = await harness.app.create({ sessionId: 's1' });
-    const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'HOST' });
-    const runtime = harnessInternals(harness.app).agents.get(session)?.get('main');
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createConfig({}));
+    harness.features.add(tokenCounting);
+    harness.features.add(probe);
+    const session = await harness.open('s1');
+    const { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
+    const runtime = session.agentRuntime('main');
     if (runtime === undefined) throw new Error('runtime missing');
     runtime.requester = scriptedRequester(() => ({
       type: 'done',

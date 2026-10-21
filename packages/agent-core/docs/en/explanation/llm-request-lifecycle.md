@@ -85,7 +85,7 @@ The `onEvent` of `runLlmRequest` (type `LlmRunEvent`) is the llm layer's outward
 
 | Event | When | Payload |
 |---|---|---|
-| `llm.started` | Entry of `runLlmRequest`, before resolvers and media upload | none |
+| `llm.started` | Entry of `runLlmRequest`, before resolvers and media upload | Request summary: `provider`, `model`, `thinkingEffort` / `thinkingKeep`, `temperature` / `topP`, `maxOutputTokens`, `messageCount`, plus `systemPromptHash` / `toolsHash` (SHA-256 of the system prompt and of the provider-visible tool signature list, `deferred` tools excluded) |
 | `llm.notice` | A pass or resolver adapted something | `notice` |
 | `llm.streaming.headers` / `part` / `usage` / `finish` / `message_id` / `tool_call_end` | Streaming within each attempt | Deltas; `tool_call_end` carries the assembled `toolCall` |
 | `llm.retrying`, `reason: 'backoff'` | An attempt failed and is retryable, before waiting | `error`, `failedAttempt`, `nextAttempt`, `maxAttempts`, `delayMs` |

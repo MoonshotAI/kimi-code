@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -12,7 +17,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session, type SessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
   BTW_TOOL_DENIED_MESSAGE,
@@ -24,12 +29,7 @@ import {
   type BtwFace,
 } from '#/features/btw/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
-  type Harness,
-  type HarnessSessionSpace,
 } from '#/runtime/index';
 
 let callSeq = 0;
@@ -112,15 +112,15 @@ function captureBtw(): { feature: Feature<void>; face(): BtwFace } {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
@@ -153,9 +153,9 @@ function assistantTexts(agent: Agent): string[] {
 }
 
 interface BtwTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
-  readonly btwFeature: Feature<void, BtwEvent>;
+  readonly btwFeature: Feature<void, { session: BtwEvent }>;
   readonly executed: string[];
   main(): Agent;
   face(): BtwFace;
@@ -163,23 +163,23 @@ interface BtwTestEnv {
 
 async function startBtwTest(opts?: {
   readonly sourceAgentId?: string;
-  readonly space?: HarnessSessionSpace;
+  readonly space?: SessionSpace;
 }): Promise<BtwTestEnv> {
   const btwFeature = createBtw({ sourceAgentId: opts?.sourceAgentId });
   const probe = captureBtw();
   const executed: string[] = [];
-  const harness = createHarness({ space: opts?.space ?? memoryHarnessSpace() });
-  harness.app.features.add(btwFeature);
-  harness.app.features.add(probe.feature);
-  harness.app.features.add(bindTestTools(executed));
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const harness = createApp({ space: opts?.space ?? memorySessionSpace() });
+  harness.features.add(btwFeature);
+  harness.features.add(probe.feature);
+  harness.features.add(bindTestTools(executed));
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
   return { harness, session, btwFeature, executed, main: () => main, face: probe.face };
 }
 
 function liveChild(session: Session, agentId: string): Agent {
-  const child = session.agents.get(agentId);
+  const child = session.liveAgents.get(agentId);
   if (child === undefined) throw new Error(`btw child '${agentId}' is not live`);
   return child;
 }
@@ -188,7 +188,7 @@ describe('btw feature', () => {
   it('forks the source agent with full history, injects the side-question reminder, and fires btw.created', async () => {
     const env = await startBtwTest();
     const createdEvents: BtwCreatedEvent[] = [];
-    env.harness.app.on(env.btwFeature, 'btw.created', (event) => {
+    env.harness.on(env.btwFeature, 'btw.created', (event) => {
       createdEvents.push(event);
     });
     await env.main().loop.runTurn(user('hello'));
@@ -242,7 +242,7 @@ describe('btw feature', () => {
 
   it('rejects with a clear error when the source agent does not exist', async () => {
     const missingMain = await startBtwTest();
-    await missingMain.session.close(MAIN_AGENT_ID);
+    await missingMain.session.closeAgent(MAIN_AGENT_ID);
     await expect(missingMain.face().ask()).rejects.toThrow(
       "Cannot start a side question: source agent 'main' does not exist or is not running in this session.",
     );
@@ -256,7 +256,7 @@ describe('btw feature', () => {
   });
 
   it('recovers membership and the readonly guard from the persisted roster after remount', async () => {
-    const space = memoryHarnessSpace();
+    const space = memorySessionSpace();
     const first = await startBtwTest({ space });
     const { agentId } = await first.face().ask();
     await first.harness.close();
@@ -265,7 +265,7 @@ describe('btw feature', () => {
     expect(second.face().isBtw(agentId)).toBe(true);
     expect(second.face().list()).toEqual([agentId]);
 
-    const child = await second.harness.ensureAgent(second.session, agentId);
+    const { agent: child } = await second.session.ensureAgent(agentId);
     setRequester(second.harness, 'sess', agentId, createMockRequester());
     await child.loop.runTurn(user('run bash'));
     await child.flush();

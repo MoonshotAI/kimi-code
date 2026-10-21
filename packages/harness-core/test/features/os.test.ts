@@ -5,12 +5,17 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import type { ToolResult } from '@moonshot-ai/agent-core/tool/index';
 
 import {
@@ -39,7 +44,8 @@ import {
   type RgResolution,
 } from '#/features/os/index';
 import { startProcessExecution } from '#/features/os/process-exec';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/index';
+import {
+} from '#/runtime/index';
 
 let workDir: string;
 let host: OsHost;
@@ -76,9 +82,9 @@ function callTool(name: string, args: Record<string, unknown>): {
   return { type: 'function', id: `call-${name}`, name, arguments: JSON.stringify(args) };
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -1014,12 +1020,12 @@ describe('os feature', () => {
         ),
       save: () => Promise.resolve(),
     };
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(probe);
-    harness.app.features.add(createConfig({ persist }));
-    harness.app.features.add(createOs({ workDir }));
-    const session = await harness.app.create({ sessionId: 'sess' });
-    const agent = await harness.ensureAgent(session, 'main', { systemPrompt: 'main-host' });
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(probe);
+    harness.features.add(createConfig({ persist }));
+    harness.features.add(createOs({ workDir }));
+    const session = await harness.open('sess');
+    const { agent } = await session.ensureAgent('main', { systemPrompt: 'main-host' });
     setRequester(harness, 'sess', 'main', requester);
     try {
       const outcome = await agent.loop.runTurn(

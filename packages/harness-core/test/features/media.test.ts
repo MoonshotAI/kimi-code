@@ -5,13 +5,17 @@ import { join } from 'node:path';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   createUserEntry,
   type HistoryMessage,
   type ToolMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, watch } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, watch } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -27,7 +31,7 @@ import type { LlmEndpoint, LlmModelSpec, LlmRequest, LlmRequestModel } from '@mo
 import { mergeFields } from '@moonshot-ai/agent-core/llm/requester';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
 import {
@@ -37,7 +41,8 @@ import {
 } from '#/features/files/index';
 import { createMedia, IMAGE_CONFIG_SECTION, type ImageConfig } from '#/features/media/index';
 import { createNodeOsHost } from '#/features/os/host/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/index';
+import {
+} from '#/runtime/index';
 
 const visionModel: LlmModelSpec = {
   provider: 'test',
@@ -143,7 +148,7 @@ afterEach(async () => {
 });
 
 interface StartedApp {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly main: Agent;
   readonly calls: LlmCall[];
@@ -184,22 +189,22 @@ async function startApp(opts: {
       );
     },
   });
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   if (opts.withConfig !== false) {
-    harness.app.features.add(createConfig({ persist: fakePersist(opts.toml) }));
+    harness.features.add(createConfig({ persist: fakePersist(opts.toml) }));
   }
-  harness.app.features.add(createFiles({ dir: join(workDir, 'files') }));
-  harness.app.features.add(
+  harness.features.add(createFiles({ dir: join(workDir, 'files') }));
+  harness.features.add(
     createMedia({
       workDir,
       host: createNodeOsHost(),
       originalsDir: opts.originalsDir,
     }),
   );
-  harness.app.features.add(probe);
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
-  const runtime = harnessInternals(harness.app).agents.get(session)?.get(MAIN_AGENT_ID);
+  harness.features.add(probe);
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const runtime = session.agentRuntime(MAIN_AGENT_ID);
   if (runtime === undefined) throw new Error('runtime missing');
   runtime.requester = requester;
   if (library === undefined) throw new Error('media library face was not exposed');

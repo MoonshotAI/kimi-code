@@ -1,4 +1,4 @@
-import { createFeature, useAgent } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent } from '#/app/index';
 import {
   addUsage,
   emptyUsage,
@@ -14,7 +14,7 @@ import {
   useExpose,
   type ComputedRef,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
+} from '#/kernel/index';
 import type { TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 
 export interface UsageFace {

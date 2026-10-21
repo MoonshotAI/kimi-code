@@ -4,8 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
-import { useExpose, useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  useAgent,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -16,7 +22,7 @@ import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import { mergeFields } from '@moonshot-ai/agent-core/llm/requester';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 
 import {
@@ -41,10 +47,6 @@ import {
   type SessionInitFace,
 } from '#/features/sessionInit/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
-  type Harness,
 } from '#/runtime/index';
 
 interface LlmCall {
@@ -123,7 +125,7 @@ afterEach(async () => {
 });
 
 interface SessionInitTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly main?: Agent;
   readonly calls: LlmCall[];
@@ -140,13 +142,13 @@ async function startApp(opts?: {
   const homeDir = await mkdtemp(join(tmpdir(), 'session-init-home-'));
   tmpDirs.push(workDir, homeDir);
   const { requester, calls } = createMockRequester(() => 'init summary');
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const host = testHost(homeDir);
-  harness.app.features.add(createSessionInit({ workDir, host }));
-  harness.app.features.add(createAgentsMdReminder({ workDir, host }));
-  harness.app.features.add(bindCatalog());
+  harness.features.add(createSessionInit({ workDir, host }));
+  harness.features.add(createAgentsMdReminder({ workDir, host }));
+  harness.features.add(bindCatalog());
   let faceRef: Readonly<ShallowRef<SessionInitFace | undefined>> | undefined;
-  harness.app.features.add(
+  harness.features.add(
     createFeature('session-init-probe', {
       session: () => {
         faceRef = useInject(SessionInitRef);
@@ -154,17 +156,17 @@ async function startApp(opts?: {
     }),
   );
   const reminderRefs = new Map<string, Readonly<ShallowRef<AgentsMdReminderFace | undefined>>>();
-  harness.app.features.add(
+  harness.features.add(
     createFeature('agents-md-reminder-probe', {
       agent: () => {
         reminderRefs.set(useAgent().id, useInject(AgentsMdReminderRef));
       },
     }),
   );
-  const session = await harness.app.create({ sessionId: 'sess' });
+  const session = await harness.open('sess');
   let main: Agent | undefined;
   if (opts?.withMain !== false) {
-    main = await harness.ensureAgent(session, MAIN_AGENT_ID);
+    (main = (await session.ensureAgent(MAIN_AGENT_ID)).agent);
     if (opts?.withRequester !== false) setRequester(harness, session, MAIN_AGENT_ID, requester);
   }
   const face = (): SessionInitFace => {
@@ -181,12 +183,12 @@ async function startApp(opts?: {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   session: Session,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const runtime = harnessInternals(harness.app).agents.get(session)?.get(agentId);
+  const runtime = session.agentRuntime(agentId);
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -208,7 +210,7 @@ describe('sessionInit', () => {
     expect(prompt?.role).toBe('user');
     expect(extractText(prompt!)).toBe(DEFAULT_INIT_PROMPT);
 
-    const child = [...env.session.agents.values()].find((agent) => agent.id !== MAIN_AGENT_ID);
+    const child = [...env.session.liveAgents.values()].find((agent) => agent.id !== MAIN_AGENT_ID);
     expect(child).toBeDefined();
     await child!.flush();
     expect(env.session.roster.getState().agents[child!.id]?.source).toBe('session-init');

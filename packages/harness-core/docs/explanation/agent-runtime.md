@@ -1,10 +1,11 @@
 # Agent Runtime
 
-`createApp` gives every agent a loop, a log, and a view — and nothing else.
-The product needs more per-agent state that is *not* durable (which LLM to
-call, which tools exist this run, which policy entries apply) and *not* part
-of the loop's own state. That record is the `AgentRuntime`
-(`src/runtime/agents.ts`), and this document explains its semantics.
+`app.open` gives every session a log, a roster, and live agents with a loop —
+and nothing else. The product needs more per-agent state that is *not*
+durable (which LLM to call, which tools exist this run, which policy entries
+apply) and *not* part of the loop's own state. That record is the
+`AgentRuntime` (`src/runtime/agents.ts`), and this document explains its
+semantics.
 
 ## The Record
 
@@ -22,34 +23,40 @@ interface AgentRuntime {
 ```
 
 One `AgentRuntime` exists per (session, agentId) pair, created lazily by
-`ensureAgent` and kept in `harnessInternals(app).agents` — a
-`WeakMap<Session, Map<string, AgentRuntime>>`, so runtimes die with their
-session. Agent feature units reach it with `useAgentRuntime()` (which throws
-if the agent was not opened through the harness — e.g. opened via a bare
-`session.open`).
+`session.ensureAgent` and kept in the session handler itself (`AppSession`,
+`src/app/session.ts`), so runtimes die with their session. Hosts look one up
+with `session.agentRuntime(agentId)`; agent
+feature units reach the current agent's record with `useAgentRuntime()`
+(which throws if the agent was not opened through the session handler — e.g.
+opened via a bare `session.open`).
 
-## `ensureAgent`
+## `session.ensureAgent`
 
 ```ts
-const agent = await harness.ensureAgent(session, 'main', {
+const { agent, runtime } = await session.ensureAgent('main', {
   systemPrompt: 'You are Kimi.',
   maxSteps: 100,
   maxResultChars: 60_000,
   hooks: [/* extra HookRegistration[] */],
+  init: { source: 'spawn:main:coder' },
 });
 ```
 
 - Returns the **live agent** if one is already open; otherwise creates the
   runtime (once — later calls with different options reuse the existing
-  runtime) and opens the agent with `agentCaps(runtime, opts)`.
-- `EnsureAgentOptions.systemPrompt` seeds the reserved `host` prompt
+  runtime) and opens the agent with `agentCaps(runtime, opts)`. The resolved
+  value carries both the agent and its runtime.
+- `OpenAgentOptions.systemPrompt` seeds the reserved `host` prompt
   section; `maxResultChars` becomes the executor's truncation policy;
   `maxSteps` installs agent-core's `createMaxStepsHook`; `hooks` are extra
-  loop hook registrations.
+  loop hook registrations; `init` is forwarded to `session.open` /
+  `session.fork` (the agent's durable `source`).
+- `session.forkAgent(sourceId, agentId, opts)` is the fork twin: same
+  runtime handling over `session.fork`.
 - The HTTP transport has its own entry point for cold sessions:
   `resumeSession(app, sessionId)` re-creates runtimes (default options) for
-  every agent in the roster. Both paths converge on the same registry, so a
-  runtime made by either is visible to `useAgentRuntime()`.
+  every agent in the roster. Both paths converge on the same per-session
+  registry, so a runtime made by either is visible to `useAgentRuntime()`.
 
 ## The Requester Slot and the Live Policy Arrays
 
@@ -106,14 +113,13 @@ does that alone.)
 
 ## System Prompt: Sections as a Contribution Point
 
-The system prompt is assembled by agent-core, not the harness: agent-core's
-app layer owns a `SystemPromptSections` collection, and every agent unit
-assembles the contributed sections into the loop's profile exactly once at
-agent create (`src/app/system-prompt.ts` in agent-core, wired into
-`AgentUnit`).
+The system prompt is assembled by the harness app layer: `src/app/system-prompt.ts`
+owns a `SystemPromptSections` collection, and every agent unit assembles the
+contributed sections into the loop's profile exactly once at agent create
+(wired into `AgentUnit`).
 
 `useSystemPrompt({ id, text, priority? })` (from
-`@moonshot-ai/agent-core/app/index`) contributes a named section, withdrawn
+`#/app/index`) contributes a named section, withdrawn
 automatically when the unit unmounts. The create-time assembly sorts by
 `priority` (default 0, registration order breaks ties), drops blank texts,
 lets a later registration replace an earlier one with the same id, joins
@@ -126,8 +132,8 @@ carries a system prompt — resume or fork — never re-assembles: the prompt is
 reduced from the durable record and later section changes are ignored.
 
 The reserved `host` section (priority `-100`, so it stays first) is
-contributed by an internal harness feature from `runtime.hostSystemPrompt`,
-seeded by `EnsureAgentOptions.systemPrompt` (and by the pre-open helpers in
+contributed by an internal app feature from `runtime.hostSystemPrompt`,
+seeded by `OpenAgentOptions.systemPrompt` (and by the pre-open helpers in
 spawn and session-init). After the create-time settle the prompt is frozen
 for the agent's lifetime.
 
@@ -171,11 +177,12 @@ reject the promise rather than producing a synthetic success.
 **Session level — the default.** A session-scoped feature store holds the
 session's default model/thinking (`session.model_defaults` events), exposed
 as `SessionModelRef` (`setModel` / `setThinking`); writes are dual-written
-into the main agent's binding log so the main agent's undo stays aligned.
+into the main agent's own log so the main agent's undo stays aligned.
 
 **Agent level — the binding.** Each agent keeps its own
-`model.bound`-stamped feature store (`AgentModelRef.current` /
-`setModel(alias)` / `setThinking(effort)`). A watch computes the effective
+`model.bound` feature store (`AgentModelRef.current` /
+`setModel(alias)` / `setThinking(effort)`), persisted in the agent's log
+alongside its loop records. A watch computes the effective
 alias — agent store → session default → config `defaultModel` — resolves it
 against `CatalogModels` (`matchCatalogBinding`), and assigns
 `runtime.requester` to the binding's requester (layered with a thinking
@@ -189,13 +196,14 @@ effort when one is requested). Two safeguards:
 The agent unit also registers `credentialsRecovery` (re-prompt for
 credentials on auth failure) via `useLlmRecovery`.
 
-Because the binding is a turn-stamped feature store, `undoAgentTurns`
+Because the binding lives in the main agent's own log, `session.undo`
 rewinds model switches together with the conversation — the model that was
 active at the cut turn becomes active again.
 
 ## Reading Order for the Runtime Path
 
 1. `src/runtime/agents.ts` — the record, caps, tool sync.
-2. `src/runtime/harness.ts` — the registry, `ensureAgent`, writers, the `host` prompt section feature.
-3. `src/runtime/hooks.ts` — the contribution hooks features call.
-4. `src/features/provider-catalog/feature.ts` — managed binding, end to end.
+2. `src/app/session.ts` — the session handler: the registry, `ensureAgent` / `forkAgent`.
+3. `src/app/units.ts` — the internal `host` prompt section feature.
+4. `src/runtime/hooks.ts` — the contribution hooks features call.
+5. `src/features/provider-catalog/feature.ts` — managed binding, end to end.

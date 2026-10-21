@@ -4,9 +4,13 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -15,7 +19,7 @@ import {
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
 import {
   createShellCommand,
@@ -24,7 +28,8 @@ import {
   type ShellCommandFace,
 } from '#/features/shellCommand/index';
 import { createNodeOsHost } from '#/features/os/host/index';
-import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/index';
+import {
+} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -48,15 +53,15 @@ function user(text: string) {
 }
 
 function setRequester(
-  harness: Harness,
+  harness: App,
   sessionId: string,
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const session = harness.app.sessions.get(sessionId);
+  const session = harness.sessions.get(sessionId);
   const runtime =
     session !== undefined
-      ? harnessInternals(harness.app).agents.get(session)?.get(agentId)
+      ? session.agentRuntime(agentId)
       : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
@@ -64,7 +69,7 @@ function setRequester(
 
 async function startApp(opts?: { timeoutMs?: number }) {
   const workDir = await mkdtemp(join(tmpdir(), 'shell-command-'));
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   const shell = createShellCommand({
     workDir,
     timeoutMs: opts?.timeoutMs,
@@ -76,10 +81,10 @@ async function startApp(opts?: { timeoutMs?: number }) {
       exposed = useInject(ShellCommandRef);
     },
   });
-  harness.app.features.add(shell);
-  harness.app.features.add(probe);
-  const session = await harness.app.create({ sessionId: 's1' });
-  const agent = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  harness.features.add(shell);
+  harness.features.add(probe);
+  const session = await harness.open('s1');
+  const { agent } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   setRequester(harness, 's1', MAIN_AGENT_ID, scriptedRequester(() => textOutcome('done')));
   const face = (): ShellCommandFace => {
     const value = exposed?.value;
@@ -98,9 +103,9 @@ describe('shellCommand feature', () => {
     const { harness, shell, face, cleanup } = await startApp();
     try {
       const events: ShellCommandEvent[] = [];
-      harness.app.on(shell, 'shell.started', (event) => events.push(event));
-      harness.app.on(shell, 'shell.output', (event) => events.push(event));
-      harness.app.on(shell, 'shell.completed', (event) => events.push(event));
+      harness.on(shell, 'shell.started', (event) => events.push(event));
+      harness.on(shell, 'shell.output', (event) => events.push(event));
+      harness.on(shell, 'shell.completed', (event) => events.push(event));
 
       const result = await face().run({ command: 'echo hello' });
 

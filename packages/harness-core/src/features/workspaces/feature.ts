@@ -4,9 +4,10 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import {
   createFeature,
   useApp,
+  type AppSession,
   type CreateSessionInput,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createFacadeToken,
   shallowRef,
@@ -17,8 +18,7 @@ import {
   useReady,
   type RuntimeEvent,
   type ShallowRef,
-} from '@moonshot-ai/agent-core/kernel/index';
-import type { Session } from '@moonshot-ai/agent-core/session/index';
+} from '#/kernel/index';
 import { memoryJournal } from '@moonshot-ai/agent-core/store/backend/memory';
 import { openWriter, type Journal } from '@moonshot-ai/agent-core/store/index';
 
@@ -100,7 +100,7 @@ export interface WorkspacesFace {
   findByRoot(path: string): WorkspaceEntry | undefined;
   locate(path: string): Promise<WorkspaceLocation | undefined>;
   createOrTouch(root: string, name?: string): Promise<WorkspaceEntry>;
-  openSession(root: string, input?: CreateSessionInput): Promise<Session>;
+  openSession(root: string, input?: CreateSessionInput & { sessionId?: string }): Promise<AppSession>;
   update(id: string, patch: WorkspacePatch): Promise<WorkspaceEntry | undefined>;
   delete(id: string): Promise<void>;
   getTrust(id: string): boolean | undefined;
@@ -155,9 +155,9 @@ function cloneRecord(value: unknown): Record<string, unknown> {
   return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
-export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, WorkspacesEvent> {
+export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, { app: WorkspacesEvent }> {
   const ephemeralDirs = new Map<string, string[]>();
-  return createFeature<WorkspacesEvent>('workspaces', {
+  return createFeature<{ app: WorkspacesEvent }>('workspaces', {
     app() {
       const fire = useFire();
       const app = useApp();
@@ -477,10 +477,9 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, Wo
         },
         openSession: async (root, input) => {
           const workspace = await face.createOrTouch(root);
-          return app.create({
-            ...input,
-            metadata: withSessionWorkspace(input?.metadata, workspace.id),
-          });
+          const { sessionId, ...rest } = input ?? {};
+          const createInput = { ...rest, metadata: withSessionWorkspace(input?.metadata, workspace.id) };
+          return sessionId === undefined ? app.create(createInput) : app.open(sessionId, createInput);
         },
         update: async (id, patch) => {
           const before = await currentState();

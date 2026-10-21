@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
-import type { ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
+import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
+import type { ShallowRef } from '#/kernel/index';
 
 import {
   createConfig,
@@ -18,7 +23,7 @@ import {
   type ConfigStore,
   type DomainUpdate,
 } from '#/features/config/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
+
 
 interface LimitsConfig {
   readonly maxRetries?: number;
@@ -124,12 +129,12 @@ async function mountConfigApp(options: {
   env?: Record<string, string | undefined>;
   sections?: readonly ConfigSectionContribution<any>[];
   overlays?: readonly ConfigOverlayContribution[];
-}): Promise<{ harness: Harness; config: ConfigStore }> {
+}): Promise<{ harness: App; config: ConfigStore }> {
   const capture: { config?: Readonly<ShallowRef<ConfigStore | undefined>> } = {};
   const probe = configProbe(capture, options.sections ?? [limitsSection, accountSection], options.overlays ?? []);
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(probe);
-  harness.app.features.add(createConfig({ persist: options.persist, env: options.env }));
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(probe);
+  harness.features.add(createConfig({ persist: options.persist, env: options.env }));
   await tick();
   const store = capture.config?.value;
   if (store === undefined) throw new Error('config store was not exposed');
@@ -289,11 +294,11 @@ describe('config feature', () => {
     const capture: { config?: Readonly<ShallowRef<ConfigStore | undefined>> } = {};
     const probe = configProbe(capture, [limitsSection], []);
     const spec = createConfig({ persist });
-    const harness = createHarness({ space: memoryHarnessSpace() });
-    harness.app.features.add(probe);
-    harness.app.features.add(spec);
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(probe);
+    harness.features.add(spec);
     let loaded = false;
-    const onLoaded = harness.app
+    const onLoaded = harness
       .wait(spec, 'config.changed', {
         match: (event) => (event.value as LimitsConfig).timeout === 4,
       })
@@ -373,13 +378,13 @@ describe('config feature', () => {
     const spec = createConfig({});
     const capture: { config?: Readonly<ShallowRef<ConfigStore | undefined>> } = {};
     const probe = configProbe(capture, [limitsSection], []);
-    const harness = createHarness({ space: memoryHarnessSpace() });
+    const harness = createApp({ space: memorySessionSpace() });
     const events: ConfigChangedEvent[] = [];
-    harness.app.on(spec, 'config.changed', (event) => {
+    harness.on(spec, 'config.changed', (event) => {
       events.push(event);
     });
-    harness.app.features.add(probe);
-    harness.app.features.add(spec);
+    harness.features.add(probe);
+    harness.features.add(spec);
     await tick();
     const config = capture.config?.value;
     if (config === undefined) throw new Error('config store was not exposed');

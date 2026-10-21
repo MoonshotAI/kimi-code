@@ -1,19 +1,13 @@
-import type { App } from '@moonshot-ai/agent-core/app/index';
+import type { AppSession, EnsuredAgent } from '#/app/index';
 import { addUsage, type AssistantMeta, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
 import { createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import { MAX_STEPS_REASON, type TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
+import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { describeUnknownError } from '#/features/config/index';
 import type { OsProcessPort } from '#/features/os/index';
-import {
-  agentCaps,
-  createAgentRuntime,
-  harnessInternals,
-  syncAgentTools,
-  type AgentRuntime,
-} from '#/runtime/index';
+import { syncAgentTools, type AgentRuntime } from '#/runtime/index';
 
 import { SUBAGENT_STOPPED_MESSAGE, type SubagentStopReason } from './format';
 import {
@@ -72,9 +66,8 @@ export interface SubagentLauncherDeps {
   readonly catalog: ProfileCatalog;
   readonly models: readonly SpawnModelEntry[];
   readonly registry: SpawnRegistry;
-  readonly session: Session;
+  readonly session: AppSession;
   readonly agent: Agent;
-  readonly app: App;
   readonly runtime: AgentRuntime;
   readonly process?: OsProcessPort;
   readonly workDir: string;
@@ -89,58 +82,6 @@ export interface SubagentLauncher {
   resume(resumeAgentId: string, prompt: string): Promise<LaunchedSubagent | string>;
 }
 
-interface EnsuredSubagent {
-  readonly agent: Agent;
-  readonly runtime: AgentRuntime;
-}
-
-function runtimeOf(app: App, session: Session, agentId: string): AgentRuntime {
-  const internals = harnessInternals(app);
-  let perSession = internals.agents.get(session);
-  if (perSession === undefined) {
-    perSession = new Map();
-    internals.agents.set(session, perSession);
-  }
-  let runtime = perSession.get(agentId);
-  if (runtime === undefined) {
-    runtime = createAgentRuntime(agentId);
-    perSession.set(agentId, runtime);
-  }
-  return runtime;
-}
-
-async function ensureSubagent(app: App, session: Session, agentId: string): Promise<EnsuredSubagent> {
-  const live = session.agents.get(agentId);
-  const runtime = runtimeOf(app, session, agentId);
-  const agent = live ?? (await session.open(agentId, agentCaps(runtime)));
-  return { agent, runtime };
-}
-
-async function openSubagent(
-  app: App,
-  session: Session,
-  agentId: string,
-  source: string,
-  systemPrompt?: string,
-): Promise<EnsuredSubagent> {
-  const runtime = runtimeOf(app, session, agentId);
-  runtime.hostSystemPrompt = systemPrompt;
-  const agent = await session.open(agentId, agentCaps(runtime), { source });
-  return { agent, runtime };
-}
-
-async function forkSubagent(
-  app: App,
-  session: Session,
-  sourceId: string,
-  agentId: string,
-  source: string,
-): Promise<EnsuredSubagent> {
-  const runtime = runtimeOf(app, session, agentId);
-  const agent = await session.fork(sourceId, agentId, agentCaps(runtime), { source });
-  return { agent, runtime };
-}
-
 function profileToolAllowed(profile: AgentProfile, name: string): boolean {
   return (
     (profile.tools === undefined || profile.tools.includes(name)) &&
@@ -148,7 +89,7 @@ function profileToolAllowed(profile: AgentProfile, name: string): boolean {
   );
 }
 
-function trimSubagentTools(ensured: EnsuredSubagent, allowed: (name: string) => boolean): void {
+function trimSubagentTools(ensured: EnsuredAgent, allowed: (name: string) => boolean): void {
   for (const name of ensured.runtime.tools.keys()) {
     if (!allowed(name)) ensured.runtime.tools.delete(name);
   }
@@ -156,7 +97,7 @@ function trimSubagentTools(ensured: EnsuredSubagent, allowed: (name: string) => 
 }
 
 export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLauncher {
-  const { catalog, models, registry, session, agent, app } = deps;
+  const { catalog, models, registry, session, agent } = deps;
   const callerAgentId = agent.id;
 
   const resume = async (
@@ -182,9 +123,9 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
     }
     record.running = true;
     registry.set(resumeAgentId, record);
-    let ensured: EnsuredSubagent;
+    let ensured: EnsuredAgent;
     try {
-      ensured = await ensureSubagent(app, session, resumeAgentId);
+      ensured = await session.ensureAgent(resumeAgentId);
     } catch (error) {
       record.running = false;
       return `Agent instance "${resumeAgentId}" could not be reopened: ${error instanceof Error ? error.message : String(error)}`;
@@ -212,13 +153,13 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
       ? undefined
       : plan.profile?.renderSystemPrompt({ cwd: deps.workDir }).text;
     const ensured = plan.fork
-      ? await forkSubagent(app, session, callerAgentId, agentId, source)
-      : await openSubagent(app, session, agentId, source, rendered);
+      ? await session.forkAgent(callerAgentId, agentId, { init: { source } })
+      : await session.ensureAgent(agentId, { systemPrompt: rendered, init: { source } });
     const target = ensured.agent;
     const parentRequester = deps.runtime.requester;
     if (parentRequester === undefined) {
       if (plan.model.kind === 'explicit') {
-        await session.close(agentId).catch(() => {});
+        await session.closeAgent(agentId).catch(() => {});
         return MODEL_NOT_CONFIGURED_MESSAGE;
       }
     } else {

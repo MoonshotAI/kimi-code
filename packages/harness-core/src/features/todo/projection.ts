@@ -9,6 +9,7 @@ export const TODO_UPDATED = 'todo.updated' as const;
 export interface TodoUpdatedEvent extends FeatureEvent {
   readonly type: typeof TODO_UPDATED;
   readonly todos: readonly TodoItem[];
+  readonly turn?: number;
 }
 
 export type TodoEvent = TodoUpdatedEvent;
@@ -25,7 +26,7 @@ export const todos: Projection<TodoState, TodoEvent> = {
     if (event.type !== TODO_UPDATED) return state;
     return {
       todos: readTodoItems(event.todos),
-      lastWriteTurnId: event.turnId ?? state.lastWriteTurnId,
+      lastWriteTurnId: event.turn ?? state.lastWriteTurnId,
     };
   },
 };

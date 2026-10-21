@@ -1,4 +1,4 @@
-import { createCollection, useContribute } from '@moonshot-ai/agent-core/kernel/index';
+import { createCollection, useContribute } from '#/kernel/index';
 
 import type { TelemetryFace } from './feature';
 import type { TelemetryPrimitive, TelemetryProperties } from './telemetry';

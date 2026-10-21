@@ -10,6 +10,13 @@ export interface PtcStoreState {
   readonly dispatches: number;
 }
 
+export const PTC_DISPATCHED = 'ptc.dispatched';
+
+export interface PtcDispatchedEvent extends FeatureEvent {
+  readonly type: typeof PTC_DISPATCHED;
+  readonly events: readonly FeatureEvent[];
+}
+
 export interface PtcAgentReadonly {
   readonly id: string;
   subscribe: Loop['subscribe'];
@@ -31,7 +38,9 @@ export interface PtcStoreFull extends PtcStoreReadonly {
 
 export type PtcBlobsReadonly = Pick<BlobStore, 'get' | 'has'>;
 
-export type PtcSessionReadonly = Pick<Session, 'id' | 'source' | 'agents' | 'roster' | 'status'>;
+export type PtcSessionReadonly = Pick<Session, 'id' | 'source' | 'roster' | 'status'> & {
+  readonly agents: Session['liveAgents'];
+};
 
 export interface PtcContextBridge {
   readonly level: Exclude<PtcContextLevel, 'none'>;
@@ -46,7 +55,7 @@ export interface PtcContextDeps {
   readonly agent: Agent;
   readonly session: Session;
   readonly blobs: BlobStore;
-  readonly store?: FeatureStore<PtcStoreState, FeatureEvent>;
+  readonly store?: FeatureStore<PtcStoreState, PtcDispatchedEvent>;
 }
 
 export function createPtcContext(
@@ -76,7 +85,7 @@ export function createPtcContext(
         : { id: agent.id, subscribe, wait },
     useAgentStore: () =>
       full && store !== undefined
-        ? { getState, dispatch: (events) => store.dispatch(events) }
+        ? { getState, dispatch: (events) => store.dispatch([{ type: PTC_DISPATCHED, events }]) }
         : { getState },
     useBlobs: () =>
       full ? blobs : { get: (ref) => blobs.get(ref), has: (ref) => blobs.has(ref) },
@@ -86,7 +95,7 @@ export function createPtcContext(
         : {
             id: session.id,
             source: session.source,
-            agents: session.agents,
+            agents: session.liveAgents,
             roster: session.roster,
             status: () => session.status(),
           },

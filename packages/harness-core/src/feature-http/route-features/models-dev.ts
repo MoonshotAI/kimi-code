@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject } from '#/kernel/index';
 
 import { OAuthTokensRef } from '#/features/kimi/oauth/index';
 import { ModelsDevError, ModelsDevRef, type ModelsDevFace } from '#/features/models-dev/index';

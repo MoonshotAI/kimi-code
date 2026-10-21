@@ -1,13 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, useAgent, type Feature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  useAgent,
+  type Feature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { createConfig, useConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
 import {
@@ -31,13 +37,9 @@ import {
   type PermissionStoreEvent,
 } from '#/features/permission/index';
 import {
-  createHarness,
-  harnessInternals,
-  memoryHarnessSpace,
   useAgentTools,
   useFeatureStore,
   type FeatureStore,
-  type Harness,
 } from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
@@ -71,9 +73,9 @@ function createMockRequester(): LoopLlmRequester {
   return self;
 }
 
-function setRequester(harness: Harness, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
-  const session = harness.app.sessions.get(sessionId);
-  const runtime = session !== undefined ? harnessInternals(harness.app).agents.get(session)?.get(agentId) : undefined;
+function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
+  const session = harness.sessions.get(sessionId);
+  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
   if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
   runtime.requester = requester;
 }
@@ -148,7 +150,7 @@ function capturePermission(): PermissionProbe {
 }
 
 interface PermissionTestEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly session: Session;
   readonly captured: Interaction[];
   readonly resolved: PermissionApprovalResolvedEvent[];
@@ -169,17 +171,17 @@ async function startPermissionTest(options?: {
 }): Promise<PermissionTestEnv> {
   const permission = createPermission(options?.permissionProps);
   const probe = capturePermission();
-  const harness = createHarness({ space: memoryHarnessSpace() });
+  const harness = createApp({ space: memorySessionSpace() });
   if (options?.configText !== undefined && options?.configText !== null) {
-    harness.app.features.add(createConfig({ persist: fakePersist(options.configText) }));
+    harness.features.add(createConfig({ persist: fakePersist(options.configText) }));
   }
-  harness.app.features.add(interaction);
-  harness.app.features.add(permission);
-  harness.app.features.add(bindTestTools());
-  harness.app.features.add(probe.feature);
-  const session = await harness.app.create({ sessionId: 'sess' });
+  harness.features.add(interaction);
+  harness.features.add(permission);
+  harness.features.add(bindTestTools());
+  harness.features.add(probe.feature);
+  const session = await harness.open('sess');
   const agents = new Map<string, Agent>();
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
   agents.set(MAIN_AGENT_ID, main);
   setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
   await tick();
@@ -187,12 +189,12 @@ async function startPermissionTest(options?: {
   if (interactions === undefined) throw new Error('interactions were not captured');
   const captured: Interaction[] = [];
   let response: ApprovalResponse = { decision: 'approved' };
-  harness.app.on(interaction, 'interaction.requested', (event) => {
+  harness.on(interaction, 'interaction.requested', (event) => {
     captured.push(event.interaction);
     interactions.respond(event.interaction.id, response);
   });
   const resolved: PermissionApprovalResolvedEvent[] = [];
-  harness.app.on(permission, 'permission.approval.resolved', (event) => {
+  harness.on(permission, 'permission.approval.resolved', (event) => {
     resolved.push(event);
   });
   const runTurn = async (agentId = MAIN_AGENT_ID, text = 'go'): Promise<void> => {
@@ -201,15 +203,15 @@ async function startPermissionTest(options?: {
     await agent.flush();
   };
   const spawnWorker = async (agentId: string): Promise<Agent> => {
-    const worker = await harness.ensureAgent(session, agentId, { systemPrompt: 'worker-host' });
+    const { agent: worker } = await session.ensureAgent(agentId, { systemPrompt: 'worker-host' });
     agents.set(agentId, worker);
     setRequester(harness, 'sess', agentId, createMockRequester());
     await tick();
     return worker;
   };
   const remount = async (): Promise<void> => {
-    await session.close(MAIN_AGENT_ID);
-    const reopened = await harness.ensureAgent(session, MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+    await session.closeAgent(MAIN_AGENT_ID);
+    const { agent: reopened } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
     agents.set(MAIN_AGENT_ID, reopened);
     setRequester(harness, 'sess', MAIN_AGENT_ID, createMockRequester());
     await tick();

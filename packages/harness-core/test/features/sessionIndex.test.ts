@@ -4,19 +4,24 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import { memoryBlobBackend } from '@moonshot-ai/agent-core/blob/backend/memory';
 import { openBlobStore } from '@moonshot-ai/agent-core/blob/index';
 import { createAssistantEntry, createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import {
   MAIN_AGENT_ID,
+  memorySessionSpace,
   mergeSessionRecord,
   type SessionContainer,
   type SessionRecord,
+  type SessionSpace,
 } from '@moonshot-ai/agent-core/session/index';
-import { memoryJournal } from '@moonshot-ai/agent-core/store/backend/memory';
 import { nodeJournal } from '@moonshot-ai/agent-core/store/backend/node';
 
 import {
@@ -26,14 +31,9 @@ import {
   type SessionIndexFace,
   type SessionSummaryPage,
 } from '#/features/sessionIndex/index';
-import {
-  createHarness,
-  memoryHarnessSpace,
-  type Harness,
-  type HarnessSessionSpace,
-} from '#/runtime/index';
 
-const harnesses: Harness[] = [];
+
+const harnesses: App[] = [];
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -47,15 +47,14 @@ async function tempDir(prefix: string): Promise<string> {
   return dir;
 }
 
-async function closeHarness(harness: Harness): Promise<void> {
+async function closeHarness(harness: App): Promise<void> {
   const index = harnesses.indexOf(harness);
   if (index >= 0) harnesses.splice(index, 1);
   await harness.close();
 }
 
-function diskHarnessSpace(root: string): HarnessSessionSpace {
+function diskHarnessSpace(root: string): SessionSpace {
   const catalog = new Map<string, SessionRecord>();
-  const featureLogs = new Map<string, Map<string, string[]>>();
   const openContainer = async (sessionId: string): Promise<SessionContainer> => ({
     journal: await nodeJournal(join(root, sessionId)),
     blobs: openBlobStore(memoryBlobBackend(new Map())),
@@ -91,24 +90,16 @@ function diskHarnessSpace(root: string): HarnessSessionSpace {
       catalog.set(to, mergeSessionRecord(to, source, { createdAt: now, updatedAt: now }));
       return openContainer(to);
     },
-    featureJournal: (sessionId) => {
-      let logs = featureLogs.get(sessionId);
-      if (logs === undefined) {
-        logs = new Map();
-        featureLogs.set(sessionId, logs);
-      }
-      return memoryJournal(logs);
-    },
   };
 }
 
 interface SessionIndexEnv {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly face: SessionIndexFace;
 }
 
 async function mountSessionIndex(options: {
-  space: HarnessSessionSpace;
+  space: SessionSpace;
   dbPath?: string;
   sessionDir?: (sessionId: string) => string;
   now?: () => number;
@@ -119,17 +110,17 @@ async function mountSessionIndex(options: {
       capture.face = useInject(SessionIndexRef);
     },
   });
-  const harness = createHarness({ space: options.space });
+  const harness = createApp({ space: options.space });
   harnesses.push(harness);
-  harness.app.features.add(
+  harness.features.add(
     createSessionIndex({
       dbPath: options.dbPath ?? ':memory:',
       sessionDir: options.sessionDir,
       now: options.now,
     }),
   );
-  harness.app.features.add(probe);
-  await harness.app.features.delete('session-index-settle-noop');
+  harness.features.add(probe);
+  await harness.features.delete('session-index-settle-noop');
   const face = capture.face?.value;
   if (face === undefined) throw new Error('session index face is not exposed');
   return { harness, face };
@@ -151,12 +142,11 @@ describe('sessionIndex live write path', () => {
   it('tracks create, meta updates, prompts, lastTurn and delete through node events', async () => {
     let now = 10_000;
     const { harness, face } = await mountSessionIndex({
-      space: memoryHarnessSpace(),
+      space: memorySessionSpace(),
       now: () => now,
     });
 
-    const s1 = await harness.app.create({
-      sessionId: 's1',
+    const s1 = await harness.open('s1', {
       title: 'first',
       metadata: { workspaceId: 'ws-a' },
     });
@@ -175,11 +165,11 @@ describe('sessionIndex live write path', () => {
     });
 
     now = 11_000;
-    await harness.app.create({ sessionId: 's2' });
+    await harness.open('s2');
     expect(face.get('s2')).toMatchObject({ id: 's2', title: null, workspaceId: null, createdAt: 11_000 });
 
     now = 20_000;
-    await harness.app.update('s1', {
+    await harness.update('s1', {
       title: 'renamed',
       metadata: { archived: true, archived_at: '2026-01-02T03:04:05.000Z' },
     });
@@ -193,7 +183,7 @@ describe('sessionIndex live write path', () => {
     });
 
     now = 30_000;
-    const main = await harness.ensureAgent(s1, MAIN_AGENT_ID);
+    const { agent: main } = await s1.ensureAgent(MAIN_AGENT_ID);
     await main.log.commit({
       events: [{ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: user('hello sqlite') }],
     });
@@ -212,18 +202,18 @@ describe('sessionIndex live write path', () => {
     expect(face.get('s1')).toMatchObject({ lastTurnId: 2, lastTurnOutcome: 'done', updatedAt: 40_000 });
 
     now = 42_000;
-    await harness.app.update('s1', { lastTurn: { turnId: 3, outcome: 'failed' } });
+    await harness.update('s1', { lastTurn: { turnId: 3, outcome: 'failed' } });
     expect(face.get('s1')).toMatchObject({ lastTurnId: 3, lastTurnOutcome: 'failed', updatedAt: 42_000 });
 
     now = 45_000;
-    const sub = await harness.ensureAgent(s1, 'sub');
+    const { agent: sub } = await s1.ensureAgent('sub');
     await sub.log.commit({
       events: [{ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: user('subagent prompt') }],
     });
     expect(face.get('s1')).toMatchObject({ lastPrompt: 'hello sqlite', updatedAt: 42_000 });
 
     now = 50_000;
-    await harness.app.delete('s1');
+    await harness.delete('s1');
     expect(face.get('s1')).toBeUndefined();
     expect(face.get('s2')).toMatchObject({ id: 's2', createdAt: 11_000 });
     expect(face.list().total).toBe(1);
@@ -232,20 +222,19 @@ describe('sessionIndex live write path', () => {
   it('tracks cwd and cold-session meta updates through app.update', async () => {
     let now = 1_000;
     const { harness, face } = await mountSessionIndex({
-      space: memoryHarnessSpace(),
+      space: memorySessionSpace(),
       now: () => now,
     });
 
-    await harness.app.create({
-      sessionId: 's1',
+    await harness.open('s1', {
       title: 'live',
       metadata: { workspaceId: 'ws-a', cwd: '/work/a' },
     });
     expect(face.get('s1')).toMatchObject({ cwd: '/work/a' });
 
-    await harness.app.close('s1');
+    await harness.close('s1');
     now = 2_000;
-    await harness.app.update('s1', {
+    await harness.update('s1', {
       title: 'cold-renamed',
       metadata: { archived: true, archived_at: '2026-01-02T03:04:05.000Z', cwd: '/work/b' },
     });
@@ -269,15 +258,14 @@ describe('sessionIndex reconcile', () => {
 
     await space.create('s0', { title: 'raw', metadata: { workspaceId: 'ws-z' } });
 
-    const appA = createHarness({ space });
+    const appA = createApp({ space });
     harnesses.push(appA);
     const t0 = Date.now();
-    const s1 = await appA.app.create({
-      sessionId: 's1',
+    const s1 = await appA.open('s1', {
       title: 'alpha',
       metadata: { workspaceId: 'ws-a' },
     });
-    const main = await appA.ensureAgent(s1, MAIN_AGENT_ID);
+    const { agent: main } = await s1.ensureAgent(MAIN_AGENT_ID);
     await main.log.commit({
       events: [{ type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: user('first prompt') }],
     });
@@ -287,8 +275,7 @@ describe('sessionIndex reconcile', () => {
     await main.log.commit({
       events: [{ type: 'turn.ended', turnId: 5, outcome: { type: 'failed' } }],
     });
-    await appA.app.create({
-      sessionId: 's2',
+    await appA.open('s2', {
       title: 'beta',
       metadata: { workspaceId: 'ws-b', archived: true, archived_at: '2026-02-01T00:00:00.000Z' },
     });
@@ -347,7 +334,7 @@ describe('sessionIndex query semantics', () => {
   it('pushes filters, sort, pagination and by_workspace grouping down to SQL', async () => {
     let now = 0;
     const { harness, face } = await mountSessionIndex({
-      space: memoryHarnessSpace(),
+      space: memorySessionSpace(),
       now: () => now,
     });
 
@@ -361,14 +348,13 @@ describe('sessionIndex query semantics', () => {
       archivedAt?: string;
     }): Promise<void> {
       now = opts.createdAt;
-      const session = await harness.app.create({
-        sessionId: opts.id,
+      const session = await harness.open(opts.id, {
         title: `title-${opts.id}`,
         metadata: opts.workspaceId === undefined ? undefined : { workspaceId: opts.workspaceId },
       });
       if (opts.prompt !== undefined) {
         now = opts.promptAt ?? opts.updatedAt;
-        const main = await harness.ensureAgent(session, MAIN_AGENT_ID);
+        const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID);
         await main.log.commit({
           events: [
             { type: 'message.appended', turnId: 0, step: 0, source: 'normal', entry: user(opts.prompt) },
@@ -376,7 +362,7 @@ describe('sessionIndex query semantics', () => {
         });
       }
       now = opts.updatedAt;
-      await harness.app.update(
+      await harness.update(
         opts.id,
         opts.archivedAt === undefined ? {} : { metadata: { archived: true, archived_at: opts.archivedAt } },
       );

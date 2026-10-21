@@ -4,7 +4,11 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import {
+  createFeature,
+  createApp,
+  type App,
+} from '#/app/index';
 import {
   createAssistantEntry,
   createUserEntry,
@@ -14,9 +18,9 @@ import {
   type UserEntry,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useExpose, useInject, type ShallowRef } from '@moonshot-ai/agent-core/kernel/index';
+import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 import {
   FileTokenStorage,
   OAuthError,
@@ -34,7 +38,7 @@ import {
   type SessionTitleFace,
 } from '#/features/kimi/sessionTitle/index';
 import { providerCatalog } from '#/features/provider-catalog/index';
-import { createHarness, memoryHarnessSpace, type Harness } from '#/runtime/index';
+
 
 const MANAGED_PROVIDER_TOML =
   '[providers."managed:kimi-code"]\n' +
@@ -194,7 +198,7 @@ function stubOAuthTokens(tokens: BearerTokenProvider | undefined): OAuthTokens {
 }
 
 interface TitleSession {
-  readonly harness: Harness;
+  readonly harness: App;
   readonly main: Agent;
   readonly face: SessionTitleFace;
 }
@@ -205,14 +209,14 @@ async function openTitleSession(options: {
   tokens?: BearerTokenProvider;
 }): Promise<TitleSession> {
   const capture: { title?: Readonly<ShallowRef<SessionTitleFace | undefined>> } = {};
-  const harness = createHarness({ space: memoryHarnessSpace() });
-  harness.app.features.add(createConfig({ persist: fakePersist(options.toml ?? MANAGED_PROVIDER_TOML) }));
-  harness.app.features.add(providerCatalog);
+  const harness = createApp({ space: memorySessionSpace() });
+  harness.features.add(createConfig({ persist: fakePersist(options.toml ?? MANAGED_PROVIDER_TOML) }));
+  harness.features.add(providerCatalog);
   if (options.home !== undefined) {
-    harness.app.features.add(createOauth({ home: options.home }));
+    harness.features.add(createOauth({ home: options.home }));
   } else {
     const tokens = options.tokens;
-    harness.app.features.add(
+    harness.features.add(
       createFeature('test-oauth', {
         app() {
           useExpose(OAuthTokensRef, stubOAuthTokens(tokens));
@@ -220,8 +224,8 @@ async function openTitleSession(options: {
       }),
     );
   }
-  harness.app.features.add(sessionTitle);
-  harness.app.features.add(
+  harness.features.add(sessionTitle);
+  harness.features.add(
     createFeature('probe', {
       session() {
         capture.title = useInject(SessionTitleRef);
@@ -229,8 +233,8 @@ async function openTitleSession(options: {
     }),
   );
   await tick();
-  const session = await harness.app.create({ sessionId: 'sess' });
-  const main = await harness.ensureAgent(session, MAIN_AGENT_ID);
+  const session = await harness.open('sess');
+  const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID);
   await tick();
   const face = capture.title?.value;
   if (face === undefined) throw new Error('sessionTitle face was not exposed');
@@ -342,14 +346,14 @@ describe('sessionTitle facade', () => {
     expect(calls[0]?.url).toBe('https://managed.example.com/tools');
     expect(calls[0]?.authorization).toBe('Bearer sk-managed');
     expect(calls[0]?.chatContent).toBe('user: hello title');
-    const record = await harness.app.space.get('sess');
+    const record = await harness.space.get('sess');
     expect(record?.title).toBe('生成标题');
     expect(record?.metadata?.['titleKind']).toBe('generated');
 
     respond = () => Response.json({ title: '题'.repeat(300) });
     const forced = await face.generateTitle({ force: true });
     expect(forced).toBe('题'.repeat(200));
-    expect((await harness.app.space.get('sess'))?.title).toBe('题'.repeat(200));
+    expect((await harness.space.get('sess'))?.title).toBe('题'.repeat(200));
     await harness.close();
   });
 
@@ -367,7 +371,7 @@ describe('sessionTitle facade', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe('https://managed.example.com/tools');
     expect(calls[0]?.authorization).toBe('Bearer sk-managed');
-    expect((await harness.app.space.get('sess'))?.title).toBe('生成标题');
+    expect((await harness.space.get('sess'))?.title).toBe('生成标题');
     await harness.close();
   });
 
@@ -377,13 +381,13 @@ describe('sessionTitle facade', () => {
     const { harness, main, face } = await openTitleSession({ tokens });
     await seedPrompts(main, userEntry('hello title'));
 
-    await harness.app.update('sess', { title: '手写标题', metadata: { titleKind: 'custom' } });
+    await harness.update('sess', { title: '手写标题', metadata: { titleKind: 'custom' } });
     expect(await face.generateTitle()).toBeUndefined();
     expect(calls).toHaveLength(0);
 
     expect(await face.generateTitle({ force: true })).toBe('生成标题');
     expect(calls).toHaveLength(1);
-    const record = await harness.app.space.get('sess');
+    const record = await harness.space.get('sess');
     expect(record?.title).toBe('生成标题');
     expect(record?.metadata?.['titleKind']).toBe('generated');
 
@@ -402,10 +406,10 @@ describe('sessionTitle facade', () => {
 
     const pending = face.generateTitle();
     await until(() => calls.length === 1);
-    await harness.app.update('sess', { title: '手写标题', metadata: { titleKind: 'custom' } });
+    await harness.update('sess', { title: '手写标题', metadata: { titleKind: 'custom' } });
     gate.resolve(Response.json({ title: '生成标题' }));
     expect(await pending).toBeUndefined();
-    const record = await harness.app.space.get('sess');
+    const record = await harness.space.get('sess');
     expect(record?.title).toBe('手写标题');
     expect(record?.metadata?.['titleKind']).toBe('custom');
     await harness.close();

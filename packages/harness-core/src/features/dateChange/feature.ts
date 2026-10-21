@@ -2,7 +2,7 @@ import {
   createFeature,
   useStepStarting,
   type Feature,
-} from '@moonshot-ai/agent-core/app/index';
+} from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,

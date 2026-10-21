@@ -1,4 +1,4 @@
-import { useApp, type Feature, type FeatureLevel } from '@moonshot-ai/agent-core/app/index';
+import { useApp, type Feature, type FeatureLevel } from '#/app/index';
 
 import { useHttpRoute } from '../scope';
 import { sendOk } from '../route/http';
@@ -31,7 +31,7 @@ export function useFeatureRoutes(prefix: string): void {
         sessions: [...app.sessions.values()].map((session) => ({
           id: session.id,
           features: featureNames(app.features.list({ session: session.id }), 'session'),
-          agents: [...session.agents.keys()].map((agentId) => ({
+          agents: [...session.liveAgents.keys()].map((agentId) => ({
             id: agentId,
             features: featureNames(app.features.list({ session: session.id, agent: agentId }), 'agent'),
           })),

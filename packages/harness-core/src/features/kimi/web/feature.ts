@@ -1,5 +1,5 @@
-import { createFeature, type Feature, type FeatureUnits } from '@moonshot-ai/agent-core/app/index';
-import { createFacadeToken, useExpose, useInject } from '@moonshot-ai/agent-core/kernel/index';
+import { createFeature, type Feature, type FeatureUnits } from '#/app/index';
+import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,

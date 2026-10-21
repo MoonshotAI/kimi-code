@@ -1,4 +1,4 @@
-import { createFeature, useAgent, useSession, type Feature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useAgent, useSession, type Feature } from '#/app/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
 import {
@@ -6,11 +6,11 @@ import {
   useAgentTools,
   useBlobs,
   useFeatureStore,
-  type FeatureEvent,
   type FeatureStore,
 } from '#/runtime/index';
 
-import type { PtcContextLevel, PtcStoreState } from './context';
+import type { PtcContextLevel, PtcDispatchedEvent, PtcStoreState } from './context';
+import { PTC_DISPATCHED } from './context';
 import { createCodeTool, DEFAULT_PTC_LIMITS, type PtcLimits } from './tool';
 
 export const PTC_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_PTC';
@@ -24,9 +24,12 @@ export interface CreatePtcProps {
   readonly enabled?: () => boolean;
 }
 
-const ptcProjection: Projection<PtcStoreState, FeatureEvent> = {
+const ptcProjection: Projection<PtcStoreState, PtcDispatchedEvent> = {
   initial: () => ({ dispatches: 0 }),
-  reduce: (state) => ({ dispatches: state.dispatches + 1 }),
+  reduce: (state, entry) => {
+    if (entry.event.type !== PTC_DISPATCHED) return state;
+    return { dispatches: state.dispatches + entry.event.events.length };
+  },
 };
 
 export function createPtc(props: CreatePtcProps): Feature<void> {
@@ -39,7 +42,7 @@ export function createPtc(props: CreatePtcProps): Feature<void> {
       if (!enabled()) return;
       const agent = useAgent();
       const runtime = useAgentRuntime();
-      const store: FeatureStore<PtcStoreState, FeatureEvent> | undefined =
+      const store: FeatureStore<PtcStoreState, PtcDispatchedEvent> | undefined =
         contextLevel === 'full' ? useFeatureStore('agent', 'ptc', ptcProjection) : undefined;
       useAgentTools(
         createCodeTool({
