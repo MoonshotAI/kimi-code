@@ -170,22 +170,24 @@ npm uninstall -g @moonshot-ai/kimi-code
 
 ## 常见问题
 
-::: details /login 时模型列表为空
+常见问题与解决方法：登录失败、配额与会员、粘贴图片、首次启动缓慢以及升级。
+
+::: details `/login` 时模型列表为空
 如果所选平台返回的可用模型为空，会看到 "No models available for this platform." 错误，通常是该平台没有符合前缀规则的模型。先确认账号和平台是否匹配，再检查该平台是否有可用模型。
 
 如果看到 "Failed to verify API key"，则按 API 密钥或网络问题处理：
 
 - **API 密钥无效或过期**：检查你输入的 API 密钥是否正确，以及是否仍有效。
-- **网络连接问题**：确认能正常访问 API 服务地址（如 `api.kimi.com` 或 `api.moonshot.cn`）。
+- **网络连接问题**：确认能正常访问你所用平台的 API 服务地址（`api.kimi.com`、`api.moonshot.cn` 或 `api.moonshot.ai`）。
 
 **注意区分平台**
 
-Kimi Code 会员权益与 [Kimi 开放平台](https://platform.kimi.com) 有不同的 Base URL，配置时请注意 Base URL 与 API 密钥的匹配是否正确。
+Kimi Code 会员权益与 Kimi 开放平台有不同的 Base URL，配置时请注意 Base URL 与 API 密钥的匹配是否正确。
 
 | 平台 | Base URL | 计费方式 | API 密钥创建入口 |
 |------|---------|---------|-------------|
 | **Kimi Code** | Anthropic 兼容：`https://api.kimi.com/coding/` | Kimi 会员订阅（含额度） | [Kimi Code 控制台](https://www.kimi.com/code/console) |
-| **Kimi 开放平台** | `https://api.moonshot.cn/v1` | 按量付费 | [Kimi 开放平台官网](https://platform.kimi.com) |
+| **Kimi 开放平台** | `https://api.moonshot.cn/v1`（中国大陆）、`https://api.moonshot.ai/v1`（海外） | 按量付费 | [platform.kimi.com](https://platform.kimi.com)（中国大陆）、[platform.kimi.ai](https://platform.kimi.ai)（海外） |
 :::
 
 ::: details API 密钥无效

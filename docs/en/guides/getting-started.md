@@ -170,22 +170,24 @@ npm uninstall -g @moonshot-ai/kimi-code
 
 ## FAQ
 
-::: details Empty model list during /login
+Common issues and fixes: login failures, quota and membership, image paste, slow first launch, and upgrades.
+
+::: details Empty model list during `/login`
 If the selected platform returns no usable models, the CLI reports "No models available for this platform." This usually means no model matches the platform's supported prefix. Check that the account and platform match first, then check whether any models are available there.
 
 If the CLI reports "Failed to verify API key", handle it as an API key or network issue:
 
 - **Invalid or expired API key**: Check whether the API key you entered is correct and still valid.
-- **Network connection issues**: Confirm you can access the API service addresses (such as `api.kimi.com` or `api.moonshot.cn`).
+- **Network connection issues**: Confirm you can access the API service address for your platform (`api.kimi.com`, `api.moonshot.cn`, or `api.moonshot.ai`).
 
 **Note: Distinguish Platforms**
 
-Kimi Code membership benefits and the [Kimi Open Platform](https://platform.kimi.com) have different Base URLs. Please ensure your Base URL and API key are matched correctly.
+Kimi Code membership benefits and the Kimi Open Platform have different Base URLs. Please ensure your Base URL and API key are matched correctly.
 
 | Platform | Base URL | Billing | API key source |
 |----------|----------|---------|----------------|
 | **Kimi Code** | Anthropic-compatible: `https://api.kimi.com/coding/` | Membership subscription (quota included) | [Kimi Code Console](https://www.kimi.com/code/console) |
-| **Kimi Open Platform** | `https://api.moonshot.cn/v1` | Pay-as-you-go | [Kimi Open Platform](https://platform.kimi.com) |
+| **Kimi Open Platform** | `https://api.moonshot.cn/v1` (mainland China), `https://api.moonshot.ai/v1` (global) | Pay-as-you-go | [platform.kimi.com](https://platform.kimi.com) (mainland China), [platform.kimi.ai](https://platform.kimi.ai) (global) |
 :::
 
 ::: details Invalid API key
