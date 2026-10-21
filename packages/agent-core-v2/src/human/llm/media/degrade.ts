@@ -3,6 +3,8 @@ import type { LlmRecovery } from '#/llm/requester/recovery';
 
 export const MEDIA_DEGRADE_KEEP_RECENT = 2;
 
+export type MediaDegradeCause = 'size-limit' | 'unsupported-media';
+
 const MEDIA_DEGRADED_PLACEHOLDERS = {
   image_url:
     '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
@@ -10,6 +12,17 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
     '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
   video_url:
     '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+} as const;
+
+const MEDIA_DEGRADED_UNSUPPORTED_PLACEHOLDERS = {
+  image_url: '[image omitted: not supported by this endpoint; re-read the file to view it]',
+  audio_url: '[audio omitted: not supported by this endpoint; re-read the file to hear it]',
+  video_url: '[video omitted: not supported by this endpoint; re-read the file to view it]',
+} as const;
+
+const MEDIA_DEGRADED_PLACEHOLDERS_BY_CAUSE = {
+  'size-limit': MEDIA_DEGRADED_PLACEHOLDERS,
+  'unsupported-media': MEDIA_DEGRADED_UNSUPPORTED_PLACEHOLDERS,
 } as const;
 
 const MEDIA_STRIPPED_PLACEHOLDERS = {
@@ -50,6 +63,7 @@ function replaceMediaParts(
 export function degradeOlderMediaParts(
   messages: readonly Message[],
   keepRecent: number,
+  cause: MediaDegradeCause = 'size-limit',
 ): readonly Message[] {
   const mediaCount = messages.reduce(
     (count, message) => count + message.content.filter(isDegradableMediaPart).length,
@@ -57,7 +71,7 @@ export function degradeOlderMediaParts(
   );
   let toDegrade = Math.max(0, mediaCount - keepRecent);
   if (toDegrade === 0) return messages;
-  return replaceMediaParts(messages, MEDIA_DEGRADED_PLACEHOLDERS, () => {
+  return replaceMediaParts(messages, MEDIA_DEGRADED_PLACEHOLDERS_BY_CAUSE[cause], () => {
     if (toDegrade === 0) return false;
     toDegrade -= 1;
     return true;

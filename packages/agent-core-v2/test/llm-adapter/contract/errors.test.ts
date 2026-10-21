@@ -7,6 +7,7 @@ import {
   APIProviderOverloadedError,
   APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -14,6 +15,7 @@ import {
   createAbortError,
   isAbortError,
   isRetryableGenerateError,
+  isUnsupportedMediaError,
   normalizeAPIStatusError,
   throwIfAbortError,
 } from '#/llm-adapter/contract/errors';
@@ -129,6 +131,76 @@ describe('isRetryableGenerateError', () => {
       isRetryableGenerateError(new APIEmptyResponseError('empty', { finishReason: 'completed' })),
     ).toBe(true);
     expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
+  });
+
+  it('leaves media rejections to the projection ladder', () => {
+    expect(
+      isRetryableGenerateError(new ChatProviderError('unsupported media type for base64 image')),
+    ).toBe(false);
+    expect(
+      isRetryableGenerateError(
+        new ChatProviderError('Unsupported media type for base64 video: video/avi'),
+      ),
+    ).toBe(false);
+    expect(isRetryableGenerateError(new ChatProviderError('some other problem'))).toBe(true);
+  });
+});
+
+describe('isUnsupportedMediaError', () => {
+  it('matches the free-tokens gateway rejection of an inline video tool result', () => {
+    const reporter = new APIStatusError(
+      400,
+      'messages.56.content.0.tool_result.content: Field required',
+    );
+    expect(isUnsupportedMediaError(reporter)).toBe(true);
+  });
+
+  it('matches common video-unsupported wordings on 400 and 422', () => {
+    const wordings = [
+      'Unsupported media type for base64 video: video/x-ms-wmv',
+      'Invalid data URL for video: data:video/avi;base64,AAAA',
+      'video not supported by this model',
+    ];
+    for (const message of wordings) {
+      expect(isUnsupportedMediaError(new APIStatusError(400, message))).toBe(true);
+      expect(isUnsupportedMediaError(new APIStatusError(422, message))).toBe(true);
+    }
+  });
+
+  it('does not match field-required errors on other fields', () => {
+    const others = [
+      'messages.1.content.0.tool_use.input: Field required',
+      'messages.0.content.0.text: Field required',
+    ];
+    for (const message of others) {
+      expect(isUnsupportedMediaError(new APIStatusError(400, message))).toBe(false);
+    }
+  });
+
+  it('does not match on non-400/422 statuses', () => {
+    const message = 'messages.56.content.0.tool_result.content: Field required';
+    expect(isUnsupportedMediaError(new APIStatusError(429, message))).toBe(false);
+    expect(isUnsupportedMediaError(new APIStatusError(500, message))).toBe(false);
+  });
+
+  it('excludes overflow and too-large subclasses even with a matching message', () => {
+    const message = 'messages.56.content.0.tool_result.content: Field required';
+    expect(isUnsupportedMediaError(new APIContextOverflowError(400, message))).toBe(false);
+    expect(isUnsupportedMediaError(new APIRequestTooLargeError(413, message))).toBe(false);
+  });
+
+  it('matches provider-side video format errors and ignores plain errors', () => {
+    expect(
+      isUnsupportedMediaError(
+        new ChatProviderError('Unsupported media type for base64 video: video/avi'),
+      ),
+    ).toBe(true);
+    expect(isUnsupportedMediaError(new ChatProviderError('Invalid data URL for video: x'))).toBe(
+      true,
+    );
+    expect(isUnsupportedMediaError(new ChatProviderError('some other problem'))).toBe(false);
+    expect(isUnsupportedMediaError(new Error('video not supported'))).toBe(false);
+    expect(isUnsupportedMediaError('video not supported')).toBe(false);
   });
 });
 

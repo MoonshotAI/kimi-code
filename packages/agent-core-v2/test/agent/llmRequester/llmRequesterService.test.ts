@@ -631,6 +631,42 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(projection.calls).toEqual(['normal', 'degraded']);
   });
 
+  it('keeps the too-large wording for size rejections', async () => {
+    const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
+      undefined,
+    );
+    const imageMessage = (data: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${data}` } }],
+      toolCalls: [],
+    });
+
+    await service.request({
+      messages: [imageMessage('OLD'), imageMessage('NEW1'), imageMessage('NEW2')],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-degraded',
+        message:
+          'Provider rejected the request as too large; older media were dropped and the request was retried.',
+      }),
+    ]);
+    const retriedTexts = (capturedInputs[1]?.messages ?? [])
+      .flatMap((message) => message.content)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+    expect(retriedTexts).toContain(
+      '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+    );
+  });
+
   it('attaches display paths to degraded older media', async () => {
     const calls = { value: 0 };
     const capturedInputs: ModelRequestInput[] = [];
@@ -836,6 +872,152 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
   });
 });
 
+describe('AgentLLMRequesterService unsupported-media resend', () => {
+  const GATEWAY_MEDIA_400 = new APIStatusError(
+    400,
+    'messages.56.content.0.tool_result.content: Field required',
+  );
+
+  function inlineVideoToolMessages(): Message[] {
+    return [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          {
+            type: 'function',
+            id: 'call_1',
+            name: 'ReadMediaFile',
+            arguments: '{"path":"a.mp4"}',
+          },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_1',
+        content: [
+          { type: 'text', text: '<video path="/tmp/a.mp4">' },
+          { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          { type: 'text', text: '</video>' },
+        ],
+        toolCalls: [],
+      },
+    ];
+  }
+
+  function partsOf(input: ModelRequestInput | undefined) {
+    return (input?.messages ?? []).flatMap((message) => message.content);
+  }
+
+  function textsOf(input: ModelRequestInput | undefined) {
+    return partsOf(input)
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text);
+  }
+
+  it('strips a recent inline video tool result when degrading cannot drop it', async () => {
+    const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
+    const { service, dispatcher, records } = createService(
+      createRequester(calls, GATEWAY_MEDIA_400, [GATEWAY_MEDIA_400], capturedInputs),
+      undefined,
+    );
+
+    const result = await service.request({
+      messages: inlineVideoToolMessages(),
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+    await dispatcher.flush();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(3);
+    expect(partsOf(capturedInputs[1]).some((part) => part.type === 'video_url')).toBe(true);
+    expect(partsOf(capturedInputs[2]).some((part) => part.type === 'video_url')).toBe(false);
+    expect(textsOf(capturedInputs[2])).toContain(
+      '[video omitted for provider compatibility; re-read the file to view it]',
+    );
+    expect(textsOf(capturedInputs[2])).toContain('<video path="/tmp/a.mp4">');
+    expect(
+      records
+        .filter((record) => record.type === 'llm.request')
+        .map((record) => record['projection']),
+    ).toEqual([undefined, 'media-degraded', 'media-stripped']);
+  });
+
+  it('degrades an older inline video tool result and succeeds without stripping', async () => {
+    const calls = { value: 0 };
+    const capturedInputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester(calls, GATEWAY_MEDIA_400, [], capturedInputs),
+      undefined,
+    );
+    const imageMessage = (data: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${data}` } }],
+      toolCalls: [],
+    });
+
+    const result = await service.request({
+      messages: [...inlineVideoToolMessages(), imageMessage('NEW1'), imageMessage('NEW2')],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(partsOf(capturedInputs[1]).some((part) => part.type === 'video_url')).toBe(false);
+    expect(textsOf(capturedInputs[1])).toContain(
+      '[video omitted: not supported by this endpoint; re-read the file to view it]',
+    );
+    const imageUrls = partsOf(capturedInputs[1])
+      .filter((part) => part.type === 'image_url')
+      .map((part) => part.imageUrl.url);
+    expect(imageUrls).toEqual(['data:image/png;base64,NEW1', 'data:image/png;base64,NEW2']);
+  });
+
+  it('reports the degraded-media warning with unsupported-media wording', async () => {
+    const calls = { value: 0 };
+    const { service, dispatcher, events } = createService(
+      createRequester(calls, GATEWAY_MEDIA_400),
+      undefined,
+    );
+    const imageMessage = (data: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${data}` } }],
+      toolCalls: [],
+    });
+
+    await service.request({
+      messages: [...inlineVideoToolMessages(), imageMessage('NEW1'), imageMessage('NEW2')],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+    await dispatcher.flush();
+
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      expect.objectContaining({
+        type: 'warning',
+        code: 'media-degraded',
+        message:
+          'Provider does not accept the media in the request; older media were dropped and the request was retried.',
+      }),
+    ]);
+  });
+
+  it('does not resend for a field-required rejection on a non-media field', async () => {
+    for (const error of [
+      new APIStatusError(400, 'messages.1.content.0.tool_use.input: Field required'),
+      new APIStatusError(400, 'messages.0.content.0.text: Field required'),
+    ]) {
+      const calls = { value: 0 };
+      const projection = recordProjectionCalls();
+      const { service } = createService(createRequester(calls, error), projection.projector);
+
+      await expect(service.request()).rejects.toBe(error);
+      expect(calls.value).toBe(1);
+      expect(projection.calls).toEqual(['normal']);
+    }
+  });
+});
+
 describe('AgentLLMRequesterService combined recovery projections', () => {
   const BODY_TOO_LARGE_413 = new APIRequestTooLargeError(413, 'Request Entity Too Large');
   const IMAGE_FORMAT_400 = new APIStatusError(
@@ -869,7 +1051,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(policies).toEqual([
       undefined,
       { structure: 'strict' },
-      { structure: 'strict', media: 'degraded' },
+      { structure: 'strict', media: 'degraded', mediaDegradeCause: 'size-limit' },
       { structure: 'strict', media: { strip: expect.anything() } },
     ]);
     await dispatcher.flush();
@@ -926,8 +1108,8 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(calls.value).toBe(3);
     expect(policies).toEqual([
       undefined,
-      { media: 'degraded' },
-      { structure: 'strict', media: 'degraded' },
+      { media: 'degraded', mediaDegradeCause: 'size-limit' },
+      { structure: 'strict', media: 'degraded', mediaDegradeCause: 'size-limit' },
     ]);
     expect(events.filter((event) => event.type === 'warning')).toEqual([
       expect.objectContaining({ type: 'warning', code: 'media-degraded' }),

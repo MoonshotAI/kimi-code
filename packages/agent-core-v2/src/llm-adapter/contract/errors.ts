@@ -8,6 +8,7 @@ import {
   isRequestStructureStatusError,
   isRequestTooLargeStatusError,
   isToolExchangeAdjacencyStatusError,
+  isUnsupportedMediaStatusError,
   llmStatusErrorMessage,
   sanitizeStatusErrorMessage,
   type LlmErrorMessage,
@@ -225,6 +226,26 @@ export function isImageFormatError(error: unknown): boolean {
   return false;
 }
 
+const UNSUPPORTED_MEDIA_PROVIDER_MESSAGE_PATTERNS = [
+  /unsupported media type for base64 video/,
+  /invalid data url for video/,
+] as const;
+
+export function isUnsupportedMediaError(error: unknown): boolean {
+  if (error instanceof APIStatusError) {
+    if (error instanceof APIContextOverflowError) return false;
+    if (error instanceof APIRequestTooLargeError) return false;
+    return isUnsupportedMediaStatusError(error.statusCode, error.message);
+  }
+  if (error instanceof ChatProviderError) {
+    const lowerMessage = error.message.toLowerCase();
+    return UNSUPPORTED_MEDIA_PROVIDER_MESSAGE_PATTERNS.some((pattern) =>
+      pattern.test(lowerMessage),
+    );
+  }
+  return false;
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -241,7 +262,11 @@ export function isRetryableGenerateError(error: unknown): boolean {
     }
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  return (
+    error instanceof ChatProviderError &&
+    !isImageFormatError(error) &&
+    !isUnsupportedMediaError(error)
+  );
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;

@@ -9,6 +9,8 @@ import type { MediaStripSnapshot } from './contextProjector';
 
 export const MEDIA_DEGRADE_KEEP_RECENT = 2;
 
+export type MediaDegradeCause = 'size-limit' | 'unsupported-media';
+
 const MEDIA_DEGRADED_PLACEHOLDERS = {
   image_url:
     '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
@@ -16,6 +18,17 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
     '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
   video_url:
     '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+} as const;
+
+const MEDIA_DEGRADED_UNSUPPORTED_PLACEHOLDERS = {
+  image_url: '[image omitted: not supported by this endpoint; re-read the file to view it]',
+  audio_url: '[audio omitted: not supported by this endpoint; re-read the file to hear it]',
+  video_url: '[video omitted: not supported by this endpoint; re-read the file to view it]',
+} as const;
+
+const MEDIA_DEGRADED_PLACEHOLDERS_BY_CAUSE = {
+  'size-limit': MEDIA_DEGRADED_PLACEHOLDERS,
+  'unsupported-media': MEDIA_DEGRADED_UNSUPPORTED_PLACEHOLDERS,
 } as const;
 
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
@@ -130,9 +143,11 @@ export function stripMediaPartsBySnapshot(
 export function degradeOlderMediaParts(
   messages: readonly Message[],
   keepRecent: number,
-  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
+  placeholders?: MediaPlaceholderSet,
   mediaPaths?: ReadonlyMap<string, string>,
+  cause: MediaDegradeCause = 'size-limit',
 ): readonly Message[] {
+  const effectivePlaceholders = placeholders ?? MEDIA_DEGRADED_PLACEHOLDERS_BY_CAUSE[cause];
   const mediaCount = messages.reduce(
     (count, message) => count + message.content.filter(isDegradableMediaPart).length,
     0,
@@ -145,7 +160,7 @@ export function degradeOlderMediaParts(
     const content = message.content.map((part): ContentPart => {
       if (toDegrade === 0 || !isDegradableMediaPart(part)) return part;
       toDegrade -= 1;
-      return mediaPathTag(part, mediaPaths) ?? { type: 'text', text: placeholders[part.type] };
+      return mediaPathTag(part, mediaPaths) ?? { type: 'text', text: effectivePlaceholders[part.type] };
     });
     return { ...message, content };
   });
