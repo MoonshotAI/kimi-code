@@ -1,5 +1,6 @@
 import {
   type KimiHarness,
+  type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
   type Session,
   type ThinkingEffort,
@@ -177,8 +178,10 @@ export class AuthFlowController {
    * config.  Runs best-effort: individual provider failures are collected
    * and returned instead of thrown.
    */
-  async refreshProviderModels(): Promise<RefreshProviderModelsResponse> {
-    const result = await this.host.harness.refreshProviderModels();
+  async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
+    const result = await this.host.harness.refreshProviderModels(options);
     if (result.changed.length > 0) {
       await this.refreshAvailableModels();
     }

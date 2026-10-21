@@ -7,6 +7,7 @@ import type { ColorToken, ThemeName } from '#/tui/theme';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
+import type { ModelMigrationController } from '../controllers/model-migration';
 import type { StreamingUIController } from '../controllers/streaming-ui';
 import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
@@ -215,6 +216,7 @@ export interface SlashCommandHost {
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
   readonly authFlow: AuthFlowController;
+  readonly modelMigration: ModelMigrationController;
 }
 
 // ---------------------------------------------------------------------------
@@ -468,7 +470,7 @@ async function handleBuiltInSlashCommand(
       await handleEffortCommand(host, args);
       return;
     case 'provider':
-      await handleProviderCommand(host);
+      await handleProviderCommand(host, args);
       return;
     case 'permission':
       showPermissionPicker(host);
