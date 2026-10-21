@@ -182,7 +182,8 @@ export class SessionManager implements ISessionManager {
   }
 
   private async retained(handle: ISessionScopeHandle): Promise<boolean> {
-    if ((await handle.accessor.get(ISessionTerminalService).list()).length > 0) return true;
+    const terminals = await handle.accessor.get(ISessionTerminalService).list();
+    if (terminals.some((terminal) => terminal.status === 'running')) return true;
     const agents = handle.accessor.get(IAgentLifecycleService);
     const hasCron = agents
       .list()

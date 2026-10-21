@@ -635,7 +635,6 @@ describe('SessionManager closeIfIdle', () => {
     ['a pending approval', { pending: 'approval' }],
     ['a pending question', { pending: 'question' }],
     ['a running terminal', { terminal: 'running' }],
-    ['an exited terminal', { terminal: 'exited' }],
     ['pending cron tasks', { cronTasks: 1 }],
   ];
 
@@ -644,6 +643,13 @@ describe('SessionManager closeIfIdle', () => {
     await create(fake);
     expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(false);
     expect(fake.manager.get('session-1')).toBeDefined();
+  });
+
+  it('reclaims a session with an exited terminal', async () => {
+    const fake = setup({ terminal: 'exited' });
+    await create(fake);
+    expect(await fake.manager.closeIfIdle('session-1', 0)).toBe(true);
+    expect(fake.manager.get('session-1')).toBeUndefined();
   });
 
   it('releases the lease when the close path fails', async () => {
