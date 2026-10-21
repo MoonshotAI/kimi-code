@@ -83,6 +83,7 @@ let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
+let towerBudget: number;
 const agentContexts = new Map<string, AgentContext>();
 const agentLoops = new Map<string, { state: 'idle' | 'running'; submitted: string[] }>();
 
@@ -97,6 +98,7 @@ beforeEach(async () => {
   currentAgentId = 'main';
   liveSessionIds = [];
   liveAgentTaskIds = [];
+  towerBudget = 2;
   currentSessionId = 'session-test';
   agentContexts.clear();
   agentLoops.clear();
@@ -151,7 +153,7 @@ beforeEach(async () => {
         get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
-        snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
+        snapshot: () => ({ budget: towerBudget, inflight: 0, blockedUntil: null }),
       });
       reg.definePartialInstance(IAgentTaskService, {
         list: () =>
@@ -872,6 +874,19 @@ describe('TowerStatusTool', () => {
       concurrency: { budget: 2, inflight: 0, blockedUntil: null },
       recentActivity: expect.arrayContaining([expect.stringContaining(' tower init')]),
     });
+  });
+
+  it('renders a non-finite budget as unlimited in the dashboard and summary', async () => {
+    await initViaTool();
+    towerBudget = Number.POSITIVE_INFINITY;
+
+    const dashboard = await run(ix.get(ITowerStatusTool), {});
+    const summary = await readStatusSummary();
+
+    expect(dashboard.output).toContain('budget: unlimited agent(s) · inflight: 0 · spawns open');
+    expect(summary).toContain('Concurrency: budget: unlimited agent(s) · inflight: 0 · spawns open');
+    expect(dashboard.output).not.toContain('Infinity agent(s)');
+    expect(summary).not.toContain('Infinity agent(s)');
   });
 
   it('keeps the Markdown dashboard available to tower workers', async () => {

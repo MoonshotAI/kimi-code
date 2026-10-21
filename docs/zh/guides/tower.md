@@ -111,7 +111,7 @@ worker 和 reviewer 的模型选择规则不同。未配置 `[secondary_model]` 
 
 worktree 只能隔离写入，不能当作安全沙箱。worker 可以读取仓库内容，并以你的权限运行工具；在 Never Ask 模式下，worker 和 reviewer 不会逐项向你请求审批。Tower worker 没有 `Agent` 工具，不能再派发 subagent。不过，mission 范围和合并检查只是流程约束，不是安全边界。
 
-worker 和 reviewer 都有独立的模型上下文，也会分别消耗 token。Tower 的规划、消息路由、故障恢复和合并轮次还会产生额外消耗。Agent 越多，配额、CPU 和磁盘压力越大。Tower 会限制同时派发的 Agent 数量；`/tower status` 可以查看当前预算和运行数量，而且不会启动模型轮次。建议先拆少量相互独立的 mission，完成后及时清理 worktree，释放磁盘空间。
+worker 和 reviewer 都有独立的模型上下文，也会分别消耗 token。Tower 的规划、消息路由、故障恢复和合并轮次还会产生额外消耗。Agent 越多，配额、CPU 和磁盘压力越大。[`max_running_tasks`](../configuration/config-files.md#task) 限制同时运行的 Tower worker 和 reviewer 数量。未配置时，Tower 不设固定并发上限，但供应商返回 HTTP 429 时仍可能暂停派发并降低自适应预算。`/tower status` 会显示当前数值预算或 `unlimited` 以及运行数量，而且不会启动模型轮次。建议先拆少量相互独立的 mission，完成后及时清理 worktree，释放磁盘空间。
 
 ## 下一步
 
