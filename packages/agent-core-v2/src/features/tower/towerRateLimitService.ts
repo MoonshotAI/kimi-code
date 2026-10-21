@@ -9,6 +9,7 @@ import {
 export const RATE_LIMIT_CAPACITY_SHRINK_INTERVAL_MS = 2_000;
 export const RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS = 180_000;
 export const TOWER_SPAWN_PAUSE_MS = 60_000;
+export const TOWER_DEFAULT_MAX_RUNNING_AGENTS = 256;
 
 export class RateLimitCapacityGovernor {
   private capacity = Number.POSITIVE_INFINITY;
@@ -103,7 +104,7 @@ export class TowerRateLimitService extends Disposable implements ITowerRateLimit
     const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
     return Math.max(
       1,
-      Math.min(this.governor.getCapacity(), maxRunningTasks ?? Number.POSITIVE_INFINITY),
+      Math.min(this.governor.getCapacity(), maxRunningTasks ?? TOWER_DEFAULT_MAX_RUNNING_AGENTS),
     );
   }
 

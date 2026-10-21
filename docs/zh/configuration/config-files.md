@@ -352,7 +352,7 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数；也限制 Tower worker 和 reviewer，未设置时不设固定上限 |
+| `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数；也限制 Tower worker 和 reviewer，Tower 默认上限为 256 |
 | `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务；print 模式下仅作 `print_background_mode` 的回退：`true` 等价于 `drain` |
 | `kill_grace_period_ms` | `integer` | `5000` | 任务被请求正常终止后，等待自行结束的宽限时间（毫秒），超时后强制停止 |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令超时后转为后台任务而非终止；设为 `false` 恢复超时即终止 |
@@ -361,7 +361,7 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 | `print_wait_ceiling_s` | `integer` | `2147483` | 等待/steer 循环的墙钟上限（秒），非 print 模式或 `"exit"` 时无效 |
 | `print_max_turns` | `integer` | `100000` | steer 模式下后台任务触发新 turn 的数量上限，防止 steer 循环失控 |
 
-对 Tower 而言，`max_running_tasks` 同时限制 worker 和 reviewer 的总运行数量。如果两个配置节与 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 都未设置该值，Tower 不设固定并发上限；供应商返回 HTTP 429 时仍可能暂停派发并降低自适应预算。
+对 Tower 而言，`max_running_tasks` 同时限制 worker 和 reviewer 的总运行数量。如果两个配置节与 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 都未设置该值，默认合计最多运行 256 个。
 
 `keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`max_running_tasks` 可被 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 覆盖，`bash_task_timeout_s` 可被 `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` 覆盖，`print_background_mode`、`print_wait_ceiling_s`、`print_max_turns` 可分别被 `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`、`KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`、`KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` 覆盖，优先级均高于两个配置节。
 

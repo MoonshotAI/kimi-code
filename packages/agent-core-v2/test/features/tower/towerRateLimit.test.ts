@@ -40,12 +40,30 @@ describe('TowerRateLimitService', () => {
     return ix.get(ITowerRateLimitService).snapshot();
   }
 
-  it('starts with an unlimited budget and no pause', () => {
+  it('starts with a 256-agent budget and no pause', () => {
     expect(snapshot()).toEqual({
-      budget: Number.POSITIVE_INFINITY,
+      budget: 256,
       inflight: 0,
       blockedUntil: null,
     });
+  });
+
+  it('refuses new spawns above the default budget', () => {
+    const limiter = ix.get(ITowerRateLimitService);
+    for (let index = 0; index < 256; index += 1) {
+      expect(limiter.acquire()).toEqual({ ok: true });
+    }
+
+    const gate = limiter.acquire();
+    expect(gate.ok).toBe(false);
+    if (gate.ok) throw new Error('expected acquire to be refused');
+    expect(gate.reason).toContain('tower concurrency budget exhausted (256/256');
+  });
+
+  it('allows explicit maxRunningTasks to exceed the default budget', () => {
+    config.setSilent('task', { maxRunningTasks: 300 });
+
+    expect(snapshot().budget).toBe(300);
   });
 
   it('uses task maxRunningTasks to limit the budget and new acquisitions', () => {
@@ -84,7 +102,7 @@ describe('TowerRateLimitService', () => {
     expect(limiter.budget()).toBe(4);
 
     config.setSilent('task', undefined);
-    expect(limiter.budget()).toBe(Number.POSITIVE_INFINITY);
+    expect(limiter.budget()).toBe(256);
   });
 
   it('acquire / release track inflight agents', () => {
@@ -195,7 +213,7 @@ describe('TowerRateLimitService', () => {
     limiter.reset();
 
     expect(snapshot()).toEqual({
-      budget: Number.POSITIVE_INFINITY,
+      budget: 256,
       inflight: 0,
       blockedUntil: null,
     });
