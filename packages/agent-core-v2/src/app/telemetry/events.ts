@@ -280,6 +280,14 @@ export interface ContextProjectionRepairedEvent {
   vacuous_dropped: number;
 }
 
+export interface LlmRequestSanitizedEvent {
+  lone_surrogates: number;
+  empty_tool_content: number;
+  tool_media_downgraded: number;
+  model?: string;
+  protocol?: string;
+}
+
 export interface BackgroundTaskCreatedEvent {
   task_id: string;
   kind: 'bash' | 'agent' | 'question';
@@ -962,6 +970,18 @@ export const telemetryEventDefinitions = {
       assistants_merged: 'Consecutive assistant messages merged',
       whitespace_dropped: 'Whitespace-only text blocks dropped',
       vacuous_dropped: 'Messages dropped because every recorded part serialized to nothing',
+    },
+  }),
+  llm_request_sanitized: defineTelemetryEvent<LlmRequestSanitizedEvent>({
+    owner: 'kimi-code',
+    comment:
+      'The last-mile request sanitizer rewrites outgoing LLM request content the endpoint would reject, so a poisoned history does not lock the session into repeated 400s.',
+    properties: {
+      lone_surrogates: 'Lone UTF-16 surrogate code units replaced with U+FFFD',
+      empty_tool_content: 'Tool messages padded because their content carried nothing wire-visible',
+      tool_media_downgraded: 'Tool message media parts replaced with placeholder text',
+      model: 'Model the request targeted',
+      protocol: 'Request protocol',
     },
   }),
   background_task_created: defineAgentTelemetryEvent<BackgroundTaskCreatedEvent>({

@@ -183,10 +183,11 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_MODEL_THINKING_EFFORT` | Force a thinking effort (`thinking.effort`), bypassing the model's declared `support_efforts`; `kimi` provider only | An effort value, e.g. `max` |
 | `KIMI_MODEL_THINKING_KEEP` | Preserved-thinking passthrough: `thinking.keep` on `kimi`, a `clear_thinking_20251015` edit on `anthropic`; overrides `[thinking] keep` | A value the API accepts, e.g. `all`; an off-value (`false`/`0`/`no`/`off`/`none`/`null`) disables it |
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | Max time (ms) an LLM request on the `openai` / `openai-responses` / `anthropic` protocols may wait for the response headers (first byte), replacing the HTTP client's default 300 s headers timeout — raise it for long non-streaming thinking; unset keeps the default; the SDK's own total request timeout (default 10 minutes) still caps each attempt; not supported for `google-genai` (its SDK exposes no dispatcher option) or behind a SOCKS proxy (requests still go through the proxy) | Positive integer no greater than 2147483647; invalid values fail the request |
+| `KIMI_CODE_REQUEST_SANITIZE` | Last-mile sanitization of outgoing LLM requests: lone UTF-16 surrogates in request messages, the system prompt, and tool declarations (typically left by truncated tool output) are replaced with U+FFFD, empty tool results are padded with placeholder text, and base64 video/audio tool-result parts the endpoint rejects degrade to placeholder text; unset keeps it on | `off` disables; any other value (including unset) keeps it on |
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight: no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` also honored | Truthy: `1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
 
-The `KIMI_CODE_INFINITE_RETRY`, `KIMI_CODE_IDENTITY_*`, and `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine.
+The `KIMI_CODE_INFINITE_RETRY`, `KIMI_CODE_IDENTITY_*`, `KIMI_CODE_BUILTIN_PRODUCT_SKILLS`, and `KIMI_CODE_REQUEST_SANITIZE` variables are read by the `agent-core-v2` engine.
 
 ## Diagnostic logs
 

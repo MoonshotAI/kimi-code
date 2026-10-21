@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createScopedTestHost } from '#/_base/di/test';
 import { isErrorCode } from '#/_base/errors/codes';
 import { isError2 } from '#/_base/errors/errors';
+import { ILogService } from '#/_base/log/log';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { ConfigErrors } from '#/app/config/errors';
+import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { UNKNOWN_CAPABILITY } from '#/llm-adapter/contract/capability';
 import { emptyUsage } from '#human/llm/usage';
 import type { LlmRequester } from '#human/llm/requester/requester';
@@ -36,6 +39,7 @@ import { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
 import { HostRequestHeadersAdapter } from '#/app/kosongConfig/hostRequestHeadersAdapter';
 
 import { StubConfigService, stubModelOAuthTokens, stubTokenProvider } from '../../stubs';
+import { noopLogger } from '../../wire/stubs';
 import { stubAgentIdentity } from '../../app/agentIdentity/stubs';
 import { stubBootstrap } from '../../app/bootstrap/stubs';
 
@@ -69,6 +73,9 @@ function createHost(
     [IConfigService, config],
     [IModelOAuthTokens, oauthTokens],
     [IHostRequestHeaders, hostHeadersPort(hostHeaders)],
+    [ILogService, noopLogger],
+    [ITelemetryService, noopTelemetryService],
+    [IBootstrapService, stubBootstrap()],
   ]);
   const providers = host.app.accessor.get(IProviderService);
   providers.loadAll(
@@ -695,6 +702,9 @@ describe('ModelCatalog ping', () => {
         stubModelOAuthTokens(),
         registry,
         { headers: {}, thirdPartyHeaders: {} },
+        noopLogger,
+        noopTelemetryService,
+        stubBootstrap(),
       );
       const result = await catalog.ping('k1');
       expect(result).toMatchObject({ ok: true, text: 'pong', finishReason: 'completed' });
