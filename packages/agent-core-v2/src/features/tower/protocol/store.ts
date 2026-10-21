@@ -7,12 +7,13 @@ import {
   open,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 
 import { listBaseDirtyEntries, snapshotBaseWip } from './baseWip';
 import {
@@ -453,8 +454,18 @@ export class TowerStore {
     }
   }
 
-  private stateLockReaperRef(lockPath: string): string {
-    const suffix = createHash('sha256').update(lockPath).digest('hex');
+  private async stateLockReaperRef(lockPath: string): Promise<string> {
+    let canonical: string;
+    try {
+      canonical = join(await realpath(dirname(lockPath)), basename(lockPath));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      canonical = resolve(
+        await realpath(this.repoRoot),
+        relative(this.repoRoot, lockPath),
+      );
+    }
+    const suffix = createHash('sha256').update(canonical).digest('hex');
     return `refs/tower/state-lock-reaper-${suffix}`;
   }
 
@@ -470,7 +481,7 @@ export class TowerStore {
   private async acquireStateLockReaper(
     lockPath: string,
   ): Promise<{ readonly ref: string; readonly token: string } | undefined> {
-    const ref = this.stateLockReaperRef(lockPath);
+    const ref = await this.stateLockReaperRef(lockPath);
     const current = await this.readStateLockReaper(ref);
     if (current !== undefined) {
       const holder = await git(this.repoRoot, ['cat-file', '-p', current]);

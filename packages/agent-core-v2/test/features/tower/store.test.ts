@@ -9,6 +9,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   utimes,
   writeFile,
 } from 'node:fs/promises';
@@ -4057,7 +4058,7 @@ describe('state lock recovery and prepared writes', () => {
 
   type LockDriver = {
     reapStaleStateLock(lockPath: string): Promise<boolean>;
-    stateLockReaperRef(lockPath: string): string;
+    stateLockReaperRef(lockPath: string): Promise<string>;
     stateLockHolderIsDead(pid: number): Promise<boolean>;
     tryAcquireStateLock(lockPath: string, token: string): Promise<boolean>;
     releaseStateLock(lockPath: string, token: string): Promise<void>;
@@ -4099,6 +4100,64 @@ describe('state lock recovery and prepared writes', () => {
     }
   });
 
+  it('uses one reaper guard across real and symlink checkout aliases', async () => {
+    const alias = `${repo}-alias`;
+    await symlink(repo, alias, 'dir');
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const realDriver = store as unknown as LockDriver;
+    const aliasStore = new TowerStore(alias);
+    const aliasDriver = aliasStore as unknown as LockDriver;
+    const aliasLockPath = `${aliasStore.abs(STATE_FILE)}.lock`;
+    const originalCheck = realDriver.stateLockHolderIsDead;
+    const paused = deferred();
+    const entered = deferred();
+    let staleChecks = 0;
+    realDriver.stateLockHolderIsDead = async (pid) => {
+      if (pid === 999999 && staleChecks === 0) {
+        staleChecks += 1;
+        entered.resolve();
+        await paused.promise;
+      }
+      return originalCheck(pid);
+    };
+    let first: Promise<boolean> | undefined;
+    let contender: Promise<unknown> | undefined;
+    try {
+      expect(await realDriver.stateLockReaperRef(lockPath)).toBe(
+        await aliasDriver.stateLockReaperRef(aliasLockPath),
+      );
+      await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
+      first = realDriver.reapStaleStateLock(lockPath);
+      await entered.promise;
+      expect(await aliasDriver.reapStaleStateLock(aliasLockPath)).toBe(false);
+      paused.resolve();
+      expect(await first).toBe(true);
+      expect(await realDriver.tryAcquireStateLock(lockPath, 'replacement')).toBe(true);
+      expect(await aliasDriver.reapStaleStateLock(aliasLockPath)).toBe(false);
+      const replacement = await readFile(lockPath, 'utf8');
+      expect(replacement).toContain('token=replacement');
+
+      let contenderEntered = false;
+      contender = aliasDriver.withStateLock(async () => {
+        contenderEntered = true;
+      });
+      await delay(20);
+      expect(contenderEntered).toBe(false);
+      expect(await readFile(lockPath, 'utf8')).toBe(replacement);
+      await realDriver.releaseStateLock(lockPath, 'replacement');
+      await contender;
+      expect(contenderEntered).toBe(true);
+    } finally {
+      paused.resolve();
+      realDriver.stateLockHolderIsDead = originalCheck;
+      await realDriver.releaseStateLock(lockPath, 'replacement');
+      if (first !== undefined) await Promise.allSettled([first]);
+      if (contender !== undefined) await Promise.allSettled([contender]);
+      await rm(lockPath, { force: true });
+      await rm(alias, { force: true });
+    }
+  });
+
   it('recovers from incomplete legacy claims and a crashed reaper guard', async () => {
     const logDir = join(repo, '.tower/comms/log');
     const empty = join(logDir, 'state-lock-claim-crashed');
@@ -4120,7 +4179,7 @@ describe('state lock recovery and prepared writes', () => {
     const guardFile = join(repo, 'crashed-reaper.txt');
     await writeFile(guardFile, 'pid=999999 since=2026-09-26T00:00:00.000Z token=crashed');
     const guardToken = await git(repo, 'hash-object', '-w', guardFile);
-    const guardRef = driver.stateLockReaperRef(lockPath);
+    const guardRef = await driver.stateLockReaperRef(lockPath);
     await git(repo, 'update-ref', guardRef, guardToken, '');
     await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
 
