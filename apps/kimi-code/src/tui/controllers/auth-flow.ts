@@ -182,9 +182,10 @@ export class AuthFlowController {
     options?: RefreshProviderModelsOptions,
   ): Promise<RefreshProviderModelsResponse> {
     const result = await this.host.harness.refreshProviderModels(options);
-    if (result.changed.length > 0) {
-      await this.refreshAvailableModels();
-    }
+    // The engine persists provider-only config changes (type, baseUrl, …)
+    // while reporting the provider as unchanged, so reload even when no model
+    // changed.
+    await this.refreshAvailableModels();
     return result;
   }
 

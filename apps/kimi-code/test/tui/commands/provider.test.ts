@@ -268,4 +268,26 @@ describe('handleProviderCommand refresh', () => {
     expect(host.authFlow.refreshProviderModels).not.toHaveBeenCalled();
     expect(spinner.stop).not.toHaveBeenCalled();
   });
+
+  it('reports metadata-only updates without the model counters', async () => {
+    const { host } = makeRefreshHost({
+      changed: [{ provider_id: 'custom', provider_name: 'Custom Registry', added: 0, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+
+    await handleProviderCommand(host, 'refresh');
+
+    expect(host.showStatus).toHaveBeenCalledWith('Custom Registry: model metadata updated.');
+  });
+
+  it('rejects surplus arguments after the provider id instead of refreshing', async () => {
+    const { host, spinner } = makeRefreshHost({ changed: [], unchanged: [], failed: [] });
+
+    await handleProviderCommand(host, 'refresh custom unexpected');
+
+    expect(host.showError).toHaveBeenCalledWith('Usage: /provider [refresh [providerId]]');
+    expect(host.authFlow.refreshProviderModels).not.toHaveBeenCalled();
+    expect(spinner.stop).not.toHaveBeenCalled();
+  });
 });

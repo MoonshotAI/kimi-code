@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add a `/provider refresh [providerId]` subcommand that re-fetches model lists from providers at runtime. Run `/provider refresh` to update every provider, or `/provider refresh <providerId>` to update one. Typing an unknown `/provider` subcommand now shows a usage hint instead of silently opening the provider manager.
+Add `/provider refresh [providerId]` to re-fetch provider model lists at runtime; unknown `/provider` subcommands now show a usage hint instead of opening the manager.

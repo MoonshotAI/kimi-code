@@ -44,6 +44,10 @@ import type { SlashCommandHost } from './dispatch';
 export async function handleProviderCommand(host: SlashCommandHost, rawArgs = ''): Promise<void> {
   const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
   if (args[0] === 'refresh') {
+    if (args.length > 2) {
+      host.showError('Usage: /provider [refresh [providerId]]');
+      return;
+    }
     await handleProviderRefresh(host, args[1]);
     return;
   }
@@ -87,6 +91,11 @@ function reportProviderRefresh(
   result: RefreshProviderModelsResponse,
 ): void {
   for (const change of result.changed) {
+    if (change.added === 0 && change.removed === 0) {
+      // Metadata-only refresh: display name, capabilities, or upgrade info changed.
+      host.showStatus(`${change.provider_name}: model metadata updated.`);
+      continue;
+    }
     const parts: string[] = [];
     if (change.added > 0) parts.push(`+${change.added}`);
     if (change.removed > 0) parts.push(`-${change.removed}`);

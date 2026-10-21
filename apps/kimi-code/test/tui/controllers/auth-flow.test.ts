@@ -212,3 +212,30 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
     await vi.waitFor(() => expect(session!.setThinking).toHaveBeenCalledWith('max'));
   });
 });
+
+describe('refreshProviderModels', () => {
+  it('reloads app-state providers and models even when the engine reports no model change', async () => {
+    // A config-only registry change (type, baseUrl, …) is persisted by the
+    // engine while the provider lands in `unchanged` — the TUI must still
+    // reload, or appState keeps the stale provider record.
+    const { host } = makeHost();
+    const refreshProviderModels = vi.fn(async () => ({
+      changed: [],
+      unchanged: ['custom'],
+      failed: [],
+    }));
+    (host.harness as unknown as { refreshProviderModels: unknown }).refreshProviderModels =
+      refreshProviderModels;
+
+    const result = await new AuthFlowController(host).refreshProviderModels({
+      providerId: 'custom',
+    });
+
+    expect(refreshProviderModels).toHaveBeenCalledWith({ providerId: 'custom' });
+    expect(result.unchanged).toEqual(['custom']);
+    expect(host.setAppState).toHaveBeenCalledWith({
+      availableModels: expect.anything(),
+      availableProviders: expect.anything(),
+    });
+  });
+});
