@@ -36,10 +36,13 @@ import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/
 import { subagentLabels } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
+  buildSubagentModelDescriptions,
+  exposesSubagentModelChoice,
   isSubagentModelForced,
   resolveSubagentBinding,
   resolveSubagentThinking,
   resolveSubagentTimeoutMs,
+  stripSubagentModelParameter,
   wrapSubagentModelError,
 } from '#/session/subagent/configSection';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -53,6 +56,8 @@ import DESCRIPTION from './spawn.md?raw';
 
 type SubagentBinding = ReturnType<typeof resolveSubagentBinding>;
 
+const TOWER_SPAWN_PARAMETERS = toInputJsonSchema(TowerSpawnToolInputSchema);
+const TOWER_SPAWN_PARAMETERS_NO_MODEL = stripSubagentModelParameter(TOWER_SPAWN_PARAMETERS);
 const REVIEW_REQUEST_SCAN_LIMIT = 50;
 const REVIEW_HISTORY_ROUNDS = 5;
 const REVIEW_EXCERPT_MAX_CHARS = 8000;
@@ -79,8 +84,20 @@ async function findReviewRequest(
 export class TowerSpawnTool implements ITowerSpawnTool {
   declare readonly _serviceBrand: undefined;
   readonly name = 'TowerSpawn' as const;
-  readonly description: string = DESCRIPTION;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(TowerSpawnToolInputSchema);
+
+  get description(): string {
+    const modelLines = buildSubagentModelDescriptions(
+      this.config,
+      this.profile.data().modelAlias,
+    );
+    return modelLines === undefined ? DESCRIPTION : `${DESCRIPTION}\n\n${modelLines}`;
+  }
+
+  get parameters(): Record<string, unknown> {
+    return exposesSubagentModelChoice(this.config)
+      ? TOWER_SPAWN_PARAMETERS
+      : TOWER_SPAWN_PARAMETERS_NO_MODEL;
+  }
 
   private readonly callerAgentId: string;
 
@@ -190,6 +207,30 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         throw new TowerProtocolError('tower spawn could not resolve the branch lease');
       }
 
+      const own = this.profile.data();
+      if (args.model !== undefined && own.modelAlias === undefined) {
+        return { output: 'Caller agent has no model bound', isError: true };
+      }
+      let binding: SubagentBinding | undefined;
+      try {
+        binding =
+          own.modelAlias === undefined
+            ? undefined
+            : resolveSubagentBinding(
+                this.config,
+                { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+                args.model ??
+                  (args.kind === 'reviewer' && !isSubagentModelForced(this.config)
+                    ? 'primary'
+                    : undefined),
+              );
+      } catch (error) {
+        return {
+          output: error instanceof Error ? error.message : String(error),
+          isError: true,
+        };
+      }
+
       return await this.tower.withBranchLease(leaseBranch, async () => {
         const notes: string[] = [];
         if (mission !== undefined) {
@@ -239,17 +280,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         let slotHeld = true;
         try {
           const controller = new AbortController();
-          const own = this.profile.data();
-          const binding =
-            own.modelAlias === undefined
-              ? undefined
-              : resolveSubagentBinding(
-                  this.config,
-                  { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-                  args.kind === 'reviewer' && !isSubagentModelForced(this.config)
-                    ? 'primary'
-                    : undefined,
-                );
           let handle: SubagentHandle;
           try {
             handle = await this.launch(prompt, description, toolCallId, controller, binding);
