@@ -150,6 +150,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const port = opts.port ?? DEFAULT_PORT;
   const homeDir = resolveKimiHome(opts.homeDir);
   const serverVersion = opts.serverVersion ?? getServerVersion();
+  const idleReclaimMs = resolveSessionIdleReclaimMs(opts.env ?? process.env);
   const registry = createInstanceRegistry({
     instancesDir: opts.instancesDir ?? join(homeDir, 'server', 'instances'),
   });
@@ -277,7 +278,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const sessionIdleReaper = new SessionIdleReaper(
     core.accessor.get(ISessionManager),
     logger,
-    resolveSessionIdleReclaimMs(opts.env ?? process.env),
+    idleReclaimMs,
   );
 
   try {
