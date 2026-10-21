@@ -14,6 +14,7 @@ import type { TranscriptService } from '../services/transcript/transcriptService
 import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
+import { registerClientConfigsRoutes } from './clientConfigs';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
 import { registerFileHistoryRoutes } from './fileHistory';
@@ -123,6 +124,10 @@ export async function registerApiV1Routes(
         opts.remoteControl.homeDir,
       );
       registerConfigRoutes(apiV1 as unknown as Parameters<typeof registerConfigRoutes>[0], core);
+      registerClientConfigsRoutes(
+        apiV1 as unknown as Parameters<typeof registerClientConfigsRoutes>[0],
+        core,
+      );
       registerModelCatalogRoutes(
         apiV1 as unknown as Parameters<typeof registerModelCatalogRoutes>[0],
         core,
