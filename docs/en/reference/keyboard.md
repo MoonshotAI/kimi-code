@@ -65,13 +65,13 @@ While streaming output is active, the input box can still receive input and supp
 
 Pressing `Ctrl-S` causes the model to see your message at the next interruptible point, without waiting for the current turn to finish.
 
-## Tool Output
+## Expandable content
 
 | Shortcut | Function |
 | --- | --- |
-| `Ctrl-O` | Expand or collapse tool output, shell command output, and compaction summaries |
+| `Ctrl-O` | Expand or collapse thinking, tool output, shell command output, and compaction summaries |
 
-When collapsed tool call results or shell command outputs exist in the history, press `Ctrl-O` to toggle between collapsed and expanded views. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
+Press `Ctrl-O` to toggle collapsed and expanded views for thinking, tool call results, and shell command output. Thinking can be expanded while it is still streaming, and its expansion state is preserved when it finishes. After compaction, the same shortcut shows or hides the compaction summary in the compaction block.
 
 ## Approval Panel
 
@@ -84,7 +84,7 @@ When the Agent initiates a tool call that requires confirmation, the TUI display
 | `1` ~ `9` | Directly select the option at the corresponding index |
 | `Esc` / `Ctrl-C` / `Ctrl-D` | Reject the current request |
 | `Ctrl-E` | Expand or collapse the full content when the panel contains a diff or file preview |
-| `Ctrl-O` | Toggle the collapsed state of other tool output |
+| `Ctrl-O` | Toggle the collapsed state of other expandable content |
 
 Options that require feedback (such as "Reject" or "Revise") switch to a feedback input state after confirmation: type the feedback text and press `Enter` to submit; press `Esc` to exit feedback input and return to the candidate list.
 

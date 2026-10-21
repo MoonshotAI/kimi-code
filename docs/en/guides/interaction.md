@@ -130,7 +130,9 @@ The input box remains usable while the agent is thinking or calling tools, and s
 
 - **`Ctrl-S`**: inject the content in the input box into the running turn immediately, without waiting for it to finish
 - **`Esc` / `Ctrl-C`**: interrupt the current turn
-- **`Ctrl-O`**: globally toggle the collapsed/expanded state of tool output and compaction summaries
+- **`Ctrl-O`**: globally toggle the collapsed/expanded state of thinking, tool output, and compaction summaries
+
+Expanding thinking while it is streaming reveals all text received so far. New thinking text remains visible as it arrives, and the expansion state is preserved when thinking finishes.
 
 When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` steers it in and ends that wait early; messages already queued when the wait starts are steered in automatically as well. If the queue holds a shell command or a skill, automatic steering is skipped and the queue and new input stay queued until the turn ends. Press `Ctrl-S` to manually steer non-shell inputs from the editor and the queue. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 
