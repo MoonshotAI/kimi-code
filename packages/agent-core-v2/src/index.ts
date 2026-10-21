@@ -591,6 +591,8 @@ export * from '#/agent/tools/web-search/web-search';
 import '#/agent/tools/web-search/webSearchTool';
 export * from '#/app/auth/auth';
 export * from '#/app/auth/authService';
+export * from '#/app/region/region';
+export * from '#/app/region/regionService';
 export * from '#/app/auth/configSection';
 export * from '#/app/auth/webSearch/webSearch';
 export * from '#/app/auth/webSearch/webSearchService';
