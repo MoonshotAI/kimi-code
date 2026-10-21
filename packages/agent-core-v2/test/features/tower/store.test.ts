@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import {
   appendFile,
   type FileHandle,
+  link,
   mkdir,
   mkdtemp,
   open,
@@ -41,6 +42,11 @@ import type {
   TowerRosterEntry,
   TowerState,
 } from '../../../src/features/tower/protocol';
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return { ...actual, link: vi.fn(actual.link) };
+});
 
 const execFileAsync = promisify(execFile);
 
@@ -987,6 +993,22 @@ describe('inbox send', () => {
     const ref = /ref=(\S+)/.exec(sendLine ?? '')?.[1];
     expect(ref).toBe(rel);
     expect((await stat(join(repo, ref!))).isFile()).toBe(true);
+  });
+
+  it('falls back to exclusive creation without overwriting when hard links are unavailable', async () => {
+    const linkSpy = vi.mocked(link).mockRejectedValue(
+      Object.assign(new Error('hard links unavailable'), { code: 'EPERM' }),
+    );
+    try {
+      const first = await store.send('tower', { to: 'w1', subject: 'fallback', body: 'one' });
+      const second = await store.send('tower', { to: 'w1', subject: 'fallback', body: 'two' });
+
+      expect(second).not.toBe(first);
+      expect(parseFrontmatter(await readFile(store.abs(first), 'utf8')).body).toBe('one');
+      expect(parseFrontmatter(await readFile(store.abs(second), 'utf8')).body).toBe('two');
+    } finally {
+      linkSpy.mockRestore();
+    }
   });
 });
 

@@ -3180,7 +3180,17 @@ export class TowerStore {
         return candidate;
       } catch (error) {
         await rm(this.abs(temporary), { force: true });
-        if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue;
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'EEXIST') continue;
+        if (code === 'EPERM' || code === 'ENOTSUP' || code === 'EOPNOTSUPP' || code === 'ENOSYS') {
+          try {
+            await writeFile(this.abs(candidate), content, { encoding: 'utf8', flag: 'wx' });
+            return candidate;
+          } catch (fallbackError) {
+            if ((fallbackError as NodeJS.ErrnoException).code === 'EEXIST') continue;
+            throw fallbackError;
+          }
+        }
         throw error;
       }
     }
