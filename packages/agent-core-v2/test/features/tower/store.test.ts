@@ -4055,73 +4055,97 @@ describe('state lock recovery and prepared writes', () => {
     await expect(stat(lockPath)).rejects.toThrow(/ENOENT/);
   });
 
-  it('never deletes a replacement lock when stale reapers interleave', async () => {
-    type LockDriver = {
-      reapStaleStateLock(lockPath: string): Promise<boolean>;
-      stateLockHolderIsDead(pid: number): Promise<boolean>;
-      tryAcquireStateLock(lockPath: string, token: string): Promise<boolean>;
-      withStateLock<T>(fn: () => Promise<T>): Promise<T>;
-    };
+  type LockDriver = {
+    reapStaleStateLock(lockPath: string): Promise<boolean>;
+    stateLockReaperRef(lockPath: string): string;
+    stateLockHolderIsDead(pid: number): Promise<boolean>;
+    tryAcquireStateLock(lockPath: string, token: string): Promise<boolean>;
+    releaseStateLock(lockPath: string, token: string): Promise<void>;
+    withStateLock<T>(fn: () => Promise<T>): Promise<T>;
+  };
+
+  it('never deletes a replacement created after stale removal', async () => {
     const lockPath = `${store.abs(STATE_FILE)}.lock`;
     await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
     const driver = store as unknown as LockDriver;
     const originalCheck = driver.stateLockHolderIsDead;
-    const confirmationGates = [deferred(), deferred()];
-    let checks = 0;
+    const paused = deferred();
+    const entered = deferred();
+    let staleChecks = 0;
     driver.stateLockHolderIsDead = async (pid) => {
-      if (pid !== 999999) return originalCheck(pid);
-      const index = checks;
-      checks += 1;
-      if (index < 2) return originalCheck(pid);
-      await confirmationGates[index - 2]!.promise;
+      if (pid === 999999 && staleChecks === 0) {
+        staleChecks += 1;
+        entered.resolve();
+        await paused.promise;
+      }
       return originalCheck(pid);
     };
     const first = driver.reapStaleStateLock(lockPath);
-    const second = driver.reapStaleStateLock(lockPath);
     try {
-      await vi.waitFor(() => {
-        expect(checks).toBe(4);
-      });
-      expect(await driver.tryAcquireStateLock(lockPath, 'too-early-1')).toBe(false);
-      confirmationGates[0]!.resolve();
-      await Promise.race([first, second]);
-      expect(await driver.tryAcquireStateLock(lockPath, 'too-early-2')).toBe(false);
-      confirmationGates[1]!.resolve();
-      await Promise.all([first, second]);
+      await entered.promise;
+      expect(await driver.reapStaleStateLock(lockPath)).toBe(false);
+      expect(staleChecks).toBe(1);
+      paused.resolve();
+      expect(await first).toBe(true);
+      expect(await driver.tryAcquireStateLock(lockPath, 'replacement')).toBe(true);
+      expect(await driver.reapStaleStateLock(lockPath)).toBe(false);
+      expect(await readFile(lockPath, 'utf8')).toContain('token=replacement');
     } finally {
-      confirmationGates.forEach((gate) => {
-        gate.resolve();
-      });
-      await Promise.allSettled([first, second]);
+      paused.resolve();
+      await Promise.allSettled([first]);
       driver.stateLockHolderIsDead = originalCheck;
+      await driver.releaseStateLock(lockPath, 'replacement');
+      await rm(lockPath, { force: true });
     }
+  });
 
-    const other = new TowerStore(repo) as unknown as LockDriver;
-    const hold = deferred();
-    const entered = deferred();
-    let active = 0;
-    let maximum = 0;
-    const firstCritical = driver.withStateLock(async () => {
-      active += 1;
-      maximum = Math.max(maximum, active);
-      entered.resolve();
-      await hold.promise;
-      active -= 1;
+  it('recovers from incomplete legacy claims and a crashed reaper guard', async () => {
+    const logDir = join(repo, '.tower/comms/log');
+    const empty = join(logDir, 'state-lock-claim-crashed');
+    const partial = join(logDir, 'state-lock-claim-partial');
+    await writeFile(empty, '');
+    await writeFile(partial, 'pid=');
+    const driver = store as unknown as LockDriver;
+
+    let entered = false;
+    await driver.withStateLock(async () => {
+      entered = true;
+      expect(await readFile(`${store.abs(STATE_FILE)}.lock`, 'utf8')).toContain('token=');
     });
-    await entered.promise;
-    const replacement = await readFile(lockPath, 'utf8');
-    const secondCritical = other.withStateLock(async () => {
-      active += 1;
-      maximum = Math.max(maximum, active);
-      active -= 1;
-    });
-    await delay(20);
-    expect(active).toBe(1);
-    expect(await readFile(lockPath, 'utf8')).toBe(replacement);
-    hold.resolve();
-    await Promise.all([firstCritical, secondCritical]);
-    expect(maximum).toBe(1);
-    await expect(stat(lockPath)).rejects.toThrow(/ENOENT/);
+
+    expect(entered).toBe(true);
+    expect(await readFile(empty, 'utf8')).toBe('');
+    expect(await readFile(partial, 'utf8')).toBe('pid=');
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const guardFile = join(repo, 'crashed-reaper.txt');
+    await writeFile(guardFile, 'pid=999999 since=2026-09-26T00:00:00.000Z token=crashed');
+    const guardToken = await git(repo, 'hash-object', '-w', guardFile);
+    const guardRef = driver.stateLockReaperRef(lockPath);
+    await git(repo, 'update-ref', guardRef, guardToken, '');
+    await writeFile(lockPath, 'pid=999999 since=2026-09-26T00:00:00.000Z token=stale');
+
+    expect(await driver.reapStaleStateLock(lockPath)).toBe(true);
+    await expect(git(repo, 'rev-parse', '--verify', '--quiet', guardRef)).rejects.toThrow();
+    await rm(guardFile, { force: true });
+  });
+
+  it('keeps one deleting reaper and preserves replacements under contention', async () => {
+    const lockPath = `${store.abs(STATE_FILE)}.lock`;
+    const driver = store as unknown as LockDriver;
+    for (let round = 0; round < 8; round += 1) {
+      await writeFile(
+        lockPath,
+        `pid=999999 since=2026-09-26T00:00:00.000Z token=stale-${String(round)}`,
+      );
+      const outcomes = await Promise.all(
+        Array.from({ length: 6 }, () => driver.reapStaleStateLock(lockPath)),
+      );
+      expect(outcomes.filter(Boolean)).toHaveLength(1);
+      const token = `replacement-${String(round)}`;
+      expect(await driver.tryAcquireStateLock(lockPath, token)).toBe(true);
+      expect(await readFile(lockPath, 'utf8')).toContain(`token=${token}`);
+      await driver.releaseStateLock(lockPath, token);
+    }
   });
 
   it('sends without waiting for the state lock and preserves concurrent roster writes', async () => {

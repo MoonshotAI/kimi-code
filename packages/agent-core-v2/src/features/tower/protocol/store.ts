@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import {
   appendFile,
@@ -421,32 +421,19 @@ export class TowerStore {
   }
 
   private async reapStaleStateLock(lockPath: string): Promise<boolean> {
-    let content: string;
+    const guard = await this.acquireStateLockReaper(lockPath);
+    if (guard === undefined) return false;
     try {
-      content = await readFile(lockPath, 'utf8');
-    } catch {
-      return false;
-    }
-    const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
-    if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
-      return false;
-    }
-    await mkdir(this.abs(LOG_DIR), { recursive: true });
-    const claimToken = randomUUID();
-    const claimPath = this.abs(join(LOG_DIR, `state-lock-claim-${claimToken}`));
-    const claim = await open(claimPath, 'wx');
-    try {
-      await claim.writeFile(
-        `pid=${String(process.pid)} since=${new Date().toISOString()} token=${claimToken}`,
-        'utf8',
-      );
-    } catch (error) {
-      await rm(claimPath, { force: true });
-      throw error;
-    } finally {
-      await claim.close();
-    }
-    try {
+      let content: string;
+      try {
+        content = await readFile(lockPath, 'utf8');
+      } catch {
+        return false;
+      }
+      const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
+      if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
+        return false;
+      }
       let confirmed: string;
       try {
         confirmed = await readFile(lockPath, 'utf8');
@@ -462,7 +449,71 @@ export class TowerStore {
         throw error;
       }
     } finally {
-      await rm(claimPath, { force: true });
+      await this.releaseStateLockReaper(guard);
+    }
+  }
+
+  private stateLockReaperRef(lockPath: string): string {
+    const suffix = createHash('sha256').update(lockPath).digest('hex');
+    return `refs/tower/state-lock-reaper-${suffix}`;
+  }
+
+  private async readStateLockReaper(ref: string): Promise<string | undefined> {
+    try {
+      return await git(this.repoRoot, ['rev-parse', '--verify', '--quiet', ref]);
+    } catch (error) {
+      if (error instanceof GitError && error.exitCode === 1) return undefined;
+      throw error;
+    }
+  }
+
+  private async acquireStateLockReaper(
+    lockPath: string,
+  ): Promise<{ readonly ref: string; readonly token: string } | undefined> {
+    const ref = this.stateLockReaperRef(lockPath);
+    const current = await this.readStateLockReaper(ref);
+    if (current !== undefined) {
+      const holder = await git(this.repoRoot, ['cat-file', '-p', current]);
+      const pid = Number(/^pid=(\d+)\b/.exec(holder)?.[1]);
+      if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
+        return undefined;
+      }
+    }
+    const token = await git(this.repoRoot, ['hash-object', '-w', '--stdin'], {
+      input: `pid=${String(process.pid)} since=${new Date().toISOString()} token=${randomUUID()}`,
+    });
+    try {
+      await git(this.repoRoot, [
+        'update-ref',
+        ref,
+        token,
+        current ?? '',
+      ]);
+      return { ref, token };
+    } catch (error) {
+      if (error instanceof GitError) {
+        const after = await this.readStateLockReaper(ref);
+        if (after === token) return { ref, token };
+        if (after !== current || /reference already exists|but expected/.test(error.stderr)) {
+          return undefined;
+        }
+      }
+      throw error;
+    }
+  }
+
+  private async releaseStateLockReaper(guard: {
+    readonly ref: string;
+    readonly token: string;
+  }): Promise<void> {
+    try {
+      await git(this.repoRoot, ['update-ref', '-d', guard.ref, guard.token]);
+    } catch (error) {
+      if (error instanceof GitError) {
+        const current = await this.readStateLockReaper(guard.ref);
+        if (current === undefined || current !== guard.token) return;
+      }
+      throw error;
     }
   }
 
@@ -474,41 +525,6 @@ export class TowerStore {
     } catch (error) {
       return (error as NodeJS.ErrnoException).code === 'ESRCH';
     }
-  }
-
-  private async stateLockReapersPresent(): Promise<boolean> {
-    const prefix = 'state-lock-claim-';
-    const listClaims = async (): Promise<string[]> => {
-      try {
-        return (await readdir(this.abs(LOG_DIR))).filter((file) => file.startsWith(prefix));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-        throw error;
-      }
-    };
-    const claims = await listClaims();
-    await mapWithConcurrency(claims, TOWER_FILE_IO_CONCURRENCY, async (file) => {
-      const path = this.abs(join(LOG_DIR, file));
-      let content: string;
-      try {
-        content = await readFile(path, 'utf8');
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-        throw error;
-      }
-      const pid = Number(/^pid=(\d+)\b/.exec(content)?.[1]);
-      if (!Number.isSafeInteger(pid) || pid <= 0 || !(await this.stateLockHolderIsDead(pid))) {
-        return;
-      }
-      let confirmed: string;
-      try {
-        confirmed = await readFile(path, 'utf8');
-      } catch {
-        return;
-      }
-      if (confirmed === content) await rm(path, { force: true });
-    });
-    return (await listClaims()).length > 0;
   }
 
   private async releaseStateLock(lockPath: string, token: string): Promise<void> {
@@ -523,7 +539,6 @@ export class TowerStore {
   }
 
   private async tryAcquireStateLock(lockPath: string, token: string): Promise<boolean> {
-    if (await this.stateLockReapersPresent()) return false;
     try {
       const handle = await open(lockPath, 'wx');
       try {
@@ -531,6 +546,7 @@ export class TowerStore {
           `pid=${String(process.pid)} since=${new Date().toISOString()} token=${token}`,
           'utf8',
         );
+        return true;
       } catch (error) {
         await rm(lockPath, { force: true });
         throw error;
@@ -543,18 +559,6 @@ export class TowerStore {
       if (code === 'ENOENT') {
         throw await this.stateMissingError();
       }
-      throw error;
-    }
-    try {
-      if (await this.stateLockReapersPresent()) {
-        await this.releaseStateLock(lockPath, token);
-        return false;
-      }
-      const content = await readFile(lockPath, 'utf8');
-      return content.includes(`token=${token}`);
-    } catch (error) {
-      await this.releaseStateLock(lockPath, token);
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
       throw error;
     }
   }
