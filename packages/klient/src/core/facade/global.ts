@@ -1,11 +1,3 @@
-/**
- * The `global` facade — aggregated, single-object-param methods over the
- * engine's app-scope services. Each method maps to one underlying service
- * call (except `env()`, which fans out and merges); the `Caller` underneath
- * applies contract validation and hands the call to the transport. Facade
- * code never sees service tokens, scope routing, or transport details.
- */
-
 import type {
   SessionListQuery,
   SessionSummary,
@@ -60,7 +52,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2/app/plugin/types';
 import type { CapabilityStatus } from '@moonshot-ai/agent-core-v2/app/capability/types';
 
-/** Low-level caller the klient factory builds: routes + validates one service call. */
 export type Caller = (
   service: string,
   method: string,
@@ -68,7 +59,6 @@ export type Caller = (
   options?: CallOptions,
 ) => Promise<unknown>;
 
-/** Scoped variant — the factory's real signature; global methods bind the core scope. */
 export type ScopedCaller = (
   scope: { readonly workspaceId?: string; readonly sessionId?: string; readonly agentId?: string },
   service: string,
@@ -77,18 +67,12 @@ export type ScopedCaller = (
   options?: CallOptions,
 ) => Promise<unknown>;
 
-/** Streaming variant of `ScopedCaller` — returns a validated `AsyncIterable`. */
 export type ScopedStreamCaller = (
   scope: { readonly workspaceId?: string; readonly sessionId?: string; readonly agentId?: string },
   service: string,
   method: string,
   args: unknown[],
 ) => AsyncIterable<unknown>;
-
-// ---------------------------------------------------------------------------
-// Wire-type aliases for engine-sourced shapes (not direct klient
-// dependencies) — derived through the service interfaces.
-// ---------------------------------------------------------------------------
 
 export type RefreshProviderModelsResponse = Awaited<
   ReturnType<IProviderDiscoveryService['refreshProviderModels']>
@@ -109,7 +93,6 @@ export type RefreshProviderModelsOptions = NonNullable<
   Parameters<IProviderDiscoveryService['refreshProviderModels']>[0]
 >;
 
-/** String-literal form of the engine's `ConfigTarget` enum, so consumers never import the enum value. */
 export type ConfigTargetLiteral = `${ConfigTarget}`;
 
 export type ImportCustomRegistryOptions = Parameters<
@@ -119,21 +102,10 @@ export type ImportCustomRegistryResult = Awaited<
   ReturnType<IModelsDevImportService['importCustomRegistry']>
 >;
 
-// ---------------------------------------------------------------------------
-// Facade interfaces
-// ---------------------------------------------------------------------------
-
 export interface GlobalSessionsFacade {
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   get(id: string): Promise<SessionSummary | undefined>;
   countActive(workspaceIds: readonly string[]): Promise<number>;
-  /**
-   * Create a session rooted at `workDir` (the workspace is registered
-   * implicitly), optionally titled. Returns the persisted metadata. No agent
-   * is created — `session(id).agent('main')` materializes it on first use.
-   * `mcpServers` injects ephemeral per-session MCP servers: connected only
-   * for this session, never persisted.
-   */
   create(input: {
     workDir: string;
     additionalDirs?: readonly string[];
@@ -160,11 +132,6 @@ export interface GlobalConfigFacade {
     value: unknown;
     target?: ConfigTargetLiteral;
   }): Promise<void>;
-  /**
-   * Replace several domains in ONE atomic write (the engine's
-   * `IConfigService.replaceSections`): a domain mapped to `undefined` is
-   * cleared, domains absent from `sections` are left untouched.
-   */
   replaceSections(input: {
     sections: Record<string, unknown>;
     target?: ConfigTargetLiteral;
@@ -174,21 +141,17 @@ export interface GlobalConfigFacade {
 }
 
 export interface GlobalKosongFacade {
-  // -- Provider ---------------------------------------------------------
   listProviders(): Promise<readonly ProviderCatalogItem[]>;
   getProvider(id: string): Promise<ProviderCatalogItem>;
-  /** Add a named provider (string id + config) or an anonymous single-model provider (object). */
   addProvider(id: string, config: ProviderInput): Promise<void>;
   addProvider(config: AnonymousProviderInput): Promise<void>;
   removeProvider(id: string): Promise<void>;
   refreshProviders(opts?: RefreshProviderModelsOptions): Promise<RefreshProviderModelsResponse>;
   importCustomRegistry(options: ImportCustomRegistryOptions): Promise<ImportCustomRegistryResult>;
 
-  // -- Model ------------------------------------------------------------
   listModels(): Promise<readonly ModelCatalogItem[]>;
   setDefaultModel(id: string): Promise<SetDefaultModelResponse>;
 
-  // -- Generate (streaming) -----------------------------------------------
   generate(
     modelId: string,
     input: GenerateInput,
@@ -199,22 +162,11 @@ export interface GlobalKosongFacade {
 export interface GlobalAuthFacade {
   status(provider?: string): Promise<AuthStatus>;
   summarize(): Promise<readonly AuthStatus[]>;
-  /**
-   * The engine's own auth-readiness probe for a model (the default model when
-   * omitted): resolves config-file apiKey / provider env-bag credentials or an
-   * OAuth token, throwing a typed auth error when nothing resolves. Actual
-   * model usage does not depend on the OAuth-only {@link summarize} view.
-   */
   ensureReady(modelOverride?: string): Promise<void>;
   startLogin(provider?: string, options?: OAuthLoginOptions): Promise<OAuthFlowStart>;
   flow(provider?: string): Promise<OAuthFlowSnapshot | undefined>;
   cancelLogin(provider?: string): Promise<OAuthLoginCancelResponse>;
   logout(provider?: string): Promise<OAuthLogoutResponse>;
-  /**
-   * @deprecated Use `kosong.refreshProviders({ scope: 'oauth' })` — the
-   * kosong facade owns provider-model refresh; this alias remains for one
-   * release cycle.
-   */
   refreshProviderModels(): Promise<RefreshProviderModelsResponse>;
 }
 
@@ -249,40 +201,27 @@ export interface GlobalHostFsFacade {
   home(): Promise<FsHomeResponse>;
 }
 
-/**
- * The unified MCP management plane (engine `IMcpManagementService`, App
- * scope): CRUD on the user-level `mcp.json`, a connection test probe, the
- * locator-addressed inspection catalog, the auth-status surface, and the
- * locator-addressed OAuth flow operations.
- */
 export interface GlobalMcpFacade {
   list(input?: { cwd?: string }): Promise<readonly McpManagedServer[]>;
   get(input: { name: string; cwd?: string }): Promise<McpManagedServer>;
-  /** Add a user-level entry; a same-named read-only entry rejects. Returns the refreshed list. */
   add(input: {
     server: GlobalMcpServerConfig;
     cwd?: string;
   }): Promise<readonly McpManagedServer[]>;
-  /** Replace a user-level entry; read-only entries reject. Returns the refreshed list. */
   update(input: {
     server: GlobalMcpServerConfig;
     cwd?: string;
   }): Promise<readonly McpManagedServer[]>;
-  /** Remove a user-level entry; read-only entries reject. Returns the refreshed list. */
   remove(input: { name: string; cwd?: string }): Promise<readonly McpManagedServer[]>;
-  /** Probe a real connection: a registry `name`, or an inline `server` config as-is. */
   test(input: McpServerTestTarget): Promise<McpServerTestResult>;
-  /** The locator-addressed catalog plus a batched real-connection probe of OAuth candidates. */
   inspect(input?: {
     targets?: readonly McpServerLocator[];
     cwd?: string;
   }): Promise<readonly McpServerInspection[]>;
-  /** Per-server OAuth state; omitted `verify` detects implicit OAuth, `false` stays offline. */
   authStatuses(input?: {
     cwd?: string;
     verify?: boolean;
   }): Promise<readonly McpServerAuthStatus[]>;
-  /** Resolve a legacy name-only auth target to its unambiguous locator. */
   resolveByName(input: { name: string; cwd?: string }): Promise<McpServerLocator>;
   beginAuth(input: {
     locator: McpServerLocator;
@@ -293,18 +232,12 @@ export interface GlobalMcpFacade {
   resetAuth(input: { locator: McpServerLocator; cwd?: string }): Promise<void>;
 }
 
-/** One downloaded upload: its metadata plus the buffered bytes. */
 export interface FileDownload {
   readonly meta: FileMeta;
   readonly data: Uint8Array;
 }
 
 export interface GlobalFilesFacade {
-  /**
-   * Upload buffered bytes to the daemon's file store. Bytes cross the wire
-   * base64-encoded (JSON cannot carry them), so very large uploads pay one
-   * encode here and one decode in the dispatcher.
-   */
   save(input: {
     data: Uint8Array;
     filename: string;
@@ -312,12 +245,10 @@ export interface GlobalFilesFacade {
     mimeType?: string;
     expiresInSec?: number;
   }): Promise<FileMeta>;
-  /** Download one upload back into memory. */
   get(fileId: string): Promise<FileDownload>;
   delete(fileId: string): Promise<void>;
 }
 
-/** Aggregated host/environment snapshot (`bootstrapService` properties). */
 export interface KlientEnvInfo {
   readonly platform: string;
   readonly arch: string;
@@ -348,12 +279,6 @@ export interface GlobalFacade {
   env(): Promise<KlientEnvInfo>;
 }
 
-// ---------------------------------------------------------------------------
-// Implementation — thin reshaping over `Caller`. Casts are safe by
-// construction: the contract validates outputs, and type-parity assertions
-// tie every contract schema to its engine type.
-// ---------------------------------------------------------------------------
-
 const ENV_SCALAR_PROPERTIES = [
   'platform',
   'arch',
@@ -368,13 +293,6 @@ const ENV_SCALAR_PROPERTIES = [
   'logsDir',
 ] as const;
 
-// The IPC transport enforces a per-call deadline (default 30s) that would
-// truncate the completeAuth long poll: the engine waits up to
-// `DEFAULT_AUTH_TIMEOUT_MS` for the browser callback when the caller omits
-// `timeoutMs` (agent-core-v2 `mcpManagementService.ts`), and the
-// authorization-code exchange afterwards is itself bounded at 30s per grant
-// request (agent-core-v2 `mcpCore/oauth/service.ts`). The per-call deadline
-// below covers both, so IPC behaves like the timeout-free memory transport.
 const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60_000;
 const AUTH_COMPLETION_MARGIN_MS = 30_000;
 
@@ -382,14 +300,10 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
   const call: Caller = (service, method, args, options) => scoped({}, service, method, args, options);
   const streamCall = (service: string, method: string, args: unknown[]) =>
     scopedStream({}, service, method, args);
-  // The bootstrap snapshot is frozen at process start, so the aggregated
-  // env() result can never change — resolve it once and reuse the promise.
   let envPromise: Promise<KlientEnvInfo> | undefined;
   const env = (): Promise<KlientEnvInfo> => {
     envPromise ??= Promise.all([
       ...ENV_SCALAR_PROPERTIES.map((prop) => call('bootstrapService', prop, []) as Promise<string>),
-      // The wire surface keeps `clientVersion` (a string); it is sourced from
-      // the bootstrap clientIdentity, which replaced the flat scalar.
       call('bootstrapService', 'clientIdentity', []) as Promise<{ version: string }>,
     ]).then((values) => {
       const scalars = Object.fromEntries(
@@ -438,8 +352,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       set: ({ domain, patch, target }) =>
         call('configService', 'set', [domain, patch, target]) as Promise<void>,
       replace: ({ domain, value, target }) =>
-        // `null` is the wire encoding of "clear this domain" — JSON
-        // round-trips cannot carry `undefined` (see IConfigService.replace).
         call('configService', 'replace', [domain, value === undefined ? null : value, target]) as Promise<void>,
       replaceSections: ({ sections, target }) =>
         call('configService', 'replaceSections', [
@@ -470,7 +382,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         maybeConfig?: ProviderInput,
       ): Promise<void> => {
         if (typeof idOrConfig === 'string') {
-          // Named provider — map ProviderInput to ProviderConfig wire shape.
           const config = maybeConfig!;
           const wire: ProviderConfig = {
             type: config.type,
@@ -480,7 +391,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
           };
           return call('providerService', 'set', [idOrConfig, wire]) as Promise<void>;
         }
-        // Anonymous provider — map AnonymousProviderInput to ModelRecord wire shape.
         const anon = idOrConfig;
         const capabilities = anon.capabilities
           ? Object.entries(anon.capabilities)
@@ -499,7 +409,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         return call('modelService', 'set', [anon.id, wire]) as Promise<void>;
       }) as GlobalKosongFacade['addProvider'],
       removeProvider: async (id) => {
-        // Try provider registry first; fall back to model registry.
         const existing = await call('providerService', 'get', [id]);
         if (existing !== undefined) {
           return call('providerService', 'delete', [id]) as Promise<void>;
@@ -647,9 +556,6 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
         ]) as Promise<McpServerAuthBeginResult>,
       completeAuth: ({ flowId, timeoutMs }) =>
         call('mcpManagementService', 'completeServerAuth', [{ flowId, timeoutMs }], {
-          // Clamp to Node's 32-bit timer ceiling: `timeoutMs` may legally be
-          // the contract max (2**31 - 1), and adding the margin would
-          // overflow setTimeout into a ~1ms deadline.
           timeoutMs: Math.min(
             (timeoutMs ?? DEFAULT_AUTH_TIMEOUT_MS) + AUTH_COMPLETION_MARGIN_MS,
             2 ** 31 - 1,

@@ -1,18 +1,3 @@
-/**
- * Left sidebar — a single-column workspace → session tree backed by the v2
- * list's grouped projection (`GET /api/v2/sessions?view=by_workspace`, see
- * `src/sessions/api.ts`): one request returns every workspace with a matching
- * session, each carrying its first `group.page_size` sessions under the
- * requested sort plus the workspace's full matching total. Preset views
- * (`src/sessions/views.ts`) map onto the endpoint's status / archived / git
- * query conditions; the active view, collapsed workspaces, and the panel
- * width persist to localStorage. Group pagination is the endpoint's opaque
- * cursor (Load more), with a slow poll on top; a workspace whose total
- * outruns the served slice expands inline into the flat per-workspace
- * listing. Live activity frames (`useSessionActivities`) override the REST
- * status badge. Session creation still goes through the v1 REST endpoint.
- */
-
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
@@ -46,13 +31,8 @@ const MIN_WIDTH = 240;
 const MAX_WIDTH = 640;
 const GROUP_PAGE_SIZE = 50;
 
-// ---------------------------------------------------------------------------
-// Persisted panel prefs
-// ---------------------------------------------------------------------------
-
 interface PanelPrefs {
   readonly view?: string;
-  /** Collapsed workspace ids; absent = everything expanded. */
   readonly collapsed?: readonly string[];
   readonly width?: number;
 }
@@ -62,7 +42,6 @@ function readPrefs(): PanelPrefs {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw !== null) return JSON.parse(raw) as PanelPrefs;
   } catch {
-    // corrupt storage — fall through to defaults
   }
   return {};
 }
@@ -70,10 +49,6 @@ function readPrefs(): PanelPrefs {
 function writePrefs(prefs: PanelPrefs): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
 }
-
-// ---------------------------------------------------------------------------
-// Live status override (mirrors the server's mapActivityStatus)
-// ---------------------------------------------------------------------------
 
 function liveStatus(facts: SessionWorkFacts | undefined): V2ActivityStatus | undefined {
   if (facts === undefined) return undefined;
@@ -98,13 +73,6 @@ const SORTS: readonly { readonly id: V2SessionSort; readonly label: string }[] =
   { id: 'meta.created_at_desc', label: 'Created ↓' },
 ];
 
-/**
- * Default model for a fresh session: the configured global `defaultModel`
- * first (the same fallback the profile bind uses), then the first connected
- * provider's `default_model`. `undefined` means the server has nothing to
- * offer — the session stays model-less and the chat surfaces
- * `model.not_configured` as before.
- */
 async function resolveDefaultModel(klient: InspectClient): Promise<string | undefined> {
   const configured: unknown = await klient.core(IConfigService).get('defaultModel');
   if (typeof configured === 'string' && configured !== '') return configured;
@@ -112,10 +80,6 @@ async function resolveDefaultModel(klient: InspectClient): Promise<string | unde
   const withDefault = providers.filter((p) => p.default_model !== undefined);
   return (withDefault.find((p) => p.status === 'connected') ?? withDefault[0])?.default_model;
 }
-
-// ---------------------------------------------------------------------------
-// Sidebar
-// ---------------------------------------------------------------------------
 
 export function Sidebar({
   activeSessionId,
@@ -187,7 +151,6 @@ export function Sidebar({
   );
 
   const createSession = async (ws: Workspace | null) => {
-    // With a workspace, the server derives workDir from workspace.root, so no cwd is needed.
     let body: string;
     if (ws !== null) {
       body = JSON.stringify({ workspace_id: ws.id });
@@ -209,10 +172,6 @@ export function Sidebar({
       return;
     }
     const sessionId = envelope.data.id;
-    // The REST create route ignores agent_config, so bind the default model
-    // over the channel — the same resume + setModel path the Model Catalog's
-    // "+ Session" button uses. Best-effort: a failure leaves the session
-    // model-less instead of blocking the creation flow.
     try {
       const model = await resolveDefaultModel(klient);
       if (model !== undefined) {
@@ -254,7 +213,7 @@ export function Sidebar({
       className="relative flex h-full shrink-0 flex-col border-r border-neutral-800"
       style={{ width }}
     >
-      {/* View tabs */}
+      { }
       <div className="flex items-center gap-1 overflow-x-auto border-b border-neutral-800 px-2 py-1.5">
         {SESSION_VIEWS.map((v) => (
           <button
@@ -271,7 +230,7 @@ export function Sidebar({
         ))}
       </div>
 
-      {/* Toolbar: new session + sort */}
+      { }
       <div className="flex items-center justify-between border-b border-neutral-800 px-2 py-1">
         <NewSessionMenu workspaces={workspaces.data ?? []} onCreate={createSession} />
         <button
@@ -283,7 +242,7 @@ export function Sidebar({
         </button>
       </div>
 
-      {/* Tree body */}
+      { }
       <div className="flex-1 overflow-y-auto">
         {groups.isError ? <ErrorLine error={groups.error} /> : null}
         {groupList.map((group) => (
@@ -319,7 +278,7 @@ export function Sidebar({
         ) : null}
       </div>
 
-      {/* Resize handle */}
+      { }
       <div
         className="absolute top-0 right-0 h-full w-1 cursor-col-resize hover:bg-sky-700/50"
         onMouseDown={startResize}
@@ -327,10 +286,6 @@ export function Sidebar({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Tree nodes
-// ---------------------------------------------------------------------------
 
 function WorkspaceNode({
   group,
@@ -415,11 +370,6 @@ function WorkspaceNode({
   );
 }
 
-/**
- * The flat per-workspace listing behind "Show all" — pages the ungrouped
- * projection filtered to this workspace, so sessions beyond the grouped
- * slice stay reachable.
- */
 function FullGroupList({
   workspaceId,
   view,
@@ -538,10 +488,6 @@ function SessionNode({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Toolbar dropdowns
-// ---------------------------------------------------------------------------
 
 function useDropdown(): { open: boolean; toggle: () => void; close: () => void } {
   const [open, setOpen] = useState(false);

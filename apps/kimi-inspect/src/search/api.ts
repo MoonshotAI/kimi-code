@@ -1,27 +1,12 @@
-/**
- * REST client for the global message search endpoint:
- * `POST {baseUrl}/api/v1/search`.
- *
- * The endpoint is a cross-session full-text search over user messages,
- * assistant text and session titles. The wire shape is validated locally by
- * hand (this app does not depend on zod): a malformed envelope or payload
- * throws, individual hits with an unexpected shape are dropped rather than
- * failing the whole page.
- */
-
 export interface SearchHit {
   readonly sessionId: string;
   readonly workspaceId: string;
   readonly sessionTitle: string;
-  /** 'main' or a subagent id; '' for title hits (they belong to the session). */
   readonly agentId: string;
   readonly role: 'user' | 'assistant' | 'title';
   readonly snippet: string;
-  /** Epoch ms. */
   readonly time: number;
-  /** 0-based turn ordinal (`t<turn>` in the transcript); absent for title hits. */
   readonly turn?: number | undefined;
-  /** Transcript step id (`t<turn>.<step>`); assistant hits on step-aware servers. */
   readonly stepId?: string | undefined;
   readonly score: number;
 }
@@ -37,16 +22,7 @@ export interface SearchPage {
   readonly items: readonly SearchHit[];
   readonly hasMore: boolean;
   readonly pageToken?: string | undefined;
-  /**
-   * Set when the server truncated the literal-mode candidate set before
-   * confirmation — the page may be missing real hits.
-   */
   readonly incomplete?: 'candidate_cap' | undefined;
-  /**
-   * Which backend served the search: 'live' scanned the in-memory session
-   * transcript, 'index' queried the persisted search index. Absent when the
-   * server omits it or reports an unknown value.
-   */
   readonly source?: 'live' | 'index' | undefined;
   readonly indexState: SearchIndexState;
 }
@@ -55,27 +31,14 @@ export interface FetchSearchPageOptions {
   readonly baseUrl: string;
   readonly token?: string | undefined;
   readonly query: string;
-  /** Restrict to one document role; omitted searches all. */
   readonly role?: 'user' | 'assistant' | 'title' | undefined;
-  /** Default server-side 'score'. */
   readonly sort?: 'score' | 'time_desc' | 'time_asc' | undefined;
-  /**
-   * Match mode; default server-side 'terms'. 'literal' is a substring match
-   * (case-insensitive, NFKC-normalized); the server ignores `sort` and orders
-   * by time desc.
-   */
   readonly mode?: 'terms' | 'literal' | undefined;
-  /**
-   * Scope the search to one session (and optionally one agent). Wire:
-   * `container: { session_id, agent_id? }`.
-   */
   readonly container?:
     | { readonly sessionId: string; readonly agentId?: string | undefined }
     | undefined;
   readonly pageSize?: number | undefined;
-  /** Opaque cursor from the previous page; the query conditions must not change. */
   readonly pageToken?: string | undefined;
-  /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
 }
 

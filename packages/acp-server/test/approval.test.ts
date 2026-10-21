@@ -113,7 +113,6 @@ describe('permissionResponseToApprovalResponse', () => {
   });
 
   it('maps the legacy Python kimi-cli optionIds like their canonical counterparts', () => {
-    // < v0.9.0 clients answer with 'approve' / 'approve_for_session'.
     expect(
       permissionResponseToApprovalResponse(makeRequest(commandDisplay), selected('approve')),
     ).toEqual({ decision: 'approved' });

@@ -1,11 +1,3 @@
-/**
- * The aggregated klient contract — service wire name → method → zod
- * input/output schemas, across the core/session/agent scopes. The klient
- * factory validates every call against this table; transports never see it.
- * Event registrations live in the per-scope `events.ts` files alongside
- * their payload schemas.
- */
-
 import type { KlientContract } from './types.js';
 import {
   agentCommandContract,
@@ -50,7 +42,6 @@ import { sessionSkillCatalogContract } from './session/skills.js';
 import { sessionTitleContract } from './session/title.js';
 
 export const globalContract: KlientContract = {
-  // core (app scope)
   sessionIndex: sessionsContract,
   workspaceService: workspacesContract,
   configService: configContract,
@@ -69,7 +60,6 @@ export const globalContract: KlientContract = {
   fileService: filesContract,
   mcpManagementService: mcpManagementContract,
   sessionManager: sessionManagerContract,
-  // session scope
   sessionMetadata: sessionMetadataContract,
   sessionInteractionService: sessionInteractionContract,
   sessionApprovalService: sessionApprovalContract,
@@ -77,7 +67,6 @@ export const globalContract: KlientContract = {
   sessionSkillCatalog: sessionSkillCatalogContract,
   sessionTitleService: sessionTitleContract,
   sessionActivityView: sessionActivityViewContract,
-  // agent scope
   agentPromptService: agentPromptContract,
   agentSkillService: agentSkillContract,
   agentLoopService: agentLoopContract,

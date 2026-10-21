@@ -1,18 +1,3 @@
-/**
- * Self-tests for `DaemonClient` against a live server at
- * `process.env.KIMI_SERVER_URL ?? http://127.0.0.1:58627`.
- *
- * Every test gates on a `daemonReachable()` check so CI / dev machines
- * without a running server stay green. Run a server (`pnpm dev:server` from
- * repo root) to exercise these locally.
- *
- * Coverage:
- *   1. HTTP envelope unwrap throws on `code !== 0`.
- *   2. WS handshake completes (server_hello + client_hello ack).
- *   3. Subscribe ack succeeds for a real session id.
- *   4. `waitForFrame` times out cleanly (no zombie waiters).
- *   5. Created session is observable via `getSession`.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
@@ -49,17 +34,14 @@ const describeLive = reachable ? describe : describe.skip;
 let created: { client: DaemonClient; sid: string }[] = [];
 
 afterEach(async () => {
-  // Best-effort cleanup so reruns don't accumulate phantom sessions.
   for (const { client, sid } of created.splice(0)) {
     try {
       await client.archiveSession(sid);
     } catch {
-      // ignore
     }
     try {
       await client.close();
     } catch {
-      // ignore
     }
   }
 });
@@ -90,7 +72,6 @@ describeLive('DaemonClient (live server required)', () => {
     log('connect request', { url: `${BASE_URL.replace(/^http/, 'ws')}/api/v1/ws` });
     const hello = await client.connect();
     log('server hello', hello);
-    // heartbeat_ms is optional — kap-server omits it (no server heartbeat).
     expect(hello.heartbeat_ms === undefined || hello.heartbeat_ms > 0).toBe(true);
     expect(typeof hello.ws_connection_id).toBe('string');
     await client.close();

@@ -1,31 +1,3 @@
-/**
- * Refresh / reload wire-level invariants.
- *
- * Models the page-refresh path a web client takes when the server is already
- * up: hit `/healthz`, `/meta`, `/auth`, then open a fresh WebSocket and replay
- * any missed events via `client_hello.cursors` BEFORE pulling REST history
- * (REST.md §3 + WS.md §3.2).
- *
- * What's asserted here (and NOT in `client.test.ts`):
- *   1. `/healthz` returns `{ok: true}`.
- *   2. `/meta` exposes a non-empty `server_id`. (Since the v2 sync protocol,
- *      cursors carry a journal `epoch` and seq is durable across restarts —
- *      a stale cursor is detected server-side via `epoch_changed` instead of
- *      clients comparing `server_id`.)
- *   3. `/auth` returns the `AuthSummary` shape.
- *   4. After running one prompt to populate the journal, a fresh WS that
- *      passes `cursors: { [sid]: { seq: currentSeq } }` is acked with
- *      `accepted_subscriptions: [sid]`, `resync_required: []`, and NO event
- *      frames arrive between `server_hello` and the ack (caught-up replay).
- *   5. A fresh WS that passes `cursors: { [sid]: { seq: 0 } }` triggers
- *      replay of every durable event in order (seq 1..N) BEFORE the ack.
- *      Volatile frames (deltas/progress/status) are never replayed.
- *   6. After reconnect, `GET /messages` reflects the persisted state from
- *      before the WS close.
- *
- * Live-server gated via the same `daemonReachable()` check as
- * `client.test.ts`; missing server → tests skip cleanly so CI stays green.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket as WsWebSocket } from 'ws';
 
@@ -145,19 +117,16 @@ afterEach(async () => {
     try {
       await ws.close();
     } catch {
-      // ignore
     }
   }
   for (const { client, sid } of created.splice(0)) {
     try {
       await client.http.archiveSession(sid);
     } catch {
-      // ignore
     }
     try {
       await client.close();
     } catch {
-      // ignore
     }
   }
 });
@@ -307,8 +276,6 @@ describeLive('refresh-replay (live server required)', () => {
         resync_required?: string[];
       };
       expect(payload.accepted_subscriptions ?? []).toEqual([session.id]);
-      // Buffer cap defaults to 1000; a single prompt emits <<1000 events, so
-      // every event is still in the ring → no resync_required.
       expect(payload.resync_required ?? []).toEqual([]);
       expect(refreshed.replayed.length).toBeGreaterThan(0);
 
@@ -317,8 +284,6 @@ describeLive('refresh-replay (live server required)', () => {
         .filter((n): n is number => typeof n === 'number');
       expect(Math.min(...seqs)).toBe(1);
       expect(Math.max(...seqs)).toBe(maxSeq);
-      // Daemon must dispatch buffered events in seq order
-      // (eventService.getBufferedSince filters the buffer in insertion order).
       const sorted = seqs.toSorted((a, b) => a - b);
       expect(seqs).toEqual(sorted);
       log('replay seq assertion', {
@@ -328,7 +293,6 @@ describeLive('refresh-replay (live server required)', () => {
         replayed_count: refreshed.replayed.length,
       });
 
-      // Phase 2: REST snapshot reflects the persisted user + assistant pair.
       const { items } = await client.http.listMessages(session.id, { page_size: 100 });
       log('messages snapshot', {
         count: items.length,
@@ -338,7 +302,6 @@ describeLive('refresh-replay (live server required)', () => {
       expect(items.some((m) => m.role === 'user')).toBe(true);
       expect(items.some((m) => m.role === 'assistant')).toBe(true);
 
-      // `GET /tasks` returns the documented `{items:[]}` envelope shape.
       const tasks = await getEnvelope<{ items: unknown[] }>(
         `/sessions/${encodeURIComponent(session.id)}/tasks`,
         log,

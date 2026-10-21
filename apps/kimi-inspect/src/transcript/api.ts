@@ -1,18 +1,3 @@
-/**
- * REST client for the transcript page endpoint:
- * `GET {baseUrl}/api/v1/sessions/{sessionId}/transcript`.
- *
- * This is the ONLY source of full transcript state: the initial load fetches
- * the newest page, a full refresh re-reads page by page from the tail
- * backwards, and "load earlier" pages further with a `before_turn` cursor.
- * (The WS channel, by contrast, carries incremental `transcript.ops` only.)
- *
- * Pages are turn-segment slices keyed by a turn-id cursor (`before_turn`
- * pages towards older turns). The response is validated with the
- * package-owned `transcriptResponseSchema` — the schema is the single source
- * of truth for the wire shape, local code consumes the domain model types.
- */
-
 import {
   transcriptOpsCatchupResponseSchema,
   transcriptPlanResponseSchema,
@@ -65,23 +50,18 @@ export async function fetchTranscriptAttachment(
   return res.blob();
 }
 
-/** One transcript page as merged by the chat store. */
 export interface TranscriptPage {
   readonly items: readonly TranscriptItem[];
-  /** `has_more` in the query direction — more older turns exist. */
   readonly hasMoreOlder: boolean;
-  /** Global, unpaginated state (every response carries the current whole). */
   readonly tasks: readonly TranscriptTask[];
   readonly interactions: readonly TranscriptInteraction[];
   readonly attachments: readonly TranscriptAttachment[];
   readonly todos: readonly TranscriptTodo[];
   readonly meta: TranscriptMeta;
   readonly pendingInteractions: readonly string[];
-  /** Op-batch watermark (state includes every batch with seq <= N); absent on legacy servers. */
   readonly seq?: number | undefined;
 }
 
-/** One turn per page: fine-grained paging — the viewport grows a turn at a time. */
 export const TRANSCRIPT_PAGE_SIZE = 1;
 
 export interface FetchTranscriptPageOptions {
@@ -89,10 +69,8 @@ export interface FetchTranscriptPageOptions {
   readonly token?: string | undefined;
   readonly sessionId: string;
   readonly agentId: string;
-  /** Turn-id cursor; when set, fetches up to `pageSize` segments strictly older. */
   readonly beforeTurn?: string | undefined;
   readonly pageSize?: number | undefined;
-  /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -139,9 +117,6 @@ export async function fetchTranscriptPage(
   };
 }
 
-// ---------------------------------------------------------------- ops catch-up
-
-/** One sequenced op batch from the catch-up endpoint. */
 export interface TranscriptOpBatch {
   readonly seq: number;
   readonly ops: readonly TranscriptOperation[];
@@ -150,7 +125,6 @@ export interface TranscriptOpBatch {
 export interface TranscriptOpsCatchup {
   readonly batches: readonly TranscriptOpBatch[];
   readonly latestSeq: number;
-  /** False = the journal cannot cover `sinceSeq`; the caller must full-refresh. */
   readonly complete: boolean;
 }
 
@@ -159,17 +133,10 @@ export interface FetchTranscriptOpsOptions {
   readonly token?: string | undefined;
   readonly sessionId: string;
   readonly agentId: string;
-  /** Return journaled batches with seq strictly greater than this watermark. */
   readonly sinceSeq: number;
-  /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
 }
 
-/**
- * Point-to-point catch-up: `GET .../transcript/ops?agent_id=&since_seq=N`.
- * Available on sequenced servers; a 404/envelope error means the server
- * predates the endpoint and the caller should fall back to a full refresh.
- */
 export async function fetchTranscriptOps(
   opts: FetchTranscriptOpsOptions,
 ): Promise<TranscriptOpsCatchup> {
@@ -201,20 +168,15 @@ export async function fetchTranscriptOps(
   };
 }
 
-// ------------------------------------------------------------------ plan lookup
-
-/** The review round-trip of one ExitPlanMode call, from the plan endpoint. */
 export interface TranscriptPlanReview {
   readonly state: 'pending' | 'approved' | 'rejected' | 'cancelled';
   readonly selectedOption?: string | undefined;
   readonly feedback?: string | undefined;
 }
 
-/** Plan information of one ExitPlanMode tool call (`GET .../transcript/plan`). */
 export interface TranscriptPlanInfo {
   readonly toolCallId: string;
   readonly turnId: string;
-  /** Which fact the content was projected from server-side. */
   readonly source: 'interaction' | 'display' | 'output';
   readonly plan: string;
   readonly path?: string | undefined;
@@ -227,18 +189,10 @@ export interface FetchTranscriptPlanOptions {
   readonly token?: string | undefined;
   readonly sessionId: string;
   readonly agentId: string;
-  /** Narrow the read to one ExitPlanMode call; omitted lists every plan of the agent. */
   readonly toolCallId?: string | undefined;
-  /** Injectable for tests. */
   readonly fetchImpl?: typeof fetch;
 }
 
-/**
- * Plan lookup: `GET .../transcript/plan?agent_id=[&tool_call_id=]`, in
- * timeline order. With `toolCallId` set, a 40416 envelope means the tool
- * call does not exist or is not an ExitPlanMode call (the message says
- * which).
- */
 export async function fetchTranscriptPlan(
   opts: FetchTranscriptPlanOptions,
 ): Promise<TranscriptPlanInfo[]> {

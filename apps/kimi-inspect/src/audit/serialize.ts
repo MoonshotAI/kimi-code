@@ -1,11 +1,3 @@
-/**
- * Serialize an `AgentState` into a plain, JSON-shaped object for the audit
- * panel's state tree and structural diff. Maps become key-sorted plain
- * objects (stable display order), Sets become sorted arrays; everything
- * else is passed through by reference (state is immutable, so sharing is
- * safe and keeps the reference-equality fast path in `diffValue` useful).
- */
-
 import type {
   AgentState,
   TranscriptAttachment,
@@ -16,7 +8,6 @@ import type {
   TranscriptTodo,
 } from '@moonshot-ai/transcript';
 
-/** Plain-object view of an `AgentState` (Maps/Sets unwrapped). */
 export interface SerializedAgentState {
   readonly items: readonly TranscriptItem[];
   readonly tasks: Record<string, TranscriptTask>;

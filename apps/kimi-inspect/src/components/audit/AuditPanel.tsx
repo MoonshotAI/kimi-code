@@ -1,18 +1,3 @@
-/**
- * Audit panel — the `Audit` tab of the chat view's right dock
- * (`RightPanel`): replays how the visible `TranscriptChatStore` was built,
- * entry by entry. It used to be a standalone column docked inside the chat
- * view.
- *
- *  - Timeline (draggable slider + entry list): every REST page load, WS
- *    frame (`transcript.ops` / `transcript.reset`), loss signal, and user
- *    action the channel processed, with its timestamp.
- *  - Detail tabs for the selected entry: `Diff` (structural diff vs the
- *    previous entry — added/modified/removed colored), `State` (the full
- *    store state at that point, goal/plan/todos included), `Event` (the
- *    raw REST request/response or WS payload).
- */
-
 import { EMPTY_AGENT_STATE } from '@moonshot-ai/transcript';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
@@ -36,7 +21,6 @@ function fmtTime(iso: string): string {
   return `${base}.${String(d.getMilliseconds()).padStart(3, '0')}`;
 }
 
-/** Raw payload view: full JSON, with long strings tail-truncated. */
 function EventJson({ entry }: { entry: AuditEntry }) {
   const payload = useMemo(() => {
     switch (entry.kind) {
@@ -77,7 +61,6 @@ export function AuditPanel({ trail }: { trail: AuditTrail }) {
     entries.find((entry) => entry.index === selectedIndex) ?? entries.at(-1);
   const currentPos = current !== undefined ? entries.indexOf(current) : -1;
 
-  // Follow-latest: jump to (and scroll to) the newest entry as it lands.
   useEffect(() => {
     if (!follow || entries.length === 0) return;
     setSelectedIndex(entries.at(-1)!.index);

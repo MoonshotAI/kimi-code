@@ -1,21 +1,3 @@
-/**
- * REST client for the v2 session list endpoint: `GET {baseUrl}/api/v2/sessions`.
- *
- * Like the v1 surface, every response is wrapped in the
- * `{ code, msg, data, request_id }` envelope — the business outcome lives in
- * `code` (`0` success; e.g. `40001` invalid query params, `40922` page_token
- * mismatch) while the HTTP status only reports server-/transport-level
- * outcomes (401 from the global auth hook, etc.). Pagination is an opaque
- * cursor (`page_token`) bound to the first page's query conditions; any
- * condition change mid-pagination fails server-side with 40922, so callers
- * must restart from the first page instead of reusing a cursor across
- * filters/sorts.
- *
- * The wire shape is validated locally by hand (this app does not depend on
- * zod): a malformed page throws, individual items with an unexpected shape
- * are dropped rather than failing the whole page.
- */
-
 export type V2ActivityStatus = 'running' | 'approval' | 'question' | 'failed' | 'idle';
 
 export type V2SessionSort =
@@ -34,7 +16,6 @@ export interface V2Session {
     readonly archived: boolean;
   };
   readonly activity: { readonly status: V2ActivityStatus };
-  /** Present only when the request opted in via `include=git`. */
   readonly git?: {
     readonly branch: string | null;
     readonly pullRequest: {
@@ -53,14 +34,12 @@ export interface V2SessionsQuery {
   readonly sort?: V2SessionSort;
   readonly includeGit?: boolean;
   readonly pageSize?: number;
-  /** Opaque cursor from the previous page; the query conditions must not change. */
   readonly pageToken?: string;
 }
 
 export interface V2SessionGroup {
   readonly workspace: { readonly id: string; readonly cwd: string | null };
   readonly sessions: readonly V2Session[];
-  /** Full matching-session count of this workspace (≥ sessions.length). */
   readonly total: number;
 }
 
@@ -218,12 +197,6 @@ export async function fetchV2SessionsPage(
   return { items, ...pageMeta(data) };
 }
 
-/**
- * The workspace-grouped projection (`view=by_workspace`): one request returns
- * every workspace with a matching session, each carrying its first
- * `groupPageSize` sessions under the requested sort plus the workspace's full
- * matching `total`. The opaque cursor pages over groups.
- */
 export async function fetchV2SessionGroups(
   opts: FetchOptions & V2SessionsQuery & { readonly groupPageSize?: number },
 ): Promise<V2SessionGroupPage> {

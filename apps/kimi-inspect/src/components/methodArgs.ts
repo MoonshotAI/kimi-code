@@ -1,42 +1,17 @@
-/**
- * Structured method-argument editing for the dynamic Service cards, driven
- * only by the wire `params` string (the declared parameter list parsed from
- * `Function#toString` server-side — names only, no per-method schemas).
- *
- * `parseParamFields` splits the params string into editable fields:
- * - a named parameter (`title`, `count = 1`) becomes one input; an empty
- *   input falls back to the declared default;
- * - a destructured object parameter (`{ workspaceId, limit }`) becomes one
- *   input per key, assembled back into an object (empty keys are dropped);
- * - anything unparseable (rest params, array patterns) falls back to one
- *   raw JSON input — the old behavior.
- *
- * Field values are smart-parsed (`smartParse`): text that parses as JSON is
- * passed through parsed (numbers, booleans, objects, quoted strings),
- * anything else goes as a plain string — so `main` needs no quotes while
- * `{ "a": 1 }` still works.
- */
-
 export type ParamField =
   | { readonly kind: 'value'; readonly name: string; readonly defaultValue?: string }
   | {
       readonly kind: 'object';
-      /** Original pattern text, used as the group label (e.g. `{ workspaceId, limit }`). */
       readonly name: string;
       readonly keys: readonly string[];
       readonly defaultValue?: string;
     }
   | { readonly kind: 'raw'; readonly label: string };
 
-/** Input state key for a field: the param index, or `index.key` for object keys. */
 export function fieldKey(index: number, key?: string): string {
   return key === undefined ? String(index) : `${index}.${key}`;
 }
 
-/**
- * Split a parameter list at top-level commas, tracking `(){}[]` nesting and
- * string literals (defaults can contain commas, e.g. `= ['a', 'b']`).
- */
 function splitTopLevel(src: string): string[] {
   const parts: string[] = [];
   let depth = 0;
@@ -61,7 +36,6 @@ function splitTopLevel(src: string): string[] {
   return parts;
 }
 
-/** Index of the first `=` at nesting depth 0 (skipping `=>`, `==`, `===`), or -1. */
 function indexOfTopLevelEquals(src: string): number {
   let depth = 0;
   let quote: string | null = null;
@@ -80,7 +54,6 @@ function indexOfTopLevelEquals(src: string): number {
   return -1;
 }
 
-/** Index of the `}` matching the `{` at position 0 of `src`, or -1. */
 function matchingBrace(src: string): number {
   let depth = 0;
   let quote: string | null = null;
@@ -101,7 +74,6 @@ function matchingBrace(src: string): number {
   return -1;
 }
 
-/** Property name out of one object-pattern entry: `a`, `a: b`, `a = 1`, `a: b = 1` → `a`. */
 function objectPatternKey(entry: string): string {
   const colon = entry.indexOf(':');
   const eq = indexOfTopLevelEquals(entry);
@@ -111,7 +83,6 @@ function objectPatternKey(entry: string): string {
   return entry.slice(0, end).trim();
 }
 
-/** Parse the wire `params` string into editable fields (see file header). */
 export function parseParamFields(params: string): readonly ParamField[] {
   return splitTopLevel(params)
     .map((s) => s.trim())
@@ -143,13 +114,10 @@ export function parseParamFields(params: string): readonly ParamField[] {
     });
 }
 
-/** Smart-parse one field value: JSON when it parses, the raw string otherwise. */
 export function smartParse(raw: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    // Declared defaults are source text, where strings use JS single-quote
-    // literals ('auto') that JSON.parse rejects — unquote those.
     if (raw.length >= 2 && raw.startsWith("'") && raw.endsWith("'")) {
       return raw.slice(1, -1).replaceAll(/\\(.)/g, '$1');
     }
@@ -157,13 +125,6 @@ export function smartParse(raw: string): unknown {
   }
 }
 
-/**
- * Assemble the wire argument array from field inputs (keyed by `fieldKey`).
- * Empty value fields fall back to their declared default; empty object
- * fields drop the key, and a fully-empty object param is omitted. Trailing
- * holes are truncated; interior holes serialize as `null` on the wire.
- * Throws when a raw field contains invalid JSON.
- */
 export function buildArgs(
   fields: readonly ParamField[],
   values: Readonly<Record<string, string>>,

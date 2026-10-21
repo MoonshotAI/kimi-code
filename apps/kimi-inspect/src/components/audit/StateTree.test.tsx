@@ -1,12 +1,3 @@
-/**
- * StateTree rendering tests (SSR via renderToStaticMarkup — no DOM needed).
- * Locks in two audit-panel readability rules:
- *  1. Unchanged subtrees collapse into `{ …N }` rows — never a one-line
- *     compact-JSON dump (the copy-on-write fast path gives them no diff
- *     children, and rendering the raw value destroyed the layout).
- *  2. Whole-subtree adds expand into fully fielded, indented tree rows.
- */
-
 import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
@@ -39,11 +30,8 @@ describe('StateTree', () => {
     const html = renderToStaticMarkup(
       <StateTree root={diffValue(serializeState(prev), serializeState(next))} />,
     );
-    // No one-line JSON blob anywhere.
     expect(html).not.toContain('{"kind"');
-    // The unchanged turn t0 stays folded: its prompt is not rendered…
     expect(html).not.toContain('PROMPT_ZERO');
-    // …while the modified turn opens and shows old → new.
     expect(html).toContain('PROMPT_ONE_V2');
     expect(html).toContain('PROMPT_ONE');
     expect(html).toContain('→');
@@ -81,11 +69,9 @@ describe('StateTree', () => {
         root={diffValue(serializeState(EMPTY_AGENT_STATE), serializeState(stateWith([withSteps])))}
       />,
     );
-    // Array children are keyed by their ids, not #indices.
     expect(html).toContain('t0.1');
     expect(html).toContain('t0.1.f1');
     expect(html).not.toContain('#0');
-    // Open containers end with an explicit closing brace row.
     expect(html).toContain(']');
     expect(html).toContain('}');
   });
@@ -103,13 +89,9 @@ describe('StateTree', () => {
   it('collapses multiline strings into a hover-preview button', () => {
     const root = plainNode({ note: 'line one\nline two\nline three', single: 'one-liner' });
     const html = renderToStaticMarkup(<StateTree root={root} defaultDepth={1} />);
-    // The multiline value renders as a compact button: first-line preview +
-    // line count, with the remaining lines NOT inlined into the tree (they
-    // only appear in the hover panel, which needs a real mouse to open).
     expect(html).toContain('&quot;line one&quot; ⏎ 3');
     expect(html).not.toContain('line two');
     expect(html).not.toContain('line three');
-    // Single-line strings keep the inline rendering.
     expect(html).toContain('&quot;one-liner&quot;');
   });
 });

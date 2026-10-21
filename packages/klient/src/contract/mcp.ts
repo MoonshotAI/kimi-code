@@ -1,10 +1,3 @@
-/**
- * Shared MCP server wire schema for session creation and plugin manifests.
- * Mirrors `agent-core-v2/mcpCore/config-schema.ts`. Unlike the config files,
- * the wire requires the explicit `transport` discriminant (the engine's
- * command/url inference preprocess is a file-format convenience).
- */
-
 import { z } from 'zod';
 
 const stringRecordSchema = z.record(z.string(), z.string());

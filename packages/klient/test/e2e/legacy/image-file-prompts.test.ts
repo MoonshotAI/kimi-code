@@ -1,14 +1,3 @@
-/**
- * Live-server invariant for uploaded image files in prompt content (v1 REST
- * surface only — the facade has no file-upload method):
- *   - a missing prompt image `file_id` returns `FILE_NOT_FOUND`;
- *   - a non-image uploaded file used as image content returns `VALIDATION_FAILED`;
- *   - an uploaded PNG can be referenced by a prompt submission, and the
- *     prompt can be aborted (or was already terminal).
- *
- * Converted from the retired scenario `09-image-file-prompts.ts`. Skips when
- * no server is reachable at `KIMI_SERVER_URL`.
- */
 import { describe, expect, it } from 'vitest';
 
 import { ErrorCode } from '@moonshot-ai/kap-server/protocol/error-codes';
@@ -132,13 +121,11 @@ describeLive('legacy: image file prompts', () => {
         try {
           await client.deleteFile(fileId);
         } catch {
-          // ignore
         }
       }
       try {
         if (sid) await client.archiveSession(sid);
       } catch {
-        // ignore
       }
       await client.close();
     }

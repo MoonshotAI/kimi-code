@@ -1,7 +1,3 @@
-/**
- * HTTP layer for `DaemonClient` — typed wrappers around fetch + envelope
- * unwrap. All paths concatenate `baseUrl + apiPrefix + route`.
- */
 import type {
   FsBrowseResponse,
   FsHomeResponse,
@@ -69,7 +65,6 @@ export interface HttpClientOptions {
   apiPrefix: string;
   fetchImpl: typeof fetch;
   reportDir?: string;
-  /** Optional bearer token — sent as `Authorization: Bearer <token>` when set. */
   token?: string;
 }
 
@@ -191,7 +186,6 @@ export class HttpClient {
     return unwrap(envelope);
   }
 
-  // ── Probes + model catalog ─────────────────────────────────────────────
   getAuth(): Promise<AuthSummary> {
     return this.request<AuthSummary>('GET', '/auth', undefined);
   }
@@ -216,7 +210,6 @@ export class HttpClient {
     );
   }
 
-  // ── Sessions ────────────────────────────────────────────────────────────
   createSession(body: SessionCreate): Promise<Session> {
     return this.request<Session>('POST', '/sessions', body);
   }
@@ -232,10 +225,6 @@ export class HttpClient {
     return this.request('GET', `/sessions${qs(query)}`, undefined);
   }
   updateSession(sid: string, body: SessionUpdate): Promise<Session> {
-    // Daemon canonical route: `POST /v1/sessions/{sid}/profile` (REST.md §3.3).
-    // Earlier scaffolding spoke `PATCH /v1/sessions/{sid}`, which the server
-    // never wired — keep the helper name (used by existing fixtures) and just
-    // dispatch to the right URL.
     return this.request<Session>(
       'POST',
       `/sessions/${encodeURIComponent(sid)}/profile`,
@@ -286,7 +275,6 @@ export class HttpClient {
     );
   }
 
-  // ── Terminals ──────────────────────────────────────────────────────────
   listTerminals(sid: string): Promise<ListTerminalsResponse> {
     return this.request(
       'GET',
@@ -322,7 +310,6 @@ export class HttpClient {
     );
   }
 
-  // ── Workspaces ──────────────────────────────────────────────────────────
   listWorkspaces(): Promise<{ items: Workspace[] }> {
     return this.request('GET', '/workspaces', undefined);
   }
@@ -344,7 +331,6 @@ export class HttpClient {
     );
   }
 
-  // ── Folder picker (fs:browse + fs:home) ─────────────────────────────────
   fsBrowse(path?: string): Promise<FsBrowseResponse> {
     return this.request('GET', `/fs:browse${qs({ path })}`, undefined);
   }
@@ -352,7 +338,6 @@ export class HttpClient {
     return this.request('GET', '/fs:home', undefined);
   }
 
-  // ── Uploads ─────────────────────────────────────────────────────────────
   uploadFile(input: {
     name: string;
     data: UploadFileData;
@@ -371,7 +356,6 @@ export class HttpClient {
     return this.request('DELETE', `/files/${encodeURIComponent(fileId)}`, undefined);
   }
 
-  // ── Messages ────────────────────────────────────────────────────────────
   listMessages(
     sid: string,
     query?: { page_size?: number; before_id?: string; after_id?: string; role?: string },
@@ -379,7 +363,6 @@ export class HttpClient {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/messages${qs(query)}`, undefined);
   }
 
-  // ── Prompts ─────────────────────────────────────────────────────────────
   listPrompts(sid: string): Promise<PromptListResponse> {
     return this.request('GET', `/sessions/${encodeURIComponent(sid)}/prompts`, undefined);
   }
@@ -411,7 +394,6 @@ export class HttpClient {
     return this.request('POST', `/sessions/${encodeURIComponent(sid)}:abort`, {});
   }
 
-  // ── Approvals / Questions (reverse-RPC resolves) ────────────────────────
   resolveApproval(
     sid: string,
     aid: string,

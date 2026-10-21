@@ -1,23 +1,3 @@
-/**
- * Scripted LLM provider seam for "real" ACP turn tests.
- *
- * Boots the full engine + ACP wire but replaces the wire `ChatProvider` with a
- * deterministic one that replays a FIFO queue of scripted responses. This keeps
- * the entire real stack — JSON-RPC, `AcpSession`, the agent turn loop,
- * `ModelImpl.request`, the real `generate()` stream-merge, `IEventBus`
- * `assistant.delta` → ACP `session/update`, tool execution, and the
- * approval / question bridge — and fakes only the network LLM call.
- *
- * Usage:
- *   const { seed, mockNextResponse } = createScriptedProvider();
- *   mockNextResponse({ type: 'text', text: 'hi' });
- *   const client = await createTestClient({ homeDir, extraSeeds: [seed] });
- *
- * The seed shadows the App-scope `IProtocolAdapterRegistry`, so every Model the
- * resolver builds routes its `createChatProvider()` call into the scripted
- * provider regardless of protocol.
- */
-
 import {
   IProtocolAdapterRegistry,
   type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
@@ -46,12 +26,6 @@ const ZERO_USAGE: TokenUsage = {
   inputCacheCreation: 0,
 };
 
-/**
- * Async-iterable `StreamedMessage` backed by a fixed part list. Terminal fields
- * (`id` / `usage` / `finishReason` / `rawFinishReason`) are populated when the
- * iterator completes — matching the real `generate()` driver, which reads them
- * after its `for await` loop drains the stream.
- */
 class ScriptedStream {
   id: string | null = null;
   usage: TokenUsage | null = null;
@@ -116,29 +90,21 @@ class ScriptedChatProvider {
 }
 
 export interface ScriptedProvider {
-  /** App-scope seed tuple to pass as `extraSeeds: [seed]`. */
   readonly seed: readonly [typeof IProtocolAdapterRegistry, IProtocolAdapterRegistryType];
-  /** Push a text-only assistant response onto the queue. */
   mockNextText(text: string): void;
-  /** Push a response assembled from arbitrary streamed parts. */
   mockNextResponse(...parts: StreamedMessagePart[]): void;
-  /** Push a response with an explicit finish reason. */
   mockNextProviderResponse(response: {
     readonly parts?: readonly StreamedMessagePart[];
     readonly finishReason?: FinishReason | null;
     readonly rawFinishReason?: string | null;
   }): void;
-  /** Number of `generate()` calls the engine has made so far. */
   callCount(): number;
-  /** The `history` argument of every `generate()` call so far, in order. */
   callHistory(): ReadonlyArray<readonly Message[]>;
 }
 
 export function createScriptedProvider(): ScriptedProvider {
   const queue: ScriptedResponse[] = [];
   const calls: Array<readonly Message[]> = [];
-  // Single shared provider so every ModelImpl in the process (main agent,
-  // sub-agents) draws from the same FIFO queue.
   const provider = new ScriptedChatProvider(queue, calls);
   const requester: LlmRequester = {
     async generate(config, content, control) {
@@ -177,10 +143,6 @@ export function createScriptedProvider(): ScriptedProvider {
       }
     },
   };
-  // Identity/capability/model resolution delegates to the real registry (the
-  // interface grew `resolveAdapterIdentity` / `resolveProviderBaseId` /
-  // `resolveCapability` / `resolve` — delegating keeps the
-  // stub truthful and immune to further growth); only the requester is scripted.
   const real = new ProtocolAdapterRegistry();
   const registry: IProtocolAdapterRegistryType = {
     _serviceBrand: undefined,
@@ -189,8 +151,6 @@ export function createScriptedProvider(): ScriptedProvider {
     resolveProviderBaseId: real.resolveProviderBaseId.bind(real),
     resolveCapability: real.resolveCapability.bind(real),
     resolve: (model: Model) => ({ ...real.resolve(model), requester }),
-    // `createChatProvider` is called by `ModelImpl` (a package-internal method
-    // not on the public interface); present at runtime, cast for the type gap.
     createChatProvider: (_input: ProtocolAdapterConfig) => provider,
   } as unknown as IProtocolAdapterRegistryType;
 

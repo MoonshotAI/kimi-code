@@ -1,9 +1,3 @@
-/**
- * Unit tests for the local server discovery middleware helpers
- * (`vite/serverDiscovery.ts`): instance/lock/token file reading, pid-liveness
- * filtering, URL normalization and dedupe. Runs in Node (mkdtemp homes).
- */
-
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,7 +14,6 @@ import {
 } from './serverDiscovery';
 
 const ALIVE_PID = process.pid;
-// Far above any realistic pid_max; must not collide with a live process.
 const DEAD_PID = 999_999_999;
 
 let home: string;
@@ -100,13 +93,11 @@ describe('discoverLocalServers', () => {
   it('merges instances + lock + proxy target, deduped by url, with the home token', async () => {
     await writeInstance('inst', { pid: ALIVE_PID, port: 58627, started_at: 1 });
     await mkdir(join(home, 'server'), { recursive: true });
-    // Lock points at another (also live) server on a different port.
     await writeFile(join(home, 'server', 'lock'), JSON.stringify({ pid: ALIVE_PID, port: 59000 }));
     await writeFile(join(home, 'server.token'), 'tok-xyz');
 
     const payload = await discoverLocalServers({
       homeDir: home,
-      // Proxy target collides with the instance → dedupe keeps the instance.
       proxyTarget: 'http://127.0.0.1:58627/',
     });
     expect(payload.home).toBe(home);

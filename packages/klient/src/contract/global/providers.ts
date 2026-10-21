@@ -1,11 +1,3 @@
-/**
- * `providerService` — provider configuration registry. Mirrors
- * `agent-core-v2/llm-adapter/provider/provider.ts` (`ProviderConfigSchema`).
- * `type` is free-form text, not an enum: vendor identity is validated at
- * resolve time against the engine's provider-definition registry, so external
- * packages can register new vendors without touching this schema.
- */
-
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';

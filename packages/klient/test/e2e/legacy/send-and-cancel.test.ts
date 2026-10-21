@@ -1,18 +1,3 @@
-/**
- * Send prompt + cancel prompt live-server invariant.
- *
- * Verifies the server can arbitrarily start and stop prompts:
- *   1. submit a prompt and wait for `prompt.completed`;
- *   2. inject an active prompt via the debug hook, queue a second prompt,
- *      abort it by prompt_id, and observe `prompt.aborted`;
- *   3. inject another active prompt and cancel it via session-level
- *      `POST /sessions/{sid}:abort` (no prompt_id required);
- *   4. submit a prompt after cancellations and assert the scheduler recovers.
- *
- * Requires a server launched with debug endpoints enabled. Normal production
- * daemons do not expose `/debug/*`, so this file skips when that surface is
- * absent.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DaemonClient, EnvelopeError, type AnyFrame } from '../harness/index.js';
@@ -59,18 +44,15 @@ afterEach(async () => {
       try {
         await client.abortPrompt(sid, promptId);
       } catch {
-        // ignore
       }
     }
     try {
       await client.archiveSession(sid);
     } catch {
-      // ignore
     }
     try {
       await client.close();
     } catch {
-      // ignore
     }
   }
 });

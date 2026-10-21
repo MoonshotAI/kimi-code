@@ -1,21 +1,3 @@
-/**
- * Bash Parser view — a playground for the App-scope `IBashParserService`
- * (the `bashParser` domain, a thin adapter over `@moonshot-ai/tree-sitter-bash`).
- *
- *   left:  the bash source textarea plus the parse budget (timeoutMs /
- *          maxNodes, empty = package default); the `examples…` dropdown
- *          fills the textarea with curated snippets from the parser's own
- *          differential fixtures;
- *   right: the parse result — status badges (hasError / aborted / node
- *          count) and the syntax tree, one row per node with its type,
- *          UTF-16 range and (for leaves) the source text. Anonymous tokens
- *          are dimmed; rows expand/collapse.
- *
- * Parsing is debounced off the textarea and rides the same `/api/v1/debug`
- * channel as every other panel (`klient.core(IBashParserService).parse`) —
- * the budgeted parse never throws, `{ ok: false }` means budget exhaustion.
- */
-
 import { useEffect, useState } from 'react';
 
 import {
@@ -36,20 +18,9 @@ fi
 
 const PARSE_DEBOUNCE_MS = 300;
 
-/**
- * Quick-fill examples, adapted from the parser's own differential fixtures
- * (`packages/tree-sitter-bash/test/fixtures/differential/*.txt`) — each one
- * exercises a distinct area of the grammar. The last three probe the
- * non-happy paths: deep nesting (a left-associative arithmetic chain, the
- * case that once overflowed the DTO conversion) and the error-recovery
- * paths that set `hasError`.
- */
 const EXAMPLES: readonly { readonly name: string; readonly source: string }[] = [
   {
     name: 'deep arithmetic (1000 operands)',
-    // A thousand left-nested binary_expression levels. Deeper chains parse
-    // fine in-process, but past ~2500 levels the JSON RPC transport itself
-    // cannot serialize the tree (V8 call-stack limit in JSON.stringify).
     source: `echo $((${'1+'.repeat(1000)}1))`,
   },
   {
@@ -265,8 +236,6 @@ function SyntaxTreeNode({
       {open
         ? node.children.map((child, index) => (
             <SyntaxTreeNode
-              // Children are source-ordered and sibling ranges never overlap,
-              // so range + index is a stable key.
               key={`${String(child.startIndex)}:${String(child.endIndex)}:${String(index)}`}
               node={child}
               depth={depth + 1}

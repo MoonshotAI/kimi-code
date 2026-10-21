@@ -1,18 +1,3 @@
-/**
- * Right dock — the single right-hand column of the chat view. Merges what
- * used to be three separate columns (the transcript audit panel docked
- * inside the chat view, the agent inspector on the far right, and the
- * session pane next to the session list) into one tabbed column: `Audit`
- * replays how the visible transcript store was built, entry by entry;
- * `Agent` hosts the agent switcher, the Plan lookup card, and the agent
- * Service panels; `State` reads the active agent's registered plain-data
- * state through `IAgentStateService.snapshot()`; `Session` embeds
- * `SessionPane` (session Services / State tabs). Tabs switch with `hidden`
- * instead of unmounting, so panel-local state (the audit timeline position,
- * Plan lookup input/results, expanded Service panels, the state tree's open
- * rows) survives tab switches.
- */
-
 import { IAgentStateService } from '@moonshot-ai/agent-core-v2/agent/state/agentState';
 import { useState } from 'react';
 
@@ -37,7 +22,6 @@ export function RightPanel({
   agentId: string;
   onAgentChange: (agentId: string) => void;
   ready: boolean;
-  /** The chat view's audit trail; null until its transcript channel exists. */
   trail: AuditTrail | null;
 }) {
   const { klient } = useConnection();

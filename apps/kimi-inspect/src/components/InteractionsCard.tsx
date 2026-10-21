@@ -1,12 +1,3 @@
-/**
- * Pending interactions card (approvals / questions) of one session — fetched
- * on demand over the public REST surface (`/api/v1/sessions/{id}/approvals`
- * and `.../questions`): the engine's interaction kernel is a process-global
- * singleton with no debug channel, and the session `interactions` push
- * stream went away with `/api/v2/ws`, so the card refreshes only when Load
- * is clicked.
- */
-
 import { useState } from 'react';
 
 import { useConnection } from '../connection';
@@ -23,7 +14,6 @@ import { ActionButton, Badge, ErrorLine, JsonView } from '../ui';
 
 interface PendingInteraction {
   readonly id: string;
-  /** Known kinds: 'approval' | 'question'. */
   readonly kind: string;
   readonly payload: Record<string, unknown>;
 }
@@ -196,11 +186,6 @@ function QuestionView({
   );
 }
 
-/**
- * Render a wire payload field as display text: strings pass through,
- * numbers/booleans are stringified, anything else (or missing) falls back —
- * never "[object Object]".
- */
 function payloadField(payload: Record<string, unknown>, key: string, fallback: string): string {
   const value = payload[key];
   if (typeof value === 'string') return value;

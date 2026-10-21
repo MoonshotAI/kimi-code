@@ -1,8 +1,3 @@
-/**
- * `capabilityService` — built-in product capability readiness and install
- * orchestration. Mirrors `agent-core-v2/app/capability/types.ts`.
- */
-
 import { z } from 'zod';
 
 import type { ServiceContract } from '../types.js';

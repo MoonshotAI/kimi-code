@@ -1,17 +1,3 @@
-/**
- * The event hub — klient-level event forwarding. It exposes typed, namespaced
- * events and hides the engine's `onDid*`/`onWill*` surface: each public event
- * name resolves to one registration (a global-bus type filter, a scope
- * stream, or a service emitter). Underlying channel subscriptions are shared
- * per source and ref-counted by listener count. Payloads are validated
- * against the event schema before delivery; bad payloads are dropped and
- * reported through `onError`, never thrown.
- *
- * One hub serves one scope: the global klient hub binds `{}`, session/agent
- * handles bind their scope coordinates, so `stream` sources resolve to the
- * right scope's event stream on every transport.
- */
-
 import type { IDisposable, KlientChannel, ScopeRef } from '../channel.js';
 import type { EventRegistration } from '#/contract/types';
 import type { KlientEventPayloads } from '#/contract/global/events';
@@ -22,7 +8,6 @@ export interface KlientEvents<TPayloadMap extends object = KlientEventPayloads> 
     event: E,
     listener: (payload: TPayloadMap[E]) => void,
   ): IDisposable;
-  /** Validation failures and listener exceptions surface here. */
   onError(listener: (error: Error) => void): IDisposable;
 }
 
@@ -34,7 +19,6 @@ interface SharedSub {
   refs: number;
 }
 
-/** Stable identity of a registration's underlying channel subscription. */
 function keyOf(reg: EventRegistration): string {
   switch (reg.kind) {
     case 'bus':
@@ -107,7 +91,6 @@ export class EventHub<TPayloadMap extends object = KlientEventPayloads>
     };
   }
 
-  /** Detach every subscription; the hub may not be reused after. */
   close(): void {
     this.closed = true;
     for (const sub of this.subs.values()) {
@@ -172,20 +155,15 @@ export class EventHub<TPayloadMap extends object = KlientEventPayloads>
     );
   }
 
-  /** Fan one raw payload out to the registrations attached to this source. */
   private deliver(key: string, raw: unknown): void {
     for (const [event, reg] of Object.entries(this.registrations)) {
       if (keyOf(reg) !== key || !this.listeners.has(event)) continue;
       if (reg.kind === 'bus') {
-        // Global bus events are `{ type, payload }` facts; only registered
-        // types are forwarded, with the payload unwrapped.
         if (rawTypeOf(raw) !== reg.type) continue;
         this.deliverValidated(event, reg, (raw as { payload?: unknown }).payload);
         continue;
       }
       if (reg.kind === 'stream' && reg.type !== undefined) {
-        // Scoped streams (e.g. the agent `events` bus) carry flat
-        // `{ type, ...fields }` events; forward the whole event.
         if (rawTypeOf(raw) !== reg.type) continue;
         this.deliverValidated(event, reg, raw);
         continue;
@@ -220,7 +198,6 @@ export class EventHub<TPayloadMap extends object = KlientEventPayloads>
       try {
         listener(error);
       } catch {
-        // error listeners must not take the hub down
       }
     }
   }

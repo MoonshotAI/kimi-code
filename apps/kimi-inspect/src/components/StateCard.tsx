@@ -1,15 +1,3 @@
-/**
- * State card — one scope's registered state as a live diff tree, shared by
- * the session `State` tab (`SessionPane`) and the agent `State` tab
- * (`RightPanel`). Same view as the audit panel's "Diff vs prev" (`StateTree`
- * over a `DiffNode` root), so every key is an interactive, collapsible row.
- * Auto-loads on mount and polls once a second: the first snapshot (and any
- * owner switch) renders as a plain tree, each later snapshot folds in as a
- * structural diff against the previous one (added = green, removed = red,
- * modified = amber). Changed subtrees auto-open; rows the user expanded stay
- * expanded across polls.
- */
-
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';
 
@@ -25,14 +13,9 @@ export function StateCard({
   badge,
   fetchSnapshot,
 }: {
-  /** Identity of the state owner (`sessionId`, or `sessionId/agentId`); a
-   * change resets the diff baseline so a fresh owner renders as a plain tree
-   * instead of an all-green diff against the previous owner. */
   id: string;
   queryKey: readonly unknown[];
-  /** Card title, e.g. `Session state` / `Agent state`. */
   title: string;
-  /** Mono caption next to the title: the state service's channel name. */
   label: string;
   badge?: ReactNode;
   fetchSnapshot: () => Promise<Record<string, unknown>>;
@@ -44,12 +27,6 @@ export function StateCard({
     placeholderData: (previous) => previous,
   });
 
-  // Fold each poll into a diff against the previous snapshot. `plainNode`
-  // on first load / owner switch — diffing a freshly loaded tree against
-  // nothing (or against the previous owner) would paint it all-green. While
-  // the new owner's fetch is in flight the query still carries the previous
-  // owner's placeholder data (`data.id !== id`); ignore it so a stale tree
-  // never renders under the new owner's badge.
   const [tree, setTree] = useState<{ id: string; node: DiffNode } | null>(null);
   useEffect(() => {
     const data = query.data;
@@ -61,14 +38,8 @@ export function StateCard({
     );
   }, [query.data, id]);
 
-  // The tree is only shown when it belongs to the current owner — after an
-  // owner switch the old tree is suppressed until the new snapshot arrives.
   const visibleTree = tree !== null && tree.id === id ? tree : null;
 
-  // One-click expand/collapse: bumping `nonce` remounts the tree, and the
-  // fresh `defaultDepth` decides how deep nodes open (Infinity = expand all,
-  // 0 = collapse all — diff-changed subtrees still auto-open, as in the
-  // audit panel). Polls afterwards keep the local open state untouched.
   const [expand, setExpand] = useState({ nonce: 0, depth: 1 });
 
   return (

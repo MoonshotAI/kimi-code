@@ -1,9 +1,3 @@
-/**
- * Tests for the v2 session list REST client (`GET /api/v2/sessions`): query
- * string serialization, `{ code, msg, data }` envelope parsing, and error
- * mapping (business codes on 2xx, infra statuses on non-2xx).
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { fetchV2SessionGroups, fetchV2SessionsPage } from './api';
@@ -17,7 +11,6 @@ function fakeFetch(status: number, body: unknown) {
   return { calls, fetchImpl };
 }
 
-/** The shared REST envelope the server wraps every response in. */
 function okBody(data: unknown) {
   return { code: 0, msg: 'success', data, request_id: 'req-1' };
 }
@@ -56,7 +49,6 @@ const pageData = {
       },
       activity: { status: 'idle' },
     },
-    // Malformed entries are dropped, not fatal.
     { id: 42 },
   ],
   has_more: true,
@@ -105,7 +97,6 @@ describe('fetchV2SessionsPage', () => {
       archived: false,
     });
     expect(first.activity.status).toBe('running');
-    // Draft PRs are not in the v2 enum; an unknown state degrades to null.
     expect(first.git?.branch).toBe('main');
     expect(first.git?.pullRequest).toBeNull();
     const second = page.items[1]!;
@@ -189,7 +180,6 @@ describe('fetchV2SessionGroups', () => {
         sessions: [],
         total: 0,
       },
-      // Malformed groups are dropped, not fatal.
       { workspace: { cwd: '/x' }, sessions: [], total: 1 },
       { id: 'nope' },
     ],

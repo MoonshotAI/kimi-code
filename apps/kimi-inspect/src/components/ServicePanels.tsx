@@ -1,27 +1,3 @@
-/**
- * Scope panels — the merged Service list for one wire scope (`app` /
- * `session` / `agent`), shared by the chat inspector (session + agent tabs)
- * and the standalone App Services rail view. The baseline is the dynamic
- * channel list served by `GET /api/v1/debug/channels` (every wire-exposed
- * Service with its methods), rendered by `DynamicServiceCard`; the
- * handwritten descriptors in `panels.ts` override individual Services with
- * curated cards (`ServiceCard`).
- *
- * Two layouts consume the same merged list (`useScopePanels`):
- * - `ScopePanels`: a plain stacked card list (the chat inspector).
- * - `ScopePanelsScrollspy`: a Postman-style three-pane layout — Service
- *   list on the left with a fuzzy filter box, every Service's card
- *   expanded (no collapsing) in one continuously scrolling column in the
- *   middle (scroll position drives the left-side highlight, clicks scroll
- *   the middle), and a request/response call history on the right fed by
- *   recording proxies around every card. Card headers copy the Service
- *   name on click (`CopyableName`).
- *
- * Everything here is fetch-on-demand (Load / Refresh buttons): the v2 event
- * socket (`/api/v2/ws`) that used to push core/session/agent event streams
- * was removed server-side, so there is no live push to render.
- */
-
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -42,14 +18,12 @@ const PANEL_OVERRIDES: ReadonlyMap<string, ServicePanelDef> = new Map(
   [...CORE_PANELS, ...SESSION_PANELS, ...AGENT_PANELS].map((def) => [def.id, def]),
 );
 
-/** One merged Service entry: the wire channel plus its curated override, if any. */
 interface ScopeEntry {
   readonly name: string;
   readonly channel?: ChannelDescriptor;
   readonly def?: ServicePanelDef;
 }
 
-/** Load the full protocol list once per connection (every channel, 1:1). */
 function useChannels() {
   const { klient } = useConnection();
   return useQuery({
@@ -59,11 +33,6 @@ function useChannels() {
   });
 }
 
-/**
- * Merge the dynamic channel list with the handwritten overrides for one
- * scope. When the channels endpoint is unavailable, fall back to the
- * handwritten panels only.
- */
 function useScopePanels(scope: ChannelScope) {
   const channels = useChannels();
   const entries = useMemo<readonly ScopeEntry[]>(() => {
@@ -72,7 +41,6 @@ function useScopePanels(scope: ChannelScope) {
       for (const c of channels.data) {
         if (c.scope === scope) byName.set(c.name, c);
       }
-      // Keep overrides the introspection missed (e.g. server drift).
       for (const def of PANEL_OVERRIDES.values()) {
         if (def.scope === scope && !byName.has(def.id)) byName.set(def.id, undefined);
       }
@@ -90,12 +58,6 @@ function useScopePanels(scope: ChannelScope) {
   return { entries, channels };
 }
 
-/**
- * Render every Service of one scope as a plain stacked card list.
- * `proxyFor` materializes the Service proxy for a channel name (null when
- * the scope is not callable, e.g. no session selected); `onError` observes
- * call failures (the agent switcher uses it to mark unloaded agents).
- */
 export function ScopePanels({
   scope,
   proxyFor,
@@ -130,10 +92,6 @@ export function ScopePanels({
   );
 }
 
-/**
- * Subsequence fuzzy match (case-insensitive): `ssm` matches
- * `sessionScopeMetadata`. An empty query matches everything.
- */
 function fuzzyMatch(name: string, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (q === '') return true;
@@ -146,16 +104,6 @@ function fuzzyMatch(name: string, query: string): boolean {
   return false;
 }
 
-/**
- * Three-pane scope browser: the Service list on the left (with a fuzzy
- * filter box), every Service's card expanded in one continuously scrolling
- * column in the middle, and a Postman-style call history on the right
- * (`HistoryPane`) recording every wire request/response the cards make.
- * The scroll position highlights the matching list item (and keeps it
- * visible); clicking a list item smooth-scrolls the middle column to that
- * Service. The list hides below the `md` breakpoint and the history below
- * `lg`.
- */
 export function ScopePanelsScrollspy({
   scope,
   title,
@@ -174,22 +122,17 @@ export function ScopePanelsScrollspy({
   const sectionRefs = useRef(new Map<string, HTMLElement>());
   const navRefs = useRef(new Map<string, HTMLButtonElement>());
 
-  // The filter narrows the left list only; the middle column keeps every
-  // card mounted so in-flight inputs and results survive a search.
   const filtered = useMemo(
     () => entries.filter(({ name }) => fuzzyMatch(name, query)),
     [entries, query],
   );
 
-  // Call history: every card proxy is wrapped (`makeRecordingProxy`), so
-  // curated and dynamic cards record uniformly without per-card plumbing.
   const [records, setRecords] = useState<readonly CallRecord[]>([]);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const recordId = useRef(0);
   const record = useCallback((entry: Omit<CallRecord, 'id'>) => {
     const id = ++recordId.current;
     setRecords((prev) => [{ ...entry, id }, ...prev].slice(0, 100));
-    // Like Postman's response pane: the newest call is always open.
     setExpandedId(id);
   }, []);
   const recordingProxyFor = useCallback(
@@ -200,9 +143,6 @@ export function ScopePanelsScrollspy({
     [proxyFor, record],
   );
 
-  // Highlight the section nearest the top of the scroll port. Driven by the
-  // scroll event (not IntersectionObserver) so tall sections and the tail of
-  // the list behave predictably. Section refs sit in DOM order in the map.
   const syncActive = useCallback(() => {
     const root = scrollRef.current;
     if (root === null) return;
@@ -216,12 +156,10 @@ export function ScopePanelsScrollspy({
     setActive((prev) => (prev === current ? prev : current));
   }, [entries]);
 
-  // Sections mount as the channel list resolves, so re-sync on list changes.
   useEffect(() => {
     syncActive();
   }, [syncActive]);
 
-  // Keep the highlighted item inside the left list's viewport.
   useEffect(() => {
     if (active === null) return;
     navRefs.current.get(active)?.scrollIntoView({ block: 'nearest' });
@@ -318,10 +256,6 @@ export function ScopePanelsScrollspy({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Call history — one record per wire call, newest first, capped at 100.
-// ---------------------------------------------------------------------------
-
 interface CallRecord {
   readonly id: number;
   readonly service: string;
@@ -334,11 +268,6 @@ interface CallRecord {
   readonly error?: string;
 }
 
-/**
- * Wrap a Service proxy so every method call is recorded (args, result or
- * error, duration) before its promise settles. Errors rethrow unchanged, so
- * the calling card's own error handling still runs.
- */
 function makeRecordingProxy(
   service: string,
   svc: AnyService,
@@ -450,11 +379,6 @@ function HistoryPane({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Generic service card
-// ---------------------------------------------------------------------------
-
-/** Service name that copies itself to the clipboard on click. */
 function CopyableName({ name, className }: { name: string; className?: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -463,7 +387,6 @@ function CopyableName({ name, className }: { name: string; className?: string })
       title={`click to copy: ${name}`}
       className={className}
       onClick={(e) => {
-        // Don't trigger the collapsible header toggle behind the name.
         e.stopPropagation();
         void navigator.clipboard.writeText(name).then(() => {
           setCopied(true);
@@ -578,14 +501,6 @@ function ServiceCard({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Dynamic service card — generic renderer for channels without a handwritten
-// override. Every method gets a call button labeled with its declared
-// signature; parameters become structured inputs (`MethodArgInputs`: one
-// field per parameter, one per key for destructured objects, smart-parsed —
-// see `methodArgs.ts`). Getters become read buttons. Results render inline.
-// ---------------------------------------------------------------------------
-
 function DynamicServiceCard({
   channel,
   svc,
@@ -596,16 +511,7 @@ function DynamicServiceCard({
   channel: ChannelDescriptor;
   svc: AnyService | null;
   onError?: (error: unknown) => void;
-  /**
-   * Allow collapsing the method list behind the header. Off in the
-   * scrollspy layout, where every card stays expanded and the header name
-   * is a copy target instead of a toggle.
-   */
   collapsible?: boolean;
-  /**
-   * Render call results inline under each method. Off in the scrollspy
-   * layout, where results land in the right-side history pane instead.
-   */
   inlineResults?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -705,12 +611,6 @@ function DynamicServiceCard({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Structured argument inputs — one labeled field per declared parameter.
-// Values are smart-parsed on invoke (JSON when it parses, plain string
-// otherwise), so simple strings need no quotes.
-// ---------------------------------------------------------------------------
 
 function MethodArgInputs({
   fields,

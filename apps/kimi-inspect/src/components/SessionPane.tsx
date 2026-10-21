@@ -1,15 +1,3 @@
-/**
- * Session pane — everything session-scoped: the pending-interactions card
- * and the session Service panels under the `Services` tab, plus a `State`
- * tab reading the session's registered plain-data state through
- * `ISessionStateService.snapshot()` (every key a Session Service registered
- * into the session-state container, JSON-safe). Rendered as the `Session`
- * tab of the chat view's right dock (`RightPanel`). The Service panels are
- * fetch-on-demand (no Service-event push channel exists); the State tab
- * instead auto-loads on mount and polls once a second, so it stays live
- * without a Refresh button.
- */
-
 import { ISessionStateService } from '@moonshot-ai/agent-core-v2/session/state/sessionState';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';

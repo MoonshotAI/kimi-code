@@ -1,9 +1,3 @@
-/**
- * Left icon rail — the app-level view switcher. Icon-only by design; view
- * names live in tooltips. Adding a view is one `VIEWS` entry here plus its
- * render branch in `App`.
- */
-
 import type { ReactNode } from 'react';
 
 export type AppView =

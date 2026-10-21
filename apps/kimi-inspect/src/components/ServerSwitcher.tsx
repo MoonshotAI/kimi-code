@@ -1,12 +1,3 @@
-/**
- * Header server switcher — lists the locally discovered kap-servers (dev
- * middleware `/__inspect/servers`) and switches the connection between them
- * without a reload. Discovered picks are not persisted as a full connection
- * config; only the picked URL is remembered so a reload re-picks it while the
- * instance is still alive. Falls back to a plain read-only URL when discovery
- * is unavailable (static hosting) or finds no local servers.
- */
-
 import { useConnection } from '../connection';
 import { useServerDiscovery } from '../servers';
 
@@ -15,7 +6,6 @@ export function ServerSwitcher() {
   const discovery = useServerDiscovery();
   const data = discovery.data;
   if (data === null || data === undefined || data.servers.length === 0) {
-    // No local discovery (static hosting / no servers): plain read-only URL.
     return <span className="font-mono text-[10px] text-neutral-500">{baseUrl}</span>;
   }
   const current = data.servers.find((s) => s.url === baseUrl);

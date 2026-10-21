@@ -1,10 +1,3 @@
-/**
- * Service name → DI token registry for the in-process dispatcher. Only leaf
- * modules are imported (tokens + types) — never the engine root barrel, so
- * hosting klient in-process does not force the full registration side effects
- * beyond what the host already bootstrapped.
- */
-
 import type { ServiceIdentifier } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
@@ -47,7 +40,6 @@ import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentFullCompactionService } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/fullCompaction';
 import { IMcpManagementService } from '@moonshot-ai/agent-core-v2/app/mcpManagement/mcpManagement';
 
-/** Wire service name (decorator id string) → token. */
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
   sessionIndex: ISessionIndex,
   workspaceService: IWorkspaceService,

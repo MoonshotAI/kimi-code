@@ -1,11 +1,3 @@
-/**
- * Live-server invariant for the v1 terminal surface (REST + WS controls):
- * create/list/get a terminal, attach + input over WS,
- * observe `terminal_output`, resize, close with `terminal_exit`.
- *
- * Converted from the retired scenario `11-terminal.ts`. Skips when no server
- * is reachable at `KIMI_SERVER_URL`.
- */
 import { describe, expect, it } from 'vitest';
 
 import { DaemonClient, type AnyFrame } from '../harness/index.js';
@@ -158,13 +150,11 @@ describeLive('legacy: terminal controls', () => {
         try {
           await client.closeTerminal(sid, terminalId);
         } catch {
-          // ignore
         }
       }
       try {
         if (sid) await client.archiveSession(sid);
       } catch {
-        // ignore
       }
       await client.close();
     }

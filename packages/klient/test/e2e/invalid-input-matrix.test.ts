@@ -1,30 +1,3 @@
-/**
- * Invalid-input × provider behavior matrix, pinned end-to-end through the
- * klient in-memory transport and a local mock model endpoint.
- *
- * Every case runs the REAL pipeline: klient facade → engine session/loop →
- * llmRequester → ModelRequesterImpl → composed ChatProvider.generate → the
- * provider's message-conversion layer → HTTP against a local `node:http`
- * server. The mock server captures request bodies (so fallbacks can be
- * asserted on their wire shape) and replies with scripted SSE streams or
- * HTTP errors. No real network is touched.
- *
- * Error layers are labeled in each case (and in the report):
- *  - l1: klient-side zod contract rejection (`KlientValidationError`,
- *    promise rejection from the facade call — never reaches the engine).
- *  - l2: engine-native error (provider conversion layer or engine services —
- *    surfaces as a failed turn whose error payload carries a v2 `Error2`
- *    domain code such as `provider.api_error`).
- *  - l3: scripted provider (mock server) error — an HTTP status error that
- *    enters through the provider SDK's error path, gets normalized into the
- *    `API*Error` family, and is translated by `translateProviderError`.
- *
- * Provider columns: plain OpenAI (protocol `openai`, no vendor), composed
- * Kimi (protocol `openai` + provider `type: kimi` — the trait-composition
- * path), Anthropic, and Google GenAI. Rows are chosen for representativeness
- * rather than a full cartesian product.
- */
-
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -45,8 +18,6 @@ import type { KlientEvents } from '../../src/core/events/hub.js';
 import { KlientValidationError } from '../../src/core/validation.js';
 import { createKlient as createMemoryKlient } from '../../src/transports/memory/index.js';
 
-// The dual/http e2e suites (and their `helpers/dual.ts`) were dropped with the
-// http transport; the two wait primitives they exported are re-declared here.
 async function waitFor(
   predicate: () => Promise<boolean> | boolean,
   timeoutMs: number,
@@ -62,7 +33,6 @@ async function waitFor(
   throw new Error(`waitFor timed out after ${timeoutMs}ms`);
 }
 
-/** Resolve with the first payload of `name` (or reject on timeout). */
 function onceEvent<TPayloadMap extends object, E extends keyof TPayloadMap & string>(
   events: KlientEvents<TPayloadMap>,
   name: E,
@@ -81,10 +51,6 @@ function onceEvent<TPayloadMap extends object, E extends keyof TPayloadMap & str
   });
 }
 
-// ---------------------------------------------------------------------------
-// Model ids registered in the engine for this suite.
-// ---------------------------------------------------------------------------
-
 const M_OPENAI = 'matrix-openai';
 const M_OPENAI_VISION = 'matrix-openai-vision';
 const M_KIMI = 'matrix-kimi';
@@ -93,29 +59,21 @@ const M_GOOGLE = 'matrix-google';
 
 const KIMI_PROVIDER = 'matrix-kimi-provider';
 
-const IMAGE_BAD_MIME_URL = 'data:image/tiff;base64,QUJD'; // tiff is outside every provider's accepted set
-const IMAGE_KIMI_ONLY_MIME_URL = 'data:image/bmp;base64,QUJD'; // bmp is accepted by Kimi alone
+const IMAGE_BAD_MIME_URL = 'data:image/tiff;base64,QUJD';
+const IMAGE_KIMI_ONLY_MIME_URL = 'data:image/bmp;base64,QUJD';
 const IMAGE_BAD_BASE64_URL = 'data:image/png;base64,%%%not-base64%%%';
 const VIDEO_HTTP_URL = 'https://example.com/clip.mp4';
 const VIDEO_BAD_MIME_URL = 'data:video/x-ms-wmv;base64,QUJD';
 
-/** 1x1 transparent PNG — real magic bytes so the engine's sniffer accepts it. */
 const PNG_1X1_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-/** Minimal ftyp box so the video sniffer reports video/mp4. */
 const MP4_FTYP_HEX = '00000020667479706d703432000000006d70343269736f6d';
-
-// ---------------------------------------------------------------------------
-// Captured requests + scripted replies.
-// ---------------------------------------------------------------------------
 
 interface CapturedRequest {
   readonly method: string;
   readonly url: string;
   readonly contentType: string;
-  /** Parsed JSON body when the content type is JSON, otherwise undefined. */
   readonly json: unknown;
-  /** Raw body (kept for multipart inspection). */
   readonly raw: Buffer;
 }
 
@@ -138,7 +96,6 @@ function resetMock(next: MockHandler): void {
   handler = next;
 }
 
-/** A reply queue: each call shifts; once empty, `fallback` serves the rest. */
 function queueScript(...replies: readonly (MockReply | undefined)[]): MockHandler {
   const queue = [...replies];
   return () => {
@@ -155,10 +112,6 @@ function jsonError(status: number, message: string): MockReply {
 const OK_OPENAI: MockReply = { kind: 'sse', lines: openAiSse('OK') };
 const OK_ANTHROPIC: MockReply = { kind: 'sse', lines: anthropicSse('OK') };
 const OK_GOOGLE: MockReply = { kind: 'sse', lines: googleSse('OK') };
-
-// ---------------------------------------------------------------------------
-// SSE fixtures per wire protocol.
-// ---------------------------------------------------------------------------
 
 function sseLines(...events: readonly string[]): string[] {
   const lines: string[] = [];
@@ -285,10 +238,6 @@ function googleSse(text: string): string[] {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Engine + klient + mock server lifecycle.
-// ---------------------------------------------------------------------------
-
 let klient: Klient;
 let app: ReturnType<typeof bootstrap>['app'] | undefined;
 let server: Server;
@@ -351,8 +300,6 @@ beforeAll(async () => {
         'cache-control': 'no-cache',
         connection: 'keep-alive',
       });
-      // Trailing '\n' closes the final event — some SDK SSE parsers (Google
-      // GenAI) only dispatch an event on a blank-line terminator.
       res.end(`${reply.lines.join('\n')}\n`);
     })().catch(() => {
       res.destroy();
@@ -387,9 +334,6 @@ beforeAll(async () => {
     maxContextSize: 262_144,
     capabilities: { image_in: true, video_in: true },
   });
-  // M_KIMI needs a `provider` reference to KIMI_PROVIDER so the engine
-  // resolves kimi provider traits (uploadVideo). The facade's addProvider()
-  // doesn't support provider-linkage, so call modelService directly.
   await app!.accessor.get(IModelService).set(M_KIMI, {
     model: 'kimi-k2-matrix',
     provider: KIMI_PROVIDER,
@@ -425,10 +369,6 @@ afterAll(async () => {
   await rm(homeDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
   await rm(workRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 });
 });
-
-// ---------------------------------------------------------------------------
-// Case helpers.
-// ---------------------------------------------------------------------------
 
 interface CollectedEvent {
   readonly name: string;
@@ -480,7 +420,6 @@ async function promptAndWait(ctx: CaseContext, input: readonly ContentPart[]): P
   await settled;
 }
 
-/** Chat-completions messages array of the n-th captured request. */
 function openAiMessages(callIndex: number): Record<string, unknown>[] {
   const body = requests[callIndex]?.json as { messages?: Record<string, unknown>[] } | undefined;
   expect(body?.messages, `request #${callIndex} should carry a messages array`).toBeDefined();
@@ -497,10 +436,6 @@ function isDateReminderMessage(message: Record<string, unknown>): boolean {
   return DATE_REMINDER_MARKERS.some((marker) => serialized.includes(marker));
 }
 
-// ---------------------------------------------------------------------------
-// l1 — klient contract validation (never reaches the engine).
-// ---------------------------------------------------------------------------
-
 describe('l1: klient input validation', () => {
   it('rejects an image_url part missing `url` before any engine work (l1)', async () => {
     const ctx = await newCase(M_OPENAI, 'l1-image-missing-url');
@@ -513,8 +448,8 @@ describe('l1: klient input validation', () => {
     expect(failure).toBeInstanceOf(KlientValidationError);
     expect((failure as KlientValidationError).phase).toBe('input');
 
-    expect(requests).toHaveLength(0); // nothing reached the wire
-    expect(ctx.events).toHaveLength(0); // no engine events at all
+    expect(requests).toHaveLength(0);
+    expect(ctx.events).toHaveLength(0);
   }, 30_000);
 
   it('rejects an audio_url prompt part (not in the PromptPart union) (l1)', async () => {
@@ -536,9 +471,6 @@ describe('l1: klient input validation', () => {
 
     await promptAndWait(ctx, []);
 
-    // klient's zod schema allows an empty array; the engine's prompt service
-    // only appends non-empty user messages, so the request leaves with the
-    // system prompt alone. The turn still completes.
     expect(requests).toHaveLength(1);
     const messages = openAiMessages(0);
     expect(messages.every((message) => message['role'] === 'system')).toBe(true);
@@ -546,17 +478,8 @@ describe('l1: klient input validation', () => {
   }, 30_000);
 });
 
-// ---------------------------------------------------------------------------
-// Image blocks: illegal mime type / corrupt payload × providers.
-// ---------------------------------------------------------------------------
-
 describe('image blocks with invalid data', () => {
   it('a data-URL image with an unaccepted mime is replaced at prompt ingestion on EVERY provider (l2)', async () => {
-    // PromptStepRequest gates image parts through gateImageFormatParts before
-    // the turn starts: image/tiff never reaches any provider's conversion
-    // layer — it becomes a text notice, the request goes out without the
-    // image, and the turn completes. This is the engine's "session
-    // poisoning" defense and holds for every provider.
     const cases = [
       { label: 'tiff-openai', model: M_OPENAI, reply: OK_OPENAI },
       { label: 'tiff-kimi', model: M_KIMI, reply: OK_OPENAI },
@@ -579,8 +502,6 @@ describe('image blocks with invalid data', () => {
   }, 60_000);
 
   it('a data-URL image in a Kimi-only format reaches a Kimi model but is replaced elsewhere (l2)', async () => {
-    // The accepted set is keyed by the provider the agent is bound to: Kimi
-    // takes BMP/HEIC/HEIF on top of the baseline, the other providers do not.
     const cases = [
       { label: 'bmp-kimi', model: M_KIMI, reply: OK_OPENAI, accepted: true },
       { label: 'bmp-openai', model: M_OPENAI, reply: OK_OPENAI, accepted: false },
@@ -626,16 +547,11 @@ describe('image blocks with invalid data', () => {
     ]);
 
     expect(requests).toHaveLength(2);
-    // Ingestion accepts the declared mime (png) without validating the
-    // payload; the OpenAI base forwards the data URL verbatim.
     const firstContent = openAiMessages(0).at(-1)?.['content'] as unknown[];
     expect(firstContent).toContainEqual({
       type: 'image_url',
       image_url: { url: IMAGE_BAD_BASE64_URL },
     });
-    // The 400 + "invalid image" body classifies as an image-format error, so
-    // llmRequester resends with the media stripped to a placeholder — and the
-    // turn succeeds.
     const secondContent = openAiMessages(1).at(-1)?.['content'] as unknown[];
     expect(secondContent.some((part) => (part as { type?: string }).type === 'image_url')).toBe(
       false,
@@ -676,8 +592,6 @@ describe('image blocks with invalid data', () => {
     ]);
 
     expect(requests).toHaveLength(2);
-    // convertMediaUrl parses the mime out of the data URL and never
-    // validates the payload — it lands in inlineData.
     const firstParts = (
       (requests[0]?.json as { contents?: { parts?: unknown[] }[] }).contents ?? []
     ).flatMap((content) => content.parts ?? []);
@@ -701,9 +615,6 @@ describe('image blocks with invalid data', () => {
     ]);
 
     expect(requests).toHaveLength(2);
-    // The base validates the mime STRING only; payload bytes go out as-is.
-    // (The last block of the last message also carries an injected
-    // cache_control marker — compare on the fields that matter.)
     const firstBlocks = (
       (requests[0]?.json as { messages?: { content?: unknown[] }[] }).messages ?? []
     ).flatMap((message) => (Array.isArray(message.content) ? message.content : []));
@@ -724,19 +635,7 @@ describe('image blocks with invalid data', () => {
   }, 30_000);
 });
 
-// ---------------------------------------------------------------------------
-// Daemon file references (kimi-file://): engine-side resolution before the
-// provider wire.
-// ---------------------------------------------------------------------------
-
 describe('daemon file references (kimi-file://)', () => {
-  // Regression for the duplicated resolver-token shadowing: the legacy
-  // video-only resolver won the shared DI token on the production import
-  // order, so image kimi-file refs leaked to the provider unchanged and
-  // gateways rejected the unknown scheme with a 400 ("unsupported image
-  // url"), which the media-strip fallback then mistook for a bad image.
-  // Kimi models now upload the image via the files API and reference it as
-  // ms://<id>; other providers keep the inline data URL.
   it('a kimi-file image reference reaches a non-kimi provider as a data URL, never verbatim', async () => {
     const meta = await klient.global.files.save({
       data: new Uint8Array(Buffer.from(PNG_1X1_BASE64, 'base64')),
@@ -810,10 +709,6 @@ describe('daemon file references (kimi-file://)', () => {
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 60_000);
 });
-
-// ---------------------------------------------------------------------------
-// Video blocks: URL pass-through, upload capability, illegal video data.
-// ---------------------------------------------------------------------------
 
 describe('video blocks', () => {
   it('video_url with an http URL passes through verbatim on every provider', async () => {
@@ -923,7 +818,6 @@ describe('video blocks', () => {
     });
     await promptAndWait(ctx, [{ type: 'text', text: 'watch clip.mp4' }]);
 
-    // The KimiFiles client POSTs multipart form data to {baseUrl}/files.
     const fileUpload = requests.find((request) => request.url === '/v1/files');
     expect(fileUpload).toBeDefined();
     expect(fileUpload?.contentType).toContain('multipart/form-data');
@@ -932,8 +826,6 @@ describe('video blocks', () => {
     expect(formText).toContain('video');
     expect(formText).toContain('clip.mp4');
 
-    // Second chat call: the tool result carries the ms:// file reference in
-    // the tool message content (trait mode keeps media parts in place).
     const chatCalls = requests.filter((request) => request.url === '/v1/chat/completions');
     expect(chatCalls).toHaveLength(2);
     const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
@@ -981,16 +873,11 @@ describe('video blocks', () => {
     expect(chatCalls).toHaveLength(2);
     const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
-    // ModelRequesterImpl.uploadVideo throws for providers without the hook;
-    // ReadMediaFile converts that into an error tool result (engine fallback).
     expect(String(toolMessage?.['content'])).toContain('does not support video upload');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
 
   it('anthropic: illegal base64 video mime throws in conversion; retryable, so stepRetry re-runs (l2)', async () => {
-    // "Unsupported media type for base64 video" does NOT match the
-    // image-format non-retryable patterns, so stepRetry claims it. Cap the
-    // retries at 2 attempts (1 re-run, ~500ms backoff) for the suite's sake.
     await klient.global.config.set({ domain: 'loopControl', patch: { maxAttemptsPerStep: 2 } });
     try {
       const ctx = await newCase(M_ANTHROPIC, 'anthropic-video-mime');
@@ -1001,9 +888,6 @@ describe('video blocks', () => {
         { type: 'video_url', videoUrl: { url: VIDEO_BAD_MIME_URL } },
       ]);
 
-      // The conversion throws before any HTTP on every attempt — zero requests
-      // even though stepRetry re-ran the step once (retry is invisible on the
-      // klient event surface; only the final failure is).
       expect(requests).toHaveLength(0);
       const turnEnded = ctx.payloads('turn.ended');
       expect(turnEnded).toHaveLength(1);
@@ -1013,8 +897,6 @@ describe('video blocks', () => {
       expect(wireError?.['name']).toBe('ChatProviderError');
       expect(String(wireError?.['message'])).toContain('Unsupported media type for base64 video');
 
-      // The same v2-native payload is recorded on the klient error event, in
-      // order: turn.started → turn.ended → error → prompt.completed.
       const errorEvents = ctx.payloads('error');
       expect(errorEvents).toHaveLength(1);
       expect(errorEvents[0]?.['code']).toBe('provider.api_error');
@@ -1025,10 +907,6 @@ describe('video blocks', () => {
     }
   }, 30_000);
 });
-
-// ---------------------------------------------------------------------------
-// Tool-call / tool-result structure × providers.
-// ---------------------------------------------------------------------------
 
 describe('tool exchange structure', () => {
   it('openai: an unknown tool call still gets a paired (error) result on the wire', async () => {
@@ -1056,8 +934,6 @@ describe('tool exchange structure', () => {
       (message) => message['role'] === 'tool' && message['tool_call_id'] === 'call_unknown_1',
     );
     expect(toolMessage).toBeDefined();
-    // toolExecutor's fallback for a missing tool: an error result, so the
-    // exchange stays paired (engine-level toleration).
     expect(String(toolMessage?.['content'])).toContain('definitely_not_a_real_tool');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
   }, 30_000);
@@ -1083,8 +959,6 @@ describe('tool exchange structure', () => {
       return openAiMessages(1);
     };
 
-    // Plain openai: the base's extract_text fallback flattens the tool result
-    // to text, and the image re-attaches as a trailing user message.
     const openAiWire = await runMediaToolResultCase(M_OPENAI_VISION, 'media-result-openai');
     const openAiTool = openAiWire.find((message) => message['role'] === 'tool');
     expect(typeof openAiTool?.['content']).toBe('string');
@@ -1098,8 +972,6 @@ describe('tool exchange structure', () => {
     });
     expect(trailingContent.some((part) => part.type === 'image_url')).toBe(true);
 
-    // Composed kimi: trait mode hands shaping to the trait — the image part
-    // stays inside the tool message content; no extra user message appears.
     const kimiWire = await runMediaToolResultCase(M_KIMI, 'media-result-kimi');
     const kimiTool = kimiWire.find((message) => message['role'] === 'tool');
     const kimiContent = kimiTool?.['content'] as { type: string }[];
@@ -1137,7 +1009,6 @@ describe('tool exchange structure', () => {
       expect(wireId!.length, label).toBeLessThanOrEqual(64);
       expect(wireId, label).toMatch(/^[a-zA-Z0-9_-]+$/);
       const toolMessage = messages.find((message) => message['role'] === 'tool');
-      // Normalization rewrites call and result with the SAME mapping.
       expect(toolMessage?.['tool_call_id'], label).toBe(wireId);
     }
   }, 60_000);
@@ -1156,9 +1027,6 @@ describe('tool exchange structure', () => {
 
     expect(requests).toHaveLength(2);
     const userMessages = openAiMessages(1).filter((message) => message['role'] === 'user');
-    // A deliberate user cancel injects an interruption reminder between the
-    // aborted turn's prompt and the next user message, so the two prompts no
-    // longer merge into one wire message.
     expect(userMessages).toHaveLength(3);
     expect(String(userMessages[0]?.['content'])).toContain('first message');
     expect(String(userMessages[1]?.['content'])).toContain('<system-reminder>');
@@ -1168,10 +1036,6 @@ describe('tool exchange structure', () => {
   }, 60_000);
 });
 
-// ---------------------------------------------------------------------------
-// Scripted provider (mock server) errors — the l3 layer.
-// ---------------------------------------------------------------------------
-
 describe('provider HTTP errors', () => {
   it('a non-recoverable 422 fails the turn with provider.api_error + statusCode on the wire (l3)', async () => {
     const ctx = await newCase(M_OPENAI, 'openai-422');
@@ -1179,7 +1043,7 @@ describe('provider HTTP errors', () => {
 
     await promptAndWait(ctx, [{ type: 'text', text: 'hello' }]);
 
-    expect(requests).toHaveLength(1); // 422 is not retried, not reprojected
+    expect(requests).toHaveLength(1);
     const turnEnded = ctx.payloads('turn.ended');
     expect(turnEnded).toHaveLength(1);
     expect(turnEnded[0]?.['reason']).toBe('failed');
@@ -1205,8 +1069,6 @@ describe('provider HTTP errors', () => {
 
     await promptAndWait(ctx, [{ type: 'text', text: 'hello' }]);
 
-    // llmRequester recognizes the adjacency rejection and resends with the
-    // strict projection before the loop ever sees an error.
     expect(requests).toHaveLength(2);
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');
     expect(ctx.payloads('error')).toHaveLength(0);

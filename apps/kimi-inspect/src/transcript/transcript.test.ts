@@ -1,9 +1,3 @@
-/**
- * Transcript glue-layer tests — the app's own REST/WS/store plumbing. The L2
- * reducer semantics themselves are covered by `@moonshot-ai/transcript`'s own
- * test suite and are intentionally not re-tested here.
- */
-
 import {
   itemId,
   type StepHeader,
@@ -31,8 +25,6 @@ import {
   TranscriptChatStore,
 } from './store';
 import { TranscriptWs } from './ws';
-
-// ---------------------------------------------------------------- fixtures
 
 function turnHeader(n: number, state: TurnState = 'completed'): TurnHeader {
   return { kind: 'turn', turnId: `t${n}`, ordinal: n, state, origin: { kind: 'user' } };
@@ -215,8 +207,6 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
   return { ws, seen };
 }
 
-// ---------------------------------------------------------------- api
-
 describe('fetchTranscriptPage', () => {
   const pageData = {
     agent_id: 'main',
@@ -272,8 +262,6 @@ describe('fetchTranscriptPage', () => {
     ).rejects.toThrow('unexpected response shape');
   });
 });
-
-// ---------------------------------------------------------------- ops catch-up
 
 describe('fetchTranscriptOps', () => {
   const catchupData = {
@@ -332,8 +320,6 @@ describe('fetchTranscriptOps', () => {
     ).rejects.toThrow('unknown route');
   });
 });
-
-// ------------------------------------------------------------------ plan lookup
 
 describe('fetchTranscriptPlan', () => {
   const planEntry = {
@@ -429,8 +415,6 @@ describe('fetchTranscriptPlan', () => {
     ).rejects.toThrow('unexpected response shape');
   });
 });
-
-// ---------------------------------------------------------------- ws
 
 describe('TranscriptWs', () => {
   it('connects with the bearer subprotocol and sends the grade spec via subscribe_v2', () => {
@@ -603,10 +587,7 @@ describe('TranscriptWs', () => {
       const { seen } = makeWs();
       const first = FakeWs.instances[0]!;
       first.open();
-      // Open alone does not reconcile: the server attaches the transcript
-      // stream only after processing subscribe_v2.
       expect(seen.reconnects).toBe(0);
-      // Neither does the client_hello ack.
       const helloId = (first.sentFrames()[0] as { id: string }).id;
       first.serverFrame({ type: 'ack', id: helloId, code: 0, msg: 'success', payload: {} });
       expect(seen.reconnects).toBe(0);
@@ -637,8 +618,6 @@ describe('TranscriptWs', () => {
     expect(FakeWs.instances).toHaveLength(1);
   });
 });
-
-// ---------------------------------------------------------------- store
 
 describe('TranscriptChatStore', () => {
   it('applyPage(replace) installs the newest slice wholesale (items + globals)', () => {
@@ -679,7 +658,6 @@ describe('TranscriptChatStore', () => {
     });
     expect(store.getState().items.map((item) => itemId(item))).toEqual(['t1', 't2', 't3']);
     expect(store.getState().hasMoreOlder).toBe(true);
-    // Globals from the older page do not clobber the fresher live state.
     expect(store.getState().meta.activity).toBe('idle');
     store.applyPage({ ...emptyPage, items: [turnItem(2)], hasMoreOlder: false });
     expect(store.getState().items.map((item) => itemId(item))).toEqual(['t1', 't2', 't3']);
@@ -720,14 +698,12 @@ describe('TranscriptChatStore', () => {
 
   it('buffered ops converge when flushed onto freshly fetched pages', () => {
     const store = new TranscriptChatStore();
-    // Simulate: REST page lands AFTER the live ops were produced (buffered).
     const buffered: TranscriptOperation[] = [
       { op: 'turn.upsert', turn: turnHeader(1, 'running') },
       { op: 'step.upsert', turnId: 't1', step: stepHeader('t1.1', 1) },
       textFrameUpsert('t1', 't1.1', 't1.1.f1', ''),
       frameAppend('t1', 't1.1', 't1.1.f1', 0, 'hello'),
     ];
-    // The REST snapshot already includes part of the stream ('hel').
     const pageTurn: TranscriptTurn = {
       ...turnHeader(1, 'running'),
       steps: [
@@ -770,8 +746,6 @@ describe('recoverLoadedWindow', () => {
 
   it('pages backwards until the previous oldest turn is re-covered', async () => {
     const store = new TranscriptChatStore();
-    // The refresh landed the newest page (t36..t65) while the previously
-    // loaded window reached t1 — a count-based stop would drop t1..t5.
     store.applyPage(pageOf(range(36, 65), true), { replace: true });
 
     const fetched: string[] = [];
@@ -819,7 +793,6 @@ describe('recoverLoadedWindow', () => {
       },
       () => false,
     );
-    // The anchor no longer exists server-side: one no-progress probe, then stop.
     expect(fetched).toEqual(['t10']);
     expect(countTurns(store.getState().items)).toBe(11);
   });
@@ -887,7 +860,6 @@ describe('createCoalescedRunner', () => {
     await vi.waitFor(() => {
       expect(gates.length).toBe(2);
     });
-    // No third run: the two mid-run triggers were coalesced into one.
   });
 
   it('queues again when a trigger lands during the follow-up run', async () => {

@@ -1,16 +1,3 @@
-/**
- * WorkspaceDirBrowser — server-side filesystem browser living in the Workspace
- * Services view's left sidebar, replacing the old <select> of registered
- * workspaces. Directories are listed through the App-scope
- * `IHostFolderBrowser` (home + recent roots + one-level directory listing);
- * entries that are registered workspaces carry a `workspace` badge plus their
- * trust state (`trusted` / `untrusted`, read through the Workspace-scope
- * `IWorkspaceTrust`; servers predating that service simply show no trust
- * badge). "Select" registers the current folder on demand —
- * `IWorkspaceService.createOrTouch` is idempotent on root — before handing
- * the workspace to the parent.
- */
-
 import {
   IHostFolderBrowser,
   type FsBrowseEntry,
@@ -42,7 +29,6 @@ export function WorkspaceDirBrowser(props: {
 }) {
   const { klient, workspaces, onSelect } = props;
   const queryClient = useQueryClient();
-  /** Current browsed directory; null = the server default ($HOME). */
   const [path, setPath] = useState<string | null>(null);
 
   const home = useQuery({
@@ -66,7 +52,6 @@ export function WorkspaceDirBrowser(props: {
   });
 
   const workspaceList = workspaces ?? [];
-  /** normalized root → trusted; undefined when the server predates `workspaceTrust`. */
   const trustByRoot = useQuery({
     queryKey: ['workspace-trust', klient.baseUrl, workspaceList.map((ws) => ws.id).join(',')],
     enabled: workspaceList.length > 0,

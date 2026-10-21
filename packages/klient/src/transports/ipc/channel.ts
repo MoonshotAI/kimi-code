@@ -1,12 +1,3 @@
-/**
- * IPC client channel — connects to a `serveKlientIpc` host over a unix
- * domain socket. Calls are correlated by client-chosen ids with a per-call
- * deadline; event subscriptions are registered before the handshake
- * completes and flushed once it does. There is no automatic reconnect: a
- * broken socket rejects in-flight calls and stays closed (the WS transport
- * owns the resumable-connection story).
- */
-
 import { createConnection, type Socket } from 'node:net';
 
 import type {
@@ -25,7 +16,6 @@ const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 export interface IpcChannelOptions {
   readonly socketPath: string;
   readonly token?: string;
-  /** Per-call deadline (ms). Default `30000`; `0` disables. */
   readonly callTimeoutMs?: number;
 }
 
@@ -35,11 +25,6 @@ interface PendingCall {
   readonly timer: ReturnType<typeof setTimeout> | undefined;
 }
 
-/**
- * Async queue for streaming responses. The server pushes chunks via
- * `stream_data` frames; the client pulls them with `next()`. Back-pressure
- * is implicit: the queue buffers until the consumer drains.
- */
 interface PendingStream {
   push(chunk: unknown): void;
   end(): void;
@@ -77,13 +62,11 @@ export class IpcChannel implements KlientChannel {
       };
       this.socket.once('error', onError);
       this.socket.once('connect', () => {
-        // The host sends `ready` immediately; answer with the handshake.
         this.send({ type: 'hello', token: options.token });
         this.socket.off('error', onError);
         resolve();
       });
     });
-    // The promise is consumed lazily by call/listen; never let it reject unhandled.
     this.ready.catch(() => {});
 
     this.socket.on('data', (chunk) => {
@@ -97,7 +80,6 @@ export class IpcChannel implements KlientChannel {
       this.listens.clear();
     });
     this.socket.on('error', () => {
-      // 'close' always follows; teardown lives there.
     });
   }
 
@@ -128,8 +110,6 @@ export class IpcChannel implements KlientChannel {
       scope: scopeKindOf(scope),
       service,
       method,
-      // NDJSON is JSON: trailing optional args would cross as `null` and
-      // defeat the host's default parameters — trim them.
       arg: trimTrailingUndefined(args),
       workspaceId: scope.workspaceId,
       sessionId: scope.sessionId,
@@ -141,9 +121,6 @@ export class IpcChannel implements KlientChannel {
   stream(scope: ScopeRef, service: string, method: string, args: unknown[]): AsyncIterable<unknown> {
     return {
       [Symbol.asyncIterator]: () => {
-        // Simple queue: push/pull with deferred promises. `buffer` holds
-        // already-received chunks waiting for a `next()` call; `waiters`
-        // holds unresolved `next()` calls waiting for a chunk.
         const buffer: Array<IteratorResult<unknown>> = [];
         const waiters: Array<{
           resolve: (result: IteratorResult<unknown>) => void;
@@ -174,7 +151,6 @@ export class IpcChannel implements KlientChannel {
             } else {
               buffer.push(terminal);
             }
-            // Resolve remaining waiters with done
             for (const w of waiters) {
               w.resolve({ done: true, value: undefined });
             }
@@ -188,7 +164,6 @@ export class IpcChannel implements KlientChannel {
             if (waiter !== undefined) {
               waiter.reject(err);
             } else {
-              // Store as a throwing result
               buffer.push({ done: true, value: err } as IteratorResult<unknown>);
             }
             for (const w of waiters) {
@@ -198,7 +173,6 @@ export class IpcChannel implements KlientChannel {
           },
         };
 
-        // Start the stream after the handshake is done.
         let started = false;
         const ensureStarted = (): void => {
           if (started) return;
@@ -229,7 +203,6 @@ export class IpcChannel implements KlientChannel {
             ensureStarted();
             const buffered = buffer.shift();
             if (buffered !== undefined) {
-              // Check if this is an error stored as { done: true, value: Error }
               if (buffered.done && buffered.value instanceof Error) {
                 return Promise.reject(buffered.value);
               }
@@ -247,7 +220,6 @@ export class IpcChannel implements KlientChannel {
                 this.streams.delete(streamId);
                 this.send({ type: 'stream_cancel', id: streamId });
               }
-              // Resolve any pending waiters
               for (const w of waiters) {
                 w.resolve({ done: true, value: undefined });
               }
@@ -301,8 +273,6 @@ export class IpcChannel implements KlientChannel {
     this.socket.end();
     return Promise.resolve();
   }
-
-  // -------------------------------------------------------------------------
 
   private nextId(): string {
     this.seq += 1;
@@ -394,7 +364,6 @@ export class IpcChannel implements KlientChannel {
     try {
       this.socket.write(encodeFrame(frame));
     } catch {
-      // best-effort; the close handler handles teardown
     }
   }
 }

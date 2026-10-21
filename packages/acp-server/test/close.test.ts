@@ -42,8 +42,6 @@ describe('acp-server session/close', () => {
       };
       await c.send('session/close', { sessionId: created.sessionId });
 
-      // After close the server no longer routes the session — a follow-up
-      // prompt must surface invalid_params for the now-unknown sessionId.
       await expect(
         c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
       ).rejects.toThrow();

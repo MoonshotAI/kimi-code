@@ -1,11 +1,3 @@
-/**
- * zod-backed wire validation. Every procedure in the contract validates its
- * input tuple before it goes on the wire (caller bugs) and its output when it
- * comes back (server drift). Event payloads are validated on delivery;
- * failures there are reported, not thrown, so one bad event cannot kill a
- * subscription stream.
- */
-
 import { z } from 'zod';
 
 import type { ProcedureContract, StreamingProcedureContract } from '#/contract/types';
@@ -15,10 +7,8 @@ export type ValidationPhase = 'input' | 'output' | 'event' | 'chunk';
 export class KlientValidationError extends Error {
   constructor(
     readonly phase: ValidationPhase,
-    /** `service.method` for calls, the klient event name for events. */
     readonly procedure: string,
     readonly issues: z.ZodError['issues'],
-    /** The offending raw payload (input args, output data, or event data). */
     readonly payload: unknown,
   ) {
     super(
@@ -30,7 +20,6 @@ export class KlientValidationError extends Error {
   }
 }
 
-/** Parse the positional-args tuple; returns the normalized args to send. */
 export function parseInput(
   procedure: string,
   contract: ProcedureContract | StreamingProcedureContract,
@@ -43,7 +32,6 @@ export function parseInput(
   return result.data as unknown[];
 }
 
-/** Parse a wire result; returns the normalized data to hand to the caller. */
 export function parseOutput(
   procedure: string,
   contract: ProcedureContract,
@@ -56,7 +44,6 @@ export function parseOutput(
   return result.data;
 }
 
-/** Validate one streamed chunk; throws on mismatch. */
 export function parseChunk(
   procedure: string,
   contract: StreamingProcedureContract,
@@ -69,7 +56,6 @@ export function parseChunk(
   return result.data;
 }
 
-/** Parse an event payload without throwing; `undefined` on failure. */
 export function parseEvent(
   event: string,
   schema: z.ZodType,

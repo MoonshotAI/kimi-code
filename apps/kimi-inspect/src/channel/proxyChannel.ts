@@ -1,16 +1,3 @@
-/**
- * `ProxyChannel` — an `IChannel` bound to one Service, routing `call`s to
- * kap-server's `/api/v1/debug` HTTP surface. Every call `POST`s the method
- * name to the Service base URL with the complete argument array as the JSON
- * body, then unwraps the project envelope: a non-zero `code` throws
- * `RPCError`, otherwise `data` is returned. Non-function members answer as
- * property reads through the same route (the dispatcher returns them as-is).
- *
- * `listen` cannot be served by HTTP: the v2 event socket (`/api/v2/ws`) that
- * used to back Service emitter events was removed, so `listen` throws and
- * the UI fetches Service state on demand instead.
- */
-
 import type { Event, IChannel } from './channel';
 import { RPCError } from './errors';
 
@@ -23,11 +10,8 @@ interface Envelope<T> {
 }
 
 export interface ProxyChannelOptions {
-  /** Service base URL, e.g. `http://127.0.0.1:58627/api/v1/debug[/session/:sid[/agent/:aid]]/:service`. */
   readonly baseUrl: string;
-  /** Optional bearer token. */
   readonly token?: string;
-  /** `fetch` implementation; defaults to the global `fetch`. */
   readonly fetch?: typeof fetch;
 }
 
@@ -39,8 +23,6 @@ export class ProxyChannel implements IChannel {
   constructor(opts: ProxyChannelOptions) {
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
     this.token = opts.token;
-    // Bind the global fetch: browsers throw "Illegal invocation" when the
-    // native function is invoked with a non-Window receiver.
     this.fetchImpl = opts.fetch ?? fetch.bind(globalThis);
   }
 

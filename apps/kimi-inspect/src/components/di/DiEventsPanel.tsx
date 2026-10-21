@@ -1,17 +1,3 @@
-/**
- * DI Events panel — event-subscription introspection
- * (`IDebugEventsService.subscriptions`), two merged sides:
- *
- *   - Subscriptions: the unit-book side — every materialized unit's ledger
- *     entries labeled as an event subscription (`on:<name>` from a named
- *     Emitter or the fiber `on` capability, `disposable:EventSubscription`
- *     from an unnamed one), grouped by scope path;
- *   - Bus listeners: the emitter-side fallback — per-`IEventBus` listener
- *     counts (`*` = the full stream) plus the global `IEventService` count,
- *     which also cover subscriptions never registered on a unit book.
- *
- * Pure React + Tailwind.
- */
 import type {
   DebugEventBusSnapshot,
   DebugEventSubscription,

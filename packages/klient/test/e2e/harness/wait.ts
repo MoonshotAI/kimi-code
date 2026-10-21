@@ -1,20 +1,10 @@
-/**
- * Higher-level wait helpers built on top of `WsClient.waitForFrame` and
- * `HttpClient.getSession`. Kept separate from `client.ts` so scenarios can
- * import them directly without dragging the whole `DaemonClient` class.
- */
 import type { Session } from '@moonshot-ai/kap-server/protocol/session';
 
 import type { HttpClient } from './http.js';
 import type { AnyFrame, WsClient } from './ws.js';
 
-/** Default 60s wait for a single event frame — matches approval/question TTL. */
 export const DEFAULT_FRAME_TIMEOUT_MS = 60_000;
 
-/**
- * Wait for the first WS frame matching `predicate`. Thin wrapper that fills
- * the default timeout — most scenarios shouldn't have to think about it.
- */
 export function waitForFrame(
   ws: WsClient,
   predicate: (frame: AnyFrame) => boolean,
@@ -23,12 +13,6 @@ export function waitForFrame(
   return ws.waitForFrame(predicate, opts?.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS);
 }
 
-/**
- * Poll `GET /sessions/{sid}` until aggregate `busy` matches. Useful as a
- * final synchronization point — the server's `turn.ended` arrives before
- * the session work projection flips to false, so scenarios that want a
- * quiescent session must poll.
- */
 export async function waitForSessionBusy(
   http: HttpClient,
   sid: string,

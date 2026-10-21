@@ -1,10 +1,3 @@
-/**
- * `bootstrapService` — frozen startup snapshot: host facts and app path
- * layout. Mirrors `agent-core-v2/app/bootstrap/bootstrap.ts`. The string
- * properties are exposed as zero-arg reads; `clientIdentity` returns the
- * host identity object (which replaced the flat `clientVersion` scalar).
- */
-
 import { z } from 'zod';
 
 import type { ServiceContract } from '../types.js';

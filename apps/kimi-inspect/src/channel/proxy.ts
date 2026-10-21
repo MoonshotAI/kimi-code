@@ -1,13 +1,3 @@
-/**
- * Typed proxy turning an `IChannel` (bound to one Service) into a value
- * satisfying that Service's interface `T` — VS Code's `ProxyChannel.toService`.
- *
- * Members named `onUpperCase` become channel events; every other property access
- * becomes a function forwarding its complete argument array to `channel.call`
- * (the dispatcher also answers property reads this way). The shared interface
- * `T` is the whole contract, with no per-method allowlist or renaming.
- */
-
 import type { IChannel, ServiceProxy } from './channel';
 
 export function makeProxy<T extends object>(channel: IChannel): ServiceProxy<T> {

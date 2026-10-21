@@ -1,23 +1,3 @@
-/**
- * Per-(session, agent) transcript state for the chat view.
- *
- * A thin observable wrapper over the package's L1 convergence path
- * (`applyOperation` on an `AgentState`) — the reducer is NOT re-implemented
- * here. State arrives through exactly two channels:
- *
- *  - REST pages (`applyPage`): the only source of FULL state. A `replace`
- *    page (initial load / full refresh) is the newest slice and replaces
- *    local state wholesale, globals included; a non-replace page is an older
- *    slice fetched with `before_turn` and prepended ahead of the loaded
- *    window (items only — globals stay with the fresher live state).
- *  - WS delta ops (`applyOps`): incremental `transcript.ops` only. Ops are
- *    idempotent upserts plus offset-placed appends, so ops buffered while a
- *    REST refresh is in flight converge when flushed onto the fresh pages.
- *
- * `onGap` surfaces `append` placement gaps so the caller can trigger a full
- * REST refresh (the WS channel carries no snapshots to fall back on).
- */
-
 import {
   applyOperation,
   EMPTY_AGENT_STATE,
@@ -44,14 +24,6 @@ export function hasTurnId(items: readonly TranscriptItem[], turnId: string): boo
   return items.some((item) => item.kind === 'turn' && item.turnId === turnId);
 }
 
-/**
- * Re-cover a previously loaded window after a full refresh: page backwards
- * until `prevOldestTurnId` (the window's oldest turn before the refresh) is
- * loaded again. A count-based stop silently drops the window's head when new
- * turns arrived meanwhile (the server window shifted, so the same count no
- * longer reaches as far back). Stops at the oldest available page
- * (`hasMoreOlder` false), on a no-progress page, or when `isDisposed`.
- */
 export async function recoverLoadedWindow(
   store: TranscriptChatStore,
   prevOldestTurnId: string | undefined,
@@ -72,12 +44,6 @@ export async function recoverLoadedWindow(
   }
 }
 
-/**
- * Serialize refresh-style triggers: at most one run in flight; a trigger that
- * arrives while a run is in flight is coalesced into exactly one follow-up run
- * (so a subscribe ack landing mid-load still produces a post-load reconcile
- * instead of being dropped).
- */
 export function createCoalescedRunner(run: () => Promise<void>): () => void {
   let running = false;
   let queued = false;
@@ -102,14 +68,12 @@ export class TranscriptChatStore {
   private state: AgentState = EMPTY_AGENT_STATE;
   private readonly listeners = new Set<() => void>();
 
-  /** Called when an `append` op could not be placed — the caller should refresh. */
   onGap: (() => void) | undefined;
 
   getState(): AgentState {
     return this.state;
   }
 
-  /** `useSyncExternalStore`-compatible subscribe. */
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => {
@@ -117,12 +81,6 @@ export class TranscriptChatStore {
     };
   };
 
-  /**
-   * Merge one REST page. With `replace`, the page is the newest slice and
-   * becomes the whole state (initial load / full refresh); otherwise it is an
-   * older slice prepended ahead of the window (deduped by item id), updating
-   * only `items` and `hasMoreOlder`.
-   */
   applyPage(page: TranscriptPage, opts?: { replace?: boolean }): void {
     if (opts?.replace === true) {
       this.state = {
@@ -135,8 +93,6 @@ export class TranscriptChatStore {
           page.attachments.map((attachment) => [attachment.attachmentId, attachment]),
         ),
         todos: new Map(page.todos.map((todo) => [todo.todoId, todo])),
-        // The page contract carries no prompt slice yet; prompt.upsert ops
-        // still accumulate through the shared reducer between refreshes.
         prompts: new Map(),
         meta: page.meta,
         pendingInteractions: new Set(page.pendingInteractions),
@@ -156,7 +112,6 @@ export class TranscriptChatStore {
     this.notify();
   }
 
-  /** Apply incremental WS ops; notifies once per changed batch. */
   applyOps(ops: readonly TranscriptOperation[]): void {
     let changed = false;
     for (const op of ops) {

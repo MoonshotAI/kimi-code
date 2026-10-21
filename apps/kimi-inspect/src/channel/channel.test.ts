@@ -1,9 +1,3 @@
-/**
- * Channel layer unit tests — `ProxyChannel` URL/envelope semantics,
- * `makeProxy` routing, the HTTP-only `listen` failure, and the debug-surface
- * probe (`/api/v1/debug` is the only RPC surface; there is no v2 fallback).
- */
-
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Event, IChannel } from './channel';

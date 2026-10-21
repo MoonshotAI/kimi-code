@@ -1,15 +1,4 @@
-/**
- * Shared agent-scope wire schemas — the payload/result vocabulary reused by
- * the per-domain contracts in `agent/services.ts` and pinned against the
- * engine types by `test/contract-parity.ts`. `PromptPayload.input` mirrors the
- * `PromptPart` subset of `ContentPart` (text / image_url / video_url) from
- * `agent-core-v2/llm-adapter/contract/message.ts`. Task wire shapes mirror the
- * `TaskInfo` union in `protocol/src/events.ts`.
- */
-
 import { z } from 'zod';
-
-// ── prompt parts ────────────────────────────────────────────────────────────
 
 const textPartSchema = z.object({
   type: z.literal('text'),
@@ -26,37 +15,29 @@ const videoUrlPartSchema = z.object({
   videoUrl: z.object({ url: z.string(), id: z.string().optional() }),
 });
 
-/** `PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>`. */
 export const promptPartSchema = z.discriminatedUnion('type', [
   textPartSchema,
   imageUrlPartSchema,
   videoUrlPartSchema,
 ]);
 
-// ── payloads / results ──────────────────────────────────────────────────────
-
 export const emptyPayloadSchema = z.object({});
 
 export const promptPayloadSchema = z.object({
   input: z.array(promptPartSchema),
-  // Mirrors `PromptPayload.promptId` in the engine (client-chosen prompt
-  // record id, echoed on the consuming turn's `turn.started`).
   promptId: z.string().min(1).optional(),
 });
 
-/** Same shape as `PromptSkillActivation` in the engine. */
 export const promptSkillActivationSchema = z.object({
   name: z.string(),
   args: z.string().optional(),
 });
 
-/** Same shape as `PromptWithSkillsInput` in the engine. */
 export const promptWithSkillsPayloadSchema = promptPayloadSchema.extend({
   skills: z.array(promptSkillActivationSchema).min(1),
   steerIfActive: z.boolean().optional(),
 });
 
-/** Same shape as `PromptWithSkillsResult` in the engine. */
 export const promptWithSkillsResultSchema = z.object({
   turn_id: z.number().optional(),
   prompt_id: z.string(),
@@ -64,12 +45,10 @@ export const promptWithSkillsResultSchema = z.object({
   state: z.enum(['running', 'queued', 'blocked']),
 });
 
-/** Same shape as `SteerPayload` in the engine. */
 export const steerPayloadSchema = z.object({
   input: z.array(promptPartSchema),
 });
 
-/** Same shape as `SkillActivationInput`'s wire subset in the engine. */
 export const activateSkillPayloadSchema = z.object({
   name: z.string(),
   args: z.string().optional(),
@@ -132,29 +111,22 @@ export const usageStatusSchema = z.object({
   total: tokenUsageSchema.optional(),
 });
 
-/**
- * `AgentContextData` — `history` items are full `ContextMessage`s (deep
- * `Message` / `Tool` / `PromptOrigin` unions); mirrored as `unknown` entries.
- */
 export const agentContextDataSchema = z.object({
   history: z.array(z.unknown()),
   tokenCount: z.number(),
 });
 
-/** `AgentCommandInfo` (`agent-core-v2/agent/command/agentCommand.ts`). */
 export const agentCommandInfoSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
   source: z.string(),
 });
 
-/** The facade's `runCommand` input shape. */
 export const runCommandPayloadSchema = z.object({
   name: z.string(),
   args: z.string().optional(),
 });
 
-/** `PlanData = null | { id, content, path }` — null is JSON-representable. */
 export const planDataSchema = z.union([
   z.null(),
   z.object({
@@ -194,7 +166,6 @@ const taskInfoBaseFields = {
   timeoutMs: z.number().optional(),
 } as const;
 
-/** Protocol `TaskInfo` union (`protocol/src/events.ts`). */
 export const agentTaskInfoSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('process'),

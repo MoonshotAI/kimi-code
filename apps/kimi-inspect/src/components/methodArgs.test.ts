@@ -108,7 +108,6 @@ describe('buildArgs', () => {
   it('truncates trailing empty params but keeps interior holes', () => {
     const fields = parseParamFields('a, b, c');
     expect(buildArgs(fields, { '0': 'x' })).toEqual(['x']);
-    // Interior hole: `b` empty, `c` filled — the hole serializes as null.
     expect(JSON.parse(JSON.stringify(buildArgs(fields, { '0': 'x', '2': 'z' })))).toEqual([
       'x',
       null,

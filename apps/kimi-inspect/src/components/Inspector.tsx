@@ -1,18 +1,3 @@
-/**
- * Agent inspector — the `Agent` tab of the chat view's right dock
- * (`RightPanel`; it used to be a standalone 420px column on the far right).
- * Hosts the agent switcher, the Plan lookup card, and the agent Service
- * panels (`ScopePanels`). The session scope lives in the `SessionPane`
- * column next to the sidebar (pending interactions, session Services,
- * session State); the app-scope (server-level) Services live in their own
- * rail view (`AppServicesView`), not here.
- *
- * Everything here is fetch-on-demand (Load / Refresh buttons): the v2 event
- * socket (`/api/v2/ws`) that used to push core/session/agent event streams
- * — live panel refetches, the pending-interaction push, the merged event
- * log — was removed server-side, so there is no live push to render.
- */
-
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
@@ -56,7 +41,6 @@ export function Inspector({
     );
   }, [meta.data]);
 
-  // Keep the selected agent valid as the registry changes.
   const effectiveAgent = agentIds.includes(agentId) ? agentId : agentIds[0]!;
   const runtimeBinding = useQuery({
     queryKey: ['agent-runtime-binding', klient.baseUrl, sessionId, effectiveAgent],
@@ -68,11 +52,6 @@ export function Inspector({
     if (effectiveAgent !== agentId) onAgentChange(effectiveAgent);
   }, [effectiveAgent, agentId, onAgentChange]);
 
-  // Subagents stay in the metadata registry even when their scope is not
-  // materialized in this process (created before a restart, or disposed on
-  // session close), so the switcher lists entries that cannot be called.
-  // Mark one as "not loaded" when an agent-scope call comes back with
-  // `agent.not_found` (message names the agent).
   const [stoppedAgents, setStoppedAgents] = useState<ReadonlySet<string>>(new Set());
   useEffect(() => setStoppedAgents(new Set()), [sessionId]);
   const noteAgentError = (agent: string, error: unknown) => {
@@ -81,9 +60,6 @@ export function Inspector({
     }
   };
 
-  // Resolve a Service proxy by channel name, 1:1 with the channel descriptor
-  // from `/api/v1/debug/channels`. Returns null when the scope needs a
-  // session that isn't selected/ready.
   const proxyFor = useMemo(() => {
     return (name: string): AnyService | null => {
       return (
@@ -100,7 +76,7 @@ export function Inspector({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Agent switcher */}
+      { }
       {sessionId !== null ? (
         <div className="border-b border-neutral-800 px-3 py-2">
           <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-neutral-500">
@@ -174,13 +150,6 @@ export function Inspector({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Plan lookup — `GET /api/v1/sessions/{id}/transcript/plan`: the reviewed plan
-// of one ExitPlanMode tool call, queried by tool_call_id (copy it from a tool
-// frame in the chat view). Read-only, fetched on demand like everything else
-// here.
-// ---------------------------------------------------------------------------
-
 function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }) {
   const { baseUrl, config } = useConnection();
   const [toolCallId, setToolCallId] = useState('');
@@ -188,8 +157,6 @@ function PlanCard({ sessionId, agentId }: { sessionId: string; agentId: string }
   const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(false);
 
-  // A plan belongs to one agent's transcript — stale results from another
-  // session/agent are misleading, so reset on switch.
   useEffect(() => {
     setResult(null);
     setError(null);

@@ -16,14 +16,6 @@ function findPackageRoot(importer: string | undefined): string | undefined {
   }
 }
 
-/**
- * Resolve `#/` subpath imports the way Node's package.json `imports` field does,
- * scoped to the importer's owning package. acp-server pulls in
- * `@moonshot-ai/agent-core-v2` source (the full barrel), whose internal `#/foo`
- * imports must resolve against that package's own `src/`.
- *
- * Mirrors `packages/server-v2/vitest.config.ts`.
- */
 function hashImportsPlugin(): Plugin {
   return {
     name: 'resolve-hash-imports',
@@ -43,8 +35,6 @@ function hashImportsPlugin(): Plugin {
 }
 
 export default defineConfig({
-  // `rawTextPlugin` is required because acp-server pulls in agent-core-v2's
-  // full barrel, which imports `*.md?raw` prompt templates.
   plugins: [rawTextPlugin(), hashImportsPlugin()],
   test: {
     name: 'acp-server',

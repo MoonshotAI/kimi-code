@@ -1,24 +1,3 @@
-/**
- * App shell — selection state and session resume. There is no live event
- * push anymore: the v2 socket (`/api/v2/ws`) that fed the core/session/agent
- * event streams was removed server-side, so Service panels and the pending
- * interactions card fetch on demand and the sidebar polls.
- * Layout: header / icon rail / view. The `chat` view is a strip of the
- * left sidebar (a workspace → session tree), the chat column, and the
- * right dock (`RightPanel`) merging the transcript audit, the agent
- * inspector, and the session pane under Audit / Agent / State / Session
- * tabs;
- * the `models` view is the full-width model catalog; the `services` view is
- * the full-width app-scope Service reflection (`AppServicesView`); the
- * `workspace` view is the workspace-scope counterpart
- * (`WorkspaceServicesView`, with a workspace picker on top); the
- * `bash` view is the full-width `IBashParserService` playground
- * (`BashParserView`); the `di` view is the engine's Service × Effect × DI
- * debug surface (`DiInspectionView`); the `search` view is the full-width
- * global message search (`SearchView`) whose hits navigate back into the
- * chat timeline.
- */
-
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import { useEffect, useState } from 'react';
 
@@ -46,15 +25,9 @@ export function App() {
   const [view, setView] = useState<AppView>('chat');
   const [ready, setReady] = useState(false);
   const [resumeError, setResumeError] = useState<unknown>(null);
-  /** Audit trail of the chat view's transcript channel, rendered in the right dock. */
   const [trail, setTrail] = useState<AuditTrail | null>(null);
-  /** Pending chat navigation requested from another view (search result click). */
   const [jump, setJump] = useState<ChatJump | null>(null);
 
-  // Resume (materialize) the session on the server when it is selected, so
-  // session / agent scoped Services become reachable. Session lifecycle lives
-  // on the workspace handler (Workspace scope): the index yields the
-  // session's workspaceId, then the handler resumes it.
   useEffect(() => {
     if (sessionId === null) return;
     let cancelled = false;
@@ -77,17 +50,12 @@ export function App() {
     };
   }, [klient, sessionId]);
 
-  // Switching servers invalidates every session/agent selection: sessions
-  // belong to the server they were listed from.
   useEffect(() => {
     setSessionId(null);
     setAgentId('main');
     setJump(null);
   }, [baseUrl]);
 
-  // A search hit opens the chat view at its session / agent / turn / step.
-  // Title hits belong to the session (agent '') and carry no turn: switch
-  // over without a scroll target.
   const openSearchHit = (hit: SearchHit): void => {
     setSessionId(hit.sessionId);
     setAgentId(hit.agentId === '' ? 'main' : hit.agentId);

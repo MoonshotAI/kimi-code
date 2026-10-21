@@ -1,8 +1,3 @@
-/**
- * Audit-layer tests: the trail recorder, the structural diff, serialization,
- * and tail-preserving truncation used by the chat view's audit panel.
- */
-
 import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 import { describe, expect, it } from 'vitest';
 
@@ -25,8 +20,6 @@ function turnItem(n: number): TranscriptTurn {
 function stateWith(items: readonly TranscriptTurn[]): AgentState {
   return { ...EMPTY_AGENT_STATE, items };
 }
-
-// ---------------------------------------------------------------- diff
 
 describe('diffValue', () => {
   it('collapses reference-equal subtrees to unchanged without children', () => {
@@ -119,14 +112,10 @@ describe('diffValue', () => {
     const meta = node.children?.get('meta');
     expect(meta?.status).toBe('modified');
     expect(meta?.children?.get('goal')?.status).toBe('added');
-    // Whole-subtree add: `modes` was absent before, so the block (plan
-    // included) is marked added without descending into children.
     expect(meta?.children?.get('modes')?.status).toBe('added');
     expect(meta?.children?.get('modes')?.children).toBeUndefined();
   });
 });
-
-// ---------------------------------------------------------------- serialize
 
 describe('serializeState', () => {
   it('turns maps into sorted plain objects and sets into arrays', () => {
@@ -151,8 +140,6 @@ describe('serializeState', () => {
   });
 });
 
-// ---------------------------------------------------------------- truncate
-
 describe('tailTrunc', () => {
   it('returns short strings unchanged', () => {
     expect(tailTrunc('hello')).toBe('hello');
@@ -167,8 +154,6 @@ describe('tailTrunc', () => {
     expect(out).not.toContain('head-padding'.repeat(10));
   });
 });
-
-// ---------------------------------------------------------------- trail
 
 describe('AuditTrail', () => {
   const page = {

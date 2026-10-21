@@ -1,30 +1,8 @@
-/**
- * Diff-aware state tree for the audit panel.
- *
- * Renders a serialized `AgentState` (see `audit/serialize.ts`) as a
- * collapsible tree, colored by the structural diff against the previous
- * trail entry: added = green, removed = red + strikethrough, modified =
- * amber (`old → new` on leaves). Every field is rendered — long strings
- * are tail-truncated (`tailTrunc`) but no key is ever dropped, and a string
- * containing newlines collapses into one compact button (first-line preview
- * + line count) whose hover pops a `fixed` full-text panel at the button's
- * right edge.
- *
- * The tree is driven entirely by a `DiffNode` root: diff mode passes
- * `diffValue(prev, next)`, plain state mode passes `plainNode(value)`.
- * Diff nodes that carry an object/array but no children (whole-subtree
- * added/removed, or reference-equal unchanged subtrees collapsed by the
- * diff fast path) are expanded into same-status blocks at render time
- * (`blockNode`) — they show as collapsible `{ …N }` rows instead of an
- * unreadable one-line JSON dump.
- */
-
 import { useEffect, useRef, useState } from 'react';
 
 import { elementId, type DiffNode, type DiffStatus } from '../../audit/diff';
 import { tailTrunc } from '../../audit/truncate';
 
-/** Build an all-`unchanged` tree over a plain value (plain state mode). */
 export function plainNode(value: unknown): DiffNode {
   return blockNode(value, 'unchanged');
 }
@@ -82,17 +60,6 @@ function Leaf({ value, tone }: { value: unknown; tone: DiffStatus }) {
   return <span className={className}>{JSON.stringify(value) ?? 'unknown'}</span>;
 }
 
-/**
- * Multiline string leaf: rendered as one compact button (first-line preview
- * + line count) so a prompt or tool output never stretches the tree. Hovering
- * the button pops a `fixed` panel at its right edge with the full text —
- * `fixed` because the tree sits inside an `overflow-y-auto` column that
- * would clip an absolutely-positioned popup. A 150 ms close delay lets the
- * pointer travel from the button into the panel (to scroll or select).
- * `popupStyle` keeps the whole panel inside the viewport: the total height
- * is capped by the space left below the clamped top edge, and the panel
- * flips to the button's left side when the remaining right space is cramped.
- */
 function popupStyle(rect: DOMRect): React.CSSProperties {
   const margin = 8;
   const vh = window.innerHeight;
@@ -170,9 +137,6 @@ function Node({
   depth: number;
   defaultDepth: number;
 }) {
-  // Childless object/array nodes (whole-subtree added/removed, or
-  // reference-equal unchanged subtrees) are expanded into same-status
-  // blocks so every field stays visible — never a one-line JSON dump.
   const raw = node.status === 'removed' ? node.prev : node.value;
   const effective =
     node.children === undefined && typeof raw === 'object' && raw !== null
@@ -239,7 +203,6 @@ export function StateTree({
   defaultDepth = 0,
 }: {
   root: DiffNode;
-  /** Unchanged levels opened by default (diff mode 0 = only changes auto-open). */
   defaultDepth?: number;
 }) {
   if (root.children === undefined) {

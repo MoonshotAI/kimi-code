@@ -1,17 +1,3 @@
-/**
- * DI debug feed — a dedicated global-events socket for the DI view. The
- * session activity hub (`useSessionActivities`) lives with the chat Sidebar,
- * which unmounts when the DI view is active, so the DI view owns its own
- * `GlobalEventsWs` (only one of the two is ever connected at a time).
- *
- * Every `event.di.unit_changed` frame invalidates the `['di']` query prefix
- * (the same pattern as `event.session.created` invalidating `['sessions']`),
- * so all DI panels refetch on unit transitions instead of waiting out their
- * poll interval. Bursts (a cascade flipping many units at once) are coalesced
- * with a short trailing throttle; a reconnect invalidates immediately, since
- * live transitions were missed while the socket was down.
- */
-
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
 

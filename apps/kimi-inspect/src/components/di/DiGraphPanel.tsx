@@ -1,32 +1,3 @@
-/**
- * DI Deps panel — the persistent dependency DAG (`IDebugGraphService.graph`)
- * as Finder-style Miller columns with path-scoped relation markers. Edges
- * point consumer → dependency, so "X depends on Y" ⟺ an edge
- * `from: X → to: Y`:
- *
- *   - column 0 lists the roots: services that never appear as an edge's `to`
- *     (nothing consumes them, isolated nodes included), token-sorted,
- *     constrained by the scope filter; each root row carries the level-0
- *     color bar;
- *   - clicking a row in column N truncates the expansion path there and
- *     opens column N+1 with that service's direct dependencies (along `to`,
- *     unfiltered — cross-scope rows get a scopePath subtitle);
- *   - relation bars are path-scoped: a row's left edge carries one 3px bar
- *     per path ancestor that depends on it DIRECTLY (edge ancestor → node),
- *     ordered by ancestor depth — the direct parent always contributes one,
- *     and a grandparent with a skip-level edge adds another. Every color is
- *     the fixed per-LEVEL identity color (`levelColor(depth)`), so a bar
- *     reads directly as "depended on by the service N levels up", identical
- *     in every path; column headers carry the parent level's color chip so
- *     bars map back to ancestors;
- *   - path highlight: rows covered by the closure (reachable along `to`) of
- *     the path's root get a faint background in the level-0 color;
- *   - rows without dependencies are dimmed and carry no chevron; a row
- *     already in the current path is marked ↩ (cycle guard — columns only
- *     ever open on click, so there is no auto-recursion).
- *
- * Pure React + Tailwind, no graph or layout library.
- */
 import type { UnitState } from '@moonshot-ai/agent-core-v2/_base/di/cascadeEngine';
 import type { DebugGraph, DebugGraphNode } from '@moonshot-ai/agent-core-v2/debug/debugGraph';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -40,11 +11,6 @@ const STATE_COLORS: Record<UnitState | 'none', string> = {
   none: '#525252',
 };
 
-/**
- * Fixed identity color per path depth (level): `levelColor(d)` is the same
- * for every service at depth d in every path, so a row's color bars read
- * directly as "depended on by the service at level 0 / 1 / 2 …".
- */
 const LEVEL_PALETTE = [
   '#f87171',
   '#fb923c',
@@ -80,18 +46,12 @@ function fallbackNode(id: string): DebugGraphNode {
 
 interface DepsColumn {
   readonly title: string;
-  /**
-   * The scope the column's rows belong to by default ('' = unfiltered root
-   * column): rows from any other scope get a scopePath subtitle, as do all
-   * rows when the column spans more than one scope.
-   */
   readonly homeScope: string;
   readonly items: readonly DebugGraphNode[];
 }
 
 export function DiGraphPanel({ graph }: { graph: DebugGraph }) {
   const [scopeFilter, setScopeFilter] = useState('');
-  /** Selected row id per column — path[i] is the row expanded into column i+1. */
   const [path, setPath] = useState<readonly string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -102,7 +62,6 @@ export function DiGraphPanel({ graph }: { graph: DebugGraph }) {
 
   const nodesById = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
 
-  /** Direct dependencies per consumer id (edge `to` endpoints), deduped. */
   const depsOf = useMemo(() => {
     const acc = new Map<string, Set<string>>();
     for (const e of graph.edges) {
@@ -113,7 +72,6 @@ export function DiGraphPanel({ graph }: { graph: DebugGraph }) {
     return acc;
   }, [graph]);
 
-  /** Services nothing consumes (never an edge's `to`), scope-filtered. */
   const roots = useMemo(() => {
     const consumed = new Set(graph.edges.map((e) => e.to));
     const pool =
@@ -121,9 +79,6 @@ export function DiGraphPanel({ graph }: { graph: DebugGraph }) {
     return pool.filter((n) => !consumed.has(n.id)).toSorted(byToken);
   }, [graph, scopeFilter]);
 
-  // Walk the path, truncating it at the first entry that is no longer
-  // selectable (scope filter change or data refresh), so rendering and
-  // follow-up clicks always work from a valid prefix.
   const { columns, usedPath } = useMemo(() => {
     const columns: DepsColumn[] = [];
     const usedPath: string[] = [];
@@ -151,7 +106,6 @@ export function DiGraphPanel({ graph }: { graph: DebugGraph }) {
     return { columns, usedPath };
   }, [scopeFilter, path, roots, depsOf, nodesById]);
 
-  // Keep the deepest column in view as the path grows.
   useEffect(() => {
     const el = scrollRef.current;
     if (el !== null) el.scrollLeft = el.scrollWidth;
@@ -161,13 +115,8 @@ export function DiGraphPanel({ graph }: { graph: DebugGraph }) {
     setPath([...usedPath.slice(0, columnIndex), id]);
   };
 
-  // Path context: the root the current path starts at (column 0 only holds
-  // roots, so this is always one — guarded anyway).
   const pathRootId = usedPath[0];
 
-  // Path-highlight: nodes reachable (along `to`) from the path's root,
-  // tinted in the fixed level-0 color. Only the path root's closure is
-  // needed — computed lazily per selection.
   const pathTint = pathRootId === undefined ? undefined : `${levelColor(0)}1a`;
   const pathClosure = useMemo(() => {
     if (pathRootId === undefined) return undefined;
@@ -285,9 +234,6 @@ function DepsColumnView({
             const inPath = usedPath.slice(0, columnIndex).includes(node.id);
             const showScope =
               mixedScopes || (column.homeScope !== '' && node.scopePath !== column.homeScope);
-            // Path-scoped relation bars: column 0 rows carry the level-0
-            // color; expanded columns carry one bar per path ancestor with a
-            // DIRECT edge to this node, each in that ancestor's level color.
             const bars: { color: string; label: string }[] = [];
             if (columnIndex === 0) {
               bars.push({ color: levelColor(0), label: node.token });

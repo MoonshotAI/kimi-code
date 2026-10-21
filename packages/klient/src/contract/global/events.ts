@@ -1,11 +1,3 @@
-/**
- * Klient-level global events — the public, typed, namespaced event surface.
- * Each registration binds a public event name to its underlying source (the
- * `IEventService` bus or one service's `onDid*` emitter) plus the zod schema
- * its payload must satisfy. Consumers never see the engine's `onDid`/`onWill`
- * naming; unknown bus event types are not forwarded.
- */
-
 import { z } from 'zod';
 
 import type { ConfigChangedEvent } from '@moonshot-ai/agent-core-v2/app/config/config';
@@ -17,12 +9,10 @@ import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/k
 import { stringDeltaSchema } from '../helpers.js';
 import type { EventRegistration } from '../types.js';
 
-/** Payload of `event.session.archived` on the global bus. */
 export interface SessionArchivedPayload {
   readonly sessionId: string;
 }
 
-/** Payload of `session.meta.updated` on the global bus (`session/sessionMetadata/promptMetadata.ts`). */
 export interface SessionMetaUpdatedPayload {
   readonly agentId: string;
   readonly sessionId: string;
@@ -34,12 +24,10 @@ export interface SessionMetaUpdatedPayload {
   };
 }
 
-/** Payload of `event.model_catalog.changed` — same shape as a provider-discovery refresh result. */
 export type CatalogChangedPayload = Awaited<
   ReturnType<IProviderDiscoveryService['refreshProviderModels']>
 >;
 
-/** Public event name → payload type. Keys must stay in sync with `globalEvents`. */
 export interface KlientEventPayloads {
   'config.changed': ConfigChangedEvent;
   'config.sectionChanged': ConfigChangedEvent;
@@ -97,7 +85,6 @@ export const catalogChangedSchema = z.object({
     .optional(),
 });
 
-/** Public event name → source binding + payload schema. */
 export const globalEvents = {
   'config.changed': {
     kind: 'emitter',

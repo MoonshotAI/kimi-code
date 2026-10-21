@@ -1,15 +1,3 @@
-/**
- * React binding for the session activity hub: one hub per (server, token),
- * torn down on server switch or unmount. Consumers read per-session coarse
- * activity (`get(sessionId)`) and re-render on every store bump; list-level
- * signals invalidate the `['sessions']` / `['v2-sessions']` react-query lists
- * directly.
- *
- * The hub is created inside `useEffect` (not `useMemo`): under StrictMode
- * the mount → cleanup → re-mount cycle runs the cleanup of the FIRST mount,
- * and a memo-created hub would stay closed for the rest of the page's life.
- */
-
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 

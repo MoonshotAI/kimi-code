@@ -1,45 +1,3 @@
-/**
- * Probe the ModelRequester problem boundary, in two parts.
- *
- * Part 1 — real config: bootstraps the agent-core-v2 App scope on the REAL
- * Kimi home (`KIMI_CODE_HOME` or `~/.kimi-code`), resolves `IModelCatalog`
- * with the providers/auth from `config.toml`, lists every provider/model, and
- * pings every configured model through its `ModelRequester` (one tiny live
- * request per model, real credentials). This is the "does the assembled
- * pipeline actually reach each provider" smoke.
- *
- * Part 2 — deterministic boundary probes: points hand-built Models at a local
- * stub HTTP server (OpenAI Chat Completions wire) and drives failure modes
- * through `ModelRequesterImpl`, recording for each one WHO owned it:
- *
- *   - wrapped by ChatProvider  — the wire adapter converted the SDK/transport
- *     failure into the typed `ChatProviderError` family (APIStatusError /
- *     APIConnectionError / APIEmptyResponseError / ...), so the requester could
- *     translate it into a coded `Error2` (`provider.*` / `context.overflow`).
- *   - owned by ModelRequester  — behavior the ChatProvider layer CANNOT
- *     provide: per-request credential injection (credentials.resolve per
- *     attempt), plus the final `translateProviderError` safety net that
- *     turns even unwrapped raw errors into `Error2` (`internal`).
- *   - owned by the caller      — the OAuth 401 → credentials.invalidate →
- *     single replay: the requester surfaces the 401, and the call site
- *     re-resolves and re-sends (mirroring IModelCatalog.generate / ping).
- *   - owned by neither         — user cancellation: the standard AbortError
- *     DOMException passes through BOTH layers untranslated, by design.
- *
- * Tool-call probes cover the decode/encode boundary specifically: streamed
- * `delta.tool_calls` assembly (single, parallel-interleaved, index-less),
- * malformed arguments (deliberately NOT the wire layer's problem), the
- * strict-provider tool-exchange 400 staying recognizable through the wrap,
- * and request-side encoding of tool declarations and tool results.
- *
- * Run (the examples tsconfig enables the decorators the engine sources need):
- *   pnpm -C packages/klient smoke:boundary
- *
- * Env:
- *   KIMI_CODE_HOME        — default `~/.kimi-code`
- *   KIMI_BOUNDARY_MODELS  — comma-separated model ids to ping (default: all)
- *   KIMI_BOUNDARY_SKIP_LIVE — set to `1` to skip part 1 (no real API calls)
- */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -86,10 +44,6 @@ const tick = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
-// ---------------------------------------------------------------------------
-// Part 1 — real config.toml: catalog listing + per-model live ping.
-// ---------------------------------------------------------------------------
-
 async function probeRealConfig(): Promise<void> {
   const homeDir = process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
   console.log(`\n=== part 1: real config (${homeDir}/config.toml) ===`);
@@ -97,7 +51,6 @@ async function probeRealConfig(): Promise<void> {
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
   try {
-    // Config (and every section on top of it) loads asynchronously.
     await app.accessor.get(IConfigService).ready;
     const catalog = app.accessor.get(IModelCatalog);
 
@@ -136,10 +89,6 @@ async function probeRealConfig(): Promise<void> {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Part 2 — stub-driven boundary probes.
-// ---------------------------------------------------------------------------
-
 const PING_INPUT: ModelRequestInput = {
   systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
   tools: [],
@@ -158,7 +107,6 @@ const WEATHER_TOOL: Tool = {
 
 const TOOL_INPUT: ModelRequestInput = { ...PING_INPUT, tools: [WEATHER_TOOL] };
 
-/** A prior tool exchange: assistant tool call + its tool result. */
 const TOOL_HISTORY_INPUT: ModelRequestInput = {
   systemPrompt: PING_INPUT.systemPrompt,
   tools: [WEATHER_TOOL],
@@ -226,8 +174,6 @@ async function collectWithRecovery(requester: ModelRequester): Promise<Collected
   }
 }
 
-// --- stub server -----------------------------------------------------------
-
 type StubHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
 const sseChunk = (delta: object, finishReason: string | null): string =>
@@ -276,8 +222,6 @@ function writeJsonError(
   res.end(JSON.stringify({ error: { message, type: 'stub_error' } }));
 }
 
-// --- probe bookkeeping ------------------------------------------------------
-
 interface ProbeReport {
   readonly probe: string;
   readonly outcome: string;
@@ -286,7 +230,6 @@ interface ProbeReport {
 
 const reports: ProbeReport[] = [];
 
-/** Walk the cause chain looking for a typed ChatProviderError. */
 function chatProviderCause(error: unknown): ChatProviderError | undefined {
   let current: unknown = error;
   while (current !== undefined && current !== null) {
@@ -327,8 +270,6 @@ function report(probe: string, outcome: string, wrappedBy: string): void {
   console.log(`[probe] ${probe.padEnd(30)} -> ${outcome}`);
 }
 
-// --- part 2 main ------------------------------------------------------------
-
 async function probeBoundaries(): Promise<void> {
   console.log('\n=== part 2: deterministic boundary probes (local stub) ===');
   let handler: StubHandler = () => {
@@ -341,8 +282,6 @@ async function probeBoundaries(): Promise<void> {
   const server = createServer((req, res) => {
     requestCount += 1;
     lastAuth = req.headers.authorization;
-    // Drain (and capture) the request body before answering so the SDK never
-    // sees a reset — tool-call probes assert on the captured wire JSON.
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
@@ -354,8 +293,6 @@ async function probeBoundaries(): Promise<void> {
       handler(req, res);
     });
   });
-  // Read through functions so TS literal narrowing on the counters does not
-  // leak across probes (assert() guards narrow `number` to a literal).
   const requests = (): number => requestCount;
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', () => resolve());
@@ -386,7 +323,6 @@ async function probeBoundaries(): Promise<void> {
   };
 
   try {
-    // 1) happy path — the requester's event envelope on top of the raw stream.
     resetCounts();
     handler = (_req, res) => writePong(res);
     const ok = await collect(makeRequester(createStaticCredentialProvider('sk-probe')));
@@ -397,8 +333,6 @@ async function probeBoundaries(): Promise<void> {
     assert(lastAuth === 'Bearer sk-probe', 'requester injects per-request auth');
     report('happy-path', `events=${ok.events.join('>')} text=${JSON.stringify(ok.text)}`, '—');
 
-    // 2) 401 with a static key: ChatProvider wraps to APIStatusError(401), the
-    // requester translates to provider.auth_error. No replay (no canRecover).
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 401, 'invalid api key');
     try {
@@ -412,8 +346,6 @@ async function probeBoundaries(): Promise<void> {
       report('auth-401-static-key', outcome, wrappedBy);
     }
 
-    // 3) 401 with refreshable credentials: the call site invalidates and
-    // replays ONCE — recovery the requester deliberately does not own.
     resetCounts();
     handler = (req, res) => {
       if (req.headers.authorization === 'Bearer sk-good') writePong(res);
@@ -430,8 +362,6 @@ async function probeBoundaries(): Promise<void> {
     assert(requests() === 2, 'exactly one replay after the 401');
     report('auth-401-refresh-replay', `success after ${String(requestCount)} attempts`, 'caller-owned recovery (ModelRequester surfaces the 401)');
 
-    // 4) 401 that survives a forced refresh: the provider rejected the account
-    // — surfaced as provider.auth_error, not a re-login prompt.
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 401, 'account disabled');
     try {
@@ -444,7 +374,6 @@ async function probeBoundaries(): Promise<void> {
       report('auth-401-refresh-rejected', outcome, wrappedBy);
     }
 
-    // 5) 429 with Retry-After: typed rate-limit error carrying the server backoff.
     resetCounts();
     handler = (_req, res) => writeJsonError(res, 429, 'too many requests', { 'retry-after': '2' });
     try {
@@ -458,7 +387,6 @@ async function probeBoundaries(): Promise<void> {
       report('rate-limit-429', outcome, wrappedBy);
     }
 
-    // 6) 400 context overflow: routed to its own recovery-owned code.
     resetCounts();
     handler = (_req, res) =>
       writeJsonError(res, 400, 'This model\'s maximum context length is 8192 tokens.');
@@ -472,7 +400,6 @@ async function probeBoundaries(): Promise<void> {
       report('context-overflow-400', outcome, wrappedBy);
     }
 
-    // 7) 500 with an HTML error page: status error with a sanitized message.
     resetCounts();
     handler = (_req, res) => {
       res.writeHead(500, { 'content-type': 'text/html' });
@@ -488,7 +415,6 @@ async function probeBoundaries(): Promise<void> {
       report('server-500-html', outcome, wrappedBy);
     }
 
-    // 8) connection refused: transport failure wrapped as APIConnectionError.
     resetCounts();
     const dead = createServer();
     await new Promise<void>((resolve) => {
@@ -498,7 +424,7 @@ async function probeBoundaries(): Promise<void> {
     await new Promise<void>((resolve) => {
     dead.close(() => resolve());
   });
-    handler = (_req, res) => writePong(res); // unused — nothing listens there
+    handler = (_req, res) => writePong(res);
     try {
       await collect(makeRequester(createStaticCredentialProvider('sk-probe'), `http://127.0.0.1:${String(deadPort)}`));
       throw new Error('expected a failure');
@@ -508,7 +434,6 @@ async function probeBoundaries(): Promise<void> {
       report('connection-refused', outcome, wrappedBy);
     }
 
-    // 9) empty stream (immediate [DONE]): generate() throws APIEmptyResponseError.
     resetCounts();
     handler = (_req, res) => writeSse(res, []);
     try {
@@ -520,8 +445,6 @@ async function probeBoundaries(): Promise<void> {
       report('empty-stream-done', outcome, wrappedBy);
     }
 
-    // 10) malformed SSE chunk: who catches a wire-format violation? Reported,
-    // not hard-coded — the CODE tells whether ChatProvider wrapped it.
     resetCounts();
     handler = (_req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -536,7 +459,6 @@ async function probeBoundaries(): Promise<void> {
       report('malformed-sse-chunk', outcome, wrappedBy);
     }
 
-    // 11) stream cut mid-flight: one valid chunk, then the socket dies.
     resetCounts();
     handler = (_req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -553,15 +475,6 @@ async function probeBoundaries(): Promise<void> {
       report('stream-cut-mid-flight', outcome, wrappedBy);
     }
 
-    // --- tool-call boundary probes -------------------------------------------
-    // Response side: streamed `delta.tool_calls` fragments are buffered per
-    // index by the OpenAI base and routed into `message.toolCalls` by the
-    // contract's generate() driver — both BELOW the ModelRequester, which just
-    // forwards the parts. Request side: tool declarations and tool-result
-    // history are encoded by the ChatProvider.
-
-    // 12) tool call happy path: header chunk + fragmented arguments, and the
-    // outbound request carries the tool declaration.
     resetCounts();
     handler = (_req, res) =>
       writeSse(res, [
@@ -599,8 +512,6 @@ async function probeBoundaries(): Promise<void> {
       'ChatProvider (decode) + generate() (assembly), below the requester',
     );
 
-    // 13) parallel tool calls with interleaved argument fragments: per-index
-    // buffering must keep the two calls apart.
     resetCounts();
     handler = (_req, res) =>
       writeSse(res, [
@@ -633,9 +544,6 @@ async function probeBoundaries(): Promise<void> {
       'generate() index routing — interleaving stays separated',
     );
 
-    // 14) malformed tool-call arguments: the wire layer NEVER parses the
-    // arguments string — invalid JSON sails through both layers and only fails
-    // later at tool dispatch. A boundary neither layer owns, by design.
     resetCounts();
     handler = (_req, res) =>
       writeSse(res, [
@@ -662,10 +570,6 @@ async function probeBoundaries(): Promise<void> {
       'neither — arguments validity is deferred to tool dispatch (by design)',
     );
 
-    // 15) index-less fragments: a single call without `index` still assembles
-    // (header + trailing merge in generate()). Caveat NOT probed: two
-    // interleaved index-less calls would silently cross-merge — the wire layer
-    // trusts the provider's indices and does not guard that.
     resetCounts();
     handler = (_req, res) =>
       writeSse(res, [
@@ -687,9 +591,6 @@ async function probeBoundaries(): Promise<void> {
       'generate() pending-part merge (indices trusted, not guarded)',
     );
 
-    // 16) tool-exchange adjacency rejection: the strict-provider 400 must stay
-    // recognizable as `isToolExchangeAdjacencyError` THROUGH the ChatProvider
-    // wrap — the agent loop's strict-resend recovery keys on that predicate.
     resetCounts();
     handler = (_req, res) =>
       writeJsonError(res, 400, 'tool_call_id "call_1" is not found');
@@ -706,8 +607,6 @@ async function probeBoundaries(): Promise<void> {
       report('toolcall-adjacency-400', outcome, wrappedBy);
     }
 
-    // 17) request-side encoding of a tool exchange: assistant tool_calls and
-    // the tool result must hit the wire in the provider's shape.
     resetCounts();
     handler = (_req, res) => writePong(res);
     await collect(makeRequester(createStaticCredentialProvider('sk-probe')), undefined, TOOL_HISTORY_INPUT);
@@ -728,7 +627,6 @@ async function probeBoundaries(): Promise<void> {
       'ChatProvider (request-side encoding boundary)',
     );
 
-    // 18) user cancellation: the one boundary BOTH layers pass through.
     resetCounts();
     handler = (_req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
@@ -764,8 +662,6 @@ async function probeBoundaries(): Promise<void> {
     console.log(`${''.padEnd(30)} └ ${r.wrappedBy}`);
   }
 }
-
-// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
   if (process.env['KIMI_BOUNDARY_SKIP_LIVE'] !== '1') {

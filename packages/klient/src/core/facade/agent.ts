@@ -1,13 +1,3 @@
-/**
- * The agent facade — one `session.agent(id)` handle over the agent-scope
- * services the wire exposes. Turn-driving calls (prompt / steer / cancel),
- * skill activation, permission mode, and commands go straight to their domain
- * services, as do shell commands, model, usage, plan, and task calls;
- * `getContext` merges two reads client-side. Prompt streaming is
- * NOT on this interface: it flows through the agent's `events` hub
- * (`turn.*`, `assistant.delta`, `tool.call.*`, `prompt.completed`, …).
- */
-
 import type { IAgentCommandService } from '@moonshot-ai/agent-core-v2/agent/command/agentCommand';
 import type { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextMemory';
 import type { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
@@ -26,8 +16,6 @@ import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permission
 import type { ScopeRef } from '../channel.js';
 import type { ScopedCaller } from './session.js';
 
-// Wire-type aliases derived through the engine service interfaces (keeps
-// klient free of protocol-package imports).
 export type PromptLaunchResult = import('@moonshot-ai/agent-core-v2/agent/loop/loop').PromptLaunchResult | undefined;
 export type PromptWithSkillsInput = Parameters<IAgentSkillService['promptWithSkills']>[0];
 export type PromptWithSkillsResult = Awaited<ReturnType<IAgentSkillService['promptWithSkills']>>;
@@ -50,23 +38,8 @@ export interface AgentFacade {
     input: readonly ContentPart[];
     promptId?: string;
   }): Promise<PromptLaunchResult>;
-  /**
-   * Submit one prompt with one or more skill activations bundled into the
-   * same user message: the skills are validated up front (an unknown name or
-   * an empty list rejects the whole submission), rendered ahead of the
-   * caller's parts in the same turn, and the bundle undoes as a single
-   * anchor. Resolves with the submitted bundle's queue identity (`prompt_id`
-   * / `created_at` / `state`), plus `turn_id` once launched — `state` is
-   * `queued` when the submission queued behind a running turn.
-   */
   promptWithSkills(input: PromptWithSkillsInput): Promise<PromptWithSkillsResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
-  /**
-   * Activate a skill as a user-slash activation: the engine renders the skill
-   * prompt and drives it as a normal turn (same settlement/event flow as
-   * `prompt`). Resolves with the launched turn id; rejects when the skill is
-   * unknown or the agent is busy.
-   */
   activateSkill(input: { name: string; args?: string }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;
@@ -89,17 +62,7 @@ export interface AgentFacade {
   getTasks(input?: { activeOnly?: boolean; limit?: number }): Promise<readonly AgentTaskInfo[]>;
   stopTask(input: { taskId: string; reason?: string }): Promise<void>;
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
-  /**
-   * Session-merged MCP server entries (workspace set + ephemeral session
-   * overlay). This is a live snapshot, so entries may still be pending while
-   * the initial connection attempt runs.
-   */
   getMcpServers(): Promise<readonly McpServerEntry[]>;
-  /**
-   * Trigger a manual full compaction. Async: `true` means the compaction was
-   * started (it runs in the background); `false` means one is already running.
-   * Throws when there is nothing to compact or a turn is active.
-   */
   compact(input?: { instruction?: string }): Promise<boolean>;
 }
 
@@ -114,8 +77,6 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     activateSkill: (input) =>
       call(scope, 'agentSkillService', 'activate', [input]) as Promise<PromptLaunchResult>,
     cancel: (input) =>
-      // No turnId sends an empty arg list: `[undefined]` would cross the wire
-      // as `[null]`, and `cancelFromUser(null)` would not match the active turn.
       call(scope, 'agentLoopService', 'cancelFromUser', input?.turnId === undefined ? [] : [input.turnId]) as Promise<void>,
     runShellCommand: (input) =>
       call(scope, 'agentShellCommandService', 'run', [input]) as Promise<ShellCommandResult>,
@@ -141,8 +102,6 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     listCommands: () =>
       call(scope, 'agentCommandService', 'list', []) as Promise<readonly AgentCommandInfo[]>,
     runCommand: (input) =>
-      // Same `[undefined]` → `[null]` wire hazard as `cancel`: the engine's
-      // `args = ''` default only applies to a missing arg.
       call(
         scope,
         'agentCommandService',

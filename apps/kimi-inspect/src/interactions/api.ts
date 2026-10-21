@@ -1,15 +1,3 @@
-/**
- * REST client for the pending-interactions endpoints:
- * `GET/POST {baseUrl}/api/v1/sessions/{sessionId}/approvals[/...]` and
- * `.../questions[/...]`.
- *
- * These are the only remaining surfaces for listing and answering a session's
- * pending approvals/questions: the engine's interaction kernel is a
- * process-global singleton with no DI channel on the `/api/v1/debug`
- * dispatcher, so the inspector talks to the same public REST surface the
- * clients use.
- */
-
 export interface ApprovalWire {
   readonly approval_id: string;
   readonly session_id: string;
@@ -139,8 +127,6 @@ export function dismissQuestion(
   opts: InteractionsApiOptions,
   questionId: string,
 ): Promise<unknown> {
-  // The dismiss endpoint reports success as a QUESTION_DISMISSED (40909)
-  // envelope (see kap-server's question dismiss action), not code 0.
   return call(opts, 'POST', `/questions/${encodeURIComponent(questionId)}:dismiss`, undefined, [
     0,
     40909,

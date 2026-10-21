@@ -1,10 +1,3 @@
-/**
- * Search view — the global cross-session message search (`POST /api/v1/search`).
- * Full width like the other non-chat views. Results are pageable (Load more);
- * clicking a hit hands it to the app shell (`onOpenResult`), which switches
- * to the chat view at the hit's session / agent / turn / step.
- */
-
 import { useState } from 'react';
 
 import { useConnection } from '../connection';

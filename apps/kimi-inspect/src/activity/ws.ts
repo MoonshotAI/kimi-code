@@ -1,34 +1,3 @@
-/**
- * Minimal `/api/v1/ws` client for GLOBAL session facts — no subscriptions.
- *
- * The server pushes every global event (`event.session.*` /
- * `session.meta.updated` / `event.workspace.*` / `event.config.*`) to every
- * established connection, so this client subscribes to nothing: it sends a
- * `client_hello` with an empty subscription list (etiquette only — the
- * delivery set does not depend on it) and dispatches the coarse per-session
- * facts to the consumer:
- *
- *   - `event.session.work_changed` → `{busy, main_turn_active,
- *     pending_interaction, last_turn_reason}` for one session;
- *   - `event.session.created` / `session.meta.updated` → list-level signals
- *     (a session appeared / retitled), forwarded for list invalidation;
- *   - `event.session.archived` (live or cold) / `event.workspace.*` →
- *     list-level signals, forwarded for list invalidation;
- *   - `event.di.unit_changed` → one DI unit state transition of the engine's
- *     scope tree (the debug-surface feed), forwarded for `['di']`
- *     invalidation. Global like the rest: it carries the `__global__`
- *     session watermark and fans out to every connection.
- *
- * Session/agent-grained events never arrive here (they stay subscribe-gated
- * server-side); the transcript chat channel has its own socket. Global
- * frames are live-only — a drop loses whatever fired meanwhile, so the
- * consumer answers `onReconnected` with a REST re-seed.
- *
- * The bearer token is presented at the upgrade through the
- * `kimi-code.bearer.<token>` subprotocol (the only credential channel a
- * browser WebSocket has).
- */
-
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
 
 export type SessionPendingInteraction = 'none' | 'approval' | 'question';
@@ -43,48 +12,29 @@ export interface SessionWorkFacts {
 
 export type DiUnitState = 'Pending' | 'Activating' | 'Active' | 'Unloading' | 'Failed';
 
-/** Wire payload of the `event.di.unit_changed` global event. */
 export interface DiUnitChangedPayload {
-  /** Scope path of the container owning the unit (`app` / `app/workspace:<id>` / …). */
   readonly scope: string;
   readonly token: string;
   readonly state: DiUnitState;
-  /** Serialized sticky failure, present only on a Failed transition. */
   readonly error?: string | undefined;
 }
 
 export interface GlobalEventsWsHandlers {
-  /** Coarse work-fact tuple for one session changed. */
   onWorkChanged: (sessionId: string, facts: SessionWorkFacts) => void;
-  /** A session was created (list-level signal). */
   onSessionCreated: (sessionId: string) => void;
-  /** A session's title/patch changed (list-level signal). */
   onMetaUpdated: (sessionId: string) => void;
-  /** A session was archived, live or cold (list-level signal). The envelope
-   *  carries the `__global__` watermark; the real session id rides in the
-   *  payload. */
   onSessionArchived?: ((sessionId: string) => void) | undefined;
-  /** A session was permanently deleted (list-level signal). Same envelope
-   *  shape as `event.session.archived`: the real session id rides in the
-   *  payload. */
   onSessionDeleted?: (sessionId: string) => void;
-  /** A workspace was created / updated / deleted (list-level signal). */
   onWorkspaceChanged?: (() => void) | undefined;
-  /** A DI unit of the engine's scope tree changed state (debug feed). */
   onDiUnitChanged?: ((payload: DiUnitChangedPayload) => void) | undefined;
-  /** Socket established (initial connect and every reconnect) — the consumer
-   *  answers with a REST re-seed, since live facts are missed while down. */
   onReconnected: () => void;
 }
 
 export interface GlobalEventsWsOptions {
-  /** Server base URL (`http(s)://host:port`) or a full `ws(s)://…/api/v1/ws` URL. */
   readonly url: string;
   readonly token?: string | undefined;
   readonly handlers: GlobalEventsWsHandlers;
-  /** WebSocket implementation; defaults to the global `WebSocket`. */
   readonly WebSocketImpl?: WsLikeCtor;
-  /** Base delay (ms) for the reconnect backoff. Default `500`. */
   readonly reconnectDelayMs?: number;
 }
 
@@ -122,7 +72,6 @@ export class GlobalEventsWs {
     this.connect();
   }
 
-  /** Tear the socket down permanently. */
   close(): void {
     this.manualClose = true;
     if (this.reconnectTimer !== undefined) {
@@ -154,21 +103,17 @@ export class GlobalEventsWs {
         id: `kimi-inspect-global-${Date.now().toString(36)}`,
         payload: { client_id: 'kimi-inspect', subscriptions: [] },
       });
-      // Established (first connect and every reconnect alike): live facts may
-      // have been missed — the consumer re-seeds from REST.
       this.handlers.onReconnected();
     });
     ws.addEventListener('message', (event: { data: unknown }) => {
       this.onMessage(event.data);
     });
     ws.addEventListener('close', () => {
-      // Stale socket (a manual close already cleared `this.ws`).
       if (this.ws !== ws) return;
       this.ws = undefined;
       if (!this.manualClose) this.scheduleReconnect();
     });
     ws.addEventListener('error', () => {
-      // The 'close' event always follows 'error'; reconnect logic lives there.
     });
   }
 
@@ -249,7 +194,6 @@ export class GlobalEventsWs {
     try {
       ws.send(JSON.stringify(frame));
     } catch {
-      // best-effort; the close handler handles teardown
     }
   }
 }
@@ -291,7 +235,6 @@ function parseDiUnitChangedPayload(payload: unknown): DiUnitChangedPayload | und
   };
 }
 
-/** Derive the `/api/v1/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */
 function toWsUrl(base: string): string {
   const url = new URL(base);
   if (url.protocol === 'http:') url.protocol = 'ws:';

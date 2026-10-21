@@ -1,14 +1,3 @@
-/**
- * Audit trail for the chat view's transcript channel.
- *
- * A pure observer: the chat pipeline (REST loads, WS frames, user actions)
- * calls the `record*` methods AFTER applying each step to the real
- * `TranscriptChatStore`, passing the resulting immutable `AgentState`
- * reference. Replaying the trail is therefore free — every entry already
- * holds the exact state the store had at that point, ready for the
- * timeline slider and the structural diff.
- */
-
 import type {
   AgentState,
   AgentTranscriptSnapshot,
@@ -20,13 +9,9 @@ import type { TranscriptPage } from '../transcript/api';
 export const AUDIT_TRAIL_MAX_ENTRIES = 5000;
 
 interface AuditEntryBase {
-  /** Position in the trail (stable even when old entries are dropped). */
   readonly index: number;
-  /** Local record time (ISO). */
   readonly at: string;
-  /** Store state right after this entry was applied (immutable reference). */
   readonly state: AgentState;
-  /** One-line summary for the timeline list. */
   readonly summary: string;
 }
 
@@ -39,10 +24,8 @@ export interface RestAuditEntry extends AuditEntryBase {
 
 export interface OpsAuditEntry extends AuditEntryBase {
   readonly kind: 'ops';
-  /** Envelope timestamp (server send time) when present. */
   readonly envelopeAt?: string | undefined;
   readonly ops: readonly TranscriptOperation[];
-  /** live = applied immediately; buffered = held during a REST refresh; flushed = replayed after one; catchup = fetched via the ops catch-up endpoint after a seq gap. */
   readonly delivery: 'live' | 'buffered' | 'flushed' | 'catchup';
 }
 
@@ -63,7 +46,6 @@ export type AuditEntry = RestAuditEntry | OpsAuditEntry | ResetAuditEntry | Even
 
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
 
-/** Entry payload accepted by `push` (index/at are filled in there). */
 type AuditEntryInput = DistributiveOmit<AuditEntry, 'index' | 'at'>;
 
 function summarizeOps(ops: readonly TranscriptOperation[]): string {
@@ -77,7 +59,6 @@ export class AuditTrail {
   private nextIndex = 0;
   private readonly listeners = new Set<() => void>();
 
-  /** `useSyncExternalStore`-compatible subscribe. */
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener);
     return () => {

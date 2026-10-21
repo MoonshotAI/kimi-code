@@ -1,13 +1,3 @@
-/**
- * In-chat search bar — searches the messages of the CURRENT session only
- * (`container: { session_id }` on `POST /api/v1/search`; the whole session,
- * not just the active agent) and renders the first page as a dropdown under
- * the input. Clicking a hit hands it to the app shell (`onOpenHit`), which
- * switches the agent when the hit belongs to another one and jumps the
- * transcript to the hit's turn / step. Esc or an outside click closes the
- * panel.
- */
-
 import { useEffect, useRef, useState } from 'react';
 
 import { useConnection } from '../connection';
@@ -31,7 +21,6 @@ export function ChatSearchBar({
   const [error, setError] = useState<unknown>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  // A session switch drops the previous session's query and results.
   useEffect(() => {
     setInput('');
     setHits(null);
@@ -39,7 +28,6 @@ export function ChatSearchBar({
     setOpen(false);
   }, [sessionId]);
 
-  // Clicking outside the bar closes the result panel.
   useEffect(() => {
     if (!open) return;
     const onDown = (event: MouseEvent) => {
@@ -65,8 +53,6 @@ export function ChatSearchBar({
         baseUrl,
         token: token === '' ? undefined : token,
         query,
-        // Substring semantics (Ctrl+F-like): terms mode is whole-token matching,
-        // which surprises in an in-session search box.
         mode: 'literal',
         container: { sessionId },
         pageSize: PAGE_SIZE,

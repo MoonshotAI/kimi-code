@@ -1,11 +1,3 @@
-/**
- * `sessionSkillCatalog` — the session-merged skill catalog. Mirrors
- * `agent-core-v2/features/skill/session/skillCatalog.ts` (the thin
- * `list()` method; the `catalog` / `ready` properties and the sink interface
- * are not wire methods). `SkillSummary` mirrors
- * `agent-core-v2/features/skill/catalog/types.ts`.
- */
-
 import { z } from 'zod';
 
 import type { ServiceContract } from '../types.js';

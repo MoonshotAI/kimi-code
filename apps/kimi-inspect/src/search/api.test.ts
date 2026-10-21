@@ -1,8 +1,3 @@
-/**
- * Tests for the global search REST client (`POST /api/v1/search`): request
- * serialization, envelope unwrapping, and hit parsing.
- */
-
 import { describe, expect, it } from 'vitest';
 
 import { fetchSearchPage } from './api';
@@ -44,7 +39,6 @@ const pageData = {
       time: 1_700_000_100_000,
       score: 0.9,
     },
-    // Malformed entries are dropped, not fatal.
     { session_id: 42 },
   ],
   has_more: true,

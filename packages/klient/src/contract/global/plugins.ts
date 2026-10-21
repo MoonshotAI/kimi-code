@@ -1,13 +1,3 @@
-/**
- * `pluginService` — plugin management and consumption. Mirrors
- * `agent-core-v2/app/plugin/plugin.ts` and `agent-core-v2/app/plugin/types.ts`;
- * nested `McpServerConfig` mirrors `agent-core-v2/mcpCore/config-schema.ts`,
- * `HookDefConfig` mirrors `agent-core-v2/features/externalHooks/configSection.ts`.
- * `pluginSkillRoots`, `enabledSessionStarts`, `enabledSystemPrompts`,
- * `enabledMcpServers`, and `enabledHooks` are excluded (not part of the
- * klient wire surface).
- */
-
 import { z } from 'zod';
 
 import { noResult } from '../helpers.js';
@@ -148,7 +138,6 @@ export const pluginInfoSchema = pluginSummarySchema.extend({
   diagnostics: z.array(pluginDiagnosticSchema),
 });
 
-/** Same shape as `reloadSummarySchema` in `./events.js` — keep in sync. */
 export const reloadSummarySchema = z.object({
   added: z.array(z.string()),
   removed: z.array(z.string()),

@@ -1,11 +1,3 @@
-/**
- * Agent-scope domain service contracts. These mirror the signatures of the
- * engine's domain Services (prompt / skill / loop / permissionMode / command /
- * contextMemory / tokenCounting / shellCommand / profile / usage / plan /
- * task) that the agent facade calls directly; payload and result schemas are
- * shared in `agent/schemas.ts` (they mirror the same wire shapes).
- */
-
 import { z } from 'zod';
 
 import { maybe, noResult } from '../helpers.js';
@@ -66,7 +58,6 @@ export const agentRuntimeBindingContract = {
   switch: { input: z.tuple([z.string()]), output: runtimeBindingSchema },
 } satisfies ServiceContract;
 
-/** `history` items are full `ContextMessage`s, mirrored as `unknown`. */
 export const agentContextMemoryContract = {
   get: { input: z.tuple([]), output: z.array(z.unknown()) },
 } satisfies ServiceContract;
@@ -101,7 +92,6 @@ export const agentPlanContract = {
   cancel: { input: z.tuple([z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
-/** `McpServerEntry` from the engine's `mcpCore/connection-manager`. */
 export const mcpServerEntrySchema = z.object({
   name: z.string(),
   transport: z.enum(['stdio', 'http', 'sse']),
@@ -114,7 +104,6 @@ export const agentMcpContract = {
   list: { input: z.tuple([]), output: z.array(mcpServerEntrySchema) },
 } satisfies ServiceContract;
 
-/** `FullCompactionInput` from the engine's `agent/fullCompaction`. */
 export const fullCompactionInputSchema = z.object({
   source: z.enum(['manual', 'auto']),
   instruction: z.string().optional(),

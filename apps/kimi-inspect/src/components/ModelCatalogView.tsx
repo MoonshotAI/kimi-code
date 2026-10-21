@@ -1,17 +1,3 @@
-/**
- * Model Catalog view — providers with their models and the default marker:
- *
- *   left:   every configured model (provider-grouped), its highlight synced
- *           both ways with the center column — scrolling the center moves the
- *           highlight (scrollspy), clicking an entry jumps the center to that
- *           model;
- *   center: one section per model with ping and session creation actions.
- *
- * All data goes through the channel layer — `IModelCatalog` +
- * `IModelService` for the list — over the `/api/v1/debug` RPC surface.
- * There is no live event push; the queries refresh on a slow poll.
- */
-
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
@@ -51,7 +37,6 @@ export function ModelCatalogView({
     queryFn: () => klient.core(IModelCatalog).listModels(),
     refetchInterval: 15_000,
   });
-  // Raw records carry the structured `providerId` grouping fallback.
   const records = useQuery({
     queryKey: ['modelCatalog', 'records'],
     queryFn: () => klient.core(IModelService).list(),
@@ -62,8 +47,6 @@ export function ModelCatalogView({
   const items = models.data ?? [];
   const recordMap = records.data ?? {};
 
-  // Flatten the provider grouping into one ordered model list (listed
-  // providers first, then models whose group matches no listed provider).
   const groupKeyOf = (item: ModelCatalogItem): string => {
     const record = recordMap[item.model];
     return record?.providerId ?? record?.provider ?? item.provider;
@@ -84,15 +67,12 @@ export function ModelCatalogView({
     ...extraGroups.flatMap((key) => (byGroup.get(key) ?? []).map((item) => ({ item }) as const)),
   ];
 
-  // --- two-way sync between the left list and the center scroll ----------
   const [activeId, setActiveId] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef(new Map<string, HTMLElement>());
   const itemRefs = useRef(new Map<string, HTMLElement>());
 
-  // Default the highlight to the first model once data arrives, and follow
-  // the list when the highlighted model disappears (config changed).
   useEffect(() => {
     if (flatEntries.length === 0) return;
     if (activeId === null || !flatEntries.some((entry) => entry.item.model === activeId)) {
@@ -100,9 +80,6 @@ export function ModelCatalogView({
     }
   }, [activeId, flatEntries]);
 
-  // Center scroll → left highlight (scrollspy). Computed synchronously — a
-  // rAF throttle would stall in background tabs and lag real scrolling; the
-  // walk over the entry list is trivial at this scale.
   const handleCenterScroll = () => {
     const container = scrollRef.current;
     if (container === null) return;
@@ -117,8 +94,6 @@ export function ModelCatalogView({
     if (current !== null) setActiveId((prev) => (prev === current ? prev : current));
   };
 
-  // Left highlight → keep the highlighted entry visible inside the left list
-  // (manual scroll: scrollIntoView would also move the center column).
   useEffect(() => {
     if (activeId === null) return;
     const list = listRef.current;
@@ -134,8 +109,6 @@ export function ModelCatalogView({
 
   const jumpTo = (modelId: string) => {
     setActiveId(modelId);
-    // 'instant', not 'smooth': smooth scrolling is frame-driven and stalls in
-    // occluded tabs, leaving the center column stranded mid-jump.
     sectionRefs.current.get(modelId)?.scrollIntoView({ behavior: 'instant', block: 'start' });
   };
 
@@ -168,14 +141,14 @@ export function ModelCatalogView({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1">
-        {/* left: the model list */}
+        { }
         <div
           ref={listRef}
           className="relative w-72 shrink-0 overflow-y-auto border-r border-neutral-800"
         >
           <LeftList entries={flatEntries} activeId={activeId} onJump={jumpTo} itemRefs={itemRefs} />
         </div>
-        {/* center: one section per model */}
+        { }
         <div
           ref={scrollRef}
           className="relative min-w-0 flex-1 overflow-y-auto"
@@ -197,10 +170,6 @@ export function ModelCatalogView({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// left column
-// ---------------------------------------------------------------------------
 
 function LeftList({
   entries,
@@ -279,10 +248,6 @@ function LeftList({
   );
 }
 
-// ---------------------------------------------------------------------------
-// center column
-// ---------------------------------------------------------------------------
-
 function ModelSection({
   entry,
   onOpenSession,
@@ -314,8 +279,6 @@ function ModelSection({
     }
   };
 
-  // Session creation itself is v1 REST (klient is v2-only); resume + model
-  // selection then go through the channel layer before opening the chat tab.
   const createSession = async () => {
     const cwd = window.prompt('Working directory for the new session:', '');
     if (cwd === null || cwd.trim() === '') return;

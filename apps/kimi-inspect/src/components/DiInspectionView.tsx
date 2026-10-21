@@ -1,31 +1,3 @@
-/**
- * DI view — the engine's "Service × Effect × DI" debug surface (the App-scope
- * `debug` domain, exposed like every other Service over `/api/v1/debug`):
- *
- *   - Units: the unit tree = ledger tree (`IDebugLedgerService.tree`) — one
- *     collapsible card per scope container, its units with the five-state
- *     cascade badge and the unprovide / update / dispose triggers
- *     (`IDebugCascadeService`), its ledger entries as a nested subtree;
- *   - Deps: the persistent dependency DAG (`IDebugGraphService.graph`) as
- *     root-based Miller columns (`di/DiGraphPanel.tsx`) — column 0 lists the
- *     roots (services nothing consumes), each click opens the next column
- *     with that service's direct dependencies; rows carry path-scoped
- *     relation bars (one per path ancestor with a direct edge) and a
- *     path-root background highlight;
- *   - Events: event subscriptions (`IDebugEventsService.subscriptions`) —
- *     unit-book ledger entries labeled `on:<name>` /
- *     `disposable:EventSubscription` per scope, plus per-bus listener counts
- *     as the fallback side (`di/DiEventsPanel.tsx`);
- *   - Cascade: the cross-scope cascade history rings
- *     (`IDebugCascadeService.history`), newest first;
- *   - Pending: the waiting area + sticky failures per scope
- *     (`IDebugCascadeService.pending`), with an `update` retry per failure.
- *
- * All five panels poll on a short interval and refresh eagerly when the
- * global `event.di.unit_changed` WS frame fires (`useDiQueryInvalidation`
- * invalidates the `['di']` query prefix).
- */
-
 import type { UnitState } from '@moonshot-ai/agent-core-v2/_base/di/cascadeEngine';
 import type { LedgerEntryInfo } from '@moonshot-ai/agent-core-v2/_base/lifecycle/ledger';
 import {
@@ -108,10 +80,6 @@ export function DiInspectionView() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared data plumbing
-// ---------------------------------------------------------------------------
-
 function useDiQuery<T>(panel: string, fetcher: (klient: InspectClient) => Promise<T>) {
   const { klient } = useConnection();
   return useQuery({
@@ -121,7 +89,6 @@ function useDiQuery<T>(panel: string, fetcher: (klient: InspectClient) => Promis
   });
 }
 
-/** The loading / error gate shared by every panel. Returns null when data is ready. */
 function panelGate(query: { isError: boolean; error: unknown; data: unknown }): ReactNode | null {
   if (query.isError) return <ErrorLine error={query.error} />;
   if (query.data === undefined) {
@@ -133,7 +100,6 @@ function panelGate(query: { isError: boolean; error: unknown; data: unknown }): 
 type DiTriggerAction = 'unprovide' | 'update' | 'dispose';
 
 interface DiTrigger {
-  /** `${action}:${scopePath}:${token}` of the in-flight trigger, if any. */
   readonly busy: string | null;
   readonly error: unknown;
   readonly run: (action: DiTriggerAction, scopePath: string, token: string) => Promise<void>;
@@ -143,11 +109,6 @@ function triggerKey(action: DiTriggerAction, scopePath: string, token: string): 
   return `${action}:${scopePath}:${token}`;
 }
 
-/**
- * The destructive unit triggers (`IDebugCascadeService.unprovide` / `update`
- * / `dispose`), confirm-gated like the ServiceCard danger actions; a settled
- * trigger invalidates the `['di']` prefix so every panel converges.
- */
 function useDiTrigger(): DiTrigger {
   const { klient } = useConnection();
   const queryClient = useQueryClient();
@@ -177,10 +138,6 @@ function useDiTrigger(): DiTrigger {
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
-
-// ---------------------------------------------------------------------------
-// Units panel — the unit tree = ledger tree
-// ---------------------------------------------------------------------------
 
 const STATE_TONES: Record<UnitState, 'neutral' | 'sky' | 'green' | 'amber' | 'red'> = {
   Pending: 'neutral',
@@ -385,20 +342,12 @@ function LedgerEntryRow({ entry }: { entry: LedgerEntryInfo }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Graph panel — the dependency DAG; rendering lives in di/DiGraphPanel.tsx
-// ---------------------------------------------------------------------------
-
 function GraphPanel() {
   const query = useDiQuery('graph', (klient) => klient.core(IDebugGraphService).graph());
   const gate = panelGate(query);
   if (gate !== null) return gate;
   return <DiGraphPanel graph={query.data as DebugGraph} />;
 }
-
-// ---------------------------------------------------------------------------
-// Events panel — event subscriptions; rendering lives in di/DiEventsPanel.tsx
-// ---------------------------------------------------------------------------
 
 function EventsPanel() {
   const query = useDiQuery('events', (klient) =>
@@ -409,15 +358,10 @@ function EventsPanel() {
   return <DiEventsPanel data={query.data as DebugEventSubscriptions} />;
 }
 
-// ---------------------------------------------------------------------------
-// Cascade panel — the cross-scope cascade history rings, newest first
-// ---------------------------------------------------------------------------
-
 function CascadePanel() {
   const query = useDiQuery('cascade', (klient) => klient.core(IDebugCascadeService).history());
   const gate = panelGate(query);
   if (gate !== null) return gate;
-  // seq is a per-engine ring sequence; cross-scope ordering is approximate.
   const entries = (query.data as DebugCascadeEntry[]).toReversed();
   if (entries.length === 0) {
     return <div className="text-[11px] text-neutral-600 italic">no cascade transactions yet</div>;
@@ -526,10 +470,6 @@ function TokenList({
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Pending panel — the waiting area + sticky failures per scope
-// ---------------------------------------------------------------------------
 
 function PendingPanel() {
   const query = useDiQuery('pending', (klient) => klient.core(IDebugCascadeService).pending());

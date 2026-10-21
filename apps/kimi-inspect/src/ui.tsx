@@ -1,8 +1,3 @@
-/**
- * Small shared UI primitives for the inspector: JSON dump, badges, buttons,
- * relative time. Deliberately minimal — this is an internal devtool.
- */
-
 import { useState } from 'react';
 
 export function JsonView({ data, empty }: { data: unknown; empty?: string }) {
@@ -84,7 +79,6 @@ export function relTime(epochMs: number | undefined): string {
   return new Date(epochMs).toLocaleDateString();
 }
 
-/** Render an unknown thrown value as display text (never "[object Object]"). */
 export function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === 'string') return error;

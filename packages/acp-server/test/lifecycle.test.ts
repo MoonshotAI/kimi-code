@@ -18,15 +18,10 @@ import { createTestClient, type TestClient } from './_helpers/acpClient';
 import { writeFakeModelConfig } from './_helpers/fakeModelConfig';
 import { createScriptedProvider } from './_helpers/scriptedProvider';
 
-/** Real stdio MCP fixture server from the agent-core-v2 test suite. */
 const STDIO_MCP_FIXTURE = fileURLToPath(
   new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url),
 );
 
-/**
- * config.toml declaring one OAuth provider so `auth.summarize()` considers it;
- * the token itself lives in the seeded fake `IOAuthToolkit`.
- */
 const OAUTH_PROVIDER_CONFIG = `[providers.test-oauth]
 type = "kimi"
 baseUrl = "http://localhost"
@@ -36,11 +31,6 @@ storage = "file"
 key = "test-key"
 `;
 
-/**
- * In-memory `IOAuthToolkit` stub: starts logged in, `logout()` clears the
- * token. Seeded at App scope so the real `OAuthService` / `AuthSummaryService`
- * chain runs against it.
- */
 function createFakeOAuthToolkit(): {
   readonly seed: readonly [typeof IOAuthToolkit, IOAuthToolkit];
   hasToken(): boolean;
@@ -84,11 +74,6 @@ describe('acp-server session lifecycle', () => {
     return client;
   }
 
-  /**
-   * Read the session scope's MCP entries engine-side: workspace handler →
-   * session lifecycle → the session's MCP handle (the overlay view when the
-   * session was created/loaded with ephemeral `mcpServers`).
-   */
   async function sessionMcpEntries(
     c: TestClient,
     sessionId: string,
@@ -138,8 +123,6 @@ describe('acp-server session lifecycle', () => {
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
         sessionId: string;
       };
-      // Drain the available_commands_update pushed after new so the load
-      // replay assertion only sees load-time notifications.
       await c.waitForSessionUpdate('available_commands_update', 10_000);
       const before = c.sessionUpdates().length;
 
@@ -149,8 +132,6 @@ describe('acp-server session lifecycle', () => {
         mcpServers: [],
       })) as { configOptions?: unknown[] };
       expect(Array.isArray(loaded.configOptions)).toBe(true);
-      // A brand-new session has no persisted history, so load must not emit
-      // any user/agent/tool replay chunks (only the post-load commands push).
       const replayed = c
         .sessionUpdates()
         .slice(before)
@@ -182,7 +163,6 @@ describe('acp-server session lifecycle', () => {
       const c = client;
       await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
 
-      // One real turn on the source session so the fork has history to carry.
       scripted.mockNextText('first turn reply');
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
         sessionId: string;
@@ -201,11 +181,9 @@ describe('acp-server session lifecycle', () => {
       })) as { sessionId: string; configOptions?: unknown[]; modes?: unknown };
       expect(forked.sessionId).toMatch(/^session_/);
       expect(forked.sessionId).not.toBe(created.sessionId);
-      // Same response surface as session/new.
       expect(Array.isArray(forked.configOptions)).toBe(true);
       expect(forked.modes).toBeDefined();
 
-      // Both the source and the fork are listed.
       const listed = (await c.send('session/list', {})) as {
         sessions: { sessionId: string }[];
       };
@@ -213,7 +191,6 @@ describe('acp-server session lifecycle', () => {
       expect(ids).toContain(created.sessionId);
       expect(ids).toContain(forked.sessionId);
 
-      // The fork is wired for prompts like a session/new session.
       scripted.mockNextText('fork reply');
       const forkTurn = (await c.send('session/prompt', {
         sessionId: forked.sessionId,
@@ -221,8 +198,6 @@ describe('acp-server session lifecycle', () => {
       })) as { stopReason: string };
       expect(forkTurn.stopReason).toBe('end_turn');
 
-      // History carried over: loading the fork replays the source turn (and
-      // the fork's own turn).
       const before = c.sessionUpdates().length;
       await c.send('session/load', {
         sessionId: forked.sessionId,
@@ -261,8 +236,6 @@ describe('acp-server session lifecycle', () => {
 
       const deleted = await c.send('session/delete', { sessionId: created.sessionId });
       expect(deleted).toEqual({});
-      // The local ACP session state is torn down with the engine session:
-      // prompting the deleted id now hits the unknown-session branch.
       await expect(
         c.send('session/prompt', { sessionId: created.sessionId, prompt: [] }),
       ).rejects.toThrow(/-32602/);
@@ -307,8 +280,6 @@ describe('acp-server session lifecycle', () => {
       })) as { sessionId: string };
       expect(created.sessionId).toMatch(/^session_/);
 
-      // Engine-side assertion: the session scope's MCP handle is the overlay
-      // view and the converted server ended up connected under its ACP name.
       const entries = await sessionMcpEntries(c, created.sessionId);
       expect(entries.find((e) => e.name === 'mock')?.status).toBe('connected');
     },
@@ -352,8 +323,6 @@ describe('acp-server session lifecycle', () => {
       })) as { sessionId: string };
       expect(created.sessionId).toMatch(/^session_/);
 
-      // The workspace handler merges create-time dirs into its
-      // (ephemeral) additional-dir set.
       const workspace = await c.server.core.accessor
         .get(IWorkspaceInstanceManager)
         .getOrCreate({ root: homeDir! });
@@ -373,8 +342,6 @@ describe('acp-server session lifecycle', () => {
       };
       await c.waitForSessionUpdate('available_commands_update', 10_000);
 
-      // Retitle through the engine (the same klient the server drives) — the
-      // metadata.changed event must surface as session_info_update.
       await c.server.klient.session(created.sessionId).setTitle('Renamed Session');
 
       const notification = await c.waitForSessionUpdate('session_info_update', 10_000);
@@ -398,8 +365,6 @@ describe('acp-server session lifecycle', () => {
       const c = client;
       await c.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
 
-      // Provider hydration from config.toml is async (kosongConfig initialize
-      // → providerService.loadAll); wait until summarize sees the fake token.
       await expect
         .poll(
           async () => (await c.server.klient.global.auth.summarize()).some((s) => s.loggedIn),
@@ -407,7 +372,6 @@ describe('acp-server session lifecycle', () => {
         )
         .toBe(true);
 
-      // Logged in (fake token present): the gate lets session/new through.
       const created = (await c.send('session/new', { cwd: homeDir, mcpServers: [] })) as {
         sessionId: string;
       };
@@ -416,7 +380,6 @@ describe('acp-server session lifecycle', () => {
       await c.send('logout', {});
       expect(toolkit.hasToken()).toBe(false);
 
-      // Logged out: the summarize-driven gate rejects with auth_required.
       await expect
         .poll(
           async () => (await c.server.klient.global.auth.summarize()).some((s) => s.loggedIn),
@@ -433,9 +396,6 @@ describe('acp-server session lifecycle', () => {
   it(
     'apiKey-only config passes the auth gate without any OAuth provider',
     async () => {
-      // The flat fake-model config carries an inline apiKey and no OAuth
-      // provider at all: the engine's readiness probe (not the OAuth-only
-      // summary) must let session/new through.
       homeDir = await mkdtemp(join(tmpdir(), 'acp-apikey-gate-'));
       await writeFakeModelConfig(homeDir);
       client = await createTestClient({ homeDir, disableAuth: false });
@@ -470,7 +430,6 @@ describe('acp-server session lifecycle', () => {
       expect(ids).toContain(first.sessionId);
       expect(ids).not.toContain(second.sessionId);
 
-      // No cwd → no filter: both sessions are listed.
       const unfiltered = (await c.send('session/list', {})) as {
         sessions: { sessionId: string }[];
       };
@@ -499,8 +458,6 @@ describe('filterSessionSummariesByCwd', () => {
 
   it('keeps cwd-less legacy sessions under an explicit filter', () => {
     const items = [summary('a', '/x'), summary('b'), summary('c', '/y')];
-    // 'b' has no cwd metadata: its workspace is unknown, not known-different,
-    // so an explicit filter must not silently drop it.
     expect(filterSessionSummariesByCwd(items, '/x').map((s) => s.id)).toEqual(['a', 'b']);
     expect(filterSessionSummariesByCwd(items, '/y').map((s) => s.id)).toEqual(['b', 'c']);
   });

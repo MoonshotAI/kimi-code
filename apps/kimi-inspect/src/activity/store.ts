@@ -1,19 +1,3 @@
-/**
- * Session activity hub — owns the global-events socket and the per-session
- * coarse activity map behind the Sidebar's status badges.
- *
- * Two data sources converge into one store: the initial / reconnect
- * baseline comes from a single `GET /api/v1/sessions` page (every wire
- * session carries `busy` / `main_turn_active` / `pending_interaction` /
- * `last_turn_reason`), and live updates arrive as
- * `event.session.work_changed` frames over the global WS channel (no
- * subscription needed server-side). List-level facts (session created /
- * retitled) are forwarded to the consumer as `onListChanged` so the
- * react-query session list invalidates instead of waiting out its slow poll.
- * The store is a plain subscribe/version store so React binds through
- * `useSyncExternalStore`.
- */
-
 import type { WsLikeCtor } from '../channel/wsLike';
 import { GlobalEventsWs, type SessionWorkFacts } from './ws';
 
@@ -52,14 +36,11 @@ export class SessionActivityStore {
     this.bump();
   }
 
-  /** Replace the whole map with a REST baseline (initial load / re-seed). */
   seed(entries: Iterable<readonly [string, SessionWorkFacts]>): void {
     this.activities = new Map(entries);
     this.bump();
   }
 
-  /** Drop one session's live facts (e.g. it was archived — no further
-   *  work_changed frames will arrive to correct a stale badge). */
   remove(sessionId: string): void {
     if (this.activities.delete(sessionId)) this.bump();
   }
@@ -71,10 +52,8 @@ export class SessionActivityStore {
 }
 
 export interface SessionActivityHubOptions {
-  /** Server base URL (`http(s)://host:port`). */
   readonly url: string;
   readonly token?: string | undefined;
-  /** List-level signal (session created / retitled) — invalidate the list. */
   readonly onListChanged: () => void;
   readonly WebSocketImpl?: WsLikeCtor;
   readonly fetchImpl?: typeof fetch;
@@ -90,9 +69,6 @@ export class SessionActivityHub {
   constructor(opts: SessionActivityHubOptions) {
     this.baseUrl = opts.url.replace(/\/$/, '');
     this.token = opts.token;
-    // Bind the default: `this.fetchImpl(...)` is a member call, and the
-    // browser's `fetch` throws Illegal invocation when its receiver is not
-    // the global object (Node's undici fetch does not care).
     this.fetchImpl = opts.fetchImpl ?? fetch.bind(globalThis);
     this.ws = new GlobalEventsWs({
       url: opts.url,
@@ -153,8 +129,6 @@ export class SessionActivityHub {
       }
       this.store.seed(entries);
     } catch {
-      // Seed is best-effort: live frames keep flowing, and the next reconnect
-      // re-seeds. A dead server surfaces through the connection layer anyway.
     }
   }
 }

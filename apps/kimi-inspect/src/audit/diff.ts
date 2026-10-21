@@ -1,37 +1,12 @@
-/**
- * Structural diff over serialized `AgentState` values (see `serialize.ts`).
- *
- * The audit panel diffs two adjacent, immutable states. Because the store
- * is copy-on-write, untouched subtrees share references — the reference
- * equality fast path below collapses them to `unchanged` without walking.
- *
- * Arrays of transcript entities are matched by their id field (turnId,
- * stepId, frameId, …) rather than by index, so an upsert in the middle of
- * the timeline does not turn into a cascade of spurious modifications.
- */
-
 export type DiffStatus = 'unchanged' | 'added' | 'removed' | 'modified';
 
 export interface DiffNode {
   readonly status: DiffStatus;
-  /** Current value (`undefined` when removed). */
   readonly value: unknown;
-  /** Previous value (`undefined` when added). */
   readonly prev: unknown;
-  /**
-   * Object/array children — key is the object key, the entity id, or
-   * `#<index>` for plain arrays. Absent on leaves and on whole-subtree
-   * added/removed nodes (the renderer colors the subtree as one block).
-   */
   readonly children?: ReadonlyMap<string, DiffNode>;
 }
 
-/**
- * Id fields checked in priority order — MOST SPECIFIC FIRST. A step carries
- * both `turnId` and `stepId`, and a frame can carry `taskId` alongside its
- * `frameId`; matching the wrong one mislabels the node and, worse, collides
- * siblings in the children map (two steps of one turn both keyed `t1`).
- */
 const ID_FIELDS = [
   'frameId',
   'stepId',
@@ -53,7 +28,6 @@ function elementId(element: unknown): string | undefined {
   return undefined;
 }
 
-/** Public for the audit UI: same id-priority keying used to match array elements. */
 export { elementId };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

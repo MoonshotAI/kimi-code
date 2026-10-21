@@ -17,7 +17,6 @@ interface JsonRpcMessage {
   readonly error?: unknown;
 }
 
-/** Read a single ND-JSON JSON-RPC message off a readable stream. */
 async function readOneMessage(readable: Readable): Promise<JsonRpcMessage> {
   let buf = '';
   for await (const chunk of readable) {
@@ -61,7 +60,6 @@ describe('acp-server initialize handshake', () => {
     'boots agent-core-v2 and answers the ACP initialize request',
     async () => {
       const homeDir = await mkdtemp(join(tmpdir(), 'acp-server-init-'));
-      // One PassThrough per direction: writes on one side appear on the other.
       const toAgent = new PassThrough();
       const toClient = new PassThrough();
       try {

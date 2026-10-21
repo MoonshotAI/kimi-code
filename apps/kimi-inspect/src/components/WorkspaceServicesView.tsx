@@ -1,16 +1,3 @@
-/**
- * Workspace Services view — the workspace-scope Service reflection as a
- * standalone rail view. Same Postman-style three-pane layout
- * (`ScopePanelsScrollspy`) as App Services, plus a left sidebar holding the
- * workspace picker: a server-side directory browser (`WorkspaceDirBrowser`,
- * over the App-scope `IHostFolderBrowser`) that marks already-registered
- * workspaces and registers a picked folder on demand. The proxies resolve on
- * the `/workspace/:id` route, so a workspace must be selected before any
- * Service is callable. Picking one materializes its handler on demand
- * server-side (`IWorkspaceLifecycleService.handlerFor` is create-or-get), no
- * manual join needed.
- */
-
 import { IWorkspaceService } from '@moonshot-ai/agent-core-v2/app/workspace/workspace';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState, type ReactNode } from 'react';

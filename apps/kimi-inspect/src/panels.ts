@@ -1,21 +1,3 @@
-/**
- * Service panel descriptors — the handwritten *override* layer of the right
- * sidebar. The sidebar's baseline is the dynamic channel list served by
- * `GET /api/v1/debug/channels` (every wire-exposed Service with its methods);
- * a descriptor here replaces the generic card for its Service with a curated
- * one: a `fetch` that reads its inspectable state and optional `actions`
- * that trigger its methods. The generic `ServiceCard` renders them; adding a
- * curated panel is one entry here, no component code.
- *
- * Panels refresh manually (Load / Refresh buttons): the live event streams
- * that used to drive `refreshOn` refetches went away with the v2 socket
- * (`/api/v2/ws`).
- *
- * The proxies are typed by the real `agent-core-v2` contracts at the call
- * site, but panels treat them as `AnyService` so one descriptor shape covers
- * every Service.
- */
-
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import { IAgentMcpService } from '@moonshot-ai/agent-core-v2/agent/mcp/mcp';
 import { IAgentPermissionModeService } from '@moonshot-ai/agent-core-v2/agent/permissionMode/permissionMode';
@@ -33,10 +15,8 @@ import { ISessionInitService } from '@moonshot-ai/agent-core-v2/features/session
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '@moonshot-ai/agent-core-v2/session/workspaceContext/workspaceContext';
 
-/** Loosely-typed view of a scoped service proxy (every member is a remote call). */
 export type AnyService = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
-/** Invoke a method on a loose proxy; the proxy materializes every member. */
 export function call(svc: AnyService, method: string, ...args: unknown[]): Promise<unknown> {
   const fn = svc[method];
   if (fn === undefined) {
@@ -47,17 +27,14 @@ export function call(svc: AnyService, method: string, ...args: unknown[]): Promi
 
 export interface PanelAction {
   readonly label: string;
-  /** Prompt for one string input before running (raw string passed to `run`). */
   readonly input?: string;
   readonly danger?: boolean;
   readonly run: (svc: AnyService, input?: string) => unknown;
 }
 
 export interface ServicePanelDef {
-  /** Decorator id / wire channel name, e.g. `sessionMetadata`. */
   readonly id: string;
   readonly label: string;
-  /** Wire scope the Service is called on (`app` maps to the `core` route). */
   readonly scope: 'app' | 'workspace' | 'session' | 'agent';
   readonly fetch?: (svc: AnyService) => Promise<unknown>;
   readonly actions?: readonly PanelAction[];

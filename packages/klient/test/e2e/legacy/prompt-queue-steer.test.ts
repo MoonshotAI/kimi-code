@@ -1,17 +1,3 @@
-/**
- * Prompt queue + steer live-server invariant.
- *
- * Drives the TUI Ctrl-S equivalent over server REST + WS:
- *   1. use the debug-only prompt test hook to mark one prompt active;
- *   2. submit a second prompt and assert it is queued instead of rejected;
- *   3. list prompts and assert active + queued state;
- *   4. steer the queued prompt and assert `prompt.steered` is broadcast and
- *      the queue is drained.
- *
- * Requires a server launched with debug endpoints enabled. Normal production
- * daemons do not expose `/debug/*`, so this file skips when that surface is
- * absent.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { DaemonClient, type AnyFrame } from '../harness/index.js';
@@ -66,18 +52,15 @@ afterEach(async () => {
       try {
         await client.abortPrompt(sid, promptId);
       } catch {
-        // ignore
       }
     }
     try {
       await client.archiveSession(sid);
     } catch {
-      // ignore
     }
     try {
       await client.close();
     } catch {
-      // ignore
     }
   }
 });

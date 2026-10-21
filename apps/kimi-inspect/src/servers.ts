@@ -1,12 +1,3 @@
-/**
- * Local server discovery (browser side) — reads the dev/preview middleware at
- * `/__inspect/servers` (`vite/serverDiscovery.ts`), which scans the local
- * kap-server instance registry and reads the home token. Powers the
- * zero-config startup connect, the header server switcher, and the discovered
- * list on the connect screen. Returns `null` outside dev/preview (no such
- * endpoint on a static host) so the app falls back to the manual flow.
- */
-
 import { useQuery } from '@tanstack/react-query';
 
 export type DiscoveredServerSource = 'instance' | 'lock' | 'proxy';
@@ -42,7 +33,6 @@ export async function fetchServerDiscovery(): Promise<ServerDiscoveryResult | nu
   }
 }
 
-/** Poll discovery: instances come and go (the server-side heartbeat is 15 s). */
 export function useServerDiscovery() {
   return useQuery({
     queryKey: ['local-server-discovery'],
@@ -53,9 +43,6 @@ export function useServerDiscovery() {
   });
 }
 
-/** Pick the auto-connect target: the remembered pick when it is still alive,
- * else the dev-proxy target (the standard `pnpm dev:v2` flow), else the
- * longest-running instance. */
 export function pickDefaultServer(
   discovery: ServerDiscoveryResult,
   rememberedUrl?: string | null,

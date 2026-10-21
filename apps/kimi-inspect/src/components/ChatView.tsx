@@ -1,26 +1,3 @@
-/**
- * Main view — the conversation of the active session + agent, rendered from
- * the transcript surface (`/api/v1`):
- *
- *  - FULL state comes from the REST transcript API only: the initial load
- *    reads the newest page, a full refresh re-reads from the tail backwards
- *    until the previously loaded window is re-covered, and "Load earlier
- *    turns" pages further with a `before_turn` cursor.
- *  - The WS channel (`/api/v1/ws`) is a DELTA channel only: `transcript.ops`
- *    at `delta` grade; `transcript.reset` snapshots are ignored. Ops are
- *    buffered while a REST refresh is in flight and flushed onto the fresh
- *    pages — idempotent upserts and offset-placed appends make that converge.
- *  - Loss signals (`resync_required`, append gap, socket reconnect) trigger
- *    a full REST refresh; nothing is resynced from the socket itself.
- *
- * Rendering is turn-granular (turn → step → frame) and typed entirely by the
- * transcript data model. Cancels go through the `IAgentLoopService` channel
- * over the debug RPC surface (`/api/v1/debug`); interaction answers
- * (approve/reject, answer/dismiss) go through the public REST endpoints
- * (`src/interactions/api.ts`); the running indicator
- * derives from transcript state (`meta.activity` / running turns).
- */
-
 import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import {
   type QuestionItem,
@@ -84,39 +61,22 @@ import { ChatSearchBar } from './ChatSearchBar';
 
 const noopSubscribe = () => () => {};
 
-/** Active session id for deeply nested interaction views (approve/answer buttons). */
 const SessionContext = createContext<string>('');
 
-/**
- * A navigation request into the chat timeline (e.g. from a search hit). The
- * channel pages backwards until the turn enters the loaded window, then
- * scrolls it into view and flashes it briefly.
- */
 export interface ChatJump {
-  /** Turn to locate (`t<N>`); omitted = switch session/agent only, no scroll. */
   readonly turnId?: string | undefined;
-  /** Step within the turn (`t<N>.<M>`); falls back to the turn card. */
   readonly stepId?: string | undefined;
-  /** Changes on every request so re-clicking the same hit re-triggers. */
   readonly nonce: number;
 }
 
 interface TranscriptChannel {
-  /** Null until the effect has created the store (pre-ready / no session). */
   readonly store: TranscriptChatStore | null;
   readonly state: AgentState;
-  /** Records every step that built the store (audit panel data source). */
   readonly trail: AuditTrail | null;
-  /** True once the initial REST page load succeeded. */
   readonly loaded: boolean;
-  /** Set when the initial/refresh load failed (e.g. server without transcript). */
   readonly loadError: unknown;
 }
 
-/**
- * Owns the store, the REST load/refresh pipeline, and the WS delta
- * subscription for one (sessionId, agentId) pair.
- */
 function useTranscriptChannel(
   sessionId: string | null,
   agentId: string,
@@ -137,21 +97,11 @@ function useTranscriptChannel(
     const trail = new AuditTrail();
     const authToken = token === '' ? undefined : token;
     let disposed = false;
-    /** While a REST reload / catch-up is in flight, WS ops are buffered, then flushed. */
     let fetching = true;
     let buffer: TranscriptOperation[] = [];
-    /** Max batch seq seen while buffering (folded into the watermark on flush). */
     let bufferedSeq: number | undefined;
-    /**
-     * Op-batch watermark: the store is known to include every batch with
-     * seq <= lastSeq. Sourced from REST page watermarks and applied batch
-     * seqs; `undefined` until a sequenced server provides one (legacy
-     * servers never do — every recovery then falls back to full refreshes).
-     */
     let lastSeq: number | undefined;
-    /** Cursor of the in-flight recover fetch, paired with `onPageApplied`. */
     let recoverBefore: string | undefined;
-    /** True once the initial page load succeeded (gates reset-driven catch-up). */
     let seeded = false;
 
     const noteSeq = (seq: number | undefined): void => {
@@ -171,11 +121,7 @@ function useTranscriptChannel(
       bufferedSeq = undefined;
     };
 
-    /** Page (re)load body shared by the full refresh and the catch-up fallback. */
     const reloadPages = async (): Promise<void> => {
-      // The window's oldest turn is the re-cover anchor: after a refresh the
-      // server window may have shifted, and only re-loading up to THIS turn
-      // preserves the previously loaded history.
       const prevOldest = oldestTurnId(store.getState().items);
       if (prevOldest !== undefined) captureAnchor();
       const newest = await fetchTranscriptPage({
@@ -189,8 +135,6 @@ function useTranscriptChannel(
       store.applyPage(newest, { replace: true });
       trail.recordRest({ pageSize: TRANSCRIPT_PAGE_SIZE }, 'replace', newest, store.getState());
       lastSeq = newest.seq;
-      // Re-cover the previously loaded window for refreshes (a no-op on the
-      // initial load, where there is no previous oldest turn).
       await recoverLoadedWindow(
         store,
         prevOldest,
@@ -222,7 +166,6 @@ function useTranscriptChannel(
       }
     };
 
-    /** Full-state (re)load: the legacy recovery path and the initial load. */
     const refresh = createCoalescedRunner(async (): Promise<void> => {
       fetching = true;
       buffer = [];
@@ -236,12 +179,6 @@ function useTranscriptChannel(
       }
     });
 
-    /**
-     * Targeted catch-up: fetch exactly the op batches after our watermark
-     * (`GET .../transcript/ops?since_seq=`). Falls back to a full page
-     * reload on a legacy server (no seq / endpoint missing), a journal that
-     * no longer covers the gap (`complete: false`), or a fetch failure.
-     */
     const catchUp = createCoalescedRunner(async (): Promise<void> => {
       if (lastSeq === undefined) {
         refresh();
@@ -296,9 +233,6 @@ function useTranscriptChannel(
             trail.recordOps(ops, 'buffered', meta?.at, store.getState());
             return;
           }
-          // Seq gap: the store is behind by at least one batch. Catch up
-          // point-to-point instead of applying on a stale base (appends are
-          // offset-placed and would surface a gap anyway).
           if (meta?.seq !== undefined && lastSeq !== undefined && meta.seq > lastSeq + 1) {
             catchUp();
             return;
@@ -309,11 +243,6 @@ function useTranscriptChannel(
         },
         onReset: (_aid, snapshot, hasMoreOlder, meta) => {
           trail.recordReset(snapshot, hasMoreOlder, meta?.at, store.getState());
-          // Sequenced mode only: a reset after seeding means the server could
-          // not replay from our `transcript_since` cursor (journal truncated)
-          // — catch up, which itself falls back to a full reload when the seq
-          // window is gone. On legacy servers (no watermark) resets are
-          // routine per-subscribe noise and stay ignored, as before.
           if (seeded && lastSeq !== undefined) catchUp();
         },
         onResyncRequired: () => {
@@ -360,13 +289,9 @@ export function ChatView({
   sessionId: string | null;
   agentId: string;
   ready: boolean;
-  /** Hands the audit trail of the current channel up to the app shell (the audit panel lives in the right dock, not inside this view). */
   onTrailChange?: (trail: AuditTrail | null) => void;
-  /** Pending navigation into the timeline (search result click). */
   jump?: ChatJump | null | undefined;
-  /** Called once the jump has been processed (or found un-actionable). */
   onJumpHandled?: (() => void) | undefined;
-  /** Hands an in-chat search hit up to the app shell (agent switch + jump). */
   onOpenSearchHit?: ((hit: SearchHit) => void) | undefined;
 }) {
   const { klient, baseUrl, config } = useConnection();
@@ -374,11 +299,8 @@ export function ChatView({
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<unknown>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** Distance from the scroll bottom captured before a prepend (restore anchor). */
   const anchorRef = useRef<number | null>(null);
-  /** Whether the viewport was pinned to the bottom before the last update. */
   const stickBottomRef = useRef(true);
-  /** The jump target being flashed (cleared on a timer). */
   const [flash, setFlash] = useState<{ turnId: string; stepId?: string | undefined } | null>(null);
 
   const captureAnchor = useCallback(() => {
@@ -394,16 +316,10 @@ export function ChatView({
   );
   const items = state.items;
 
-  // The audit panel is rendered by the app shell's right dock; report the
-  // trail (null while no channel exists) so it can subscribe to it there.
   useEffect(() => {
     onTrailChange?.(trail);
   }, [onTrailChange, trail]);
 
-  // Jump navigation (search result click): once the channel has loaded, page
-  // backwards until the target turn enters the window, then scroll to the
-  // step (or the turn card) and flash it briefly. A turn that never appears
-  // (cut by an undo) degrades to no scroll.
   useEffect(() => {
     if (jump === null || jump === undefined || !loaded || store === null || sessionId === null) {
       return;
@@ -449,7 +365,6 @@ export function ChatView({
         return;
       }
       setFlash({ turnId, stepId });
-      // The prepend renders asynchronously; wait two frames before scrolling.
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
           if (cancelled) return;
@@ -469,7 +384,6 @@ export function ChatView({
     };
   }, [jump, loaded, store, sessionId, agentId, baseUrl, config, trail, onJumpHandled]);
 
-  // The flash highlight clears itself after a short moment.
   useEffect(() => {
     if (flash === null) return;
     const timer = setTimeout(() => setFlash(null), 2400);
@@ -525,9 +439,6 @@ export function ChatView({
     }
   };
 
-  // Auto-paging: the top sentinel auto-loads the previous REST page when it
-  // approaches the viewport (paused while a previous load failed — the retry
-  // button re-arms it). This replaces any manual "load earlier" action.
   const loadOlderRef = useRef(loadOlder);
   loadOlderRef.current = loadOlder;
   const topSentinelRef = useRef<HTMLDivElement>(null);
@@ -552,9 +463,6 @@ export function ChatView({
     state.meta.activity === 'turn' ||
     items.some((item) => item.kind === 'turn' && item.state === 'running');
 
-  // Interactions render inline at their anchor tool frame; entities without
-  // an anchor (or whose anchor frame is outside the loaded window) collect
-  // here and render floating at the bottom.
   const anchoredToolCallIds = collectToolCallIds(items);
   const unanchoredInteractions = [...state.interactions.values()].filter(
     (interaction) =>
@@ -666,10 +574,6 @@ export function ChatView({
             </div>
           ) : null}
           {items.map((item) => (
-            // Native virtual screen: the browser skips layout/paint for
-            // off-screen items and remembers their last rendered size
-            // (`auto` in contain-intrinsic-size), so long transcripts stay
-            // cheap without a windowing library.
             <div
               key={itemId(item)}
               style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
@@ -705,8 +609,6 @@ export function ChatView({
   );
 }
 
-// ---------------------------------------------------------------- items
-
 function ItemView({
   item,
   tasks,
@@ -718,7 +620,6 @@ function ItemView({
   tasks: ReadonlyMap<string, TranscriptTask>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
-  /** The jump target being flashed, if any. */
   flash?: { turnId: string; stepId?: string | undefined } | null | undefined;
 }) {
   switch (item.kind) {
@@ -785,7 +686,6 @@ function TurnView({
   tasks: ReadonlyMap<string, TranscriptTask>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
-  /** The jump target being flashed, if any. */
   flash?: { turnId: string; stepId?: string | undefined } | null | undefined;
 }) {
   const turnFlashed = flash?.turnId === turn.turnId && flash.stepId === undefined;
@@ -904,8 +804,6 @@ function TaskRefView({
     </div>
   );
 }
-
-// ---------------------------------------------------------------- frames
 
 function AttachmentChips({
   ids,
@@ -1060,8 +958,6 @@ function ToolFrameView({
   interactions: ReadonlyMap<string, TranscriptInteraction>;
 }) {
   const task = frame.taskId !== undefined ? tasks.get(frame.taskId) : undefined;
-  // The interaction anchored at this call (via approvalId, or by scanning the
-  // entity's toolCallId for requests that predate the back-link).
   const linked = [...interactions.values()].filter(
     (interaction) =>
       interaction.interactionId === frame.approvalId || interaction.toolCallId === frame.toolCallId,
@@ -1136,9 +1032,7 @@ function InteractionEntityView({
   const sessionId = useContext(SessionContext);
   const [busy, setBusy] = useState(false);
   const [respondError, setRespondError] = useState<unknown>(null);
-  /** Question answers in progress: question text → selected option labels. */
   const [selections, setSelections] = useState<Readonly<Record<string, readonly string[]>>>({});
-  /** Question free-text ("Other") input: question text → draft. */
   const [others, setOthers] = useState<Readonly<Record<string, string>>>({});
 
   const pending = interaction.state === 'pending';
@@ -1198,7 +1092,6 @@ function InteractionEntityView({
         answers[`q_${index}`] = { kind: 'single', option_id: optionIds[0]! };
       }
     }
-    // Mirror the TUI adapter: no answers at all dismisses the question.
     if (Object.keys(answers).length === 0) {
       dismiss();
       return;

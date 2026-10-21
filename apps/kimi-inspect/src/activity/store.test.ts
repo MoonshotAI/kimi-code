@@ -112,7 +112,6 @@ describe('SessionActivityHub', () => {
 
     expect(hub.store.get('s1')).toEqual(facts({ busy: true, mainTurnActive: true }));
     expect(hub.store.get('s2')?.pendingInteraction).toBe('approval');
-    // The hello goes out with no subscriptions — global facts flow regardless.
     const hello = JSON.parse(instances[0]!.sent[0]!) as {
       type: string;
       payload: { subscriptions: string[] };
@@ -163,7 +162,6 @@ describe('SessionActivityHub', () => {
 
     instances[0]!.emitFrame({ type: 'event.session.created', session_id: 's1', payload: {} });
     instances[0]!.emitFrame({ type: 'session.meta.updated', session_id: 's1', payload: {} });
-    // Agent-grained frames are ignored even if they somehow arrive.
     instances[0]!.emitFrame({ type: 'turn.started', session_id: 's1', payload: {} });
 
     expect(onListChanged).toHaveBeenCalledTimes(2);
@@ -189,8 +187,6 @@ describe('SessionActivityHub', () => {
     });
     expect(hub.store.get('s1')).toBeDefined();
 
-    // Global-dispatched frames carry the __global__ watermark; the real
-    // session id rides in the payload.
     instances[0]!.emitFrame({
       type: 'event.session.archived',
       session_id: '__global__',

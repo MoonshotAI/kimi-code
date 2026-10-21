@@ -1,26 +1,3 @@
-/**
- * Connection context — owns the inspect client (HTTP calls over the
- * `/api/v1/debug` surface) built from the selected server URL + token.
- *
- * Three ways to connect:
- *   1. deep link `?url=` / `?token=` or a previously saved manual config
- *      (persisted in localStorage);
- *   2. zero-config discovery: on startup the dev middleware
- *      (`/__inspect/servers`) lists every local kap-server with the home
- *      token — the app connects straight to the remembered / proxy / first
- *      instance, persisting nothing but the picked URL (so a reload re-picks
- *      it while it is still alive, and never resurrects a stale port);
- *   3. the manual form or a discovered-server card on the connect screen.
- * `disconnect` suppresses the discovery bootstrap for the rest of the
- * session so it lands on the connect screen instead of reconnecting.
- *
- * The client is built only after `probeDebugSurface` confirms the server
- * mounts `/api/v1/debug` (kap-server started with `--debug-endpoints` on a
- * loopback bind). There is no fallback surface — when the probe fails the
- * connection stops on a dedicated error screen (with retry / reconfigure)
- * instead of silently degrading.
- */
-
 import {
   createContext,
   useCallback,
@@ -35,16 +12,12 @@ import { createInspectClient, probeDebugSurface, type InspectClient } from './ch
 import { fetchServerDiscovery, pickDefaultServer, useServerDiscovery } from './servers';
 
 export interface ConnectionConfig {
-  /** Server base URL; empty string means same-origin (the Vite dev proxy). */
   readonly url: string;
   readonly token: string;
 }
 
 export interface ConnectOptions {
-  /** Persist the whole config (manual form / deep link). Default `true`;
-   * discovered connects pass `false` so a reload re-discovers fresh state. */
   readonly persist?: boolean;
-  /** Remember just this URL as the preferred discovery pick (`kimi-inspect.server-url`). */
   readonly rememberServerUrl?: string;
 }
 
@@ -65,12 +38,10 @@ function readInitialConfig(): ConnectionConfig {
       return { url: parsed.url ?? '', token: parsed.token ?? '' };
     }
   } catch {
-    // corrupt storage — fall through to default
   }
   return { url: '', token: '' };
 }
 
-/** Resolve the configured (possibly relative) URL to an absolute base for the client. */
 export function resolveBaseUrl(url: string): string {
   const trimmed = url.trim().replace(/\/$/, '');
   if (trimmed === '') return window.location.origin;
@@ -90,8 +61,6 @@ const ConnectionContext = createContext<ConnectionValue | null>(null);
 export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<ConnectionConfig | null>(() => {
     const initial = readInitialConfig();
-    // Auto-connect only when the user explicitly connected before (stored) or
-    // deep-linked (query). First visit goes through the discovery bootstrap.
     const params = new URLSearchParams(window.location.search);
     if (params.has('url') || params.has('token')) return initial;
     return localStorage.getItem(STORAGE_KEY) !== null ? initial : null;
@@ -99,8 +68,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [discovering, setDiscovering] = useState(config === null);
   const [suppressDiscovery, setSuppressDiscovery] = useState(false);
 
-  // Discovery bootstrap: with nothing explicit configured, scan the local
-  // kap-server instance registry (via the dev middleware) and auto-connect.
   useEffect(() => {
     if (config !== null || suppressDiscovery) return;
     let cancelled = false;
@@ -118,10 +85,6 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     };
   }, [config, suppressDiscovery]);
 
-  // Debug-surface probe: the app talks ONLY to `/api/v1/debug` (kap-server
-  // `--debug-endpoints`, loopback). The client is built once the probe for
-  // this exact config has succeeded; a failure is kept and rendered as a
-  // blocking error screen (no fallback surface exists anymore).
   const [probe, setProbe] = useState<{
     readonly key: string;
     readonly error: string | null;
@@ -235,7 +198,6 @@ export function useConnection(): ConnectionValue {
   return value;
 }
 
-/** Blocking screen when the server does not mount the debug RPC surface. */
 function DebugSurfaceError({
   baseUrl,
   error,

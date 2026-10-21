@@ -1,32 +1,3 @@
-/**
- * Stress check for the kosong ⇄ kosongConfig read/write path, against an
- * in-process engine (memory transport) bootstrapped on a throwaway home.
- *
- * The contract under pressure: an awaited kosong mutation resolves only after
- * the write has been persisted by the kosongConfig bridge (with retries on
- * transient disk failures), and config-originated writes land in the kosong
- * registries synchronously. Every phase asserts read-after-write visibility
- * through BOTH facades — `kosong.*` (registry view) and `config.get` (the
- * persisted section the bridge writes) — with no sleeps or flush helpers:
- * any settling gap shows up here as a failed assertion.
- *
- * Phases:
- *   1. sequential provider add/remove read-after-write;
- *   2. same-name add/remove flip-flop (hammering the persist chain with
- *      alternating real writes and no-op merges);
- *   3. sequential default-model churn;
- *   4. concurrent burst adds (persist-chain serialization + merge);
- *   5. concurrent mixed sections: removes racing adds racing a default flip;
- *   6. config → kosong direction (config.replace must be visible to the
- *      registry facade immediately);
- *   7. restart durability: dispose the app, re-bootstrap on the same home,
- *      and compare every section against the pre-restart snapshot.
- *
- *   pnpm -C packages/klient stress:kosong-config
- *
- * Env: KIMI_MODEL_NAME is unset for the run (it would pin `defaultModel` and
- * break the pointer assertions); restored on exit.
- */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -66,7 +37,6 @@ const anonymousModel = (id: string) => ({
   maxContextSize: 8192,
 });
 
-/** Key-order-independent deep equality (post-restart TOML round-trips reorder keys). */
 const stable = (value: unknown): string =>
   JSON.stringify(value, (_key, v: unknown) =>
     v !== null && typeof v === 'object' && !Array.isArray(v)
@@ -90,15 +60,12 @@ async function main(): Promise<void> {
   const { app } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
     ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
   ]);
-  // Filled in right before the restart phase.
   let snapshot: Record<string, unknown> = {};
   try {
     const klient = createKlient({ scope: app });
     const config = klient.global.config;
     const kosong = klient.global.kosong;
 
-    // 1) Sequential read-after-write: each awaited add must already be in the
-    //    persisted section when it resolves — no settling window allowed.
     await phase('sequential provider add read-after-write', 30, async () => {
       for (let i = 0; i < 30; i += 1) {
         const name = `seq_${String(i)}`;
@@ -113,8 +80,6 @@ async function main(): Promise<void> {
       }
     });
 
-    // 2) Same-name flip-flop: add → remove → add on one key, asserting both
-    //    directions of the write land before the await returns.
     await phase('same-name add/remove flip-flop', 30, async () => {
       for (let i = 0; i < 15; i += 1) {
         await kosong.addProvider('flip', apiKeyProvider(`sk-flip-${String(i)}`));
@@ -126,8 +91,6 @@ async function main(): Promise<void> {
       }
     });
 
-    // 3) Sequential default-model churn: every awaited pointer write must be
-    //    visible in the persisted defaultModel section immediately.
     await phase('default-model churn', 22, async () => {
       await kosong.addProvider(anonymousModel('churn_a'));
       await kosong.addProvider(anonymousModel('churn_b'));
@@ -139,8 +102,6 @@ async function main(): Promise<void> {
       }
     });
 
-    // 4) Concurrent burst: 40 adds racing on one section. The persist chain
-    //    must serialize them and converge to the full set — no lost updates.
     await phase('concurrent burst adds', 40, async () => {
       await Promise.all(
         Array.from({ length: 40 }, (_, i) =>
@@ -156,8 +117,6 @@ async function main(): Promise<void> {
       }
     });
 
-    // 5) Mixed sections racing: removes of phase-1 providers + anonymous-model
-    //    adds (models section) + a default flip, all in flight at once.
     await phase('concurrent mixed sections', 41, async () => {
       await Promise.all([
         ...Array.from({ length: 30 }, (_, i) => kosong.removeProvider(`seq_${String(i)}`)),
@@ -175,8 +134,6 @@ async function main(): Promise<void> {
       assert((await config.get<string>('defaultModel')) === 'churn_b', 'default flip persisted');
     });
 
-    // 6) config → kosong: a config-originated write must be visible to the
-    //    registry facade as soon as its await resolves.
     await phase('config-originated replace visible to registry', 4, async () => {
       await config.replace({
         domain: 'providers',
@@ -221,15 +178,11 @@ async function main(): Promise<void> {
     app.dispose();
   }
 
-  // 7) Restart durability: a fresh engine on the SAME home must rehydrate the
-  //    exact pre-restart state — the ultimate proof the writes hit the disk.
   await phase('restart durability', 1, async () => {
     const { app: app2 } = bootstrap({ homeDir, clientIdentity: EXAMPLE_CLIENT_IDENTITY }, [
       ...logSeed(resolveLoggingConfig({ homeDir, env: process.env })),
     ]);
     try {
-      // Reads race the async startup otherwise: config loads from disk, then
-      // the bridge hydrates the registries from it.
       await app2.accessor.get(IConfigService).ready;
       await app2.accessor.get(IKosongConfigService).ready;
       const klient2: Klient = createKlient({ scope: app2 });
