@@ -1328,6 +1328,86 @@ describe('AnthropicChatProvider', () => {
       });
     });
 
+    it('video-only tool result keeps the video block without a text anchor', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run tool' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [ADD_TOOL], history);
+
+      const messages = body['messages'] as Array<{ content: Array<{ type: string; content: unknown[] }> }>;
+      const toolResult = messages.at(-1)!.content.find((block) => block.type === 'tool_result')!;
+      expect(toolResult.content).toEqual([
+        { type: 'video', source: { type: 'base64', media_type: 'video/mp4', data: 'AAAA' } },
+      ]);
+    });
+
+    it('video-only tool result passes an ms:// url through as a url source', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Run tool' }], toolCalls: [] },
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' }],
+        },
+        {
+          role: 'tool',
+          content: [
+            { type: 'video_url', videoUrl: { url: 'ms://file-id-123' } },
+          ] satisfies ContentPart[],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+      ];
+      const body = await captureRequestBody(provider, '', [ADD_TOOL], history);
+
+      const messages = body['messages'] as Array<{ content: Array<{ type: string; content: unknown[] }> }>;
+      const toolResult = messages.at(-1)!.content.find((block) => block.type === 'tool_result')!;
+      expect(toolResult.content).toEqual([
+        { type: 'video', source: { type: 'url', url: 'ms://file-id-123' } },
+      ]);
+    });
+
+    it.each([
+      ['empty content', []],
+      ['only an empty text part', [{ type: 'text', text: '' }]],
+    ] as Array<[string, ContentPart[]]>)(
+      'tool result with %s lowers to placeholder text instead of empty content',
+      async (_label, content) => {
+        const provider = createProvider();
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Run tool' }], toolCalls: [] },
+          {
+            role: 'assistant',
+            content: [],
+            toolCalls: [{ type: 'function', id: 'call_1', name: 'add', arguments: '{"a":1,"b":2}' }],
+          },
+          { role: 'tool', content, toolCalls: [], toolCallId: 'call_1' },
+        ];
+        const body = await captureRequestBody(provider, '', [ADD_TOOL], history);
+
+        const messages = body['messages'] as Array<{
+          content: Array<{ type: string; content: unknown[] }>;
+        }>;
+        const toolResult = messages.at(-1)!.content.find((block) => block.type === 'tool_result')!;
+        expect(toolResult.content).toEqual([{ type: 'text', text: 'Tool output is empty.' }]);
+      },
+    );
+
     it('parallel tool calls and tool results (request body capture)', async () => {
       const provider = createProvider();
       const tcAdd: ToolCall = {

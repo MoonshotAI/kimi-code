@@ -18,6 +18,8 @@ const SUPPORTED_B64_VIDEO_TYPES = new Set([
   'video/3gpp',
 ]);
 
+const EMPTY_TOOL_RESULT_PLACEHOLDER = 'Tool output is empty.';
+
 function imageUrlPartToAnthropic(
   url: string,
   acceptedMimes: ReadonlySet<string>,
@@ -114,6 +116,9 @@ export function lowerMessage(
       } else if (part.type === 'video_url') {
         blocks.push(videoUrlPartToAnthropic(part.videoUrl.url));
       }
+    }
+    if (blocks.length === 0) {
+      blocks.push({ type: 'text', text: EMPTY_TOOL_RESULT_PLACEHOLDER });
     }
     content.push({
       type: 'tool_result',

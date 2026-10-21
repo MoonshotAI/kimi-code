@@ -155,6 +155,10 @@ function normalizeGenerationKwargs(
   return kwargs;
 }
 
+// Emitted when a tool result lowers to no usable content at all; see the
+// tool branch of convertMessage. Matches the Anthropic provider's guard.
+const EMPTY_TOOL_RESULT_PLACEHOLDER = 'Tool output is empty.';
+
 function convertMessage(
   message: Message,
   reasoningKey: string,
@@ -202,6 +206,22 @@ function convertMessage(
           .map((p) => convertContentPart(p))
           .filter((p): p is OpenAIContentPart => p !== null);
       }
+    }
+
+    // Strict chat-completions validators (e.g. LiteLLM) reject tool messages
+    // with missing or empty content — the same permanent-brick failure class
+    // as an empty `tool_result` on Anthropic endpoints. An empty tool result
+    // (no parts, think-only, all-empty text, or an empty extract_text string)
+    // would serialize as a dropped `content` key, '', or an empty /
+    // all-empty-text part array; normalize every one of those shapes to a
+    // non-empty placeholder. Non-empty content passes through unchanged.
+    if (
+      result.content === undefined ||
+      result.content === '' ||
+      (Array.isArray(result.content) &&
+        result.content.every((p) => p.type === 'text' && p.text === ''))
+    ) {
+      result.content = EMPTY_TOOL_RESULT_PLACEHOLDER;
     }
   } else {
     // content: serialize to string if single text, array otherwise
