@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -34,9 +35,18 @@ type ClaimOutcome =
 function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+    if ((error as NodeJS.ErrnoException).code !== 'EPERM') return false;
+  }
+  if (process.platform === 'win32') return true;
+  try {
+    const stat = execFileSync('ps', ['-p', String(pid), '-o', 'stat='], {
+      encoding: 'utf8',
+      timeout: 1000,
+    });
+    return !stat.trim().startsWith('Z');
+  } catch {
+    return true;
   }
 }
 
