@@ -18,7 +18,6 @@ import {
   missionFileName,
   parseFrontmatter,
   resolveMissionByBranch,
-  resolveTowerRepoRoot,
   type TowerInboxItem,
   type TowerMission,
   type TowerState,
@@ -48,7 +47,7 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 import { SubagentTask, type SubagentHandle } from '#/agent/tools/agent/subagent-task';
 
-import { TOWER_MAIN_AGENT_ONLY, TOWER_MODE_USER_ENABLED_ONLY } from '../support';
+import { newTowerStore, TOWER_MAIN_AGENT_ONLY, TOWER_MODE_USER_ENABLED_ONLY } from '../support';
 import { ITowerSpawnTool, TowerSpawnToolInputSchema, type TowerSpawnToolInput } from './spawn';
 import DESCRIPTION from './spawn.md?raw';
 
@@ -115,7 +114,7 @@ export class TowerSpawnTool implements ITowerSpawnTool {
   }
 
   private newStore(): TowerStore {
-    return new TowerStore(resolveTowerRepoRoot(this.sessionContext.cwd));
+    return newTowerStore(this.sessionContext);
   }
 
   private async execution(
@@ -284,18 +283,21 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             });
           slotHeld = false;
 
-          await store.registerAgent({
-            name: args.name,
-            agentId: handle.agentId,
-            sessionId: this.sessionContext.sessionId,
-            kind: args.kind,
-            missionId: mission?.id,
-            reviewTarget,
-            reviewMissionId: reviewMission?.id,
-            worktree: mission?.worktree,
-            branch: mission?.branch,
-            spawnedAt: new Date().toISOString(),
-          });
+          await store.registerSpawnedAgent(
+            {
+              name: args.name,
+              agentId: handle.agentId,
+              sessionId: this.sessionContext.sessionId,
+              kind: args.kind,
+              missionId: mission?.id,
+              reviewTarget,
+              reviewMissionId: reviewMission?.id,
+              worktree: mission?.worktree,
+              branch: mission?.branch,
+              spawnedAt: new Date().toISOString(),
+            },
+            mission === undefined ? undefined : { id: mission.id, owner: args.name },
+          );
           const settled = this.tasks.getTask(taskId);
           if (
             settled !== undefined &&
@@ -307,14 +309,6 @@ export class TowerSpawnTool implements ITowerSpawnTool {
               settled.status,
               settled.stopReason,
               this.sessionContext.sessionId,
-            );
-          }
-          if (mission !== undefined) {
-            await store.updateMission(
-              TOWER_NAME,
-              mission.id,
-              { status: 'active', owner: args.name },
-              { silent: true },
             );
           }
           await store.appendLog(

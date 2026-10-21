@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +19,11 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
-import { TowerStore, parseFrontmatter } from '#/features/tower/protocol/index';
+import {
+  TOWER_GIT_CONCURRENCY,
+  TowerStore,
+  parseFrontmatter,
+} from '#/features/tower/protocol/index';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ExecutableTool } from '#/tool/toolContract';
@@ -52,7 +57,11 @@ import { TowerStatusTool } from '#/features/tower/tools/status/statusTool';
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { stubAgentContext } from '../../../agent/agentContext/stubs';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import { TOWER_MODE_USER_ENABLED_ONLY } from '#/features/tower/tools/support';
+import {
+  newTowerStore,
+  TOWER_MODE_USER_ENABLED_ONLY,
+  TOWER_STATE_LOCK_TIMEOUT_ENV,
+} from '#/features/tower/tools/support';
 
 const execFileAsync = promisify(execFile);
 const signal = new AbortController().signal;
@@ -1070,6 +1079,45 @@ describe('TowerStatusTool', () => {
     expect(workerStatus.output).toContain('unknown is not idle');
     expect(workerStatus.output).not.toContain('READY reasons=none');
   });
+
+  it('computes independent mission gates with bounded parallelism and stable mission order', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: Array.from({ length: 6 }, (_, index) => ({
+        title: `Mission ${String(index)}`,
+        scope: [`src/m${String(index)}/**`],
+      })),
+    });
+    let active = 0;
+    let maximum = 0;
+    const gate = vi.spyOn(TowerStore.prototype, 'missionGate').mockImplementation(async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await delay(5);
+      active -= 1;
+      return {
+        ready: false,
+        noop: false,
+        blocks: [{ reason: 'not-completed', message: 'blocked' }],
+        observations: {},
+      } as never;
+    });
+    try {
+      const status = await readStatus();
+      if (!status.initialized) throw new Error('expected initialized status');
+      expect(status.gate.map((mission) => mission.missionId)).toEqual([
+        'M1',
+        'M2',
+        'M3',
+        'M4',
+        'M5',
+        'M6',
+      ]);
+      expect(maximum).toBe(TOWER_GIT_CONCURRENCY);
+    } finally {
+      gate.mockRestore();
+    }
+  });
 });
 
 describe('readTowerStatusSummary', () => {
@@ -1770,6 +1818,28 @@ describe('tower state loss degradation', () => {
     expect(rebase.output).not.toContain('tower is not initialized');
 
     expect(await new TowerStore(repo).isInitialized()).toBe(false);
+  });
+});
+
+describe('tower tool store configuration', () => {
+  it('applies the state lock timeout environment variable at tool store creation', async () => {
+    await initViaTool();
+    const setup = new TowerStore(repo);
+    await setup.plan([{ title: 'alpha', scope: ['src/alpha/**'] }]);
+    const lockPath = join(repo, '.tower/comms/state.json.lock');
+    await writeFile(lockPath, `pid=${String(process.pid)} since=2026-01-01T00:00:00.000Z token=live`);
+    const previous = process.env[TOWER_STATE_LOCK_TIMEOUT_ENV];
+    try {
+      process.env[TOWER_STATE_LOCK_TIMEOUT_ENV] = '40';
+      const configured = newTowerStore(ix.get(ISessionContext));
+      await expect(configured.updateMission('tower', 'M1', { note: 'blocked' })).rejects.toThrow(
+        /40ms.*another tower tool call in this process/s,
+      );
+    } finally {
+      if (previous === undefined) delete process.env[TOWER_STATE_LOCK_TIMEOUT_ENV];
+      else process.env[TOWER_STATE_LOCK_TIMEOUT_ENV] = previous;
+      await rm(lockPath, { force: true });
+    }
   });
 });
 
