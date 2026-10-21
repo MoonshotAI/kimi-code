@@ -206,7 +206,8 @@ function summaryGate(gate: readonly TowerStatusGate[]): string[] {
 }
 
 function summaryConcurrency(snapshot: TowerStatusConcurrency): string {
-  const base = `budget: ${String(snapshot.budget)} agent(s) · inflight: ${String(snapshot.inflight)}`;
+  const budget = Number.isFinite(snapshot.budget) ? String(snapshot.budget) : 'unlimited';
+  const base = `budget: ${budget} agent(s) · inflight: ${String(snapshot.inflight)}`;
   if (snapshot.blockedUntil === null) return `${base} · spawns open`;
   const remainingMs = snapshot.blockedUntil - Date.now();
   return remainingMs > 0
