@@ -19,7 +19,9 @@ function expectHighlighted(out: string, token: string): void {
 }
 
 describe('highlightFirstSlashToken', () => {
-  const KNOWN_COMMANDS = new Set(['help', 'goal', 'exit', 'a', 'q']);
+  const KNOWN_COMMANDS = new Set(['help', 'goal', 'exit', 'a', 'q', 'usage']);
+  // pi-tui renders the focused cursor as this zero-width APC marker (CURSOR_MARKER).
+  const CURSOR_APC = '\u001B_pi:c\u0007';
 
   it('colours /cmd when line starts with a slash', () => {
     const out = highlightFirstSlashToken('  /help rest of input', 'primary', KNOWN_COMMANDS);
@@ -97,6 +99,31 @@ describe('highlightFirstSlashToken', () => {
     // /b should remain plain — the substring " /b" exists verbatim.
     expect(out!).toContain(' /b');
   });
+
+  it('colours a known token with the cursor APC right after it (typing in progress)', () => {
+    const line = `/usage${CURSOR_APC}`;
+    const out = highlightFirstSlashToken(line, 'primary', KNOWN_COMMANDS);
+    expect(out).toBeDefined();
+    expectHighlighted(out!, '/usage');
+    // The cursor marker survives in the output, still right after the token.
+    expect(out!).toContain(CURSOR_APC);
+  });
+
+  it('colours a known token with the cursor APC inside it', () => {
+    const out = highlightFirstSlashToken(`/us${CURSOR_APC}age`, 'primary', KNOWN_COMMANDS);
+    expect(out).toBeDefined();
+    expect(strip(out!)).toBe(`/us${CURSOR_APC}age`);
+  });
+
+  it('leaves an unknown token unpainted even with the cursor APC adjacent', () => {
+    expect(highlightFirstSlashToken(`/usgae${CURSOR_APC}`, 'primary', KNOWN_COMMANDS)).toBeUndefined();
+  });
+
+  it('leaves a multi-segment path unpainted even with the cursor APC adjacent', () => {
+    expect(
+      highlightFirstSlashToken(`/tmp/foo${CURSOR_APC}`, 'primary', KNOWN_COMMANDS),
+    ).toBeUndefined();
+  });
 });
 
 describe('highlightInlineSkillTokens', () => {
@@ -140,5 +167,11 @@ describe('highlightInlineSkillTokens', () => {
     const out = highlightInlineSkillTokens('please /review this', SKILLS, null, 'primary');
     expect(out).toBeDefined();
     expectHighlighted(out!, '/review');
+  });
+
+  it('colours a skill token with the cursor APC right after it', () => {
+    const out = highlightInlineSkillTokens('please /skill:review\u001B_pi:c\u0007', SKILLS, null, 'primary');
+    expect(out).toBeDefined();
+    expectHighlighted(out!, '/skill:review');
   });
 });

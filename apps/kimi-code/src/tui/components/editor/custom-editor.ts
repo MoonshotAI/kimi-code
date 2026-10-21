@@ -23,6 +23,10 @@ import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
 const ANSI_SGR = /\u001B\[[0-9;]*m/g;
+// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match APC sequences (pi-tui's CURSOR_MARKER)
+const ANSI_APC = /\u001B_[^\u0007\u001B]*(?:\u0007|\u001B\\)/g;
+/** SGR plus zero-width APC control sequences (pi-tui renders the focused cursor as the APC CURSOR_MARKER). */
+const ANSI_SGR_OR_APC = new RegExp(`${ANSI_SGR.source}|${ANSI_APC.source}`, 'g');
 
 const PASTE_MARKER_RE = /\[paste #(\d+)(?: (?:\+\d+ lines|\d+ chars))?\]/g;
 const BRACKET_PASTE_START = '\u001B[200~';
@@ -52,6 +56,20 @@ interface AutocompleteListFactoryInternals {
 interface AutocompleteTriggerInternals {
   tryTriggerAutocomplete: (explicitTab?: boolean) => void;
   requestAutocomplete: (options: { force: boolean; explicitTab: boolean }) => void;
+}
+
+/** pi-tui members `submitValue` touches; all TS-private but plain properties at runtime. */
+interface SubmitInternals {
+  state: { lines: string[]; cursorLine: number; cursorCol: number };
+  submitValue: () => void;
+  cancelAutocomplete: () => void;
+  expandPasteMarkers: (text: string) => string;
+  exitHistoryBrowsing: () => void;
+  pastes: Map<number, string>;
+  pasteCounter: number;
+  scrollOffset: number;
+  undoStack: { clear(): void };
+  lastAction: 'kill' | 'yank' | 'type-word' | null;
 }
 
 // Mirror pi-tui's private SLASH_COMMAND_SELECT_LIST_LAYOUT
@@ -93,10 +111,10 @@ export function normalizeCapsLockedCtrl(data: string): string {
 }
 
 /** Convert a visible-char index (ANSI-stripped) back to an index into the raw ANSI-bearing string. */
-function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
+function mapVisibleIdxToRaw(line: string, visibleIdx: number, zeroWidth: RegExp = ANSI_SGR): number {
   let visibleCount = 0;
   let i = 0;
-  const re = new RegExp(ANSI_SGR.source, 'y');
+  const re = new RegExp(zeroWidth.source, 'y');
   while (i < line.length && visibleCount < visibleIdx) {
     re.lastIndex = i;
     const m = re.exec(line);
@@ -112,6 +130,16 @@ function mapVisibleIdxToRaw(line: string, visibleIdx: number): number {
 
 function stripSgr(s: string): string {
   return s.replace(ANSI_SGR, '');
+}
+
+/**
+ * Strip SGR plus zero-width APC control sequences (pi-tui's focused-cursor
+ * marker) so token ranges and highlight offsets see only visible text.
+ * Pair with `mapVisibleIdxToRaw(..., ANSI_SGR_OR_APC)` so the sequences
+ * stripped for range computation are skipped identically for painting.
+ */
+function stripSgrAndControl(s: string): string {
+  return s.replace(ANSI_SGR_OR_APC, '');
 }
 
 interface CustomEditorOptions {
@@ -228,6 +256,32 @@ export class CustomEditor extends Editor {
     triggerInternals.tryTriggerAutocomplete = (explicitTab = false) => {
       triggerInternals.requestAutocomplete({ force: this.inputMode === 'bash', explicitTab });
     };
+
+    // pi-tui's `submitValue` trims the submitted text, which eats the
+    // leading-space escape hatch for slash-shaped messages (the parser only
+    // sees index-0 `/`). Shadow it — TS-private but a plain method at
+    // runtime, like `tryTriggerAutocomplete` above — so a first line of
+    // space(s)+`/` submits verbatim; everything else keeps pi-tui's trim.
+    const submitInternals = this as unknown as SubmitInternals;
+    const piSubmitValue = submitInternals.submitValue.bind(this);
+    submitInternals.submitValue = () => {
+      const expanded = submitInternals.expandPasteMarkers(submitInternals.state.lines.join('\n'));
+      if (!/^ +\//.test(expanded)) {
+        piSubmitValue();
+        return;
+      }
+      // Verbatim escape path: pi-tui's submitValue body minus the trim.
+      submitInternals.cancelAutocomplete();
+      submitInternals.state = { lines: [''], cursorLine: 0, cursorCol: 0 };
+      submitInternals.pastes.clear();
+      submitInternals.pasteCounter = 0;
+      submitInternals.exitHistoryBrowsing();
+      submitInternals.scrollOffset = 0;
+      submitInternals.undoStack.clear();
+      submitInternals.lastAction = null;
+      this.onChange?.('');
+      this.onSubmit?.(expanded);
+    };
   }
 
   override setDisablePasteBurst(disabled: boolean): void {
@@ -296,7 +350,7 @@ export class CustomEditor extends Editor {
         let highlighted = original;
         let leadingRange: { start: number; end: number } | null = null;
         if (text.startsWith('/')) {
-          leadingRange = leadingSlashTokenRange(stripSgr(original));
+          leadingRange = leadingSlashTokenRange(stripSgrAndControl(original));
           const leading = highlightFirstSlashToken(original, 'primary', this.knownCommandNames);
           if (leading !== undefined) {
             highlighted = leading;
@@ -682,7 +736,7 @@ export function highlightFirstSlashToken(
   token: 'primary',
   knownCommandNames: ReadonlySet<string>,
 ): string | undefined {
-  const visible = stripSgr(line);
+  const visible = stripSgrAndControl(line);
   const range = leadingSlashTokenRange(visible);
   if (range === null) return undefined;
   // Validity is judged on the command-name token alone: `/usage anything`
@@ -727,7 +781,7 @@ export function highlightInlineSkillTokens(
   token: 'primary',
 ): string | undefined {
   if (skillCommandNames.size === 0) return undefined;
-  const visible = stripSgr(line);
+  const visible = stripSgrAndControl(line);
   const ranges = findInlineSkillTokens(visible, {
     isKnownSkill: (commandName) =>
       skillCommandNames.has(commandName) || skillCommandNames.has(`skill:${commandName}`),
@@ -777,8 +831,8 @@ function highlightVisibleRanges(
   let out = '';
   let rawCursor = 0;
   for (const range of ranges) {
-    const rawStart = mapVisibleIdxToRaw(line, range.start);
-    const rawEnd = mapVisibleIdxToRaw(line, range.end);
+    const rawStart = mapVisibleIdxToRaw(line, range.start, ANSI_SGR_OR_APC);
+    const rawEnd = mapVisibleIdxToRaw(line, range.end, ANSI_SGR_OR_APC);
     out += line.slice(rawCursor, rawStart);
     out += currentTheme.boldFg(token, line.slice(rawStart, rawEnd));
     rawCursor = rawEnd;

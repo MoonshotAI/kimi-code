@@ -117,6 +117,59 @@ describe('CustomEditor onNonEscapeInput', () => {
   });
 });
 
+describe('CustomEditor submit trimming', () => {
+  // Typing synchronously would trip pi-tui's paste-burst heuristic (≥8 rapid
+  // chars), which turns Enter into a newline; real typing is slower.
+  function makeNoBurstEditor(): CustomEditor {
+    const tui = {
+      requestRender: vi.fn(),
+      render: vi.fn(() => []),
+      terminal: { rows: 40, cols: 120 },
+    } as unknown as TUI;
+    return new CustomEditor(tui, { disablePasteBurst: true });
+  }
+
+  function submit(text: string): string | undefined {
+    const editor = makeNoBurstEditor();
+    const onSubmit = vi.fn();
+    editor.onSubmit = onSubmit;
+    for (const char of text) {
+      editor.handleInput(char);
+    }
+    editor.handleInput('\r');
+    return onSubmit.mock.calls[0]?.[0] as string | undefined;
+  }
+
+  it('submits a leading space+slash line verbatim (the escape hatch survives)', () => {
+    expect(submit(' /tmp')).toBe(' /tmp');
+  });
+
+  it('clears the buffer after a verbatim submit, like a normal submit', () => {
+    const editor = makeNoBurstEditor();
+    const onSubmit = vi.fn();
+    editor.onSubmit = onSubmit;
+    for (const char of ' /tmp') {
+      editor.handleInput(char);
+    }
+    editor.handleInput('\r');
+    expect(onSubmit).toHaveBeenCalledWith(' /tmp');
+    expect(editor.getText()).toBe('');
+  });
+
+  it('keeps trimming ordinary prompts', () => {
+    expect(submit('hello  ')).toBe('hello');
+    expect(submit('  hello world  ')).toBe('hello world');
+  });
+
+  it('keeps trimming slash commands without a leading space', () => {
+    expect(submit('/usgae  ')).toBe('/usgae');
+  });
+
+  it('keeps trimming multi-line input whose first line is not space+slash', () => {
+    expect(submit('hello\n /tmp')).toBe('hello\n /tmp');
+  });
+});
+
 describe('CustomEditor slash argument completion refresh', () => {
   it('reopens /add-dir directory completions after tab completion and entering slash', async () => {
     const editor = makeEditor();
