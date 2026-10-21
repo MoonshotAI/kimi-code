@@ -186,6 +186,18 @@ describe('resolveWindowsBatchCommand', () => {
     expect(resolveWindowsBatchCommand(shim, env())).toBe(shim);
   });
 
+  it('resolves a suffixed batch command found on PATH', () => {
+    expect(resolveWindowsBatchCommand('kimi-probe.cmd', env())).toBe(join(dir, 'kimi-probe.cmd'));
+  });
+
+  it('resolves a relative batch path against the spawn cwd', async () => {
+    await mkdir(join(dir, 'tools'), { recursive: true });
+    await writeFile(join(dir, 'tools', 'kimi-probe.cmd'), '@echo off\r\necho ok\r\n');
+    expect(
+      resolveWindowsBatchCommand('tools/kimi-probe.cmd', env(), dir),
+    ).toBe(join(dir, 'tools', 'kimi-probe.cmd'));
+  });
+
   it('returns undefined when no batch shim matches', () => {
     expect(resolveWindowsBatchCommand('kimi-missing', env())).toBeUndefined();
   });

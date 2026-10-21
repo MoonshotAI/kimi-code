@@ -26,16 +26,25 @@ export function resolveWindowsBatchCommand(
   cwd: string = process.cwd(),
 ): string | undefined {
   const lowerCommand = command.toLowerCase();
-  if (lowerCommand.endsWith('.bat') || lowerCommand.endsWith('.cmd')) {
-    return isFile(command) ? command : undefined;
+  const isBatchName = lowerCommand.endsWith('.bat') || lowerCommand.endsWith('.cmd');
+  const hasPath = command.includes('/') || command.includes('\\');
+  if (hasPath) {
+    const candidate = resolve(cwd, command);
+    return isBatchName && isFile(candidate) ? candidate : undefined;
   }
-  if (command.includes('/') || command.includes('\\')) return undefined;
-  const extensions = pathExtensions(env);
-  if (extensions.length === 0) return undefined;
   const dirs = (envValue(env, 'PATH') ?? '')
     .split(';')
     .map((dir) => stripQuotes(dir.trim()))
     .filter((dir) => dir.length > 0);
+  if (isBatchName) {
+    for (const dir of dirs) {
+      const candidate = resolve(cwd, dir, command);
+      if (isFile(candidate)) return candidate;
+    }
+    return undefined;
+  }
+  const extensions = pathExtensions(env);
+  if (extensions.length === 0) return undefined;
   for (const dir of dirs) {
     for (const ext of extensions) {
       const candidate = resolve(cwd, dir, `${command}${ext}`);
@@ -73,6 +82,14 @@ function isFile(path: string): boolean {
     return statSync(path).isFile();
   } catch {
     return false;
+  }
+}
+
+function spawnCwd(cwd: string | undefined): string {
+  try {
+    return resolve(cwd ?? process.cwd());
+  } catch {
+    return cwd ?? '.';
   }
 }
 
@@ -289,8 +306,6 @@ export class HostProcessService implements IHostProcessService {
     options: HostProcessOptions = {},
   ): Promise<IHostProcess> {
     const spawnOptions = buildSpawnOptions(options);
-    const env = buildEnv(options.env) ?? process.env;
-    const cwd = resolve(options.cwd ?? process.cwd());
     let child: ChildProcess | undefined;
     let failure: unknown;
     try {
@@ -302,10 +317,14 @@ export class HostProcessService implements IHostProcessService {
     if (child !== undefined && failure === undefined) {
       return new HostProcess(child, options.mergeStderr ?? false);
     }
-    const batchCommand =
-      isWindows && isRetryableWithBatchShim(failure)
-        ? resolveWindowsBatchCommand(command, env, cwd)
-        : undefined;
+    if (!isWindows || !isRetryableWithBatchShim(failure)) {
+      throw toSpawnError(failure, command, args, options);
+    }
+    const batchCommand = resolveWindowsBatchCommand(
+      command,
+      buildEnv(options.env) ?? process.env,
+      spawnCwd(options.cwd),
+    );
     if (batchCommand === undefined) {
       throw toSpawnError(failure, command, args, options);
     }
