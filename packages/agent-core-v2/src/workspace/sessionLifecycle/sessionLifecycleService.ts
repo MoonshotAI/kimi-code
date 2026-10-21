@@ -113,10 +113,10 @@ import {
   type ResumeSessionOptions,
   type SessionArchivedEvent,
   type SessionClosedEvent,
+  type SessionCloseReason,
   type SessionCreatedEvent,
-  type SessionExitReason,
+  type SessionCreateSource,
   type SessionForkedEvent,
-  type SessionResumeSource,
   type SessionWillCloseEvent,
   type SessionWillCreateEvent,
   ISessionLifecycleService,
@@ -358,7 +358,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   resume(
     sessionId: string,
     opts?: ResumeSessionOptions,
-    source: SessionResumeSource = 'resume',
+    source: Extract<SessionCreateSource, 'resume' | 'reclaimed'> = 'resume',
   ): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
@@ -388,7 +388,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async doResume(
     sessionId: string,
-    source: SessionResumeSource,
+    source: SessionCreateSource,
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
     const live = this.sessions.get(sessionId);
@@ -426,7 +426,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return ready;
   }
 
-  async close(sessionId: string, reason: SessionExitReason = 'exit'): Promise<void> {
+  async close(sessionId: string, reason: Exclude<SessionCloseReason, 'archive'> = 'exit'): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
     await this.announceWillClose({ sessionId, handle, reason });

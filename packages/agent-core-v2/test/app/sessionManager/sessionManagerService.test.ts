@@ -20,10 +20,10 @@ import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity'
 import { ISessionTerminalService } from '#/session/terminal/terminalService';
 import type {
   SessionArchivedEvent,
+  SessionCloseReason,
   SessionClosedEvent,
   SessionCreatedEvent,
-  SessionExitReason,
-  SessionResumeSource,
+  SessionCreateSource,
   SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -566,12 +566,12 @@ describe('SessionManager closeIfIdle', () => {
     const resume = vi.fn(async (
       sessionId: string,
       _options: unknown,
-      source: SessionResumeSource = 'resume',
+      source: SessionCreateSource = 'resume',
     ) => {
       if (manager.get(sessionId) === undefined) didCreate.fire({ sessionId, handle, source });
       return handle;
     });
-    const close = vi.fn(async (sessionId: string, _reason: SessionExitReason = 'exit') => {
+    const close = vi.fn(async (sessionId: string, _reason: SessionCloseReason = 'exit') => {
       didClose.fire({ sessionId });
     });
     const service = {
