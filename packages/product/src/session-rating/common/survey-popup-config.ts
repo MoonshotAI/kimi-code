@@ -1,31 +1,15 @@
 import { z } from 'zod';
 
-import {
-  getClientConfig,
-  peekClientConfig,
-  resetClientConfigCache,
-  type ClientConfigFetchOptions,
-} from '#/utils/client-configs';
-
-const CONFIG_NAME = 'survey_popup';
-
-/** The `survey_popup` wire shape; every layer below (process cache, disk
- *  cache, network failure, per-field parse failure) falls back to the
- *  built-in defaults. */
 export interface SurveyPopupConfig {
   probability: number;
-  /** Model gate: exact match against the resolved managed (kimi-for-coding) model id, `"*"` opens for every model, `[]` closes both arms. */
   on_for_models: string[];
   min_time_before_feedback_ms: number;
   min_user_turns_before_feedback: number;
   min_time_between_feedback_ms: number;
   min_user_turns_between_feedback: number;
-  /** Cross-session cooldown, persisted as `last_shown_time`. */
   min_time_between_global_feedback_ms: number;
-  /** Token threshold for the long-context arm; invalid/non-positive disables that arm. */
   long_context_survey_threshold: number;
   long_context_probability: number;
-  /** Which token counter the threshold compares against. */
   long_context_trigger_mode: 'cumulative' | 'virtual_context';
 }
 
@@ -78,7 +62,7 @@ function parseModelOverrides(raw: unknown): Record<string, SurveyPopupOverride> 
   return overrides;
 }
 
-const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopupPayload> => {
+export const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopupPayload> => {
   if (typeof raw !== 'object' || raw === null) return {};
   const record = raw as Record<string, unknown>;
   const partial: Record<string, unknown> = {};
@@ -94,18 +78,8 @@ const surveyPopupConfigSchema = z.unknown().transform((raw): Partial<SurveyPopup
   return partial as Partial<SurveyPopupPayload>;
 });
 
-function withDefaults(partial: Partial<SurveyPopupPayload> | undefined): SurveyPopupPayload {
+export function withDefaults(partial: Partial<SurveyPopupPayload> | undefined): SurveyPopupPayload {
   return { ...DEFAULT_SURVEY_POPUP_PAYLOAD, ...partial };
-}
-
-export async function getSurveyPopupConfig(
-  options: ClientConfigFetchOptions = {},
-): Promise<SurveyPopupPayload> {
-  return withDefaults(await getClientConfig(CONFIG_NAME, surveyPopupConfigSchema, options));
-}
-
-export function peekSurveyPopupConfig(now?: number): SurveyPopupPayload {
-  return withDefaults(peekClientConfig(CONFIG_NAME, surveyPopupConfigSchema, now));
 }
 
 export function resolveSurveyPopupConfig(
@@ -115,12 +89,4 @@ export function resolveSurveyPopupConfig(
   const { model_overrides: modelOverrides, ...base } = payload;
   const override = kfcModelId === undefined ? undefined : modelOverrides[kfcModelId];
   return override === undefined ? base : { ...base, ...override };
-}
-
-export function peekSurveyPopupConfigFresh(now?: number): boolean {
-  return peekClientConfig(CONFIG_NAME, surveyPopupConfigSchema, now) !== undefined;
-}
-
-export function resetSurveyPopupConfigCache(): void {
-  resetClientConfigCache(CONFIG_NAME);
 }

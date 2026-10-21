@@ -28,6 +28,7 @@ import {
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
+  IDefaultWorkspace,
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
@@ -99,6 +100,61 @@ class FakeEventBus {
   }
   emit(e: { type: string; payload: unknown }): void {
     for (const h of [...this.handlers]) h(e);
+  }
+}
+
+class FakeManagerEvents {
+  private readonly willDeleteHandlers = new Set<
+    (event: {
+      sessionId: string;
+      signal: AbortSignal;
+      waitUntil(cleanup: Promise<unknown>): void;
+    }) => void
+  >();
+  private readonly didCloseHandlers = new Set<(event: { sessionId: string }) => void>();
+  private readonly didArchiveHandlers = new Set<(event: { sessionId: string }) => void>();
+
+  readonly onWillDeleteSession = (
+    handler: (event: {
+      sessionId: string;
+      signal: AbortSignal;
+      waitUntil(cleanup: Promise<unknown>): void;
+    }) => void,
+  ) => {
+    this.willDeleteHandlers.add(handler);
+    return { dispose: () => this.willDeleteHandlers.delete(handler) };
+  };
+
+  readonly onDidCloseSession = (handler: (event: { sessionId: string }) => void) => {
+    this.didCloseHandlers.add(handler);
+    return { dispose: () => this.didCloseHandlers.delete(handler) };
+  };
+
+  readonly onDidArchiveSession = (handler: (event: { sessionId: string }) => void) => {
+    this.didArchiveHandlers.add(handler);
+    return { dispose: () => this.didArchiveHandlers.delete(handler) };
+  };
+
+  fireDidClose(sessionId: string): void {
+    for (const handler of [...this.didCloseHandlers]) handler({ sessionId });
+  }
+
+  fireDidArchive(sessionId: string): void {
+    for (const handler of [...this.didArchiveHandlers]) handler({ sessionId });
+  }
+
+  async fireWillDelete(sessionId: string): Promise<void> {
+    const cleanups: Promise<unknown>[] = [];
+    for (const handler of [...this.willDeleteHandlers]) {
+      handler({
+        sessionId,
+        signal: new AbortController().signal,
+        waitUntil: (cleanup) => {
+          cleanups.push(cleanup);
+        },
+      });
+    }
+    await Promise.allSettled(cleanups);
   }
 }
 
@@ -368,6 +424,7 @@ function makeCore(
   sessions: Map<string, FakeLifecycle>,
   eventBus = new FakeEventBus(),
   metaAgents: Record<string, { type?: string; parentAgentId?: string }> = {},
+  managerEvents?: FakeManagerEvents,
 ): Scope {
   const handles = new WeakMap<FakeLifecycle, IScopeHandle>();
   const sessionFor = (sid: string) => {
@@ -407,6 +464,9 @@ function makeCore(
         return {
           get: sessionFor,
           list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
+          onWillDeleteSession: managerEvents?.onWillDeleteSession,
+          onDidCloseSession: managerEvents?.onDidCloseSession,
+          onDidArchiveSession: managerEvents?.onDidArchiveSession,
         };
       }
       if (token === IWorkspaceInstanceManager) {
@@ -417,6 +477,9 @@ function makeCore(
       }
       if (token === IWorkspaceSessions) {
         return { listRecent: async () => [], count: async () => 3 };
+      }
+      if (token === IDefaultWorkspace) {
+        return { isDefault: async () => false };
       }
       return undefined;
     },
@@ -1011,22 +1074,73 @@ describe('SessionEventBroadcaster', () => {
     );
   });
 
-  it('broadcasts agent.disposed only for agents this state attached', async () => {
+  it('attaches only to the live session scope: ghost agents ignored, detaches on archive, re-attaches on restore, purges on delete', async () => {
+    const managerEvents = new FakeManagerEvents();
+    await bc.close();
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus, {}, managerEvents),
+      maxBufferSize: 3,
+    });
+
     const lc = new FakeLifecycle();
-    lc.addAgent('main');
+    const main = lc.addAgent('main');
     lc.addAgent('agent-0');
     sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
+    const first = collectingTarget();
+    await bc.subscribe('s1', first.target);
 
     lc.removeAgent('agent-0');
     lc.removeAgent('ghost');
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
     await bc.getCursor('s1');
 
-    const disposed = envelopes.filter((e) => e.type === 'agent.disposed');
+    const disposed = first.envelopes.filter((e) => e.type === 'agent.disposed');
     expect(disposed).toHaveLength(1);
     expect((disposed[0]!.payload as { agentId: string }).agentId).toBe('agent-0');
     expect(disposed[0]!.volatile).toBeUndefined();
+    const beforeArchive = await bc.getCursor('s1');
+    expect(beforeArchive.seq).toBeGreaterThan(0);
+
+    eventBus.emit({
+      type: 'event.session.archived',
+      payload: { sessionId: 's1', workspaceId: 'wd' },
+    });
+    await vi.waitFor(() => {
+      expect(first.envelopes.map((e) => e.type)).toContain('event.session.archived');
+    });
+    sessions.delete('s1');
+    managerEvents.fireDidArchive('s1');
+
+    const cold = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(cold.resyncRequired).toBe('session_recreated');
+    expect(await readdir(dir)).toContain('s1.jsonl');
+
+    const revived = new FakeLifecycle();
+    const revivedMain = revived.addAgent('main');
+    sessions.set('s1', revived);
+    const second = collectingTarget();
+    expect(await bc.subscribe('s1', second.target)).toBe(true);
+
+    revivedMain.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    main.bus.emit(agentEvent('turn.started', { turnId: 3 }));
+    await bc.getCursor('s1');
+
+    const turnIdsOf = (envelopes: EventEnvelope[]) =>
+      envelopes
+        .filter((e) => e.type === 'turn.started')
+        .map((e) => (e.payload as { turnId: number }).turnId);
+    expect(turnIdsOf(second.envelopes)).toEqual([2]);
+    expect(turnIdsOf(first.envelopes)).toEqual([1]);
+
+    const afterRestore = await bc.getCursor('s1');
+    expect(afterRestore.epoch).toBe(beforeArchive.epoch);
+    expect(afterRestore.seq).toBeGreaterThan(beforeArchive.seq);
+
+    sessions.delete('s1');
+    managerEvents.fireDidClose('s1');
+    await managerEvents.fireWillDelete('s1');
+    expect(await readdir(dir)).not.toContain('s1.jsonl');
   });
 
   it('delivers lifecycle events past the agent allowlist (session-grained)', async () => {
@@ -1126,6 +1240,39 @@ describe('SessionEventBroadcaster', () => {
     main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
     const next = await bc.getSnapshotState('s1');
     expect(next.subagents).toEqual([]);
+  });
+
+  it('clears the in-flight turn and subagent roster across a close and reattach', async () => {
+    const managerEvents = new FakeManagerEvents();
+    await bc.close();
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus, {}, managerEvents),
+      maxBufferSize: 3,
+    });
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    lc.addAgent('agent-1');
+    sessions.set('s1', lc);
+    await bc.subscribe('s1', collectingTarget().target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    main.bus.emit(
+      agentEvent('subagent.spawned', {
+        subagentId: 'agent-1',
+        subagentName: 'kimi-subagent',
+        description: 'task agent-1',
+      }),
+    );
+    const before = await bc.getSnapshotState('s1');
+    expect(before.inFlightTurn).toMatchObject({ turn_id: 1 });
+    expect(before.subagents).toHaveLength(1);
+
+    managerEvents.fireDidClose('s1');
+
+    const after = await bc.getSnapshotState('s1');
+    expect(after.inFlightTurn).toBeNull();
+    expect(after.subagents).toEqual([]);
   });
 
   it('subscribe returns false for an unknown session', async () => {
@@ -1276,6 +1423,7 @@ describe('SessionEventBroadcaster', () => {
           id: 'wd_a',
           root: '/repo/a',
           name: 'repo-a',
+          is_default: false,
           created_at: new Date(1_000).toISOString(),
           last_opened_at: new Date(2_000).toISOString(),
           session_count: 3,

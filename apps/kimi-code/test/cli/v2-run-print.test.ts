@@ -13,6 +13,7 @@ import {
   IAgentProfileService,
   IAgentScopeContext,
   IAgentTaskService,
+  IAppendLogStore,
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
@@ -21,11 +22,18 @@ import {
   IFileSystemStorageService,
   IHostFileSystem,
   IOAuthToolkit,
+  ISessionContext,
   ISessionIndex,
+  ISessionLockService,
+  ISessionRunGate,
   ISessionManager,
   ITelemetryService,
   IWorkspaceInstanceManager,
+  InMemorySessionLockService,
+  Error2,
+  ErrorCodes,
   makeAgentScopeContext,
+  makeSessionContext,
   resolveKimiHome,
   type BootstrapInput,
   type Event2,
@@ -236,6 +244,23 @@ function makeFakeHarness() {
         handleOf: vi.fn(() => agent),
       },
     ],
+    [
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 'ses_v2',
+        workspaceId: 'wd_v2',
+        sessionDir: '/tmp/ses_v2',
+        sessionScope: 'sessions/wd_v2/ses_v2',
+        cwd: process.cwd(),
+      }),
+    ],
+    [
+      ISessionRunGate,
+      {
+        begin: vi.fn(() => {}),
+        tryHold: vi.fn(() => true),
+      },
+    ],
   ]);
   const session = fakeScope('ses_v2', sessionServices);
 
@@ -276,6 +301,8 @@ function makeFakeHarness() {
       },
     ],
     [ISessionIndex, { get: vi.fn(async () => undefined), listRecent: vi.fn(async () => ({ items: [] })) }],
+    [ISessionLockService, new InMemorySessionLockService()],
+    [IAppendLogStore, { externallyModified: vi.fn(() => false) }],
     [
       IBootstrapService,
       {
@@ -358,6 +385,49 @@ describe('runV2Print', () => {
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');
     expect(stdout.text()).toContain('hello world');
     expect(app.dispose).toHaveBeenCalled();
+  });
+
+  it('reloads a stale session in place, retries once, and still reports occupied', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agentServices, sessionServices, appServices } = makeFakeHarness();
+    const sessions = appServices.get(ISessionManager) as {
+      create: ReturnType<typeof vi.fn>;
+      resume: ReturnType<typeof vi.fn>;
+      close: ReturnType<typeof vi.fn>;
+    };
+    sessions.close = vi.fn(async () => {});
+    const lifecycle = sessionServices.get(IAgentLifecycleService) as {
+      list: ReturnType<typeof vi.fn>;
+    };
+    lifecycle.list.mockReturnValue([{ agentId: 'main' }]);
+    const runGate = sessionServices.get(ISessionRunGate) as {
+      begin: ReturnType<typeof vi.fn>;
+    };
+    runGate.begin.mockImplementationOnce(() => {
+      throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
+    });
+    const loop = agentServices.get(IAgentLoopService) as { submit: ReturnType<typeof vi.fn> };
+    loop.submit.mockImplementationOnce(() => {
+      throw new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+    });
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const previousExitCode = process.exitCode;
+    try {
+      await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+      expect(sessions.create).toHaveBeenCalledTimes(1);
+      expect(sessions.close).toHaveBeenCalledTimes(1);
+      expect(sessions.resume).toHaveBeenCalledTimes(1);
+      expect(loop.submit).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBe(4);
+      expect(stderr.text()).toContain('was updated by another client; reloaded it');
+      expect(stderr.text()).toContain('occupied');
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it('passes explicit skill dirs from --skillsDir into bootstrap args', async () => {

@@ -44,6 +44,7 @@ function recordingTelemetry(): {
   return {
     telemetry: {
       _serviceBrand: undefined,
+      track: vi.fn(),
       track2,
       withContext: () => recordingTelemetry().telemetry,
       setContext: () => {},

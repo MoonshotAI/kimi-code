@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  Error2,
+  ErrorCodes,
   IAgentLifecycleService,
+  IAgentSkillService,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -11,7 +14,7 @@ import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
 } from '../src/protocol/rest-skill';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -265,6 +268,40 @@ describe('server-v2 /api/v1 skills', () => {
         `/api/v1/sessions/${id}/skills/does-not-exist:activate`,
       );
       expect(body.code).toBe(40415);
+    });
+
+    it('maps an occupied skill activation to 40931', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const handle = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const activate = vi
+        .spyOn(agent.accessor.get(IAgentSkillService), 'activate')
+        .mockRejectedValue(new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied'));
+
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`);
+
+      expect(result.status).toBe(200);
+      expect(result.body.code).toBe(40931);
+      activate.mockRestore();
+    });
+
+    it('reloads a stale session and retries the activation', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+      const handle = getLiveSessionById(server!.core.accessor, id)!;
+      const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
+      const activate = vi
+        .spyOn(agent.accessor.get(IAgentSkillService), 'activate')
+        .mockRejectedValue(new Error2(ErrorCodes.SESSION_STALE, 'stale'));
+
+      const result = await postJson(`/api/v1/sessions/${id}/skills/update-config:activate`);
+
+      expect(result.body.code).toBe(0);
+      expect(activate).toHaveBeenCalledTimes(1);
+      const reloaded = getLiveSessionById(server!.core.accessor, id);
+      expect(reloaded).toBeDefined();
+      expect(reloaded).not.toBe(handle);
     });
 
     it('returns 40401 for an unknown session', async () => {

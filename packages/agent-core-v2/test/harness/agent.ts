@@ -128,6 +128,9 @@ import {
   AgentExternalHooksService,
   FileStorageService,
   InMemoryStorageService,
+  InMemorySessionLockService,
+  ISessionLockService,
+  ISessionRunGate,
   AgentFullCompactionService,
   IAppendLogStore,
   IFileSystemStorageService,
@@ -188,6 +191,7 @@ import {
   type SessionCreatedEvent,
   type SessionWillCloseEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
+import { stubSessionRunGate } from '../stubs';
 import { IEventService } from '#/app/event/event';
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -1022,6 +1026,13 @@ class PersistenceAppendLogStore implements IAppendLogStore {
     return Promise.resolve();
   }
 
+  externallyModified(): boolean {
+    return false;
+  }
+
+  bindWriteGuard(): IDisposable {
+    return toDisposable(() => undefined);
+  }
   snapshot(): WireRecord[] {
     return this.persistence.records.map(cloneRecord);
   }
@@ -1138,6 +1149,9 @@ export class AgentTestContext {
           const memoryStorage = (): SyncDescriptor<IFileSystemStorageService> =>
             new SyncDescriptor(InMemoryStorageService, []);
           reg.defineDescriptor(IFileSystemStorageService, memoryStorage());
+          const sessionLocks = new InMemorySessionLockService();
+          reg.defineInstance(ISessionLockService, sessionLocks);
+          reg.defineInstance(ISessionRunGate, stubSessionRunGate(sessionLocks));
           reg.define(IBlobStore, BlobStoreService);
           reg.defineInstance(
             IConfigService,
@@ -2134,7 +2148,7 @@ export class AgentTestContext {
     const env = this.root.accessor.get(IHostEnvironment);
     const bootstrapService = this.root.accessor.get(IBootstrapService);
     const cwd = this.cwd;
-    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [] };
+    let current: LoadedAgentsMd = { content: '', warning: undefined, paths: [], files: new Map() };
     return {
       _serviceBrand: undefined,
       get ready(): Promise<void> {

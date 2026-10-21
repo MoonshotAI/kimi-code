@@ -94,6 +94,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../../packages/oauth
+      '@moonshot-ai/kimi-code-product':
+        specifier: workspace:^
+        version: link:../../packages/product
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../../packages/node-sdk
@@ -647,6 +650,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/kimi-code-product':
+        specifier: workspace:^
+        version: link:../product
       '@moonshot-ai/minidb':
         specifier: workspace:*
         version: link:../minidb
@@ -780,6 +786,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/kimi-code-product':
+        specifier: workspace:^
+        version: link:../product
       '@moonshot-ai/klient':
         specifier: workspace:^
         version: link:../klient
@@ -821,6 +830,18 @@ importers:
       chalk:
         specifier: ^5.4.1
         version: 5.6.2
+
+  packages/product:
+    dependencies:
+      '@moonshot-ai/agent-core-v2':
+        specifier: workspace:^
+        version: link:../agent-core-v2
+      '@moonshot-ai/kimi-code-oauth':
+        specifier: workspace:^
+        version: link:../oauth
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
 
   packages/remote-control:
     dependencies:
@@ -12998,7 +13019,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@30.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   '@vitest/expect@4.1.4':
     dependencies:
