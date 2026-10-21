@@ -4,7 +4,10 @@ import { shake } from 'radashi';
 import type { MediaSource, Message, TextPart, ToolDescription } from '#/llm/message';
 import { SyntaxRequestFormatError, ThinkingConfigError, unresolvedMediaRefError } from '#/llm/protocol/errors';
 import { sanitizeToolCallId } from '#/llm/protocol/kit/ids';
-import { BASELINE_IMAGE_MIMES } from '#/llm/protocol/kit/media';
+import {
+  BASELINE_IMAGE_MIMES,
+  BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+} from '#/llm/protocol/kit/media';
 import { mergeConsecutiveUsers } from '#/llm/protocol/kit/merge-users';
 import { withExtras } from '#/llm/protocol/kit/params';
 import type { Pattern } from '#/llm/protocol/pattern';
@@ -405,7 +408,12 @@ const ANTHROPIC_VIDEO_MIMES: ReadonlySet<string> = new Set([
 
 export const anthropicMedia: MediaSupport = {
   kinds: {
-    image: { mimes: BASELINE_IMAGE_MIMES, sources: ['inline', 'url', 'file'], inToolResult: 'native' },
+    image: {
+      mimes: BASELINE_IMAGE_MIMES,
+      sources: ['inline', 'url', 'file'],
+      inToolResult: 'native',
+      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+    },
     video: { mimes: ANTHROPIC_VIDEO_MIMES, sources: ['inline', 'url'], inToolResult: 'native' },
   },
 };

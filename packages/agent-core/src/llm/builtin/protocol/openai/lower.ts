@@ -4,7 +4,10 @@ import { shake } from 'radashi';
 import type { ContentPart, MediaSource, Message, ToolDescription } from '#/llm/message';
 import { SyntaxRequestFormatError, ThinkingConfigError, unresolvedMediaRefError } from '#/llm/protocol/errors';
 import { sanitizeToolCallId } from '#/llm/protocol/kit/ids';
-import { BASELINE_IMAGE_MIMES } from '#/llm/protocol/kit/media';
+import {
+  BASELINE_IMAGE_MIMES,
+  BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+} from '#/llm/protocol/kit/media';
 import { withExtras } from '#/llm/protocol/kit/params';
 import type { NativeModule, PipelineSpec } from '#/llm/protocol/pipeline';
 import type { LlmModule } from '#/llm/protocol/protocol';
@@ -318,7 +321,12 @@ function flatten(
 
 export const openAIChatMedia: MediaSupport = {
   kinds: {
-    image: { mimes: BASELINE_IMAGE_MIMES, sources: ['inline', 'url'], inToolResult: 'relocate' },
+    image: {
+      mimes: BASELINE_IMAGE_MIMES,
+      sources: ['inline', 'url'],
+      inToolResult: 'relocate',
+      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+    },
     audio: { mimes: 'any', sources: ['inline', 'url'], inToolResult: 'unsupported' },
   },
 };

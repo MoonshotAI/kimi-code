@@ -10,11 +10,8 @@ import type { BlobStore } from '@moonshot-ai/agent-core/blob/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import {
-  HOST_SYSTEM_PROMPT_ID,
-  settleSystemPrompt,
   syncAgentTools,
   type AgentRuntime,
-  type SystemPromptSection,
 } from './agents';
 import { harnessInternals } from './harness';
 
@@ -47,24 +44,6 @@ export function useAgentTools(...definitions: ToolDefinition[]): void {
       if (runtime.tools.get(definition.name) === definition) runtime.tools.delete(definition.name);
     }
     syncAgentTools(agent, runtime);
-  });
-}
-
-export function useSystemPrompt(...sections: SystemPromptSection[]): void {
-  const agent = useAgent();
-  const runtime = useAgentRuntime();
-  for (const section of sections) {
-    if (section.id === '' || section.id === HOST_SYSTEM_PROMPT_ID) {
-      throw new Error(`invalid system prompt section id '${section.id}'`);
-    }
-    if (runtime.sections.has(section.id)) throw new Error(`duplicate system prompt section '${section.id}'`);
-    runtime.sections.set(section.id, section);
-  }
-  settleSystemPrompt(agent, runtime);
-  onScopeDispose(() => {
-    for (const section of sections) {
-      if (runtime.sections.get(section.id) === section) runtime.sections.delete(section.id);
-    }
   });
 }
 

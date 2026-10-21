@@ -42,7 +42,6 @@ export function systemPromptVars(
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
-    agents_md: context.agentsMd ?? '',
     additional_dirs_info: additionalDirsInfo,
     additional_dirs_section:
       additionalDirsInfo.length > 0

@@ -1,4 +1,4 @@
-import { basename, dirname, join, normalize } from 'pathe';
+import { dirname, join, normalize } from 'pathe';
 
 import type { OsFsPort } from '#/features/os/host/index';
 
@@ -14,31 +14,17 @@ export interface AgentsMdDeps extends AgentsMdFsDeps {
   readonly homeDir: string;
 }
 
+export interface AgentsMdRoot {
+  readonly leaf: string;
+  readonly boundary: string;
+}
+
 export function dotKimiAgentsMdPath(dir: string): string {
   return join(dir, '.kimi-code', 'AGENTS.md');
 }
 
 export function agentsMdCandidatePaths(dir: string): string[] {
   return [dotKimiAgentsMdPath(dir), ...AGENTS_MD_PLAIN_NAMES.map((name) => join(dir, name))];
-}
-
-export function extractAgentsMdPathsFromSystemPrompt(systemPrompt: string): string[] {
-  const paths: string[] = [];
-  const seen = new Set<string>();
-  for (const match of systemPrompt.matchAll(/^<!-- From: (.+) -->$/gm)) {
-    const path = match[1];
-    if (
-      path === undefined ||
-      !AGENTS_MD_PLAIN_NAMES.some((candidate) => candidate === basename(path))
-    ) {
-      continue;
-    }
-    const normalized = normalize(path);
-    if (seen.has(normalized)) continue;
-    seen.add(normalized);
-    paths.push(normalized);
-  }
-  return paths;
 }
 
 export async function isNonEmptyFile(deps: AgentsMdFsDeps, path: string): Promise<boolean> {
@@ -84,10 +70,10 @@ export function dirsRootToLeaf(workDir: string, projectRoot: string): string[] {
   return dirs.toReversed();
 }
 
-export async function loadAgentsMdPaths(
+export async function loadAgentsMdForRoots(
   deps: AgentsMdDeps,
-  workDir: string,
-  brandHome?: string,
+  brandHome: string | undefined,
+  roots: readonly AgentsMdRoot[],
 ): Promise<string[]> {
   const found: string[] = [];
   const seen = new Set<string>();
@@ -100,38 +86,54 @@ export async function loadAgentsMdPaths(
     return true;
   };
 
-  const brandDir = brandHome ?? join(deps.homeDir, '.kimi-code');
-  await collect(join(brandDir, 'AGENTS.md'));
+  await collect(join(brandHome ?? join(deps.homeDir, '.kimi-code'), 'AGENTS.md'));
   for (const fileName of AGENTS_MD_PLAIN_NAMES) {
     if (await collect(join(deps.homeDir, '.agents', fileName))) break;
   }
 
-  const rootWorkDir = normalize(workDir);
-  const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
-  for (const dir of dirsRootToLeaf(rootWorkDir, projectRoot)) {
-    await collect(dotKimiAgentsMdPath(dir));
-    for (const fileName of AGENTS_MD_PLAIN_NAMES) {
-      if (await collect(join(dir, fileName))) break;
+  for (const root of roots) {
+    for (const dir of dirsRootToLeaf(root.leaf, normalize(root.boundary))) {
+      await collect(dotKimiAgentsMdPath(dir));
+      for (const fileName of AGENTS_MD_PLAIN_NAMES) {
+        if (await collect(join(dir, fileName))) break;
+      }
     }
   }
   return found;
 }
 
-export async function agentsMdWatchCandidates(
+export async function agentsMdWatchCandidatesForRoots(
   deps: AgentsMdDeps,
-  workDir: string,
-  brandHome?: string,
+  brandHome: string | undefined,
+  roots: readonly AgentsMdRoot[],
 ): Promise<string[]> {
-  const brandDir = brandHome ?? join(deps.homeDir, '.kimi-code');
   const candidates: string[] = [
-    join(brandDir, 'AGENTS.md'),
+    join(brandHome ?? join(deps.homeDir, '.kimi-code'), 'AGENTS.md'),
     join(deps.homeDir, '.agents', 'AGENTS.md'),
     join(deps.homeDir, '.agents', 'agents.md'),
   ];
-  const rootWorkDir = normalize(workDir);
-  const projectRoot = (await findGitWorkTree(deps.fs, rootWorkDir))?.root ?? rootWorkDir;
-  for (const dir of dirsRootToLeaf(rootWorkDir, projectRoot)) {
-    candidates.push(...agentsMdCandidatePaths(dir));
+  for (const root of roots) {
+    for (const dir of dirsRootToLeaf(root.leaf, normalize(root.boundary))) {
+      candidates.push(...agentsMdCandidatePaths(dir));
+    }
   }
   return candidates;
+}
+
+export async function loadAgentsMdContent(
+  deps: AgentsMdFsDeps,
+  paths: readonly string[],
+): Promise<string> {
+  const sections: string[] = [];
+  for (const path of paths) {
+    let text: string;
+    try {
+      text = (await deps.fs.readText(path, { errors: 'ignore' })).trim();
+    } catch {
+      continue;
+    }
+    if (text.length === 0) continue;
+    sections.push(`<!-- From: ${path} -->\n${text}`);
+  }
+  return sections.join('\n\n');
 }

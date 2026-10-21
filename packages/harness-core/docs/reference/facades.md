@@ -23,7 +23,7 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 | `SkillRef` | skill | agent | `{ activate, promptWithSkills }` — run a skill in this agent |
 | `PluginRef` | plugin | app | plugin management — `listPlugins`, `installPlugin`, `setPluginEnabled`, `removePlugin`, `reloadPlugins`, `getPluginInfo`, `checkUpdates`, … plus `lastMutation` / `lastReload` refs |
 | `McpRef` | mcp | app | `McpFacade` — MCP server management (`list`, `connect`, `disconnect`, `reconnect`, `reload`, …) |
-| `ProviderCatalogRef` | provider-catalog | app | the provider catalog — `snapshot`, `providers`, `models`, `requester`, `upsert`, `bind`, `remove`, `refresh`, `ping`, `onChanged`, … |
+| `ProviderCatalogRef` | provider-catalog | app | the provider catalog — provider/model lookup, requester binding, `addProvider`, `addModel`, `refresh`, awaitable `ping`, retired-model lookup, and change/refresh-failure/retirement listeners |
 | `ModelDefaultsRef` | provider-catalog | app | `{ setDefaultModel, setDefaultThinking }` — persisted app-wide defaults |
 | `SessionModelRef` | provider-catalog | session | `{ setModel, setThinking }` — session-level model defaults |
 | `AgentModelRef` | provider-catalog | agent | `{ current, setModel, setThinking }` — this agent's model binding |
@@ -58,7 +58,13 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 | `TraceRef` | kimi/trace | agent | `{ traceId }` — the current LLM trace id |
 | `WebSearchRef` | kimi/web | app | `{ getProvider }` — the web search provider behind the tool |
 | `WebFetchRef` | kimi/fetch | app | `{ getUrlFetcher }` — the URL fetcher behind the tool |
-| `OAuthTokensRef` | kimi/oauth | app | `OAuthTokens` — `resolve`, `refresh`, `loginStart`, `loginStatus`, `loginCancel`, `logout`, `usage`, `userinfo`, `region`, `summary` |
+| `OAuthTokensRef` | kimi/oauth | app | `OAuthTokens` — `resolve`, `hasCachedAccessToken`, `refresh`, `loginStart`, `loginStatus`, `loginCancel`, `logout`, `usage`, `userinfo`, `region`, `summary` |
+
+`ProviderCatalogRef.refresh` accepts `{ providerId?, scope?: 'all' | 'oauth' }`
+and resolves to a `ProviderRefreshReport` with `changed`, `unchanged`, `failed`,
+and optional `retired_default`. `ping(providerId, modelId)` resolves to a
+`ProviderCatalogPingResult` (`ok`, `durationMs`, `text?`, `usage?`,
+`finishReason?`, `error?`); unknown models and a not-yet-ready catalog reject.
 
 Features without a facade (`wait-for`, `edit`, `media`, `swarm`,
 `tool-select`, `toolDedupe`, `dateChange`, `notify`, `ptc`) contribute

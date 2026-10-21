@@ -260,7 +260,7 @@ describe('anthropic requester responseFormat', () => {
 });
 
 describe('google-genai requester responseFormat', () => {
-  it('maps response formats to config', async () => {
+  it('maps response formats and thinking to config', async () => {
     const client = stubGoogleClient(googleGenAIStreamChunks);
     const requester = createRequester().with({
       protocol: { base: googleGenAIProtocol },
@@ -277,5 +277,28 @@ describe('google-genai requester responseFormat', () => {
     config = client.body()['config'] as Record<string, unknown> | undefined;
     expect(config?.['responseMimeType']).toBe('application/json');
     expect(config?.['responseJsonSchema']).toBeUndefined();
+
+    await requester.generate(
+      { model: { spec: { ...spec, name: 'gemini-3-pro' }, thinking: { effort: 'low' } } },
+      control(),
+    );
+    config = client.body()['config'] as Record<string, unknown> | undefined;
+    expect(config?.['thinkingConfig']).toEqual({ includeThoughts: true, thinkingLevel: 'LOW' });
+
+    await requester.generate(
+      { model: { spec: { ...spec, name: 'gemini-4-pro' }, thinking: { effort: 'high' } } },
+      control(),
+    );
+    config = client.body()['config'] as Record<string, unknown> | undefined;
+    expect(config?.['thinkingConfig']).toEqual({ includeThoughts: true, thinkingLevel: 'HIGH' });
+
+    const disabled = await requester.generate(
+      { model: { spec: { ...spec, name: 'gemini-4-pro' }, thinking: { effort: 'off' } } },
+      control(),
+    );
+    if (disabled.type !== 'failed' || disabled.error.kind !== 'syntax') {
+      throw new Error('expected a syntax failure');
+    }
+    expect(disabled.error.code).toBe('thinking_config');
   });
 });

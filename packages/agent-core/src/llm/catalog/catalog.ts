@@ -285,13 +285,17 @@ export async function createProviderCatalog(
       const credentials = requester.request(rest).endpoint?.credentials;
       let removeAbortListener = () => {};
       const aborted = new Promise<never>((_resolve, reject) => {
-        const onAbort = () => reject(abortReason(signal));
+        const onAbort = () => {
+          reject(abortReason(signal));
+        };
         if (signal.aborted) {
           onAbort();
           return;
         }
         signal.addEventListener('abort', onAbort, { once: true });
-        removeAbortListener = () => signal.removeEventListener('abort', onAbort);
+        removeAbortListener = () => {
+          signal.removeEventListener('abort', onAbort);
+        };
       });
       try {
         const generate = () => Promise.race([requester.generate(rest, { signal }), aborted]);
@@ -581,7 +585,7 @@ export async function createProviderCatalog(
       closed = true;
       activeController?.abort(new Error('Provider catalog is closed'));
       activeController = undefined;
-      for (const task of [...pingTasks.values()]) {
+      for (const task of pingTasks.values()) {
         settlePing(task, {
           ok: false,
           durationMs: Date.now() - task.startedAt,

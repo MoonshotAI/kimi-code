@@ -17,8 +17,7 @@ interface AgentRuntime {
   readonly retryables: LlmRetryable[];
   readonly executor: ToolExecutorHost;         // tool handlers
   readonly tools: Map<string, ToolDefinition>; // tool descriptions
-  readonly sections: Map<string, SystemPromptSection>;
-  systemPromptSettled: boolean;
+  hostSystemPrompt: string | undefined;        // the reserved `host` prompt section
 }
 ```
 
@@ -105,28 +104,32 @@ unit dispose the definitions are withdrawn and the profile re-synced.
 agent-core's `useToolHandler(definition)` / `useToolHandler(name, handler)`
 does that alone.)
 
-## System Prompt: Sections, One Settle, Frozen
+## System Prompt: Sections as a Contribution Point
 
-`useSystemPrompt({ id, text, priority? })` contributes a named section.
-Validation rejects the empty id and the reserved `host` id (used by
-`EnsureAgentOptions.systemPrompt`), and duplicate ids throw.
+The system prompt is assembled by agent-core, not the harness: agent-core's
+app layer owns a `SystemPromptSections` collection, and every agent unit
+assembles the contributed sections into the loop's profile exactly once at
+agent create (`src/app/system-prompt.ts` in agent-core, wired into
+`AgentUnit`).
 
-Settling is deliberately **once per agent**: the first contribution flips
-`systemPromptSettled` and schedules a microtask that assembles the sections
-registered so far — non-empty texts sorted by `priority` (default 0), joined
-with `'\n\n'`, empty result meaning `undefined` — and calls
-`loop.setSystemPrompt`. Because all agent feature units mount synchronously
-in the same pass, every section contributed at mount time lands in that one
-settle. After it:
+`useSystemPrompt({ id, text, priority? })` (from
+`@moonshot-ai/agent-core/app/index`) contributes a named section, withdrawn
+automatically when the unit unmounts. The create-time assembly sorts by
+`priority` (default 0, registration order breaks ties), drops blank texts,
+lets a later registration replace an earlier one with the same id, joins
+with `'\n\n'`, and lands as a single settle fired from a `useMounted` hook
+registered after the feature mirror's — so by the time it runs, every
+feature unit of the mount pass has already contributed, and the loop is
+still guaranteed idle (the settle runs before `session.open` resolves,
+hence before any turn can start). An agent whose replayed log already
+carries a system prompt — resume or fork — never re-assembles: the prompt is
+reduced from the durable record and later section changes are ignored.
 
-- later section additions or removals update the map but **never
-  re-settle** — the prompt is frozen,
-- if the loop's profile already carries a system prompt (restored from the
-  loop log on reopen), the settle is skipped entirely.
-
-Hosts that need a different prompt per agent should pass
-`EnsureAgentOptions.systemPrompt` or layer it on the requester's `profile`;
-features should treat sections as mount-time declarations.
+The reserved `host` section (priority `-100`, so it stays first) is
+contributed by an internal harness feature from `runtime.hostSystemPrompt`,
+seeded by `EnsureAgentOptions.systemPrompt` (and by the pre-open helpers in
+spawn and session-init). After the create-time settle the prompt is frozen
+for the agent's lifetime.
 
 ## Managed Model Binding (provider-catalog)
 
@@ -149,16 +152,21 @@ the choice as it goes.
 
 Provider contributions carry only the handle and optional init info; config
 `models` is the only model list. Refresh contributions (`useProviderRefresh`)
-return `config key → complete model record`. A successful refresh, including
-an empty result, replaces only that provider's model records in config. A
-failed refresh leaves both the provider and its previous models unchanged.
+return `config key → complete model record`. A successful refresh rebuilds
+canonical aliases while preserving user aliases, extras, and overrides. A
+successful empty result keeps the provider's previous models instead of
+deleting them and rebuilds only canonical aliases. A failed refresh leaves both
+the provider and its previous models unchanged and writes nothing back.
 
 Every model with a live requester is published as a `CatalogModelBinding`
 into the `CatalogModels` collection. The app unit exposes two facades:
 `ProviderCatalogRef` (providers/models/requester, `addProvider`, `addModel`,
-`refresh`, `ping`, `onChanged`, `onRefreshFailed`) and `ModelDefaultsRef`
-(`setDefaultModel(alias)`, `setDefaultThinking(effort)` — both persisted to
-config).
+`refresh`, `ping`, `retiredModelReplacement`, `onChanged`, `onRefreshFailed`,
+`onRetiredModel`) and `ModelDefaultsRef` (`setDefaultModel(alias)`,
+`setDefaultThinking(effort)` — both persisted to config). `ping(providerId,
+modelId)` returns a `Promise<ProviderCatalogPingResult>` containing `ok`,
+`durationMs`, and outcome details; unknown models and a not-yet-ready catalog
+reject the promise rather than producing a synthetic success.
 
 **Session level — the default.** A session-scoped feature store holds the
 session's default model/thinking (`session.model_defaults` events), exposed
@@ -187,7 +195,7 @@ active at the cut turn becomes active again.
 
 ## Reading Order for the Runtime Path
 
-1. `src/runtime/agents.ts` — the record, caps, prompt assembly, tool sync.
-2. `src/runtime/harness.ts` — the registry, `ensureAgent`, writers.
+1. `src/runtime/agents.ts` — the record, caps, tool sync.
+2. `src/runtime/harness.ts` — the registry, `ensureAgent`, writers, the `host` prompt section feature.
 3. `src/runtime/hooks.ts` — the contribution hooks features call.
 4. `src/features/provider-catalog/feature.ts` — managed binding, end to end.

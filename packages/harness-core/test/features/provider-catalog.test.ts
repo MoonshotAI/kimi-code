@@ -296,24 +296,27 @@ describe('providerCatalog feature', () => {
     await until(() => models().some((item) => item.model.id === 'm1'));
     expect(catalog.requester('test', 'm1')).toBeDefined();
 
-    catalog.ping('test', 'm1');
+    const failed = await catalog.ping('test', 'm1');
+    expect(failed).toMatchObject({ ok: false, error: 'boom' });
+    expect(failed.durationMs).toEqual(expect.any(Number));
     await until(() => catalog.models('test').at(0)?.pingError === 'boom');
 
     failing = false;
-    catalog.ping('test', 'm1');
+    const succeeded = await catalog.ping('test', 'm1');
+    expect(succeeded).toMatchObject({ ok: true, text: 'pong' });
+    expect(succeeded.durationMs).toEqual(expect.any(Number));
     await until(() => catalog.models('test').at(0)?.pingError === undefined);
     await harness.close();
   });
 
-  it('ignores pings for unknown providers and models', async () => {
+  it('rejects pings for unknown providers and models', async () => {
     const { harness, catalog } = await mountCatalog();
     await catalog.addProvider({ handle: stubHandle('test', failingRequester('boom')) });
     await catalog.addModel('test/m1', modelDef);
     await until(() => catalog.models('test').length === 1);
 
-    catalog.ping('nope', 'm1');
-    catalog.ping('test', 'nope');
-    await sleep(5);
+    await expect(catalog.ping('nope', 'm1')).rejects.toThrow('Unknown model nope/m1');
+    await expect(catalog.ping('test', 'nope')).rejects.toThrow('Unknown model test/nope');
 
     expect(catalog.models('test').at(0)?.pingError).toBeUndefined();
     expect(catalog.requester('nope', 'm1')).toBeUndefined();
@@ -325,8 +328,9 @@ describe('providerCatalog feature', () => {
     await catalog.addProvider({ handle: stubHandle('test', failingRequester('first')) });
     await catalog.addProvider({ handle: stubHandle('test', failingRequester('second')) });
     await catalog.addModel('test/m1', modelDef);
+    await until(() => catalog.models('test').length === 1);
 
-    catalog.ping('test', 'm1');
+    await expect(catalog.ping('test', 'm1')).resolves.toMatchObject({ ok: false, error: 'second' });
 
     await until(() => catalog.models('test').at(0)?.pingError === 'second');
     expect(catalog.requester('test', 'm1')).toBeDefined();
@@ -347,7 +351,7 @@ describe('providerCatalog feature', () => {
     await catalog.addProvider({ handle });
     await catalog.addModel('test/m1', { ...modelDef, protocol: 'anthropic', betaApi: true });
 
-    catalog.ping('test', 'm1');
+    await expect(catalog.ping('test', 'm1')).resolves.toMatchObject({ ok: true, text: 'pong' });
     await until(() => seen.length > 0);
     expect(seen[0]?.name).toBe('m1');
     expect(catalog.models('test').at(0)?.protocolOptions?.['betaApi']).toBe(true);
@@ -428,6 +432,15 @@ describe('providerCatalog feature', () => {
     release();
     await Promise.all([older, newer]);
     await until(() => catalog.models('test').map((model) => model.id).join(',') === 'm4');
+    pause = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const delayedRefresh = catalog.refresh({ providerId: 'test' });
+    const added = catalog.addModel('test/m5', { ...modelDef, model: 'm5' });
+    release();
+    await Promise.all([delayedRefresh, added]);
+    await until(() => catalog.models('test').length === 2);
+    expect(catalog.models('test').map((model) => model.id)).toEqual(['m4', 'm5']);
     expect(changed.length).toBeGreaterThan(0);
     await expect(catalog.refresh({ providerId: 'missing' })).rejects.toMatchObject({
       code: 'provider.not_found',
@@ -568,7 +581,7 @@ describe('providerCatalog config integration', () => {
 
   it('uses provider init as a fallback and restores models without a providers section', async () => {
     const { harness, config, catalog, models } = await mountWithConfig(
-      '[models."solo"]\nprovider_id = "test"\nprovider = "other"\nmodel = "m1"\nname = "wire-m1"\nsupport_efforts = ["low", "high"]\ndefault_effort = "low"\n\n[models."flat"]\nbase_url = "https://anon.example.com/v1"\nprotocol = "openai"\nfuture_field = "preserved"\n',
+      '[models."solo"]\nprovider_id = "test"\nprovider = "other"\nmodel = "m1"\nname = "wire-m1"\nsupport_efforts = ["low", "high"]\ndefault_effort = "low"\n\n[models."flat"]\nname = "flat"\nbase_url = "https://anon.example.com/v1"\nprotocol = "openai"\nfuture_field = "preserved"\n',
       {
         contribute: () => {
           useProvider({

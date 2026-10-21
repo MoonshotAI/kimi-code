@@ -4,7 +4,7 @@
 
 ## 步骤
 
-1. 可选：存储之前先规整图片（Node 宿主）。`compressImage(bytes, mimeType)`（`src/image/compress.ts`）会把每条边缩到最多 2000 px，并尽量压缩到 3.75 MiB 以内；`cropImage` 用于裁剪区域。浏览器宿主改用 `createImageBitmap` / `OffscreenCanvas`。
+1. 可选：存储之前先规整图片（Node 宿主）。`compressImage(bytes, mimeType)`（`src/image/compress.ts`）会把每条边缩到最多 2000 px，并尽量压缩到 3.75 MiB 以内；`cropImage` 用于裁剪区域。浏览器宿主改用 `createImageBitmap` / `OffscreenCanvas`。协议对单张图片可接受的内联预算声明在其 image `MediaKindSupport` 的 `inlineByteBudget` 上（`src/llm/protocol/rules/media.ts`）：内建协议为 `BASELINE_INLINE_IMAGE_BYTE_BUDGET`（3.75 MiB），kimi 为 5 MiB。
 2. 存储字节，消息里只保留引用。可以把字节放进 `BlobStore`（`src/blob/`，用 `openBlobStore(backend)` 打开，后端可选 memory、Node 或 Durable Object），再传入 `createBlobRefStore(blobs)`；也可以在自己的存储上实现 `RefStore.get(ref)`（`src/llm/builtin/policy/store-ref/ports.ts`）。
 3. 用 `store` 来源引用媒体：`{ type: 'image_url', source: { kind: 'store', ref } }`（`video_url`、`audio_url` 同理）。
 4. 在 `policy.resolvers` 里加入 `createStoreRefResolver(...)`，并在整个会话中复用同一个实例；它保存着按会话维护的 memo 和预算状态。

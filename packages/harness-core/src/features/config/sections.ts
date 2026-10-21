@@ -385,7 +385,6 @@ function collectMalformedModelEntries(rawModels: unknown): readonly ConfigDiagno
   for (const [alias, entry] of Object.entries(rawModels)) {
     if (!isPlainObject(entry)) continue;
     if (entry['model'] !== undefined || entry['name'] !== undefined) continue;
-    if (dottedAliasSuffix(alias, entry) === undefined) continue;
     diagnostics.push({
       section: MODELS_CONFIG_SECTION,
       severity: 'warning',

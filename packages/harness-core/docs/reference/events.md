@@ -95,12 +95,21 @@ noted otherwise.
 | shellCommand | `shell.started` / `shell.output` / `shell.completed` | a host `!` shell command's lifecycle (`commandId`) |
 | undo | `context.undone` | turns were rewound (`agentId`, `turns`, `fromTurnId?`) |
 | btw | `btw.created` | a by-the-way side agent was created (`agentId`, `sourceId`) |
+| provider-catalog | `event.model_catalog.changed` | a refresh changed at least one provider (`payload` is the `ProviderRefreshReport`) |
 | provider-catalog | `model.bound` *(store)* | an agent's model binding changed (`alias`, `thinking`, `turnId`) |
 | provider-catalog | `session.model_defaults` *(store)* | the session's default model/thinking changed |
 | workspaces | `workspace.created` / `workspace.updated` / `workspace.deleted` / `workspace.trust.changed` | workspace registry and trust changes |
 | capabilities | `capability.changed` | a capability install progressed (`id`, `install`) |
 | config | `config.changed` | a config value changed (`section`, `value`, `previousValue`, `source`) |
 | fileHistory | `file_history.tracked` / `file_history.checkpoint` *(store; no typed union declared)* | file snapshots recorded per turn |
+
+The model-catalog payload contains `changed` entries (`provider_id`,
+`provider_name`, `added`, `removed`), `unchanged` provider ids, `failed`
+entries (`provider`, `reason`), and an optional `retired_default`
+(`from`, `to`, `from_display_name`). Retirement is also available through
+`ProviderCatalogRef.retiredModelReplacement(alias)` and
+`onRetiredModel(listener)`, which reports individual `{ from, to }` replacements;
+those facade callbacks are not additional app events.
 
 Features not listed here (`usage`, `timing`, `tokenCounting`, `wait-for`,
 `edit`, `os`, `media`, `spawn`, `swarm`, `tool-select`, `toolDedupe`,

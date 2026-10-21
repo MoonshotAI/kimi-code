@@ -50,7 +50,7 @@ Invariant 6 only applies to media the target can accept: omitted media and media
 | Media kind not declared by the protocol, or not allowed inside tool results | `[image omitted: not supported by this provider]` | none |
 | Source form or MIME type not accepted by the protocol declaration | `stripped` placeholder | none |
 | Media in a tool result that the protocol accepts only outside tool results | Moved into a following user message `Attached media from tool result:`; an emptied tool result becomes `(see attached media)` | none |
-| `maxOutputTokens` (or the protocol default when absent) | `min(requested, maxContextSize - usedTokens)`, at least 1, then protocol clamp; `'none'` sends no cap | none |
+| `maxOutputTokens` (or the protocol default when absent) | `min(requested, maxContextSize - usedTokens)`, at least 1, then protocol clamp; a non-positive value is treated as unset; `'none'` sends no cap | none |
 | `sampling` | Only the fields the protocol supports are kept | none |
 | `cacheKey` | Dropped when the protocol has no cache key | none |
 

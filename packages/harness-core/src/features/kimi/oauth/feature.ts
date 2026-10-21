@@ -294,22 +294,25 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
           configuredOAuthRef: info?.oauth,
         });
       };
-      const managedLoggedIn = async (): Promise<boolean> => {
+      const hasCachedAccessToken = async (ref: CatalogOAuthRef): Promise<boolean> => {
         try {
-          const auth = runtimeAuthFor(KIMI_CODE_PROVIDER_NAME);
-          const manager = tokens.manager({
-            storage: 'file',
-            key: auth.oauthRef.key,
-            oauthHost: auth.oauthRef.oauthHost,
-          });
+          const manager = tokens.manager(ref);
           if (manager === undefined) return false;
           return (await manager.getCachedAccessToken()) !== undefined;
         } catch {
           return false;
         }
       };
+      const managedLoggedIn = async (): Promise<boolean> => {
+        try {
+          return await hasCachedAccessToken(runtimeAuthFor(KIMI_CODE_PROVIDER_NAME).oauthRef);
+        } catch {
+          return false;
+        }
+      };
       const facade: OAuthTokens = {
         resolve: (ref) => tokens.resolve(ref),
+        hasCachedAccessToken,
         refresh: () => {
           const store = catalog.value;
           return store === undefined

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createApp, createFeature, useAgent, useApp, useSession, useTurnStarting } from '#/app/index';
+import { createApp, createFeature, useAgent, useApp, useSession, useSystemPrompt, useTurnStarting } from '#/app/index';
 import { createSystemEntry } from '#/history/message';
 import { useCleanup, useFire, useOn, type RuntimeEvent } from '#/kernel/index';
 import { extractText } from '#/llm/message';
@@ -463,6 +463,73 @@ describe('app units', () => {
       { agentId: 'sub-1', source: 'spawn:main:coder', reopened: true },
     ]);
     expect(closed).toEqual(['sub-1']);
+    await app.close();
+  });
+});
+
+describe('system prompt sections', () => {
+  it('assembles mount-time sections once at agent create and keeps the prompt frozen afterwards', async () => {
+    const app = createApp();
+    const settled: unknown[] = [];
+    app.on('system_prompt.settled', (event) => settled.push(event['systemPrompt']));
+    app.features.add(
+      createFeature('first', {
+        agent() {
+          useSystemPrompt(
+            { id: 'late', text: 'LATE', priority: 10 },
+            { id: 'early', text: 'EARLY', priority: -10 },
+            { id: 'blank', text: '   ' },
+          );
+        },
+      }),
+    );
+    app.features.add(
+      createFeature('second', {
+        agent() {
+          useSystemPrompt({ id: 'early', text: 'EARLY-2', priority: -10 });
+        },
+      }),
+    );
+    const session = await app.create({ sessionId: 'sess' });
+    const agent = await session.open('main', agentCaps());
+    await vi.waitFor(() => {
+      expect(agent.loop.state.profile.systemPrompt).toBe('EARLY-2\n\nLATE');
+    });
+    app.features.add(
+      createFeature('third', {
+        agent() {
+          useSystemPrompt({ id: 'third', text: 'THIRD' });
+        },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(agent.loop.state.profile.systemPrompt).toBe('EARLY-2\n\nLATE');
+    expect(settled).toEqual(['EARLY-2\n\nLATE']);
+    await app.close();
+  });
+
+  it('does not assemble on resume and keeps the replayed prompt', async () => {
+    const app = createApp({ space: memorySessionSpace() });
+    app.features.add(
+      createFeature('sections', {
+        agent() {
+          useSystemPrompt({ id: 's', text: 'TEXT' });
+        },
+      }),
+    );
+    const session = await app.create({ sessionId: 'sess' });
+    const settled: unknown[] = [];
+    app.on('system_prompt.settled', (event) => settled.push(event['systemPrompt']));
+    const first = await session.open('main', agentCaps());
+    await vi.waitFor(() => {
+      expect(first.loop.state.profile.systemPrompt).toBe('TEXT');
+    });
+    await first.flush();
+    await session.close('main');
+    const second = await session.open('main', agentCaps());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(second.loop.state.profile.systemPrompt).toBe('TEXT');
+    expect(settled).toEqual(['TEXT']);
     await app.close();
   });
 });

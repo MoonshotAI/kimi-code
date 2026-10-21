@@ -204,8 +204,9 @@ function captureFacade(): { feature: Feature<void>; face: () => AgentsMdReminder
 }
 
 describe('agentsMdReminder feature', () => {
-  it('discovers AGENTS.md near tool targets, reminds once and stays silent on later access', async () => {
+  it('discloses applicable AGENTS.md up front, discovers new ones near tool targets and stays silent later', async () => {
     const fs = createFakeFs();
+    fs.set('/ws/AGENTS.md', 'root instructions');
     fs.set('/ws/sub/AGENTS.md', 'sub instructions');
     fs.set('/ws/sub/code.ts', 'code');
     fs.set('/ws/sub/more.ts', 'more');
@@ -236,24 +237,27 @@ describe('agentsMdReminder feature', () => {
     });
 
     await agent.loop.runTurn(user('start'));
-    expect(discovered).toHaveLength(1);
-    expect(discovered[0]).toContain('/ws/sub/AGENTS.md');
-    expect(discovered[0]).toContain('were not included in your system prompt');
+    expect(discovered).toHaveLength(2);
+    expect(discovered[0]).toContain('apply to your working directories');
+    expect(discovered[0]).toContain('- /ws/AGENTS.md');
+    expect(discovered[1]).toContain('/ws/sub/AGENTS.md');
+    expect(discovered[1]).toContain('have not been provided to you yet');
 
     await agent.loop.runTurn(user('read the instructions file itself'));
-    expect(discovered).toHaveLength(1);
+    expect(discovered).toHaveLength(2);
 
     await agent.loop.runTurn(user('read more in the same dir'));
-    expect(discovered).toHaveLength(1);
+    expect(discovered).toHaveLength(2);
     expect(changed).toHaveLength(0);
 
     await agent.flush();
     const entries = agent.view
       .getState()
       .messages.filter((entry) => entry.meta?.key === AGENTS_MD_DISCOVERY_REMIND_KEY);
-    expect(entries).toHaveLength(1);
+    expect(entries).toHaveLength(2);
     expect(entries[0]?.message.role).toBe('user');
-    expect(extractText(entries[0]!.message)).toContain('- /ws/sub/AGENTS.md');
+    expect(extractText(entries[0]!.message)).toContain('- /ws/AGENTS.md');
+    expect(extractText(entries[1]!.message)).toContain('- /ws/sub/AGENTS.md');
     await harness.close();
   });
 

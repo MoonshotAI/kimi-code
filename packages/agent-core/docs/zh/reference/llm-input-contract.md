@@ -50,7 +50,7 @@
 | 协议没有声明的媒体类型，或不允许出现在 tool result 里 | `[image omitted: not supported by this provider]` | 无 |
 | 来源形式或 MIME 不被协议声明接受 | `stripped` 占位文本 | 无 |
 | tool result 里、协议只在 tool result 之外接受的媒体 | 挪到后面一条 user 消息 `Attached media from tool result:` 里；被挪空的 tool result 变成 `(see attached media)` | 无 |
-| `maxOutputTokens`（缺省时用协议默认值） | `min(请求值, maxContextSize - usedTokens)`，至少为 1，再由协议 clamp；`'none'` 表示不发送上限 | 无 |
+| `maxOutputTokens`（缺省时用协议默认值） | `min(请求值, maxContextSize - usedTokens)`，至少为 1，再由协议 clamp；非正值按未设置处理；`'none'` 表示不发送上限 | 无 |
 | `sampling` | 只保留协议支持的字段 | 无 |
 | `cacheKey` | 协议没有 cache key 时去掉 | 无 |
 

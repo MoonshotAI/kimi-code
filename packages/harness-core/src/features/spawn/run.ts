@@ -121,8 +121,10 @@ async function openSubagent(
   session: Session,
   agentId: string,
   source: string,
+  systemPrompt?: string,
 ): Promise<EnsuredSubagent> {
   const runtime = runtimeOf(app, session, agentId);
+  runtime.hostSystemPrompt = systemPrompt;
   const agent = await session.open(agentId, agentCaps(runtime), { source });
   return { agent, runtime };
 }
@@ -206,9 +208,12 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
   ): Promise<LaunchedSubagent | string> => {
     const agentId = `subagent-${crypto.randomUUID().slice(0, 8)}`;
     const source = spawnSource(callerAgentId, plan.profileName);
+    const rendered = plan.fork
+      ? undefined
+      : plan.profile?.renderSystemPrompt({ cwd: deps.workDir }).text;
     const ensured = plan.fork
       ? await forkSubagent(app, session, callerAgentId, agentId, source)
-      : await openSubagent(app, session, agentId, source);
+      : await openSubagent(app, session, agentId, source, rendered);
     const target = ensured.agent;
     const parentRequester = deps.runtime.requester;
     if (parentRequester === undefined) {
@@ -234,8 +239,6 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
       }
     } else {
       const profile = plan.profile;
-      const rendered = profile?.renderSystemPrompt({ cwd: deps.workDir }).text;
-      if (rendered !== undefined) target.loop.setSystemPrompt(rendered);
       if (profile !== undefined) {
         trimSubagentTools(ensured, (name) => profileToolAllowed(profile, name));
       }

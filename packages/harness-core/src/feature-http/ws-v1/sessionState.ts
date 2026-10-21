@@ -279,6 +279,15 @@ export class SessionBroadcaster {
       });
       return;
     }
+    if (type === 'event.model_catalog.changed') {
+      const payload = event['payload'];
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return;
+      this.onGlobalEvent(type, {
+        ...(payload as Record<string, unknown>),
+        agentId: MAIN_AGENT_ID,
+      });
+      return;
+    }
     const sessionId = event['sessionId'];
     if (typeof sessionId !== 'string') return;
     const state = this.sessions.get(sessionId);

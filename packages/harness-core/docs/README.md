@@ -9,8 +9,8 @@ harness-core turns those primitives into a product:
 
 - `src/runtime/` — the seam between agent-core and the product features:
   `createHarness`, `memoryHarnessSpace`, the per-agent `AgentRuntime`
-  (requester slot, LLM policy arrays, tool registry, system prompt sections),
-  the contribution hooks (`useAgentTools`, `useSystemPrompt`, …) and the
+  (requester slot, LLM policy arrays, tool registry, host prompt section),
+  the contribution hooks (`useAgentTools`, …) and the
   durable feature stores (`useFeatureStore`, `undoAgentTurns`).
 - `src/features/` — every Kimi product feature as a `createFeature` unit
   (todo, plan, permission, skill, mcp, compaction, provider-catalog, …).
@@ -31,8 +31,9 @@ harness-core turns those primitives into a product:
 - [Persistence](explanation/persistence.md) — loop logs, the session roster
   log, feature journals, blobs, and the `SessionSpace` layouts.
 - [Agent Runtime](explanation/agent-runtime.md) — the `AgentRuntime` record,
-  `ensureAgent`, tool/system-prompt freeze semantics, and managed model
-  binding through provider-catalog.
+  `ensureAgent`, tool freeze semantics, the agent-core system prompt
+  sections contribution point, and managed model binding through
+  provider-catalog.
 
 ### Reference
 

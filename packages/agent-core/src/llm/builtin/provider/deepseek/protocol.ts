@@ -1,6 +1,9 @@
 import { anthropicProtocol } from '#/llm/builtin/protocol/anthropic/index';
 import { openAIProtocol } from '#/llm/builtin/protocol/openai/index';
-import { BASELINE_IMAGE_MIMES } from '#/llm/protocol/kit/media';
+import {
+  BASELINE_IMAGE_MIMES,
+  BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+} from '#/llm/protocol/kit/media';
 import type { MediaSupport } from '#/llm/protocol/rules/media';
 import type { ModelLegality } from '#/llm/protocol/rules/model';
 import type { ModelCapability, ResponseFormat } from '#/llm/request';
@@ -39,6 +42,7 @@ const deepseekMedia: MediaSupport = {
       sources: ['inline', 'url', 'file'],
       url: (url) => /^https?:\/\//i.test(url) && url.length <= MAX_IMAGE_URL_LENGTH,
       inToolResult: 'native',
+      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
     },
   },
 };

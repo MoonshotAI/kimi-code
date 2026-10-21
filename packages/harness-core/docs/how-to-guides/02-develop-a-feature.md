@@ -136,8 +136,8 @@ names across features throw at mount.
 Other contributions you will reach for, all agent level
 ([full table](../reference/contribution-hooks.md)):
 
-- `useSystemPrompt({ id, text, priority? })` — a prompt section (settled
-  once per agent),
+- `useSystemPrompt({ id, text, priority? })` (agent-core) — a prompt
+  section, assembled into the system prompt once at agent create,
 - `useStepStarting` / `useToolPermitting` / … — loop hook helpers for
   turn-cycle intervention,
 - `useMessageResolver` / `useLlmRecovery` / `useLlmRetryable` — LLM policy

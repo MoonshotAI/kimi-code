@@ -21,6 +21,7 @@ export interface MediaKindSupport {
   readonly sources: readonly Exclude<MediaSource['kind'], 'store'>[];
   readonly url?: (url: string) => boolean;
   readonly inToolResult: 'native' | 'relocate' | 'unsupported';
+  readonly inlineByteBudget?: number;
 }
 
 export interface MediaSupport {

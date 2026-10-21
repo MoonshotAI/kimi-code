@@ -2,6 +2,7 @@ import {
   createFeature,
   useAgent,
   useSession,
+  useSystemPrompt,
   type Feature,
 } from '@moonshot-ai/agent-core/app/index';
 import {
@@ -29,7 +30,7 @@ import type { ContentPart, ContentPartMeta, UserMessage } from '@moonshot-ai/age
 
 import { ConfigRef, useConfigSection } from '#/features/config/index';
 import type { OsFsPort } from '#/features/os/host/index';
-import { useAgentTools, useSystemPrompt } from '#/runtime/index';
+import { useAgentTools } from '#/runtime/index';
 
 import { InMemorySkillCatalog } from './catalog/registry';
 import {

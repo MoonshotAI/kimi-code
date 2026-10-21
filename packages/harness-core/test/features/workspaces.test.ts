@@ -600,5 +600,13 @@ describe('workspaces additional dirs', () => {
       `path ${join(root, 'plain.txt')} is not a directory`,
     );
     expect(await face.addDir('wd_ghost_000000000000', extra)).toBeUndefined();
+
+    const locatedRoot = await face.locate(join(root, 'plain.txt'));
+    expect(locatedRoot?.entry.id).toBe(ws.id);
+    expect(locatedRoot?.baseDir).toBe(root);
+    const locatedExtra = await face.locate(join(extra, 'inner', 'file.ts'));
+    expect(locatedExtra?.entry.id).toBe(ws.id);
+    expect(locatedExtra?.baseDir).toBe(extra);
+    expect(await face.locate(await realpath(await tempDir('ws-add-dir-outside-')))).toBeUndefined();
   });
 });

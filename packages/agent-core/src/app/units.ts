@@ -33,6 +33,7 @@ import type { Event, Log } from '#/store/index';
 
 import type { App } from './app';
 import { featureSetOf, type FeatureEntry, type FeatureLevel, type FeatureSet } from './features';
+import { useSystemPromptAssembly } from './system-prompt';
 
 const AppRef: CertainToken<App> = createToken('app');
 const SessionRef: CertainToken<Session> = createToken('session');
@@ -242,6 +243,7 @@ export const AgentUnit = createUnit<{ readonly agent: Agent }>('agent', ({ agent
   });
   useForward(agent.log, agent.since);
   useLevel('agent', featureSetOf(agent), AgentFeatures, () => []);
+  useSystemPromptAssembly(agent);
   node.fire({ type: 'agent.opened', source: agent.source, reopened: agent.reopened });
 });
 

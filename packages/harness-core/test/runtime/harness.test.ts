@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature } from '@moonshot-ai/agent-core/app/index';
+import { createFeature, useSystemPrompt } from '@moonshot-ai/agent-core/app/index';
 import { createUserEntry, type HistoryMessage, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -11,7 +11,6 @@ import type { Projection } from '@moonshot-ai/agent-core/store/index';
 import { agentCaps } from '#/runtime/agents';
 import { createHarness, harnessInternals, memoryHarnessSpace, type Harness } from '#/runtime/harness';
 import { useAgentTools, useFeatureStore, undoAgentTurns, type FeatureStore } from '#/runtime/index';
-import { useSystemPrompt } from '#/runtime/hooks';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -142,7 +141,7 @@ describe('harness runtime', () => {
     await harness.close();
   });
 
-  it('freezes the system prompt after first settle', async () => {
+  it('freezes the system prompt after the create-time settle', async () => {
     const early = createFeature('early', {
       agent: () => {
         useSystemPrompt({ id: 'early', text: 'EARLY' });

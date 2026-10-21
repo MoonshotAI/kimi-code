@@ -30,7 +30,6 @@ import {
   agentCaps,
   createAgentRuntime,
   harnessInternals,
-  settleSystemPrompt,
   useAgentRuntime,
   useAgentTools,
   useFeatureStore,
@@ -479,7 +478,6 @@ export function createTower(props: CreateTowerProps): Feature<void, TowerEvent> 
               const target = await session.open(agentId, agentCaps(child), {
                 source: init.source,
               });
-              settleSystemPrompt(target, child);
               return target;
             },
             parentRequester: () => runtime.requester,

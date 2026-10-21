@@ -2,10 +2,10 @@
 
 ## Resources used
 
-- `useAgent()`: reads the current system prompt to identify injected `AGENTS.md` files and sends discovery and change reminders through `loop.remind`.
-- `useLoopEvent('system_prompt.settled')`: extracts `AGENTS.md` paths after system prompt updates to seed known paths and initialize change tracking.
+- `useAgent()`: reads the loop history for disclosure records and sends initial, discovery, and change reminders through `loop.remind`.
+- `useInject(WorkspaceRef)`: resolves the workspace roots (workspace root plus additional directories) that apply to `workDir` and to tool-accessed paths; falls back to git-root discovery when the facade is absent.
 - `useToolEnding`: discovers applicable, undisclosed `AGENTS.md` files from paths accessed by completed tool calls.
-- `useStepStarting`: refreshes disclosed paths, resets per-step deduplication, and checks seeded files for changes at each step boundary.
+- `useStepStarting`: refreshes disclosed paths, resets per-step deduplication, completes the initial disclosure, and checks seeded files for changes at each step boundary.
 
 ## Resources exposed
 
@@ -15,5 +15,5 @@
 ## Business rules
 
 - `workDir`, `host`, and optional `brandHome` are accepted only through props; no environment variables are read. The feature is disabled without `host`.
-- Covers paths accessed by file, search, and Bash tools; reminds the agent about missed `AGENTS.md` files and about created, modified, or deleted injected files.
+- AGENTS.md content never enters the system prompt. Files applicable to the workspace roots are disclosed once via an initial path-list reminder; files applicable to paths accessed later by file, search, and Bash tools trigger discovery reminders; created, modified, or deleted seeded files trigger change reminders. All three channels point the agent at paths to read.
 - Keeps discovery and change-tracking bookkeeping in memory per agent, using stable reminder keys and disclosure records to suppress duplicates.

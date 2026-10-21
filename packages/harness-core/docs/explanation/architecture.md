@@ -56,8 +56,8 @@ It adds three things to the plain `App`:
    the durable feature stores (see [Persistence](persistence.md)).
 2. **A per-agent `AgentRuntime` registry** — `ensureAgent(session, agentId?)`
    opens an agent with harness-managed capabilities: a requester slot, live
-   LLM policy arrays, a tool registry, and system prompt sections. Feature
-   units reach this record through `useAgentRuntime()`. See
+   LLM policy arrays, a tool registry, and the `host` system prompt section.
+   Feature units reach this record through `useAgentRuntime()`. See
    [Agent Runtime](agent-runtime.md).
 3. **Feature journal writers** — one shared `Writer` per session, used by
    every `useFeatureStore` in that session.
@@ -237,8 +237,8 @@ agent's `AgentRuntime`:
 
 - `useAgentTools(...)` — tool definitions into the registry **and** the
   loop's tool profile (with freeze-aware re-sync),
-- `useSystemPrompt(...)` — a section into the assembled system prompt
-  (settled once),
+- `useSystemPrompt(...)` (agent-core) — a section into the system prompt
+  contribution point (assembled once at agent create),
 - `useMessageResolver` / `useLlmRecovery` / `useLlmRetryable` — entries into
   the live policy arrays read by every LLM request,
 - `useFeatureStore(...)` — a durable, undo-aware event-sourced store,

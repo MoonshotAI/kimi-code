@@ -3,10 +3,12 @@ import type { Request, Response } from 'express';
 import { useCollection, useInject } from '@moonshot-ai/agent-core/kernel/index';
 import type { CatalogModel } from '@moonshot-ai/agent-core/llm/catalog/index';
 import type { ModelCapability } from '@moonshot-ai/agent-core/llm/request';
+import { reconcileProviderCredentialUpdate } from '@moonshot-ai/kimi-code-oauth/provider-credential';
 
 import {
   ConfigRef,
   DEFAULT_MODEL_CONFIG_SECTION,
+  DEFAULT_PROVIDER_CONFIG_SECTION,
   MODELS_CONFIG_SECTION,
   omitUndefined,
   PROVIDERS_CONFIG_SECTION,
@@ -14,9 +16,12 @@ import {
   type ModelsSection,
   type ProvidersSection,
 } from '#/features/config/index';
+import { OAuthTokensRef, type OAuthTokens } from '#/features/kimi/oauth/index';
 import {
   CatalogModels,
   catalogModelAlias,
+  catalogProviderCredentialOf,
+  catalogProviderHasApiKey,
   matchCatalogBinding,
   ModelCatalogError,
   ModelDefaultsRef,
@@ -43,6 +48,7 @@ export interface ProviderView {
   readonly type: string;
   readonly base_url?: string;
   readonly default_model?: string;
+  readonly api_key_env?: string;
   readonly has_api_key: boolean;
   readonly status: 'connected' | 'error' | 'unconfigured';
   readonly models?: readonly string[];
@@ -74,6 +80,7 @@ interface ProviderForm {
   readonly newId?: string;
   readonly type: string;
   readonly apiKey?: string;
+  readonly apiKeyEnv?: string;
   readonly baseUrl?: string;
   readonly defaultModel?: string;
   readonly models: readonly ProviderModelInput[];
@@ -84,11 +91,18 @@ export function useModelCatalogRoutes(prefix: string): void {
   const store = useInject(ProviderCatalogRef);
   const bindings = useCollection(CatalogModels);
   const defaults = useInject(ModelDefaultsRef);
+  const oauth = useInject(OAuthTokensRef);
 
   const catalogFacades = (
     request: Request,
     response: Response,
-  ): { readonly config: ConfigStore; readonly store: ProviderStore } | undefined => {
+  ):
+    | {
+        readonly config: ConfigStore;
+        readonly store: ProviderStore;
+        readonly oauth: OAuthTokens | undefined;
+      }
+    | undefined => {
     if (config.value === undefined) {
       sendErr(
         request,
@@ -107,19 +121,23 @@ export function useModelCatalogRoutes(prefix: string): void {
       );
       return undefined;
     }
-    return { config: config.value, store: store.value };
+    return { config: config.value, store: store.value, oauth: oauth.value };
   };
 
   useHttpRoute({
     id: 'providers.list',
     method: 'GET',
     path: `${prefix}/providers`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const resolved = catalogFacades(request, response);
       if (resolved === undefined) return;
-      const items = resolved.store
-        .providers()
-        .map((providerId) => providerView(providerId, resolved.config, resolved.store));
+      const items = await Promise.all(
+        resolved.store
+          .providers()
+          .map((providerId) =>
+            providerView(providerId, resolved.config, resolved.store, resolved.oauth),
+          ),
+      );
       sendOk(request, response, { items });
     },
   });
@@ -128,7 +146,7 @@ export function useModelCatalogRoutes(prefix: string): void {
     id: 'providers.get',
     method: 'GET',
     path: `${prefix}/providers/:provider_id`,
-    handler: (request, response) => {
+    handler: async (request, response) => {
       const providerId = param(request, 'provider_id');
       if (providerId === undefined) {
         sendErr(request, response, ErrorCode.VALIDATION_FAILED, 'provider_id is required');
@@ -145,7 +163,7 @@ export function useModelCatalogRoutes(prefix: string): void {
         );
         return;
       }
-      const view = providerView(providerId, resolved.config, resolved.store);
+      const view = await providerView(providerId, resolved.config, resolved.store, resolved.oauth);
       const stored = (resolved.config.get<ProvidersSection>(PROVIDERS_CONFIG_SECTION) ?? {})[providerId];
       const apiKey = stored?.apiKey;
       sendOk(request, response, {
@@ -177,7 +195,16 @@ export function useModelCatalogRoutes(prefix: string): void {
         sendErr(request, response, ErrorCode.PROVIDER_ALREADY_EXISTS, `provider ${id} already exists`);
         return;
       }
-      const info = providerInfoFromForm(id, form);
+      const credential = reconcileProviderCredentialUpdate(
+        {},
+        { apiKey: form.apiKey, apiKeyEnv: form.apiKeyEnv },
+        id,
+      );
+      if (!credential.ok) {
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, credential.message);
+        return;
+      }
+      const info = providerInfoFromForm(id, form, credential);
       const aliases: Record<string, CatalogModelConfig> = {};
       for (const entry of form.models) {
         aliases[`${id}/${entry.model}`] = modelConfigFromInput(id, entry);
@@ -198,7 +225,14 @@ export function useModelCatalogRoutes(prefix: string): void {
       sendOk(
         request,
         response,
-        buildProviderView(id, info, Object.keys(aliases), resolved.config, nextModels),
+        await buildProviderView(
+          id,
+          info,
+          Object.keys(aliases),
+          resolved.config,
+          nextModels,
+          resolved.oauth,
+        ),
       );
     },
   });
@@ -250,7 +284,16 @@ export function useModelCatalogRoutes(prefix: string): void {
         );
         return;
       }
-      const info = providerInfoFromForm(newId, form, target);
+      const credential = reconcileProviderCredentialUpdate(
+        target,
+        { apiKey: form.apiKey, apiKeyEnv: form.apiKeyEnv },
+        providerId,
+      );
+      if (!credential.ok) {
+        sendErr(request, response, ErrorCode.VALIDATION_FAILED, credential.message);
+        return;
+      }
+      const info = providerInfoFromForm(newId, form, credential, target);
       const nextProviders = Object.fromEntries(
         Object.entries(providers).map(([key, value]) => [key === providerId ? newId : key, value]),
       );
@@ -258,7 +301,7 @@ export function useModelCatalogRoutes(prefix: string): void {
       const models = resolved.config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
       const newAliasKeys = new Set(form.models.map((entry) => `${newId}/${entry.model}`));
       const colliding = Object.entries(models)
-        .filter(([, record]) => record.provider !== providerId)
+        .filter(([, record]) => configuredProviderIdOf(record) !== providerId)
         .map(([aliasId]) => aliasId)
         .filter((aliasId) => newAliasKeys.has(aliasId));
       if (colliding.length > 0) {
@@ -273,26 +316,43 @@ export function useModelCatalogRoutes(prefix: string): void {
       await resolved.config.replace({ [PROVIDERS_CONFIG_SECTION]: nextProviders }, 'user');
       const previousAliasIds = new Set(
         Object.entries(models)
-          .filter(([, record]) => record.provider === providerId)
+          .filter(([, record]) => configuredProviderIdOf(record) === providerId)
           .map(([aliasId]) => aliasId),
       );
       const nextModels: Record<string, CatalogModelConfig> = Object.fromEntries(
-        Object.entries(models).filter(([, record]) => record.provider !== providerId),
+        Object.entries(models).filter(([, record]) => configuredProviderIdOf(record) !== providerId),
       );
       const previousByModel = new Map(
         Object.values(models)
-          .filter((record) => record.provider === providerId)
+          .filter(
+            (record) => configuredProviderIdOf(record) === providerId && record.model !== undefined,
+          )
           .map((record) => [record.model, record] as const),
       );
       for (const entry of form.models) {
+        const previous = previousByModel.get(entry.model);
+        let upgrade = previous?.upgrade;
+        if (upgrade !== undefined) {
+          const targetModel = models[upgrade.model]?.model;
+          const targetAlias = targetModel === undefined ? undefined : `${newId}/${targetModel}`;
+          upgrade =
+            targetAlias !== undefined && newAliasKeys.has(targetAlias)
+              ? { ...upgrade, model: targetAlias }
+              : undefined;
+        }
         nextModels[`${newId}/${entry.model}`] = modelConfigFromInput(
           newId,
           entry,
-          previousByModel.get(entry.model),
+          previous,
+          upgrade,
         );
       }
       await resolved.config.replace({ [MODELS_CONFIG_SECTION]: nextModels }, 'user');
       if (newId !== providerId) {
+        const defaultProvider = resolved.config.get<string>(DEFAULT_PROVIDER_CONFIG_SECTION);
+        if (defaultProvider === providerId) {
+          await resolved.config.set(DEFAULT_PROVIDER_CONFIG_SECTION, newId, 'user');
+        }
         const defaultModel = resolved.config.get<string>(DEFAULT_MODEL_CONFIG_SECTION);
         if (defaultModel !== undefined && previousAliasIds.has(defaultModel)) {
           const renamedModel = models[defaultModel]?.model;
@@ -303,12 +363,13 @@ export function useModelCatalogRoutes(prefix: string): void {
         }
       }
       sendOk(request, response, {
-        provider: buildProviderView(
+        provider: await buildProviderView(
           newId,
           info,
           form.models.map((entry) => `${newId}/${entry.model}`),
           resolved.config,
           nextModels,
+          resolved.oauth,
         ),
       });
     },
@@ -351,7 +412,7 @@ export function useModelCatalogRoutes(prefix: string): void {
       await resolved.config.replace({ [PROVIDERS_CONFIG_SECTION]: restProviders }, 'user');
       const models = resolved.config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
       const restModels = Object.fromEntries(
-        Object.entries(models).filter(([, record]) => record.provider !== providerId),
+        Object.entries(models).filter(([, record]) => configuredProviderIdOf(record) !== providerId),
       );
       if (Object.keys(restModels).length !== Object.keys(models).length) {
         await resolved.config.replace({ [MODELS_CONFIG_SECTION]: restModels }, 'user');
@@ -491,6 +552,7 @@ function readProviderForm(body: unknown, mode: 'create' | 'replace'): ProviderFo
     newId?: string;
     type?: string;
     apiKey?: string;
+    apiKeyEnv?: string;
     baseUrl?: string;
     defaultModel?: string;
     models?: readonly ProviderModelInput[];
@@ -513,6 +575,10 @@ function readProviderForm(body: unknown, mode: 'create' | 'replace'): ProviderFo
   if (record['api_key'] !== undefined) {
     if (typeof record['api_key'] !== 'string') return { error: 'api_key must be a string' };
     form.apiKey = record['api_key'];
+  }
+  if (record['api_key_env'] !== undefined) {
+    if (typeof record['api_key_env'] !== 'string') return { error: 'api_key_env must be a string' };
+    form.apiKeyEnv = record['api_key_env'];
   }
   if (record['base_url'] !== undefined) {
     if (typeof record['base_url'] !== 'string') return { error: 'base_url must be a string' };
@@ -589,6 +655,7 @@ function readProviderForm(body: unknown, mode: 'create' | 'replace'): ProviderFo
     newId: form.newId,
     type: form.type,
     apiKey: form.apiKey,
+    apiKeyEnv: form.apiKeyEnv,
     baseUrl: form.baseUrl,
     defaultModel: form.defaultModel,
     models: parsed,
@@ -598,12 +665,14 @@ function readProviderForm(body: unknown, mode: 'create' | 'replace'): ProviderFo
 function providerInfoFromForm(
   id: string,
   form: ProviderForm,
+  credential: Pick<CatalogProviderInfo, 'apiKey' | 'apiKeyEnv'>,
   target?: CatalogProviderInfo,
 ): CatalogProviderInfo {
   return omitUndefined({
     ...target,
     type: form.type,
-    apiKey: form.apiKey ?? target?.apiKey,
+    apiKey: credential.apiKey,
+    apiKeyEnv: credential.apiKeyEnv,
     baseUrl: form.baseUrl,
     defaultModel: form.defaultModel !== undefined ? `${id}/${form.defaultModel}` : undefined,
   }) as CatalogProviderInfo;
@@ -613,9 +682,11 @@ function modelConfigFromInput(
   providerId: string,
   entry: ProviderModelInput,
   previous?: CatalogModelConfig,
+  upgrade?: CatalogModelConfig['upgrade'],
 ): CatalogModelConfig {
   return omitUndefined({
     ...previous,
+    providerId: previous?.providerId === undefined ? undefined : providerId,
     provider: providerId,
     model: entry.model,
     maxContextSize: entry.max_context_size,
@@ -625,7 +696,12 @@ function modelConfigFromInput(
     supportEfforts: entry.support_efforts === undefined ? undefined : [...entry.support_efforts],
     adaptiveThinking: entry.adaptive_thinking,
     alwaysThinking: hasDeclaredCapability(entry.capabilities, 'always_thinking') ? true : undefined,
+    upgrade,
   }) as CatalogModelConfig;
+}
+
+function configuredProviderIdOf(record: CatalogModelConfig): string | undefined {
+  return record.providerId ?? record.provider;
 }
 
 function hasDeclaredCapability(capabilities: readonly string[] | undefined, name: string): boolean {
@@ -645,49 +721,56 @@ function mapCapabilities(capabilities: readonly string[] | undefined): ModelCapa
   };
 }
 
-function nonEmpty(value: string | undefined): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function hasApiKey(info: CatalogProviderInfo | undefined, config: ConfigStore): boolean {
-  if (info === undefined) return false;
-  if (nonEmpty(info.apiKey) !== undefined) return true;
-  const envName = info.env?.['apiKey'];
-  return envName !== undefined && nonEmpty(config.env(envName)) !== undefined;
-}
-
-function buildProviderView(
+async function buildProviderView(
   providerId: string,
   info: CatalogProviderInfo | undefined,
   aliasIds: readonly string[],
   config: ConfigStore,
   modelsSection: Readonly<Record<string, CatalogModelConfig>>,
-): ProviderView {
+  oauth: OAuthTokens | undefined,
+): Promise<ProviderView> {
   const globalDefault = config.get<string>(DEFAULT_MODEL_CONFIG_SECTION);
+  const globalDefaultRecord = globalDefault === undefined ? undefined : modelsSection[globalDefault];
   const defaultModel =
     info?.defaultModel ??
-    (globalDefault !== undefined && modelsSection[globalDefault]?.provider === providerId
+    (globalDefault !== undefined &&
+    globalDefaultRecord !== undefined &&
+    configuredProviderIdOf(globalDefaultRecord) === providerId
       ? globalDefault
       : undefined);
-  const hasKey = hasApiKey(info, config);
+  const credential = catalogProviderCredentialOf(providerId, info);
+  const hasKey = catalogProviderHasApiKey(credential, (name) => config.env(name));
+  const hasOAuthToken =
+    credential.oauth !== undefined &&
+    oauth !== undefined &&
+    (await oauth.hasCachedAccessToken(credential.oauth));
   return {
     id: providerId,
     type: info?.type ?? 'openai',
     base_url: info?.baseUrl,
     default_model: defaultModel,
+    api_key_env: info?.apiKeyEnv,
     has_api_key: hasKey,
-    status: hasKey || info?.oauth !== undefined ? 'connected' : 'unconfigured',
+    status:
+      credential.conflict !== undefined
+        ? 'error'
+        : hasKey || hasOAuthToken
+          ? 'connected'
+          : 'unconfigured',
     models: aliasIds,
   };
 }
 
-function providerView(providerId: string, config: ConfigStore, store: ProviderStore): ProviderView {
+async function providerView(
+  providerId: string,
+  config: ConfigStore,
+  store: ProviderStore,
+  oauth: OAuthTokens | undefined,
+): Promise<ProviderView> {
   const info = store.providerInfo(providerId);
   const aliasIds = store.models(providerId).map((model) => `${providerId}/${model.id}`);
   const modelsSection = config.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
-  return buildProviderView(providerId, info, aliasIds, config, modelsSection);
+  return buildProviderView(providerId, info, aliasIds, config, modelsSection, oauth);
 }
 
 function capabilityStrings(model: CatalogModel): readonly string[] | undefined {

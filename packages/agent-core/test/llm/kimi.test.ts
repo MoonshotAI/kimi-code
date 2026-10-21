@@ -346,6 +346,11 @@ describe('kimi provider', () => {
       },
     ]);
 
+    expect(anthropicProtocol.media.kinds.image?.inlineByteBudget).toBe(3.75 * 1024 * 1024);
+    expect(googleGenAIProtocol.media.kinds.image?.inlineByteBudget).toBe(3.75 * 1024 * 1024);
+    expect(openAIProtocol.media.kinds.image?.inlineByteBudget).toBe(3.75 * 1024 * 1024);
+    expect(kimiOpenAIProtocol.media.kinds.image?.inlineByteBudget).toBe(5 * 1024 * 1024);
+
     const passes: string[] = [];
     const notices: LlmNotice[] = [];
     const module = {
@@ -405,7 +410,7 @@ describe('kimi provider', () => {
           options: undefined,
         }).params as unknown as Record<string, unknown>
       )['max_completion_tokens'];
-    expect([budget(), budget(5000), budget(100), budget('none')]).toEqual([600, 600, 100, undefined]);
+    expect([budget(), budget(5000), budget(100), budget(0), budget(-1), budget('none')]).toEqual([600, 600, 100, 600, 600, undefined]);
     expect(passes).toEqual([
       'legalize-media',
       'verify-history',
@@ -523,6 +528,7 @@ describe('kimi provider', () => {
     expect(call?.params).toMatchObject({
       thinking: { type: 'enabled' },
       output_config: { effort: 'high' },
+      max_tokens: 64000,
       betas: ['context-management-2025-06-27'],
       system: [{ type: 'text', text: 'be brief', cache_control: { type: 'ephemeral' } }],
       tools: [{ name: 'lookup', cache_control: { type: 'ephemeral' } }],

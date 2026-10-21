@@ -5,14 +5,6 @@ import { createMaxStepsHook, type HookRegistration, type LoopLlmRequester } from
 import type { Agent, AgentCaps } from '@moonshot-ai/agent-core/session/index';
 import { createToolExecutor, type ToolDefinition, type ToolExecutorHost } from '@moonshot-ai/agent-core/tool/index';
 
-export const HOST_SYSTEM_PROMPT_ID = 'host';
-
-export interface SystemPromptSection {
-  readonly id: string;
-  readonly text: string;
-  readonly priority?: number;
-}
-
 export interface AgentRuntime {
   readonly agentId: string;
   requester: LoopLlmRequester | undefined;
@@ -21,8 +13,7 @@ export interface AgentRuntime {
   readonly retryables: LlmRetryable[];
   readonly executor: ToolExecutorHost;
   readonly tools: Map<string, ToolDefinition>;
-  readonly sections: Map<string, SystemPromptSection>;
-  systemPromptSettled: boolean;
+  hostSystemPrompt: string | undefined;
 }
 
 export interface EnsureAgentOptions {
@@ -33,7 +24,7 @@ export interface EnsureAgentOptions {
 }
 
 export function createAgentRuntime(agentId: string, options: EnsureAgentOptions = {}): AgentRuntime {
-  const runtime: AgentRuntime = {
+  return {
     agentId,
     requester: undefined,
     resolvers: [],
@@ -41,13 +32,8 @@ export function createAgentRuntime(agentId: string, options: EnsureAgentOptions 
     retryables: [],
     executor: createToolExecutor({ policy: { maxResultChars: options.maxResultChars } }),
     tools: new Map(),
-    sections: new Map(),
-    systemPromptSettled: false,
+    hostSystemPrompt: options.systemPrompt,
   };
-  if (options.systemPrompt !== undefined) {
-    runtime.sections.set(HOST_SYSTEM_PROMPT_ID, { id: HOST_SYSTEM_PROMPT_ID, text: options.systemPrompt });
-  }
-  return runtime;
 }
 
 export function agentCaps(runtime: AgentRuntime, options: EnsureAgentOptions = {}): AgentCaps {
@@ -85,23 +71,5 @@ export function syncAgentTools(agent: Agent, runtime: AgentRuntime): void {
     if (event.type !== 'step.ended' && event.type !== 'turn.ended') return;
     unsubscribe();
     queueMicrotask(() => syncAgentTools(agent, runtime));
-  });
-}
-
-export function assembleSystemPrompt(sections: ReadonlyMap<string, SystemPromptSection>): string {
-  return [...sections.values()]
-    .filter((section) => section.text.trim() !== '')
-    .sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
-    .map((section) => section.text)
-    .join('\n\n');
-}
-
-export function settleSystemPrompt(agent: Agent, runtime: AgentRuntime): void {
-  if (runtime.systemPromptSettled) return;
-  runtime.systemPromptSettled = true;
-  queueMicrotask(() => {
-    if (agent.loop.state.profile.systemPrompt !== undefined) return;
-    const text = assembleSystemPrompt(runtime.sections);
-    agent.loop.setSystemPrompt(text === '' ? undefined : text);
   });
 }

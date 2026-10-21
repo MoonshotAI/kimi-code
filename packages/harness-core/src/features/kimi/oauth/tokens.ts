@@ -35,6 +35,7 @@ export type OAuthRefreshReport = ProviderRefreshReport;
 
 export interface OAuthTokens {
   resolve(ref: CatalogOAuthRef): BearerTokenProvider | undefined;
+  hasCachedAccessToken(ref: CatalogOAuthRef): Promise<boolean>;
   refresh(): Promise<OAuthRefreshReport>;
   loginStart(input?: OAuthLoginStartInput): Promise<OAuthFlowStart>;
   loginStatus(provider?: string): OAuthFlowSnapshot | undefined;

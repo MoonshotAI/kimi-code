@@ -195,11 +195,20 @@ describe('oauth feature', () => {
     const token = tokens.resolve({ storage: 'file', key: 'oauth/kimi-code' });
     expect(token).toBeDefined();
     await expect(token!.getAccessToken()).resolves.toBe('sk-managed');
+    await expect(
+      tokens.hasCachedAccessToken({ storage: 'file', key: 'oauth/kimi-code' }),
+    ).resolves.toBe(true);
 
     expect(tokens.resolve({ storage: 'keyring', key: 'oauth/kimi-code' })).toBeUndefined();
+    await expect(
+      tokens.hasCachedAccessToken({ storage: 'keyring', key: 'oauth/kimi-code' }),
+    ).resolves.toBe(false);
 
     const missing = tokens.resolve({ storage: 'file', key: 'oauth/unknown-slot' });
     await expect(missing!.getAccessToken()).rejects.toThrow(/No token/);
+    await expect(
+      tokens.hasCachedAccessToken({ storage: 'file', key: 'oauth/unknown-slot' }),
+    ).resolves.toBe(false);
     await harness.close();
   });
 

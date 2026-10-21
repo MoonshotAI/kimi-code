@@ -57,7 +57,8 @@ function legalOutputCap(module: LlmModule<unknown>, legality: ModelLegality): nu
   const { maxOutputTokens, spec } = module.model;
   if (maxOutputTokens === 'none') return undefined;
   const { usedTokens } = module.content;
-  const requested = maxOutputTokens ?? legality.fillMaxOutputTokens?.(spec, usedTokens);
+  const explicit = maxOutputTokens === undefined || maxOutputTokens <= 0 ? undefined : maxOutputTokens;
+  const requested = explicit ?? legality.fillMaxOutputTokens?.(spec, usedTokens);
   if (requested === undefined) return undefined;
   const window = spec.maxContextSize;
   const room =

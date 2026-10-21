@@ -17,3 +17,8 @@ export {
   useTurnStarting,
   type LoopHookOptions,
 } from './units';
+export {
+  SystemPromptSections,
+  useSystemPrompt,
+  type SystemPromptSection,
+} from './system-prompt';

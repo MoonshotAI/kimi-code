@@ -22,6 +22,9 @@ import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core
 
 import {
   AgentsMdReminderRef,
+  findProjectRoot,
+  loadAgentsMdContent,
+  loadAgentsMdForRoots,
   type AgentsMdReminderFace,
 } from '#/features/agentsMdReminder/index';
 import type { OsHost } from '#/features/os/host/index';
@@ -29,7 +32,6 @@ import { PermissionRef, type PermissionFace } from '#/features/permission/index'
 import { ProfileCatalogRef } from '#/features/profiles/index';
 import { agentCaps, createAgentRuntime, harnessInternals } from '#/runtime/index';
 
-import { loadAgentsMdDetailed } from './agents-md';
 import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './init';
 
 export const SESSION_INIT_FAILED = 'session.init_failed';
@@ -113,11 +115,11 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
             runtime = createAgentRuntime(agentId);
             perSession.set(agentId, runtime);
           }
+          runtime.hostSystemPrompt = systemPrompt;
           const child = await session.open(agentId, agentCaps(runtime), {
             source: SESSION_INIT_SOURCE,
           });
           runtime.requester = mainRequester;
-          if (systemPrompt !== undefined) child.loop.setSystemPrompt(systemPrompt);
           const mode = permissionFaces.get(main)?.value?.mode();
           if (mode !== undefined) {
             await permissionFaces
@@ -157,7 +159,13 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
               outcome.cause.message ?? 'Agent turn failed',
             );
           }
-          const { content, paths } = await loadAgentsMdDetailed(host, props.workDir, props.brandHome);
+          await host.environment.ready;
+          const fsDeps = { fs: host.fs, homeDir: host.environment.homeDir };
+          const boundary = await findProjectRoot(fsDeps, props.workDir);
+          const paths = await loadAgentsMdForRoots(fsDeps, props.brandHome, [
+            { leaf: props.workDir, boundary },
+          ]);
+          const content = await loadAgentsMdContent({ fs: host.fs }, paths);
           try {
             reminderFaces.get(main)?.value?.seed(paths);
           } catch {}

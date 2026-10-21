@@ -1891,7 +1891,17 @@ describe('feature-http API routes', () => {
   });
 
   it('manages providers and models over the catalog routes', async () => {
-    const file = fakePersist(CATALOG_TOML);
+    vi.stubEnv('BETA_KEY', 'sk-beta');
+    const initial = CATALOG_TOML.replace('provider = "acme"', 'provider_id = "acme"');
+    const file = fakePersist(
+      `default_provider = "acme"\n${initial}` +
+        'upgrade = { model = "acme/m2", migration_markdown = "Move" }\n' +
+        'future_field = "preserved"\n\n' +
+        '[models."acme/m2"]\n' +
+        'provider = "acme"\n' +
+        'model = "m2"\n' +
+        'max_context_size = 4096\n',
+    );
     const env = await mountHttp([
       createConfig({ persist: file.persist }),
       providerCatalog,
@@ -1909,7 +1919,7 @@ describe('feature-http API routes', () => {
       default_model: 'acme/m1',
       has_api_key: true,
       status: 'connected',
-      models: ['acme/m1'],
+      models: ['acme/m1', 'acme/m2'],
     });
 
     const single = await get(env, '/providers/acme');
@@ -1923,7 +1933,7 @@ describe('feature-http API routes', () => {
     const created = await post(env, '/providers', {
       id: 'beta',
       type: 'anthropic',
-      api_key: 'sk-beta',
+      api_key_env: 'BETA_KEY',
       base_url: 'https://beta.example.com',
       default_model: 'b1',
       models: [{ model: 'b1', max_context_size: 8192, capabilities: ['tool_use', 'thinking'] }],
@@ -1935,6 +1945,7 @@ describe('feature-http API routes', () => {
         type: 'anthropic',
         base_url: 'https://beta.example.com',
         default_model: 'beta/b1',
+        api_key_env: 'BETA_KEY',
         has_api_key: true,
         status: 'connected',
         models: ['beta/b1'],
@@ -1943,8 +1954,8 @@ describe('feature-http API routes', () => {
     const config = env.root.resolve(ConfigRef);
     if (config === undefined) throw new Error('config feature missing');
     await vi.waitFor(() => {
-      const providers = config.get('providers') as Record<string, { apiKey?: string }>;
-      expect(providers['beta']?.apiKey).toBe('sk-beta');
+      const providers = config.get('providers') as Record<string, { apiKeyEnv?: string }>;
+      expect(providers['beta']?.apiKeyEnv).toBe('BETA_KEY');
     });
     expect(file.saved.join('\n')).toContain('beta');
 
@@ -1956,42 +1967,185 @@ describe('feature-http API routes', () => {
     expect(duplicate.status).toBe(200);
     expect(await duplicate.json()).toMatchObject({ code: 40921 });
 
+    const beforeRejectedCreate = file.saved.length;
+    const rejectedCreate = await post(env, '/providers', {
+      id: 'invalid-credentials',
+      type: 'openai',
+      api_key: 'sk-conflict',
+      api_key_env: 'BETA_KEY',
+      models: [{ model: 'x', max_context_size: 1 }],
+    });
+    expect(rejectedCreate.status).toBe(200);
+    expect(await rejectedCreate.json()).toMatchObject({ code: 40001 });
+    expect(file.saved).toHaveLength(beforeRejectedCreate);
+    expect(config.get<Record<string, unknown>>('providers')?.['invalid-credentials']).toBeUndefined();
+
+    await config.set(
+      'providers',
+      {
+        endpoint: { type: 'openai', env: { OPENAI_API_KEY: 'sk-endpoint' } },
+        missingEnv: { type: 'openai', apiKeyEnv: 'MISSING_BETA_KEY' },
+        conflicted: { type: 'openai', apiKey: 'sk-conflict', apiKeyEnv: 'BETA_KEY' },
+        endpointOauth: {
+          type: 'openai',
+          env: { OPENAI_API_KEY: 'sk-endpoint' },
+          oauth: { storage: 'file', key: 'oauth/missing' },
+        },
+      },
+      'user',
+    );
+    expect((await (await get(env, '/providers/endpoint')).json()).data).toMatchObject({
+      has_api_key: true,
+      status: 'connected',
+    });
+    expect((await (await get(env, '/providers/missingEnv')).json()).data).toMatchObject({
+      api_key_env: 'MISSING_BETA_KEY',
+      has_api_key: false,
+      status: 'unconfigured',
+    });
+    expect((await (await get(env, '/providers/conflicted')).json()).data).toMatchObject({
+      api_key_env: 'BETA_KEY',
+      has_api_key: true,
+      status: 'error',
+    });
+    expect((await (await get(env, '/providers/endpointOauth')).json()).data).toMatchObject({
+      has_api_key: true,
+      status: 'error',
+    });
+
     const models = await get(env, '/models');
     const modelIds = ((await models.json()).data.items as { provider: string; model: string }[]).map(
       (item) => item.model,
     );
-    expect(modelIds).toEqual(expect.arrayContaining(['acme/m1', 'beta/b1']));
+    expect(modelIds).toEqual(expect.arrayContaining(['acme/m1', 'acme/m2', 'beta/b1']));
 
     const replaced = await put(env, '/providers/acme', {
+      new_id: 'acme2',
       type: 'openai',
       base_url: 'https://acme2.example.com',
-      models: [{ model: 'm2', max_context_size: 2048 }],
+      models: [
+        { model: 'm1', max_context_size: 2048 },
+        { model: 'm2', max_context_size: 4096 },
+      ],
     });
     expect(replaced.status).toBe(200);
     expect((await replaced.json()).data.provider).toMatchObject({
-      id: 'acme',
+      id: 'acme2',
       base_url: 'https://acme2.example.com',
+      default_model: 'acme2/m1',
       has_api_key: true,
-      models: ['acme/m2'],
+      models: ['acme2/m1', 'acme2/m2'],
     });
+    expect(config.get('defaultProvider')).toBe('acme2');
+    expect(config.get('defaultModel')).toBe('acme2/m1');
+    const renamedProviders = config.get<Record<string, { apiKey?: string }>>('providers') ?? {};
+    expect(renamedProviders['acme']).toBeUndefined();
+    expect(renamedProviders['acme2']?.apiKey).toBe('sk-acme');
+    const renamedModels = config.get<Record<string, Record<string, unknown>>>('models') ?? {};
+    expect(renamedModels['acme2/m1']).toMatchObject({
+      providerId: 'acme2',
+      provider: 'acme2',
+      futureField: 'preserved',
+      upgrade: { model: 'acme2/m2', migrationMarkdown: 'Move' },
+    });
+    expect(renamedModels['acme2/m2']?.['provider']).toBe('acme2');
+    expect(renamedModels['acme2/m2']?.['providerId']).toBeUndefined();
+
+    const envReplaced = await put(env, '/providers/acme2', {
+      type: 'openai',
+      api_key_env: 'BETA_KEY',
+      base_url: 'https://acme2.example.com',
+      models: [
+        { model: 'm1', max_context_size: 2048 },
+        { model: 'm2', max_context_size: 4096 },
+      ],
+    });
+    expect(envReplaced.status).toBe(200);
+    expect((await envReplaced.json()).data.provider).toMatchObject({
+      api_key_env: 'BETA_KEY',
+      has_api_key: true,
+      status: 'connected',
+    });
+    const envProviders = config.get<Record<string, { apiKey?: string; apiKeyEnv?: string }>>('providers') ?? {};
+    expect(envProviders['acme2']?.apiKey).toBeUndefined();
+    expect(envProviders['acme2']?.apiKeyEnv).toBe('BETA_KEY');
+
+    const beforeRejectedReplace = file.saved.length;
+    const rejectedReplace = await put(env, '/providers/acme2', {
+      type: 'openai',
+      api_key: 'sk-conflict',
+      api_key_env: 'BETA_KEY',
+      models: [{ model: 'm1', max_context_size: 2048 }],
+    });
+    expect(rejectedReplace.status).toBe(200);
+    expect(await rejectedReplace.json()).toMatchObject({ code: 40001 });
+    expect(file.saved).toHaveLength(beforeRejectedReplace);
+    expect(config.get<Record<string, { apiKeyEnv?: string }>>('providers')?.['acme2']?.apiKeyEnv).toBe(
+      'BETA_KEY',
+    );
+
+    const inlineReplaced = await put(env, '/providers/acme2', {
+      type: 'openai',
+      api_key: 'sk-acme-new',
+      base_url: 'https://acme2.example.com',
+      models: [{ model: 'm1', max_context_size: 2048 }],
+    });
+    expect(inlineReplaced.status).toBe(200);
+    expect((await inlineReplaced.json()).data.provider).toMatchObject({
+      has_api_key: true,
+      status: 'connected',
+      models: ['acme2/m1'],
+    });
+    const inlineProviders = config.get<Record<string, { apiKey?: string; apiKeyEnv?: string }>>('providers') ?? {};
+    expect(inlineProviders['acme2']?.apiKey).toBe('sk-acme-new');
+    expect(inlineProviders['acme2']?.apiKeyEnv).toBeUndefined();
+    const inlineModels = config.get<Record<string, Record<string, unknown>>>('models') ?? {};
+    expect(inlineModels['acme2/m1']?.['upgrade']).toBeUndefined();
+    expect(inlineModels['acme2/m1']?.['futureField']).toBe('preserved');
+    expect(inlineModels['acme2/m2']).toBeUndefined();
+    expect(config.get('defaultModel')).toBe('acme2/m1');
+
     const afterReplace = await get(env, '/models');
     const afterIds = ((await afterReplace.json()).data.items as { provider: string; model: string }[])
-      .filter((item) => item.provider === 'acme')
+      .filter((item) => item.provider === 'acme2')
       .map((item) => item.model);
-    expect(afterIds).toEqual(['acme/m2']);
+    expect(afterIds).toEqual(['acme2/m1']);
 
-    const deleted = await del(env, '/providers/acme');
+    const cleared = await put(env, '/providers/acme2', {
+      type: 'openai',
+      api_key: '',
+      base_url: 'https://acme2.example.com',
+      models: [{ model: 'm1', max_context_size: 2048 }],
+    });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json()).data.provider).toMatchObject({
+      has_api_key: false,
+      status: 'unconfigured',
+    });
+    const clearedProviders = config.get<Record<string, { apiKey?: string; apiKeyEnv?: string }>>('providers') ?? {};
+    expect(clearedProviders['acme2']?.apiKey).toBeUndefined();
+    expect(clearedProviders['acme2']?.apiKeyEnv).toBeUndefined();
+
+    const deleted = await del(env, '/providers/acme2');
     expect(deleted.status).toBe(204);
+    const remainingModels = config.get<Record<string, unknown>>('models') ?? {};
+    expect(remainingModels['acme2/m1']).toBeUndefined();
+    expect(remainingModels['beta/b1']).toBeDefined();
+    expect(config.get('defaultProvider')).toBe('acme2');
+    expect(config.get('defaultModel')).toBe('acme2/m1');
     await vi.waitFor(async () => {
-      const gone = await get(env, '/providers/acme');
+      const gone = await get(env, '/providers/acme2');
       expect(gone.status).toBe(200);
+      expect(await gone.json()).toMatchObject({ code: 40412 });
     });
 
-    const deleteMissing = await del(env, '/providers/acme');
+    const deleteMissing = await del(env, '/providers/acme2');
     expect(deleteMissing.status).toBe(200);
+    expect(await deleteMissing.json()).toMatchObject({ code: 40412 });
 
     const invalid = await post(env, '/providers', { id: 'bad id!', type: 'openai', models: [] });
     expect(invalid.status).toBe(200);
+    expect(await invalid.json()).toMatchObject({ code: 40001 });
   });
 
   it('sets the default model and refreshes providers', async () => {
@@ -5077,7 +5231,6 @@ describe('feature-http auth/oauth routes', () => {
 
   it('refreshes oauth-backed providers through the providers collection action', async () => {
     const home = await tempDir('oauth-http-refresh-');
-    await seedManagedToken(home);
     const models: { current: readonly unknown[] } = {
       current: [
         {
@@ -5107,6 +5260,16 @@ describe('feature-http auth/oauth routes', () => {
       providerCatalog,
       createKimi({ oauth: { home } }),
     ]);
+    expect((await (await get(env, '/providers/managed%3Akimi-code')).json()).data).toMatchObject({
+      has_api_key: false,
+      status: 'unconfigured',
+    });
+    await seedManagedToken(home);
+    expect((await (await get(env, '/providers/managed%3Akimi-code')).json()).data).toMatchObject({
+      has_api_key: false,
+      status: 'connected',
+    });
+
     const first = await post(env, '/providers:refresh_oauth');
     expect(first.status).toBe(200);
     expect(await first.json()).toMatchObject({
@@ -5123,6 +5286,15 @@ describe('feature-http auth/oauth routes', () => {
       expect(file.saved.at(-1)?.includes('kimi-code/kimi-for-coding')).toBe(true);
     });
 
+    const client = await connectWsV1(env);
+    await client.next((frame) => frame['type'] === 'server_hello');
+    client.send({
+      type: 'client_hello',
+      id: 'catalog-hello',
+      payload: { client_id: 'test-client', subscriptions: [] },
+    });
+    await client.next((frame) => frame['type'] === 'ack' && frame['id'] === 'catalog-hello');
+
     models.current = [
       ...models.current,
       {
@@ -5133,6 +5305,7 @@ describe('feature-http auth/oauth routes', () => {
         supports_tool_use: true,
       },
     ];
+    const changedFrame = client.next((frame) => frame['type'] === 'event.model_catalog.changed');
     const second = await post(env, '/providers:refresh_oauth');
     expect(second.status).toBe(200);
     expect(await second.json()).toMatchObject({
@@ -5145,6 +5318,19 @@ describe('feature-http auth/oauth routes', () => {
         failed: [],
       },
     });
+    await expect(changedFrame).resolves.toMatchObject({
+      type: 'event.model_catalog.changed',
+      session_id: '__global__',
+      payload: {
+        agentId: MAIN_AGENT_ID,
+        changed: [
+          { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 },
+        ],
+        unchanged: [],
+        failed: [],
+      },
+    });
+    await client.close();
     await vi.waitFor(async () => {
       expect(file.saved.at(-1)?.includes('kimi-code/kimi-latest')).toBe(true);
     });

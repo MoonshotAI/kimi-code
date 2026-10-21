@@ -26,6 +26,8 @@ const KIMI_IMAGE_MIMES: ReadonlySet<string> = new Set([
   'image/heif',
 ]);
 
+const KIMI_INLINE_IMAGE_BYTE_BUDGET = 5 * 1024 * 1024;
+
 const KIMI_UPLOADED_VIDEO: MediaKindSupport = { mimes: 'any', sources: ['url'], inToolResult: 'native' };
 
 function kimiMedia(
@@ -34,7 +36,15 @@ function kimiMedia(
 ): MediaSupport {
   const kinds: Partial<Record<MediaKind, MediaKindSupport>> = {};
   for (const [kind, spec] of Object.entries({ ...base.kinds, ...extra }) as [MediaKind, MediaKindSupport][]) {
-    kinds[kind] = { ...spec, mimes: kind === 'image' ? KIMI_IMAGE_MIMES : spec.mimes, inToolResult: 'native' };
+    kinds[kind] =
+      kind === 'image'
+        ? {
+            ...spec,
+            mimes: KIMI_IMAGE_MIMES,
+            inToolResult: 'native',
+            inlineByteBudget: KIMI_INLINE_IMAGE_BYTE_BUDGET,
+          }
+        : { ...spec, inToolResult: 'native' };
   }
   return { kinds };
 }

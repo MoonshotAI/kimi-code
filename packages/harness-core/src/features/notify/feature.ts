@@ -2,6 +2,7 @@ import {
   createFeature,
   useAgent,
   useStepStarting,
+  useSystemPrompt,
   type Feature,
 } from '@moonshot-ai/agent-core/app/index';
 import {
@@ -10,7 +11,7 @@ import {
 } from '@moonshot-ai/agent-core/history/index';
 import { useFire, type RuntimeEvent } from '@moonshot-ai/agent-core/kernel/index';
 
-import { useAgentTools, useSystemPrompt } from '#/runtime/index';
+import { useAgentTools } from '#/runtime/index';
 
 import {
   lastMidResponsePosition,

@@ -2,8 +2,15 @@ import type { GenerateContentParameters } from '@google/genai';
 import { shake } from 'radashi';
 
 import type { MediaSource, Message, TextPart, ToolDescription } from '#/llm/message';
-import { SyntaxRequestFormatError, unresolvedMediaRefError } from '#/llm/protocol/errors';
-import { BASELINE_IMAGE_MIMES } from '#/llm/protocol/kit/media';
+import {
+  SyntaxRequestFormatError,
+  ThinkingConfigError,
+  unresolvedMediaRefError,
+} from '#/llm/protocol/errors';
+import {
+  BASELINE_IMAGE_MIMES,
+  BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+} from '#/llm/protocol/kit/media';
 import { mergeConsecutiveUsers } from '#/llm/protocol/kit/merge-users';
 import { withExtras } from '#/llm/protocol/kit/params';
 import type { Pattern } from '#/llm/protocol/pattern';
@@ -240,7 +247,13 @@ function encodeThinking(
   model: string,
   effort: ThinkingEffort,
 ): Record<string, unknown> {
-  if (model.includes('gemini-3')) {
+  if (model.includes('gemini-3') || model.includes('gemini-4')) {
+    if (effort === 'off' && model.includes('gemini-4')) {
+      throw new ThinkingConfigError(
+        'thinking-cannot-disable',
+        `Model '${model}' always reasons and thinking cannot be turned off. Choose a concrete thinking effort (low, medium, high) instead of 'off'.`,
+      );
+    }
     switch (effort) {
       case 'off':
         return { includeThoughts: false, thinkingLevel: 'MINIMAL' };
@@ -311,7 +324,12 @@ function flatten(
 
 export const googleGenAIMedia: MediaSupport = {
   kinds: {
-    image: { mimes: BASELINE_IMAGE_MIMES, sources: ['inline', 'url', 'file'], inToolResult: 'native' },
+    image: {
+      mimes: BASELINE_IMAGE_MIMES,
+      sources: ['inline', 'url', 'file'],
+      inToolResult: 'native',
+      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+    },
     video: { mimes: 'any', sources: ['inline', 'url', 'file'], inToolResult: 'native' },
     audio: { mimes: 'any', sources: ['inline', 'url', 'file'], inToolResult: 'native' },
   },

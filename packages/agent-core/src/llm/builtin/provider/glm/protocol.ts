@@ -1,5 +1,6 @@
 import { openAIProtocol, type OpenAINativeMessage, type OpenAIRawChunk } from '#/llm/builtin/protocol/openai/index';
 import { ThinkingConfigError } from '#/llm/protocol/errors';
+import { BASELINE_INLINE_IMAGE_BYTE_BUDGET } from '#/llm/protocol/kit/media';
 import type { DecodeSink } from '#/llm/protocol/protocol';
 import type { MediaSupport } from '#/llm/protocol/rules/media';
 import type { ModelCapability, ThinkingRequestOptions } from '#/llm/request';
@@ -72,7 +73,12 @@ export function inferGlmCapability(modelName: string): ModelCapability | undefin
 
 const glmMedia: MediaSupport = {
   kinds: {
-    image: { mimes: new Set(['image/png', 'image/jpeg']), sources: ['inline', 'url'], inToolResult: 'relocate' },
+    image: {
+      mimes: new Set(['image/png', 'image/jpeg']),
+      sources: ['inline', 'url'],
+      inToolResult: 'relocate',
+      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+    },
     video: { mimes: 'any', sources: ['url'], inToolResult: 'relocate' },
   },
 };

@@ -21,6 +21,7 @@ import type {
   CatalogSnapshot,
   ProviderCatalog,
   ProviderCatalogChangedEvent,
+  ProviderCatalogPingResult,
   ProviderCatalogRefreshFailedEvent,
 } from '@moonshot-ai/agent-core/llm/catalog/index';
 import {
@@ -44,6 +45,7 @@ import {
   PROVIDERS_CONFIG_SECTION,
   THINKING_CONFIG_SECTION,
   deepEqual,
+  describeUnknownError,
   defaultModelConfigSection,
   defaultProviderConfigSection,
   modelCatalogConfigSection,
@@ -151,7 +153,7 @@ export interface ProviderCatalogFace {
   addModel(key: string, record: CatalogModelConfig): Promise<void>;
   refresh(options?: ProviderRefreshOptions): Promise<ProviderRefreshReport>;
   retiredModelReplacement(alias: string): string | undefined;
-  ping(providerId: string, modelId: string): void;
+  ping(providerId: string, modelId: string): Promise<ProviderCatalogPingResult>;
   onChanged(listener: (event: ProviderCatalogChangedEvent) => void): () => void;
   onRefreshFailed(listener: (event: ProviderCatalogRefreshFailedEvent) => void): () => void;
   onRetiredModel(listener: (event: RetiredModel) => void): () => void;
@@ -270,25 +272,6 @@ export const providerCatalog = createFeature<
       const ready = shallowRef(false);
       const snapshotRef = shallowRef<CatalogSnapshot>({ providers: {} });
       const pendingChanged: ((event: ProviderCatalogChangedEvent) => void)[] = [];
-      let modelWriteChain: Promise<unknown> = Promise.resolve();
-      const enqueueModelWrite = <T>(task: () => Promise<T>): Promise<T> => {
-        const run = modelWriteChain.then(task, task);
-        modelWriteChain = run.then(
-          () => undefined,
-          () => undefined,
-        );
-        return run;
-      };
-      const requireConfig = (): ConfigStore => {
-        const current = config.value;
-        if (current === undefined) {
-          throw new ModelCatalogError(
-            'config.unavailable',
-            'Cannot persist catalog models: the config feature is not mounted.',
-          );
-        }
-        return current;
-      };
       const face: ProviderCatalogFace = {
         providers: () => Object.keys(snapshotRef.value.providers).toSorted(),
         providerInfo: (providerId) =>
@@ -314,7 +297,9 @@ export const providerCatalog = createFeature<
         },
         requester: (providerId, modelId) => {
           const error = requesterErrors.get(providerId)?.get(modelId);
-          if (error !== undefined) throw error;
+          if (error !== undefined) {
+            throw error instanceof Error ? error : new Error(describeUnknownError(error));
+          }
           return catalog === undefined ? undefined : catalog.requester(providerId, modelId);
         },
         isLive: (providerId) => live.has(providerId),
@@ -335,18 +320,14 @@ export const providerCatalog = createFeature<
             throw error;
           }
         },
-        addModel: (key, record) =>
-          enqueueModelWrite(async () => {
-            const current = requireConfig();
-            const models = current.get<ModelsSection>(MODELS_CONFIG_SECTION) ?? {};
-            await current.set(MODELS_CONFIG_SECTION, { ...models, [key]: record }, 'user');
-          }),
+        addModel: (key, record) => orchestrator.addModel(key, record),
         refresh: (options = {}) => orchestrator.refresh(options),
         retiredModelReplacement: (alias) => orchestrator.retiredModelReplacement(alias),
-        ping: (providerId, modelId) => {
-          if (catalog === undefined) return;
+        ping: async (providerId, modelId) => {
+          const cat = catalog;
+          if (cat === undefined) throw new Error('Provider catalog is not ready');
           face.requester(providerId, modelId);
-          void catalog.ping(providerId, modelId).catch(() => {});
+          return cat.ping(providerId, modelId);
         },
         onChanged: (listener) => {
           if (catalog === undefined) {

@@ -4,7 +4,10 @@ import { shake } from 'radashi';
 import type { ContentPart, MediaSource, Message, ToolDescription } from '#/llm/message';
 import { SyntaxRequestFormatError, unresolvedMediaRefError } from '#/llm/protocol/errors';
 import { sanitizeToolCallId } from '#/llm/protocol/kit/ids';
-import { BASELINE_IMAGE_MIMES } from '#/llm/protocol/kit/media';
+import {
+  BASELINE_IMAGE_MIMES,
+  BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+} from '#/llm/protocol/kit/media';
 import { withExtras } from '#/llm/protocol/kit/params';
 import type { NativeModule, PipelineSpec } from '#/llm/protocol/pipeline';
 import type { LlmModule } from '#/llm/protocol/protocol';
@@ -291,7 +294,12 @@ const isHttpUrl = (url: string): boolean => url.startsWith('http://') || url.sta
 
 export const openAIResponsesMedia: MediaSupport = {
   kinds: {
-    image: { mimes: BASELINE_IMAGE_MIMES, sources: ['inline', 'url', 'file'], inToolResult: 'native' },
+    image: {
+      mimes: BASELINE_IMAGE_MIMES,
+      sources: ['inline', 'url', 'file'],
+      inToolResult: 'native',
+      inlineByteBudget: BASELINE_INLINE_IMAGE_BYTE_BUDGET,
+    },
     audio: { mimes: RESPONSES_AUDIO_MIMES, sources: ['inline', 'url'], url: isHttpUrl, inToolResult: 'native' },
   },
 };

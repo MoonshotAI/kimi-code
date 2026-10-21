@@ -43,7 +43,10 @@ const MANAGED_PROVIDER_TOML =
   'model_source = "oauth-catalog"\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
-  'key = "oauth/kimi-code"\n';
+  'key = "oauth/kimi-code"\n\n' +
+  '[model_catalog]\n' +
+  'refresh_on_start = false\n' +
+  'refresh_interval_ms = 0\n';
 
 const MANAGED_PROVIDER_LEGACY_TOML =
   '[providers."managed:kimi-code"]\n' +
@@ -52,7 +55,10 @@ const MANAGED_PROVIDER_LEGACY_TOML =
   'api_key = ""\n\n' +
   '[providers."managed:kimi-code".oauth]\n' +
   'storage = "file"\n' +
-  'key = "oauth/kimi-code"\n';
+  'key = "oauth/kimi-code"\n\n' +
+  '[model_catalog]\n' +
+  'refresh_on_start = false\n' +
+  'refresh_interval_ms = 0\n';
 
 const ENV_KEYS = ['KIMI_CODE_BASE_URL', 'KIMI_CODE_OAUTH_HOST', 'KIMI_OAUTH_HOST'] as const;
 
@@ -174,6 +180,7 @@ function stubOAuthTokens(tokens: BearerTokenProvider | undefined): OAuthTokens {
   };
   return {
     resolve: () => tokens,
+    hasCachedAccessToken: () => Promise.resolve(false),
     refresh: () => Promise.resolve({ changed: [], unchanged: [], failed: [] }),
     loginStart: unavailable,
     loginStatus: unavailable,

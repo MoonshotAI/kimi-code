@@ -7,6 +7,8 @@ export const BASELINE_IMAGE_MIMES: ReadonlySet<string> = new Set([
   'image/webp',
 ]);
 
+export const BASELINE_INLINE_IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
+
 export const IMAGE_MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',

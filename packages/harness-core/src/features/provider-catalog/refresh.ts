@@ -27,7 +27,6 @@ import {
 
 import { ModelCatalogError } from './binding';
 import {
-  catalogProviderIdOf,
   type CatalogModelConfig,
   type CatalogModelRecords,
   type CatalogOAuthRef,
@@ -193,16 +192,8 @@ function orderManagedModel(record: Record<string, unknown>): Record<string, unkn
   return out;
 }
 
-function toManagedModel(
-  alias: string,
-  record: CatalogModelConfig,
-  defaultProvider: string | undefined,
-): Record<string, unknown> {
-  let out: Record<string, unknown> = {
-    ...record,
-    provider: catalogProviderIdOf(record, defaultProvider),
-    model: record.model ?? alias,
-  };
+function toManagedModel(record: CatalogModelConfig): Record<string, unknown> {
+  let out: Record<string, unknown> = { ...record };
   const capabilities: string[] = CAPABILITY_KEYS.filter((key) => record.capability?.[key] === true);
   if (record.alwaysThinking === true) capabilities.push('always_thinking');
   const unknowns = record.extras?.['capabilities'];
@@ -256,10 +247,9 @@ function fromManagedModel(record: Record<string, unknown>): CatalogModelConfig {
 
 function toManagedModels(
   models: Readonly<Record<string, CatalogModelConfig>>,
-  defaultProvider: string | undefined,
 ): Record<string, Record<string, unknown>> {
   return Object.fromEntries(
-    Object.entries(models).map(([alias, record]) => [alias, toManagedModel(alias, record, defaultProvider)]),
+    Object.entries(models).map(([alias, record]) => [alias, toManagedModel(record)]),
   );
 }
 
@@ -279,15 +269,11 @@ function readUserShape(config: ConfigStore, exclusion: StaticExclusion = EMPTY_E
   const defaultModel = config.inspect<string>(DEFAULT_MODEL_CONFIG_SECTION).userValue;
   const thinking = config.inspect<ThinkingConfig>(THINKING_CONFIG_SECTION).userValue;
   const visible = withoutKeys(models, exclusion.models);
-  const managedModels = toManagedModels(visible, defaultProvider);
+  const managedModels = toManagedModels(visible);
   const excludedDefaultRecord =
     exclusion.defaultModel === undefined ? undefined : models[exclusion.defaultModel];
   if (exclusion.defaultModel !== undefined && excludedDefaultRecord !== undefined) {
-    managedModels[exclusion.defaultModel] = toManagedModel(
-      exclusion.defaultModel,
-      excludedDefaultRecord,
-      defaultProvider,
-    );
+    managedModels[exclusion.defaultModel] = toManagedModel(excludedDefaultRecord);
   }
   return {
     providers: withoutKeys(providers, exclusion.providers),
@@ -603,7 +589,7 @@ export function createRefreshOrchestrator(deps: RefreshOrchestratorDeps) {
           sections[PROVIDERS_CONFIG_SECTION] = { ...exclusion.providers, ...patch.providers };
         }
         if (patch.models !== undefined) {
-          const excludedModels = toManagedModels(exclusion.models, undefined);
+          const excludedModels = toManagedModels(exclusion.models);
           sections[MODELS_CONFIG_SECTION] = fromManagedModels({
             ...excludedModels,
             ...patch.models,
@@ -660,15 +646,24 @@ export function createRefreshOrchestrator(deps: RefreshOrchestratorDeps) {
     return finalize(result);
   };
 
+  const enqueue = <T>(task: () => Promise<T>): Promise<T> => {
+    const pending = chain.then(task);
+    chain = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    return pending;
+  };
+
   return {
-    refresh: (options: ProviderRefreshOptions = {}): Promise<ProviderRefreshReport> => {
-      const pending = chain.then(() => run(options));
-      chain = pending.then(
-        () => undefined,
-        () => undefined,
-      );
-      return pending;
-    },
+    addModel: (key: string, record: CatalogModelConfig): Promise<void> =>
+      enqueue(async () => {
+        const config = requireConfig();
+        const models = config.inspect<ModelsSection>(MODELS_CONFIG_SECTION).userValue ?? {};
+        await config.set(MODELS_CONFIG_SECTION, { ...models, [key]: record }, 'user');
+      }),
+    refresh: (options: ProviderRefreshOptions = {}): Promise<ProviderRefreshReport> =>
+      enqueue(() => run(options)),
     retiredModelReplacement: (alias: string): string | undefined => {
       const config = deps.config();
       if (config === undefined) return undefined;

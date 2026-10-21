@@ -4,7 +4,7 @@ This is a how-to guide: it shows how to attach binary media to a request so it i
 
 ## Steps
 
-1. Optionally normalize images before storing them (Node hosts): `compressImage(bytes, mimeType)` (`src/image/compress.ts`) resizes to at most 2000 px per edge and recompresses toward 3.75 MiB; `cropImage` crops a region. Browser hosts use `createImageBitmap` / `OffscreenCanvas` instead.
+1. Optionally normalize images before storing them (Node hosts): `compressImage(bytes, mimeType)` (`src/image/compress.ts`) resizes to at most 2000 px per edge and recompresses toward 3.75 MiB; `cropImage` crops a region. Browser hosts use `createImageBitmap` / `OffscreenCanvas` instead. The inline budget a protocol accepts for one image is declared as `inlineByteBudget` on its image `MediaKindSupport` (`src/llm/protocol/rules/media.ts`): `BASELINE_INLINE_IMAGE_BYTE_BUDGET` (3.75 MiB) for the built-in protocols, 5 MiB for kimi.
 2. Store the bytes and keep only a reference in the message. Put them into a `BlobStore` (`src/blob/`, `openBlobStore(backend)` over a memory, Node or Durable Object backend) and pass `createBlobRefStore(blobs)`, or implement `RefStore.get(ref)` (`src/llm/builtin/policy/store-ref/ports.ts`) over your own storage.
 3. Reference the media with a `store` source: `{ type: 'image_url', source: { kind: 'store', ref } }` (`video_url`, `audio_url` likewise).
 4. Add `createStoreRefResolver(...)` to `policy.resolvers` and keep the same instance for the whole conversation; it holds the per-conversation memo and budget state.

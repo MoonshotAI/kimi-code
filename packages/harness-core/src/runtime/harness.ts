@@ -1,4 +1,13 @@
-import { createApp, type App } from '@moonshot-ai/agent-core/app/index';
+import {
+  createApp,
+  createFeature,
+  useAgent,
+  useApp,
+  useSession,
+  useSystemPrompt,
+  type App,
+  type Feature,
+} from '@moonshot-ai/agent-core/app/index';
 import type { EffectScope } from '@moonshot-ai/agent-core/kernel/index';
 import {
   MAIN_AGENT_ID,
@@ -103,11 +112,26 @@ async function ensureAgent(
   return session.open(agentId, agentCaps(runtime, opts));
 }
 
+function createHarnessFeature(): Feature<void> {
+  return createFeature('harness', {
+    agent() {
+      const app = useApp();
+      const session = useSession();
+      const agent = useAgent();
+      const runtime = harnessInternals(app).agents.get(session)?.get(agent.id);
+      const text = runtime?.hostSystemPrompt;
+      if (text === undefined) return;
+      useSystemPrompt({ id: 'host', text, priority: -100 });
+    },
+  });
+}
+
 export function createHarness(options: CreateHarnessOptions = {}): Harness {
   const space = options.space ?? memoryHarnessSpace();
   const app = createApp({ space, scope: options.scope });
   const internals: HarnessInternals = { space, agents: new WeakMap(), writers: new Map() };
   internalsByApp.set(app, internals);
+  app.features.add(createHarnessFeature());
   return {
     app,
     ensureAgent: (session, agentId = MAIN_AGENT_ID, opts) => ensureAgent(internals, session, agentId, opts),

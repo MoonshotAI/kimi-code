@@ -23,6 +23,7 @@ import { memoryJournal } from '@moonshot-ai/agent-core/store/backend/memory';
 import { openWriter, type Journal } from '@moonshot-ai/agent-core/store/index';
 
 import type { HostFileStat, OsFsPort, OsHost } from '#/features/os/host/index';
+import { isWithinDirectory } from '#/features/os/path-access';
 
 import { createHostFsBrowser, type FsContentProbe } from './browse';
 import { mapHostFsError, WorkspaceFsError } from './errors';
@@ -86,12 +87,18 @@ export interface WorkspaceFsFace {
   view(roots: WorkspaceFsRoots): WorkspaceFsView;
 }
 
+export interface WorkspaceLocation {
+  readonly entry: WorkspaceEntry;
+  readonly baseDir: string;
+}
+
 export interface WorkspacesFace {
   readonly state: ShallowRef<WorkspacesState>;
   readonly fs: WorkspaceFsFace | undefined;
   list(): readonly WorkspaceEntry[];
   get(id: string): WorkspaceEntry | undefined;
   findByRoot(path: string): WorkspaceEntry | undefined;
+  locate(path: string): Promise<WorkspaceLocation | undefined>;
   createOrTouch(root: string, name?: string): Promise<WorkspaceEntry>;
   openSession(root: string, input?: CreateSessionInput): Promise<Session>;
   update(id: string, patch: WorkspacePatch): Promise<WorkspaceEntry | undefined>;
@@ -345,6 +352,16 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, Wo
         return host;
       };
 
+      const dirsCache = new Map<string, Promise<readonly string[]>>();
+      const cachedAdditionalDirs = (id: string): Promise<readonly string[]> => {
+        let cached = dirsCache.get(id);
+        if (cached === undefined) {
+          cached = face.additionalDirs(id);
+          dirsCache.set(id, cached);
+        }
+        return cached;
+      };
+
       const face: WorkspacesFace = {
         state,
         fs:
@@ -378,6 +395,22 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, Wo
             if (workspaceRootKey(workspace.root) === rootKey) return workspace;
           }
           return undefined;
+        },
+        locate: async (path) => {
+          const pathClass = host?.environment.pathClass ?? 'posix';
+          const target = normalize(path);
+          let best: WorkspaceLocation | undefined;
+          for (const entry of face.list()) {
+            const bases = [entry.root, ...(await cachedAdditionalDirs(entry.id))];
+            for (const base of bases) {
+              const normalizedBase = normalize(base);
+              if (!isWithinDirectory(target, normalizedBase, pathClass)) continue;
+              if (best === undefined || normalizedBase.length > best.baseDir.length) {
+                best = { entry, baseDir: normalizedBase };
+              }
+            }
+          }
+          return best;
         },
         createOrTouch: async (root, name) => {
           if (host !== undefined) {
@@ -497,6 +530,7 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, Wo
           }
           await dispatch({ type: WORKSPACE_DELETED, id, root, aliasIds });
           ephemeralDirs.delete(id);
+          dirsCache.delete(id);
           fire({ type: 'workspace.deleted', workspaceId: id, root });
         },
         getTrust: (id) => {
@@ -545,6 +579,7 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, Wo
           const before = await currentState();
           const entry = getWorkspaceEntry(before, id);
           if (entry === undefined) return undefined;
+          dirsCache.delete(id);
           const trimmed = input.trim();
           const resolved = resolvePath(entry.root, trimmed);
           let statResult;

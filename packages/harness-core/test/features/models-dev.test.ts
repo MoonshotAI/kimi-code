@@ -806,6 +806,11 @@ describe('models-dev custom registry', () => {
           extras: { custom: 'user' },
           overrides: { displayName: 'user-override' },
         },
+        flat: {
+          name: 'flat',
+          baseUrl: 'https://flat.example.com/v1',
+          protocol: 'openai',
+        },
       },
       'user',
     );
@@ -854,12 +859,16 @@ describe('models-dev custom registry', () => {
     expect(config.get(PROVIDERS_CONFIG_SECTION)).not.toHaveProperty('regtwo');
     const modelsAfterRefresh = config.get(MODELS_CONFIG_SECTION) as Record<string, CatalogModelConfig>;
     expect(Object.keys(modelsAfterRefresh).toSorted()).toEqual([
+      'flat',
       'manual/m1',
       'my-fav',
       'regone/reg-a',
       'regone/reg-c',
       'regone/reg-d',
     ]);
+    expect(modelsAfterRefresh['flat']).toMatchObject({ name: 'flat' });
+    expect(modelsAfterRefresh['flat']).not.toHaveProperty('provider');
+    expect(modelsAfterRefresh['flat']).not.toHaveProperty('model');
     expect(modelsAfterRefresh['regone/reg-a']).toMatchObject({
       extras: { custom: 'canonical' },
       overrides: { displayName: 'canonical-override' },

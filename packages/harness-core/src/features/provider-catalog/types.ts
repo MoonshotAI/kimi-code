@@ -199,6 +199,47 @@ function credentialConflictMessage(
   return `${kind} "${name}" has both ${first} and ${second} set in config.toml - they are mutually exclusive. Remove one.`;
 }
 
+export interface CatalogProviderCredential {
+  readonly inlineApiKey?: string;
+  readonly apiKeyEnv?: string;
+  readonly endpointApiKey?: string;
+  readonly oauth?: CatalogOAuthRef;
+  readonly conflict?: string;
+}
+
+export function catalogProviderCredentialOf(
+  providerId: string,
+  provider: CatalogProviderInfo | undefined,
+  protocol?: string,
+): CatalogProviderCredential {
+  const inlineApiKey = nonEmpty(provider?.apiKey);
+  const apiKeyEnv = nonEmpty(provider?.apiKeyEnv);
+  const endpointApiKey = explainProviderEndpoint(provider?.type ?? protocol, provider?.env).apiKey;
+  const oauth = provider?.oauth;
+  let conflict: string | undefined;
+  if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
+    conflict = credentialConflictMessage('Provider', providerId, 'apiKey', 'apiKeyEnv');
+  } else if (apiKeyEnv !== undefined && oauth !== undefined) {
+    conflict = credentialConflictMessage('Provider', providerId, 'apiKeyEnv', 'oauth');
+  } else if (inlineApiKey !== undefined && oauth !== undefined) {
+    conflict = credentialConflictMessage('Provider', providerId, 'apiKey', 'oauth');
+  } else if (endpointApiKey !== undefined && oauth !== undefined) {
+    conflict = credentialConflictMessage('Provider', providerId, 'apiKey', 'oauth');
+  }
+  return { inlineApiKey, apiKeyEnv, endpointApiKey, oauth, conflict };
+}
+
+export function catalogProviderHasApiKey(
+  credential: CatalogProviderCredential,
+  env: (name: string) => string | undefined,
+): boolean {
+  if (credential.inlineApiKey !== undefined) return true;
+  if (credential.apiKeyEnv !== undefined) {
+    return nonEmpty(env(credential.apiKeyEnv)) !== undefined;
+  }
+  return credential.endpointApiKey !== undefined;
+}
+
 function oauthCredential(
   oauth: CatalogOAuthRef,
   provider: CatalogProviderInfo | undefined,
@@ -228,24 +269,13 @@ function credentialOf(
   if (record.oauth !== undefined) return oauthCredential(record.oauth, context.provider, context);
 
   const provider = context.provider;
-  const endpoint = explainProviderEndpoint(provider?.type ?? record.protocol, provider?.env);
-  const inlineApiKey = nonEmpty(provider?.apiKey);
-  const apiKeyEnv = nonEmpty(provider?.apiKeyEnv);
-  if (inlineApiKey !== undefined && apiKeyEnv !== undefined) {
-    throw new Error(
-      credentialConflictMessage('Provider', context.providerId, 'apiKey', 'apiKeyEnv'),
-    );
+  const credential = catalogProviderCredentialOf(context.providerId, provider, record.protocol);
+  if (credential.conflict !== undefined) throw new Error(credential.conflict);
+  if (credential.inlineApiKey !== undefined) {
+    return createStaticCredentialProvider(credential.inlineApiKey);
   }
-  if (apiKeyEnv !== undefined && provider?.oauth !== undefined) {
-    throw new Error(
-      credentialConflictMessage('Provider', context.providerId, 'apiKeyEnv', 'oauth'),
-    );
-  }
-  if (inlineApiKey !== undefined && provider?.oauth !== undefined) {
-    throw new Error(credentialConflictMessage('Provider', context.providerId, 'apiKey', 'oauth'));
-  }
-  if (inlineApiKey !== undefined) return createStaticCredentialProvider(inlineApiKey);
-  if (apiKeyEnv !== undefined) {
+  if (credential.apiKeyEnv !== undefined) {
+    const apiKeyEnv = credential.apiKeyEnv;
     return {
       resolve: () => {
         const apiKey = nonEmpty(context.config?.env(apiKeyEnv));
@@ -258,11 +288,10 @@ function credentialOf(
       },
     };
   }
-  if (endpoint.apiKey !== undefined && provider?.oauth !== undefined) {
-    throw new Error(credentialConflictMessage('Provider', context.providerId, 'apiKey', 'oauth'));
+  if (credential.endpointApiKey !== undefined) {
+    return createStaticCredentialProvider(credential.endpointApiKey);
   }
-  if (endpoint.apiKey !== undefined) return createStaticCredentialProvider(endpoint.apiKey);
-  if (provider?.oauth !== undefined) return oauthCredential(provider.oauth, provider, context);
+  if (credential.oauth !== undefined) return oauthCredential(credential.oauth, provider, context);
   return undefined;
 }
 
@@ -300,6 +329,9 @@ export function catalogModelDefinitionOf(
   context?: CatalogModelDefinitionContext,
 ): CatalogModelDefinition {
   const folded = foldOverrides(record);
+  if (context !== undefined && folded.name === undefined && folded.model === undefined) {
+    throw new Error(`Model "${configKey}" must define a wire-facing name in config.toml.`);
+  }
   const aliases = [
     ...(folded.aliases ?? []),
     ...(folded.name === undefined ? [] : [folded.name]),
