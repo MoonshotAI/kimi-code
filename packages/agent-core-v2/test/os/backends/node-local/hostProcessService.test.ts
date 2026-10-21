@@ -206,6 +206,31 @@ describe('resolveWindowsBatchCommand', () => {
     expect(resolveWindowsBatchCommand('kimi-probe', { PATH: dir, PATHEXT: '.COM;.EXE' })).toBeUndefined();
   });
 
+  it('reads PATH and PATHEXT case-insensitively', () => {
+    expect(resolveWindowsBatchCommand('kimi-probe', { Path: dir, PathExt: '.CMD' })).toBe(
+      join(dir, 'kimi-probe.cmd'),
+    );
+  });
+
+  it('keeps a later executable ahead of an earlier batch shim', async () => {
+    const other = join(dir, 'other');
+    await mkdir(other, { recursive: true });
+    await writeFile(join(other, 'kimi-probe.cmd'), '@echo off\r\necho ok\r\n');
+    await writeFile(join(dir, 'kimi-probe.exe'), 'binary');
+    expect(
+      resolveWindowsBatchCommand('kimi-probe', { PATH: `${dir};${other}`, PATHEXT: '.EXE;.CMD' }),
+    ).toBeUndefined();
+  });
+
+  it('falls through to a batch shim when no earlier candidate exists', async () => {
+    const other = join(dir, 'other');
+    await mkdir(other, { recursive: true });
+    await writeFile(join(other, 'kimi-later.cmd'), '@echo off\r\necho ok\r\n');
+    expect(
+      resolveWindowsBatchCommand('kimi-later', { PATH: `${dir};${other}`, PATHEXT: '.EXE;.CMD' }),
+    ).toBe(join(other, 'kimi-later.cmd'));
+  });
+
   it('resolves through a quoted PATH entry', () => {
     expect(resolveWindowsBatchCommand('kimi-probe', { PATH: `"${dir}"`, PATHEXT: '.CMD' })).toBe(
       join(dir, 'kimi-probe.cmd'),
@@ -232,6 +257,20 @@ describe('HostProcessService on a Windows host', () => {
     try {
       const svc = new HostProcessService();
       const proc = await svc.spawn(shim, []);
+      const out = await collect(proc.stdout);
+      expect(out.trim()).toBe('ok');
+      expect(await proc.wait()).toBe(0);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.skipIf(process.platform !== 'win32')('runs a bare batch shim command found on PATH', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-host-process-'));
+    await writeFile(join(dir, 'kimi-probe.cmd'), '@echo off\r\necho ok\r\n');
+    try {
+      const svc = new HostProcessService();
+      const proc = await svc.spawn('kimi-probe', [], { env: { Path: dir, PathExt: '.CMD' } });
       const out = await collect(proc.stdout);
       expect(out.trim()).toBe('ok');
       expect(await proc.wait()).toBe(0);
