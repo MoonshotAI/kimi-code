@@ -45,10 +45,16 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
   () => false,
 );
 
+const MCP_INSTRUCTIONS_HEADER =
+  '# MCP Server Instructions\n\n' +
+  'The following MCP servers have provided instructions for how to use their tools and resources:\n\n';
+
 export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];
+  private appliedInstructionsSuffix = '';
+  private instructionsSyncActive = false;
 
   constructor(
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
@@ -69,6 +75,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     this.attachMcpTools();
     loop.hooks.onWillBeginStep.register('mcp', async (ctx, next) => {
       await this.waitForInitialLoad(ctx.signal);
+      this.instructionsSyncActive = true;
       this.syncMcpInstructions();
       await next();
     });
@@ -79,6 +86,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
+        this.recoverAppliedInstructionsSuffix();
         this.flushPendingDiscoveries();
         await next();
       }),
@@ -162,6 +170,9 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     this._register(
       this.onStatusChange((entry) => {
         this.handleMcpServerStatusChange(entry);
+        if (this.instructionsSyncActive) {
+          this.syncMcpInstructions();
+        }
       }),
     );
   }
@@ -365,6 +376,28 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     }
   }
 
+  private recoverAppliedInstructionsSuffix(): void {
+    if (typeof this.profile.getSystemPrompt !== 'function') {
+      return;
+    }
+    const current = this.profile.getSystemPrompt();
+    if (
+      this.appliedInstructionsSuffix.length > 0 &&
+      current.endsWith(this.appliedInstructionsSuffix)
+    ) {
+      return;
+    }
+    const prefixedMarker = `\n\n${MCP_INSTRUCTIONS_HEADER}`;
+    const lastIndex = current.lastIndexOf(prefixedMarker);
+    if (lastIndex !== -1) {
+      this.appliedInstructionsSuffix = current.slice(lastIndex);
+      return;
+    }
+    if (current.startsWith(MCP_INSTRUCTIONS_HEADER)) {
+      this.appliedInstructionsSuffix = current;
+    }
+  }
+
   private syncMcpInstructions(): void {
     if (
       typeof this.profile.getSystemPrompt !== 'function' ||
@@ -380,17 +413,23 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         sections.push(`## ${entry.name}\n${instructions}`);
       }
     }
-    if (sections.length === 0) return;
-    const block =
-      '# MCP Server Instructions\n\n' +
-      'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
-      sections.join('\n\n');
     const current = this.profile.getSystemPrompt();
-    if (current.length === 0) return;
-    const marker = '\n\n# MCP Server Instructions\n\n';
-    const index = current.indexOf(marker);
-    const base = index === -1 ? current : current.slice(0, index);
-    const next = `${base}\n\n${block}`;
+    const previousSuffix = this.appliedInstructionsSuffix;
+    const base =
+      previousSuffix.length > 0 && current.endsWith(previousSuffix)
+        ? current.slice(0, current.length - previousSuffix.length)
+        : current;
+    if (sections.length === 0) {
+      this.appliedInstructionsSuffix = '';
+      if (base !== current) {
+        this.profile.update({ systemPrompt: base });
+      }
+      return;
+    }
+    const block = `${MCP_INSTRUCTIONS_HEADER}${sections.join('\n\n')}`;
+    const nextSuffix = base.length === 0 ? block : `\n\n${block}`;
+    const next = `${base}${nextSuffix}`;
+    this.appliedInstructionsSuffix = nextSuffix;
     if (next !== current) {
       this.profile.update({ systemPrompt: next });
     }

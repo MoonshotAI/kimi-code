@@ -227,6 +227,7 @@ export class McpConnectionManager implements McpConnectionView {
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
+    entry.instructions = undefined;
     entry.error = undefined;
     this.emit(entry);
     this.entries.delete(name);
@@ -241,6 +242,7 @@ export class McpConnectionManager implements McpConnectionView {
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
+    entry.instructions = undefined;
     entry.error = undefined;
     this.emit(entry);
     return true;
@@ -293,6 +295,7 @@ export class McpConnectionManager implements McpConnectionView {
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
+    entry.instructions = undefined;
     entry.error = undefined;
     this.emit(entry);
     await this.connectOne(entry, attemptId);
@@ -356,6 +359,7 @@ export class McpConnectionManager implements McpConnectionView {
     entry.tools = undefined;
     entry.enabledNames = undefined;
     entry.rawTools = undefined;
+    entry.instructions = undefined;
   }
 
   async shutdown(): Promise<void> {
@@ -410,6 +414,7 @@ export class McpConnectionManager implements McpConnectionView {
         entry.tools = undefined;
         entry.enabledNames = undefined;
         entry.rawTools = undefined;
+        entry.instructions = undefined;
       }
       await this.closeClient(entry);
     }
@@ -430,6 +435,7 @@ export class McpConnectionManager implements McpConnectionView {
       entry.tools = undefined;
       entry.enabledNames = undefined;
       entry.rawTools = undefined;
+      entry.instructions = undefined;
       entry.client = undefined;
       void this.closeRuntimeClient(client);
       this.emit(entry);
