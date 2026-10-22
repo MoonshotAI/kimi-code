@@ -13,6 +13,7 @@ import { FakeRuntime } from '#/runtime/fakeRuntime';
 import {
   crashAfterConnectFixture,
   cwdStdioFixture,
+  sharedAgentStdioFixture,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -43,6 +44,29 @@ function createClient(
     defaultCwd: process.cwd(),
     ...options,
   });
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntilExited(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return !isAlive(pid);
+}
+
+async function spawnAgentPid(client: StdioMcpClient): Promise<number> {
+  const result = await client.callTool('spawn_agent', {});
+  return Number((result.content[0] as { type: 'text'; text: string }).text);
 }
 
 function isPostCloseTransportError(error: unknown): boolean {
@@ -346,6 +370,47 @@ describe('StdioMcpClient', () => {
     await client.close();
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
+  }, 15000);
+
+  it('closes stdin and lets the server exit without killing processes it started', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      expect(isAlive(agentPid)).toBe(true);
+      await client.close();
+      await new Promise((r) => setTimeout(r, 200));
+      expect(isAlive(agentPid)).toBe(true);
+    } finally {
+      await client.close();
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('force-kills the server tree when it ignores stdin EOF past the grace period', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+      env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      await client.close();
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+    } finally {
+      await client.close();
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
   }, 15000);
 });
 

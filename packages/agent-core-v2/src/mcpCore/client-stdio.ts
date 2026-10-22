@@ -33,6 +33,7 @@ export interface StdioMcpClientOptions {
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const STDIO_CLOSE_GRACE_MS = 2_000;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
@@ -233,9 +234,7 @@ class RuntimeStdioTransport implements Transport {
     const process = this.process;
     this.process = undefined;
     if (process !== undefined) {
-      try {
-        await process.kill();
-      } catch {}
+      await shutdownStdioServer(process);
       void process.dispose();
     }
     this.readBuffer.clear();
@@ -267,6 +266,34 @@ class RuntimeStdioTransport implements Transport {
     this.lease = undefined;
     lease?.dispose();
     this.onclose?.();
+  }
+}
+
+async function shutdownStdioServer(process: IHostProcess): Promise<void> {
+  if (process.exitCode !== null) return;
+  try {
+    process.stdin.end();
+  } catch {}
+  if (await exitsWithin(process, STDIO_CLOSE_GRACE_MS)) return;
+  try {
+    await process.kill();
+  } catch {}
+}
+
+async function exitsWithin(process: IHostProcess, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      process.wait().then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
