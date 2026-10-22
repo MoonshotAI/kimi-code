@@ -1073,13 +1073,15 @@ describe('KimiTUI message flow', () => {
     });
     const first = stripSgr(picker().render(80).join(' '));
     expect(first).not.toContain('Take over');
-    expect(first).not.toContain('Held by process');
+    expect(first).not.toContain('still has this session open');
     picker().handleInput('\r');
 
     await vi.waitFor(() => {
       expect(stripSgr(picker().render(80).join(' '))).toContain('Session still in use');
     });
-    expect(stripSgr(picker().render(80).join(' '))).toContain('Held by process 4321 on host-a.');
+    expect(stripSgr(picker().render(80).join(' '))).toContain(
+      'Process 4321 on host-a still has this session open.',
+    );
     if (takeOver) picker().handleInput('\u001B[B');
     picker().handleInput('\r');
 

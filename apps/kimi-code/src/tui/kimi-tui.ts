@@ -2294,7 +2294,7 @@ export class KimiTUI {
     };
     const holderSummary = occupiedHolderSummary(error);
     const risk =
-      'If that process is no longer running, take over the session. If it is still running, both processes will write to this session and its history can interleave.';
+      'If that process has exited, you can take over. If it is still running, the history may get mixed up.';
     this.mountEditorReplacement(
       new ChoicePickerComponent({
         title: 'Session still in use',
@@ -2306,7 +2306,7 @@ export class KimiTUI {
             value: 'takeover',
             label: 'Take over',
             tone: 'danger',
-            description: "remove the other process's lock and send again",
+            description: 'send your message anyway',
           },
         ],
         spaceSelect: false,

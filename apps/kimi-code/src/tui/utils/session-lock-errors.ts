@@ -28,5 +28,5 @@ export function occupiedHolderSummary(error: unknown): string | undefined {
   const holder = occupiedHolder(error);
   if (holder?.pid === undefined || holder.pid <= 0) return undefined;
   if (holder.hostname === undefined || holder.hostname === '') return undefined;
-  return `Held by process ${holder.pid} on ${holder.hostname}.`;
+  return `Process ${holder.pid} on ${holder.hostname} still has this session open.`;
 }
