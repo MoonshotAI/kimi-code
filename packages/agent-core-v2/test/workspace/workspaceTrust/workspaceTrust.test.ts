@@ -251,6 +251,33 @@ describe('WorkspaceTrustService', () => {
     await expect(entry.get()).resolves.toBe(true);
   });
 
+  it('emits one recovery change when initialization discovers an existing marker', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    await writeWorkspaceTrust(docs, cwd, 1);
+    const failure = new Error('trust storage temporarily unavailable');
+    const read = docs.get.bind(docs);
+    let unavailable = true;
+    docs.get = async <T>(scope: string, key: string): Promise<T | undefined> => {
+      if (unavailable) throw failure;
+      return read<T>(scope, key);
+    };
+    const store = disposables.add(new WorkspaceTrustStore(
+      docs,
+      noopTelemetryService,
+      stubBootstrap(homeDir),
+    ));
+    const entry = store.forRoot(cwd);
+    const events: WorkspaceTrustChange[] = [];
+    entry.onDidChange((change) => events.push(change));
+
+    await expect(entry.get()).rejects.toBe(failure);
+    unavailable = false;
+    await expect(entry.get()).resolves.toBe(true);
+    await entry.trust();
+
+    expect(events).toEqual([{ trusted: true }]);
+  });
+
   it('skips a corrupt legacy record but propagates legacy storage access failures', async () => {
     const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
     const root = 'C:\\Users\\Foo\\Repo';

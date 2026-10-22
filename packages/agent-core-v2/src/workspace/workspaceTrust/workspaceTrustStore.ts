@@ -29,6 +29,7 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   declare readonly _serviceBrand: undefined;
 
   private initialization?: Promise<void>;
+  private initializationFailed = false;
   private readonly root: string;
   private readonly envTrusted: boolean;
   private trusted = false;
@@ -49,11 +50,16 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
 
   get ready(): Promise<void> {
     if (this.initialization !== undefined) return this.initialization;
+    const previous = this.trusted;
+    const recovering = this.initializationFailed;
     const initialization = readWorkspaceTrust(this.docs, this.root, this.telemetry).then((trusted) => {
       this.trusted = trusted;
+      this.initializationFailed = false;
+      if (recovering && previous !== trusted) this.changeEmitter.fire({ trusted });
     });
     this.initialization = initialization;
     void initialization.catch(() => {
+      this.initializationFailed = true;
       if (this.initialization === initialization) this.initialization = undefined;
     });
     return initialization;

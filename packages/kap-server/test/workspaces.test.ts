@@ -426,6 +426,59 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 
+  it('reloads project config when trust initialization recovers to an existing marker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-recovery-'));
+    try {
+      await mkdir(join(root, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(root, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { projectOnly: { command: 'project-only' } } }),
+        'utf8',
+      );
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      await docs.set('workspace-trust', encodeWorkDirKey(root), { root, trustedAt: 1 });
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const read = docs.get.bind(docs);
+      let shouldFail = true;
+      let failed = false;
+      const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
+        if (shouldFail && scope === 'workspace-trust') {
+          shouldFail = false;
+          failed = true;
+          throw new Error('temporary trust read failure');
+        }
+        return read<T>(scope, key);
+      });
+      let materialized = false;
+      try {
+        const workspace = await manager.getOrCreate({ workspaceId: id, root });
+        materialized = true;
+        await workspace.program.mcpConfig.ready;
+        expect(failed).toBe(true);
+        expect(workspace.program.mcpConfig.servers()).toEqual({});
+        const recovered: boolean[] = [];
+        workspace.program.trust.onDidChange((change) => recovered.push(change.trusted));
+
+        const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+        expect(trusted.body.code).toBe(0);
+        expect(trusted.body.data.trusted).toBe(true);
+        expect(workspace.program.trust.isTrusted()).toBe(true);
+
+        await vi.waitFor(() => {
+          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+        });
+        expect(recovered).toEqual([true]);
+      } finally {
+        get.mockRestore();
+        if (materialized) await manager.close(id);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('shares route trust changes with an already materialized workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-shared-'));
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
