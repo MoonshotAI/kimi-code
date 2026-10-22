@@ -251,15 +251,18 @@ Before planning a copy:
   explicitly asks.
   - Kimi honors `name`, `description`, `when_to_use` (or `when-to-use`),
     `disable-model-invocation`, and `arguments` (a list or a space-separated
-    string of argument names), and expands `$ARGUMENTS`, `$ARGUMENTS[N]`,
-    `$N`, `$<argument name>` for declared arguments, `${KIMI_SKILL_DIR}`,
-    and `${KIMI_SESSION_ID}`.
+    string of argument names). Argument placeholders use the same syntax as
+    in Claude Code (the dollar-prefixed `ARGUMENTS` placeholder, its `[N]`
+    indexed form, positional `$N`, and declared argument names), so they need
+    no warning. Kimi's skill-directory and session-ID placeholders are named
+    `KIMI_SKILL_DIR` and `KIMI_SESSION_ID`, written in the same dollar-brace
+    form as Claude's `${CLAUDE_SKILL_DIR}`.
   - Claude-only: `allowed-tools`, `disallowed-tools`, `context: fork`, `agent`,
     `background`, `model`, `effort`, `hooks`, `paths`, `user-invocable`,
-    `argument-hint`, `${CLAUDE_SKILL_DIR}` (suggest `${KIMI_SKILL_DIR}`),
-    `${CLAUDE_SESSION_ID}` (suggest `${KIMI_SESSION_ID}`),
-    `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_EFFORT}`, and dynamic shell injection
-    with ``!`command` ``.
+    `argument-hint`, `${CLAUDE_SKILL_DIR}` (suggest Kimi's `KIMI_SKILL_DIR`
+    placeholder), `${CLAUDE_SESSION_ID}` (suggest Kimi's `KIMI_SESSION_ID`
+    placeholder), `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_EFFORT}`, and dynamic
+    shell injection with ``!`command` ``.
   - Codex-only: `agents/openai.yaml` metadata inside the bundle.
 - If the user would rather not copy, mention once that Kimi can also read the
   source directory in place through `extra_skill_dirs` in `config.toml`; do
