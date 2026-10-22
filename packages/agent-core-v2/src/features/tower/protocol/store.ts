@@ -243,7 +243,8 @@ export interface TowerTeardownOptions {
 }
 
 const FINDING_TYPES: readonly TowerFindingType[] = ['bug', 'improve', 'vuln', 'idea'];
-const PREPARED_OPERATION_ATTEMPTS = 8;
+const PREPARED_OPERATION_TIMEOUT_MS = 60_000;
+const PREPARED_OPERATION_MAX_BACKOFF_MS = 100;
 
 interface TowerStateSnapshot {
   readonly raw: string;
@@ -370,17 +371,27 @@ export class TowerStore {
     prepare: () => Promise<TPrepared>,
     commit: (prepared: TPrepared) => Promise<TResult>,
   ): Promise<TResult> {
-    for (let attempt = 0; attempt < PREPARED_OPERATION_ATTEMPTS; attempt += 1) {
+    const deadline = Date.now() + PREPARED_OPERATION_TIMEOUT_MS;
+    let backoffMs = this.stateLockPollMs;
+    for (;;) {
       const prepared = await prepare();
       try {
         return await commit(prepared);
       } catch (error) {
         if (!(error instanceof TowerPreparationConflict)) throw error;
+        if (Date.now() >= deadline) {
+          throw new TowerProtocolError(
+            `tower protocol inputs kept changing for ${String(PREPARED_OPERATION_TIMEOUT_MS)}ms while preparing the operation; no stale snapshot was written, so retry the tool call`,
+          );
+        }
+        if (backoffMs > 0) {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, backoffMs);
+          });
+        }
+        backoffMs = Math.min(backoffMs * 2, PREPARED_OPERATION_MAX_BACKOFF_MS);
       }
     }
-    throw new TowerProtocolError(
-      'tower protocol inputs changed repeatedly while preparing the operation; no stale snapshot was written, so retry the tool call',
-    );
   }
 
   private async withStateLock<T>(fn: () => Promise<T>): Promise<T> {

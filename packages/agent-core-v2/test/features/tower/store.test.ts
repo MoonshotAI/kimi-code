@@ -4425,6 +4425,40 @@ describe('state lock recovery and prepared writes', () => {
     }
   });
 
+  it('keeps retrying prepared commits beyond eight snapshot conflicts', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    const contender = new TowerStore(repo, { stateLockPollMs: 0 });
+    type LockDriver = {
+      withStateLock<T>(fn: () => Promise<T>): Promise<T>;
+    };
+    const driver = contender as unknown as LockDriver;
+    const original = driver.withStateLock;
+    let attempts = 0;
+    driver.withStateLock = async <T,>(fn: () => Promise<T>): Promise<T> => {
+      attempts += 1;
+      if (attempts <= 9) {
+        await store.updateMission('tower', mission.id, { note: `competing-${String(attempts)}` });
+      }
+      return original.call(contender, fn) as Promise<T>;
+    };
+
+    const result = await contender.complete('w1', 'burst completion');
+
+    expect(attempts).toBe(10);
+    expect(result.notificationCreated).toBe(true);
+    const messages = await store.readInbox('tower', 20);
+    expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
+  });
+
   it('persists spawn roster and ownership atomically when mission validation fails', async () => {
     const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const entry = rosterEntry({ name: 'w1', kind: 'worker', missionId: mission!.id });
