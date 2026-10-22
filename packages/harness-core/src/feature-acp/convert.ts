@@ -4,7 +4,7 @@ import type { ContentBlock, McpServer, ToolCallContent, ToolCallLocation } from 
 import type { ContentPart } from '@moonshot-ai/agent-core/llm/message';
 import type { ToolCallOutcome } from '@moonshot-ai/agent-core/loop/index';
 
-import type { McpServerConfig } from '#/features/mcp/index';
+import type { McpServerConfig } from '#/todo-features/mcp/index';
 
 import type { AcpToolKind } from './types';
 

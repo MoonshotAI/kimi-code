@@ -29,7 +29,7 @@ import {
 import { useLoopEvent } from '#/runtime/index';
 
 import { CompactError, isContextOverflowError } from './errors';
-import { buildCompactionSeed, compactionContinuationMessage } from './shape';
+import { buildCompactionSeed, compactionContinuationMessage, type CompactionSeed } from './shape';
 import { createSummarize, type Summarize, type SummaryOutcome } from './summarize';
 
 export type CompactionReason = 'budget' | 'manual' | 'overflow';
@@ -58,9 +58,19 @@ export interface CompactionStartedEvent extends RuntimeEvent {
   readonly instruction?: string;
 }
 
-export interface CompactionBlockedEvent extends RuntimeEvent {
-  readonly type: 'compaction.blocked';
+export interface CompactionEnqueuedEvent extends RuntimeEvent {
+  readonly type: 'compaction.enqueued';
+  readonly reason: CompactionReason;
+  readonly instruction?: string;
   readonly turnId?: number;
+}
+
+export type CompactionRejectReason = 'busy';
+
+export interface CompactionRejectedEvent extends RuntimeEvent {
+  readonly type: 'compaction.rejected';
+  readonly reason: CompactionRejectReason;
+  readonly instruction?: string;
 }
 
 export interface CompactionCompletedEvent extends RuntimeEvent {
@@ -84,7 +94,8 @@ export interface CompactionCancelledEvent extends RuntimeEvent {
 
 export type CompactionEvent =
   | CompactionStartedEvent
-  | CompactionBlockedEvent
+  | CompactionEnqueuedEvent
+  | CompactionRejectedEvent
   | CompactionCompletedEvent
   | CompactionCancelledEvent;
 
@@ -130,8 +141,15 @@ interface ActiveRun {
   tokensBefore?: number;
 }
 
+interface PendingCompaction {
+  startedAt: number;
+  controller: AbortController;
+  cancelCause?: CompactionCancelCause;
+}
+
 interface CompactionState {
   active?: ActiveRun;
+  pending?: PendingCompaction;
   attempts: { turnId?: number; count: number };
   pendingOverflow: boolean;
   lastLlmErrorKind?: string;
@@ -184,9 +202,12 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
         return 'failed';
       };
 
-      const _abortRun = (run: ActiveRun, cause: 'cancelled' | 'user-abort'): void => {
-        run.cancelCause = cause;
-        run.controller.abort(
+      const _abort = (
+        target: { controller: AbortController; cancelCause?: CompactionCancelCause },
+        cause: 'cancelled' | 'user-abort',
+      ): void => {
+        target.cancelCause = cause;
+        target.controller.abort(
           cause === 'cancelled'
             ? new CompactError('cancelled', 'compaction was cancelled')
             : new CompactError('aborted', 'compaction cancelled by user abort'),
@@ -238,65 +259,43 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
         }
       };
 
-      const compact = async (instruction?: string): Promise<void> => {
-        if (shared.active !== undefined) {
-          throw new CompactError('busy', 'compaction is already running');
-        }
-        const run: ActiveRun = {
-          reason: 'manual',
-          phase: 'quiescing',
-          startedAt: Date.now(),
-          controller: new AbortController(),
-        };
+      const _compact = async <T>(
+        run: ActiveRun,
+        prepare: () => Promise<readonly HistoryMessage[]> | readonly HistoryMessage[],
+        instruction: string | undefined,
+        signal: AbortSignal,
+        apply: (seed: CompactionSeed) => T | Promise<T>,
+      ): Promise<T> => {
         shared.active = run;
-        _emit({ type: 'compaction.started', reason: 'manual', instruction });
+        _emit({ type: 'compaction.started', reason: run.reason, instruction });
         try {
-          const turnId = agent.loop.state.turn?.id;
-          if (turnId !== undefined) {
-            _emit({ type: 'compaction.blocked', turnId });
-            await _waitForIdle(run.controller.signal);
-          }
-          run.phase = 'summarizing';
-          await agent.flush();
-          const history = agent.view.getState().messages;
-          if (history.length === 0) {
-            throw new CompactError('insufficient', 'nothing to compact');
-          }
-          run.tokensBefore = usedContextTokens(history);
-          const { seed, telemetry } = await _summarizeAndSeed(
-            run,
-            history,
-            instruction,
-            run.controller.signal,
-          );
-          run.phase = 'resetting';
-          if (agent.loop.state.turn !== undefined) {
-            throw new CompactError('drift', 'history changed during compaction; cancelled');
-          }
-          const ack = agent.loop.setContext([...seed.messages], 'manual');
-          if (ack === undefined || ack.type !== 'context.settled') {
-            throw new CompactError('reset-failed', 'agent did not accept the context reset');
-          }
+          const history = await prepare();
+          const tokensBefore = (run.tokensBefore ??= usedContextTokens(history));
+          const { seed, telemetry } = await _summarizeAndSeed(run, history, instruction, signal);
+          const result = await apply(seed);
           const stats: CompactionStats = {
             compactedCount: history.length,
-            tokensBefore: run.tokensBefore,
+            tokensBefore,
             tokensAfter: seed.tokensAfter,
           };
           _emit({
             type: 'compaction.completed',
-            reason: 'manual',
+            reason: run.reason,
             stats,
             durationMs: Date.now() - run.startedAt,
+            originTurnId: run.originTurnId,
             summary: telemetry,
           });
+          return result;
         } catch (error) {
           const cause = _cancelCauseOf(run, error);
           _emit({
             type: 'compaction.cancelled',
-            reason: 'manual',
+            reason: run.reason,
             cause,
             error: cause === 'failed' ? error : undefined,
             durationMs: Date.now() - run.startedAt,
+            originTurnId: run.originTurnId,
             tokensBefore: run.tokensBefore,
           });
           throw error;
@@ -305,18 +304,84 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
         }
       };
 
-      const cancel = (): void => {
-        if (shared.active !== undefined) _abortRun(shared.active, 'cancelled');
+      const compact = async (instruction?: string): Promise<void> => {
+        if (shared.active !== undefined || shared.pending !== undefined) {
+          _emit({ type: 'compaction.rejected', reason: 'busy', instruction });
+          throw new CompactError('busy', 'compaction is already running');
+        }
+        const turnId = agent.loop.state.turn?.id;
+        if (turnId !== undefined) {
+          const pending: PendingCompaction = {
+            startedAt: Date.now(),
+            controller: new AbortController(),
+          };
+          shared.pending = pending;
+          _emit({ type: 'compaction.enqueued', reason: 'manual', instruction, turnId });
+          try {
+            await _waitForIdle(pending.controller.signal);
+          } catch (error) {
+            const cause = pending.cancelCause ?? 'failed';
+            _emit({
+              type: 'compaction.cancelled',
+              reason: 'manual',
+              cause,
+              error: cause === 'failed' ? error : undefined,
+              durationMs: Date.now() - pending.startedAt,
+            });
+            throw error;
+          } finally {
+            if (shared.pending === pending) shared.pending = undefined;
+          }
+        }
+        const run: ActiveRun = {
+          reason: 'manual',
+          phase: 'summarizing',
+          startedAt: Date.now(),
+          controller: new AbortController(),
+        };
+        await _compact(
+          run,
+          async () => {
+            await agent.flush();
+            const history = agent.view.getState().messages;
+            if (history.length === 0) {
+              throw new CompactError('insufficient', 'nothing to compact');
+            }
+            return history;
+          },
+          instruction,
+          run.controller.signal,
+          (seed) => {
+            run.phase = 'resetting';
+            if (agent.loop.state.turn !== undefined) {
+              throw new CompactError('drift', 'history changed during compaction; cancelled');
+            }
+            const ack = agent.loop.setContext([...seed.messages], 'manual');
+            if (ack === undefined || ack.type !== 'context.settled') {
+              throw new CompactError('reset-failed', 'agent did not accept the context reset');
+            }
+          },
+        );
       };
 
-      const status = (): CompactionStatus =>
-        shared.active === undefined
-          ? { phase: 'idle' }
-          : {
-              phase: shared.active.phase,
-              reason: shared.active.reason,
-              startedAt: shared.active.startedAt,
-            };
+      const cancel = (): void => {
+        if (shared.pending !== undefined) _abort(shared.pending, 'cancelled');
+        if (shared.active !== undefined) _abort(shared.active, 'cancelled');
+      };
+
+      const status = (): CompactionStatus => {
+        if (shared.active !== undefined) {
+          return {
+            phase: shared.active.phase,
+            reason: shared.active.reason,
+            startedAt: shared.active.startedAt,
+          };
+        }
+        if (shared.pending !== undefined) {
+          return { phase: 'quiescing', reason: 'manual', startedAt: shared.pending.startedAt };
+        }
+        return { phase: 'idle' };
+      };
 
       const _stepStarting = async (
         event: StepStartingEvent,
@@ -351,40 +416,16 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
           originTurnId: event.turnId,
           tokensBefore: used,
         };
-        shared.active = run;
-        _emit({ type: 'compaction.started', reason, instruction: undefined });
         try {
-          const { seed, telemetry } = await _summarizeAndSeed(
+          return await _compact(
             run,
-            event.messages,
+            () => event.messages,
             undefined,
             AbortSignal.any([signal, run.controller.signal]),
+            (seed) => ({ messages: seed.messages }),
           );
-          const stats: CompactionStats = {
-            compactedCount: event.messages.length,
-            tokensBefore: used,
-            tokensAfter: seed.tokensAfter,
-          };
-          _emit({
-            type: 'compaction.completed',
-            reason,
-            stats,
-            durationMs: Date.now() - run.startedAt,
-            originTurnId: event.turnId,
-            summary: telemetry,
-          });
-          return { messages: seed.messages };
         } catch (error) {
           const cause = _cancelCauseOf(run, error);
-          _emit({
-            type: 'compaction.cancelled',
-            reason,
-            cause,
-            error: cause === 'failed' ? error : undefined,
-            durationMs: Date.now() - run.startedAt,
-            originTurnId: event.turnId,
-            tokensBefore: used,
-          });
           if (cause === 'failed') {
             const blocked: Cause = {
               by: 'compaction',
@@ -394,8 +435,6 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
             return { blocked };
           }
           return undefined;
-        } finally {
-          if (shared.active === run) shared.active = undefined;
         }
       };
 
@@ -421,8 +460,9 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
 
       const _noteTurnEnded = (outcome: TurnOutcome): void => {
         if (outcome.type === 'done') shared.attempts = { count: 0 };
-        if (outcome.type === 'aborted' && shared.active !== undefined) {
-          _abortRun(shared.active, 'user-abort');
+        if (outcome.type === 'aborted') {
+          if (shared.pending !== undefined) _abort(shared.pending, 'user-abort');
+          if (shared.active !== undefined) _abort(shared.active, 'user-abort');
         }
       };
 
@@ -432,7 +472,8 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
       useLoopEvent('turn.ended', ({ outcome }) => _noteTurnEnded(outcome));
       useExpose(CompactionRef, { compact, cancel, status });
       useCleanup(() => {
-        if (shared.active !== undefined) _abortRun(shared.active, 'cancelled');
+        if (shared.pending !== undefined) _abort(shared.pending, 'cancelled');
+        if (shared.active !== undefined) _abort(shared.active, 'cancelled');
       });
     },
   });

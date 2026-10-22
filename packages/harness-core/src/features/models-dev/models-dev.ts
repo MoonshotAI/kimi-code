@@ -1,6 +1,6 @@
 import type { ModelCapability } from '@moonshot-ai/agent-core/llm/request';
 
-import { omitUndefined } from '#/features/config/index';
+import { omitUndefined } from '#/todo-features/config/index';
 import type { CatalogModelConfig } from '#/features/provider-catalog/index';
 
 export interface ModelsDevModelEntry {

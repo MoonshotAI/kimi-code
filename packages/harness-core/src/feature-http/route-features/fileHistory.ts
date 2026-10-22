@@ -7,7 +7,7 @@ import {
   FileHistoryRef,
   type FileHistoryCheckpointPhase,
   type FileHistoryFace,
-} from '#/features/fileHistory/index';
+} from '#/todo-features/fileHistory/index';
 
 import { agentFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';

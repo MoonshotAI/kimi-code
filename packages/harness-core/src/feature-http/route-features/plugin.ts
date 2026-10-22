@@ -5,7 +5,7 @@ import type { Request, Response } from 'express';
 
 import { useInject } from '#/kernel/index';
 
-import type { OsFsPort } from '#/features/os/host/index';
+import type { OsFsPort } from '#/todo-features/os/host/index';
 import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
@@ -18,7 +18,7 @@ import {
   type PluginFace,
   type PluginMarketplace,
   type PluginSummary,
-} from '#/features/plugin/index';
+} from '#/todo-features/plugin/index';
 
 import { useHttpRoute } from '../scope';
 import { parseActionSuffix } from '../route/action-suffix';

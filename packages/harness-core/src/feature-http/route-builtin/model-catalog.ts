@@ -15,8 +15,8 @@ import {
   type ConfigStore,
   type ModelsSection,
   type ProvidersSection,
-} from '#/features/config/index';
-import { OAuthTokensRef, type OAuthTokens } from '#/features/kimi/oauth/index';
+} from '#/todo-features/config/index';
+import { OAuthTokensRef, type OAuthTokens } from '#/todo-features/kimi/oauth/index';
 import {
   CatalogModels,
   catalogModelAlias,

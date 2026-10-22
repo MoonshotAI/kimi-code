@@ -11,7 +11,7 @@ import type {
   ToolCall,
 } from '@moonshot-ai/agent-core/llm/message';
 
-import { parseKimiFileUrl } from '#/features/files/index';
+import { parseKimiFileUrl } from '#/todo-features/files/index';
 
 import type {
   AgentTranscriptSnapshot,
@@ -779,7 +779,8 @@ export class AgentTranscriptProjector {
       case 'interaction.resolved':
         return this.onInteractionResolved(event);
       case 'compaction.started':
-      case 'compaction.blocked':
+      case 'compaction.enqueued':
+      case 'compaction.rejected':
       case 'compaction.cancelled':
       case 'compaction.completed':
         return [

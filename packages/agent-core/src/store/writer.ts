@@ -1,3 +1,5 @@
+import { silentLogger, type Logger } from '#/log/index';
+
 import { decodeCommit, encodeCommit, isSeq, LogCorruptError, type Commit, type Event, type Op } from './commit';
 import { createReplica, type MutableReplica, type Replica } from './replica';
 
@@ -31,8 +33,8 @@ export class StoreFailedError extends Error {
 
 const logName = /^[A-Za-z0-9_][A-Za-z0-9._-]*(?:\/[A-Za-z0-9_][A-Za-z0-9._-]*)*$/;
 
-export function openWriter(journal: Journal, options: { onError?: (error: unknown) => void } = {}): Writer {
-  const onError = options.onError ?? console.error;
+export function openWriter(journal: Journal, options: { logger?: Logger } = {}): Writer {
+  const logger = options.logger ?? silentLogger;
   const logs = new Map<string, Promise<Log<Event>>>();
   const pending = new Set<Promise<unknown>>();
   let clock = 0;
@@ -40,7 +42,7 @@ export function openWriter(journal: Journal, options: { onError?: (error: unknow
   const closed = (): Error => new Error('Writer is closed');
   const report = (error: unknown): void => {
     try {
-      onError(error);
+      logger.error('store writer failed', undefined, error);
     } catch {}
   };
 
@@ -117,7 +119,7 @@ export function openWriter(journal: Journal, options: { onError?: (error: unknow
   };
 
   const load = async (name: string): Promise<Log<Event>> => {
-    const replica = createReplica<Event>(onError);
+    const replica = createReplica<Event>(logger);
     let line = 0;
     for await (const text of journal.lines(name, 0)) {
       line += 1;

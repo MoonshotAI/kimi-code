@@ -38,12 +38,12 @@ import {
   type SessionRecord,
 } from '@moonshot-ai/agent-core/session/index';
 
-import type { ConfigStore } from '#/features/config/index';
-import type { Interaction } from '#/features/interaction/index';
-import type { McpFacade } from '#/features/mcp/index';
+import type { ConfigStore } from '#/todo-features/config/index';
+import type { Interaction } from '#/todo-features/interaction/index';
+import type { McpFacade } from '#/todo-features/mcp/index';
 import type { CatalogModelBinding } from '#/features/provider-catalog/index';
-import type { SkillCatalogFace } from '#/features/skill/index';
-import type { WorkspacesFace } from '#/features/workspaces/index';
+import type { SkillCatalogFace } from '#/todo-features/skill/index';
+import type { WorkspacesFace } from '#/todo-features/workspaces/index';
 
 import { buildTerminalAuthMethod, TERMINAL_AUTH_METHOD } from './auth-methods';
 import type { AcpClient } from './client';

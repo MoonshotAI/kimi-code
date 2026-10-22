@@ -24,7 +24,7 @@ import {
   type ModelCatalogConfig,
   type ModelsSection,
   type ProvidersSection,
-} from '#/features/config/index';
+} from '#/todo-features/config/index';
 import {
   useProviderCatalog,
   useProviderRefresh,

@@ -67,7 +67,7 @@ function createFakeRequester(filled: LlmRequestPart = {}): LoopLlmRequester {
         finishReason: message.toolCalls.length > 0 ? 'tool_calls' : 'completed',
         rawFinishReason: null,
       };
-      onEvent?.(await llmStartedEvent(complete(rest)));
+      onEvent?.(llmStartedEvent(complete(rest)));
       const emitted: ContentPart[] = [];
       for (const part of message.content) {
         await sleep(50);

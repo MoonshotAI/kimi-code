@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import { useApp } from '#/app/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
-import { TaskRef, type TaskFace, type TaskRecord, type TaskStatus } from '#/features/task/index';
+import { TaskRef, type TaskFace, type TaskRecord, type TaskStatus } from '#/todo-features/task/index';
 
 import { agentFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { parseActionSuffix } from '../route/action-suffix';

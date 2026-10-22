@@ -7,7 +7,7 @@ import {
   isPlainObject,
   type ConfigOverlayContribution,
   type GetEnv,
-} from '#/features/config/index';
+} from '#/todo-features/config/index';
 
 export const ENV_MODEL_ALIAS_KEY = '__kimi_env_model__';
 

@@ -27,7 +27,7 @@ import {
   createAgentsMdReminder,
   type AgentsMdReminderFace,
 } from '#/features/agentsMdReminder/index';
-import type { OsFsPort, OsHost } from '#/features/os/host/index';
+import type { OsFsPort, OsHost } from '#/todo-features/os/host/index';
 import {
   useAgentTools,
 } from '#/runtime/index';

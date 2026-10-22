@@ -16,9 +16,9 @@ import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
 import { extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { parse } from '@moonshot-ai/tree-sitter-bash';
 
-import type { OsHost } from '#/features/os/host/index';
-import { normalizeUserPath, type PathClass } from '#/features/os/path-access';
-import { WorkspaceRef } from '#/features/workspaces/index';
+import type { OsHost } from '#/todo-features/os/host/index';
+import { normalizeUserPath, type PathClass } from '#/todo-features/os/path-access';
+import { WorkspaceRef } from '#/todo-features/workspaces/index';
 
 import {
   AGENTS_MD_PLAIN_NAMES,

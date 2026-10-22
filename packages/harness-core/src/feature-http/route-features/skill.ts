@@ -10,7 +10,7 @@ import {
   type SkillFace,
   type SkillSource,
   type SkillSummary,
-} from '#/features/skill/index';
+} from '#/todo-features/skill/index';
 
 import { agentFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { parseActionSuffix } from '../route/action-suffix';

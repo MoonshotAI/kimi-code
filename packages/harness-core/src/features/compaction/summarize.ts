@@ -8,7 +8,7 @@ import { createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/mess
 import type { LlmOutcome, TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 
-import { describeUnknownError } from '#/features/config/index';
+import { describeUnknownError } from '#/todo-features/config/index';
 
 import instructionTemplate from './compaction-instruction.md?raw';
 import { CompactError, isShrinkableSummaryError } from './errors';

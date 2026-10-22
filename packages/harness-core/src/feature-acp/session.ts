@@ -20,15 +20,15 @@ import type { LoopEmitted } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, Session, SessionRecord } from '@moonshot-ai/agent-core/session/index';
 
 import type { CompactionFace } from '#/features/compaction/index';
-import { DEFAULT_MODEL_CONFIG_SECTION, type ConfigStore } from '#/features/config/index';
-import type { Interaction, Interactions } from '#/features/interaction/index';
-import type { McpFacade } from '#/features/mcp/index';
-import type { PermissionFace } from '#/features/permission/index';
+import { DEFAULT_MODEL_CONFIG_SECTION, type ConfigStore } from '#/todo-features/config/index';
+import type { Interaction, Interactions } from '#/todo-features/interaction/index';
+import type { McpFacade } from '#/todo-features/mcp/index';
+import type { PermissionFace } from '#/todo-features/permission/index';
 import type { PlanFace } from '#/features/plan/index';
 import type { AgentModelFace, CatalogModelBinding } from '#/features/provider-catalog/index';
-import type { SkillCatalogFace, SkillFace } from '#/features/skill/index';
-import type { TaskFace } from '#/features/task/index';
-import type { TodoFace, TodoItem } from '#/features/todo/index';
+import type { SkillCatalogFace, SkillFace } from '#/todo-features/skill/index';
+import type { TaskFace } from '#/todo-features/task/index';
+import type { TodoFace, TodoItem } from '#/todo-features/todo/index';
 import type { UsageFace } from '#/features/usage/index';
 
 import {
@@ -591,7 +591,7 @@ export function wireAcpSession(deps: AcpSessionDeps): AcpSession {
       }
       const permission = deps.slot?.permission.value;
       if (permission !== undefined) {
-        await permission.setModeAndBroadcast(toggles.permission);
+        await permission.setMode(toggles.permission);
       }
       currentModeId = id;
       emit(currentModeUpdateNotification(sessionId, id));

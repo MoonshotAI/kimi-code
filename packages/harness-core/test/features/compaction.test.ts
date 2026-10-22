@@ -142,7 +142,7 @@ async function startCompactionTest(options: {
 }
 
 describe('compaction feature', () => {
-  it('manual compact rewrites context in place: seed with continuation, durable context.settled, agent stays usable', async () => {
+  it('manual compact rewrites context in place; a mid-turn request is enqueued, rejects duplicates, and runs after the turn', async () => {
     const env = await startCompactionTest({
       summarize: stubSummarize('SUMMARY'),
       budgetMax: () => 1_000_000,
@@ -185,6 +185,55 @@ describe('compaction feature', () => {
     expect(after[0]).toBe('first');
     expect(after.at(-2)).toBe('third');
     expect(after.at(-1)).toBe('echo:third');
+
+    let generateSeen: () => void = () => {};
+    const turnHolding = new Promise<void>((resolve) => {
+      generateSeen = resolve;
+    });
+    let releaseTurn: (outcome: LlmOutcome) => void = () => {};
+    const gate = new Promise<LlmOutcome>((resolve) => {
+      releaseTurn = resolve;
+    });
+    setRequester(
+      env.harness,
+      's1',
+      'main',
+      scriptedRequester(() => {
+        generateSeen();
+        return gate;
+      }),
+    );
+    const busyTurn = env.agent.loop.runTurn(user('busy'));
+    await turnHolding;
+
+    const enqueued = env.face()!.compact('while busy');
+    expect(env.face()?.status()).toMatchObject({ phase: 'quiescing', reason: 'manual' });
+    await expect(env.face()!.compact()).rejects.toMatchObject({ code: 'busy' });
+
+    releaseTurn(textOutcome('echo:busy'));
+    expect((await busyTurn).type).toBe('done');
+    await expect(enqueued).resolves.toBeUndefined();
+
+    expect(env.face()?.status().phase).toBe('idle');
+    expect(env.events.map((event) => event.type)).toEqual([
+      'compaction.started',
+      'compaction.completed',
+      'compaction.enqueued',
+      'compaction.rejected',
+      'compaction.started',
+      'compaction.completed',
+    ]);
+    expect(env.events[2]).toMatchObject({
+      reason: 'manual',
+      instruction: 'while busy',
+      turnId: expect.any(Number) as number,
+    });
+    expect(env.events[3]).toMatchObject({ reason: 'busy' });
+
+    setRequester(env.harness, 's1', 'main', echoRequester());
+    await env.agent.loop.runTurn(user('after-busy'));
+    await env.agent.flush();
+    expect(extractText(env.agent.view.getState().messages.at(-1)!.message)).toBe('echo:after-busy');
 
     await env.dispose();
   });

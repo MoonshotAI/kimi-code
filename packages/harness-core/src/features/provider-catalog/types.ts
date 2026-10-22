@@ -12,7 +12,7 @@ import type {
 } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmRequester } from '@moonshot-ai/agent-core/llm/requester';
 
-import type { ConfigStore, ModelsSection } from '#/features/config/index';
+import type { ConfigStore, ModelsSection } from '#/todo-features/config/index';
 
 export type { CatalogModel, CatalogModelDefinition, CatalogProviderHandle };
 

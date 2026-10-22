@@ -10,7 +10,7 @@ import {
 import type { LoopEmitted, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
-import { interaction, type Interaction } from '#/features/interaction/index';
+import { interaction, type Interaction } from '#/todo-features/interaction/index';
 import { matchCatalogBinding } from '#/features/provider-catalog/index';
 
 import { mountExample, type ExampleProbe } from './app';

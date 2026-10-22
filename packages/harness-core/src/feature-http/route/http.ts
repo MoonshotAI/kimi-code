@@ -3,7 +3,7 @@ import type { Request, Response } from 'express';
 import type { ContentPart, MediaSource, UserMessage } from '@moonshot-ai/agent-core/llm/message';
 import { SessionSpaceError } from '@moonshot-ai/agent-core/session/index';
 
-import { parseKimiFileUrl } from '#/features/files/index';
+import { parseKimiFileUrl } from '#/todo-features/files/index';
 
 export const ErrorCode = {
   SUCCESS: 0,

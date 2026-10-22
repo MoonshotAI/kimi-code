@@ -9,12 +9,15 @@ import {
 } from '#/kernel/index';
 import type { UnitNode } from '#/kernel/runtime';
 import type { WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
+import { consoleLogWriter, createLogger, type Logger } from '@moonshot-ai/agent-core/log/index';
 import {
   memorySessionSpace,
   createSession,
   SessionSpaceError,
+  updateSessionMeta,
   type SessionContainer,
   type Session,
+  type SessionMeta,
   type SessionRecord,
   type SessionRecordDraft,
   type SessionSource,
@@ -48,6 +51,7 @@ export type AppEvent =
 
 export interface CreateAppOptions extends MountRootOptions {
   readonly space?: SessionSpace;
+  readonly logger?: Logger;
 }
 
 export interface App {
@@ -56,7 +60,7 @@ export interface App {
   readonly features: Features;
   create(input?: CreateSessionInput): Promise<AppSession>;
   open(sessionId: string, input?: CreateSessionInput): Promise<AppSession>;
-  update(sessionId: string, patch: SessionRecordDraft): Promise<SessionRecord>;
+  update(sessionId: string, patch: SessionMeta): Promise<SessionRecord>;
   close(sessionId?: string): Promise<void>;
   delete(sessionId: string): Promise<void>;
   on<E extends FeatureEventMap>(
@@ -93,6 +97,17 @@ function draftOf(input: CreateSessionInput): SessionRecordDraft | undefined {
   };
 }
 
+function legacyHealOf(folded: SessionMeta, record: SessionRecord | undefined): SessionMeta | undefined {
+  if (record === undefined) return undefined;
+  const title = folded.title === undefined ? record.title : undefined;
+  const extra = Object.entries(record.metadata ?? {}).filter(
+    ([key]) => !Object.hasOwn(folded.metadata ?? {}, key),
+  );
+  const metadata = extra.length > 0 ? Object.fromEntries(extra) : undefined;
+  if (title === undefined && metadata === undefined) return undefined;
+  return { title, metadata };
+}
+
 async function containerOf(
   space: SessionSpace,
   sessionId: string,
@@ -108,6 +123,7 @@ async function containerOf(
 
 export function createApp(options: CreateAppOptions = {}): App {
   const space = options.space ?? memorySessionSpace();
+  const logger = options.logger ?? createLogger(consoleLogWriter);
   const sessions = shallowReactive(new Map<string, AppSession>());
   const creating = new Map<string, Promise<AppSession>>();
   const closingSessions = new Map<string, Promise<void>>();
@@ -125,7 +141,10 @@ export function createApp(options: CreateAppOptions = {}): App {
     const previous = indexing.get(sessionId) ?? Promise.resolve();
     indexing.set(
       sessionId,
-      previous.then(() => space.update(sessionId, patch)).then(() => undefined, console.error),
+      previous.then(() => space.update(sessionId, patch)).then(
+        () => undefined,
+        (error) => logger.error('session index update failed', { sessionId }, error),
+      ),
     );
   };
 
@@ -135,17 +154,29 @@ export function createApp(options: CreateAppOptions = {}): App {
     const source: SessionSource = input.from !== undefined ? 'fork' : existed ? 'resume' : 'startup';
     const record = await space.get(sessionId);
     let appSession: AppSession;
+    let offMeta: () => void = () => {};
     const session: Session = await createSession({
       id: sessionId,
       ...container,
       source,
+      logger,
       liveAgentsMap: () => shallowReactive(new Map()),
       lastTurn: record?.lastTurn,
       onLastTurn: (lastTurn) => index(sessionId, { lastTurn }),
       onClosed: () => {
+        offMeta();
         if (sessions.get(sessionId) === appSession) sessions.delete(sessionId);
       },
     });
+    let mirrored: SessionMeta = { title: record?.title, metadata: record?.metadata };
+    offMeta = session.roster.subscribe((state) => {
+      const meta = state.meta;
+      if (meta.title === mirrored.title && meta.metadata === mirrored.metadata) return;
+      mirrored = meta;
+      index(sessionId, { title: meta.title, metadata: meta.metadata });
+    });
+    const heal = legacyHealOf(session.roster.getState().meta, record);
+    if (heal !== undefined) await session.update(heal);
     appSession = createAppSession(session);
     sessions.set(sessionId, appSession);
     if (!existed) emit({ type: 'session.created', sessionId, ...(input.from !== undefined ? { from: input.from } : {}) });
@@ -236,7 +267,19 @@ export function createApp(options: CreateAppOptions = {}): App {
     create,
     open,
     update: async (sessionId, patch) => {
-      const record = await space.update(sessionId, patch);
+      const live = sessions.get(sessionId);
+      if (live !== undefined) {
+        await live.update(patch);
+        await indexing.get(sessionId);
+      } else {
+        const container = await space.open(sessionId);
+        await updateSessionMeta(container.journal, patch);
+        await space.update(sessionId, patch);
+      }
+      const record = await space.get(sessionId);
+      if (record === undefined) {
+        throw new SessionSpaceError('not-found', `session '${sessionId}' does not exist`);
+      }
       emit({ type: 'session.meta_updated', sessionId, meta: record });
       return record;
     },

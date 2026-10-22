@@ -49,9 +49,12 @@ export interface ToolEndingHookEvent {
 
 export type ToolStartingDecision =
   | { readonly toolCall: ToolCall }
-  | { readonly blocked: Cause; readonly result?: ToolResult };
+  | { readonly blocked: Cause; readonly result?: ToolResult }
+  | { readonly skipPermitting: true };
 
-export type ToolPermittingDecision = ToolStartingDecision;
+export type ToolPermittingDecision =
+  | { readonly toolCall: ToolCall }
+  | { readonly blocked: Cause; readonly result?: ToolResult };
 
 export type ToolEndingDecision = { readonly result?: ToolResult; readonly stopTurn?: true };
 

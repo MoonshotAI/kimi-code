@@ -7,7 +7,7 @@ import {
   ConfigSections,
   type ConfigSectionContribution,
   type ConfigStore,
-} from '#/features/config/index';
+} from '#/todo-features/config/index';
 
 import { useHttpRoute } from '../scope';
 import { ErrorCode, sendErr, sendOk } from '../route/http';

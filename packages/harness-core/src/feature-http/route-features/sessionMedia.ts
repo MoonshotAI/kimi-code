@@ -1,7 +1,7 @@
 import { useApp } from '#/app/index';
 import { useInject } from '#/kernel/index';
 
-import { FilesRef, KimiFileRegistryRef } from '#/features/files/index';
+import { FilesRef, KimiFileRegistryRef } from '#/todo-features/files/index';
 
 import { sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, param, sendErr } from '../route/http';

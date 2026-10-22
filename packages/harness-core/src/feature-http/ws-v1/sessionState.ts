@@ -4,10 +4,10 @@ import { createFacadeToken } from '#/kernel/index';
 import type { UnitNode } from '#/kernel/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
-import type { ConfigStore } from '#/features/config/index';
-import { parseKimiFileUrl } from '#/features/files/index';
+import type { ConfigStore } from '#/todo-features/config/index';
+import { parseKimiFileUrl } from '#/todo-features/files/index';
 import { PlanRef } from '#/features/plan/index';
-import { PermissionRef } from '#/features/permission/index';
+import { PermissionRef } from '#/todo-features/permission/index';
 import {
   AgentModelRef,
   matchCatalogBinding,
@@ -15,7 +15,7 @@ import {
 } from '#/features/provider-catalog/index';
 import { TokenCountingRef } from '#/features/tokenCounting/index';
 
-import { agentFacade } from '../scope';
+import { agentFacade, sessionFacade } from '../scope';
 import { sessionBusy, sessionPendingInteraction } from '../route-features/status';
 import { sessionView } from '../route-builtin/sessions';
 import { resumeSession } from '../route/resume-session';
@@ -93,7 +93,8 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'subagent.cancelled',
   'subagent.suspended',
   'compaction.started',
-  'compaction.blocked',
+  'compaction.enqueued',
+  'compaction.rejected',
   'compaction.cancelled',
   'compaction.completed',
   'skill.activated',
@@ -851,7 +852,8 @@ export class SessionBroadcaster {
         return;
       }
       case 'compaction.started':
-      case 'compaction.blocked':
+      case 'compaction.enqueued':
+      case 'compaction.rejected':
       case 'compaction.cancelled':
       case 'compaction.completed': {
         const stats = event['stats'] as { tokensBefore?: number; tokensAfter?: number } | undefined;
@@ -860,7 +862,7 @@ export class SessionBroadcaster {
           state,
           type,
           {
-            trigger: event['reason'] === 'manual' ? 'manual' : 'auto',
+            trigger: type === 'compaction.rejected' || event['reason'] === 'manual' ? 'manual' : 'auto',
             instruction: event['instruction'],
             result:
               type === 'compaction.completed'
@@ -1290,7 +1292,7 @@ export class SessionBroadcaster {
       contextTokens: agentFacade(root, TokenCountingRef, sessionId, agentId)?.statusSize(),
       maxContextTokens: catalog?.model.maxInputSize ?? catalog?.model.maxContextSize,
       planMode,
-      permission: agentFacade(root, PermissionRef, sessionId, agentId)?.mode(),
+      permission: sessionFacade(root, PermissionRef, sessionId)?.mode(),
       ...base,
     };
   }

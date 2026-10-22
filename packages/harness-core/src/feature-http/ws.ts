@@ -27,7 +27,8 @@ const WS_EVENT_TYPES: ReadonlySet<string> = new Set([
   'compaction.started',
   'compaction.completed',
   'compaction.cancelled',
-  'compaction.blocked',
+  'compaction.enqueued',
+  'compaction.rejected',
 ]);
 
 type AgentGrade = 'turn' | 'delta';

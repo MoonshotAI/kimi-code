@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { kimiCdnContentUrl } from '@moonshot-ai/kimi-code-oauth';
 
-import type { OsFsPort } from '#/features/os/host/index';
+import type { OsFsPort } from '#/todo-features/os/host/index';
 
 import { downloadToFile, runCommand } from '../host';
 import type {

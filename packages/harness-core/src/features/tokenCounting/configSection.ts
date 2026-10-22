@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import type { ConfigSectionContribution, EnvBindings } from '#/features/config/index';
-import { stripEnvBoundFields } from '#/features/os/configSections';
+import type { ConfigSectionContribution, EnvBindings } from '#/todo-features/config/index';
+import { stripEnvBoundFields } from '#/todo-features/os/configSections';
 
 import type { TokenCountingStrategy } from './tokenCounting';
 

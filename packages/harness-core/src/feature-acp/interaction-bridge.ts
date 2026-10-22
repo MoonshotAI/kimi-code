@@ -2,7 +2,7 @@ import {
   INTERACTION_TAG_TOOL_CALL_ID,
   type Interaction,
   type Interactions,
-} from '#/features/interaction/index';
+} from '#/todo-features/interaction/index';
 
 import {
   approvalRequestToPermissionOptions,

@@ -34,8 +34,8 @@ export function useBtwRoutes(prefix: string): void {
         );
         return;
       }
-      const started = await btw.ask();
-      sendOk(request, response, { agent_id: started.agentId });
+      const agent = await btw.create();
+      sendOk(request, response, { agent_id: agent.id });
     } catch (error) {
       if (sendFacadeErr(request, response, error)) return;
       throw error;

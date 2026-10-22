@@ -1,3 +1,5 @@
+import { silentLogger, type Logger } from '#/log/index';
+
 import { LogCorruptError, type Commit, type Event } from './commit';
 
 export interface Entry<E extends Event> {
@@ -33,13 +35,13 @@ function fold<S, E extends Event>(projection: Projection<S, E>, state: S, entrie
   return next;
 }
 
-export function createReplica<E extends Event>(onError: (error: unknown) => void = console.error): MutableReplica<E> {
+export function createReplica<E extends Event>(logger: Logger = silentLogger): MutableReplica<E> {
   let version = 0;
   const log: Entry<E>[] = [];
   const updates = new Set<(rewound: boolean, added: readonly Entry<E>[]) => void>();
   const report = (error: unknown): void => {
     try {
-      onError(error);
+      logger.error('replica view failed', undefined, error);
     } catch {}
   };
   return {

@@ -13,7 +13,7 @@ import {
   type KimiRegion,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import type { OsHost } from '#/features/os/host/index';
+import type { OsHost } from '#/todo-features/os/host/index';
 import { ProviderCatalogRef } from '#/features/provider-catalog/index';
 
 import type { CapabilityEntryContext, CapabilityPluginsPort } from './entries/context';

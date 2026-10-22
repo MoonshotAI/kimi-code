@@ -10,7 +10,7 @@ import {
   type WorkspaceEntry,
   type WorkspaceFsFace,
   type WorkspacesFace,
-} from '#/features/workspaces/index';
+} from '#/todo-features/workspaces/index';
 
 import { useHttpRoute } from '../scope';
 import { ErrorCode, param, requestId, sendErr, sendOk } from '../route/http';

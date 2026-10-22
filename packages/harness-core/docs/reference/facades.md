@@ -15,7 +15,7 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 |---|---|---|---|
 | `TodoRef` | todo | agent | `{ items, state }` — the current todo list and its projection state |
 | `InteractionRef` | interaction | session | `Interactions` — request/enqueue/respond/findAll/wait for approval, question, and user-tool interactions (helper: `useInteractions()`) |
-| `PermissionRef` | permission | agent | `{ state, mode, setMode, setModeAndBroadcast, addRules }` — permission mode and rules |
+| `PermissionRef` | permission | session | `{ state, mode, setMode, recordApprovalResult, addRules }` — permission mode and rules, one state shared by every agent of the session |
 | `PlanRef` | plan | agent | `{ state, enter, cancel, clear, exit, recordRevision, status }` — plan mode control |
 | `CronRef` | cron | agent | `{ tasks, now, isDisabled, addTask, removeTasks, getTask, list, isStale, getNextFireForTask, computeDisplayNextFire, tick }` |
 | `TaskRef` | task | agent | `{ records, stop, detach }` — background task tracking |
@@ -29,7 +29,7 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 | `AgentModelRef` | provider-catalog | agent | `{ current, setModel, setThinking }` — this agent's model binding |
 | `CompactionRef` | compaction | agent | `{ compact, cancel, status }` — context compaction control |
 | `UndoRef` | undo | agent | `{ availability, undo(turns) }` — turn rewind |
-| `BtwRef` | btw | session | `{ ask, list, isBtw }` — by-the-way side questions to a read-only subagent |
+| `BtwRef` | btw | session | `{ create, list, isBtw }` — by-the-way side questions to a read-only subagent |
 | `UsageRef` | usage | agent | `{ usage, total }` — accumulated token usage |
 | `TimingRef` | timing | agent | `{ timing }` — current LLM request timing |
 | `TokenCountingRef` | tokenCounting | agent | `{ status, get, statusSize, latestMeasured, requestSize }` — context size accounting |

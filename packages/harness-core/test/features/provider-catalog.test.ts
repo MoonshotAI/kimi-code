@@ -31,7 +31,7 @@ import {
   useConfig,
   type ConfigPersist,
   type ConfigStore,
-} from '#/features/config/index';
+} from '#/todo-features/config/index';
 import {
   AgentModelRef,
   CatalogModels,

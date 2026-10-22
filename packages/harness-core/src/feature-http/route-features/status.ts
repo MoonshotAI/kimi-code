@@ -4,9 +4,9 @@ import type { UnitNode } from '#/kernel/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { CompactionRef } from '#/features/compaction/index';
-import { ConfigRef, DEFAULT_MODEL_CONFIG_SECTION, type ConfigStore } from '#/features/config/index';
-import { InteractionRef, INTERACTION_TAG_SESSION_ID } from '#/features/interaction/index';
-import { PermissionRef } from '#/features/permission/index';
+import { ConfigRef, DEFAULT_MODEL_CONFIG_SECTION, type ConfigStore } from '#/todo-features/config/index';
+import { InteractionRef, INTERACTION_TAG_SESSION_ID } from '#/todo-features/interaction/index';
+import { PermissionRef } from '#/todo-features/permission/index';
 import { PlanRef } from '#/features/plan/index';
 import {
   AgentModelRef,
@@ -14,9 +14,9 @@ import {
   matchCatalogBinding,
   type CatalogModelBinding,
 } from '#/features/provider-catalog/index';
-import { TaskRef } from '#/features/task/index';
+import { TaskRef } from '#/todo-features/task/index';
 import { TokenCountingRef } from '#/features/tokenCounting/index';
-import { TowerRef } from '#/features/tower/index';
+import { TowerRef } from '#/todo-features/tower/index';
 
 import { agentFacade, findAgentUnit, sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';
@@ -100,7 +100,7 @@ export async function sessionStatusView(
     busy: sessionBusy(root, session),
     model,
     thinking_level: model === undefined ? '' : (binding?.thinking ?? 'off'),
-    permission: agentFacade(root, PermissionRef, session.id, MAIN_AGENT_ID)?.mode() ?? 'manual',
+    permission: sessionFacade(root, PermissionRef, session.id)?.mode() ?? 'manual',
     plan_mode: plan !== undefined ? (await plan.status()) !== null : false,
     tower_mode: agentFacade(root, TowerRef, session.id, MAIN_AGENT_ID)?.isActive() ?? false,
     context_tokens: tokens,

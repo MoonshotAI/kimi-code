@@ -1,11 +1,14 @@
 import type { ToolHooks } from '@moonshot-ai/agent-core/tool/index';
 
+import type { ComputedRef } from '#/kernel/index';
+
 import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   type Interactions,
-} from '#/features/interaction/index';
+} from '#/todo-features/interaction/index';
+import type { PermissionMode } from '#/todo-features/permission/index';
 
 import { blockedWith, formatAutoApprovedPlanForOutput, requestExitPlanModeApproval } from './review';
 import type { PlanData } from './storage';
@@ -20,7 +23,7 @@ export function createPlanGuard(deps: {
   readonly interactions: Interactions;
   readonly sessionId: string;
   readonly agentId: string;
-  readonly permissionMode?: () => string | undefined;
+  readonly permissionMode: ComputedRef<PermissionMode | undefined>;
 }): ToolHooks['tool.starting'] {
   const { ready, planPath, status, recordRevision, exit, interactions, sessionId, agentId, permissionMode } =
     deps;
@@ -34,7 +37,7 @@ export function createPlanGuard(deps: {
       const args = parseExitPlanModeArgs(toolCall.arguments);
       if (!args.ok) return undefined;
       await recordRevision().catch(() => {});
-      if (permissionMode?.() === 'auto') {
+      if (permissionMode.value === 'auto') {
         await exit();
         return blockedWith(
           `Exited plan mode. ${formatAutoApprovedPlanForOutput(current.content, current.path)}`,

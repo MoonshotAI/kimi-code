@@ -4,7 +4,7 @@ import {
   isInteractionCancellation,
   type InteractionTags,
   type Interactions,
-} from '#/features/interaction/index';
+} from '#/todo-features/interaction/index';
 
 import type { ExitPlanModeOption } from './tools/exit-plan-mode';
 

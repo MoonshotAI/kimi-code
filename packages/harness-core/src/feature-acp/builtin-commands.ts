@@ -3,8 +3,8 @@ import { grandTotal, inputTotal } from '@moonshot-ai/agent-core/history/index';
 
 import type { CompactionFace } from '#/features/compaction/index';
 import { CompactError } from '#/features/compaction/index';
-import type { McpFacade, McpServerEntry } from '#/features/mcp/index';
-import type { TaskFace } from '#/features/task/index';
+import type { McpFacade, McpServerEntry } from '#/todo-features/mcp/index';
+import type { TaskFace } from '#/todo-features/task/index';
 import type { UsageFace } from '#/features/usage/index';
 
 export const ACP_BUILTIN_SLASH_COMMANDS = [

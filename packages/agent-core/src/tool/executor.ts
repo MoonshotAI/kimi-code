@@ -182,7 +182,7 @@ export function createToolExecutor(options: CreateToolExecutorOptions = {}): Too
       let toolCall = starting.toolCall;
       let blocked = starting.blocked;
       let blockedResult = starting.result;
-      if (blocked === undefined && hooks.active('tool.permitting').length > 0) {
+      if (blocked === undefined && starting.skipPermitting !== true && hooks.active('tool.permitting').length > 0) {
         const permitting = await runToolPermitting(
           hooks,
           {

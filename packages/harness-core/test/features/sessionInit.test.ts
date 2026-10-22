@@ -30,12 +30,12 @@ import {
   createAgentsMdReminder,
   type AgentsMdReminderFace,
 } from '#/features/agentsMdReminder/index';
-import { createNodeOsHost, type OsHost } from '#/features/os/host/index';
+import { createNodeOsHost, type OsHost } from '#/todo-features/os/host/index';
 import {
   createStaticProfileCatalog,
   normalizeAgentProfile,
   ProfileCatalogRef,
-} from '#/features/profiles/index';
+} from '#/todo-features/profiles/index';
 import {
   AGENT_NOT_FOUND,
   DEFAULT_INIT_PROMPT,

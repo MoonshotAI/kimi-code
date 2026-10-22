@@ -26,9 +26,9 @@ import {
   loadAgentsMdForRoots,
   type AgentsMdReminderFace,
 } from '#/features/agentsMdReminder/index';
-import type { OsHost } from '#/features/os/host/index';
-import { PermissionRef, type PermissionFace } from '#/features/permission/index';
-import { ProfileCatalogRef } from '#/features/profiles/index';
+import type { OsHost } from '#/todo-features/os/host/index';
+import { PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
+import { ProfileCatalogRef } from '#/todo-features/profiles/index';
 
 import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './init';
 

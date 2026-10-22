@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 
 import { useInject } from '#/kernel/index';
 
-import { OAuthTokensRef } from '#/features/kimi/oauth/index';
+import { OAuthTokensRef } from '#/todo-features/kimi/oauth/index';
 import { ModelsDevError, ModelsDevRef, type ModelsDevFace } from '#/features/models-dev/index';
 import { ProviderCatalogRef } from '#/features/provider-catalog/index';
 

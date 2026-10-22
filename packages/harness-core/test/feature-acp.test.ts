@@ -49,23 +49,23 @@ import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/sessi
 import { createAcp } from '#/feature-acp/index';
 import { createAcpOsHost, createAcpOsHostRouter, type AcpOsConnection } from '#/feature-acp/os-host';
 import { buildAcpSkillSlashCommands, resolveSkillCommand } from '#/feature-acp/slash';
-import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/features/config/index';
+import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/todo-features/config/index';
 import {
   createFiles,
   KimiFileRegistryRef,
   type KimiFileRegistry,
-} from '#/features/files/index';
+} from '#/todo-features/files/index';
 import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   InteractionRef,
   interaction,
-} from '#/features/interaction/index';
-import { createMedia } from '#/features/media/index';
-import { createMcp, McpRef, type McpFacade, type McpServerConfig } from '#/features/mcp/index';
-import { createNodeOsHost } from '#/features/os/host/index';
-import { createPermission, PermissionRef, type PermissionFace } from '#/features/permission/index';
+} from '#/todo-features/interaction/index';
+import { createMedia } from '#/todo-features/media/index';
+import { createMcp, McpRef, type McpFacade, type McpServerConfig } from '#/todo-features/mcp/index';
+import { createNodeOsHost } from '#/todo-features/os/host/index';
+import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
 import { createMemoryPlanStorage, createPlan, PlanRef, type PlanFace } from '#/features/plan/index';
 import {
   CatalogModels,
@@ -82,14 +82,14 @@ import {
   type SkillDefinition,
   type SkillSource,
   type SkillSummary,
-} from '#/features/skill/index';
-import { todo as todoFeature } from '#/features/todo/index';
+} from '#/todo-features/skill/index';
+import { todo as todoFeature } from '#/todo-features/todo/index';
 import { usage } from '#/features/usage/index';
 import {
   useAgentTools,
 } from '#/runtime/index';
 
-const fixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
+const fixturePath = fileURLToPath(new URL('./todo-features/fixtures/fake-mcp-server.mjs', import.meta.url));
 
 type ScriptStep = { parts: StreamedMessagePart[] } | { hang: true } | { fail: LlmRemoteErrorMessage };
 

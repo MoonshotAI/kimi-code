@@ -3,7 +3,7 @@ import { useApp } from '#/app/index';
 import {
   SessionTitleRef,
   type SessionTitleSource,
-} from '#/features/kimi/sessionTitle/index';
+} from '#/todo-features/kimi/sessionTitle/index';
 
 import { sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';

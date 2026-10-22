@@ -24,7 +24,7 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
-import { createConfig } from '#/features/config/index';
+import { createConfig } from '#/todo-features/config/index';
 import {
 } from '#/runtime/index';
 import {

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import type { OsProcessPort } from '#/features/os/host/index';
+import type { OsProcessPort } from '#/todo-features/os/host/index';
 
 export interface CommandResult {
   readonly code: number;

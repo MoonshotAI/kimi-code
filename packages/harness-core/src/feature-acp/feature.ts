@@ -33,18 +33,18 @@ import {
 } from '@moonshot-ai/agent-core/session/index';
 
 import { CompactionRef } from '#/features/compaction/index';
-import { ConfigRef } from '#/features/config/index';
-import { InteractionRef, type Interaction } from '#/features/interaction/index';
-import { OAuthTokensRef } from '#/features/kimi/index';
-import { McpRef } from '#/features/mcp/index';
-import { PermissionRef } from '#/features/permission/index';
+import { ConfigRef } from '#/todo-features/config/index';
+import { InteractionRef, type Interaction } from '#/todo-features/interaction/index';
+import { OAuthTokensRef } from '#/todo-features/kimi/index';
+import { McpRef } from '#/todo-features/mcp/index';
+import { PermissionRef } from '#/todo-features/permission/index';
 import { PlanRef } from '#/features/plan/index';
 import { AgentModelRef, CatalogModels } from '#/features/provider-catalog/index';
-import { SkillCatalogRef, SkillRef } from '#/features/skill/index';
-import { TaskRef } from '#/features/task/index';
-import { TodoRef } from '#/features/todo/index';
+import { SkillCatalogRef, SkillRef } from '#/todo-features/skill/index';
+import { TaskRef } from '#/todo-features/task/index';
+import { TodoRef } from '#/todo-features/todo/index';
 import { UsageRef } from '#/features/usage/index';
-import { WorkspaceRef } from '#/features/workspaces/index';
+import { WorkspaceRef } from '#/todo-features/workspaces/index';
 
 import { acpClientFromContext, type AcpClient } from './client';
 import { openAcpServer, type AcpHostOptions, type AcpServerHandlers } from './server';

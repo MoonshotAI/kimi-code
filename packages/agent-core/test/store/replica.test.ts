@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { createLogger } from '#/log/index';
+import { createMemoryLogWriter } from '#/log/writer';
 import { LogCorruptError } from '#/store/commit';
 import { createReplica } from '#/store/replica';
 
@@ -28,8 +30,9 @@ describe('replica', () => {
   });
 
   it('disposes only the view whose reducer throws', () => {
-    const errors: unknown[] = [];
-    const replica = createReplica<Note>((error) => errors.push(error));
+    const writer = createMemoryLogWriter();
+    const logger = createLogger(writer, { level: 'error' }).child({ domain: 'replica' });
+    const replica = createReplica<Note>(logger);
     const broken = replica.view<number>({
       initial: () => 0,
       reduce: () => {
@@ -39,9 +42,20 @@ describe('replica', () => {
     const healthy = replica.view(texts);
     replica.apply({ seq: 0, time: 1, events: [note('a')] });
     replica.apply({ seq: 1, time: 2, events: [note('b')] });
-    expect(errors).toHaveLength(1);
+    expect(writer.entries).toHaveLength(1);
+    expect(writer.entries[0]?.level).toBe('error');
+    expect(writer.entries[0]?.message).toBe('replica view failed');
+    expect(writer.entries[0]?.context).toEqual({ domain: 'replica' });
+    expect(writer.entries[0]?.error?.message).toBe('boom');
     expect(broken.getState()).toBe(0);
     expect(() => broken.subscribe(() => {})).toThrow('disposed');
     expect(healthy.getState()).toEqual(['a', 'b']);
+    logger.debug('suppressed');
+    expect(writer.entries).toHaveLength(1);
+    logger.setLevel('debug');
+    expect(logger.level).toBe('debug');
+    logger.debug('visible', { extra: 'x' });
+    expect(writer.entries).toHaveLength(2);
+    expect(writer.entries[1]?.context).toEqual({ extra: 'x', domain: 'replica' });
   });
 });

@@ -12,6 +12,7 @@ import {
   type ToolHookInfo,
   type ToolHookPoint,
   type ToolHooks,
+  type ToolPermittingDecision,
   type ToolResult,
   type ToolStartingDecision,
   type ToolStartingHookEvent,
@@ -92,10 +93,16 @@ function isCause(value: unknown): value is Cause {
   );
 }
 
-function isToolStartingDecision(value: unknown): value is ToolStartingDecision {
+function isToolPermittingDecision(value: unknown): value is ToolPermittingDecision {
   if (!isObject(value)) return false;
   if ('toolCall' in value) return isToolCall(value['toolCall']);
   return isCause(value['blocked']) && (value['result'] === undefined || isToolResult(value['result']));
+}
+
+function isToolStartingDecision(value: unknown): value is ToolStartingDecision {
+  if (!isObject(value)) return false;
+  if ('skipPermitting' in value) return value['skipPermitting'] === true;
+  return isToolPermittingDecision(value);
 }
 
 function isToolEndingDecision(value: unknown): value is ToolEndingDecision {
@@ -139,6 +146,7 @@ export interface ToolStartingRun {
   toolCall: ToolCall;
   blocked?: Cause;
   result?: ToolResult;
+  skipPermitting?: boolean;
   failures: ToolHookFailure[];
 }
 
@@ -152,18 +160,22 @@ async function runToolCallChain(
 ): Promise<ToolStartingRun> {
   const failures: ToolHookFailure[] = [];
   let toolCall = event.toolCall;
+  let skipPermitting = false;
+  const isDecision = point === 'tool.starting' ? isToolStartingDecision : isToolPermittingDecision;
   for (const item of source.active(point)) {
-    const run = await runItem(item, () => item.hook({ ...event, toolCall }, signal), isToolStartingDecision);
+    const run = await runItem(item, () => item.hook({ ...event, toolCall }, signal), isDecision);
     if (run.failure !== undefined) failures.push(run.failure);
     const decision = run.decision;
     if (decision !== undefined && 'toolCall' in decision) {
       toolCall = decision.toolCall;
+    } else if (decision !== undefined && 'skipPermitting' in decision) {
+      skipPermitting = true;
     } else if (decision !== undefined) {
       return { toolCall, blocked: signed(decision.blocked, item), result: decision.result, failures };
     }
     if (run.blocked !== undefined) return { toolCall, blocked: run.blocked, failures };
   }
-  return { toolCall, failures };
+  return skipPermitting ? { toolCall, skipPermitting, failures } : { toolCall, failures };
 }
 
 export function runToolStarting(

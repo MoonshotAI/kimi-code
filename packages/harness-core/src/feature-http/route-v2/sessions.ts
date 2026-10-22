@@ -7,12 +7,12 @@ import { useInject } from '#/kernel/index';
 import type { UnitNode } from '#/kernel/runtime';
 import { MAIN_AGENT_ID, type Session, type SessionTurnOutcome } from '@moonshot-ai/agent-core/session/index';
 
-import { ConfigRef, type ConfigStore } from '#/features/config/index';
+import { ConfigRef, type ConfigStore } from '#/todo-features/config/index';
 import {
   SessionIndexRef,
   type SessionIndexFace,
   type SessionSummaryRow,
-} from '#/features/sessionIndex/index';
+} from '#/todo-features/sessionIndex/index';
 import {
   getWorkspaceEntry,
   resolveWorkspaceId,
@@ -20,7 +20,7 @@ import {
   type FsPullRequest,
   type WorkspaceGitPort,
   type WorkspacesState,
-} from '#/features/workspaces/index';
+} from '#/todo-features/workspaces/index';
 
 import { unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, sendErr, sendOk } from '../route/http';

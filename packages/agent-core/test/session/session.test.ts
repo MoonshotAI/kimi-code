@@ -49,15 +49,22 @@ describe('session', () => {
     expect(main.source).toBe('cli');
     await expect(first.open('bad/id', agentCaps())).rejects.toMatchObject({ reason: 'invalid-agent' });
     await main.loop.runTurn(user('hello'));
+    await first.update({ title: 'one', metadata: { a: 1 } });
+    await expect(first.update({ title: 1 as unknown as string })).rejects.toThrow(TypeError);
     await first.close();
     const second = await testSession(logs);
-    expect(second.roster.getState()).toEqual({ agents: { main: { source: 'cli' } } });
+    expect(second.roster.getState()).toEqual({
+      agents: { main: { source: 'cli' } },
+      meta: { title: 'one', metadata: { a: 1 } },
+    });
     const restored = await second.open('main', agentCaps());
     expect(restored.reopened).toBe(true);
     expect(restored.source).toBe('cli');
     expect(texts(restored)).toEqual(['hello', 'echo:hello']);
     expect(restored.loop.state.messages).toEqual(restored.view.getState().messages);
     expect(restored.loop.state.nextTurnId).toBe(1);
+    await second.update({ metadata: { b: 2 } });
+    expect(second.roster.getState().meta).toEqual({ title: 'one', metadata: { a: 1, b: 2 } });
 
     const hanging = { execute: () => new Promise<ToolResult>(() => {}) };
     const slow = scriptedRequester(() =>

@@ -6,7 +6,7 @@ import {
   InteractionRef,
   INTERACTION_TAG_SESSION_ID,
   type Interaction,
-} from '#/features/interaction/index';
+} from '#/todo-features/interaction/index';
 
 import { sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';

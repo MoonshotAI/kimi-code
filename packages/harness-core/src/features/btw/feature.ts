@@ -7,7 +7,7 @@ import {
 } from '#/app/index';
 import { createHistoryMessageBuilder } from '@moonshot-ai/agent-core/history/index';
 import { createFacadeToken, useExpose, type RuntimeEvent } from '#/kernel/index';
-import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
+import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 export const BTW_REMIND_KEY = 'btw.side_question';
 
@@ -25,8 +25,13 @@ export interface BtwCreatedEvent extends RuntimeEvent {
 
 export type BtwEvent = BtwCreatedEvent;
 
+export interface BtwCreateOptions {
+  readonly sourceAgentId?: string;
+  readonly readonlyTools?: readonly string[];
+}
+
 export interface BtwFace {
-  ask(): Promise<{ agentId: string }>;
+  create(options?: BtwCreateOptions): Promise<Agent>;
   list(): readonly string[];
   isBtw(agentId: string): boolean;
 }
@@ -36,22 +41,26 @@ export const BtwRef = createFacadeToken<BtwFace>('btw');
 const BTW_SOURCE = 'btw';
 
 export interface CreateBtwProps {
-  readonly sourceAgentId?: string;
-  readonly readonlyTools?: readonly string[];
+  readonly defaultReadonlyTools?: readonly string[];
 }
 
 export function createBtw(props: CreateBtwProps = {}): Feature<void, { session: BtwEvent }> {
-  const sourceAgentId = props.sourceAgentId ?? MAIN_AGENT_ID;
-  const readonlyTools = new Set(props.readonlyTools ?? BTW_READONLY_TOOLS);
-  const reminder = sideQuestionReminder([...readonlyTools]);
-  const deniedMessage = toolDeniedMessage([...readonlyTools]);
+  const defaultReadonlyTools: ReadonlySet<string> = new Set(
+    props.defaultReadonlyTools ?? BTW_READONLY_TOOLS,
+  );
+  const guardOverrides = new WeakMap<Session, Map<string, ReadonlySet<string>>>();
   return createFeature<{ session: BtwEvent }>('btw', {
     session(_props, { fire }) {
       const session = useSession();
       const isBtw = (agentId: string): boolean =>
         session.roster.getState().agents[agentId]?.source === BTW_SOURCE;
       useExpose(BtwRef, {
-        ask: async () => {
+        create: async (options = {}) => {
+          const sourceAgentId = options.sourceAgentId ?? MAIN_AGENT_ID;
+          const readonlyTools =
+            options.readonlyTools === undefined
+              ? defaultReadonlyTools
+              : new Set(options.readonlyTools);
           if (session.liveAgents.get(sourceAgentId) === undefined) {
             throw new Error(
               `Cannot start a side question: source agent '${sourceAgentId}' does not exist or is not running in this session.`,
@@ -61,12 +70,19 @@ export function createBtw(props: CreateBtwProps = {}): Feature<void, { session: 
           const { agent: child } = await session.forkAgent(sourceAgentId, agentId, {
             init: { source: BTW_SOURCE },
           });
+          let overrides = guardOverrides.get(session);
+          if (overrides === undefined) {
+            overrides = new Map();
+            guardOverrides.set(session, overrides);
+          }
+          overrides.set(agentId, readonlyTools);
+          const reminder = sideQuestionReminder([...readonlyTools]);
           child.loop.remind({
             message: createHistoryMessageBuilder().systemReminder(reminder).userMessage(),
             meta: { key: BTW_REMIND_KEY },
           });
           fire({ type: 'btw.created', agentId, sourceId: sourceAgentId });
-          return { agentId };
+          return child;
         },
         list: () => Object.keys(session.roster.getState().agents).filter(isBtw),
         isBtw,
@@ -74,9 +90,12 @@ export function createBtw(props: CreateBtwProps = {}): Feature<void, { session: 
     },
     agent() {
       const agent = useAgent();
+      const session = useSession();
       useToolStarting(({ toolCall }) => {
         if (agent.source !== BTW_SOURCE) return undefined;
+        const readonlyTools = guardOverrides.get(session)?.get(agent.id) ?? defaultReadonlyTools;
         if (readonlyTools.has(toolCall.name)) return undefined;
+        const deniedMessage = toolDeniedMessage([...readonlyTools]);
         return {
           blocked: { reason: 'denied', message: deniedMessage },
           result: { content: [{ type: 'text', text: deniedMessage }] },

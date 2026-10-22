@@ -26,8 +26,8 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 
-import { interaction } from '#/features/interaction/index';
-import { createPermission, PermissionRef, type PermissionFace } from '#/features/permission/index';
+import { interaction } from '#/todo-features/interaction/index';
+import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
 import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
 import {
   useAgentTools,

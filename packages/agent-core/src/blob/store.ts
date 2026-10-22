@@ -65,7 +65,7 @@ export function openBlobStore(backend: BlobBackend): BlobStore {
   return {
     put: async (content) => {
       const record = encode(content);
-      const ref = await sha256Hex(record);
+      const ref = sha256Hex(record);
       if (!(await backend.has(keyOf(ref)))) await backend.write(keyOf(ref), record);
       return { ref, size: content.bytes.byteLength };
     },
@@ -73,7 +73,7 @@ export function openBlobStore(backend: BlobBackend): BlobStore {
       if (!blobRef.test(ref)) return undefined;
       const record = await backend.read(keyOf(ref));
       if (record === undefined) return undefined;
-      if ((await sha256Hex(record)) !== ref) throw new BlobIntegrityError(ref);
+      if ((sha256Hex(record)) !== ref) throw new BlobIntegrityError(ref);
       return decode(ref, record);
     },
     has: async (ref) => blobRef.test(ref) && (await backend.has(keyOf(ref))),

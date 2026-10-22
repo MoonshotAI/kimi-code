@@ -42,15 +42,15 @@ import {
 import { createBtw } from '#/features/btw/index';
 import { createCapabilities, type CapabilityEntry } from '#/features/capabilities/index';
 import { createCompaction } from '#/features/compaction/index';
-import { ConfigRef, createConfig, type ConfigPersist } from '#/features/config/index';
-import { createFileHistory } from '#/features/fileHistory/index';
+import { ConfigRef, createConfig, type ConfigPersist } from '#/todo-features/config/index';
+import { createFileHistory } from '#/todo-features/fileHistory/index';
 import {
   buildKimiFileUrl,
   createFiles,
   FilesRef,
   KimiFileRegistryRef,
   parseKimiFileUrl,
-} from '#/features/files/index';
+} from '#/todo-features/files/index';
 import {
   interaction,
   InteractionRef,
@@ -58,13 +58,13 @@ import {
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   INTERACTION_TAG_TURN_ID,
-} from '#/features/interaction/index';
-import { createKimi } from '#/features/kimi/index';
-import { createMedia } from '#/features/media/index';
-import { createMcp, McpRef } from '#/features/mcp/index';
+} from '#/todo-features/interaction/index';
+import { createKimi } from '#/todo-features/kimi/index';
+import { createMedia } from '#/todo-features/media/index';
+import { createMcp, McpRef } from '#/todo-features/mcp/index';
 import { createModelsDev } from '#/features/models-dev/index';
-import { createNodeOsHost, type OsHost, type OsProcess } from '#/features/os/host/index';
-import { createPermission, PermissionRef } from '#/features/permission/index';
+import { createNodeOsHost, type OsHost, type OsProcess } from '#/todo-features/os/host/index';
+import { createPermission, PermissionRef } from '#/todo-features/permission/index';
 import { createPlan, PlanRef } from '#/features/plan/index';
 import {
   AgentModelRef,
@@ -74,20 +74,20 @@ import {
   type CatalogModelConfig,
   type CatalogProviderHandle,
 } from '#/features/provider-catalog/index';
-import { createPlugin } from '#/features/plugin/index';
-import { createSessionIndex } from '#/features/sessionIndex/index';
-import { createSkill } from '#/features/skill/index';
-import { createTask } from '#/features/task/index';
+import { createPlugin } from '#/todo-features/plugin/index';
+import { createSessionIndex } from '#/todo-features/sessionIndex/index';
+import { createSkill } from '#/todo-features/skill/index';
+import { createTask } from '#/todo-features/task/index';
 import { tokenCounting } from '#/features/tokenCounting/index';
-import { undo } from '#/features/undo/index';
+import { undo } from '#/todo-features/undo/index';
 import { usage } from '#/features/usage/index';
-import { createWorkspaces, WorkspaceRef } from '#/features/workspaces/index';
+import { createWorkspaces, WorkspaceRef } from '#/todo-features/workspaces/index';
 import {
   useAgentRuntime,
   useAgentTools,
 } from '#/runtime/index';
 
-const mcpFixturePath = fileURLToPath(new URL('./features/fixtures/fake-mcp-server.mjs', import.meta.url));
+const mcpFixturePath = fileURLToPath(new URL('./todo-features/fixtures/fake-mcp-server.mjs', import.meta.url));
 
 const execFileAsync = promisify(execFile);
 

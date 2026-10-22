@@ -35,7 +35,7 @@ function fakeRequester(
         finishReason: message.toolCalls.length > 0 ? 'tool_calls' : 'completed',
         rawFinishReason: null,
       };
-      control.onEvent?.(await llmStartedEvent(complete(rest)));
+      control.onEvent?.(llmStartedEvent(complete(rest)));
       for (const part of [...message.content, ...message.toolCalls]) {
         control.onEvent?.({ type: 'llm.streaming.part', part });
       }

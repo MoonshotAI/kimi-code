@@ -14,9 +14,9 @@ import {
   type SessionTurnOutcome,
 } from '@moonshot-ai/agent-core/session/index';
 
-import { ConfigRef, type ConfigStore } from '#/features/config/index';
-import { parseKimiFileUrl } from '#/features/files/index';
-import { PermissionRef, type PermissionMode } from '#/features/permission/index';
+import { ConfigRef, type ConfigStore } from '#/todo-features/config/index';
+import { parseKimiFileUrl } from '#/todo-features/files/index';
+import { PermissionRef, type PermissionMode } from '#/todo-features/permission/index';
 import { PlanRef } from '#/features/plan/index';
 import {
   AgentModelRef,
@@ -27,8 +27,8 @@ import {
   type CatalogModelBinding,
 } from '#/features/provider-catalog/index';
 import { TokenCountingRef } from '#/features/tokenCounting/index';
-import { TowerRef, towerEnterFailureMessage } from '#/features/tower/index';
-import { UndoFeatureError, UndoRef } from '#/features/undo/index';
+import { TowerRef, towerEnterFailureMessage } from '#/todo-features/tower/index';
+import { UndoFeatureError, UndoRef } from '#/todo-features/undo/index';
 import { UsageRef } from '#/features/usage/index';
 import {
   getWorkspaceEntry,
@@ -36,7 +36,7 @@ import {
   sessionWorkspaceId,
   withSessionWorkspace,
   WorkspaceRef,
-} from '#/features/workspaces/index';
+} from '#/todo-features/workspaces/index';
 
 import { agentFacade, sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { useSessionAction, useSessionActionRoutes } from '../route/session-action';
@@ -589,7 +589,7 @@ export function useSessionRoutes(prefix: string): void {
         await sessionFacade(root, SessionModelRef, session.id)?.setThinking(config.thinking);
       }
       if (config.permissionMode !== undefined) {
-        await agentFacade(root, PermissionRef, session.id, MAIN_AGENT_ID)?.setModeAndBroadcast(config.permissionMode);
+        await sessionFacade(root, PermissionRef, session.id)?.setMode(config.permissionMode);
       }
       if (config.planMode !== undefined) {
         const plan = agentFacade(root, PlanRef, session.id, MAIN_AGENT_ID);

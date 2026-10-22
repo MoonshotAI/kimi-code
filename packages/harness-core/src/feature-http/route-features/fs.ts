@@ -12,7 +12,7 @@ import {
   openFileCommandFor,
   openInAppCommandFor,
   revealFileCommandFor,
-} from '#/features/os/fileLaunch';
+} from '#/todo-features/os/fileLaunch';
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
@@ -34,7 +34,7 @@ import {
   type FsSuggestRequest,
   type WorkspaceFsRoots,
   type WorkspacesFace,
-} from '#/features/workspaces/index';
+} from '#/todo-features/workspaces/index';
 
 import { useHttpRoute } from '../scope';
 import { ErrorCode, param, sendErr, sendOk } from '../route/http';

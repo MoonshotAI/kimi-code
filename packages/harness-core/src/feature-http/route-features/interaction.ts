@@ -9,7 +9,7 @@ import {
   INTERACTION_TAG_TURN_ID,
   type Interaction,
   type Interactions,
-} from '#/features/interaction/index';
+} from '#/todo-features/interaction/index';
 
 import { sessionFacade, unitsReady, useHttpRoute, useRootUnit } from '../scope';
 import { parseActionSuffix } from '../route/action-suffix';

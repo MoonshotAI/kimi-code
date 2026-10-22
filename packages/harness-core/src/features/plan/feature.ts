@@ -1,9 +1,10 @@
 import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature } from '#/app/index';
-import { createFacadeToken, useExpose, type ComputedRef } from '#/kernel/index';
+import { computed, createFacadeToken, useExpose, useInject, type ComputedRef } from '#/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
-import { useConfigSection } from '#/features/config/index';
-import { useInteractions } from '#/features/interaction/index';
+import { useConfigSection } from '#/todo-features/config/index';
+import { useInteractions } from '#/todo-features/interaction/index';
+import { PermissionRef } from '#/todo-features/permission/index';
 import { useAgentTools, useBlobs, useFeatureStore } from '#/runtime/index';
 
 import { defaultPlanModeSection } from './configSection';
@@ -36,7 +37,6 @@ export const PlanRef = createFacadeToken<PlanFace>('plan');
 
 export interface CreatePlanProps {
   readonly storage?: PlanStorage;
-  readonly permissionMode?: () => string | undefined;
 }
 
 export function createPlan(props: CreatePlanProps = {}): Feature<void, { agent: PlanEvent }> {
@@ -55,6 +55,8 @@ export function createPlan(props: CreatePlanProps = {}): Feature<void, { agent: 
       if (interactions === undefined) {
         throw new Error('plan feature requires the interaction feature');
       }
+      const permission = useInject(PermissionRef);
+      const permissionMode = computed(() => permission.value?.state.value.mode);
       let injection = injections.get(agent);
       if (injection === undefined) {
         injection = createPlanInjectionState();
@@ -141,7 +143,7 @@ export function createPlan(props: CreatePlanProps = {}): Feature<void, { agent: 
           interactions,
           sessionId: session.id,
           agentId: agent.id,
-          permissionMode: props.permissionMode,
+          permissionMode,
         }),
       );
       useStepStarting(

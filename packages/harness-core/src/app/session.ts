@@ -60,6 +60,7 @@ export function createAppSession(session: Session): AppSession {
     open: (agentId, caps, init) => session.open(agentId, caps, init),
     fork: (sourceId, agentId, caps, init) => session.fork(sourceId, agentId, caps, init),
     undo: (agentId, turns) => session.undo(agentId, turns),
+    update: (patch) => session.update(patch),
     status: () => session.status(),
     closeAgent: (agentId) => session.closeAgent(agentId),
     close: () => session.close(),

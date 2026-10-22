@@ -14,13 +14,19 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import { memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
-import { createConfig, ConfigRef, type ConfigStore } from '#/features/config/index';
+import { createConfig, ConfigRef, type ConfigStore } from '#/todo-features/config/index';
 import {
   interaction,
   InteractionRef,
   type Interaction,
   type Interactions,
-} from '#/features/interaction/index';
+} from '#/todo-features/interaction/index';
+import {
+  createPermission,
+  PermissionRef,
+  type PermissionFace,
+  type PermissionMode,
+} from '#/todo-features/permission/index';
 import {
   createMemoryPlanStorage,
   createPlan,
@@ -115,6 +121,16 @@ function captureInteractions(): { feature: Feature; face: () => Interactions | u
   return { feature, face: () => exposed?.value };
 }
 
+function capturePermission(): { feature: Feature; face: () => PermissionFace | undefined } {
+  let exposed: Readonly<ShallowRef<PermissionFace | undefined>> | undefined;
+  const feature = createFeature('permission-probe', {
+    session: () => {
+      exposed = useInject(PermissionRef);
+    },
+  });
+  return { feature, face: () => exposed?.value };
+}
+
 function captureConfig(): { feature: Feature; face: () => ConfigStore | undefined } {
   let exposed: Readonly<ShallowRef<ConfigStore | undefined>> | undefined;
   const feature = createFeature('config-probe', {
@@ -140,17 +156,20 @@ interface PlanTestEnv {
 async function startPlanTest(options?: {
   withConfig?: boolean;
   withInteraction?: boolean;
-  permissionMode?: () => string | undefined;
+  permissionMode?: PermissionMode;
 }): Promise<PlanTestEnv> {
   const harness = createApp({ space: memorySessionSpace() });
   const storage = createMemoryPlanStorage();
   if (options?.withConfig === true) harness.features.add(createConfig({}));
   if (options?.withInteraction !== false) harness.features.add(interaction);
+  harness.features.add(createPermission());
   const probe = capturePlan();
   const interactionsProbe = captureInteractions();
-  harness.features.add(createPlan({ storage, permissionMode: options?.permissionMode }));
+  const permissionProbe = capturePermission();
+  harness.features.add(createPlan({ storage }));
   harness.features.add(probe.feature);
   harness.features.add(interactionsProbe.feature);
+  harness.features.add(permissionProbe.feature);
   harness.features.add(bindTestTools());
   const session = await harness.open('s1');
   const puts: { bytes: Uint8Array; ref: string }[] = [];
@@ -163,6 +182,9 @@ async function startPlanTest(options?: {
   let { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
   setRequester(harness, 's1', 'main', createMockRequester());
   await tick();
+  const permission = permissionProbe.face();
+  if (permission === undefined) throw new Error('permission facade is not exposed');
+  await permission.setMode(options?.permissionMode ?? 'yolo');
   return {
     harness,
     storage,
@@ -582,7 +604,7 @@ describe('plan feature', () => {
   });
 
   it('skips ExitPlanMode approval interaction in auto permission mode and records the revision', async () => {
-    const env = await startPlanTest({ permissionMode: () => 'auto' });
+    const env = await startPlanTest({ permissionMode: 'auto' });
     const plan = planOf(env);
     const captured: Interaction[] = [];
     env.harness.on(interaction, 'interaction.requested', (event) => {
@@ -608,7 +630,7 @@ describe('plan feature', () => {
   });
 
   it('keeps the ExitPlanMode approval interaction in manual mode with permission mounted', async () => {
-    const env = await startPlanTest({ permissionMode: () => 'manual' });
+    const env = await startPlanTest({ permissionMode: 'manual' });
     const plan = planOf(env);
     const interactions = env.interactionsProbe.face();
     if (interactions === undefined) throw new Error('interactions facade is not exposed');

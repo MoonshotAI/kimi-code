@@ -1,4 +1,4 @@
-import { isPlainObject } from '#/features/config/index';
+import { isPlainObject } from '#/todo-features/config/index';
 
 import { ModelsDevError } from './errors';
 import type { ModelsDevCatalog, ModelsDevProviderEntry } from './models-dev';

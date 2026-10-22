@@ -3,8 +3,8 @@ import { useCleanup, useCollection, useExpose, useInject, useOn } from '#/kernel
 
 import { WebSocketServer } from 'ws';
 
-import { ConfigRef } from '#/features/config/index';
-import { KimiFileRegistryRef, parseKimiFileUrl } from '#/features/files/index';
+import { ConfigRef } from '#/todo-features/config/index';
+import { KimiFileRegistryRef, parseKimiFileUrl } from '#/todo-features/files/index';
 import { CatalogModels } from '#/features/provider-catalog/index';
 
 import { sessionFacade, useRootUnit } from '../scope';

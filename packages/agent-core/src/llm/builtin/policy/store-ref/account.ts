@@ -31,7 +31,7 @@ export async function endpointIdentity(endpoint: ResolvedEndpoint): Promise<stri
         ? `api-key\0${stableJwtSubject(endpoint.apiKey) ?? endpoint.apiKey}`
         : undefined;
   if (identity === undefined) return 'no-key';
-  return (await sha256Hex(new TextEncoder().encode(identity))).slice(0, 16);
+  return sha256Hex(new TextEncoder().encode(identity)).slice(0, 16);
 }
 
 export async function accountOf(model: LlmModelSpec, endpoint: ResolvedEndpoint): Promise<string> {

@@ -418,7 +418,7 @@ describe('app units', () => {
     await app.close();
   });
 
-  it('updates catalog metadata of cold and live sessions once each', async () => {
+  it('journals session meta updates and keeps the catalog index in sync', async () => {
     const space = memorySessionSpace();
     const app = createApp({ space });
     const cold = await app.create({ title: 'cold' });
@@ -430,11 +430,23 @@ describe('app units', () => {
     });
     await app.update(cold.id, { title: 'cold-renamed' });
     expect((await space.get(cold.id))?.title).toBe('cold-renamed');
+    const coldReopened = await app.open(cold.id);
+    expect(coldReopened.roster.getState().meta.title).toBe('cold-renamed');
     await app.update(live.id, { title: 'live-renamed' });
+    expect(live.roster.getState().meta.title).toBe('live-renamed');
+    await app.update(live.id, { metadata: { a: '1' } });
+    await app.update(live.id, { metadata: { b: '2' } });
+    expect(live.roster.getState().meta.metadata).toEqual({ a: '1', b: '2' });
+    expect((await space.get(live.id))?.metadata).toEqual({ a: '1', b: '2' });
     expect(seen).toEqual([
       { sessionId: cold.id, title: 'cold-renamed' },
       { sessionId: live.id, title: 'live-renamed' },
+      { sessionId: live.id, title: 'live-renamed' },
+      { sessionId: live.id, title: 'live-renamed' },
     ]);
+    await live.update({ title: 'live-direct' });
+    await expect.poll(async () => (await space.get(live.id))?.title, { timeout: 1000 }).toBe('live-direct');
+    expect(seen).toHaveLength(4);
     await app.close();
   });
 

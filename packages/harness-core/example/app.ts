@@ -23,14 +23,14 @@ import {
   createTomlConfigPersist,
   DEFAULT_MODEL_CONFIG_SECTION,
   type ConfigStore,
-} from '#/features/config/index';
-import { createEdit } from '#/features/edit/index';
-import { createExternalHooks } from '#/features/externalHooks/index';
-import { createFileHistory } from '#/features/fileHistory/index';
-import { createFiles } from '#/features/files/index';
-import { InteractionRef, type Interactions } from '#/features/interaction/index';
-import { createMcp } from '#/features/mcp/index';
-import { createMedia } from '#/features/media/index';
+} from '#/todo-features/config/index';
+import { createEdit } from '#/todo-features/edit/index';
+import { createExternalHooks } from '#/todo-features/externalHooks/index';
+import { createFileHistory } from '#/todo-features/fileHistory/index';
+import { createFiles } from '#/todo-features/files/index';
+import { InteractionRef, type Interactions } from '#/todo-features/interaction/index';
+import { createMcp } from '#/todo-features/mcp/index';
+import { createMedia } from '#/todo-features/media/index';
 import { createModelsDev } from '#/features/models-dev/index';
 import {
   createNodeOsHost,
@@ -38,22 +38,22 @@ import {
   detectOpenInApps,
   type OpenInAppId,
   type OsHost,
-} from '#/features/os/index';
-import { createPermission } from '#/features/permission/index';
+} from '#/todo-features/os/index';
+import { createPermission } from '#/todo-features/permission/index';
 import {
   CatalogModels,
   matchCatalogBinding,
   type CatalogModelBinding,
 } from '#/features/provider-catalog/index';
-import { createProfiles } from '#/features/profiles/index';
+import { createProfiles } from '#/todo-features/profiles/index';
 import { createSessionExport } from '#/features/sessionExport/index';
-import { createSessionIndex } from '#/features/sessionIndex/index';
+import { createSessionIndex } from '#/todo-features/sessionIndex/index';
 import { createSessionInit } from '#/features/sessionInit/index';
-import { createShellCommand } from '#/features/shellCommand/index';
-import { createSkill } from '#/features/skill/index';
-import { createSpawn } from '#/features/spawn/index';
-import { createToolSelect, isToolSelectEnabled } from '#/features/tool-select/index';
-import { createWorkspaces } from '#/features/workspaces/index';
+import { createShellCommand } from '#/todo-features/shellCommand/index';
+import { createSkill } from '#/todo-features/skill/index';
+import { createSpawn } from '#/todo-features/spawn/index';
+import { createToolSelect, isToolSelectEnabled } from '#/todo-features/tool-select/index';
+import { createWorkspaces } from '#/todo-features/workspaces/index';
 import { harnessPreset } from '#/preset';
 
 import { loadKimiCodeDefault } from './kimi-code-config';

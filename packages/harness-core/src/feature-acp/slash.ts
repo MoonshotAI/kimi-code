@@ -1,7 +1,7 @@
 import {
   isUserActivatableSkillType,
   type SkillSummary,
-} from '#/features/skill/index';
+} from '#/todo-features/skill/index';
 
 import { ACP_BUILTIN_SLASH_COMMAND_NAMES } from './builtin-commands';
 

@@ -1,4 +1,5 @@
 import type { BlobStore } from '#/blob/index';
+import { silentLogger, type Logger } from '#/log/index';
 import {
   createLoop,
   isLoopRecord,
@@ -20,6 +21,7 @@ import {
   type AgentInfo,
   type AgentInit,
   type SessionEvent,
+  type SessionMeta,
   type SessionState,
 } from './model';
 
@@ -67,6 +69,7 @@ export interface Session {
   open(agentId: string, caps: AgentCaps, init?: AgentInit): Promise<Agent>;
   fork(sourceId: string, agentId: string, caps: AgentCaps, init?: { readonly source?: string }): Promise<Agent>;
   undo(agentId: string, turns: number): Promise<void>;
+  update(patch: SessionMeta): Promise<void>;
   status(): SessionStatus;
   closeAgent(agentId: string): Promise<void>;
   close(): Promise<void>;
@@ -76,6 +79,7 @@ export interface CreateSessionOptions {
   readonly id: string;
   readonly journal: Journal;
   readonly blobs: BlobStore;
+  readonly logger?: Logger;
   readonly source?: SessionSource;
   readonly lastTurn?: LastTurn;
   readonly liveAgentsMap?: () => Map<string, Agent>;
@@ -111,7 +115,7 @@ function openAgent(
   caps: AgentCaps,
   reopened: boolean,
   info: AgentInfo,
-  onError: (error: unknown) => void = console.error,
+  logger: Logger,
 ): Agent {
   const view = log.replica.view(loopProjection());
   const { messages, nextTurnId, unfinished, notify, profile } = view.getState();
@@ -123,7 +127,7 @@ function openAgent(
       const events = batch;
       batch = [];
       tail = log.commit({ events }).catch((error: unknown) => {
-        onError(error);
+        logger.error('agent log commit failed', undefined, error);
         void loop.close();
       });
     }
@@ -172,8 +176,25 @@ function reasonOf(outcome: LastTurn['outcome']): SessionTurnOutcome {
   return outcome;
 }
 
+function metaEventOf(patch: SessionMeta): SessionEvent {
+  if (patch === null || typeof patch !== 'object') {
+    throw new TypeError('session meta patch must be an object');
+  }
+  if (patch.title !== undefined && typeof patch.title !== 'string') {
+    throw new TypeError('session meta title must be a string');
+  }
+  if (
+    patch.metadata !== undefined &&
+    (patch.metadata === null || typeof patch.metadata !== 'object' || Array.isArray(patch.metadata))
+  ) {
+    throw new TypeError('session meta metadata must be a plain object');
+  }
+  return { type: 'session.meta_updated', title: patch.title, metadata: patch.metadata };
+}
+
 export async function createSession(options: CreateSessionOptions): Promise<Session> {
-  const writer = openWriter(options.journal);
+  const logger = options.logger ?? silentLogger;
+  const writer = openWriter(options.journal, { logger });
   try {
     const log = await writer.open<SessionEvent>(SESSION_LOG);
     const roster = log.replica.view(sessionProjection());
@@ -204,7 +225,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
 
     const attach = (agentId: string, agentLog: Log<LoopRecord>, caps: AgentCaps, reopened: boolean): Agent => {
       const info = roster.getState().agents[agentId] ?? {};
-      const agent = openAgent(agentId, agentLog, caps, reopened, info);
+      const agent = openAgent(agentId, agentLog, caps, reopened, info, logger.child({ session: options.id, agent: agentId }));
       liveAgents.set(agentId, agent);
       if (agentId === MAIN_AGENT_ID) {
         settleLastTurn(lastTurnOf(agent.view.getState()));
@@ -285,6 +306,11 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
       await agent.flush();
     };
 
+    const update: Session['update'] = async (patch) => {
+      assertOpen();
+      await log.commit({ events: [metaEventOf(patch)] });
+    };
+
     const removeAgent = async (agentId: string): Promise<void> => {
       const agent = liveAgents.get(agentId);
       if (agent === undefined) return;
@@ -356,6 +382,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
       open,
       fork,
       undo,
+      update,
       status,
       closeAgent,
       close,
@@ -363,5 +390,16 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
   } catch (error) {
     await writer.close();
     throw error;
+  }
+}
+
+export async function updateSessionMeta(journal: Journal, patch: SessionMeta): Promise<void> {
+  const event = metaEventOf(patch);
+  const writer = openWriter(journal);
+  try {
+    const log = await writer.open<SessionEvent>(SESSION_LOG);
+    await log.commit({ events: [event] });
+  } finally {
+    await writer.close();
   }
 }

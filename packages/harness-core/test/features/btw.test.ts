@@ -162,10 +162,9 @@ interface BtwTestEnv {
 }
 
 async function startBtwTest(opts?: {
-  readonly sourceAgentId?: string;
   readonly space?: SessionSpace;
 }): Promise<BtwTestEnv> {
-  const btwFeature = createBtw({ sourceAgentId: opts?.sourceAgentId });
+  const btwFeature = createBtw();
   const probe = captureBtw();
   const executed: string[] = [];
   const harness = createApp({ space: opts?.space ?? memorySessionSpace() });
@@ -178,12 +177,6 @@ async function startBtwTest(opts?: {
   return { harness, session, btwFeature, executed, main: () => main, face: probe.face };
 }
 
-function liveChild(session: Session, agentId: string): Agent {
-  const child = session.liveAgents.get(agentId);
-  if (child === undefined) throw new Error(`btw child '${agentId}' is not live`);
-  return child;
-}
-
 describe('btw feature', () => {
   it('forks the source agent with full history, injects the side-question reminder, and fires btw.created', async () => {
     const env = await startBtwTest();
@@ -194,15 +187,14 @@ describe('btw feature', () => {
     await env.main().loop.runTurn(user('hello'));
     await env.main().flush();
 
-    const { agentId } = await env.face().ask();
-    expect(agentId).toMatch(/^btw-/);
-    expect(env.face().list()).toEqual([agentId]);
-    expect(env.face().isBtw(agentId)).toBe(true);
+    const child = await env.face().create();
+    expect(child.id).toMatch(/^btw-/);
+    expect(env.face().list()).toEqual([child.id]);
+    expect(env.face().isBtw(child.id)).toBe(true);
     expect(env.face().isBtw(MAIN_AGENT_ID)).toBe(false);
     expect(createdEvents).toHaveLength(1);
-    expect(createdEvents[0]).toMatchObject({ agentId, sourceId: MAIN_AGENT_ID });
+    expect(createdEvents[0]).toMatchObject({ agentId: child.id, sourceId: MAIN_AGENT_ID });
 
-    const child = liveChild(env.session, agentId);
     await child.flush();
     expect(userTexts(child)).toContain('hello');
     expect(assistantTexts(child)).toContain('echo:hello');
@@ -216,9 +208,8 @@ describe('btw feature', () => {
 
   it('denies non-readonly tools on the btw agent while allowing whitelisted ones, and leaves other agents untouched', async () => {
     const env = await startBtwTest();
-    const { agentId } = await env.face().ask();
-    const child = liveChild(env.session, agentId);
-    setRequester(env.harness, 'sess', agentId, createMockRequester());
+    const child = await env.face().create();
+    setRequester(env.harness, 'sess', child.id, createMockRequester());
 
     await child.loop.runTurn(user('run bash'));
     await child.flush();
@@ -229,6 +220,16 @@ describe('btw feature', () => {
       `<system-reminder>\n${SIDE_QUESTION_SYSTEM_REMINDER}\n</system-reminder>`,
     );
     expect(assistantTexts(child)).toContain('done:file contents');
+
+    const openChild = await env.face().create({ readonlyTools: ['Read', 'Bash'] });
+    setRequester(env.harness, 'sess', openChild.id, createMockRequester());
+
+    env.executed.length = 0;
+    await openChild.loop.runTurn(user('run bash'));
+    await openChild.flush();
+
+    expect(env.executed).toEqual(['Bash']);
+    expect(toolTexts(openChild)).toEqual(['bash output']);
 
     env.executed.length = 0;
     await env.main().loop.runTurn(user('run bash'));
@@ -243,13 +244,13 @@ describe('btw feature', () => {
   it('rejects with a clear error when the source agent does not exist', async () => {
     const missingMain = await startBtwTest();
     await missingMain.session.closeAgent(MAIN_AGENT_ID);
-    await expect(missingMain.face().ask()).rejects.toThrow(
+    await expect(missingMain.face().create()).rejects.toThrow(
       "Cannot start a side question: source agent 'main' does not exist or is not running in this session.",
     );
     await missingMain.harness.close();
 
-    const missingSource = await startBtwTest({ sourceAgentId: 'ghost' });
-    await expect(missingSource.face().ask()).rejects.toThrow(
+    const missingSource = await startBtwTest();
+    await expect(missingSource.face().create({ sourceAgentId: 'ghost' })).rejects.toThrow(
       "Cannot start a side question: source agent 'ghost' does not exist or is not running in this session.",
     );
     await missingSource.harness.close();
@@ -258,15 +259,15 @@ describe('btw feature', () => {
   it('recovers membership and the readonly guard from the persisted roster after remount', async () => {
     const space = memorySessionSpace();
     const first = await startBtwTest({ space });
-    const { agentId } = await first.face().ask();
+    const created = await first.face().create();
     await first.harness.close();
 
     const second = await startBtwTest({ space });
-    expect(second.face().isBtw(agentId)).toBe(true);
-    expect(second.face().list()).toEqual([agentId]);
+    expect(second.face().isBtw(created.id)).toBe(true);
+    expect(second.face().list()).toEqual([created.id]);
 
-    const { agent: child } = await second.session.ensureAgent(agentId);
-    setRequester(second.harness, 'sess', agentId, createMockRequester());
+    const { agent: child } = await second.session.ensureAgent(created.id);
+    setRequester(second.harness, 'sess', created.id, createMockRequester());
     await child.loop.runTurn(user('run bash'));
     await child.flush();
     expect(second.executed).toEqual(['Read']);

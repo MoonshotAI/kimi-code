@@ -84,7 +84,8 @@ noted otherwise.
 | cron | `cron.add`, `cron.delete`, `cron.cursor` *(store)* | the durable cron journal |
 | task | `task.started` / `task.settled` | a background task began / settled (`record`) |
 | compaction | `compaction.started` / `compaction.completed` | a context compaction ran (`reason`, `stats`, `durationMs`) |
-| compaction | `compaction.blocked` / `compaction.cancelled` | compaction could not start / was cancelled |
+| compaction | `compaction.enqueued` / `compaction.rejected` | a manual compaction was queued behind an active turn (`turnId`) / was refused (`reason`) |
+| compaction | `compaction.cancelled` | a compaction was cancelled (`reason`, `cause`, `durationMs`) |
 | mcp | `mcp.server.state` | an MCP server's connection state changed (`server`, `state`, `error?`) |
 | mcp | `mcp.oauth.authorization_url` | an MCP OAuth flow needs the user to open a URL |
 | skill | `skill.activated` | a skill was activated in an agent (`agentId`, `skillName`, `trigger`) |

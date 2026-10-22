@@ -1,6 +1,6 @@
 import type { KimiRegion } from '@moonshot-ai/kimi-code-oauth';
 
-import type { OsFsPort, OsProcessPort } from '#/features/os/host/index';
+import type { OsFsPort, OsProcessPort } from '#/todo-features/os/host/index';
 
 export interface CapabilityPluginSummary {
   readonly id: string;

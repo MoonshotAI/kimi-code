@@ -396,6 +396,42 @@ describe('tool.permitting', () => {
     await loop.close();
   });
 
+
+ it('skips the permitting phase when a starting hook returns skipPermitting', async () => {
+    const permitting: string[] = [];
+    const executed: string[] = [];
+    const events: LoopEmitted[] = [];
+    const tools = createExecutor(
+      [
+        {
+          point: 'tool.starting',
+          id: 'guard',
+          hook: () => ({ skipPermitting: true }),
+        },
+        {
+          point: 'tool.permitting',
+          hook: (event) => {
+            permitting.push(event.toolCall.id);
+          },
+        },
+      ],
+      async ({ toolCall }) => {
+        executed.push(toolCall.name);
+        return { content: [] };
+      },
+    );
+    const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
+    const loop = createLoop({ requester: () => scripted, executor: tools });
+    loop.subscribe((event) => events.push(event));
+    expect((await loop.runTurn(prompt('work'))).type).toBe('done');
+    expect(permitting).toEqual([]);
+    expect(executed).toEqual(['alpha']);
+    expect(events.find((event) => event.type === 'tool.ended')).toMatchObject({
+      outcome: { type: 'succeeded' },
+    });
+    await loop.close();
+  });
+
   it('settles a permitting block with attribution and lands the result in the history', async () => {
     const executed: string[] = [];
     const events: LoopEmitted[] = [];

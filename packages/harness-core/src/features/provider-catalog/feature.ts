@@ -59,7 +59,7 @@ import {
   type ModelsSection,
   type ProvidersSection,
   type ThinkingConfig,
-} from '#/features/config/index';
+} from '#/todo-features/config/index';
 import { useAgentRuntime, useFeatureStore, useLlmRecovery } from '#/runtime/index';
 
 import {

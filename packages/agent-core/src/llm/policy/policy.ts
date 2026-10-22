@@ -88,19 +88,19 @@ const toolSignature = ({ name, description, parameters }: ToolDescription) => ({
   parameters,
 });
 
-export async function llmStartedEvent(request: LlmRequest): Promise<LlmRunStarted> {
+export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
   const { model, profile, content } = request;
   const encoder = new TextEncoder();
-  const [systemPromptHash, toolsHash] = await Promise.all([
-    profile?.systemPrompt === undefined ? undefined : sha256Hex(encoder.encode(profile.systemPrompt)),
+  const systemPromptHash =
+    profile?.systemPrompt === undefined ? undefined : sha256Hex(encoder.encode(profile.systemPrompt));
+  const toolsHash =
     profile?.tools === undefined
       ? undefined
       : sha256Hex(
           encoder.encode(
             JSON.stringify(profile.tools.filter((tool) => tool.deferred !== true).map(toolSignature)),
           ),
-        ),
-  ]);
+        );
   return {
     type: 'llm.started',
     provider: model.spec.provider,
@@ -120,7 +120,7 @@ export async function runLlmRequest(
   request: LlmRequest,
   control: LlmRunControl,
 ): Promise<LlmOutcome> {
-  control.onEvent?.(await llmStartedEvent(request));
+  control.onEvent?.(llmStartedEvent(request));
   let outcome: LlmOutcome;
   try {
     outcome = await runAttempts(request, control);

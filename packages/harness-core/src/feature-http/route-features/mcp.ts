@@ -10,7 +10,7 @@ import {
   McpServerSseConfigSchema,
   McpServerStdioConfigSchema,
   type McpFacade,
-} from '#/features/mcp/index';
+} from '#/todo-features/mcp/index';
 
 import { useHttpRoute } from '../scope';
 import { parseActionSuffix } from '../route/action-suffix';
