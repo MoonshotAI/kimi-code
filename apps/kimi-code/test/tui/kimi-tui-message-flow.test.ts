@@ -1054,9 +1054,7 @@ describe('KimiTUI message flow', () => {
     ['takes over the lock and resends', true],
     ['gives the message back', false],
   ] as const)('offers takeover once a retry is still occupied and %s', async (_label, takeOver) => {
-    const occupied = new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use', {
-      details: { holder: { clientIdentity: 'kimi_code_cli', pid: 4321, hostname: 'host-a' } },
-    });
+    const occupied = new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
     const prompt = vi
       .fn(async (_input: unknown) => {})
       .mockRejectedValueOnce(occupied)
@@ -1073,14 +1071,13 @@ describe('KimiTUI message flow', () => {
     });
     const first = stripSgr(picker().render(80).join(' '));
     expect(first).not.toContain('Take over');
-    expect(first).not.toContain('still has this session open');
     picker().handleInput('\r');
 
     await vi.waitFor(() => {
       expect(stripSgr(picker().render(80).join(' '))).toContain('Session still in use');
     });
-    expect(stripSgr(picker().render(80).join(' '))).toContain(
-      'Process 4321 on host-a still has this session open.',
+    expect(stripSgr(picker().render(120).join(' '))).toContain(
+      'If another Kimi Code process is still running, taking over may mix up the history.',
     );
     if (takeOver) picker().handleInput('\u001B[B');
     picker().handleInput('\r');

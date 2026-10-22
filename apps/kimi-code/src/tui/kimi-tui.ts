@@ -197,11 +197,7 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
-import {
-  isSessionOccupiedError,
-  occupiedHolderClientId,
-  occupiedHolderSummary,
-} from './utils/session-lock-errors';
+import { isSessionOccupiedError, occupiedHolderClientId } from './utils/session-lock-errors';
 import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -2292,12 +2288,11 @@ export class KimiTUI {
       this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
       restore();
     };
-    const holderSummary = occupiedHolderSummary(error);
-    const risk = 'If that process is still running, taking over may mix up the history.';
     this.mountEditorReplacement(
       new ChoicePickerComponent({
         title: 'Session still in use',
-        notice: holderSummary === undefined ? risk : `${holderSummary}\n${risk}`,
+        notice:
+          'If another Kimi Code process is still running, taking over may mix up the history.',
         noticeTone: 'warning',
         options: [
           { value: 'cancel', label: 'Cancel', description: 'get your message back' },
