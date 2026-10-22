@@ -38,6 +38,8 @@ function runTsc(configPath: string): CheckResult {
     timeout: 120_000,
   });
   const output = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+  expect(result.error, output).toBeUndefined();
+  expect(result.status, output).toBe(0);
   const lines = output.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
   return {
     diagnostics: lines.filter((line) => line.includes('error TS')),
