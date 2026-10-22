@@ -33,6 +33,7 @@ export interface ISessionLockService {
   release(sessionId: string): void;
   lease(sessionId: string): SessionLockLease;
   held(sessionId: string): boolean;
+  takeover(sessionId: string): void;
 }
 
 export const ISessionLockService: ServiceIdentifier<ISessionLockService> =
@@ -61,6 +62,7 @@ export abstract class SessionLockHolds extends Disposable implements ISessionLoc
 
   protected abstract publish(sessionId: string): string;
   protected abstract unpublish(sessionId: string, token: string): void;
+  protected abstract evict(sessionId: string): void;
 
   hold(sessionId: string): void {
     this.stateFor(sessionId).held = true;
@@ -100,6 +102,11 @@ export abstract class SessionLockHolds extends Disposable implements ISessionLoc
 
   held(sessionId: string): boolean {
     return this.heldSessions.has(sessionId);
+  }
+
+  takeover(sessionId: string): void {
+    if (this.heldSessions.has(sessionId)) return;
+    this.evict(sessionId);
   }
 
   override dispose(): void {

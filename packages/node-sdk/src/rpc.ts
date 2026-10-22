@@ -384,6 +384,8 @@ export abstract class SDKRpcClientBase {
 
   abstract undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void>;
 
+  abstract takeOverSessionLock(input: SessionIdRpcInput): Promise<void>;
+
   abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
 
   abstract getUsage(input: SessionIdRpcInput): Promise<SessionUsage>;

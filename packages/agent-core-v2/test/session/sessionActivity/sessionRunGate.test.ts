@@ -38,6 +38,7 @@ function bootstrapStub(homeDir: string, platform = 'test_client'): IBootstrapSer
   return {
     homeDir,
     clientIdentity: { productName: 'test', version: '0.0.0', platform },
+    getEnv: (_name: string): string | undefined => undefined,
   } as IBootstrapService;
 }
 

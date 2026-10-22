@@ -301,6 +301,8 @@ export interface QueuedMessage {
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
   readonly compactInstruction?: string;
   readonly compactRetries?: number;
+  /** Resent after the user chose Retry on a session-in-use prompt. */
+  readonly occupiedRetry?: boolean;
   /** Auto-compaction serial at enqueue time; a mismatch at dequeue skips the fire. */
   readonly queuedAfterAutoSerial?: number;
 }
