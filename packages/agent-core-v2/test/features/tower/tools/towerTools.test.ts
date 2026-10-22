@@ -1164,23 +1164,24 @@ describe('readTowerStatusSummary', () => {
 });
 
 describe('TowerCompleteTool', () => {
-  async function setupCompletable(kind: 'build' | 'survey' = 'build') {
+  async function setupCompletable(kind: 'build' | 'survey' | 'artifact' = 'build') {
     await initViaTool();
     const store = new TowerStore(repo);
     const [mission] = await store.plan([
       {
-        title: kind === 'survey' ? 'Survey engine' : 'Build engine',
+        title:
+          kind === 'survey' ? 'Survey engine' : kind === 'artifact' ? 'Artifact engine' : 'Build engine',
         scope: ['src/engine/**'],
         kind,
       },
     ]);
     const state = await store.load();
     await store.addWorktree(mission!.worktree, mission!.branch, state.base);
-    if (kind === 'build') {
+    if (kind !== 'survey') {
       await commitFile(
         join(repo, '.tower/worktrees', mission!.worktree),
-        'src/engine/engine.ts',
-        'export const engine = 1;\n',
+        kind === 'artifact' ? 'src/engine/report.html' : 'src/engine/engine.ts',
+        kind === 'artifact' ? '<h1>Engine report</h1>\n' : 'export const engine = 1;\n',
         'engine work',
       );
     }
@@ -1219,6 +1220,26 @@ describe('TowerCompleteTool', () => {
       from: 'w1',
       to: 'tower',
       body: 'implemented the engine',
+      scope: 'M1',
+      action: 'complete',
+    });
+  });
+
+  it('completes an artifact with its committed paths and stores acceptance-request', async () => {
+    const { store } = await setupCompletable('artifact');
+    const report = 'Committed artifact for acceptance:\n- src/engine/report.html';
+
+    const result = await run(ix.get(ITowerCompleteTool), { report });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('mission M1 persisted as completed');
+    expect(result.output).toContain('acceptance-request notification:');
+    expect(result.output).not.toContain('review-request notification:');
+    const messages = await store.readInbox('tower', 20);
+    expect(messages.find((item) => item.subject === 'acceptance-request')).toMatchObject({
+      from: 'w1',
+      to: 'tower',
+      body: report,
       scope: 'M1',
       action: 'complete',
     });
@@ -1420,6 +1441,46 @@ describe('TowerReviewTool', () => {
     expect(result.output).not.toContain('resume w1');
   });
 
+  it('distinguishes advisory artifact review from tower-recorded human acceptance', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Artifact engine', scope: ['src/engine/**'], kind: 'artifact' }],
+    });
+    await git(repo, 'branch', 'feat/artifact-engine');
+    const store = new TowerStore(repo);
+    await store.registerAgent({
+      name: 'r1',
+      kind: 'reviewer',
+      agentId: 'agent-r1',
+      reviewTarget: 'feat/artifact-engine',
+      reviewMissionId: 'M1',
+      spawnedAt: new Date().toISOString(),
+    });
+    currentAgentId = 'agent-r1';
+
+    const advisory = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'advisory review only',
+    });
+    expect(advisory.output).toContain('still waiting for mission-matching explicit human acceptance');
+    expect(advisory.output).not.toContain('is merge-ready —');
+
+    currentAgentId = 'main';
+    const accepted = await run(ix.get(ITowerReviewTool), {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'the user explicitly approved the committed artifact paths',
+    });
+    expect(accepted.isError).toBeFalsy();
+    expect(accepted.output).toContain('explicit human acceptance for feat/artifact-engine');
+    expect(accepted.output).toContain('recorded on the exact tip');
+  });
+
   it('preserves the review and recovers without a new round or duplicate after review.write log failure', async () => {
     const store = await setupReviewableBranch();
     const failure = vi
@@ -1588,6 +1649,57 @@ describe('TowerMergeTool', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toContain('Continue with the remaining missions in Dependency Flow order');
     expect(result.output).not.toContain('ready for TowerTeardown');
+  });
+
+  it('waits for artifact acceptance and reacceptance before reporting a real merge', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: [{ title: 'Artifact engine', scope: ['src/engine/**'], kind: 'artifact' }],
+    });
+    await git(repo, 'checkout', '-b', 'feat/artifact-engine');
+    await commitFile(repo, 'src/engine/report.html', '<h1>Engine report</h1>\n', 'render report');
+    await git(repo, 'checkout', 'main');
+    const store = new TowerStore(repo);
+    await store.updateMission('tower', 'M1', { status: 'completed' }, { silent: true });
+    const baseTip = await git(repo, 'rev-parse', 'HEAD');
+
+    const waiting = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
+    expect(waiting.isError).toBe(true);
+    expect(waiting.output).toContain('waiting for explicit human acceptance');
+    expect(await git(repo, 'rev-parse', 'HEAD')).toBe(baseTip);
+
+    await store.submitReview('tower', {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'user approved the initial artifact paths',
+    });
+    await git(repo, 'checkout', 'feat/artifact-engine');
+    await commitFile(repo, 'src/engine/data.csv', 'name,value\na,1\n', 'add report data');
+    await git(repo, 'checkout', 'main');
+
+    const moved = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
+    expect(moved.isError).toBe(true);
+    expect(moved.output).toContain('fresh explicit human acceptance');
+    expect(moved.output).toContain('rebase never waives artifact acceptance');
+
+    await store.submitReview('tower', {
+      target: 'feat/artifact-engine',
+      status: 'clean',
+      merge: 'merge',
+      findings: 'none',
+      decision: 'user approved the current artifact paths',
+    });
+    const merged = await run(ix.get(ITowerMergeTool), { branch: 'feat/artifact-engine' });
+
+    expect(merged.isError).toBeFalsy();
+    expect(merged.output).toContain('merged feat/artifact-engine (merge commit');
+    expect(merged.output).toContain('full commit:');
+    expect(merged.output).not.toContain('no git merge needed');
+    expect(await readFile(join(repo, 'src/engine/report.html'), 'utf8')).toBe(
+      '<h1>Engine report</h1>\n',
+    );
   });
 
   it('points at TowerTeardown when a survey noop-merge closes the last mission', async () => {

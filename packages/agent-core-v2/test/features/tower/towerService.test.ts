@@ -4177,6 +4177,14 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('with `TowerInbox` only when it is needed');
     expect(text).toContain('structured reason and recovery details');
     expect(text).toContain('per reviewer');
+    expect(text).toContain('Normal merge-bound build reviews require this independent path');
+    expect(text).toContain('Surveys do not need review');
+    expect(text).toContain('kind: "artifact"');
+    expect(text).toContain('acceptance-request');
+    expect(text).toContain('explicit user approval');
+    expect(text).toContain('auto or noninteractive mode');
+    expect(text).toContain('Tower-recorded artifact acceptance and feedback are exempt');
+    expect(text).toContain('Artifact acceptance never receives that waiver');
     expect(text).toContain('merged or abandoned');
     expect(text).toContain('background execution is unavailable');
     expect(text).toContain('break-glass');

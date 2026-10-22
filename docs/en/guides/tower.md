@@ -4,7 +4,7 @@ Tower is an experimental multi-agent collaboration mode. It splits larger develo
 
 Once enabled, the main agent becomes the tower and coordinates these workers. While workers run in the background, you can check progress, ask the tower to relay messages, redirect work or reprioritize, and stop any agent at any time.
 
-The tower also arranges independent reviews of each worker's completed changes. Every mission has its own branch and Git worktree. Workers develop and commit in their respective worktrees, while reviewers inspect the corresponding branches read-only. The tower routes messages and completion reports, and merges only branches that pass its checks.
+For build missions, the tower also arranges independent reviews of each worker's completed changes. Every mission has its own branch and Git worktree. Workers develop and commit in their respective worktrees, while reviewers inspect the corresponding branches read-only. The tower routes messages and completion reports, and merges only branches that pass its checks.
 
 Tower is therefore neither an ordinary subagent call nor an AgentSwarm task. You must enable it explicitly. It persists repository state during collaboration and provides merge checks and cleanup commands. Tower's strengths are **responsiveness** and **parallel development**.
 
@@ -62,11 +62,23 @@ Tower may snapshot uncommitted and untracked files into worker branches; when cr
 
 2. **Send the development objective.** Enter the task as a normal chat message, for example: "Split the checkout documentation update into independent missions, test each one, and merge only branches that pass independent review." It is best to include how to verify the work and what completion means. Tower initializes `.tower/`, plans missions, and starts workers whose dependencies are satisfied in the background. When a worker finishes or Tower receives an inbox message, Tower resumes automatically, so you do not need to poll repeatedly.
 
-3. **Let the work proceed in the background.** Workers commit changes on their branches. Tower assigns independent reviewers, rebases when needed, and merges approved missions in dependency order. Handle approval prompts and questions about scope or priority when they appear.
+3. **Let the work proceed in the background.** Workers commit changes on their branches. For build missions, Tower assigns independent reviewers; for artifact missions, it waits for your explicit acceptance. Tower rebases when needed and merges approved missions in dependency order. Handle approval prompts and questions about scope or priority when they appear.
 
 4. **Verify the merged result.** Inspect `git status`, the base branch history, and the final diff, and run the tests or acceptance checks you care about. These checks are only a baseline safeguard and do not replace human acceptance.
 
 5. **Clean up and exit.** After every mission is merged or abandoned, run `/tower teardown` to clean up removable mission worktrees, then `/tower off` to exit Tower. See [Stop, teardown, and restart](#stop-teardown-and-restart) for the differences between these actions.
+
+## Choose a mission kind
+
+Tower supports three mission kinds. Choose according to what the worker may write and what must happen before the mission closes.
+
+- **Build (`kind: "build"`)**: reserves its scope for code changes, requires a committed diff and independent clean review, and performs a real merge.
+- **Artifact (`kind: "artifact"`)**: reserves its scope for business deliverables such as rendered results, training outputs, or analysis reports. It requires committed artifact paths and your explicit acceptance, but no independent reviewer, followed by a real merge.
+- **Survey (`kind: "survey"`)**: treats its scope as informational, remains read-only, and closes with zero diff, no review, and no Git merge.
+
+Use `artifact` when the work reads business inputs but must write deliverables. For example: "Create an artifact mission for the quarterly analysis. Commit `reports/q3/summary.html` and `reports/q3/data.csv`, then show me those files for acceptance."
+
+The worker commits those files inside the reserved scope and names both paths in its completion report; uncommitted files are not accepted or merged. Tower presents the committed paths and merges only after you explicitly approve. Requested changes trigger rework, and any new commit or rebase requires fresh acceptance. In automatic or noninteractive runs, Tower leaves the artifact waiting rather than approving it for you.
 
 ## Check status and intervene
 
@@ -81,9 +93,9 @@ Each workspace can have only one tower coordinator. If another session is alread
 
 ## Understand merges and rebases
 
-Before merging a mission, Tower confirms that it is complete and that its branch is up to date with the base. It also requires a valid clean review and merge approval, usually from an independent reviewer. Changes must stay within the mission scope, the main checkout must be on the recorded base, and there must be no conflicting uncommitted changes.
+Before merging a mission, Tower confirms that it is complete and that its branch is up to date with the base. A build mission requires a valid clean review and merge approval, usually from an independent reviewer. An artifact mission instead requires your explicit acceptance on the exact branch tip; an independent review cannot substitute for it. A survey remains zero-diff and needs no review. Changes must stay within the mission scope, the main checkout must be on the recorded base, and there must be no conflicting uncommitted changes.
 
-After the base advances, if the worker is idle and the worktree is clean, Tower can rebase the mission branch onto the new base in the corresponding worktree. If there are no conflicts, the existing clean review's binding is preserved. If a conflict occurs, the rebase is aborted and the worker resolves it.
+For a build or artifact mission, after the base advances, if the worker is idle and the worktree is clean, Tower can rebase the mission branch onto the new base in the corresponding worktree. If there are no conflicts, a build mission's existing clean review binding is preserved; an artifact mission always requires fresh acceptance after the tip moves. If a conflict occurs, the rebase is aborted and the worker resolves it.
 
 Let Tower handle merges and rebases; do not run additional Git integration commands yourself. Do not edit files under `.tower/comms/` directly: status, notifications, and merge checks depend on these records. You can inspect branches and worktrees read-only.
 
@@ -111,6 +123,8 @@ You can explicitly choose the model for an individual new spawn in a normal mess
 - "Use primary for the reviewer of feat/build-gemm."
 
 The only allowed choices are `primary` (Tower's current primary model) and aliases configured in `[secondary_model.models]`; aliases that exist only in `[models]` are not accepted. The choice applies only to that new agent: it does not change running or resumed agents and is not saved for future spawns. When `[secondary_model].force = true`, the forced model remains a hard configuration constraint, and Tower rejects every explicit choice, including `primary`, rather than silently overriding it.
+
+To continue a stopped worker on a different model, use `Agent(resume="<agent-id>", model="<pool-alias>", run_in_background=true, prompt="...")`. This preserves the agent ID, conversation, mission, branch, worktree, and uncommitted work. Omitting `model` keeps the previous model; `force = true` rejects explicit resume overrides too.
 
 To control token costs, you can assign workers a cheaper secondary model. When `force = true` is not set, reviewers remain on the primary model by default, preserving budget for independent review.
 

@@ -73,10 +73,12 @@ import {
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
   isSubagentModelForced,
+  resolveSubagentBinding,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
   stripSubagentModelParameter,
+  wrapSubagentModelError,
   type SubagentModelSource,
 } from '#/session/subagent/configSection';
 import {
@@ -341,7 +343,28 @@ export class SubagentTool implements ISubagentTool {
     if (isResume) {
       const target = await this.resolveResumeTarget(resumeAgentId, controller.signal);
       agentId = target.id;
-      const resumed = target.accessor.get(IAgentProfileService).data();
+      const targetProfile = target.accessor.get(IAgentProfileService);
+      if (args.model !== undefined) {
+        const own = requester.accessor.get(IAgentProfileService).data();
+        if (own.modelAlias === undefined) {
+          throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Caller agent has no model bound', {
+            details: { agentId: this.callerAgentId },
+          });
+        }
+        const binding = resolveSubagentBinding(
+          this.config,
+          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+          args.model,
+        );
+        try {
+          await targetProfile.setModel(binding.model);
+          if (binding.thinking !== undefined) targetProfile.setThinking(binding.thinking);
+        } catch (error) {
+          throw wrapSubagentModelError(error, binding.model, own.modelAlias);
+        }
+        displayModelSource = binding.modelSource;
+      }
+      const resumed = targetProfile.data();
       profileName = resumed.profileName ?? RESUMED_LABEL;
       displayModel = resumed.modelAlias;
     } else {

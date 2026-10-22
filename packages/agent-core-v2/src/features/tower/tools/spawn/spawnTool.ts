@@ -72,12 +72,13 @@ async function reviewExcerpt(store: TowerStore, file: string): Promise<string> {
   return truncateSection(body.trim(), REVIEW_EXCERPT_MAX_CHARS);
 }
 
-async function findReviewRequest(
+async function findCompletionReport(
   store: TowerStore,
   author: string,
+  subject: 'review-request' | 'acceptance-request' = 'review-request',
 ): Promise<TowerInboxItem | undefined> {
   return (await store.readInbox(TOWER_NAME, REVIEW_REQUEST_SCAN_LIMIT)).find(
-    (item) => item.from === author && item.subject.startsWith('review-request'),
+    (item) => item.from === author && item.subject.startsWith(subject),
   );
 }
 
@@ -510,12 +511,20 @@ export class TowerSpawnTool implements ITowerSpawnTool {
         `# Communication protocol\n` +
         '- Found something notable outside your scope? File it with TowerFinding instead of fixing it.\n' +
         '- Keep your mission current with TowerMission: task_done as you finish tasks, note for decisions, blocker when stuck.\n' +
-        '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to build, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n' +
+        (mission.kind === 'artifact'
+          ? '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to deliver, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n'
+          : '- Ambiguity is escalated, not guessed: if the mission and its Context leave substantive doubt about what to build, TowerSend(to="tower", subject="clarify-request", body=what needs pinning down) BEFORE acting — the tower relays to the human; you never ask the user directly.\n\n') +
         `# When the mission is done\n` +
-        "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs).\n" +
+        (mission.kind === 'artifact'
+          ? '1. `git add` + `git commit` every artifact needed for acceptance in the worktree, inside your scope. Uncommitted files are excluded from acceptance and merge.\n'
+          : "1. `git add` + `git commit` your mission's changes in the worktree (source files only — no build outputs).\n") +
         `2. Before completing, call TowerInbox once and incorporate anything new into the delivery — TowerComplete refuses while unread messages wait in your inbox. Re-read your mission too (TowerMission(id="${mission.id}") with no patch fields): the tower may have changed its tasks mid-flight.\n` +
-        '3. Call TowerComplete(report=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff). It records completed and stores review-request to the tower in one protocol flow — do not substitute a TowerMission status patch or a manual TowerSend.\n' +
-        '4. Finish with a structured final summary: files changed, key decisions, open follow-ups.' +
+        (mission.kind === 'artifact'
+          ? '3. Call TowerComplete(report=what you delivered and why, reconciled against the mission tasks item by item, naming every committed artifact path). It records completed and stores acceptance-request to the tower in one protocol flow — do not substitute a TowerMission status patch or a manual TowerSend. The tower will present those committed paths for explicit human acceptance; no independent reviewer is required.\n'
+          : '3. Call TowerComplete(report=what you changed and why, reconciled against the mission tasks item by item — the reviewer maps each task to your diff). It records completed and stores review-request to the tower in one protocol flow — do not substitute a TowerMission status patch or a manual TowerSend.\n') +
+        (mission.kind === 'artifact'
+          ? '4. Finish with a structured final summary: committed artifact paths, key decisions, open follow-ups.'
+          : '4. Finish with a structured final summary: files changed, key decisions, open follow-ups.') +
         extra
       );
     }
@@ -532,10 +541,17 @@ export class TowerSpawnTool implements ITowerSpawnTool {
             )
           ).trim()}\n\n`
         : '';
-    const reviewRequest = author !== undefined ? await findReviewRequest(store, author) : undefined;
+    const completionReport =
+      author !== undefined
+        ? await findCompletionReport(
+            store,
+            author,
+            targetMission?.kind === 'artifact' ? 'acceptance-request' : 'review-request',
+          )
+        : undefined;
     const selfReportSection =
-      reviewRequest !== undefined
-        ? `# The author's own account (their review-request to the tower)\n${reviewRequest.body.trim()}\n\n`
+      completionReport !== undefined
+        ? `# The author's own account (their ${targetMission?.kind === 'artifact' ? 'acceptance-request' : 'review-request'} to the tower)\n${completionReport.body.trim()}\n\n`
         : '';
     const historySection = await this.reviewHistorySection(store, target);
     const checklist =
@@ -554,7 +570,9 @@ export class TowerSpawnTool implements ITowerSpawnTool {
       `# Review checklist (in priority order)\n` +
       checklist +
       `# When done — TowerReview is the only mandatory protocol step\n` +
-      `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. Only a clean review with merge verdict "merge" on the exact branch tip lets the tower merge. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n` +
+      (targetMission?.kind === 'artifact'
+        ? `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. This independent review is advisory only: it cannot replace explicit human acceptance recorded by reviewer=tower on the exact branch tip. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`
+        : `1. Submit your verdict with TowerReview: { target: "${target}", status: "clean" | "p1-Nitems" | "p2-Nitems", merge: "merge" | "fix-then-merge" | "hold", findings, checks, decision }. Only a clean review with merge verdict "merge" on the exact branch tip lets the tower merge. Standard review-result notifications are stored automatically — do not send a second manual TowerSend.\n`) +
       'Then finish with a structured summary of the review.' +
       extra
     );
@@ -568,23 +586,35 @@ export class TowerSpawnTool implements ITowerSpawnTool {
     const latest = await store.latestReview(mission.branch);
     const predecessor =
       mission.owner !== undefined && mission.owner !== agentName ? mission.owner : undefined;
-    const reviewRequest =
-      predecessor !== undefined ? await findReviewRequest(store, predecessor) : undefined;
-    if (latest === undefined && reviewRequest === undefined) return '';
+    const completionReport =
+      predecessor !== undefined
+        ? await findCompletionReport(
+            store,
+            predecessor,
+            mission.kind === 'artifact' ? 'acceptance-request' : 'review-request',
+          )
+        : undefined;
+    if (latest === undefined && completionReport === undefined) return '';
     const parts = [
       '# Previous work on this branch',
-      'An earlier worker already ran on this branch — continue from its work instead of starting over, and address the review verdict below rather than re-opening what it already settled.',
+      mission.kind === 'artifact'
+        ? 'An earlier worker already ran on this branch — continue from its work instead of starting over, and address the latest human feedback below rather than re-opening what it already settled.'
+        : 'An earlier worker already ran on this branch — continue from its work instead of starting over, and address the review verdict below rather than re-opening what it already settled.',
     ];
     if (latest !== undefined) {
       parts.push(
-        `## Latest review — round ${String(latest.round)} by ${latest.reviewer}: ${latest.status}, merge verdict "${latest.merge}"`,
+        mission.kind === 'artifact'
+          ? `## Latest feedback — round ${String(latest.round)} by ${latest.reviewer}: ${latest.status}, merge verdict "${latest.merge}"`
+          : `## Latest review — round ${String(latest.round)} by ${latest.reviewer}: ${latest.status}, merge verdict "${latest.merge}"`,
         await reviewExcerpt(store, latest.file),
       );
     }
-    if (reviewRequest !== undefined) {
+    if (completionReport !== undefined) {
       parts.push(
-        "## The previous worker's review-request to the tower",
-        truncateSection(reviewRequest.body.trim(), REVIEW_EXCERPT_MAX_CHARS),
+        mission.kind === 'artifact'
+          ? "## The previous worker's acceptance-request to the tower"
+          : "## The previous worker's review-request to the tower",
+        truncateSection(completionReport.body.trim(), REVIEW_EXCERPT_MAX_CHARS),
       );
     }
     return `${parts.join('\n\n')}\n\n`;

@@ -93,7 +93,7 @@ export function selectMissionReview(
 export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionGateResult {
   const { state, mission, reviews, workers, observations } = input;
   const selectedReview =
-    mission.kind === 'build' ? selectMissionReview(state, mission, reviews) : undefined;
+    mission.kind === 'survey' ? undefined : selectMissionReview(state, mission, reviews);
   const reviewBinding = reviewBindingFor(mission, selectedReview, observations.branch?.tip);
   const result = (blocks: readonly TowerMissionGateBlock[]): TowerMissionGateResult => ({
     ready: blocks.length === 0,
@@ -174,35 +174,59 @@ export function evaluateMissionGate(input: TowerMissionGateInput): TowerMissionG
   if (!branch.baseIsAncestor) {
     return block(
       'stale-base',
-      `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land code that was never built or reviewed against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree, refuses while the worker is mid-turn or the worktree is dirty, and a conflict-free rebase waives the re-review), then retry the merge`,
+      mission.kind === 'artifact'
+        ? `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land artifacts that were never produced or accepted against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree and refuses while the worker is mid-turn or the worktree is dirty), then present the rebased artifact paths for fresh explicit human acceptance before retrying the merge`
+        : `${mission.branch} is behind base "${state.base}" — the base moved after this branch spawned, so merging now could land code that was never built or reviewed against the current base; run TowerRebase(mission="${mission.id}") first (it rebases in the mission worktree, refuses while the worker is mid-turn or the worktree is dirty, and a conflict-free rebase waives the re-review), then retry the merge`,
     );
   }
   if (selectedReview === undefined) {
-    return block('no-review', `${mission.branch} has no review — assign a reviewer first`);
+    return block(
+      'no-review',
+      mission.kind === 'artifact'
+        ? `${mission.branch} is waiting for explicit human acceptance — present the committed artifact paths to the user, then record acceptance with TowerReview(status="clean", merge="merge") only after the user approves; an independent reviewer is not required`
+        : `${mission.branch} has no review — assign a reviewer first`,
+    );
+  }
+  if (
+    mission.kind === 'artifact' &&
+    (selectedReview.reviewer !== 'tower' || selectedReview.mission !== mission.id)
+  ) {
+    return block(
+      'no-review',
+      `${mission.branch} is still waiting for mission-matching explicit human acceptance recorded by reviewer=tower — the latest applicable review by ${selectedReview.reviewer} cannot substitute for it; present the committed artifact paths and record TowerReview only after the user approves`,
+    );
   }
   if (selectedReview.merge === 'hold') {
     return block(
       'review-hold',
-      `latest applicable review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) says hold — do not merge until a later clean review with merge approval supersedes it`,
+      mission.kind === 'artifact'
+        ? `latest artifact acceptance record (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) says hold — do not merge until later clean human acceptance with merge approval supersedes it`
+        : `latest applicable review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) says hold — do not merge until a later clean review with merge approval supersedes it`,
     );
   }
   if (selectedReview.status !== 'clean') {
     return block(
       'not-clean',
-      `latest review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) is "${selectedReview.status}" — a clean round is required`,
+      mission.kind === 'artifact'
+        ? `latest artifact feedback (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) is "${selectedReview.status}" — rework and fresh clean human acceptance are required`
+        : `latest review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) is "${selectedReview.status}" — a clean round is required`,
     );
   }
   const mergeVerdict = selectedReview.merge || '';
-  if (mergeVerdict !== 'merge' && mergeVerdict !== '') {
+  if (mergeVerdict !== 'merge' && (mission.kind === 'artifact' || mergeVerdict !== '')) {
     return block(
       'review-not-approved',
-      `latest clean review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) has merge verdict "${mergeVerdict}" — fix-then-merge is not approval; only a clean review with merge verdict "merge" can pass`,
+      mission.kind === 'artifact'
+        ? `latest clean artifact acceptance (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) has merge verdict "${mergeVerdict || '(missing)'}" — only explicit human acceptance with merge verdict "merge" can pass`
+        : `latest clean review (round ${String(selectedReview.round)} by ${selectedReview.reviewer}) has merge verdict "${mergeVerdict}" — fix-then-merge is not approval; only a clean review with merge verdict "merge" can pass`,
     );
   }
   if (reviewBinding === 'stale-tip') {
     return block(
       'tip-moved',
-      `${mission.branch} moved since the clean review (reviewed ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — re-review required`,
+      mission.kind === 'artifact'
+        ? `${mission.branch} moved since the human acceptance (accepted ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — present the current committed artifact paths for fresh explicit human acceptance; rebase never waives artifact acceptance`
+        : `${mission.branch} moved since the clean review (reviewed ${selectedReview.reviewedCommit.slice(0, 7)}, tip ${branch.tip.slice(0, 7)}) — re-review required`,
     );
   }
   const siblingMissions = state.missions.filter(
@@ -249,6 +273,7 @@ function reviewBindingFor(
 ): TowerReviewBinding | undefined {
   if (review === undefined || tip === undefined) return undefined;
   if (review.reviewedCommit === tip) return 'exact-tip';
+  if (mission.kind === 'artifact') return 'stale-tip';
   const waiver = mission.lastRebase;
   return waiver !== undefined && waiver.fromCommit === review.reviewedCommit && waiver.toCommit === tip
     ? 'clean-rebase-waived'

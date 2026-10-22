@@ -4,7 +4,7 @@ Tower 是一种实验性多 Agent 协作模式。它把较大的开发任务拆�
 
 启用后，main agent 会成为 Tower，负责协调这些 worker。worker 在后台运行时，用户可以随时查看进展、让 Tower 传话、调整方向或优先级，也可以停止某个 Agent。
 
-Tower 还会安排独立 review 检查 worker 完成情况。每个 mission 都有独立的 branch 和 git worktree。worker 在各自的 worktree 中开发并提交，reviewer 以只读方式审查对应 branch。Tower 负责传递消息和完成报告，只有通过检查的 branch 才会合并。
+对于 build mission，Tower 还会安排独立 review 检查 worker 完成情况。每个 mission 都有独立的 branch 和 git worktree。worker 在各自的 worktree 中开发并提交，reviewer 以只读方式审查对应 branch。Tower 负责传递消息和完成报告，只有通过检查的 branch 才会合并。
 
 因此 Tower 既不是普通的 subagent 调用，也不是 AgentSwarm 任务。它需要你显式开启，会在协作过程中保存仓库状态，并提供合并检查和清理命令。Tower 的优势在**及时响应**和**并行开发**。
 
@@ -62,11 +62,23 @@ Tower 可能把未提交和未跟踪的文件快照到 worker branch 中；创�
 
 2. **发送开发目标。** 像平常对话一样输入任务，例如 "把结算文档更新拆成相互独立的 mission，分别测试，只合并通过独立 review 的 branch。" 最好同时说明如何验证、什么情况下算完成。Tower 会初始化 `.tower/`、规划 mission，并在后台启动依赖已经满足的 worker。worker 完成任务或 Tower 收到 inbox 消息时，Tower 就会自动继续处理，不用你反复查询。
 
-3. **让任务在后台推进。** worker 会在各自的 branch 上提交改动。Tower 会安排独立 reviewer，必要时 rebase，并按依赖顺序合并通过审核的 mission。如果出现审批提示，或 Tower 询问任务范围和优先级，请及时处理。
+3. **让任务在后台推进。** worker 会在各自的 branch 上提交改动。对于 build mission，Tower 会安排独立 reviewer；对于 artifact mission，Tower 会等待你明确验收。必要时 Tower 会 rebase，并按依赖顺序合并通过审核的 mission。如果出现审批提示，或 Tower 询问任务范围和优先级，请及时处理。
 
 4. **验收合并结果。** 检查 `git status`、base branch 的提交历史和最终 diff，并运行你关心的测试或验收命令。这些检查只能作为基础保障，不能替代人工验收。
 
 5. **清理并退出。** 所有 mission 都已合并或放弃后，先输入 `/tower teardown` 清理可以移除的 mission worktree，再输入 `/tower off` 退出 Tower。不同操作的区别见 [停止、清理与重启](#停止清理与重启)。
+
+## 选择 mission 类型
+
+Tower 支持三种 mission 类型。可以根据 worker 能否写入产物以及关闭 mission 前需要哪些检查来选择。
+
+- **Build（`kind: "build"`）**：为代码改动预留 scope，要求有已提交的 Diff 和独立 clean review，最后执行实际合并。
+- **Artifact（`kind: "artifact"`）**：为渲染结果、训练结果、分析报告等业务产物预留 scope。不要求独立 reviewer，但必须列出已提交的产物路径并由你明确验收，然后执行实际合并。
+- **Survey（`kind: "survey"`）**：scope 仅用于说明调查范围，全程只读，最终以 zero-diff 关闭，不需要 review，也不执行 Git merge。
+
+当工作需要读取业务输入并写出交付物时，使用 `artifact`。例如："创建一个 artifact mission 生成季度分析，提交 `reports/q3/summary.html` 和 `reports/q3/data.csv`，然后把这些文件交给我验收。"
+
+worker 会在预留的 scope 内提交这些文件，并在完成报告中列出两个路径；未提交的文件不会参与验收或合并。Tower 展示已提交的路径后，只有你明确同意才会合并。你提出修改时会进入返工，任何新 commit 或 rebase 后都需要重新验收。在自动或其他非交互场景中，Tower 会让产物保持等待，不会替你自行验收。
 
 ## 查看状态并干预
 
@@ -81,9 +93,9 @@ Tower 可能把未提交和未跟踪的文件快照到 worker branch 中；创�
 
 ## 合并与 rebase 规则
 
-合并 mission 前，Tower 会确认 mission 已完成，并且 branch 已跟上 base。还需要有效的 clean review 和 merge 批准（通常来自独立 reviewer）。改动必须属于 mission 范围，主 checkout 必须位于记录的 base，且不能有与合并内容冲突的未提交改动。
+合并 mission 前，Tower 会确认 mission 已完成，并且 branch 已跟上 base。build mission 需要有效的 clean review 和 merge 批准，通常来自独立 reviewer。artifact mission 则需要你在当前 branch tip 上明确验收，独立 review 不能替代。survey 始终保持 zero-diff，不需要 review。改动必须属于 mission 范围，主 checkout 必须位于记录的 base，且不能有与合并内容冲突的未提交改动。
 
-base 更新后，如果 worker 空闲且 worktree 干净，Tower 可以在对应 worktree 中把 mission branch rebase 到新 base。无冲突时，原有 clean review 的绑定会保留；发生冲突时，rebase 会中止，并交回 worker 处理。
+对于 build 或 artifact mission，base 更新后，如果 worker 空闲且 worktree 干净，Tower 可以在对应 worktree 中把 mission branch rebase 到新 base。无冲突时，build mission 原有 clean review 的绑定会保留；artifact mission 在 tip 变化后总是需要重新验收。发生冲突时，rebase 会中止，并交回 worker 处理。
 
 合并和 rebase 都交给 Tower 完成，不要另外手动执行 Git 整合命令。不要直接编辑 `.tower/comms/` 下的文件，状态、通知和合并检查都依赖这些记录。你可以只读查看 branch 和 worktree。
 
@@ -111,6 +123,8 @@ worker 和 reviewer 的默认模型选择规则不同。未配置 `[secondary_mo
 - "让审查 feat/build-gemm 的 reviewer 使用 primary。"
 
 可选值仅限 `primary`（Tower 当前的主模型）和 `[secondary_model.models]` 中配置的别名；只存在于 `[models]` 而不在池内的别名不能被接受。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。`[secondary_model].force = true` 时，强制模型仍是配置级硬约束，Tower 会拒绝包括 `primary` 在内的所有显式选择，而不是静默覆盖它。
+
+如果 worker 已停止，需要换模型接着做，可以使用 `Agent(resume="<agent-id>", model="<池内别名>", run_in_background=true, prompt="...")`。agent id、对话历史、mission、branch、worktree 和未提交修改都会保留；省略 `model` 时仍用原模型。`force = true` 时，resume 的显式覆盖同样会被拒绝。
 
 如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。未设置 `force = true` 时，reviewer 默认保持 primary model（主模型），以保留独立审查的预算。
 

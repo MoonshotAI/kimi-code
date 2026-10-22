@@ -58,7 +58,7 @@ export class TowerMergeTool implements ITowerMergeTool {
               output: [
                 `PARTIAL MERGE: only the evaluated commit ${evaluatedBranchTip} of ${args.branch} was merged (merge commit ${mergeCommit}).`,
                 `${args.branch} advanced during the merge to ${currentBranchTip}; that newer tip and any commits after ${evaluatedBranchTip} were NOT merged.`,
-                'The mission was not marked merged. Review the new exact tip, then retry TowerMerge; do not treat the partial merge as a completed mission merge.',
+                'The mission was not marked merged. Review the new exact tip, then retry TowerMerge; an artifact mission instead needs fresh explicit human acceptance on that tip. Do not treat the partial merge as a completed mission merge.',
               ].join('\n'),
             };
           }
@@ -91,7 +91,7 @@ export class TowerMergeTool implements ITowerMergeTool {
               ...conflictsWith.map(
                 (conflict) => `- ${conflict.branch}: ${conflict.files.join(', ')}`,
               ),
-              'For each affected mission, follow the next structured refusal: TowerRebase while its worker is idle (or ask the worker to rebase mid-turn). Conflict-free rebase preserves review binding; real conflicts must be resolved before another merge.',
+              'For each affected mission, follow the next structured refusal: TowerRebase while its worker is idle (or ask the worker to rebase mid-turn). Conflict-free rebase preserves build review binding; artifact missions instead require fresh explicit human acceptance after the tip moves. Real conflicts must be resolved before another merge.',
             );
           } else if (allClosed) {
             lines.push(`The mission is now marked merged. ${teardownHint}`);
