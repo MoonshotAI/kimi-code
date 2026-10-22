@@ -1458,7 +1458,7 @@ export const telemetryEventDefinitions = {
   }),
   workspace_trust_read_failed: defineTelemetryEvent<WorkspaceTrustReadFailedEvent>({
     owner: 'kimi-code',
-    comment: 'Reading the workspace trust record fails and the workspace silently falls back to untrusted.',
+    comment: 'Reading the workspace trust record fails and the error is propagated to the caller.',
     properties: { error_type: 'Classified error category' },
   }),
 } as const;

@@ -209,6 +209,68 @@ describe('WorkspaceTrustService', () => {
     await expect(readWorkspaceTrust(docs, root)).resolves.toBe(false);
   });
 
+  it('propagates storage failures instead of reporting an untrusted workspace', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const failure = new Error('trust storage unavailable');
+    const read = docs.get.bind(docs);
+    docs.get = async () => {
+      throw failure;
+    };
+
+    await expect(readWorkspaceTrust(docs, cwd)).rejects.toBe(failure);
+
+    docs.get = read;
+    await expect(readWorkspaceTrust(docs, cwd)).resolves.toBe(false);
+  });
+
+  it('retries failed initialization for both the shared entry and workspace service', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const failure = new Error('trust storage temporarily unavailable');
+    const read = docs.get.bind(docs);
+    let unavailable = true;
+    docs.get = async <T>(scope: string, key: string): Promise<T | undefined> => {
+      if (unavailable) throw failure;
+      return read<T>(scope, key);
+    };
+    const trustStore = disposables.add(new WorkspaceTrustStore(
+      docs,
+      noopTelemetryService,
+      stubBootstrap(homeDir),
+    ));
+    const entry = trustStore.forRoot(cwd);
+
+    await expect(entry.get()).rejects.toBe(failure);
+
+    const { service } = createService(cwd, undefined, {}, trustStore);
+    await expect(service.ready).rejects.toBe(failure);
+    unavailable = false;
+
+    await service.ready;
+    await expect(service.get()).resolves.toBe(false);
+    await service.trust();
+    await expect(entry.get()).resolves.toBe(true);
+  });
+
+  it('skips a corrupt legacy record but propagates legacy storage access failures', async () => {
+    const docs = new JsonAtomicDocumentStore(new FileStorageService(homeDir));
+    const root = 'C:\\Users\\Foo\\Repo';
+    await docs.set('workspace-trust', encodeWorkDirKey(root), { root, trustedAt: 1 });
+    await writeFile(join(homeDir, 'workspace-trust', 'corrupt-record'), '{', 'utf8');
+
+    await expect(readWorkspaceTrust(docs, 'c:/users/foo/repo')).resolves.toBe(true);
+    await deleteWorkspaceTrust(docs, root);
+
+    const failure = new Error('legacy trust record is inaccessible');
+    const read = docs.get.bind(docs);
+    docs.get = async <T>(scope: string, key: string): Promise<T | undefined> => {
+      if (key === 'inaccessible-record') throw failure;
+      return read<T>(scope, key);
+    };
+    await writeFile(join(homeDir, 'workspace-trust', 'inaccessible-record'), '{}', 'utf8');
+
+    await expect(readWorkspaceTrust(docs, root)).rejects.toBe(failure);
+  });
+
   it('tracks different roots independently', async () => {
     const other = mkdtempSync(join(tmpdir(), 'kimi-workspace-trust-other-'));
     try {

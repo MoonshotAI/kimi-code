@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import { IAtomicDocumentStore, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -358,6 +358,69 @@ describe('server-v2 /api/v1/workspaces', () => {
       } finally {
         getOrCreate.mockRestore();
       }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns trust storage errors with their original message and request id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-error-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      const failure = new Error('trust storage unavailable');
+      const read = vi.spyOn(docs, 'get').mockRejectedValue(failure);
+      try {
+        const responses = [
+          await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`),
+          await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`),
+          await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`),
+        ];
+        for (const response of responses) {
+          expect(response.body.code).toBe(50001);
+          expect(response.body.msg).toBe(failure.message);
+          expect(response.body.request_id).not.toBe('');
+        }
+      } finally {
+        read.mockRestore();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns trust write and delete failures and allows later mutations to succeed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-mutation-error-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+
+      const writeFailure = new Error('trust marker write failed');
+      const write = vi.spyOn(docs, 'set').mockRejectedValueOnce(writeFailure);
+      const writeError = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(writeError.body.code).toBe(50001);
+      expect(writeError.body.msg).toBe(writeFailure.message);
+      expect(writeError.body.request_id).not.toBe('');
+      write.mockRestore();
+
+      const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(trusted.body.code).toBe(0);
+      expect(trusted.body.data.trusted).toBe(true);
+
+      const deleteFailure = new Error('trust marker delete failed');
+      const deletion = vi.spyOn(docs, 'delete').mockRejectedValueOnce(deleteFailure);
+      const deleteError = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(deleteError.body.code).toBe(50001);
+      expect(deleteError.body.msg).toBe(deleteFailure.message);
+      expect(deleteError.body.request_id).not.toBe('');
+      deletion.mockRestore();
+
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.code).toBe(0);
+      expect(revoked.body.data.trusted).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

@@ -2,6 +2,7 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { isStorageError, StorageErrors } from '#/persistence/interface/storage';
 
 const TRUST_SCOPE = 'workspace-trust';
 
@@ -40,7 +41,7 @@ export async function readWorkspaceTrust(
     telemetry?.track2('workspace_trust_read_failed', {
       error_type: error instanceof Error ? error.name : 'Unknown',
     });
-    return false;
+    throw error;
   }
 }
 
@@ -71,10 +72,8 @@ async function migrateWorkspaceTrust(
   legacyKey: string,
   record: TrustRecord,
 ): Promise<void> {
-  try {
-    await docs.set(TRUST_SCOPE, canonicalKey, record);
-    await docs.delete(TRUST_SCOPE, legacyKey);
-  } catch {}
+  await docs.set(TRUST_SCOPE, canonicalKey, record);
+  await docs.delete(TRUST_SCOPE, legacyKey);
 }
 
 async function findLegacyTrustRecords(
@@ -91,7 +90,9 @@ async function findLegacyTrustRecords(
       const record = await docs.get<TrustRecord | null>(TRUST_SCOPE, key);
       if (record === undefined || record === null || typeof record.root !== 'string') continue;
       if (canonicalWorkspaceRoot(record.root) === canonicalRoot) result.push({ key, record });
-    } catch {}
+    } catch (error) {
+      if (!isStorageError(error, StorageErrors.codes.STORAGE_DECODE_FAILED)) throw error;
+    }
   }
   return result;
 }

@@ -20,7 +20,7 @@ export const workspaceTrustTrustedKey = defineState<boolean>(
 export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust {
   declare readonly _serviceBrand: undefined;
 
-  readonly ready: Promise<void>;
+  private initialization?: Promise<void>;
   private readonly inner: IWorkspaceTrustEntry;
   private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
   readonly onDidChange = this.changeEmitter.event;
@@ -37,7 +37,16 @@ export class WorkspaceTrustService extends Disposable implements IWorkspaceTrust
       this.trusted = change.trusted;
       this.changeEmitter.fire(change);
     }));
-    this.ready = this.initialize();
+  }
+
+  get ready(): Promise<void> {
+    if (this.initialization !== undefined) return this.initialization;
+    const initialization = this.initialize();
+    this.initialization = initialization;
+    void initialization.catch(() => {
+      if (this.initialization === initialization) this.initialization = undefined;
+    });
+    return initialization;
   }
 
   private get trusted(): boolean {

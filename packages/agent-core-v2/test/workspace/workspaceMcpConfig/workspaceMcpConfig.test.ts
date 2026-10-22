@@ -89,7 +89,10 @@ describe('WorkspaceMcpConfigService', () => {
     ]);
   });
 
-  function createService(mcpSection?: McpSection): IWorkspaceMcpConfigService {
+  function createService(
+    mcpSection?: McpSection,
+    trustReady: Promise<void> = Promise.resolve(),
+  ): IWorkspaceMcpConfigService {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
@@ -107,7 +110,7 @@ describe('WorkspaceMcpConfigService', () => {
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {
-          ready: Promise.resolve(),
+          ready: trustReady,
           isTrusted: () => trusted,
           onDidChange: trustFlips.event,
         });
@@ -155,6 +158,15 @@ describe('WorkspaceMcpConfigService', () => {
     await service.ready;
 
     expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+  });
+
+  it('skips the project-level config files when trust initialization fails', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+
+    const service = createService(undefined, Promise.reject(new Error('trust storage unavailable')));
+    await service.ready;
+
+    expect(service.servers()).toEqual({});
   });
 
   it('picks up the project servers when the workspace becomes trusted', async () => {

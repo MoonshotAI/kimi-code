@@ -28,7 +28,7 @@ export const IWorkspaceTrustStore: ServiceIdentifier<IWorkspaceTrustStore> =
 class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   declare readonly _serviceBrand: undefined;
 
-  readonly ready: Promise<void>;
+  private initialization?: Promise<void>;
   private readonly root: string;
   private readonly envTrusted: boolean;
   private trusted = false;
@@ -45,7 +45,18 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     super();
     this.root = root;
     this.envTrusted = trustWorkspaceEnvTrusted((name) => bootstrap.getEnv(name));
-    this.ready = this.initialize();
+  }
+
+  get ready(): Promise<void> {
+    if (this.initialization !== undefined) return this.initialization;
+    const initialization = readWorkspaceTrust(this.docs, this.root, this.telemetry).then((trusted) => {
+      this.trusted = trusted;
+    });
+    this.initialization = initialization;
+    void initialization.catch(() => {
+      if (this.initialization === initialization) this.initialization = undefined;
+    });
+    return initialization;
   }
 
   isPersistedTrusted(): boolean {
@@ -84,10 +95,6 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     });
     this.mutationTail = mutation;
     return mutation;
-  }
-
-  private async initialize(): Promise<void> {
-    this.trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
   }
 }
 
