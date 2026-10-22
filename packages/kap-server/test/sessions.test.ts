@@ -39,6 +39,7 @@ import {
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
@@ -934,6 +935,29 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(refreshed.body.data?.status).toBe('active');
     } finally {
       await rig.cancel();
+    }
+  });
+
+  it('takes over the session lock via :takeover', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const takeover = vi.spyOn(
+      (server as RunningServer).core.accessor.get(ISessionLockService),
+      'takeover',
+    );
+    try {
+      const taken = await postJson<{ taken_over: boolean }>(`/api/v1/sessions/${id}:takeover`);
+      expect(taken.body.code).toBe(0);
+      expect(taken.body.data).toEqual({ taken_over: true });
+      expect(takeover).toHaveBeenCalledWith(id);
+
+      const missing = await postJson<null>('/api/v1/sessions/sess_missing_takeover:takeover');
+      expect(missing.body.code).toBe(40401);
+      expect(takeover).toHaveBeenCalledTimes(1);
+    } finally {
+      takeover.mockRestore();
     }
   });
 
