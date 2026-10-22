@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1050,6 +1050,215 @@ describe('server /api/v2/sessions batch archive/restore', () => {
     expect(deduped.data?.results).toHaveLength(1);
     expect(deduped.data?.results[0]?.ok).toBe(false);
     expect(deduped.data?.results[0]?.error?.code).toBe(40401);
+  });
+});
+
+describe('server /api/v2/sessions batch delete', () => {
+  interface BatchItemWire {
+    id: string;
+    ok: boolean;
+    error?: { code: number; message: string };
+  }
+
+  interface BatchWire {
+    results: BatchItemWire[];
+    succeeded: number;
+    failed: number;
+  }
+
+  interface BatchEnvelopeWire {
+    code: number;
+    msg: string;
+    data: BatchWire | null;
+    request_id: string;
+    details?: { path: string; message: string }[];
+  }
+
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeAll(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-sessions-delete-'));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterAll(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  function core(): RunningServer['core']['accessor'] {
+    return (server as RunningServer).core.accessor;
+  }
+
+  function collectEvents(): { events: Event2[]; dispose(): void } {
+    const events: Event2[] = [];
+    const sub = core().get(IEventService).subscribe((event) => events.push(event));
+    return {
+      events,
+      dispose: () => {
+        sub.dispose();
+      },
+    };
+  }
+
+  async function createSession(): Promise<{ id: string; workspace_id: string }> {
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/sessions', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    });
+    const body = (await res.json()) as {
+      code: number;
+      data: { id: string; workspace_id: string };
+    };
+    expect(body.code).toBe(0);
+    return body.data;
+  }
+
+  async function postBatch(path: string, body?: unknown): Promise<BatchEnvelopeWire> {
+    const res = await authedFetch(server as RunningServer, base, path, {
+      method: 'POST',
+      headers: body !== undefined ? { 'content-type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+    expect(res.status).toBe(200);
+    return (await res.json()) as BatchEnvelopeWire;
+  }
+
+  async function sessionDirExists(workspaceId: string, id: string): Promise<boolean> {
+    const dir = sessionDirOf(home as string, `sessions/${workspaceId}`, id);
+    try {
+      await access(dir);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function listedIds(query = ''): Promise<string[]> {
+    const res = await authedFetch(server as RunningServer, base, `/api/v2/sessions${query}`);
+    const body = (await res.json()) as { code: number; data: { items: { id: string }[] } };
+    expect(body.code).toBe(0);
+    return body.data.items.map((item) => item.id);
+  }
+
+  it('deletes a live session through the lifecycle chain and publishes the deleted event', async () => {
+    const created = await createSession();
+    expect(getLiveSessionById(core(), created.id)).toBeDefined();
+    const { events, dispose } = collectEvents();
+
+    const body = await postBatch('/api/v2/sessions:delete', { ids: [created.id] });
+    expect(body.code).toBe(0);
+    expect(body.data).toMatchObject({
+      succeeded: 1,
+      failed: 0,
+      results: [{ id: created.id, ok: true }],
+    });
+
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+    expect(await sessionDirExists(created.workspace_id, created.id)).toBe(false);
+    expect(await core().get(ISessionIndex).get(created.id)).toBeUndefined();
+    expect(await listedIds()).toEqual([]);
+    expect(
+      events
+        .filter((event) => event.type === 'event.session.deleted')
+        .map((event) => ({
+          type: event.type,
+          payload: (event as { readonly payload?: unknown }).payload,
+        })),
+    ).toEqual([
+      {
+        type: 'event.session.deleted',
+        payload: { sessionId: created.id, workspaceId: created.workspace_id },
+      },
+    ]);
+    dispose();
+  });
+
+  it('deletes a cold session without materializing it', async () => {
+    const created = await createSession();
+    await closeSessionById(core(), created.id);
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+    const { events, dispose } = collectEvents();
+
+    const body = await postBatch('/api/v2/sessions:delete', { ids: [created.id] });
+    expect(body.code).toBe(0);
+    expect(body.data?.results).toEqual([{ id: created.id, ok: true }]);
+
+    expect(getLiveSessionById(core(), created.id)).toBeUndefined();
+    expect(await sessionDirExists(created.workspace_id, created.id)).toBe(false);
+    expect(await core().get(ISessionIndex).get(created.id)).toBeUndefined();
+    expect(
+      events.some(
+        (event) =>
+          event.type === 'event.session.deleted' &&
+          ((event as { readonly payload?: unknown }).payload as { sessionId: string })
+            .sessionId === created.id,
+      ),
+    ).toBe(true);
+    dispose();
+  });
+
+  it('reports per-item results in input order for a live/cold/missing mixed batch', async () => {
+    const live = await createSession();
+    const cold = await createSession();
+    await closeSessionById(core(), cold.id);
+
+    const body = await postBatch('/api/v2/sessions:delete', {
+      ids: [live.id, cold.id, 'sess_missing'],
+    });
+    expect(body.code).toBe(0);
+    expect(body.data?.results).toEqual([
+      { id: live.id, ok: true },
+      { id: cold.id, ok: true },
+      {
+        id: 'sess_missing',
+        ok: false,
+        error: { code: 40401, message: 'session sess_missing does not exist' },
+      },
+    ]);
+    expect(body.data?.succeeded).toBe(2);
+    expect(body.data?.failed).toBe(1);
+    expect(await sessionDirExists(live.workspace_id, live.id)).toBe(false);
+    expect(await sessionDirExists(cold.workspace_id, cold.id)).toBe(false);
+    expect(await listedIds()).toEqual([]);
+  });
+
+  it('validates the batch body: empty, missing, over the unique cap, duplicates', async () => {
+    for (const body of [{ ids: [] }, {}]) {
+      const rejected = await postBatch('/api/v2/sessions:delete', body);
+      expect(rejected.code).toBe(40001);
+      expect(rejected.data).toBeNull();
+    }
+
+    const tooMany = await postBatch('/api/v2/sessions:delete', {
+      ids: Array.from({ length: 5001 }, (_, i) => `sess_${i}`),
+    });
+    expect(tooMany.code).toBe(40001);
+
+    const created = await createSession();
+    const deduped = await postBatch('/api/v2/sessions:delete', {
+      ids: [created.id, created.id],
+    });
+    expect(deduped.code).toBe(0);
+    expect(deduped.data?.results).toEqual([{ id: created.id, ok: true }]);
+    expect(await sessionDirExists(created.workspace_id, created.id)).toBe(false);
   });
 });
 

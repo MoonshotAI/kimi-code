@@ -624,7 +624,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/profile` | Read the session profile |
 | `POST /api/v1/sessions/{session_id}/profile` | Update title, metadata, agent config |
 | `POST /api/v1/sessions/{session_id}/title/generate` | Generate a title via the managed `chat_title` tool |
-| `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
+| `POST /api/v1/sessions/{session_id}:{action}` | Session actions: `fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` / `delete` |
 | `GET /api/v1/sessions/{session_id}/children` | List child sessions |
 | `POST /api/v1/sessions/{session_id}/children` | Create a child session (fork with a tag) |
 | `GET /api/v1/sessions/{session_id}/status` | Realtime status rollup |
@@ -831,6 +831,14 @@ On success, `data` is `{ archived: true }`.
 Un-archives the session and resumes it.
 
 On success, `data` is [the session object](#the-session-object) with `archived: false`.
+
+#### `POST /api/v1/sessions/{session_id}:delete`
+
+Hard-deletes the session in any state — there are no archived/busy guards. A live session is closed first and its session directory is then physically removed; a cold session's directory is removed directly. Deletion broadcasts the global `event.session.deleted` event.
+
+On success, `data` is `{ deleted: true }`.
+
+- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}:reload`
 
@@ -2215,6 +2223,7 @@ On success, `data` is `null`.
 | `GET /api/v2/sessions` | Next-generation session list, see below |
 | `POST /api/v2/sessions:archive` | Batch-archive sessions, see below |
 | `POST /api/v2/sessions:restore` | Batch-restore archived sessions, see below |
+| `POST /api/v2/sessions:delete` | Batch-delete sessions, see below |
 | `/api/v2/mcp/*` | Unified MCP management plane, see below |
 | `/api/v1/debug/*` | Reflection debug RPC; mounted only with `--debug-endpoints` on loopback, not a stable protocol |
 
@@ -2313,6 +2322,12 @@ Only a body validation failure fails the whole request (`40001`). Otherwise the 
   "request_id": "req_..."
 }
 ```
+
+### `POST /api/v2/sessions:delete`
+
+Batch hard-delete for session-management views. The body and response shapes mirror `:archive` / `:restore`: `{ "ids": ["session_..."] }` — non-empty, at most 5000 unique ids (duplicates collapse). Only a body validation failure fails the whole request (`40001`); `data.results` keeps the input order, an unknown id reports `40401` in its own item, and `succeeded` / `failed` counts accompany the results.
+
+Each item follows the v1 `:delete` semantics: a hard delete in any state with no archived/busy guards — a live session is closed before its session directory is physically removed, a cold session's directory is removed directly, and every succeeded item broadcasts the global `event.session.deleted` event.
 
 ### MCP management (`/api/v2/mcp`)
 
