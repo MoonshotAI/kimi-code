@@ -1,12 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  useAgent,
-  createApp,
-  type App,
-} from '#/app/index';
-import { openBlobStore, type BlobBackend } from '@moonshot-ai/agent-core/blob/index';
+import { createFeature, useAgent, createApp, type App, useAgentTools } from '#/app/index';
+import { blobStores, type BlobBackend } from '@moonshot-ai/agent-core/blob/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
@@ -23,9 +18,6 @@ import {
   type FileHistoryState,
 } from '#/todo-features/fileHistory/index';
 import type { OsFsPort } from '#/todo-features/os/host/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 const WORK_DIR = '/ws';
 const encoder = new TextEncoder();
@@ -235,8 +227,12 @@ function blobSpace(blobFiles: Map<string, Uint8Array>): SessionSpace {
     write: async (key, data) => {
       blobFiles.set(key, data);
     },
+    delete: async (key) => {
+      blobFiles.delete(key);
+    },
+    list: async (prefix) => [...blobFiles.keys()].filter((key) => key.startsWith(prefix)),
   };
-  const blobs = openBlobStore(backend);
+  const blobs = blobStores(backend);
   return {
     list: () => base.list(),
     get: (id) => base.get(id),
@@ -421,9 +417,12 @@ describe('fileHistory feature', () => {
   it('drops turns outside the retention window and re-baselines returning files', async () => {
     const env = await startHistoryTest();
     env.fs.set('/ws/w.txt', 'v1\n');
+    const orphanKey = `file-history/${'0'.repeat(64)}`;
+    env.blobFiles.set(orphanKey, new Uint8Array(1));
 
     queue = [editStep('/ws/w.txt', 'v1', 'v2'), { text: 'done' }];
     await env.runTurn();
+    expect(env.blobFiles.has(orphanKey)).toBe(false);
     for (let turn = 1; turn <= 6; turn += 1) {
       queue = [writeStep(`/ws/filler-${String(turn)}.txt`, 'f\n'), { text: 'done' }];
       await env.runTurn();
@@ -434,6 +433,7 @@ describe('fileHistory feature', () => {
     expect(state.tracked).not.toContain('w.txt');
     expect(await env.face().changes(0)).toEqual([]);
     expect(await env.face().turnRecorded(0)).toBe(false);
+    expect(env.blobFiles.size).toBe(1);
 
     queue = [editStep('/ws/w.txt', 'v2', 'v3'), { text: 'done' }];
     await env.runTurn();
@@ -466,7 +466,7 @@ describe('fileHistory feature', () => {
 
     const keyed = entryAt(env.face().history(), 1, 'start', 'e.txt');
     expect(keyed?.key).not.toBeNull();
-    env.blobFiles.delete(`data/${(keyed?.key ?? '').slice('file-history/'.length)}`);
+    env.blobFiles.delete(keyed?.key ?? '');
     expect(await env.face().turnRecorded(1)).toBe(false);
     await env.dispose();
   });

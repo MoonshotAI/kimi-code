@@ -1,6 +1,6 @@
 import { onScopeDispose } from '@vue/reactivity';
 
-import { createFeature, useAgent, type Feature } from '#/app/index';
+import { createFeature, useAgent, type Feature, useAgentTools, useFeatureStore } from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   computed,
@@ -15,7 +15,6 @@ import {
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
-import { useAgentTools, useFeatureStore } from '#/runtime/index';
 
 import {
   CRON_CONFIG_SECTION,

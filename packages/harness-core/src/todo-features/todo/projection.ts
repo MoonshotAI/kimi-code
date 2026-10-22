@@ -1,6 +1,6 @@
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
-import type { FeatureEvent } from '#/runtime/index';
+import type { FeatureEvent } from '#/app/index';
 
 import { readTodoItems, type TodoItem } from './todoItem';
 

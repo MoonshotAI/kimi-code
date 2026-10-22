@@ -2,6 +2,7 @@ import { createActor, waitFor } from 'xstate';
 
 import type { HistoryMessage, UserEntry } from '#/history/message';
 import type { ToolCall, ToolDescription } from '#/llm/message';
+import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';
 import type { ToolExecutor } from '#/tool/index';
 import { waitEvent, type WaitOpts } from '#/utils/wait';
 import { commandError, inputError, type LoopCommand, type LoopInput, type LoopProfile } from './contract/command';
@@ -54,6 +55,7 @@ export interface Loop {
   readonly executor: ToolExecutor;
   readonly waitForTasks: WaitForTasks;
   readonly hooks: HookRegistry;
+  readonly policy: PolicyRegistry;
   submit(entry: UserEntry): LoopAck<'prompt.submitted'> | undefined;
   notify(entry: UserEntry): LoopAck<'prompt.notified'> | undefined;
   remind(entry: RemindEntry): LoopAck<'prompt.reminded'> | undefined;
@@ -78,8 +80,10 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
   if (invalid !== undefined) throw new TypeError(invalid);
   const registry = createHookRegistry();
   for (const registration of hooks ?? []) registry.add(registration);
+  const policy = createPolicyRegistry();
+  const requester = (): LoopLlmRequester => options.requester().with({ policy: policy.asPolicy() });
   const state = createLoopState(input);
-  const actor = createActor(createLoopMachine({ ...options, hooks: registry }));
+  const actor = createActor(createLoopMachine({ ...options, requester, hooks: registry }));
   const listeners = new Set<(event: LoopEmitted) => void>();
   const outputs: LoopStateOutput[] = [];
   let flushing = false;
@@ -183,7 +187,7 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
         })),
       };
     },
-    requester: createLoopRequester(options.requester, () => state.getSnapshot().context.durable.messages),
+    requester: createLoopRequester(requester, () => state.getSnapshot().context.durable.messages),
     executor: options.executor,
     waitForTasks: createWaitForTasks(actor),
     hooks: {
@@ -193,6 +197,7 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
       remove: (id) => registry.remove(id),
       list: () => registry.list(),
     },
+    policy,
     submit: (entry) =>
       acknowledge<LoopAck<'prompt.submitted'>>({ type: 'input.submit', entry }, (reply) => ({
         type: 'submit',

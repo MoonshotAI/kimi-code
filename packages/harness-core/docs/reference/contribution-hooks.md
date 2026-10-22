@@ -6,15 +6,15 @@ in; hooks that need `useAgent()` throw below the wrong level.
 
 ## App Runtime Hooks
 
-Module: `@moonshot-ai/harness-core` (root) — source `src/runtime/`.
+Module: `@moonshot-ai/harness-core` (root) — source `src/app/`.
 
 | Hook | Semantics |
 |---|---|
-| `useAgentRuntime()` | Returns the current agent's `AgentRuntime` (requester slot, policy arrays, tool registry, host prompt section); throws if the agent was not opened via `session.ensureAgent`. Agent level. |
+| `useAgentRuntime()` | Returns the current agent's `AgentRuntime` (requester slot, tool registry, host prompt section); throws if the agent was not opened via `session.ensureAgent`. Agent level. |
 | `useAgentTools(...definitions)` | Registers tool definitions into the runtime registry **and** the loop executor, then syncs the loop's tool profile (retrying after `step.ended`/`turn.ended` when the profile is frozen mid-turn); withdraws and re-syncs on dispose. Empty name / duplicate name throws. Agent level. |
-| `useMessageResolver(resolver)` | Appends a `MessageResolver` to the live policy array read by every LLM request; removed on dispose. Agent level. |
-| `useLlmRecovery(recovery)` | Appends an `LlmRecovery` to the live policy array; removed on dispose. Agent level. |
-| `useLlmRetryable(retryable)` | Appends an `LlmRetryable` to the live policy array; removed on dispose. Agent level. |
+| `useMessageResolver(resolver)` | Registers a `MessageResolver` into the agent loop's native policy registry (`loop.policy`), re-read on every attempt of every request; removed on dispose. Agent level. |
+| `useLlmRecovery(recovery)` | Registers an `LlmRecovery` into the agent loop's native policy registry (`loop.policy`); removed on dispose. Agent level. |
+| `useLlmRetryable(retryable)` | Registers an `LlmRetryable` into the agent loop's native policy registry (`loop.policy`); removed on dispose. Agent level. |
 | `useLoopEvent(type, handler)` | Subscribes to one `LoopEmitted` type on the agent's loop (e.g. `'turn.started'`, `'llm.ended'`); unsubscribed on cleanup. Agent level. |
 | `useBlobs()` | Returns the session's `BlobStore`. Agent or session level. |
 | `useWaitForTasks()` | Returns the loop's `WaitForTasks` handle (await detached/background tool tasks). Agent level. |

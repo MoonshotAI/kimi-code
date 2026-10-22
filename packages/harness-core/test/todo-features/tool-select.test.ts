@@ -17,8 +17,7 @@ import {
   createApp,
   type App,
 } from '#/app/index';
-import {
-} from '#/runtime/index';
+
 import {
   createSelectToolsTool,
   createToolSelect,

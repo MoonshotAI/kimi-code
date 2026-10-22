@@ -4,12 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -43,9 +38,6 @@ import {
   type ProfileCatalog,
   type SpawnModelEntry,
 } from '#/todo-features/spawn/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 const fastModel: SpawnModelEntry = {
   name: 'fast',

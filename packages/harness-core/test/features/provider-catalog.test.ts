@@ -60,9 +60,7 @@ import {
   type SessionModelDefaultsEvent,
   type SessionModelFace,
 } from '#/features/provider-catalog/index';
-import {
-  type AgentRuntime,
-} from '#/runtime/index';
+import { type AgentRuntime } from '#/runtime/index';
 
 type Fields = Record<string, unknown>;
 

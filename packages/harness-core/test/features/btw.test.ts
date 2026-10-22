@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import {
@@ -28,9 +23,6 @@ import {
   type BtwEvent,
   type BtwFace,
 } from '#/features/btw/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 let callSeq = 0;
 

@@ -1,8 +1,7 @@
-import { createFeature, useAgent } from '#/app/index';
+import { createFeature, useAgent, useLoopEvent } from '#/app/index';
 import { createFacadeToken, shallowRef, useExpose, useInject, type ShallowRef } from '#/kernel/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
-import { useLoopEvent } from '#/runtime/index';
 
 import {
   DEFAULT_TOKEN_COUNTING_CONFIG,

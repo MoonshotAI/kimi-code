@@ -11,9 +11,8 @@ import {
   type BlobRef,
 } from '@moonshot-ai/agent-core/blob/index';
 
-import { createFeature, useApp, type App, type Feature } from '#/app/index';
+import { createFeature, useApp, type App, type Feature, useBlobs, useFeatureStore } from '#/app/index';
 import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
-import { useBlobs, useFeatureStore } from '#/runtime/index';
 
 import { buildKimiFileUrl, parseKimiFileUrl } from './ref';
 import {

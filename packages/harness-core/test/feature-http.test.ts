@@ -11,13 +11,7 @@ import { WebSocket, type RawData } from 'ws';
 
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
-import {
-  createFeature,
-  useApp,
-  type App,
-  type Feature,
-  createApp,
-} from '#/app/index';
+import { createFeature, useApp, type App, type Feature, createApp, useAgentRuntime, useAgentTools } from '#/app/index';
 import { createUserEntry, type UserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useReady, type FacadeToken } from '#/kernel/index';
 import type { UnitNode } from '#/kernel/runtime';
@@ -82,10 +76,6 @@ import { tokenCounting } from '#/features/tokenCounting/index';
 import { undo } from '#/todo-features/undo/index';
 import { usage } from '#/features/usage/index';
 import { createWorkspaces, WorkspaceRef } from '#/todo-features/workspaces/index';
-import {
-  useAgentRuntime,
-  useAgentTools,
-} from '#/runtime/index';
 
 const mcpFixturePath = fileURLToPath(new URL('./todo-features/fixtures/fake-mcp-server.mjs', import.meta.url));
 

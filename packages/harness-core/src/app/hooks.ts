@@ -1,6 +1,6 @@
 import { onScopeDispose } from '@vue/reactivity';
 
-import { useAgent, useSession, useToolHandler } from '#/app/index';
+import { useAgent, useSession, useToolHandler } from './units';
 import { useCleanup } from '#/kernel/index';
 import type { MessageResolver } from '@moonshot-ai/agent-core/llm/policy/resolver';
 import type { LlmRecovery } from '@moonshot-ai/agent-core/llm/policy/recovery';
@@ -9,18 +9,13 @@ import type { LoopEmitted, WaitForTasks } from '@moonshot-ai/agent-core/loop/ind
 import type { BlobStore } from '@moonshot-ai/agent-core/blob/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
-import { syncAgentTools, type AgentRuntime } from './agents';
+import { syncAgentTools, type AgentRuntime } from '#/runtime/agents';
 
 export function useAgentRuntime(): AgentRuntime {
   const agent = useAgent();
   const runtime = useSession().agentRuntime(agent.id);
   if (runtime === undefined) throw new Error(`agent '${agent.id}' was not opened by session.ensureAgent`);
   return runtime;
-}
-
-function remove<T>(list: T[], value: T): void {
-  const index = list.indexOf(value);
-  if (index >= 0) list.splice(index, 1);
 }
 
 export function useAgentTools(...definitions: ToolDefinition[]): void {
@@ -42,21 +37,15 @@ export function useAgentTools(...definitions: ToolDefinition[]): void {
 }
 
 export function useMessageResolver(resolver: MessageResolver): void {
-  const runtime = useAgentRuntime();
-  runtime.resolvers.push(resolver);
-  onScopeDispose(() => remove(runtime.resolvers, resolver));
+  useCleanup(useAgent().loop.policy.addResolver(resolver));
 }
 
 export function useLlmRecovery(recovery: LlmRecovery): void {
-  const runtime = useAgentRuntime();
-  runtime.recoveries.push(recovery);
-  onScopeDispose(() => remove(runtime.recoveries, recovery));
+  useCleanup(useAgent().loop.policy.addRecovery(recovery));
 }
 
 export function useLlmRetryable(retryable: LlmRetryable): void {
-  const runtime = useAgentRuntime();
-  runtime.retryables.push(retryable);
-  onScopeDispose(() => remove(runtime.retryables, retryable));
+  useCleanup(useAgent().loop.policy.addRetryable(retryable));
 }
 
 export function useLoopEvent<T extends LoopEmitted['type']>(
@@ -71,7 +60,7 @@ export function useLoopEvent<T extends LoopEmitted['type']>(
 }
 
 export function useBlobs(): BlobStore {
-  return useSession().blobs;
+  return useSession().blobs();
 }
 
 export function useWaitForTasks(): WaitForTasks {

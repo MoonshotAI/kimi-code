@@ -3,16 +3,10 @@ import { isAbsolute, relative, resolve } from 'pathe';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  useToolStarting,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, useToolStarting, type Feature, useLoopEvent, useFeatureStore } from '#/app/index';
 import { useCleanup, useExpose } from '#/kernel/index';
 import { HostFsError, unwrapErrorCause, type OsFsPort } from '#/todo-features/os/host/index';
-import { useBlobs, useFeatureStore, useLoopEvent } from '#/runtime/index';
+
 import { sha256Hex } from '#/sha256';
 
 import { LCS_AGGREGATE_CELL_BUDGET, decodeText, diffChange } from './diff';
@@ -31,6 +25,7 @@ import {
   FILE_HISTORY_CHECKPOINT,
   FILE_HISTORY_TRACKED,
   checkpointPhaseOf,
+  displacedCheckpoints,
   fileHistoryProjection,
 } from './projection';
 
@@ -54,8 +49,9 @@ export function createFileHistory(props: CreateFileHistoryProps): Feature<void> 
       const agent = useAgent();
       const session = useSession();
       const store = useFeatureStore('agent', 'file-history', fileHistoryProjection);
-      const blobs = useBlobs();
+      const blobs = session.blobs(FILE_HISTORY_BLOB_PREFIX);
       let activeTurnId: number | undefined = agent.loop.state.turn?.id;
+      let sweepDone = false;
       let queue: Promise<void> = store.ready.then(
         () => undefined,
         () => undefined,
@@ -172,6 +168,49 @@ export function createFileHistory(props: CreateFileHistoryProps): Feature<void> 
         await store.dispatch([{ type: FILE_HISTORY_TRACKED, turn: turnId, path: pathKey, entry }]);
       };
 
+      const _sweepOrphanBlobs = async (): Promise<void> => {
+        if (sweepDone) return;
+        sweepDone = true;
+        const referenced = new Set<string>();
+        for (const checkpoint of history().checkpoints) {
+          for (const entry of Object.values(checkpoint.entries)) {
+            if (entry.key !== null) referenced.add(entry.key);
+          }
+        }
+        let refs: readonly string[];
+        try {
+          refs = await blobs.list();
+        } catch {
+          return;
+        }
+        for (const ref of refs) {
+          if (referenced.has(`${FILE_HISTORY_BLOB_PREFIX}/${ref}`)) continue;
+          try {
+            await blobs.delete(ref);
+          } catch {}
+        }
+      };
+
+      const _evictBlobs = async (
+        evicted: readonly FileHistoryCheckpointRecord[],
+        retained: readonly FileHistoryCheckpointRecord[],
+      ): Promise<void> => {
+        const retainedKeys = new Set<string>();
+        for (const checkpoint of retained) {
+          for (const entry of Object.values(checkpoint.entries)) {
+            if (entry.key !== null) retainedKeys.add(entry.key);
+          }
+        }
+        for (const checkpoint of evicted) {
+          for (const entry of Object.values(checkpoint.entries)) {
+            if (entry.key === null || retainedKeys.has(entry.key)) continue;
+            try {
+              await blobs.delete(blobRefOf(entry.key));
+            } catch {}
+          }
+        }
+      };
+
       const _endCheckpoint = async (turnId: number): Promise<void> => {
         const state = history();
         if (state.checkpoints.some((c) => c.turnId === turnId && checkpointPhaseOf(c) === 'end')) {
@@ -181,6 +220,7 @@ export function createFileHistory(props: CreateFileHistoryProps): Feature<void> 
           (c) => c.turnId === turnId && checkpointPhaseOf(c) === 'start',
         );
         if (start === undefined) return;
+        await _sweepOrphanBlobs();
 
         const entries: Record<string, FileBackupEntry> = Object.create(null) as Record<
           string,
@@ -216,7 +256,15 @@ export function createFileHistory(props: CreateFileHistoryProps): Feature<void> 
           if (before.contentHash === contentHash) continue;
           entries[pathKey] = await _backup(nextVersion, current, contentHash);
         }
+        const evictable = displacedCheckpoints(state.checkpoints, turnId);
         await store.dispatch([{ type: FILE_HISTORY_CHECKPOINT, turn: turnId, phase: 'end', entries }]);
+        if (evictable.length > 0) {
+          const displaced = new Set(evictable);
+          await _evictBlobs(evictable, [
+            ...state.checkpoints.filter((c) => !displaced.has(c)),
+            { turnId, phase: 'end' as const, entries },
+          ]);
+        }
       };
 
       const _entryBytes = async (

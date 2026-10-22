@@ -1,4 +1,4 @@
-import { createFeature, useAgent, type Feature } from '#/app/index';
+import { createFeature, useAgent, type Feature, useAgentTools, useLoopEvent } from '#/app/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 import {
   createFacadeToken,
@@ -10,8 +10,6 @@ import {
   type ShallowRef,
 } from '#/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
-
-import { useAgentTools, useLoopEvent } from '#/runtime/index';
 
 import { describeToolArguments } from './format';
 import {

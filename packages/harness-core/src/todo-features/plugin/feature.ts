@@ -1,10 +1,4 @@
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  useStepStarting,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, useStepStarting, type Feature, useFeatureStore } from '#/app/index';
 import { shallowRef, useCleanup, useExpose, useFire, useInject } from '#/kernel/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
@@ -14,7 +8,6 @@ import { ProviderCatalogRef } from '#/features/provider-catalog/index';
 import { discoverSkills } from '#/todo-features/skill/catalog/discovery';
 import type { SkillRoot } from '#/todo-features/skill/catalog/types';
 import { SkillCatalogRef, useSkillSource } from '#/todo-features/skill/index';
-import { useFeatureStore } from '#/runtime/index';
 
 import { createPluginSessionStartReminder, pluginSessionStartProjection } from './agent/session-start';
 import { createPluginMcpSource } from './contribute/mcp';

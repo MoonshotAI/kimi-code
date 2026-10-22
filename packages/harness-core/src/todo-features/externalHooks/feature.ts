@@ -1,16 +1,4 @@
-import {
-  createFeature,
-  useAgent,
-  useApp,
-  useMessageAppending,
-  useSession,
-  useStepStarting,
-  useStepStopping,
-  useToolEnding,
-  useToolStarting,
-  type App,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useApp, useMessageAppending, useSession, useStepStarting, useStepStopping, useToolEnding, useToolStarting, type App, type Feature, useLoopEvent } from '#/app/index';
 import {
   computed,
   shallowRef,
@@ -38,7 +26,6 @@ import type { CompactionCompletedEvent, CompactionStartedEvent } from '#/feature
 import { ProfileCatalogRef, type ProfileCatalogFace } from '#/todo-features/profiles/index';
 import { latestAssistantText, parseSpawnSource } from '#/todo-features/spawn/index';
 import type { TaskStartedEvent } from '#/todo-features/task/index';
-import { useLoopEvent } from '#/runtime/index';
 
 import { HOOKS_SECTION, hooksConfigSection } from './config-section';
 import { HookSources } from './hook-sources';

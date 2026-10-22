@@ -1,4 +1,4 @@
-import { createFeature, type Feature, type FeatureUnits } from '#/app/index';
+import { createFeature, type Feature, type FeatureUnits, useAgentTools } from '#/app/index';
 import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
 import {
   createKimiDefaultHeaders,
@@ -15,7 +15,6 @@ import {
   useProviderCatalog,
   type CatalogOAuthRef,
 } from '#/features/provider-catalog/index';
-import { useAgentTools } from '#/runtime/index';
 
 import { OAuthTokensRef } from '../oauth/index';
 

@@ -2,7 +2,7 @@ import type { BlobStore } from '@moonshot-ai/agent-core/blob/index';
 import type { Loop, LoopRecordState } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
 
-import type { FeatureEvent, FeatureStore } from '#/runtime/index';
+import type { FeatureEvent, FeatureStore } from '#/app/index';
 
 export type PtcContextLevel = 'none' | 'readonly' | 'full';
 

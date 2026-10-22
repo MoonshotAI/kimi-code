@@ -9,7 +9,7 @@ import type { PermissionMode, PermissionRule } from '../types';
 import { dangerousCommandAsk } from './dangerous';
 import { defaultToolApprove, fallbackAsk, gitCwdWriteApprove } from './defaults';
 import { sensitiveFileAccessAsk, gitControlPathAccessAsk } from './files';
-import { autoModeApprove, autoModeAskUserQuestionDeny, yoloModeApprove } from './mode';
+import { autoModeApprove, yoloModeApprove } from './mode';
 import {
   sessionApprovalHistory,
   userConfiguredAllow,
@@ -53,7 +53,6 @@ export async function evaluatePermissionPolicies(
   context: PermissionPolicyContext,
 ): Promise<PermissionPolicyEvaluation | undefined> {
   const policies: readonly PermissionPolicy[] = [
-    autoModeAskUserQuestionDeny,
     userConfiguredDeny,
     ...(context.interactive ? [dangerousCommandAsk] : []),
     autoModeApprove,

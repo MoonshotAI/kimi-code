@@ -1,15 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, createApp, type App, useFeatureStore } from '#/app/index';
 import {
   createUserEntry,
   type HistoryMessage,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
+import type { FeatureStore } from '#/app/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -33,10 +30,6 @@ import {
   type ContextUndoneEvent,
   type UndoFace,
 } from '#/todo-features/undo/index';
-import {
-  useFeatureStore,
-  type FeatureStore,
-} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, useSystemPrompt } from '#/app/index';
+import { createFeature, useSystemPrompt, useAgentTools, useFeatureStore } from '#/app/index';
 import { createUserEntry, type HistoryMessage, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -8,14 +8,10 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
+import type { FeatureStore } from '#/app/index';
 import { agentCaps } from '#/runtime/agents';
 import { createApp, type App } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import {
-  useAgentTools,
-  useFeatureStore,
-  type FeatureStore,
-} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -212,25 +208,15 @@ describe('app agent runtime', () => {
     await harness.close();
   });
 
-  it('layers feature policy lists onto the base requester', async () => {
+  it('exposes the base requester through agentCaps without layering', async () => {
     const harness = createApp({ space: memorySessionSpace() });
     const session = await harness.open('s1');
     await session.ensureAgent('main');
     const runtime = session.agentRuntime('main');
     if (runtime === undefined) throw new Error('runtime missing');
     expect(() => agentCaps(runtime).requester()).toThrow(/no requester/);
-    const resolver = { id: 'probe', resolve: async (messages: readonly never[]) => messages };
-    const recovery = { id: 'probe', propose: () => undefined };
-    runtime.resolvers.push(resolver as never);
-    runtime.recoveries.push(recovery as never);
     runtime.requester = mergingRequester();
-    const layered = agentCaps(runtime).requester();
-    const request = layered.request({ content: { messages: [] } }) as unknown as {
-      policy: { resolvers: () => unknown[]; recoveries: () => unknown[]; retryables: () => unknown[] };
-    };
-    expect(request.policy.resolvers()).toEqual([resolver]);
-    expect(request.policy.recoveries()).toEqual([recovery]);
-    expect(request.policy.retryables()).toEqual([]);
+    expect(agentCaps(runtime).requester()).toBe(runtime.requester);
     await harness.close();
   });
 });

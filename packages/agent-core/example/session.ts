@@ -1,5 +1,5 @@
 import { memoryBlobBackend } from '#/blob/backend/memory';
-import { openBlobStore } from '#/blob/index';
+import { blobStores } from '#/blob/index';
 import { createUserEntry } from '#/history/message';
 import {
   createAssistantMessage,
@@ -90,7 +90,7 @@ const noTools = {
 const session = await createSession({
   id: 'demo',
   journal: memoryJournal(),
-  blobs: openBlobStore(memoryBlobBackend()),
+  blobs: blobStores(memoryBlobBackend()),
 });
 
 const researcherCaps: AgentCaps = {

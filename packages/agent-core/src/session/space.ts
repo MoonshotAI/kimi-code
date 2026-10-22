@@ -1,5 +1,5 @@
 import { memoryBlobBackend } from '#/blob/backend/memory';
-import { openBlobStore, type BlobStore } from '#/blob/index';
+import { blobStores, type BlobStore } from '#/blob/index';
 import { memoryJournal } from '#/store/backend/memory';
 import type { Journal } from '#/store/index';
 
@@ -20,7 +20,7 @@ export type SessionRecordDraft = Omit<SessionRecord, 'id'>;
 
 export interface SessionContainer {
   readonly journal: Journal;
-  readonly blobs: BlobStore;
+  readonly blobs: (prefix?: string) => BlobStore;
 }
 
 export interface SessionSpace {
@@ -90,7 +90,7 @@ interface MemoryEntry {
 function containerOf(entry: MemoryEntry): SessionContainer {
   return {
     journal: memoryJournal(entry.logs),
-    blobs: openBlobStore(memoryBlobBackend(entry.blobs)),
+    blobs: blobStores(memoryBlobBackend(entry.blobs)),
   };
 }
 

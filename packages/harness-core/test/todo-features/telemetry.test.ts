@@ -1,10 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, createApp, type App, useAgentTools } from '#/app/index';
 import { useInject } from '#/kernel/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
@@ -25,9 +21,6 @@ import {
   type TelemetryFace,
 } from '#/todo-features/telemetry/index';
 import { ConfigRef, createConfig, type ConfigStore } from '#/todo-features/config/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 type GenerateControl = Parameters<LoopLlmRequester['generate']>[1];

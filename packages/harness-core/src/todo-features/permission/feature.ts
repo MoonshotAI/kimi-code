@@ -1,14 +1,6 @@
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  useStepStarting,
-  useToolPermitting,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, useToolPermitting, type Feature, useFeatureStore } from '#/app/index';
 import {
   computed,
-  createFacadeToken,
   useExpose,
   useFire,
   useInject,
@@ -21,11 +13,10 @@ import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import { useInteractions } from '#/todo-features/interaction/index';
 import type { OsFsPort } from '#/todo-features/os/host/index';
 import type { PathClass } from '#/todo-features/os/path-access';
-import { useFeatureStore } from '#/runtime/index';
 
 import { formatDenyMessage, requestToolApproval } from './ask';
 import { evaluatePermissionPolicies } from './policies/chain';
-import { createPermissionModeInjection, permissionModeReminderEnabled } from './remind';
+import { PermissionRef, type PermissionFace } from './ref';
 import {
   configRules,
   defaultPermissionModeConfigSection,
@@ -38,20 +29,8 @@ import {
   PERMISSION_RULES_ADD,
   PERMISSION_SET_MODE,
   permissionProjection,
-  type PermissionApprovalResultRecord,
-  type PermissionState,
 } from './state/projection';
-import type { PermissionEvent, PermissionMode, PermissionRule } from './types';
-
-export interface PermissionFace {
-  readonly state: ComputedRef<PermissionState>;
-  mode(): PermissionMode;
-  setMode(mode: PermissionMode): Promise<void>;
-  recordApprovalResult(record: PermissionApprovalResultRecord): Promise<void>;
-  addRules(rules: readonly PermissionRule[]): Promise<void>;
-}
-
-export const PermissionRef = createFacadeToken<PermissionFace>('permission');
+import type { PermissionEvent, PermissionMode } from './types';
 
 export function usePermissionMode(): ComputedRef<PermissionMode> {
   const permission = useInject(PermissionRef).value;
@@ -153,10 +132,6 @@ export function createPermission(props: CreatePermissionProps = {}): Feature<voi
           { toolCall, args },
         );
       });
-
-      if (permissionModeReminderEnabled()) {
-        useStepStarting(createPermissionModeInjection({ state: permission.state }));
-      }
     },
   });
 }

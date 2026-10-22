@@ -4,12 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import {
   createUserEntry,
   type ToolMeta,
@@ -67,9 +62,6 @@ import {
   type SwarmRunResult,
   type SwarmTask,
 } from '#/todo-features/swarm/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 const fastModel: SpawnModelEntry = {
   name: 'fast',

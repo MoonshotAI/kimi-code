@@ -12,7 +12,7 @@ export * from './policies/file-access';
 export * from './policies/files';
 export * from './policies/mode';
 export * from './policies/user-rules';
-export * from './remind';
+export * from './ref';
 export * from './state/configSection';
 export * from './state/projection';
 export * from './types';

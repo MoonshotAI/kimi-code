@@ -1,4 +1,4 @@
-import { openBlobStore } from '#/blob/index';
+import { blobStores } from '#/blob/index';
 import { memoryBlobBackend } from '#/blob/backend/memory';
 import { createUserEntry, type UserMeta } from '#/history/message';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '#/llm/message';
@@ -72,7 +72,11 @@ export function agentCaps(executor: ToolExecutor = noopExecutor, initial: LoopLl
 }
 
 export function testSession(logs: Map<string, string[]> = new Map()): Promise<Session> {
-  return createSession({ id: 'test', journal: memoryJournal(logs), blobs: openBlobStore(memoryBlobBackend()) });
+  return createSession({
+    id: 'test',
+    journal: memoryJournal(logs),
+    blobs: blobStores(memoryBlobBackend()),
+  });
 }
 
 export function texts(agent: Agent): string[] {

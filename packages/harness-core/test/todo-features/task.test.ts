@@ -1,11 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
@@ -23,9 +18,6 @@ import {
   type TaskSettledEvent,
   type TaskStartedEvent,
 } from '#/todo-features/task/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 

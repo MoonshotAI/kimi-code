@@ -1,12 +1,11 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { createFeature, type Feature } from '#/app/index';
+import { createFeature, type Feature, useAgentTools } from '#/app/index';
 import { createFacadeToken, useExpose, useInject, useReady } from '#/kernel/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import { KimiFileRegistryRef } from '#/todo-features/files/index';
-import { useAgentTools } from '#/runtime/index';
 
 import {
   legacyBackgroundConfigSection,

@@ -1,11 +1,10 @@
-import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature } from '#/app/index';
+import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature, useAgentTools, useBlobs, useFeatureStore } from '#/app/index';
 import { computed, createFacadeToken, useExpose, useInject, type ComputedRef } from '#/kernel/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { useConfigSection } from '#/todo-features/config/index';
 import { useInteractions } from '#/todo-features/interaction/index';
 import { PermissionRef } from '#/todo-features/permission/index';
-import { useAgentTools, useBlobs, useFeatureStore } from '#/runtime/index';
 
 import { defaultPlanModeSection } from './configSection';
 import { createPlanGuard } from './guard';

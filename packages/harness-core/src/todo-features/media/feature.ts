@@ -1,4 +1,4 @@
-import { createFeature, useMessageAppending, type Feature } from '#/app/index';
+import { createFeature, useMessageAppending, type Feature, useAgentRuntime, useAgentTools, useMessageResolver, useLlmRecovery } from '#/app/index';
 import type { BlobCache } from '@moonshot-ai/agent-core/blob/index';
 import { useInject } from '#/kernel/index';
 import { createMediaDegradeRecovery } from '@moonshot-ai/agent-core/llm/builtin/policy/media-degrade';
@@ -16,12 +16,6 @@ import {
   type KimiFileRegistry,
 } from '#/todo-features/files/index';
 import type { OsHost } from '#/todo-features/os/host/index';
-import {
-  useAgentRuntime,
-  useAgentTools,
-  useLlmRecovery,
-  useMessageResolver,
-} from '#/runtime/index';
 
 import { createMediaIntake } from './deliver/intake';
 import { createReadMediaFileTool } from './deliver/tool';

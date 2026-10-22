@@ -40,7 +40,18 @@ async function exerciseSpace(space: SessionSpace): Promise<{ blobRef: string }> 
   const alphaWriter = openWriter(alpha.journal);
   const alphaLog = await alphaWriter.open<MarkerEvent>('markers');
   await alphaLog.commit({ events: [{ type: 'marker', value: 'hello' }] });
-  const { ref: blobRef } = await alpha.blobs.put({ bytes });
+  const { ref: blobRef } = await alpha.blobs().put({ bytes });
+  expect(alpha.blobs()).toBe(alpha.blobs());
+  const fileHistory = alpha.blobs('file-history');
+  const { ref: prefixedRef } = await fileHistory.put({ bytes });
+  expect(prefixedRef).toBe(blobRef);
+  expect(await fileHistory.list()).toEqual([prefixedRef]);
+  expect(await alpha.blobs().list()).toEqual([blobRef]);
+  await fileHistory.delete(prefixedRef);
+  expect(await fileHistory.has(prefixedRef)).toBe(false);
+  expect(await fileHistory.list()).toEqual([]);
+  expect(await alpha.blobs().has(blobRef)).toBe(true);
+  expect(() => alpha.blobs('../x')).toThrow(TypeError);
   expect(await space.list()).toEqual([
     {
       id: 'alpha',
@@ -58,7 +69,7 @@ async function exerciseSpace(space: SessionSpace): Promise<{ blobRef: string }> 
   const copiedWriter = openWriter(copied.journal);
   const copiedLog = await copiedWriter.open<MarkerEvent>('markers');
   expect(markerValues(copiedLog)).toEqual(['hello']);
-  expect(await copied.blobs.has(blobRef)).toBe(true);
+  expect(await copied.blobs().has(blobRef)).toBe(true);
   await copiedWriter.close();
 
   await alphaLog.commit({ events: [{ type: 'marker', value: 'changed' }] });
@@ -114,7 +125,7 @@ describe('session space', () => {
       const { writer, log } = await markerLog(beta);
       expect(markerValues(log)).toEqual(['hello']);
       await writer.close();
-      expect((await beta.blobs.get(blobRef))?.bytes).toEqual(bytes);
+      expect((await beta.blobs().get(blobRef))?.bytes).toEqual(bytes);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

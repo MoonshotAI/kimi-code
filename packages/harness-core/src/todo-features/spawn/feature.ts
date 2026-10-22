@@ -1,14 +1,8 @@
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, type Feature, useAgentRuntime, useAgentTools } from '#/app/index';
 import { createFacadeToken, useInject, useExpose } from '#/kernel/index';
 import type { Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { OsHost } from '#/todo-features/os/index';
-import { useAgentRuntime, useAgentTools } from '#/runtime/index';
 
 import type { SpawnModelEntry } from './plan';
 import type { ProfileCatalog } from './profile';

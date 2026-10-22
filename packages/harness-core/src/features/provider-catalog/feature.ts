@@ -1,4 +1,4 @@
-import { createFeature, useSession } from '#/app/index';
+import { createFeature, useSession, useAgentRuntime, useLlmRecovery, useFeatureStore } from '#/app/index';
 import { onScopeDispose } from '@vue/reactivity';
 import {
   createCollection,
@@ -60,7 +60,6 @@ import {
   type ProvidersSection,
   type ThinkingConfig,
 } from '#/todo-features/config/index';
-import { useAgentRuntime, useFeatureStore, useLlmRecovery } from '#/runtime/index';
 
 import {
   AgentModelRef,

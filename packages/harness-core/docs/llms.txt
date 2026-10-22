@@ -18,7 +18,7 @@ the package the runtime seam is imported as `#/app/index` / `#/kernel/index`
 - [README](README.md): package orientation, documentation map, import conventions.
 - [Architecture](explanation/architecture.md): layers (agent-core vs harness-core), the three-level createFeature mechanism, features.add scope rules, facade tokens, EventContext-enriched event bubbling, and the dispose/remount re-entrancy discipline.
 - [Persistence](explanation/persistence.md): agent loop logs (LoopRecord), the session roster log, feature events sharing those same logs via useFeatureStore with single-rewind undo, blobs, and the nodeSessionSpace directory layout.
-- [Agent Runtime](explanation/agent-runtime.md): the AgentRuntime record (requester slot, live policy arrays, tool registry, host prompt section), ensureAgent, the agent-core system prompt sections contribution point, setTools freeze/retry semantics, and provider-catalog managed model binding.
+- [Agent Runtime](explanation/agent-runtime.md): the AgentRuntime record (requester slot, tool registry, host prompt section), ensureAgent, the loop's native policy registry, the agent-core system prompt sections contribution point, setTools freeze/retry semantics, and provider-catalog managed model binding.
 - [Contribution Hooks](reference/contribution-hooks.md): every hook a feature unit can call — harness runtime hooks, agent-core loop hook helpers, kernel hooks — one line each with its module.
 - [Events](reference/events.md): every event reachable via app.on — built-in app/unit events, forwarded log commits, and each feature's declared event union; notes which old-world events are gone.
 - [Facades](reference/facades.md): every facade token exposed by features and transports, one line each.
@@ -34,8 +34,8 @@ the package the runtime seam is imported as `#/app/index` / `#/kernel/index`
 - `src/app/app.ts`: createApp over a plain SessionSpace.
 - `src/app/session.ts`: AppSession — the session handler: ensureAgent/forkAgent, agentRuntime, the per-session runtime registry.
 - `src/runtime/agents.ts`: AgentRuntime, agentCaps, ensureAgent options, syncAgentTools.
-- `src/runtime/hooks.ts`: useAgentTools/useMessageResolver/useLlmRecovery/useLlmRetryable/useLoopEvent/useBlobs/useWaitForTasks.
-- `src/runtime/stores.ts`: useFeatureStore, FeatureStore, FeatureEvent.
+- `src/app/hooks.ts`: useAgentTools/useMessageResolver/useLlmRecovery/useLlmRetryable/useLoopEvent/useBlobs/useWaitForTasks.
+- `src/app/stores.ts`: useFeatureStore, FeatureStore, FeatureEvent.
 - `src/preset.ts`: harnessPreset — the default feature bundle.
 - `src/features/<name>/feature.ts`: each feature's createFeature definition (facade tokens, event unions, props).
 - `src/feature-http/feature.ts`: createHttp; `src/feature-http/scope.ts`: useHttpRoute, sessionFacade/agentFacade.

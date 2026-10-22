@@ -69,6 +69,10 @@ resolver 抛出的异常也会收敛进结果，而不是让 `requester.generate
 
 结构恢复是为 encoder 没有建模的 provider 布局规则准备的。它从不修补不变量违规，那些在发送前就已经以 syntax 错误失败了。
 
+## 注册（`src/llm/policy/registry.ts`）
+
+每个 loop 持有一个 policy registry，以 `loop.policy` 暴露：`addResolver` / `addRecovery` / `addRetryable` 按注册顺序追加，并返回一个注销函数。这些列表会叠加到 loop 运行的每个请求上，并在每次 attempt 重新读取，所以宿主可以在 turn 中途增删条目。重试选项（`retry.maxAttemptsPerStep`、`retry.infiniteRetry`）不在这里注册，仍按 requester 或按请求携带。
+
 ## Notice
 
 Notice 不是错误，它报告的是 llm 层做过的某个适配（`whitespace_text_dropped`、`vacuous_message_dropped`、`tool_result_reordered`、`consecutive_assistants_merged`、`leading_non_user_dropped`、`media-budget-exceeded`、`anthropic-thinking-effort-not-listed`）。`source` 是报告它的 encode pass 或 resolver id。

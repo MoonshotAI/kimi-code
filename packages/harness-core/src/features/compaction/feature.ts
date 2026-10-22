@@ -11,14 +11,7 @@ import type {
 } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
-import {
-  createFeature,
-  useAgent,
-  useRequester,
-  useStepStarting,
-  useStepStopping,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useRequester, useStepStarting, useStepStopping, type Feature, useLoopEvent } from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -26,7 +19,6 @@ import {
   useFire,
   type RuntimeEvent,
 } from '#/kernel/index';
-import { useLoopEvent } from '#/runtime/index';
 
 import { CompactError, isContextOverflowError } from './errors';
 import { buildCompactionSeed, compactionContinuationMessage, type CompactionSeed } from './shape';

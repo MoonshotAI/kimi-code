@@ -12,7 +12,7 @@ import type { Projection } from '@moonshot-ai/agent-core/store/index';
 import { escapeXmlAttr } from '#/todo-features/skill/catalog/xml-escape';
 import type { SkillCatalogFace } from '#/todo-features/skill/feature';
 import type { SkillDefinition } from '#/todo-features/skill/catalog/types';
-import type { FeatureEvent, FeatureStore } from '#/runtime/index';
+import type { FeatureEvent, FeatureStore } from '#/app/index';
 
 import type { PluginFace } from '../face';
 import type {

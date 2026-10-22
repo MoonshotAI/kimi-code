@@ -4,12 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/index';
 import { useExpose, useFire, useInject, type ShallowRef } from '#/kernel/index';
 import {
@@ -36,9 +31,6 @@ import { indexHooks, runMatchedHooks } from '#/todo-features/externalHooks/inter
 import { runHook } from '#/todo-features/externalHooks/internal/run';
 import type { OsHost, OsProcess, OsSpawnOptions } from '#/todo-features/os/index';
 import { ProfileCatalogRef, type AgentProfile } from '#/todo-features/profiles/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 interface FakeProcSpec {
   readonly stdout?: string;

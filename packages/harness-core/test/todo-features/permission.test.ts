@@ -1,13 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  useAgent,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, useAgent, type Feature, createApp, type App, useAgentTools, useFeatureStore } from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
+import type { FeatureStore } from '#/app/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -25,8 +20,6 @@ import {
 import {
   createPermission,
   DANGEROUS_COMMAND_GUARD_ENV,
-  PERMISSION_MODE_REMINDER_ENV,
-  PERMISSION_REMIND_KEY,
   PermissionRef,
   permissionProjection,
   type ApprovalResponse,
@@ -36,11 +29,6 @@ import {
   type PermissionState,
   type PermissionStoreEvent,
 } from '#/todo-features/permission/index';
-import {
-  useAgentTools,
-  useFeatureStore,
-  type FeatureStore,
-} from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
@@ -252,16 +240,6 @@ function toolResultTexts(agent: Agent): string[] {
     .map((entry: HistoryMessage) => extractText(entry.message));
 }
 
-function permissionReminders(agent: Agent): string[] {
-  return agent.view
-    .getState()
-    .messages.filter(
-      (entry: HistoryMessage) =>
-        entry.meta?.source === 'reminder' && entry.meta?.key === PERMISSION_REMIND_KEY,
-    )
-    .map((entry: HistoryMessage) => extractText(entry.message));
-}
-
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -329,13 +307,6 @@ describe('permission feature', () => {
     const lastResult = (): string => toolResultTexts(env.agent()).at(-1) ?? '';
 
     await face.setMode('auto');
-    queue = [{ toolCall: { name: 'AskUserQuestion', arguments: '{}' } }, { text: 'done' }];
-    await env.runTurn();
-    expect(lastResult()).toBe(
-      'AskUserQuestion is disabled while auto permission mode is active. Make a reasonable decision and continue without asking the user.',
-    );
-    expect(env.captured).toHaveLength(0);
-
     queue = [
       { toolCall: { name: 'Bash', arguments: '{"command":"rm -rf /"}' } },
       { text: 'done' },
@@ -558,36 +529,5 @@ describe('permission feature', () => {
     );
 
     await env.dispose();
-  });
-
-  it('injects auto mode enter and exit reminders with dedup, gated by the env switch', async () => {
-    const env = await startPermissionTest();
-    const face = env.face();
-
-    await face.setMode('auto');
-    queue = [{ toolCall: { name: 'Read', arguments: '{}' } }, { text: 'ok' }];
-    await env.runTurn();
-    expect(permissionReminders(env.agent())).toHaveLength(1);
-    expect(permissionReminders(env.agent())[0]).toContain('Auto permission mode is active.');
-
-    queue = [{ toolCall: { name: 'Read', arguments: '{}' } }, { text: 'ok' }];
-    await env.runTurn();
-    expect(permissionReminders(env.agent())).toHaveLength(1);
-
-    await face.setMode('manual');
-    queue = [{ toolCall: { name: 'Read', arguments: '{}' } }, { text: 'ok' }];
-    await env.runTurn();
-    expect(permissionReminders(env.agent())).toHaveLength(2);
-    expect(permissionReminders(env.agent())[1]).toContain('Auto permission mode is no longer active.');
-
-    await env.dispose();
-
-    vi.stubEnv(PERMISSION_MODE_REMINDER_ENV, 'false');
-    const off = await startPermissionTest();
-    await off.face().setMode('auto');
-    queue = [{ toolCall: { name: 'Read', arguments: '{}' } }, { text: 'ok' }];
-    await off.runTurn();
-    expect(permissionReminders(off.agent())).toHaveLength(0);
-    await off.dispose();
   });
 });

@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -18,9 +13,6 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
-import {
-  useAgentTools,
-} from '#/runtime/index';
 import { waitFor } from '#/todo-features/wait-for/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];

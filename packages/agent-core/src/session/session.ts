@@ -64,8 +64,8 @@ export interface Session {
   readonly log: Log<SessionEvent>;
   readonly since: number;
   readonly roster: View<SessionState>;
-  readonly blobs: BlobStore;
   readonly liveAgents: ReadonlyMap<string, Agent>;
+  blobs(prefix?: string): BlobStore;
   open(agentId: string, caps: AgentCaps, init?: AgentInit): Promise<Agent>;
   fork(sourceId: string, agentId: string, caps: AgentCaps, init?: { readonly source?: string }): Promise<Agent>;
   undo(agentId: string, turns: number): Promise<void>;
@@ -78,7 +78,7 @@ export interface Session {
 export interface CreateSessionOptions {
   readonly id: string;
   readonly journal: Journal;
-  readonly blobs: BlobStore;
+  readonly blobs: (prefix?: string) => BlobStore;
   readonly logger?: Logger;
   readonly source?: SessionSource;
   readonly lastTurn?: LastTurn;

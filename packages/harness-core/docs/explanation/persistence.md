@@ -13,7 +13,7 @@ Per session, the stack persists:
 | Session-scoped feature events | `session` | `useFeatureStore('session', …)` | feature events (model defaults, file registry, …) |
 | Agent loop log | `agents/<agentId>` | the `Agent` binding | `LoopRecord`s — the durable subset of loop events |
 | Agent-scoped feature events | `agents/<agentId>` | `useFeatureStore('agent', …)` | feature events (todo, plan, cron, …) |
-| Blobs | (blob backend) | `session.blobs` | content-addressed media/files, plus cache entries |
+| Blobs | (blob backend) | `session.blobs()` | content-addressed media/files, plus cache entries |
 | Catalog record | `record.json` (fs space) | the space, via `App` | title, metadata, `lastTurn` index, timestamps |
 
 There is **no separate feature journal**. Session-scoped feature events are
@@ -134,10 +134,14 @@ no per-agent turn meaning and is never truncated. The `undo` feature
 
 ## Blobs
 
-`session.blobs` is a `BlobStore` from agent-core: `put({ bytes, mimeType?,
+`session.blobs()` returns the default-keyspace `BlobStore` from agent-core: `put({ bytes, mimeType?,
 filename? })` stores one record under `data/<ref>` where `ref` is the
 record's sha256, and `get` returns `undefined` for unknown refs and throws
-`BlobIntegrityError` on a hash mismatch. `openBlobCache(backend,
+`BlobIntegrityError` on a hash mismatch. `session.blobs(prefix)` returns
+the store over a per-consumer keyspace (`<prefix>/<ref>`) — e.g.
+fileHistory owns `file-history/` — which is what makes `delete(ref)` and
+`list()` safe: they only ever touch the caller's own keyspace.
+`openBlobCache(backend,
 namespace)` layers JSON cache values under
 `cache/<namespace>/<sha256(key)>` on the same backend. Media features use it
 for image originals and upload caches; the LLM store-ref resolver adapts it
@@ -154,7 +158,7 @@ to turn `store:` refs into wire sources.
 │   ├── session.jsonl
 │   ├── agents/<agentId>.jsonl
 │   └── writer.lock
-└── blobs/             ← nodeBlobBackend: data/<ref>, cache/<namespace>/<sha256(key)>
+└── blobs/             ← nodeBlobBackend: <prefix>/<ref> (default data/<ref>), cache/<namespace>/<sha256(key)>
 ```
 
 `record.json` is written atomically (`.tmp` + rename). `copy(from, to)` —

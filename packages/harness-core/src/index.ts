@@ -1,11 +1,22 @@
 export {
   createApp,
+  useAgentRuntime,
+  useAgentTools,
+  useBlobs,
+  useFeatureStore,
+  useLlmRecovery,
+  useLlmRetryable,
+  useLoopEvent,
+  useMessageResolver,
+  useWaitForTasks,
   type App,
   type AppEvent,
   type AppSession,
   type CreateAppOptions,
   type CreateSessionInput,
   type EnsuredAgent,
+  type FeatureEvent,
+  type FeatureStore,
   type OpenAgentOptions,
 } from './app/index';
 export * from './runtime/index';
@@ -52,6 +63,7 @@ export * from './todo-features/notify/index';
 export * from './todo-features/shellCommand/index';
 export * from './todo-features/externalHooks/index';
 export * from './features/tokenCounting/index';
+export * from './defaults/index';
 export * from './feature-http/index';
 export * from './feature-acp/index';
 export * from './feature-remote-control/index';

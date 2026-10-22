@@ -27,5 +27,17 @@ describe('node blob backend', () => {
     await expect(blobs.get(first.ref)).rejects.toBeInstanceOf(BlobIntegrityError);
     expect(await blobs.get('0'.repeat(64))).toBeUndefined();
     expect(await blobs.get('../x')).toBeUndefined();
+
+    expect(await blobs.list()).toEqual([first.ref]);
+    await writeFile(join(dir, 'data', 'stray.tmp'), 'x');
+    const prefixed = openBlobStore(nodeBlobBackend(dir), 'file-history');
+    expect(await prefixed.put(content)).toEqual(first);
+    expect(await prefixed.list()).toEqual([first.ref]);
+    expect(await prefixed.has(first.ref)).toBe(true);
+    await blobs.delete(first.ref);
+    expect(await blobs.has(first.ref)).toBe(false);
+    expect(await blobs.list()).toEqual([]);
+    expect(await prefixed.has(first.ref)).toBe(true);
+    expect(() => openBlobStore(nodeBlobBackend(dir), 'bad prefix')).toThrow(TypeError);
   });
 });

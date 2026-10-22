@@ -23,8 +23,6 @@ import {
   type CompactionFace,
   type Summarize,
 } from '#/features/compaction/index';
-import {
-} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 

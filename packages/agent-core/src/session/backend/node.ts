@@ -2,7 +2,7 @@ import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:
 import { join } from 'node:path';
 
 import { nodeBlobBackend } from '#/blob/backend/node';
-import { openBlobStore } from '#/blob/index';
+import { blobStores } from '#/blob/index';
 import { nodeJournal } from '#/store/backend/node';
 
 import {
@@ -114,7 +114,7 @@ class NodeSessionSpace implements SessionSpace {
     const dir = this.dir(id);
     return {
       journal: await nodeJournal(join(dir, 'journal')),
-      blobs: openBlobStore(nodeBlobBackend(join(dir, 'blobs'))),
+      blobs: blobStores(nodeBlobBackend(join(dir, 'blobs'))),
     };
   }
 

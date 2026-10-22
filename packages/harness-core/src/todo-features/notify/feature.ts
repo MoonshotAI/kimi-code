@@ -1,17 +1,9 @@
-import {
-  createFeature,
-  useAgent,
-  useStepStarting,
-  useSystemPrompt,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useStepStarting, useSystemPrompt, type Feature, useAgentTools } from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
 } from '@moonshot-ai/agent-core/history/index';
 import type { RuntimeEvent } from '#/kernel/index';
-
-import { useAgentTools } from '#/runtime/index';
 
 import {
   lastMidResponsePosition,

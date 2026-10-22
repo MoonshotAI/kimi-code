@@ -1,17 +1,10 @@
-import { createFeature, useAgent, useSession, type Feature } from '#/app/index';
+import { createFeature, useAgent, useSession, type Feature, useAgentRuntime, useAgentTools, useBlobs, useFeatureStore } from '#/app/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
-
-import {
-  useAgentRuntime,
-  useAgentTools,
-  useBlobs,
-  useFeatureStore,
-  type FeatureStore,
-} from '#/runtime/index';
 
 import type { PtcContextLevel, PtcDispatchedEvent, PtcStoreState } from './context';
 import { PTC_DISPATCHED } from './context';
 import { createCodeTool, DEFAULT_PTC_LIMITS, type PtcLimits } from './tool';
+import type { FeatureStore } from '#/app/index';
 
 export const PTC_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_PTC';
 const EXPERIMENTAL_MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';

@@ -2,8 +2,8 @@
 
 `app.open` gives every session a log, a roster, and live agents with a loop —
 and nothing else. The product needs more per-agent state that is *not*
-durable (which LLM to call, which tools exist this run, which policy entries
-apply) and *not* part of the loop's own state. That record is the
+durable (which LLM to call, which tools exist this run) and *not* part of
+the loop's own state. That record is the
 `AgentRuntime` (`src/runtime/agents.ts`), and this document explains its
 semantics.
 
@@ -13,9 +13,6 @@ semantics.
 interface AgentRuntime {
   readonly agentId: string;
   requester: LoopLlmRequester | undefined;     // the requester slot
-  readonly resolvers: MessageResolver[];       // live policy arrays
-  readonly recoveries: LlmRecovery[];
-  readonly retryables: LlmRetryable[];
   readonly executor: ToolExecutorHost;         // tool handlers
   readonly tools: Map<string, ToolDefinition>; // tool descriptions
   hostSystemPrompt: string | undefined;        // the reserved `host` prompt section
@@ -58,7 +55,7 @@ const { agent, runtime } = await session.ensureAgent('main', {
   every agent in the roster. Both paths converge on the same per-session
   registry, so a runtime made by either is visible to `useAgentRuntime()`.
 
-## The Requester Slot and the Live Policy Arrays
+## The Requester Slot and the Loop Policy Registry
 
 `agentCaps` hands the loop a requester **getter**, read once per step by the
 loop's request actor:
@@ -67,13 +64,7 @@ loop's request actor:
 requester: () => {
   const base = runtime.requester;
   if (base === undefined) throw new Error(`agent '${agentId}' has no requester`);
-  return base.with({
-    policy: {
-      resolvers: () => [...runtime.resolvers],
-      recoveries: () => [...runtime.recoveries],
-      retryables: () => [...runtime.retryables],
-    },
-  });
+  return base;
 }
 ```
 
@@ -83,11 +74,12 @@ Two consequences:
    changes what the *next* step calls — no re-registration, no loop restart.
    A turn already in flight picks it up at its next LLM request. An agent
    with no requester fails its turn with `agent '<id>' has no requester`.
-2. **Policy arrays are read live.** `useMessageResolver`,
-   `useLlmRecovery`, and `useLlmRetryable` push into these arrays and remove
-   on scope dispose; every request re-reads them through the `.with()`
-   layering, so feature mount/unmount changes apply to the very next
-   request, mid-turn included.
+2. **Policy lives in the loop's native registry.** `useMessageResolver`,
+   `useLlmRecovery`, and `useLlmRetryable` register into agent-core's
+   `loop.policy` and remove on scope dispose; the registry is layered onto
+   every request the loop runs and re-read on every attempt, so feature
+   mount/unmount changes apply to the very next request, mid-turn included,
+   and survive a requester swap.
 
 ## Tools: Registry plus Profile Sync
 
@@ -205,5 +197,5 @@ active at the cut turn becomes active again.
 1. `src/runtime/agents.ts` — the record, caps, tool sync.
 2. `src/app/session.ts` — the session handler: the registry, `ensureAgent` / `forkAgent`.
 3. `src/app/units.ts` — the internal `host` prompt section feature.
-4. `src/runtime/hooks.ts` — the contribution hooks features call.
+4. `src/app/hooks.ts` — the contribution hooks features call.
 5. `src/features/provider-catalog/feature.ts` — managed binding, end to end.

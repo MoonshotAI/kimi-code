@@ -42,5 +42,13 @@ export function durableObjectBlobBackend(storage: DurableObjectSql): BlobBackend
         } while (offset < data.byteLength);
       });
     },
+    delete: async (key) => {
+      sql.exec('DELETE FROM blob_parts WHERE key = ?', key);
+    },
+    list: async (prefix) =>
+      Array.from(
+        sql.exec('SELECT DISTINCT key FROM blob_parts WHERE key GLOB ?', `${prefix}*`),
+        (row) => row['key'] as string,
+      ),
   };
 }

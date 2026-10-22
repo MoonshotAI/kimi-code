@@ -1,6 +1,6 @@
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
-import type { FeatureEvent } from '#/runtime/index';
+import type { FeatureEvent } from '#/app/index';
 
 export const PLAN_MODE_ENTER = 'plan_mode.enter' as const;
 export const PLAN_MODE_CANCEL = 'plan_mode.cancel' as const;

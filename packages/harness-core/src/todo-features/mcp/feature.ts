@@ -1,10 +1,4 @@
-import {
-  createFeature,
-  useAgent,
-  useApp,
-  useSession,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useApp, useSession, type Feature, useAgentRuntime, useLoopEvent } from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -21,7 +15,7 @@ import { join } from 'pathe';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import { KimiFileRegistryRef } from '#/todo-features/files/index';
-import { useAgentRuntime, useLoopEvent } from '#/runtime/index';
+
 import type { AgentRuntime } from '#/runtime/index';
 
 import { loadMcpServers, loadMcpServersDetailed, resolveMcpJsonPaths } from './config/loader';
@@ -848,7 +842,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
       const registry = useInject(KimiFileRegistryRef);
       const mediaStore = (): McpMediaStore | undefined => {
         if (props.mediaStore !== undefined) return props.mediaStore;
-        return runtime.resolvers.some((resolver) => resolver.id === 'store-ref')
+        return agent.loop.policy.resolvers.some((resolver) => resolver.id === 'store-ref')
           ? registry.value
           : undefined;
       };

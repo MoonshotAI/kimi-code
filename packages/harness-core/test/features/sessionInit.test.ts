@@ -46,8 +46,6 @@ import {
   createSessionInit,
   type SessionInitFace,
 } from '#/features/sessionInit/index';
-import {
-} from '#/runtime/index';
 
 interface LlmCall {
   readonly systemPrompt?: string;

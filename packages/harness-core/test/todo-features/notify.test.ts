@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
 import {
   createAssistantMessage,
@@ -31,9 +26,6 @@ import {
   type NotifyEvent,
   type NotifyShownEvent,
 } from '#/todo-features/notify/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 interface LlmCall {
   readonly systemPrompt?: string;

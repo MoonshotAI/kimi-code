@@ -1,6 +1,6 @@
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
-import type { FeatureEvent } from '#/runtime/index';
+import type { FeatureEvent } from '#/app/index';
 
 export const TOWER_MODE_ENTER = 'tower_mode.enter' as const;
 export const TOWER_MODE_EXIT = 'tower_mode.exit' as const;

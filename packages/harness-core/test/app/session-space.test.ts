@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createFeature, createApp, type App } from '#/app/index';
+import { createFeature, createApp, type App, useFeatureStore } from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -12,8 +12,7 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { nodeSessionSpace } from '@moonshot-ai/agent-core/session/backend/node';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
-
-import { useFeatureStore, type FeatureStore } from '#/runtime/index';
+import type { FeatureStore } from '#/app/index';
 
 interface ProbeState {
   readonly values: readonly string[];

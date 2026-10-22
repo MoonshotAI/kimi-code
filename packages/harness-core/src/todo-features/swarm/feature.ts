@@ -1,12 +1,6 @@
 import { z } from 'zod';
 
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  useToolBatchStarting,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, useToolBatchStarting, type Feature, useAgentRuntime, useAgentTools } from '#/app/index';
 import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
@@ -24,7 +18,6 @@ import {
   type SpawnModelEntry,
   type SpawnRegistry,
 } from '#/todo-features/spawn/index';
-import { useAgentRuntime, useAgentTools } from '#/runtime/index';
 
 import { createSwarmGuard } from './guard';
 import { createAgentSwarmTool, type SwarmItemRegistry } from './tool';

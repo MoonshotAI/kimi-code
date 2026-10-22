@@ -1,14 +1,12 @@
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
-import type { FeatureEvent } from '#/runtime/index';
+import type { FeatureEvent } from '#/app/index';
 
 import type { ApprovalResponse, PermissionMode, PermissionRule } from '../types';
 
 export const PERMISSION_SET_MODE = 'permission.set_mode';
 export const PERMISSION_RULES_ADD = 'permission.rules.add';
 export const PERMISSION_RECORD_APPROVAL_RESULT = 'permission.record_approval_result';
-
-export const PERMISSION_REMIND_KEY = 'permission-mode';
 
 export interface PermissionApprovalResultRecord {
   readonly toolCallId: string;

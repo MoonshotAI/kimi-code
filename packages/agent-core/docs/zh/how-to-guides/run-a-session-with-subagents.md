@@ -12,7 +12,7 @@
 
 ```ts
 import { memoryBlobBackend } from '#/blob/backend/memory';
-import { openBlobStore } from '#/blob/index';
+import { blobStores } from '#/blob/index';
 import { createUserEntry } from '#/history/message';
 import { kimiRequester } from '#/llm/builtin/provider/index';
 import { createUserMessage, extractText } from '#/llm/message';
@@ -29,7 +29,7 @@ const requester = kimiRequester
 const session = await createSession({
   id: 'demo',
   journal: memoryJournal(), // 落盘换 nodeJournal('.sessions/demo')
-  blobs: openBlobStore(memoryBlobBackend()),
+  blobs: blobStores(memoryBlobBackend()),
 });
 
 const researcherCaps: AgentCaps = {

@@ -6,14 +6,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, type Feature, createApp, type App, useAgentRuntime, useAgentTools } from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -59,10 +52,6 @@ import {
   type TowerRateLimiter,
 } from '#/todo-features/tower/index';
 import type { SpawnModelEntry } from '#/todo-features/tower/tools/spawn';
-import {
-  useAgentRuntime,
-  useAgentTools,
-} from '#/runtime/index';
 
 import TOWER_MODE_EXIT_REMINDER from '../../src/todo-features/tower/injection/tower-mode-exit-reminder.md?raw';
 import TOWER_MODE_FULL_REMINDER from '../../src/todo-features/tower/injection/tower-mode-full-reminder.md?raw';

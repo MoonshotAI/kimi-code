@@ -7,5 +7,9 @@ export function memoryBlobBackend(entries: Map<string, Uint8Array> = new Map()):
     write: async (key, data) => {
       entries.set(key, data);
     },
+    delete: async (key) => {
+      entries.delete(key);
+    },
+    list: async (prefix) => [...entries.keys()].filter((key) => key.startsWith(prefix)),
   };
 }

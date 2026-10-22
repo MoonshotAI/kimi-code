@@ -16,14 +16,7 @@ import {
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import {
   useCollection,
   useInject,
@@ -85,9 +78,6 @@ import {
 } from '#/todo-features/skill/index';
 import { todo as todoFeature } from '#/todo-features/todo/index';
 import { usage } from '#/features/usage/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 const fixturePath = fileURLToPath(new URL('./todo-features/fixtures/fake-mcp-server.mjs', import.meta.url));
 

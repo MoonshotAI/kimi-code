@@ -7,7 +7,7 @@ import type {
 import type { ToolEntry } from '@moonshot-ai/agent-core/history/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
-import { useLoopEvent } from '#/runtime/index';
+import { useLoopEvent } from '#/app/index';
 
 import type { TelemetryFace } from './feature';
 

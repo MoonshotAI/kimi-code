@@ -10,7 +10,7 @@ import {
   type App,
 } from '#/app/index';
 import { memoryBlobBackend } from '@moonshot-ai/agent-core/blob/backend/memory';
-import { openBlobStore } from '@moonshot-ai/agent-core/blob/index';
+import { blobStores } from '@moonshot-ai/agent-core/blob/index';
 import { createAssistantEntry, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
@@ -57,7 +57,7 @@ function diskHarnessSpace(root: string): SessionSpace {
   const catalog = new Map<string, SessionRecord>();
   const openContainer = async (sessionId: string): Promise<SessionContainer> => ({
     journal: await nodeJournal(join(root, sessionId)),
-    blobs: openBlobStore(memoryBlobBackend(new Map())),
+    blobs: blobStores(memoryBlobBackend(new Map())),
   });
   return {
     list: async () => [...catalog.values()],

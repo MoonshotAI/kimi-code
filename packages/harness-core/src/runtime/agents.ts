@@ -1,6 +1,3 @@
-import type { MessageResolver } from '@moonshot-ai/agent-core/llm/policy/resolver';
-import type { LlmRecovery } from '@moonshot-ai/agent-core/llm/policy/recovery';
-import type { LlmRetryable } from '@moonshot-ai/agent-core/llm/policy/retry';
 import { createMaxStepsHook, type HookRegistration, type LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, AgentCaps } from '@moonshot-ai/agent-core/session/index';
 import { createToolExecutor, type ToolDefinition, type ToolExecutorHost } from '@moonshot-ai/agent-core/tool/index';
@@ -8,9 +5,6 @@ import { createToolExecutor, type ToolDefinition, type ToolExecutorHost } from '
 export interface AgentRuntime {
   readonly agentId: string;
   requester: LoopLlmRequester | undefined;
-  readonly resolvers: MessageResolver[];
-  readonly recoveries: LlmRecovery[];
-  readonly retryables: LlmRetryable[];
   readonly executor: ToolExecutorHost;
   readonly tools: Map<string, ToolDefinition>;
   hostSystemPrompt: string | undefined;
@@ -27,9 +21,6 @@ export function createAgentRuntime(agentId: string, options: EnsureAgentOptions 
   return {
     agentId,
     requester: undefined,
-    resolvers: [],
-    recoveries: [],
-    retryables: [],
     executor: createToolExecutor({ policy: { maxResultChars: options.maxResultChars } }),
     tools: new Map(),
     hostSystemPrompt: options.systemPrompt,
@@ -45,13 +36,7 @@ export function agentCaps(runtime: AgentRuntime, options: EnsureAgentOptions = {
     requester: () => {
       const base = runtime.requester;
       if (base === undefined) throw new Error(`agent '${runtime.agentId}' has no requester`);
-      return base.with({
-        policy: {
-          resolvers: () => [...runtime.resolvers],
-          recoveries: () => [...runtime.recoveries],
-          retryables: () => [...runtime.retryables],
-        },
-      });
+      return base;
     },
     executor: runtime.executor,
     hooks,

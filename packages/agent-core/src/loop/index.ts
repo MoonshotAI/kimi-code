@@ -5,6 +5,7 @@ export * from './contract/outcome';
 export { createMaxStepsHook, MAX_STEPS_REASON } from './builtin/max-steps';
 export type { LoopLlmRequester } from './machine/request-actor';
 export type { HookRegistry } from './hook/registry';
+export type { PolicyRegistry } from '../llm/policy/registry';
 export type { LoopInput, LoopProfile, UnfinishedTurn } from './contract/command';
 export type { TaskWaitInput, TaskWaitOutcome, WaitForTasks } from './tool/tasks';
 export {

@@ -1,8 +1,6 @@
-import { createFeature, useAgent } from '#/app/index';
+import { createFeature, useAgent, useAgentTools, useLoopEvent, useFeatureStore } from '#/app/index';
 import { createHistoryMessageBuilder } from '@moonshot-ai/agent-core/history/index';
 import { computed, createFacadeToken, useExpose, type ComputedRef } from '#/kernel/index';
-
-import { useAgentTools, useFeatureStore, useLoopEvent } from '#/runtime/index';
 
 import { todos, type TodoEvent, type TodoState } from './projection';
 import { createTodoListTool } from './tool';

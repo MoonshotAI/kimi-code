@@ -69,6 +69,10 @@ Before retrying, `policy.recoveries` are asked in order; the first proposal that
 
 Structure recovery exists for provider layout rules the encoder does not model. It never repairs invariant violations; those fail as syntax errors before sending.
 
+## Registration (`src/llm/policy/registry.ts`)
+
+Each loop owns a policy registry, exposed as `loop.policy`: `addResolver` / `addRecovery` / `addRetryable` append in registration order and return an unregister function. The lists are layered onto every request the loop runs and re-read on every attempt, so a host can add or remove entries mid-turn. Retry options (`retry.maxAttemptsPerStep`, `retry.infiniteRetry`) are not registered here; they stay per-requester or per-request.
+
 ## Notices
 
 Notices are not errors. They report an adaptation the layer made (`whitespace_text_dropped`, `vacuous_message_dropped`, `tool_result_reordered`, `consecutive_assistants_merged`, `leading_non_user_dropped`, `media-budget-exceeded`, `anthropic-thinking-effort-not-listed`). `source` is the encode pass or resolver id that reported it.

@@ -1,6 +1,6 @@
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
-import type { FeatureStore } from '#/runtime/index';
+import type { FeatureStore } from '#/app/index';
 
 import { TODO_UPDATED, type TodoEvent, type TodoState } from './projection';
 import { readTodoItems, renderTodoList, TODO_LIST_TOOL_NAME } from './todoItem';

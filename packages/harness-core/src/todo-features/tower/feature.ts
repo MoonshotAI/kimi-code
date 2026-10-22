@@ -1,12 +1,4 @@
-import {
-  createFeature,
-  useAgent,
-  useApp,
-  useSession,
-  useStepStarting,
-  useToolStarting,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useApp, useSession, useStepStarting, useToolStarting, type Feature, useAgentRuntime, useAgentTools, useFeatureStore } from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   createFacadeToken,
@@ -25,7 +17,6 @@ import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index
 import type { OsHost } from '#/todo-features/os/host/index';
 import { PlanRef } from '#/features/plan/index';
 import { TaskRef } from '#/todo-features/task/index';
-import { useAgentRuntime, useAgentTools, useFeatureStore } from '#/runtime/index';
 
 import { createTowerGuard } from './guard';
 import {

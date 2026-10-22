@@ -10,8 +10,8 @@ runtime rules (facades, events, remounts) that feature code must respect.
 your host (CLI, desktop app, server, tests)
 └── @moonshot-ai/harness-core        ← this package: the Kimi product
     ├── src/kernel/                  ← Unit runtime on @vue/reactivity
-    ├── src/app/                     ← createApp + createFeature + level units + agent runtimes
-    ├── src/runtime/                 ← AgentRuntime, hooks, feature stores
+    ├── src/app/                     ← createApp + createFeature + level units + contribution hooks
+    ├── src/runtime/                 ← AgentRuntime, agentCaps
     ├── src/features/ (44 features)  ← product behavior as createFeature units
     └── src/feature-http/ -acp/ -remote-control/  ← transports (also features)
 └── @moonshot-ai/agent-core          ← the engine: no product decisions, no reactivity
@@ -250,7 +250,7 @@ agent's `AgentRuntime`:
 - `useSystemPrompt(...)` (agent-core) — a section into the system prompt
   contribution point (assembled once at agent create),
 - `useMessageResolver` / `useLlmRecovery` / `useLlmRetryable` — entries into
-  the live policy arrays read by every LLM request,
+  the loop's native policy registry, re-read on every attempt,
 - `useFeatureStore(...)` — a durable, undo-aware event-sourced store,
 - plus the agent-core loop hook helpers (`useStepStarting`,
   `useToolPermitting`, …) for turn-cycle intervention.

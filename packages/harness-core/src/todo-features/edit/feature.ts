@@ -1,7 +1,5 @@
-import { createFeature } from '#/app/index';
+import { createFeature, useAgentTools } from '#/app/index';
 import type { Feature } from '#/app/index';
-
-import { useAgentTools } from '#/runtime/index';
 
 import { createEditTool } from './tool';
 import type { CreateEditToolProps } from './tool';

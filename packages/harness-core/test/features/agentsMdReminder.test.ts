@@ -1,12 +1,7 @@
 import { dirname, normalize } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import {
@@ -28,9 +23,6 @@ import {
   type AgentsMdReminderFace,
 } from '#/features/agentsMdReminder/index';
 import type { OsFsPort, OsHost } from '#/todo-features/os/host/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 const WORK_DIR = '/ws';
 const HOME_DIR = '/home/user';

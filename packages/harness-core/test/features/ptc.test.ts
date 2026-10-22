@@ -4,13 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  useToolHandler,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, useToolHandler, type Feature, createApp, type App, useAgentTools, useBlobs } from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
 import { useInject } from '#/kernel/index';
 import {
@@ -29,9 +23,6 @@ import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agen
 import { interaction } from '#/todo-features/interaction/index';
 import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
 import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 

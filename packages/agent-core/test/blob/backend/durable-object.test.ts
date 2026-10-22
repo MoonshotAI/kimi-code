@@ -15,5 +15,9 @@ describe('durable object blob backend', () => {
     expect(await blobs.has(empty.ref)).toBe(true);
     expect((await blobs.get(empty.ref))?.bytes.byteLength).toBe(0);
     expect(await blobs.get('f'.repeat(64))).toBeUndefined();
+    expect((await blobs.list()).toSorted()).toEqual([empty.ref, ref].toSorted());
+    await blobs.delete(ref);
+    expect(await blobs.has(ref)).toBe(false);
+    expect(await blobs.list()).toEqual([empty.ref]);
   });
 });

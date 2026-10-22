@@ -4,14 +4,9 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  useAgent,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, useAgent, type Feature, createApp, type App, useFeatureStore } from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
+import type { FeatureStore } from '#/app/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
@@ -33,10 +28,6 @@ import {
   type CronState,
   type CronTask,
 } from '#/todo-features/cron/index';
-import {
-  useFeatureStore,
-  type FeatureStore,
-} from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 

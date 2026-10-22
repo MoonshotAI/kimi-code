@@ -1,7 +1,5 @@
-import { createFeature } from '#/app/index';
+import { createFeature, useLoopEvent } from '#/app/index';
 import { createFacadeToken, shallowRef, useExpose, type Ref } from '#/kernel/index';
-
-import { useLoopEvent } from '#/runtime/index';
 
 export interface LlmRequestTiming {
   readonly requestBuildMs?: number;

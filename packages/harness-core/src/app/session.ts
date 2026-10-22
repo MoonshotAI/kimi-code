@@ -51,9 +51,7 @@ export function createAppSession(session: Session): AppSession {
     get roster() {
       return session.roster;
     },
-    get blobs() {
-      return session.blobs;
-    },
+    blobs: (prefix) => session.blobs(prefix),
     get liveAgents() {
       return session.liveAgents;
     },

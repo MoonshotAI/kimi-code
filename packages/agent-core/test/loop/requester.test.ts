@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import { createUserEntry } from '#/history/message';
 import { createAssistantMessage, createUserMessage, extractText } from '#/llm/message';
+import type { LlmRecovery } from '#/llm/policy/recovery';
+import type { MessageResolver } from '#/llm/policy/resolver';
+import type { LlmRetryable } from '#/llm/policy/retry';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import { mergeFields, type LlmRequestPart } from '#/llm/requester';
 import type { LlmOutcome } from '#/llm/response';
@@ -25,6 +28,10 @@ function done(text: string): LlmOutcome {
 
 const noopExecutor = { execute: async () => ({ content: [] }) };
 
+function listOf<T>(value: readonly T[] | (() => readonly T[]) | undefined): readonly T[] {
+  return typeof value === 'function' ? value() : (value ?? []);
+}
+
 describe('loop.requester', () => {
   it('fills the host requester with the live history and delegates terminal calls to it', async () => {
     const seen: LlmRequest[] = [];
@@ -36,10 +43,20 @@ describe('loop.requester', () => {
         }).with({ model: { spec } }),
       executor: noopExecutor,
     });
+    const resolver: MessageResolver = { id: 'probe', resolve: async (messages) => messages };
+    const recovery: LlmRecovery = { propose: () => undefined };
+    const retryable: LlmRetryable = () => true;
+    const removeResolver = loop.policy.addResolver(resolver);
+    const removeRecovery = loop.policy.addRecovery(recovery);
+    const removeRetryable = loop.policy.addRetryable(retryable);
     const empty = loop.requester.request({});
     expect(empty.model.spec).toEqual(spec);
     expect(empty.content.messages).toEqual([]);
+    expect(listOf(empty.policy?.resolvers)).toEqual([resolver]);
+    expect(listOf(empty.policy?.recoveries)).toEqual([recovery]);
+    expect(listOf(empty.policy?.retryables)).toEqual([retryable]);
     expect((await loop.runTurn(createUserEntry(createUserMessage('hello')))).type).toBe('done');
+    expect(listOf(seen[0]?.policy?.resolvers)).toEqual([resolver]);
     seen.length = 0;
     const filled = loop.requester.request({});
     expect(filled.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply']);
@@ -51,6 +68,11 @@ describe('loop.requester', () => {
     expect(seen[0]?.profile?.systemPrompt).toBe('side');
     expect(seen[0]?.content.messages.map((message) => extractText(message))).toEqual(['hello', 'reply']);
     expect(typeof seen[0]?.content.usedTokens).toBe('number');
+    removeResolver();
+    removeRecovery();
+    removeRetryable();
+    expect(loop.policy.resolvers).toEqual([]);
+    expect(listOf(loop.requester.request({}).policy?.resolvers)).toEqual([]);
     await loop.close();
   });
 

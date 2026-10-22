@@ -11,17 +11,19 @@ harness-core turns those primitives into a product:
   `SessionSpace` (agent-core); `app.open` / `app.create` return the
   `AppSession` session handler, whose `session.ensureAgent` /
   `session.forkAgent` open agents with the per-agent
-  `AgentRuntime` registry (requester slot, LLM policy arrays, tool registry,
-  host prompt section).
-- `src/runtime/` — the `AgentRuntime` record and `agentCaps`, the
-  contribution hooks (`useAgentTools`, …) and the durable feature stores
-  (`useFeatureStore`).
+  `AgentRuntime` registry (requester slot, tool registry,
+  host prompt section); the contribution hooks (`useAgentTools`,
+  `useMessageResolver`, …) and durable feature stores (`useFeatureStore`)
+  live in `hooks.ts` / `stores.ts` here.
+- `src/runtime/` — the `AgentRuntime` record and `agentCaps`.
 - `src/features/` — every Kimi product feature as a `createFeature` unit
   (todo, plan, permission, skill, mcp, compaction, provider-catalog, …).
 - `src/feature-http/`, `src/feature-acp/`, `src/feature-remote-control/` —
   transport surfaces that expose the harness over HTTP/WebSocket, the Agent
   Client Protocol, and the remote-control tunnel.
 - `src/preset.ts` — `harnessPreset`, the default feature bundle.
+- `src/defaults/` — `createDefaultApp`, the common way to create an app
+  instance with the full feature set as the preset.
 - `example/` — a runnable host that assembles the full stack; it is the
   canonical tutorial for this package.
 

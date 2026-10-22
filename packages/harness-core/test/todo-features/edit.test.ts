@@ -17,9 +17,8 @@ import { createEdit, createEditTool } from '#/todo-features/edit/index';
 import {
   createApp,
 } from '#/app/index';
-import {
-} from '#/runtime/index';
-import type { App } from '#/runtime/index';
+
+import type { App } from '#/app/index';
 
 let workDir: string;
 

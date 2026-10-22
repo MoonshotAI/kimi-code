@@ -1,10 +1,4 @@
-import {
-  createFeature,
-  useAgent,
-  useSession,
-  useSystemPrompt,
-  type Feature,
-} from '#/app/index';
+import { createFeature, useAgent, useSession, useSystemPrompt, type Feature, useAgentTools } from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -30,7 +24,6 @@ import type { ContentPart, ContentPartMeta, UserMessage } from '@moonshot-ai/age
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import type { OsFsPort } from '#/todo-features/os/host/index';
-import { useAgentTools } from '#/runtime/index';
 
 import { InMemorySkillCatalog } from './catalog/registry';
 import {

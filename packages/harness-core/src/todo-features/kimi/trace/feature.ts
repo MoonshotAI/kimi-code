@@ -1,4 +1,4 @@
-import { createFeature, type Feature, type FeatureUnits } from '#/app/index';
+import { createFeature, type Feature, type FeatureUnits, useLoopEvent } from '#/app/index';
 import {
   createFacadeToken,
   shallowRef,
@@ -6,8 +6,6 @@ import {
   type Ref,
 } from '#/kernel/index';
 import { llmStatusErrorMessage } from '@moonshot-ai/agent-core/llm/response';
-
-import { useLoopEvent } from '#/runtime/index';
 
 export interface TraceFace {
   readonly traceId: Ref<string | undefined>;

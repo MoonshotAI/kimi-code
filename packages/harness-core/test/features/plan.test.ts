@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  createFeature,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
 import { useInject, type ShallowRef } from '#/kernel/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
@@ -36,9 +31,6 @@ import {
   type PlanApprovalResponse,
   type PlanFace,
 } from '#/features/plan/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
@@ -173,8 +165,9 @@ async function startPlanTest(options?: {
   harness.features.add(bindTestTools());
   const session = await harness.open('s1');
   const puts: { bytes: Uint8Array; ref: string }[] = [];
-  const basePut = session.blobs.put.bind(session.blobs);
-  session.blobs.put = async (content) => {
+  const sessionBlobs = session.blobs();
+  const basePut = sessionBlobs.put.bind(sessionBlobs);
+  sessionBlobs.put = async (content) => {
     const result = await basePut(content);
     puts.push({ bytes: content.bytes, ref: result.ref });
     return result;
@@ -190,7 +183,7 @@ async function startPlanTest(options?: {
     storage,
     probe,
     interactionsProbe,
-    blobs: session.blobs,
+    blobs: sessionBlobs,
     puts,
     agent: () => agent,
     runTurn: async (text = 'go') => {

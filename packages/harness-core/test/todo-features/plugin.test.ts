@@ -6,13 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ZipFile } from 'yazl';
 
-import {
-  createFeature,
-  useAgent,
-  type Feature,
-  createApp,
-  type App,
-} from '#/app/index';
+import { createFeature, useAgent, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
 import {
@@ -64,9 +58,6 @@ import {
   type ProviderCatalogFace,
 } from '#/features/provider-catalog/index';
 import { createSkill, SkillCatalogRef, type SkillCatalogFace } from '#/todo-features/skill/index';
-import {
-  useAgentTools,
-} from '#/runtime/index';
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
