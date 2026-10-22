@@ -106,7 +106,11 @@ export class SessionLockService extends SessionLockHolds {
     const holder = this.readHolder(lockPath);
     if (holder === undefined) return;
     this.log.warn('taking over session lock', { sessionId, holder });
-    this.unlinkSilent(lockPath);
+    try {
+      fs.unlinkSync(lockPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
   }
 
   private claim(lockPath: string, token: string): ClaimOutcome {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import fs, { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -206,6 +206,21 @@ describe('SessionLockService', () => {
     expect(existsSync(lockPath(homeDir, SID))).toBe(false);
     expect(() => serviceA.hold(SID)).not.toThrow();
     serviceA.release(SID);
+  });
+
+  it('takeover reports a lock file it cannot remove', () => {
+    serviceB.hold(SID);
+    const denied = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+      throw denied;
+    });
+    try {
+      expect(() => serviceA.takeover(SID)).toThrow(denied);
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+    expect(existsSync(lockPath(homeDir, SID))).toBe(true);
+    serviceB.release(SID);
   });
 
   it('takeover keeps a lock this service already holds', () => {
