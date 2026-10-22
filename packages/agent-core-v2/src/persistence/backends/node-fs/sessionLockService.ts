@@ -103,11 +103,10 @@ export class SessionLockService extends SessionLockHolds {
 
   protected evict(sessionId: string): void {
     const lockPath = this.lockPath(sessionId);
-    this.ensureLockDir();
     const holder = this.readHolder(lockPath);
     if (holder === undefined) return;
     this.log.warn('taking over session lock', { sessionId, holder });
-    this.reclaim(lockPath, `${process.pid}:${randomUUID()}`, true);
+    this.unlinkSilent(lockPath);
   }
 
   private claim(lockPath: string, token: string): ClaimOutcome {
@@ -133,7 +132,7 @@ export class SessionLockService extends SessionLockHolds {
     this.exitListener = undefined;
   }
 
-  private reclaim(lockPath: string, token: string, force = false): void {
+  private reclaim(lockPath: string, token: string): void {
     const reclaimPath = `${lockPath}.reclaim`;
     if (!this.tryPublish(reclaimPath, this.payload(token))) {
       const current = this.readHolder(reclaimPath);
@@ -142,7 +141,7 @@ export class SessionLockService extends SessionLockHolds {
     }
     try {
       const current = this.readHolder(lockPath);
-      if (current === undefined || force || !this.alive(current)) this.unlinkSilent(lockPath);
+      if (current === undefined || !this.alive(current)) this.unlinkSilent(lockPath);
     } finally {
       this.unlinkSilent(reclaimPath);
     }

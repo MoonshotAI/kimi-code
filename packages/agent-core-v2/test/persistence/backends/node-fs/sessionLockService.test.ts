@@ -189,6 +189,25 @@ describe('SessionLockService', () => {
     serviceA.release(SID);
   });
 
+  it('takeover evicts the lock even when a stale reclaim marker is left behind', () => {
+    const foreign = JSON.stringify({
+      version: 1,
+      token: 'foreign-token',
+      pid: 1,
+      hostname: 'definitely-not-this-host',
+      startedAt: 0,
+      clientIdentity: 'ghost',
+    } satisfies SessionLockHolder);
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
+    writeFileSync(lockPath(homeDir, SID), foreign, { mode: 0o600 });
+    writeFileSync(`${lockPath(homeDir, SID)}.reclaim`, foreign, { mode: 0o600 });
+    serviceA.takeover(SID);
+    expect(existsSync(lockPath(homeDir, SID))).toBe(false);
+    expect(() => serviceA.hold(SID)).not.toThrow();
+    serviceA.release(SID);
+  });
+
   it('takeover keeps a lock this service already holds', () => {
     serviceA.hold(SID);
     const token = readLockFile(homeDir, SID).token;
