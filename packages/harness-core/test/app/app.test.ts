@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createApp, createFeature, useAgent, useApp, useSession, useSystemPrompt, useToolHandler, useTurnStarting } from '#/app/index';
 import { createSystemEntry } from '@moonshot-ai/agent-core/history/message';
-import { useCleanup, useFire, useOn, type RuntimeEvent } from '#/kernel/index';
+import { useCleanup, useFire, useOn, type RuntimeEvent } from '#/composition-api/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import { createToolExecutor, type ToolExecuteInput, type ToolResult } from '@moonshot-ai/agent-core/tool/index';
@@ -179,14 +179,13 @@ describe('app units', () => {
   });
 
   it('runs a full turn only while idle and settles signal aborts and timeouts as aborted outcomes', async () => {
-    const caps = agentCaps();
     const app = createApp();
     const session = await app.open('sess');
-    const agent = await session.open('main', caps);
+    const agent = await session.open('main', agentCaps());
     expect((await agent.loop.runTurn(user('hello'))).type).toBe('done');
     expect(agent.loop.state.messages.map((entry) => extractText(entry.message))).toContain('echo:hello');
     const release = gate();
-    caps.use(
+    agent.loop.setRequester(
       scriptedRequester(async (rest) => {
         await release.promise;
         const last = (rest.content?.messages ?? []).at(-1);
@@ -197,7 +196,7 @@ describe('app units', () => {
     await expect(agent.loop.runTurn(user('two'))).rejects.toThrow('runTurn is only accepted while idle');
     release.resolve();
     expect((await inFlight).type).toBe('done');
-    caps.use(hangingRequester());
+    agent.loop.setRequester(hangingRequester());
     const controller = new AbortController();
     void loopEvent(agent.loop, 'turn.started').then(() => controller.abort(new Error('stop')));
     await expect(agent.loop.runTurn(user('hang', { promptId: 'h1' }), { signal: controller.signal })).resolves.toMatchObject({

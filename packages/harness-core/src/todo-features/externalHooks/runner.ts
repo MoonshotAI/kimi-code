@@ -1,4 +1,4 @@
-import { createFacadeToken } from '#/kernel/index';
+import { createFacadeToken } from '#/composition-api/index';
 
 import type { HookBlockDecision, HookMatcherValue, HookResult } from './internal/types';
 

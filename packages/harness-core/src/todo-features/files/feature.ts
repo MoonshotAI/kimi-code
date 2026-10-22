@@ -12,7 +12,7 @@ import {
 } from '@moonshot-ai/agent-core/blob/index';
 
 import { createFeature, useApp, type App, type Feature, useBlobs, useFeatureStore } from '#/app/index';
-import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
+import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 
 import { buildKimiFileUrl, parseKimiFileUrl } from './ref';
 import {

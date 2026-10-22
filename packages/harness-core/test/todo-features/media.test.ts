@@ -15,7 +15,7 @@ import {
   type HistoryMessage,
   type ToolMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, watch } from '#/kernel/index';
+import { useInject, watch } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -202,9 +202,7 @@ async function startApp(opts: {
   harness.features.add(probe);
   const session = await harness.open('sess');
   const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
-  const runtime = session.agentRuntime(MAIN_AGENT_ID);
-  if (runtime === undefined) throw new Error('runtime missing');
-  runtime.requester = requester;
+  main.loop.setRequester(requester);
   if (library === undefined) throw new Error('media library face was not exposed');
   return { harness, session, main, calls, library, config, workDir };
 }

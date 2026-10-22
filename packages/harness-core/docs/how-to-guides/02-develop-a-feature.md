@@ -94,7 +94,7 @@ Two ways to emit, both reaching `app.on` the same way:
 ## Expose a Facade
 
 ```ts
-import { computed, createFacadeToken, useExpose, useInject, type ComputedRef, type ShallowRef } from '#/kernel/index';
+import { computed, createFacadeToken, useExpose, useInject, type ComputedRef, type ShallowRef } from '#/composition-api/index';
 
 export interface CounterFace {
   readonly count: ComputedRef<number>;
@@ -199,7 +199,7 @@ probe feature to capture facades (abridged from
 import { describe, expect, it } from 'vitest';
 import { createFeature, type Feature } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import {
@@ -233,13 +233,14 @@ it('counts across turns and rewinds with undo', async () => {
   await app.features.add(probe.feature);
   const session = await app.open('s1');
   const { agent } = await session.ensureAgent('main');
-  session.agentRuntime('main')!.requester =
+  agent.loop.setRequester(
     scriptedRequester(() => ({
       type: 'done',
       message: createAssistantMessage([{ type: 'text', text: 'ok' }], [
         { type: 'function', id: 'c1', name: 'IncrementCounter', arguments: '{"by":2}' } satisfies ToolCall,
       ]),
-    }));
+    })),
+  );
 
   const seen: number[] = [];
   app.on(counter, 'counter.incremented', (event) => seen.push(event.by));
@@ -275,11 +276,11 @@ Notes on the moving parts:
 
 - [ ] Event types are `<feature>.<thing>` and declared per level in the `createFeature` event map.
 - [ ] Facade exposed with `useExpose`, token created with `createFacadeToken`.
-- [ ] Tools via `useAgentTools`; names unique across the preset.
+- [ ] Tools via `useAgentTools`; names unique across the default feature set.
 - [ ] Durable state in `useFeatureStore`, never in module state.
 - [ ] Every manual registration has a `useCleanup`.
 - [ ] A test in `test/features/<name>.test.ts` drives a real turn with the
       scripted requester (follow the nearest existing feature test).
 - [ ] Export the feature from `src/features/<name>/index.ts` and the package
-      `src/index.ts`; if it belongs in the default bundle, add it to
-      `src/preset.ts`.
+      `src/index.ts`; if it belongs in the default assembly, add it in
+      `src/presets/base.ts`.

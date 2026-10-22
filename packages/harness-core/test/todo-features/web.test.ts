@@ -10,7 +10,7 @@ import {
   type App,
 } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -152,9 +152,7 @@ async function openSession(
   await tick();
   const session = await harness.open('sess');
   const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
-  const runtime = session.agentRuntime(MAIN_AGENT_ID);
-  if (runtime === undefined) throw new Error('agent runtime not found');
-  runtime.requester = requester;
+  main.loop.setRequester(requester);
   return { harness, seen, main };
 }
 
@@ -171,7 +169,7 @@ async function mountWebApp(options: {
   const harness = createApp({ space: memorySessionSpace() });
   harness.features.add(createConfig({ persist: fakePersist(options.toml), env: options.env }));
   harness.features.add(providerCatalog);
-  if (options.home !== undefined) harness.features.add(createOauth({ home: options.home }));
+  if (options.home !== undefined) harness.features.add(createOauth({ HOME: options.home }));
   harness.features.add(createWeb({ fetchImpl: options.fetchImpl }));
   harness.features.add(
     createFeature('probe', {

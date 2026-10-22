@@ -1,5 +1,5 @@
 import { createFeature, useApp, type Feature } from '#/app/index';
-import { createFacadeToken, useExpose } from '#/kernel/index';
+import { createFacadeToken, useExpose } from '#/composition-api/index';
 import { SessionSpaceError } from '@moonshot-ai/agent-core/session/index';
 
 import { SessionExportError } from './errors';

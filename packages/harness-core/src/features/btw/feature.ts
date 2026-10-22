@@ -6,7 +6,7 @@ import {
   type Feature,
 } from '#/app/index';
 import { createHistoryMessageBuilder } from '@moonshot-ai/agent-core/history/index';
-import { createFacadeToken, useExpose, type RuntimeEvent } from '#/kernel/index';
+import { createFacadeToken, useExpose, type RuntimeEvent } from '#/composition-api/index';
 import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 
 export const BTW_REMIND_KEY = 'btw.side_question';

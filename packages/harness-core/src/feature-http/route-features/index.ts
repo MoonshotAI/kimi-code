@@ -19,7 +19,7 @@ import { useTaskRoutes } from './task';
 import { useTranscriptRoutes } from './transcript';
 import { useWorkspaceRoutes } from './workspaces';
 
-export function useFeatureFacadeRoutes(prefix: string): void {
+export function useFeatureFacadeRoutes(prefix: string, pluginMarketplaceUrl: string): void {
   const base = prefix.replace(/\/+$/, '');
   useSessionTitleRoutes(base);
   useSessionExportRoutes(base);
@@ -29,7 +29,7 @@ export function useFeatureFacadeRoutes(prefix: string): void {
   useInteractionRoutes(base);
   useRemoteControlRoutes(base);
   useModelsDevRoutes(base);
-  usePluginRoutes(base);
+  usePluginRoutes(base, pluginMarketplaceUrl);
   useMcpRoutes(base);
   useCompactionRoutes(base);
   useBtwRoutes(base);

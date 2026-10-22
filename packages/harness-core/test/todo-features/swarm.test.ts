@@ -9,7 +9,7 @@ import {
   createUserEntry,
   type ToolMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -43,6 +43,7 @@ import {
   type ProfileCatalog,
   type SpawnModelEntry,
 } from '#/todo-features/spawn/index';
+import { createProfiles } from '#/todo-features/profiles/index';
 import {
   AgentRunBatch,
   createAgentSwarmSpecs,
@@ -223,12 +224,9 @@ function setRequester(
   requester: LoopLlmRequester,
 ): void {
   const session = harness.sessions.get(sessionId);
-  const runtime =
-    session !== undefined
-      ? session.agentRuntime(agentId)
-      : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 interface SwarmTestEnv {
@@ -249,6 +247,8 @@ async function startApp(opts?: {
   withConfig?: boolean;
   toml?: string;
   env?: Record<string, string | undefined>;
+  fork?: boolean;
+  forkEnabled?: () => boolean;
 }): Promise<SwarmTestEnv> {
   const workDir = await mkdtemp(join(tmpdir(), 'swarm-work-'));
   tmpDirs.push(workDir);
@@ -262,7 +262,15 @@ async function startApp(opts?: {
   }
   const catalog = opts?.withCatalog === false ? undefined : testCatalog();
   harness.features.add(createSpawn({ catalog, workDir }));
-  harness.features.add(createSwarm({ catalog, models: opts?.models, workDir }));
+  harness.features.add(
+    createSwarm({
+      catalog,
+      models: opts?.models,
+      workDir,
+      EXPERIMENTAL_SUBAGENT_FORK: opts?.fork,
+      forkEnabled: opts?.forkEnabled,
+    }),
+  );
   harness.features.add(bindTestTools());
   harness.features.add(configProbe.feature);
   const session = await harness.open('sess');
@@ -318,9 +326,6 @@ function swarmCall(args: unknown): string {
 }
 
 afterEach(async () => {
-  delete process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'];
-  delete process.env['KIMI_CODE_EXPERIMENTAL_FLAG'];
-  delete process.env['KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY'];
   while (tmpDirs.length > 0) {
     await rm(tmpDirs.pop()!, { recursive: true, force: true });
   }
@@ -876,8 +881,7 @@ describe('AgentSwarm tool', () => {
     expect(tool!.description).toContain('- primary: your current model and thinking level');
     await env.dispose();
 
-    process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
-    const rich = await startApp();
+    const rich = await startApp({ fork: true });
     await rich.runTurn('hello');
     const richTool = rich.calls[0]!.tools.find((candidate) => candidate.name === 'AgentSwarm');
     const richProperties = richTool!.parameters['properties'] as Record<string, unknown>;
@@ -888,14 +892,15 @@ describe('AgentSwarm tool', () => {
   });
 
   it('rejects fork while the experimental flag is off or combined with resume_agent_ids', async () => {
-    const env = await startApp();
+    let forkFlag = false;
+    const env = await startApp({ forkEnabled: () => forkFlag });
     await env.runTurn(
       swarmCall({ description: 'x', prompt_template: 'do {{item}}', items: ['a', 'b'], fork: true }),
     );
     expect(toolResultTexts(env.main).at(-1)).toBe(FORK_EXPERIMENTAL_UNAVAILABLE);
     expect(toolResultIsErrors(env.main).at(-1)).toBe(true);
 
-    process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
+    forkFlag = true;
     await env.runTurn(
       swarmCall({ description: 'x', resume_agent_ids: { 'subagent-1': 'go' }, fork: true }),
     );
@@ -998,11 +1003,26 @@ describe('AgentSwarm tool', () => {
     await invalid.dispose();
   });
 
-  it('does not register the AgentSwarm tool when no catalog is available', async () => {
+  it('does not register the AgentSwarm tool when no catalog is available, and adopts the live profiles catalog', async () => {
     const env = await startApp({ withCatalog: false });
     await env.runTurn('hello');
     expect(env.calls[0]!.tools.find((candidate) => candidate.name === 'AgentSwarm')).toBeUndefined();
     await env.dispose();
+
+    const workDir = await mkdtemp(join(tmpdir(), 'swarm-work-'));
+    tmpDirs.push(workDir);
+    const { requester, calls } = createMockRequester(script);
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createProfiles({ workDir }));
+    harness.features.add(createSwarm({ workDir }));
+    harness.features.add(bindTestTools());
+    const session = await harness.open('sess');
+    const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+    setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
+    await main.loop.runTurn(user('hello'));
+    await main.flush();
+    expect(calls.at(0)?.tools.find((candidate) => candidate.name === 'AgentSwarm')).toBeDefined();
+    await harness.close();
   });
 
   it('drives a retry turn with an empty retry-origin message after a rate-limited turn', async () => {

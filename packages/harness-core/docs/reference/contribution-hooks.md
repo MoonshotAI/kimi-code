@@ -10,7 +10,7 @@ Module: `@moonshot-ai/harness-core` (root) — source `src/app/`.
 
 | Hook | Semantics |
 |---|---|
-| `useAgentRuntime()` | Returns the current agent's `AgentRuntime` (requester slot, tool registry, host prompt section); throws if the agent was not opened via `session.ensureAgent`. Agent level. |
+| `useAgentRuntime()` | Returns the current agent's `AgentRuntime` (tool registry, host prompt section); throws if the agent was not opened via `session.ensureAgent`. The LLM requester is set/read on the loop (`agent.loop.setRequester` / `agent.loop.baseRequester`). Agent level. |
 | `useAgentTools(...definitions)` | Registers tool definitions into the runtime registry **and** the loop executor, then syncs the loop's tool profile (retrying after `step.ended`/`turn.ended` when the profile is frozen mid-turn); withdraws and re-syncs on dispose. Empty name / duplicate name throws. Agent level. |
 | `useMessageResolver(resolver)` | Registers a `MessageResolver` into the agent loop's native policy registry (`loop.policy`), re-read on every attempt of every request; removed on dispose. Agent level. |
 | `useLlmRecovery(recovery)` | Registers an `LlmRecovery` into the agent loop's native policy registry (`loop.policy`); removed on dispose. Agent level. |
@@ -53,7 +53,7 @@ decision shapes: `@moonshot-ai/agent-core/loop/index` (`LoopHooks`).
 
 ## Kernel Hooks (agent-core)
 
-Module: `#/kernel/index`.
+Module: `#/composition-api/index`.
 
 | Hook | Semantics |
 |---|---|

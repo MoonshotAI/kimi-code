@@ -3,12 +3,10 @@ import { homedir } from 'node:os';
 
 import type { Request, Response } from 'express';
 
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import type { OsFsPort } from '#/todo-features/os/host/index';
 import {
-  KIMI_CODE_PLUGIN_MARKETPLACE_URL,
-  KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
   PluginError,
   PluginRef,
   computeUpdateStatus,
@@ -30,7 +28,7 @@ const MARKETPLACE_FETCH_TIMEOUT_MS = 10_000;
 
 const localFs = { readText: (path: string) => readFile(path, 'utf8') } as OsFsPort;
 
-export function usePluginRoutes(prefix: string): void {
+export function usePluginRoutes(prefix: string, marketplaceUrl: string): void {
   const face = useInject(PluginRef);
 
   const pluginFacade = (request: Request, response: Response): PluginFace | undefined => {
@@ -68,7 +66,7 @@ export function usePluginRoutes(prefix: string): void {
     handler: async (request, response) => {
       const facade = pluginFacade(request, response);
       if (facade === undefined) return;
-      const source = process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] ?? KIMI_CODE_PLUGIN_MARKETPLACE_URL;
+      const source = marketplaceUrl;
       let marketplace: PluginMarketplace;
       let raw: { readonly raw: string; readonly location: Parameters<typeof parsePluginMarketplace>[1] };
       try {

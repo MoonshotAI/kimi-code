@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { useExpose, useFire, useInject, type ShallowRef } from '#/kernel/index';
+import { useExpose, useFire, useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -225,9 +225,9 @@ interface TestApp {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 async function startApp(options?: {
@@ -1162,10 +1162,10 @@ describe('externalHooks feature', () => {
       ],
       'memory',
     );
-    const { agent: child, runtime } = await t.session.ensureAgent('sub-1', {
+    const { agent: child } = await t.session.ensureAgent('sub-1', {
       init: { source: 'spawn:main:coder' },
     });
-    runtime.requester = requester;
+    child.loop.setRequester(requester);
     await tick();
     const outcome = await child.loop.runTurn(user('do it', { origin: { kind: 'subagent' } }));
     expect(outcome.type).toBe('done');
@@ -1189,10 +1189,10 @@ describe('externalHooks feature', () => {
     expect(starts()).toHaveLength(1);
     expect(stops()).toHaveLength(1);
 
-    const { agent: btw, runtime: btwRuntime } = await t.session.ensureAgent('btw-1', {
+    const { agent: btw } = await t.session.ensureAgent('btw-1', {
       init: { source: 'btw' },
     });
-    btwRuntime.requester = requester;
+    btw.loop.setRequester(requester);
     await tick();
     await btw.loop.runTurn(user('do it', { origin: { kind: 'subagent' } }));
     await settle();

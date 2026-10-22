@@ -1,4 +1,4 @@
-import { createCollection, useContribute } from '#/kernel/index';
+import { createCollection, useContribute } from '#/composition-api/index';
 import type { LlmCredentialProvider } from '@moonshot-ai/agent-core/llm/request';
 
 import type { CatalogProviderInfo } from './types';

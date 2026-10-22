@@ -1,5 +1,5 @@
 import { createFeature, useAgent, useLoopEvent } from '#/app/index';
-import { createFacadeToken, shallowRef, useExpose, useInject, type ShallowRef } from '#/kernel/index';
+import { createFacadeToken, shallowRef, useExpose, useInject, type ShallowRef } from '#/composition-api/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 

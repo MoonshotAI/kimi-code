@@ -6,7 +6,7 @@ import {
   useInject,
   useReady,
   type RuntimeEvent,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiRegion,
@@ -60,7 +60,10 @@ export interface CreateCapabilitiesProps {
   readonly detectProbeTimeoutMs?: number;
   readonly commandTimeoutMs?: number;
   readonly resolveRegion?: () => KimiRegion | Promise<KimiRegion>;
+  readonly REGION_MARKER?: boolean;
 }
+
+const _REGION_MARKER = true;
 
 const IDLE_PROGRESS: CapabilityInstallProgress = { running: false };
 
@@ -112,7 +115,7 @@ export function createCapabilities(props: CreateCapabilitiesProps): Feature<void
         return resolveKimiRegion({
           configuredOAuthHost: oauth?.oauthHost,
           configuredOAuthKey: oauth?.key,
-          readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+          readMarker: props.REGION_MARKER ?? _REGION_MARKER,
           homeDir: props.homeDir,
         });
       };

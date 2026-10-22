@@ -23,8 +23,8 @@ import {
   useExpose,
   useInject,
   useOn,
-} from '#/kernel/index';
-import { currentUnit } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit } from '#/composition-api/runtime';
 import {
   MAIN_AGENT_ID,
   type Agent,

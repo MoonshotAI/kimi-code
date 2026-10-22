@@ -1,4 +1,4 @@
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import {
   RemoteControlAlreadyRunningError,

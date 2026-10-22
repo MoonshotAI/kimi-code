@@ -1,5 +1,5 @@
 import { useApp } from '#/app/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import type { OpenInAppId } from '#/todo-features/os/fileLaunch';
 import { WorkspaceRef } from '#/todo-features/workspaces/index';

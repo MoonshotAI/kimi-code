@@ -7,7 +7,7 @@ import {
   useExpose,
   useInject,
   watch,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { createOAuthCredentialProvider } from '@moonshot-ai/agent-core/llm/builtin/policy/credentials';
 import {
   fetchManagedUsage,
@@ -68,7 +68,6 @@ import {
 } from './auth';
 import {
   createOAuthTokenResolver,
-  resolveOauthHome,
   type OAuthTokens,
 } from './tokens';
 
@@ -76,8 +75,13 @@ export const OAuthTokensRef = createFacadeToken<OAuthTokens>('oauth.tokens');
 
 export const DEFAULT_OAUTH_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+const _HOME: string | undefined = undefined;
+
+const _REGION_MARKER = true;
+
 export interface CreateOauthProps {
-  readonly home?: string;
+  readonly HOME?: string;
+  readonly REGION_MARKER?: boolean;
   readonly fetchImpl?: typeof fetch;
 }
 
@@ -90,7 +94,7 @@ export function useOauth(): OAuthTokens {
 }
 
 export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<void> {
-  const home = resolveOauthHome(props.home);
+  const home = props.HOME ?? _HOME;
   return {
     app() {
       const catalog = useProviderCatalog();
@@ -480,7 +484,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
           return resolveKimiRegion({
             configuredOAuthHost: oauth?.oauthHost,
             configuredOAuthKey: oauth?.key,
-            readMarker: process.env['KIMI_CODE_REGION_MARKER'] !== 'off',
+            readMarker: props.REGION_MARKER ?? _REGION_MARKER,
             homeDir: home,
           });
         },

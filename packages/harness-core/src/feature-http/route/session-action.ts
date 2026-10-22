@@ -4,8 +4,8 @@ import {
   createCollection,
   useCleanup,
   useCollection,
-} from '#/kernel/index';
-import { currentUnit, lineage } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit, lineage } from '#/composition-api/runtime';
 
 import { useHttpRoute } from '../scope';
 import { parseActionSuffix } from './action-suffix';

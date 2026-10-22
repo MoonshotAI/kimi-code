@@ -8,7 +8,7 @@ import {
   createFeature,
   createApp,
 } from '#/app/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
@@ -92,7 +92,7 @@ describe('kimi composite feature', () => {
     const harness = createApp({ space: memorySessionSpace() });
     harness.features.add(createConfig({ persist: fakePersist() }));
     harness.features.add(providerCatalog);
-    harness.features.add(createKimi({ oauth: { home } }));
+    harness.features.add(createKimi({ oauth: { HOME: home } }));
     harness.features.add(kimiProbe(capture));
     await tick();
     const tokens = capture.oauth?.value;

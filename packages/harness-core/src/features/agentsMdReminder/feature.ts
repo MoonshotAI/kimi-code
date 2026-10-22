@@ -12,7 +12,7 @@ import {
   createUserEntry,
   type HistoryMessage,
 } from '@moonshot-ai/agent-core/history/index';
-import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
+import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 import { extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { parse } from '@moonshot-ai/tree-sitter-bash';
 

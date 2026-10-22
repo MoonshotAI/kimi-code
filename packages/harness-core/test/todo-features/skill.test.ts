@@ -18,7 +18,7 @@ import {
   type ToolMeta,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -49,6 +49,7 @@ import {
   parseSkillText,
   projectRoots,
   SkillCatalogRef,
+  SKILL_LISTING_CHANGE_REMIND_KEY,
   SkillParseError,
   SkillRef,
   UnsupportedSkillTypeError,
@@ -218,12 +219,9 @@ function setRequester(
   requester: LoopLlmRequester,
 ): void {
   const session = harness.sessions.get(sessionId);
-  const runtime =
-    session !== undefined
-      ? session.agentRuntime(agentId)
-      : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 async function startSkillApp(options?: {
@@ -239,7 +237,7 @@ async function startSkillApp(options?: {
   const skillFeature = createSkill({
     workDir,
     fs: options?.noFs === true ? undefined : host.fs,
-    home: options?.noFs === true ? undefined : brandHome,
+    HOME: options?.noFs === true ? undefined : brandHome,
     ...options?.skillProps,
   });
   const capture: ProbeCapture = { skills: new Map() };
@@ -853,6 +851,29 @@ describe('createSkill agent slot', () => {
     const subPrompt = env.calls.at(-1)?.systemPrompt ?? '';
     expect(subPrompt).toContain('# Skills');
     expect(subPrompt).toContain('DISREGARD any earlier skill listings. Current available skills:');
+    const reminded: string[] = [];
+    env.main.loop.subscribe((event) => {
+      if (
+        event.type === 'prompt.reminded' &&
+        event.entry.meta?.key === SKILL_LISTING_CHANGE_REMIND_KEY
+      ) {
+        reminded.push(extractText(event.entry.message));
+      }
+    });
+    await writeFileUnder(
+      workDir,
+      '.kimi-code/skills/review/SKILL.md',
+      fm('name: review\ndescription: Review code for regressions'),
+    );
+    await env.catalog().reload();
+    expect(reminded).toHaveLength(1);
+    expect(reminded[0]).toContain(
+      'The skill catalog changed since your system prompt was rendered; the listing below replaces it.',
+    );
+    expect(reminded[0]).toContain('- review: Review code for regressions');
+    expect(reminded[0]).toContain('- commit: Create a git commit');
+    await env.catalog().reload();
+    expect(reminded).toHaveLength(1);
     await env.dispose();
   });
 

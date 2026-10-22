@@ -10,7 +10,7 @@ import {
   useExpose,
   useOn,
   useReady,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { MAIN_AGENT_ID, type SessionRecord } from '@moonshot-ai/agent-core/session/index';
 
 import {

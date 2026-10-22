@@ -4,7 +4,7 @@ import {
   useContribute,
   useMounted,
   type CollectionToken,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 export interface SystemPromptSection {

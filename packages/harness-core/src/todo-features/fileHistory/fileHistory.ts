@@ -1,4 +1,4 @@
-import { createFacadeToken } from '#/kernel/index';
+import { createFacadeToken } from '#/composition-api/index';
 
 export interface FileBackupEntry {
   readonly key: string | null;

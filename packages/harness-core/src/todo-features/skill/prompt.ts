@@ -11,6 +11,13 @@ export function renderSkillsSection(listing: string): string {
   return `\n\n# Skills\n\n${SKILLS_SECTION_PROSE}\n\n${listing}\n\n`;
 }
 
+export function skillsChangeText(listing: string): string {
+  if (listing === '') {
+    return 'The skill catalog changed since your system prompt was rendered; no skills are currently available.';
+  }
+  return `The skill catalog changed since your system prompt was rendered; the listing below replaces it.\n\n${listing}`;
+}
+
 export type SkillPromptTrigger = 'user-slash' | 'model-tool' | 'nested-skill';
 
 export interface RenderSkillPromptInput {

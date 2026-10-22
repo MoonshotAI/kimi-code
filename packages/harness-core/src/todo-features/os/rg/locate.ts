@@ -46,10 +46,10 @@ function rgBinaryName(): string {
   return process.platform === 'win32' ? 'rg.exe' : 'rg';
 }
 
+const _HOME = join(homedir(), '.kimi-code');
+
 function getShareDir(): string {
-  const override = process.env['KIMI_CODE_HOME'];
-  if (override !== undefined && override !== '') return override;
-  return join(homedir(), '.kimi-code');
+  return _HOME;
 }
 
 export function getShareBinRgPath(): string {

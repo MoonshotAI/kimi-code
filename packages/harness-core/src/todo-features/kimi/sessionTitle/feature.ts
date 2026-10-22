@@ -6,7 +6,7 @@ import {
   type Feature,
   type FeatureUnits,
 } from '#/app/index';
-import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
+import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 import { MAIN_AGENT_ID, type SessionRecord } from '@moonshot-ai/agent-core/session/index';
 import {
   fetchChatTitle,

@@ -4,7 +4,7 @@
 
 ## 步骤
 
-1. 构造 requester，并把 agent 的 profile 叠上去：`profile.systemPrompt` 和 `profile.tools`（工具描述）。叠在这里的 profile 只是默认值——在 loop 上直接设置（见下文）会覆盖它。loop 每个 step 只读一次 requester getter，因此可以在 step 之间换掉返回的 requester。
+1. 构造 requester，并把 agent 的 profile 叠上去：`profile.systemPrompt` 和 `profile.tools`（工具描述）。叠在这里的 profile 只是默认值——在 loop 上直接设置（见下文）会覆盖它。把它传给 `createLoop({ requester })`，之后随时可用 `loop.setRequester(next)` 换掉；loop 每个 step 只读一次当前 requester，因此替换从下一个 step 生效。`loop.baseRequester` 读回当前 requester；未设置时每次 step 或旁路请求都以 `loop has no requester` 失败。
 2. 用 `defineTool`（`src/tool/define.ts`）定义工具。schema 同时产生模型看见的 `parameters` 和 `execute` 里的 `args` 类型。`onUpdate` 流式上报进度（以 `tool.delta` 出现）；调用 `detach(text)` 会把工具转入后台，并以 `text` 作为应答立即收尾该工具条目。
 3. 用 `createToolExecutor()` 按名字分发，把它作为 `executor` 传给 `createLoop({ requester, executor, hooks })`。`register` 登记实现，`setTools` 或 requester 的 `profile.tools` 登记描述，两边互不推导。`invalidate(name, reason)` 让后续调用得到带内错误且不进入 handler，`restore(name)` 用同一个 handler 恢复。`createToolExecutor({ policy: { maxResultChars } })` 截断最终文本结果。`loop.executor` 就是传入的那个对象。只有一个 `execute`、不需要分发时，这个对象本身仍可以直接当作 executor。
 4. loop 起步是 held 状态。`loop.runTurn(entry)` 跑一个 turn 并以该 turn 的 `TurnOutcome` resolve；也可以用 `submit` / `notify` 排队 prompt、用 `continue()` 放行。被 abort 的 turn 会把它的 prompt 退回 inbox 并 hold。`loop.close()` 会不留宽限期地 abort 正在运行的 turn，因此未完成的工具调用在 `turn.ended` 之前仍会得到一个 aborted 结果。
@@ -40,8 +40,7 @@ const requester = kimiRequester
   .with({ model: { spec: { provider: 'kimi', name: 'kimi-k2' } } });
 
 const loop = createLoop({
-  requester: () =>
-    requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [weatherTool] } }),
+  requester: requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [weatherTool] } }),
   executor: tools,
   hooks: [createMaxStepsHook(() => 8)],
 });
@@ -73,7 +72,7 @@ settled 事件是耐用记录（`src/loop/record.ts`），因此在首个 turn �
 
 ## 下一步
 
-- `loop.state` 是一个普通投影（已设置的 profile、status、held、inbox、messages、正在运行的 turn、含后台工具的工具列表）;`loop.requester` 是用于旁路请求的 requester facade——每次 `request`/`generate` 都会重新读取宿主的 requester getter 并把当前历史填充为 `content`，因此 `.with()` 的覆盖总是落在最新的配置与上下文上;`loop.waitForTasks` 等待后台工具，`loop.waitForIdle()` 等 loop 停稳。
+- `loop.state` 是一个普通投影（已设置的 profile、status、held、inbox、messages、正在运行的 turn、含后台工具的工具列表）;`loop.requester` 是用于旁路请求的 requester facade——每次 `request`/`generate` 都会重新读取 loop 当前的 base requester 并把当前历史填充为 `content`，因此 `.with()` 的覆盖总是落在最新的配置与上下文上;`loop.waitForTasks` 等待后台工具，`loop.waitForIdle()` 等 loop 停稳。
 - 输入命令（`submit`/`notify`/`remind`/`steer`/`cancel`/`setContext`/`setSystemPrompt`/`setTools`）在任何位置都是同步的，包括 `subscribe` 监听器和 hook 内部：调用即返回 ack，返回时 `loop.state` 已经反映了这次修改。事件按唯一的全局顺序投递给监听器，且总在产生它的状态变更之后。
 - loop 本身不做持久化。`src/loop/record.ts` 定义了它的耐用契约（`LoopRecord` / `toLoopRecord` / `loopProjection`）；想要接好的持久化，用 `src/session/`——见「运行一个带 subagent 的 session」。
 - 崩溃后恢复：用 `loopProjection` 回放记录，把 `{ profile, messages, nextTurnId, unfinished, inbox: { notify } }` 作为 `input` 传入。存在 `unfinished` turn 时 loop 以 `interrupted` 状态启动：`continue()` 在历史允许时续跑这个 turn(`turn.resumed`，同一个 turn id，进入下一个 step);其他触发——`abort`、`runTurn`、`submit`、`notify`、`steer`——都会先把它以 `aborted`(reason 为 `CRASHED`)收尾，并为没有结果的工具调用补上 aborted 结果。

@@ -3,7 +3,7 @@ import {
   createHistoryMessageBuilder,
   createUserEntry,
 } from '@moonshot-ai/agent-core/history/index';
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 
 import {
   lastMidResponsePosition,
@@ -25,19 +25,22 @@ export interface NotifyShownEvent extends RuntimeEvent {
 export type NotifyEvent = NotifyShownEvent;
 
 export const NOTIFY_USER_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_NOTIFY_USER';
-const EXPERIMENTAL_MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
 
 export const NOTIFY_REMIND_KEY = 'notify_user_nudge';
 
 export const NOTIFY_USER_GUIDANCE =
   'When `NotifyUser` is available, use it proactively to keep the end user informed while you work. For a multi-step task, send an early update describing your approach, then report meaningful findings, phase conclusions, long waits, and blockers. Keep each update to one or two sentences in the end user\'s language; avoid repeating unchanged status. The UI adds the source label automatically. If you are working as a subagent, report only your own subtask\'s progress, do not present its completion as completion of the whole task, and do not ask the end user questions or request decisions. Updates do not automatically reach your parent agent: include every important finding in your final handoff. Updates remain visible until the main agent starts its next turn, so your final reply must still stand on its own.';
 
+const _EXPERIMENTAL_NOTIFY_USER = false;
+
 export interface CreateNotifyProps {
   readonly available?: () => boolean;
+  readonly EXPERIMENTAL_NOTIFY_USER?: boolean;
 }
 
 export function createNotify(props: CreateNotifyProps = {}): Feature<void, { agent: NotifyEvent }> {
-  const available = props.available ?? defaultNotifyAvailable;
+  const available =
+    props.available ?? (() => props.EXPERIMENTAL_NOTIFY_USER ?? _EXPERIMENTAL_NOTIFY_USER);
   return createFeature<{ agent: NotifyEvent }>('notify', {
     agent(_props, { fire }) {
       if (!available()) return;
@@ -69,13 +72,4 @@ export function createNotify(props: CreateNotifyProps = {}): Feature<void, { age
       );
     },
   });
-}
-
-function defaultNotifyAvailable(): boolean {
-  return envFlagEnabled(NOTIFY_USER_FLAG_ENV) || envFlagEnabled(EXPERIMENTAL_MASTER_ENV);
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  return value === 'true' || value === '1';
 }

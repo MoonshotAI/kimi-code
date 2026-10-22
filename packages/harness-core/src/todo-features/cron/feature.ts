@@ -11,7 +11,7 @@ import {
   watch,
   type RuntimeEvent,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';

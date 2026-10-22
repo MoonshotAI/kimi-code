@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFeature, useAgent, type Feature, createApp, type App, useAgentTools, useFeatureStore } from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
 import type { FeatureStore } from '#/app/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
@@ -12,7 +12,7 @@ import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@mo
 
 import { createConfig, useConfig, type ConfigPersist, type ConfigStore } from '#/todo-features/config/index';
 import {
-  interaction,
+  createInteraction,
   InteractionRef,
   type Interaction,
   type Interactions,
@@ -29,6 +29,8 @@ import {
   type PermissionState,
   type PermissionStoreEvent,
 } from '#/todo-features/permission/index';
+
+const interaction = createInteraction();
 
 type ScriptStep = { text: string } | { toolCall: { name: string; arguments: string } };
 
@@ -63,9 +65,9 @@ function createMockRequester(): LoopLlmRequester {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 const TEST_TOOL_NAMES = ['Bash', 'Write', 'Edit', 'Read', 'CustomTool'];

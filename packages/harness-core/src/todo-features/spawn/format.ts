@@ -89,3 +89,33 @@ export function formatBackgroundAck(
   );
   return lines.join('\n');
 }
+
+export interface SubagentProfileChangeEntry {
+  readonly name: string;
+  readonly description?: string;
+  readonly whenToUse?: string;
+}
+
+export function subagentCatalogChangeText(
+  added: readonly SubagentProfileChangeEntry[],
+  removed: readonly string[],
+): string {
+  const lines = ['The available subagent profiles changed:'];
+  if (added.length > 0) {
+    lines.push(`- Profiles added: ${added.map(addedProfileLabel).join(', ')}`);
+  }
+  if (removed.length > 0) {
+    lines.push(`- Profiles removed: ${removed.join(', ')}`);
+  }
+  lines.push(
+    'You can use them right away — the Agent tool validates subagent_type against the live catalog.',
+  );
+  return lines.join('\n');
+}
+
+function addedProfileLabel(profile: SubagentProfileChangeEntry): string {
+  const details = [profile.description, profile.whenToUse].filter(
+    (part): part is string => part !== undefined && part.length > 0,
+  );
+  return details.length === 0 ? profile.name : `${profile.name} (${details.join('; ')})`;
+}

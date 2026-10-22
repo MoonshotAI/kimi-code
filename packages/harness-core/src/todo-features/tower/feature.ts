@@ -1,4 +1,4 @@
-import { createFeature, useAgent, useApp, useSession, useStepStarting, useToolStarting, type Feature, useAgentRuntime, useAgentTools, useFeatureStore } from '#/app/index';
+import { createFeature, useAgent, useApp, useSession, useStepStarting, useToolStarting, type Feature, useAgentTools, useFeatureStore } from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   createFacadeToken,
@@ -10,7 +10,7 @@ import {
   watch,
   type ComputedRef,
   type RuntimeEvent,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
 
@@ -36,7 +36,6 @@ import {
   type TowerIo,
 } from './protocol/index';
 import {
-  TOWER_FLAG_ENV,
   TOWER_MODE_ENTER,
   TOWER_MODE_EXIT,
   TOWER_WORKER_PROFILE,
@@ -142,17 +141,20 @@ interface TowerSessionState {
 
 const TowerSessionRef = createFacadeToken<TowerSessionState>('tower.session');
 
+const _EXPERIMENTAL_TOWER = false;
+
 export interface CreateTowerProps {
   readonly workDir: string;
   readonly host?: OsHost;
   readonly available?: boolean | (() => boolean);
   readonly models?: readonly SpawnModelEntry[];
+  readonly EXPERIMENTAL_TOWER?: boolean;
 }
 
 export function createTower(props: CreateTowerProps): Feature<void, { agent: TowerEvent }> {
   const available =
     props.available === undefined
-      ? defaultTowerAvailable
+      ? () => props.EXPERIMENTAL_TOWER ?? _EXPERIMENTAL_TOWER
       : typeof props.available === 'function'
         ? props.available
         : () => props.available === true;
@@ -531,7 +533,6 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
           hub: shared.hub,
           running,
         };
-        const runtime = useAgentRuntime();
         useAgentTools(
           createTowerInitTool(deps),
           createTowerPlanTool(deps),
@@ -547,10 +548,10 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
                 systemPrompt: init.systemPrompt,
                 init: { source: init.source },
               });
-              if (init.requester !== undefined) ensured.runtime.requester = init.requester;
+              if (init.requester !== undefined) ensured.agent.loop.setRequester(init.requester);
               return ensured.agent;
             },
-            parentRequester: () => runtime.requester,
+            parentRequester: () => agent.loop.baseRequester,
             markWorker: (agentId) => workerIds.add(agentId),
           }),
           createTowerMergeTool(deps),
@@ -606,15 +607,4 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
       useExpose(TowerRef, { state: store.state, isActive, requestedBase, enter, exit });
     },
   });
-}
-
-const EXPERIMENTAL_MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
-
-function defaultTowerAvailable(): boolean {
-  return envFlagEnabled(TOWER_FLAG_ENV) || envFlagEnabled(EXPERIMENTAL_MASTER_ENV);
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  return value === 'true' || value === '1';
 }

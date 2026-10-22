@@ -1,4 +1,4 @@
-import { createFacadeToken, type RuntimeEvent, type ShallowRef } from '#/kernel/index';
+import { createFacadeToken, type RuntimeEvent, type ShallowRef } from '#/composition-api/index';
 
 import type { McpServerConfig } from '#/todo-features/mcp/core/config-schema';
 import type { OsHost } from '#/todo-features/os/host/index';
@@ -60,4 +60,6 @@ export interface CreatePluginProps {
   readonly host?: OsHost;
   readonly onWarn?: (message: string) => void;
   readonly useHookSource?: (source: PluginHookSource) => (() => void) | void;
+  readonly BASE_URL?: string;
+  readonly OAUTH_HOST?: string;
 }

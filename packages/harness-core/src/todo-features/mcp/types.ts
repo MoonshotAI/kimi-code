@@ -1,4 +1,4 @@
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 
 import type { OsHost } from '#/todo-features/os/host/index';
 
@@ -16,7 +16,7 @@ export interface McpMediaStore {
 
 export interface CreateMcpProps {
   readonly workDir?: string;
-  readonly home?: string;
+  readonly HOME?: string;
   readonly host?: OsHost;
   readonly trusted?: boolean;
   readonly servers?: Record<string, McpServerConfig>;

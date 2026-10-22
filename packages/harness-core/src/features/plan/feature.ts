@@ -1,5 +1,5 @@
 import { createFeature, useAgent, useSession, useStepStarting, useToolStarting, type Feature, useAgentTools, useBlobs, useFeatureStore } from '#/app/index';
-import { computed, createFacadeToken, useExpose, useInject, type ComputedRef } from '#/kernel/index';
+import { computed, createFacadeToken, useExpose, useInject, type ComputedRef } from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { useConfigSection } from '#/todo-features/config/index';

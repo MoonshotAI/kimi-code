@@ -26,12 +26,10 @@ import {
   type SpawnPlan,
   type SpawnRegistry,
 } from '#/todo-features/spawn/index';
-import { type AgentRuntime } from '#/runtime/index';
 
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 import {
   AgentRunBatch,
-  resolveSwarmMaxConcurrency,
   type AgentRunAttemptHandle,
   type AgentRunAttemptOptions,
   type AgentRunBatchLauncher,
@@ -62,12 +60,12 @@ export interface AgentSwarmToolDeps {
   readonly registry: SpawnRegistry;
   readonly session: AppSession;
   readonly agent: Agent;
-  readonly runtime: AgentRuntime;
   readonly forkEnabled: () => boolean;
   readonly process?: OsProcessPort;
   readonly workDir: string;
   readonly swarmItems: SwarmItemRegistry;
   readonly timeoutMs: () => number;
+  readonly maxConcurrency?: number;
 }
 
 export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
@@ -79,15 +77,14 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
     registry,
     session,
     agent,
-    runtime: deps.runtime,
     process: deps.process,
     workDir: deps.workDir,
   });
 
   const ensureAgent = async (agentId: string): Promise<Agent> => {
-    const { agent: opened, runtime } = await session.ensureAgent(agentId);
-    if (runtime.requester === undefined) {
-      runtime.requester = deps.runtime.requester;
+    const { agent: opened } = await session.ensureAgent(agentId);
+    if (opened.loop.baseRequester === undefined) {
+      opened.loop.setRequester(agent.loop.baseRequester);
     }
     return opened;
   };
@@ -271,7 +268,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
           { subagent_type: args.subagent_type, model: args.model },
           {
             profileName: registry.get(callerAgentId)?.profileName,
-            modelAlias: callerModelName(deps.runtime.requester),
+            modelAlias: callerModelName(agent.loop.baseRequester),
           },
         );
         if (incompatible !== undefined) {
@@ -314,7 +311,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
     });
     const batchAborted = (): boolean => signal.aborted;
     const batch = new AgentRunBatch(buildBatchLauncher(batchAborted, onUpdate), tasks, {
-      maxConcurrency: resolveSwarmMaxConcurrency(),
+      maxConcurrency: deps.maxConcurrency,
     });
     const results = await batch.run();
     return renderSwarmResults(

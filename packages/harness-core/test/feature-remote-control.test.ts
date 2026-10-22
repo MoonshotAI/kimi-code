@@ -19,7 +19,7 @@ import {
   type App,
 } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import {
   acquireRemoteControlLock,
@@ -296,7 +296,7 @@ describe('remote-control feature', () => {
       buildRemoteControlUrl(
         'device-1',
         undefined,
-        resolveRemoteControlRelayOrigin(),
+        resolveRemoteControlRelayOrigin(process.env),
         'kimi_code_cli',
       ),
     ).toBe(

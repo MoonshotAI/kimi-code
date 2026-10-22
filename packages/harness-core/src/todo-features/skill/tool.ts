@@ -3,7 +3,7 @@ import {
   type SkillPartMeta,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 import type { ContentPartMeta, UserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { ToolDefinition, ToolResult } from '@moonshot-ai/agent-core/tool/index';
 

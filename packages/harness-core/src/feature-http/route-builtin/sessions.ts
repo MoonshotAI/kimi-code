@@ -2,8 +2,8 @@ import type { Request, Response } from 'express';
 
 import { useApp, type AppSession, type CreateSessionInput } from '#/app/index';
 import type { HistoryMessage, ToolMeta } from '@moonshot-ai/agent-core/history/index';
-import { useCollection, useInject } from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+import { useCollection, useInject } from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import type { ContentPart, MediaSource } from '@moonshot-ai/agent-core/llm/message';
 import {
   MAIN_AGENT_ID,

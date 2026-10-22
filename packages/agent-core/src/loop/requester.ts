@@ -1,6 +1,6 @@
 import { toRequestMessages, type HistoryMessage } from '#/history/message';
 import { usedContextTokens } from '#/history/usage';
-import { mergeFields, type LlmRequestPart } from '#/llm/requester';
+import { contentsOf, mergeFields, requesterContents, type LlmRequestPart } from '#/llm/requester';
 
 import type { LoopLlmRequester } from './machine/request-actor';
 
@@ -20,7 +20,9 @@ export function createLoopRequester(
       return current.with({ content: { messages: content, usedTokens } }).with(part);
     };
     return {
-      with: (next) => accumulate(mergeFields(part as Fields, next as Fields) as LlmRequestPart),
+      [requesterContents]: part,
+      with: ((next: LlmRequestPart | LoopLlmRequester) =>
+        accumulate(mergeFields(part as Fields, contentsOf(next) as Fields) as LlmRequestPart)) as LoopLlmRequester['with'],
       request: (rest) => resolve().request(rest),
       generate: (rest, control) => resolve().generate(rest, control),
     };

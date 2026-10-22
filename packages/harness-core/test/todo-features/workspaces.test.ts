@@ -13,7 +13,7 @@ import {
   createApp,
 } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 
 import { createNodeOsHost, type OsHost } from '#/todo-features/os/host/index';
 import {

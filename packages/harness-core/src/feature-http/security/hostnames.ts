@@ -6,7 +6,7 @@ export interface HostCheckOptions {
   readonly disable?: boolean;
 }
 
-export function parseAllowedHosts(env: NodeJS.ProcessEnv = process.env): string[] {
+export function parseAllowedHosts(env: NodeJS.ProcessEnv): string[] {
   const raw = env['KIMI_CODE_ALLOWED_HOSTS'];
   if (raw === undefined) {
     return [];
@@ -17,7 +17,7 @@ export function parseAllowedHosts(env: NodeJS.ProcessEnv = process.env): string[
     .filter((entry) => entry.length > 0);
 }
 
-export function isHostCheckDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isHostCheckDisabled(env: NodeJS.ProcessEnv): boolean {
   return env['KIMI_CODE_DISABLE_HOST_CHECK'] === '1';
 }
 

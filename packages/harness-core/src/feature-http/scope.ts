@@ -5,8 +5,8 @@ import {
   useCleanup,
   useInject,
   type FacadeToken,
-} from '#/kernel/index';
-import { currentUnit, lineage, type UnitNode } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit, lineage, type UnitNode } from '#/composition-api/runtime';
 import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { Http, HttpHandler } from './server';

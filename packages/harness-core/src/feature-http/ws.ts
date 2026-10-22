@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { useApp } from '#/app/index';
-import { useCleanup, useOn } from '#/kernel/index';
+import { useCleanup, useOn } from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { WebSocket, WebSocketServer, type RawData } from 'ws';

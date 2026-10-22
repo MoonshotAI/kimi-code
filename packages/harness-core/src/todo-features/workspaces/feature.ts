@@ -18,7 +18,7 @@ import {
   useReady,
   type RuntimeEvent,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { memoryJournal } from '@moonshot-ai/agent-core/store/backend/memory';
 import { openWriter, type Journal } from '@moonshot-ai/agent-core/store/index';
 

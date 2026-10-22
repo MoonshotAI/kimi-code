@@ -8,7 +8,7 @@ import { ZipFile } from 'yazl';
 
 import { createFeature, useAgent, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
+import { useExpose, useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -123,12 +123,9 @@ function setRequester(
   requester: LoopLlmRequester,
 ): void {
   const session = harness.sessions.get(sessionId);
-  const runtime =
-    session !== undefined
-      ? session.agentRuntime(agentId)
-      : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 function user(text: string) {
@@ -255,8 +252,11 @@ interface StartedPluginApp {
   readonly face: PluginFace;
 }
 
-async function startPluginApp(extraFeatures: readonly Feature<any, any>[] = []): Promise<StartedPluginApp> {
-  const pluginFeature = createPlugin({ homeDir: home, host });
+async function startPluginApp(
+  extraFeatures: readonly Feature<any, any>[] = [],
+  pluginProps?: { BASE_URL?: string; OAUTH_HOST?: string },
+): Promise<StartedPluginApp> {
+  const pluginFeature = createPlugin({ homeDir: home, host, ...pluginProps });
   let captured: Readonly<ShallowRef<PluginFace | undefined>> | undefined;
   const probe = createFeature('plugin-probe', {
     app() {
@@ -290,7 +290,7 @@ async function startAgentApp(): Promise<{
     },
   });
   const harness = createApp({ space: memorySessionSpace() });
-  harness.features.add(createSkill({ workDir, fs: host.fs, home: brandHome }));
+  harness.features.add(createSkill({ workDir, fs: host.fs, HOME: brandHome }));
   harness.features.add(pluginFeature);
   harness.features.add(bindTestTools());
   harness.features.add(probe);
@@ -964,7 +964,7 @@ describe('plugin skill source integration', () => {
       },
     });
     const { harness, face } = await startPluginApp([
-      createSkill({ workDir, fs: host.fs, home: brandHome }),
+      createSkill({ workDir, fs: host.fs, HOME: brandHome }),
       catalogProbe,
     ]);
     try {
@@ -1334,14 +1334,15 @@ describe('managed kimi env injection for plugin mcp servers', () => {
   }
 
   it('injects env-override endpoints ahead of the provider catalog into stdio servers only', async () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env.example.test/');
-    vi.stubEnv('KIMI_OAUTH_HOST', 'https://legacy.example.test');
-    const { harness, face } = await startPluginApp([
-      bindProviderCatalog({
-        baseUrl: 'https://api.example.test/',
-        oauth: { storage: 'file', key: 'kimi', oauthHost: 'https://auth.example.test' },
-      }),
-    ]);
+    const { harness, face } = await startPluginApp(
+      [
+        bindProviderCatalog({
+          baseUrl: 'https://api.example.test/',
+          oauth: { storage: 'file', key: 'kimi', oauthHost: 'https://auth.example.test' },
+        }),
+      ],
+      { BASE_URL: 'https://env.example.test/', OAUTH_HOST: 'https://legacy.example.test' },
+    );
     try {
       const managedRoot = await installMcpPlugin(face);
       const servers = await face.enabledMcpServers();
@@ -1363,9 +1364,6 @@ describe('managed kimi env injection for plugin mcp servers', () => {
   });
 
   it('falls back to the provider catalog endpoints when no env override is present', async () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', undefined);
-    vi.stubEnv('KIMI_CODE_OAUTH_HOST', undefined);
-    vi.stubEnv('KIMI_OAUTH_HOST', undefined);
     const { harness, face } = await startPluginApp([
       bindProviderCatalog({
         baseUrl: 'https://api.example.test/',
@@ -1390,9 +1388,6 @@ describe('managed kimi env injection for plugin mcp servers', () => {
   });
 
   it('does not inject when neither env nor the managed provider supplies endpoints', async () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', undefined);
-    vi.stubEnv('KIMI_CODE_OAUTH_HOST', undefined);
-    vi.stubEnv('KIMI_OAUTH_HOST', undefined);
     const { harness, face } = await startPluginApp();
     try {
       await installMcpPlugin(face);
@@ -1407,9 +1402,10 @@ describe('managed kimi env injection for plugin mcp servers', () => {
   });
 
   it('decorates mcpServerEntries with the same managed env merge', async () => {
-    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env.example.test/');
-    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.example.test');
-    const { harness, face } = await startPluginApp();
+    const { harness, face } = await startPluginApp(
+      [],
+      { BASE_URL: 'https://env.example.test/', OAUTH_HOST: 'https://auth.example.test' },
+    );
     try {
       const managedRoot = await installMcpPlugin(face);
       await face.setPluginMcpServerEnabled('demo', 'finance', false);
@@ -1446,7 +1442,7 @@ describe('plugin mcp server source contribution', () => {
       },
     });
     const { harness, face } = await startPluginApp([
-      createMcp({ workDir, home: mcpHome, host }),
+      createMcp({ workDir, HOME: mcpHome, host }),
       mcpProbe,
     ]);
     try {

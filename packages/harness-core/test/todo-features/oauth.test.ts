@@ -11,7 +11,7 @@ import {
   type App,
 } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import { useCollection, useInject, type ComputedRef, type ShallowRef } from '#/kernel/index';
+import { useCollection, useInject, type ComputedRef, type ShallowRef } from '#/composition-api/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
 import { ConfigRef, createConfig, type ConfigPersist, type ConfigStore } from '#/todo-features/config/index';
@@ -120,7 +120,7 @@ async function mountOauthApp(options: {
   const harness = createApp({ space: memorySessionSpace() });
   harness.features.add(createConfig({ persist: options.file.persist }));
   harness.features.add(providerCatalog);
-  harness.features.add(createKimi({ oauth: { home: options.home, fetchImpl: options.fetchImpl } }));
+  harness.features.add(createKimi({ oauth: { HOME: options.home, fetchImpl: options.fetchImpl } }));
   harness.features.add(oauthProbe(capture));
   await tick();
   const tokens = capture.oauth?.value;

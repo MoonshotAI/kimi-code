@@ -8,8 +8,6 @@ import {
   type TokenInfo,
 } from '@moonshot-ai/kimi-code-oauth';
 
-import { resolveRemoteControlRelayOrigin } from './client';
-
 export interface RemoteControlDevice {
   readonly device_id: string;
   readonly alias: string;
@@ -121,10 +119,7 @@ export class RemoteControlDeviceClient {
       configuredOAuthKey: this.options.configuredOAuthKey?.(),
       homeDir: this.options.homeDir,
     });
-    const relayOrigin = (
-      this.options.relayOrigin ??
-      resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin)
-    ).replace(/\/+$/, '');
+    const relayOrigin = (this.options.relayOrigin ?? auth.relayOrigin).replace(/\/+$/, '');
     const storage = new FileTokenStorage(join(this.options.homeDir, 'credentials'));
     const token = await storage.load(
       resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }),

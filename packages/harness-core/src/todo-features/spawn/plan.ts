@@ -101,6 +101,28 @@ export type SpawnModelResolution =
   | { readonly kind: 'inherit' }
   | { readonly kind: 'explicit'; readonly name: string; readonly model: LlmModelSpec };
 
+export function visibleSpawnProfiles(
+  catalog: ProfileCatalog,
+  caller: { readonly agentId: string; readonly profileName?: string },
+): readonly AgentProfile[] {
+  const all = catalog.list();
+  if (all.length === 0) return [];
+  const callerProfileName = caller.profileName ?? DEFAULT_AGENT_PROFILE_NAME;
+  const ownProfile = catalog.get(callerProfileName);
+  const own = { profileName: callerProfileName, subagents: ownProfile?.subagents };
+  const extras =
+    caller.agentId === MAIN_AGENT_ID
+      ? rootDelegationExtras(catalog, own, all)
+      : undefined;
+  let allowlist = subagentAllowlistFor(catalog, own, extras);
+  if (allowlist !== undefined && own.subagents === undefined) {
+    allowlist = withoutDelegatingTargets(catalog, allowlist);
+  }
+  return allowlist === undefined
+    ? all
+    : all.filter((profile) => allowlist.includes(profile.name));
+}
+
 export interface SpawnPlanInput {
   readonly callerAgentId: string;
   readonly callerProfileName?: string;

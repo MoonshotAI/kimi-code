@@ -13,13 +13,22 @@ export interface HttpAuthTokenService {
   isValid(candidate: string): boolean | Promise<boolean>;
 }
 
+export const _HOME = join(homedir(), '.kimi-code');
+
+export const _PASSWORD: string | undefined = undefined;
+
+export const _ALLOWED_HOSTS: readonly string[] = [];
+
+export const _DISABLE_HOST_CHECK = false;
+
 export interface HttpAuthOptions {
   readonly authTokenService?: HttpAuthTokenService;
   readonly disableAuth?: boolean;
-  readonly homeDir?: string;
+  readonly HOME?: string;
+  readonly PASSWORD?: string;
   readonly rpcToken?: string;
-  readonly allowedHosts?: readonly string[];
-  readonly disableHostCheck?: boolean;
+  readonly ALLOWED_HOSTS?: readonly string[];
+  readonly DISABLE_HOST_CHECK?: boolean;
   readonly bindClass?: 'lan' | 'public';
   readonly corsOrigins?: readonly string[];
   readonly apiPrefixes?: readonly string[];
@@ -32,7 +41,9 @@ export interface HttpAuthRuntime {
 }
 
 export async function initializeAuth(options: HttpAuthOptions): Promise<HttpAuthRuntime> {
-  const service = options.authTokenService ?? (await createDefaultAuthTokenService(options.homeDir));
+  const service =
+    options.authTokenService ??
+    (await createDefaultAuthTokenService(options.HOME ?? _HOME, options.PASSWORD ?? _PASSWORD));
   return {
     service,
     validateCredential: async (candidate) => {
@@ -59,10 +70,9 @@ export function extractWsBearer(header: string | undefined): string | null {
   return null;
 }
 
-async function createDefaultAuthTokenService(homeDir: string | undefined): Promise<HttpAuthTokenService> {
-  const home = homeDir ?? process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code');
+async function createDefaultAuthTokenService(home: string, password: string | undefined): Promise<HttpAuthTokenService> {
   const tokenStore = await createTokenStore(home);
-  const passwordHash = await resolvePasswordHash();
+  const passwordHash = await resolvePasswordHash(password);
   return {
     getToken: () => tokenStore.getToken(),
     isValid: async (candidate) =>

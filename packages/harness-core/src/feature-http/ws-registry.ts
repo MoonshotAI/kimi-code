@@ -1,4 +1,4 @@
-import { createFacadeToken } from '#/kernel/index';
+import { createFacadeToken } from '#/composition-api/index';
 
 export interface WsRegistryEntry {
   readonly id: string;

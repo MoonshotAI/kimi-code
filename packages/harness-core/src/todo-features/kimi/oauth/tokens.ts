@@ -52,10 +52,6 @@ export interface OAuthTokenResolver {
   manager(ref: CatalogOAuthRef): OAuthManager | undefined;
 }
 
-export function resolveOauthHome(home?: string): string | undefined {
-  return home ?? process.env['KIMI_CODE_HOME'];
-}
-
 export function createOAuthTokenResolver(home: string): OAuthTokenResolver {
   const storage = new FileTokenStorage(join(home, 'credentials'));
   const managers = new Map<string, OAuthManager>();

@@ -3,8 +3,8 @@ import { createHash } from 'node:crypto';
 import type { Request, Response } from 'express';
 
 import { useApp, type App } from '#/app/index';
-import { useInject } from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+import { useInject } from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import { MAIN_AGENT_ID, type Session, type SessionTurnOutcome } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, type ConfigStore } from '#/todo-features/config/index';

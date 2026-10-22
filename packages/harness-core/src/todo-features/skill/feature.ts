@@ -18,9 +18,10 @@ import {
   useReady,
   watch,
   type RuntimeEvent,
-} from '#/kernel/index';
-import { currentUnit } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit } from '#/composition-api/runtime';
 import type { ContentPart, ContentPartMeta, UserMessage } from '@moonshot-ai/agent-core/llm/message';
+import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import type { OsFsPort } from '#/todo-features/os/host/index';
@@ -34,7 +35,7 @@ import {
   type SkillSummary,
   type SkippedSkill,
 } from './catalog/types';
-import { renderSkillsSection, renderUserSlashSkillPrompt, type SkillPromptTrigger } from './prompt';
+import { renderSkillsSection, renderUserSlashSkillPrompt, skillsChangeText, type SkillPromptTrigger } from './prompt';
 import {
   BUILTIN_PRODUCT_SKILLS_SECTION,
   builtinProductSkillsSection,
@@ -83,6 +84,7 @@ export type SkillEvent = SkillActivatedEvent | SkillChangedEvent;
 
 export interface SkillCatalogFace {
   readonly ready: Promise<void>;
+  onDidChange(listener: () => void): () => void;
   list(): SkillSummary[];
   get(name: string): SkillDefinition | undefined;
   renderSkillPrompt(
@@ -99,6 +101,8 @@ export interface SkillCatalogFace {
 }
 
 export const SkillCatalogRef = createFacadeToken<SkillCatalogFace>('skill');
+
+export const SKILL_LISTING_CHANGE_REMIND_KEY = 'skill-listing-change';
 
 export interface SkillActivationInput {
   readonly name: string;
@@ -124,12 +128,17 @@ export interface SkillFace {
 
 export const SkillRef = createFacadeToken<SkillFace>('skill.agent');
 
+const _HOME: string | undefined = undefined;
+
+const _EXPERIMENTAL_FLAG_ENABLED = (): boolean => false;
+
 export interface CreateSkillProps {
   readonly workDir: string;
   readonly fs?: OsFsPort;
-  readonly home?: string;
+  readonly HOME?: string;
   readonly explicitDirs?: readonly string[];
   readonly sources?: readonly SkillCatalogSource[];
+  readonly EXPERIMENTAL_FLAG_ENABLED?: (flag: string) => boolean;
 }
 
 interface PreparedActivation {
@@ -151,6 +160,15 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
     app() {
       const node = currentUnit();
       const fire = useFire();
+      const listeners = new Set<() => void>();
+      const changed = (sourceId: string): void => {
+        fire({ type: 'skill.changed', sourceId });
+        for (const listener of listeners) {
+          try {
+            listener();
+          } catch {}
+        }
+      };
       useConfigSection(extraSkillDirsSection);
       useConfigSection(mergeAllAvailableSkillsSection);
       useConfigSection(builtinProductSkillsSection);
@@ -172,14 +190,19 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
             .value ?? true,
       );
 
-      useSkillSource(createBuiltinSkillSource({ productSkillsEnabled: () => builtinProduct.value }));
+      useSkillSource(
+        createBuiltinSkillSource({
+          productSkillsEnabled: () => builtinProduct.value,
+          experimentalFlagEnabled: props.EXPERIMENTAL_FLAG_ENABLED ?? _EXPERIMENTAL_FLAG_ENABLED,
+        }),
+      );
       const fs = props.fs;
       if (fs !== undefined) {
-        const homeDir = props.home ?? process.env['KIMI_CODE_HOME'];
+        const homeDir = props.HOME ?? _HOME;
         const deps: SharedSkillSourceDeps = {
           fs,
           workDir: props.workDir,
-          osHomeDir: props.home ?? homeDir,
+          osHomeDir: props.HOME ?? homeDir,
           mergeAllAvailableSkills: () => mergeAll.value,
           hasExplicitDirs: () => (props.explicitDirs?.length ?? 0) > 0,
           extraSkillDirs: () => extraDirs.value,
@@ -219,7 +242,7 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
           contributions.set(source.id, { c: contribution, priority: source.priority });
           if (fireChange) {
             remerge();
-            fire({ type: 'skill.changed', sourceId: source.id });
+            changed(source.id);
           }
         });
         loadTails.set(source.id, current);
@@ -247,7 +270,7 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
         }
         if (!loaded) return;
         remerge();
-        for (const id of ids) fire({ type: 'skill.changed', sourceId: id });
+        for (const id of ids) changed(id);
       };
 
       const subscribed = new Set<string>();
@@ -279,7 +302,7 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
         syncSubscriptions();
         void enqueue(async () => {
           await loadAll();
-          fire({ type: 'skill.changed', sourceId: 'catalog' });
+          changed('catalog');
         }).catch(() => {});
       });
       watch(mergeAll, () => {
@@ -296,6 +319,12 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
 
       useExpose(SkillCatalogRef, {
         ready: initial,
+        onDidChange: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
         list: () => merged.listSkills().map(summarizeSkill),
         get: (name) => merged.getSkill(name),
         renderSkillPrompt: (skill, rawArgs, context) =>
@@ -308,7 +337,7 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
         reload: () =>
           enqueue(async () => {
             await loadAll();
-            fire({ type: 'skill.changed', sourceId: 'catalog' });
+            changed('catalog');
           }),
       });
     },
@@ -324,6 +353,23 @@ export function createSkill(props: CreateSkillProps): Feature<void, { app: Skill
       const listing = catalog.getModelSkillListing();
       if (listing.length > 0) {
         useSystemPrompt({ id: 'skill-listing', text: renderSkillsSection(listing) });
+      }
+
+      if (agent.id === MAIN_AGENT_ID) {
+        let baseline = listing;
+        const check = (): void => {
+          const current = catalog.getModelSkillListing();
+          if (current === baseline) return;
+          baseline = current;
+          agent.loop.remind(
+            createUserEntry(
+              createHistoryMessageBuilder().systemReminder(skillsChangeText(current)).userMessage(),
+              { source: 'reminder', key: SKILL_LISTING_CHANGE_REMIND_KEY },
+            ),
+          );
+        };
+        useCleanup(catalog.onDidChange(check));
+        void catalog.ready.then(check);
       }
 
       useAgentTools(

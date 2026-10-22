@@ -9,7 +9,7 @@ import {
   type App,
 } from '#/app/index';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
@@ -23,9 +23,8 @@ import {
   INTERACTION_TAG_TOOL_CALL_ID,
   INTERACTION_TAG_TURN_ID,
   InteractionRef,
-  interaction,
+  createInteraction,
   isInteractionCancellation,
-  PERMISSION_MODE_REMINDER_ENV,
   PERMISSION_REMIND_KEY,
   type Interaction,
   type InteractionEvent,
@@ -42,6 +41,8 @@ import {
   useTelemetryAppender,
   type TelemetryAppenderRecord,
 } from '#/todo-features/telemetry/index';
+
+const interaction = createInteraction();
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -69,9 +70,9 @@ function user(text: string, meta: UserMeta = {}) {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 type InteractionRefs = Map<string, Readonly<ShallowRef<Interactions | undefined>>>;
@@ -670,15 +671,11 @@ function capturePermission(): { feature: Feature; face(sessionId: string): Permi
 }
 
 describe('AskUserQuestion auto permission mode', () => {
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  async function startAutoModeEnv() {
+  async function startAutoModeEnv(interactionFeature: Feature = interaction) {
     const harness = createApp({ space: memorySessionSpace() });
     const capture = captureInteractions();
     const permissionProbe = capturePermission();
-    harness.features.add(interaction);
+    harness.features.add(interactionFeature);
     harness.features.add(createPermission());
     harness.features.add(capture.feature);
     harness.features.add(permissionProbe.feature);
@@ -744,7 +741,7 @@ describe('AskUserQuestion auto permission mode', () => {
     await env.harness.close();
   });
 
-  it('dedups the reminder across steps and honors the env switch', async () => {
+  it('dedups the reminder across steps and honors the reminder switch', async () => {
     const env = await startAutoModeEnv();
     await env.face.setMode('auto');
     await env.runTurn([{ text: 'ok' }], 'go');
@@ -757,8 +754,7 @@ describe('AskUserQuestion auto permission mode', () => {
     expect(env.reminders()[1]).toContain('Auto permission mode is no longer active.');
     await env.harness.close();
 
-    vi.stubEnv(PERMISSION_MODE_REMINDER_ENV, 'false');
-    const off = await startAutoModeEnv();
+    const off = await startAutoModeEnv(createInteraction({ PERMISSION_MODE_REMINDER: false }));
     await off.face.setMode('auto');
     await off.runTurn([{ text: 'ok' }], 'go');
     expect(off.reminders()).toHaveLength(0);

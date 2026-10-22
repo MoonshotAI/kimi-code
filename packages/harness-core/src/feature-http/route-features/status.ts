@@ -1,6 +1,6 @@
 import { useApp } from '#/app/index';
-import { useCollection, useInject } from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+import { useCollection, useInject } from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { CompactionRef } from '#/features/compaction/index';

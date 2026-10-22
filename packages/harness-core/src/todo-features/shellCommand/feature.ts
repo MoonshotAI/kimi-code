@@ -8,7 +8,7 @@ import {
   useExpose,
   useFire,
   type RuntimeEvent,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 
 import type { OsHost, OsProcess } from '#/todo-features/os/host/index';
 import { startProcessExecution } from '#/todo-features/os/process-exec';

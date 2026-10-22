@@ -5,7 +5,7 @@ import {
   useFire,
   useInject,
   type RuntimeEvent,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { SessionError } from '@moonshot-ai/agent-core/session/index';
 
 import {

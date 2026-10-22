@@ -1,6 +1,6 @@
 import { createFeature, useAgent, useStepStarting, useToolEnding, useToolStarting, type Feature, useLoopEvent } from '#/app/index';
 import { createUserEntry, systemReminderText } from '@moonshot-ai/agent-core/history/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolResult } from '@moonshot-ai/agent-core/tool/index';
 

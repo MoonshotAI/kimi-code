@@ -2,7 +2,7 @@
 
 `app.open` gives every session a log, a roster, and live agents with a loop —
 and nothing else. The product needs more per-agent state that is *not*
-durable (which LLM to call, which tools exist this run) and *not* part of
+durable (which tools exist this run) and *not* part of
 the loop's own state. That record is the
 `AgentRuntime` (`src/runtime/agents.ts`), and this document explains its
 semantics.
@@ -12,7 +12,6 @@ semantics.
 ```ts
 interface AgentRuntime {
   readonly agentId: string;
-  requester: LoopLlmRequester | undefined;     // the requester slot
   readonly executor: ToolExecutorHost;         // tool handlers
   readonly tools: Map<string, ToolDefinition>; // tool descriptions
   hostSystemPrompt: string | undefined;        // the reserved `host` prompt section
@@ -55,26 +54,32 @@ const { agent, runtime } = await session.ensureAgent('main', {
   every agent in the roster. Both paths converge on the same per-session
   registry, so a runtime made by either is visible to `useAgentRuntime()`.
 
-## The Requester Slot and the Loop Policy Registry
+## The Loop's Requester and the Loop Policy Registry
 
-`agentCaps` hands the loop a requester **getter**, read once per step by the
-loop's request actor:
+Which LLM an agent calls is *not* part of the runtime record: it is the
+loop's own runtime state, held by agent-core's requester primitive. A bare
+`session.open(agentId, caps)` may seed it as `caps.requester`, but far more
+commonly it is set through the loop after open:
 
 ```ts
-requester: () => {
-  const base = runtime.requester;
-  if (base === undefined) throw new Error(`agent '${agentId}' has no requester`);
-  return base;
-}
+agent.loop.setRequester(requester);   // set, swap or clear (undefined)
+agent.loop.baseRequester;             // read the current one back
 ```
 
-Two consequences:
+Three consequences:
 
-1. **The slot is assignable at any time.** Setting `runtime.requester`
-   changes what the *next* step calls — no re-registration, no loop restart.
-   A turn already in flight picks it up at its next LLM request. An agent
-   with no requester fails its turn with `agent '<id>' has no requester`.
-2. **Policy lives in the loop's native registry.** `useMessageResolver`,
+1. **The requester is swappable at any time.** The loop's request actor
+   reads the current requester once per step, so `setRequester(next)`
+   changes what the *next* step calls — no re-registration, no loop
+   restart. A turn already in flight picks it up at its next LLM request.
+   With none set, every step or `loop.requester` side request fails with
+   `loop has no requester`.
+2. **It dies with the loop instance.** After `session.closeAgent` the next
+   `session.ensureAgent` opens a fresh loop with no requester; whoever
+   owns the binding re-applies it (provider-catalog does so from its
+   agent-tier watch on every mount; manual hosts call `setRequester`
+   again).
+3. **Policy lives in the loop's native registry.** `useMessageResolver`,
    `useLlmRecovery`, and `useLlmRetryable` register into agent-core's
    `loop.policy` and remove on scope dispose; the registry is layered onto
    every request the loop runs and re-read on every attempt, so feature
@@ -131,7 +136,7 @@ for the agent's lifetime.
 
 ## Managed Model Binding (provider-catalog)
 
-Most hosts never touch `runtime.requester` directly: the `provider-catalog`
+Most hosts never touch the loop's requester directly: the `provider-catalog`
 feature binds models to agents through a three-level pipeline, persisting
 the choice as it goes.
 
@@ -176,14 +181,14 @@ into the main agent's own log so the main agent's undo stays aligned.
 `setModel(alias)` / `setThinking(effort)`), persisted in the agent's log
 alongside its loop records. A watch computes the effective
 alias — agent store → session default → config `defaultModel` — resolves it
-against `CatalogModels` (`matchCatalogBinding`), and assigns
-`runtime.requester` to the binding's requester (layered with a thinking
-effort when one is requested). Two safeguards:
+against `CatalogModels` (`matchCatalogBinding`), and calls
+`agent.loop.setRequester(...)` with the binding's requester (layered with a
+thinking effort when one is requested). Two safeguards:
 
-- **Manual wins.** If something else assigned the slot (a host, a test), the
-  watch stops itself and never re-applies.
-- **Ownership on dispose.** Unmounting clears the slot only if the binding
-  still owns it.
+- **Manual wins.** If something else set the loop's requester (a host, a
+  test), the watch stops itself and never re-applies.
+- **Ownership on dispose.** Unmounting clears the requester only if the
+  binding still owns it.
 
 The agent unit also registers `credentialsRecovery` (re-prompt for
 credentials on auth failure) via `useLlmRecovery`.

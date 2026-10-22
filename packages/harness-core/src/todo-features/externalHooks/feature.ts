@@ -9,7 +9,7 @@ import {
   useOn,
   useReady,
   watch,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,

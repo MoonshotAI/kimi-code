@@ -9,7 +9,7 @@ import {
   createFeature,
   createApp,
 } from '#/app/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
@@ -134,7 +134,7 @@ async function mountFetchApp(
   const harness = createApp({ space: memorySessionSpace() });
   harness.features.add(createConfig({ persist: fakePersist(toml) }));
   harness.features.add(providerCatalog);
-  if (extra.home !== undefined) harness.features.add(createOauth({ home: extra.home }));
+  if (extra.home !== undefined) harness.features.add(createOauth({ HOME: extra.home }));
   harness.features.add(createWeb({ fetchImpl: extra.fetchImpl }));
   harness.features.add(createFetch({ fetchImpl: extra.fetchImpl }));
   harness.features.add(

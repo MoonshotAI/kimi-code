@@ -2,7 +2,7 @@ import { openBlobStore } from '@moonshot-ai/agent-core/blob/index';
 import { memoryBlobBackend } from '@moonshot-ai/agent-core/blob/backend/memory';
 import { createUserEntry, type UserMeta } from '@moonshot-ai/agent-core/history/message';
 import type { App } from '#/app/index';
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
@@ -63,13 +63,9 @@ export const noopExecutor: ToolExecutor = {
 };
 
 export function agentCaps(executor: ToolExecutor = noopExecutor, initial: LoopLlmRequester = echoRequester()) {
-  let current = initial;
   return {
     executor,
-    requester: () => current,
-    use: (next: LoopLlmRequester) => {
-      current = next;
-    },
+    requester: initial,
   };
 }
 

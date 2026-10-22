@@ -9,7 +9,7 @@ import {
 } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import { useCollection, useInject, watch, type ComputedRef, type ShallowRef } from '#/kernel/index';
+import { useCollection, useInject, watch, type ComputedRef, type ShallowRef } from '#/composition-api/index';
 import { anthropicRequester, openAIRequester } from '@moonshot-ai/agent-core/llm/builtin/provider/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type {
@@ -60,7 +60,6 @@ import {
   type SessionModelDefaultsEvent,
   type SessionModelFace,
 } from '#/features/provider-catalog/index';
-import { type AgentRuntime } from '#/runtime/index';
 
 type Fields = Record<string, unknown>;
 
@@ -220,14 +219,11 @@ async function mountWithConfig(
   return { harness, file, config, catalog, capture, models: () => capture.models?.value ?? [] };
 }
 
-function runtimeOf(harness: App, sessionId: string, agentId: string): AgentRuntime {
+function agentOf(harness: App, sessionId: string, agentId: string) {
   const session = harness.sessions.get(sessionId);
-  const runtime =
-    session !== undefined
-      ? session.agentRuntime(agentId)
-      : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  return runtime;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  return agent;
 }
 
 function boundModel(
@@ -240,7 +236,7 @@ function boundModel(
   sampling?: LlmRequestModel['sampling'];
   maxOutputTokens?: LlmRequestModel['maxOutputTokens'];
 } {
-  const request = runtimeOf(harness, sessionId, agentId).requester?.request({
+  const request = agentOf(harness, sessionId, agentId).loop.baseRequester?.request({
     content: { messages: [] },
   });
   const model = request?.model as LlmRequestModel | undefined;
@@ -1178,9 +1174,11 @@ describe('provider-catalog default model restore', () => {
     expect(boundModel(harness, 'sess', 'main').spec?.provider).toBe('test');
     expect(boundModel(harness, 'sess', 'main').spec?.maxContextSize).toBe(4096);
 
-    runtimeOf(harness, 'sess', 'main').requester = fakeRequester(() => textOutcome('ok')).with({
-      model: { spec: { provider: 'test', name: 'other', capability: modelDef.capability } },
-    });
+    agentOf(harness, 'sess', 'main').loop.setRequester(
+      fakeRequester(() => textOutcome('ok')).with({
+        model: { spec: { provider: 'test', name: 'other', capability: modelDef.capability } },
+      }),
+    );
     await sleep(20);
     expect(boundModel(harness, 'sess', 'main').spec?.name).toBe('other');
 
@@ -1457,9 +1455,11 @@ describe('provider-catalog agent model binding', () => {
   it('stops managing an agent after an external requester override', async () => {
     const { harness, config } = await mountFixture('default_model = "test/m1"\n');
     await until(() => boundModel(harness, 'sess', 'main').spec?.name === 'm1');
-    runtimeOf(harness, 'sess', 'main').requester = fakeRequester(() => textOutcome('ok')).with({
-      model: { spec: { provider: 'test', name: 'custom', capability: testCapability(true) } },
-    });
+    agentOf(harness, 'sess', 'main').loop.setRequester(
+      fakeRequester(() => textOutcome('ok')).with({
+        model: { spec: { provider: 'test', name: 'custom', capability: testCapability(true) } },
+      }),
+    );
     await writeSessionDefaults(harness, 'sess', { defaultModel: 'other/m2' });
     await sleep(20);
     expect(boundModel(harness, 'sess', 'main').spec?.name).toBe('custom');

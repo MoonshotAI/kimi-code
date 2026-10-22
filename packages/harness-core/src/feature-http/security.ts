@@ -6,6 +6,8 @@ import {
   extractBearer,
   extractWsBearer,
   initializeAuth,
+  _ALLOWED_HOSTS,
+  _DISABLE_HOST_CHECK,
   type HttpAuthOptions,
   type HttpAuthRuntime,
   type HttpAuthTokenService,
@@ -15,8 +17,6 @@ import { classify } from './security/bind-classify';
 import {
   formatHostErrorMessage,
   isAllowedHost,
-  isHostCheckDisabled,
-  parseAllowedHosts,
   type HostCheckOptions,
 } from './security/hostnames';
 import { isOriginAllowed } from './security/origin';
@@ -103,8 +103,8 @@ export function createHttpSecurity(options: HttpAuthOptions): HttpSecurity {
         exposureClass,
         hostOptions: {
           boundHost: host,
-          extra: [...parseAllowedHosts(), ...(options.allowedHosts ?? [])],
-          disable: options.disableHostCheck ?? isHostCheckDisabled(),
+          extra: options.ALLOWED_HOSTS ?? _ALLOWED_HOSTS,
+          disable: options.DISABLE_HOST_CHECK ?? _DISABLE_HOST_CHECK,
         },
         allowedOrigins: options.corsOrigins ?? [],
         limiter: exposureClass === 'loopback' ? undefined : createAuthFailureLimiter(),

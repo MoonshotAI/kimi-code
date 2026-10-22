@@ -23,14 +23,16 @@ one-shot runs. For a durable host use `nodeSessionSpace(dataRoot)` from
 ## 2. Add Features
 
 ```ts
-import { todo, interaction } from '@moonshot-ai/harness-core';
-import { harnessPreset } from '@moonshot-ai/harness-core/preset';
+import { todo, createInteraction } from '@moonshot-ai/harness-core';
 
 await app.features.add(todo);
-await app.features.add(interaction);
-// or the whole default bundle in one go:
-for (const feature of harnessPreset) await app.features.add(feature);
+await app.features.add(createInteraction());
 ```
+
+A product host usually skips per-feature assembly: `createDefaultApp` from
+`src/presets/` creates the app with the full product feature set mounted,
+and `createDefaultHttp` / `createDefaultAcp` start the transports on top
+(see `example/app.ts`).
 
 `features.add(feature)` with no scope mounts the feature's app unit once and
 its session/agent units in every session and agent — including ones created
@@ -55,16 +57,20 @@ in the space resumes. `session.ensureAgent` opens the agent with a harness-manag
 
 ## 4. Attach a Requester
 
-The agent needs an LLM requester in its runtime slot. The direct way — what
-tests do — is to look the runtime up from the session and assign the slot:
+The agent needs an LLM requester on its loop. The direct way — what
+tests do — is to set it through the loop primitive:
 
 ```ts
-import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
-
-const runtime = session.agentRuntime(MAIN_AGENT_ID);
-if (runtime === undefined) throw new Error('no runtime');
-runtime.requester = myRequester;
+agent.loop.setRequester(myRequester);
 ```
+
+The loop reads the current requester once per step, so a later
+`setRequester(next)` takes effect from the next step;
+`agent.loop.baseRequester` reads the current one back. A requester lives
+in the agent's loop instance, so after a close/re-open
+(`session.closeAgent` then `session.ensureAgent`) it must be set again —
+the `provider-catalog` feature below re-applies its binding automatically
+on every mount.
 
 For a smoke test, `myRequester` can be a scripted fake (this is the exact
 pattern the harness tests use):
@@ -81,12 +87,12 @@ const scripted: LoopLlmRequester = {
     message: createAssistantMessage([{ type: 'text', text: 'hello from the model' }]),
   }),
 };
-runtime.requester = scripted;
+agent.loop.setRequester(scripted);
 ```
 
 In a product host you normally do nothing here: with the `provider-catalog`
-feature mounted (it is in `harnessPreset`) and a default model configured,
-the catalog binds a managed requester into the slot automatically — see
+feature mounted (`createDefaultApp` includes it) and a default model configured,
+the catalog binds a managed requester onto the loop automatically — see
 [Agent Runtime](../explanation/agent-runtime.md#managed-model-binding-provider-catalog).
 For building a raw requester by hand, see agent-core's
 `docs/en/how-to-guides/make-an-llm-request.md`.
@@ -169,7 +175,7 @@ const scripted: LoopLlmRequester = {
     message: createAssistantMessage([{ type: 'text', text: 'hi' }]),
   }),
 };
-session.agentRuntime(MAIN_AGENT_ID)!.requester = scripted;
+agent.loop.setRequester(scripted);
 
 const outcome = await agent.loop.runTurn(
   createUserEntry(createUserMessage('hello'), { source: 'input' }),

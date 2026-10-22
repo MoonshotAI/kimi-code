@@ -10,7 +10,7 @@ import {
 import type { LoopEmitted, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
-import { interaction, type Interaction } from '#/todo-features/interaction/index';
+import { createInteraction, type Interaction } from '#/todo-features/interaction/index';
 import { matchCatalogBinding } from '#/features/provider-catalog/index';
 
 import { mountExample, type ExampleProbe } from './app';
@@ -94,7 +94,7 @@ export async function runCli(args: CliArgs): Promise<void> {
       throw new Error('interaction feature is not installed');
     }
     const promptOut = args.json ? process.stderr : process.stdout;
-    const offQuestion = app.on(interaction, 'interaction.requested', (event) => {
+    const offQuestion = app.on(createInteraction(), 'interaction.requested', (event) => {
       if (event['sessionId'] !== session.id) return;
       const rl = createInterface({ input: process.stdin, output: promptOut });
       void answerInteraction(rl, event.interaction, promptOut)

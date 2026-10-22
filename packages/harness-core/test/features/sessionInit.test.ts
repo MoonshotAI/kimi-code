@@ -11,7 +11,7 @@ import {
   createApp,
   type App,
 } from '#/app/index';
-import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
+import { useExpose, useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -186,9 +186,9 @@ function setRequester(
   agentId: string,
   requester: LoopLlmRequester,
 ): void {
-  const runtime = session.agentRuntime(agentId);
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session.liveAgents.get(agentId);
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 describe('sessionInit', () => {

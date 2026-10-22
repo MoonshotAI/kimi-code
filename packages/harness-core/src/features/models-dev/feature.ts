@@ -10,7 +10,7 @@ import {
 
 import { createFeature, type Feature } from '#/app/index';
 import { RootRef } from '#/app/units';
-import { createFacadeToken, useCleanup, useExpose, useInject, watch } from '#/kernel/index';
+import { createFacadeToken, useCleanup, useExpose, useInject, watch } from '#/composition-api/index';
 
 import {
   ConfigRef,

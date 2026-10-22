@@ -21,7 +21,7 @@ import {
 import { llmStartedEvent } from '#/llm/policy/policy';
 import type { LlmModelSpec, LlmRequest } from '#/llm/request';
 import type { FinishInfo, LlmOutcome, TokenUsage } from '#/llm/response';
-import { mergeFields, type LlmRequestPart } from '#/llm/requester';
+import { contentsOf, mergeFields, type LlmRequestPart } from '#/llm/requester';
 import { createToolExecutor, defineTool, zodSchema, type ToolResult } from '#/tool/index';
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -56,7 +56,7 @@ function createFakeRequester(filled: LlmRequestPart = {}): LoopLlmRequester {
   const complete = (part: LlmRequestPart) =>
     mergeFields(filled as Record<string, unknown>, part as Record<string, unknown>) as unknown as LlmRequest;
   return {
-    with: (part) => createFakeRequester(complete(part)),
+    with: (part: LlmRequestPart | LoopLlmRequester) => createFakeRequester(complete(contentsOf(part))),
     request: complete,
     generate: async (rest, control): Promise<LlmOutcome> => {
       const onEvent = control.onEvent;
@@ -114,7 +114,7 @@ tools.register(weatherTool);
 const spec: LlmModelSpec = { provider: 'fake', name: 'fake-model' };
 const requester = createFakeRequester().with({ model: { spec } });
 const loop = createLoop({
-  requester: () =>
+  requester:
     requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [weatherTool] } }),
   executor: tools,
   hooks: [createMaxStepsHook(() => 8)],

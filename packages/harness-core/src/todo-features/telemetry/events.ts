@@ -1,4 +1,4 @@
-import { createCollection, useContribute } from '#/kernel/index';
+import { createCollection, useContribute } from '#/composition-api/index';
 
 import type { TelemetryFace } from './feature';
 import type { TelemetryPrimitive, TelemetryProperties } from './telemetry';

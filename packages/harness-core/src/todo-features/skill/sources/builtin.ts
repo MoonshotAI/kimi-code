@@ -15,8 +15,6 @@ export const BUILTIN_PRODUCT_SKILLS_SECTION = 'builtinProductSkills';
 
 export const BUILTIN_PRODUCT_SKILLS_ENV = 'KIMI_CODE_BUILTIN_PRODUCT_SKILLS';
 
-const EXPERIMENTAL_MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
-
 const TRUE_BOOLEAN_ENV_VALUES: ReadonlySet<string> = new Set(['1', 'true', 'yes', 'on']);
 const FALSE_BOOLEAN_ENV_VALUES: ReadonlySet<string> = new Set(['0', 'false', 'no', 'off']);
 
@@ -42,27 +40,16 @@ export const builtinProductSkillsSection: ConfigSectionContribution<boolean> = {
   },
 };
 
-export function experimentalFlagEnabled(flag: string): boolean {
-  return (
-    envFlagEnabled(`KIMI_CODE_EXPERIMENTAL_${flag.toUpperCase().replaceAll('-', '_')}`) ||
-    envFlagEnabled(EXPERIMENTAL_MASTER_ENV)
-  );
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  return value === 'true' || value === '1';
-}
-
 export function createBuiltinSkillSource(deps: {
   readonly productSkillsEnabled: () => boolean;
+  readonly experimentalFlagEnabled: (flag: string) => boolean;
 }): SkillCatalogSource {
   return {
     id: BUILTIN_SKILL_SOURCE_ID,
     priority: SKILL_SOURCE_PRIORITY.builtin,
     load: (): Promise<SkillContribution> =>
       Promise.resolve({
-        skills: visibleBuiltinSkills(deps.productSkillsEnabled(), experimentalFlagEnabled),
+        skills: visibleBuiltinSkills(deps.productSkillsEnabled(), deps.experimentalFlagEnabled),
       }),
   };
 }

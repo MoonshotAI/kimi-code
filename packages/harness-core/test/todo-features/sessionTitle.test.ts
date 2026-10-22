@@ -18,7 +18,7 @@ import {
   type UserEntry,
   type UserMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useExpose, useInject, type ShallowRef } from '#/kernel/index';
+import { useExpose, useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 import {
@@ -213,7 +213,7 @@ async function openTitleSession(options: {
   harness.features.add(createConfig({ persist: fakePersist(options.toml ?? MANAGED_PROVIDER_TOML) }));
   harness.features.add(providerCatalog);
   if (options.home !== undefined) {
-    harness.features.add(createOauth({ home: options.home }));
+    harness.features.add(createOauth({ HOME: options.home }));
   } else {
     const tokens = options.tokens;
     harness.features.add(

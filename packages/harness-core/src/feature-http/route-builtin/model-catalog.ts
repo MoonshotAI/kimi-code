@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useCollection, useInject } from '#/kernel/index';
+import { useCollection, useInject } from '#/composition-api/index';
 import type { CatalogModel } from '@moonshot-ai/agent-core/llm/catalog/index';
 import type { ModelCapability } from '@moonshot-ai/agent-core/llm/request';
 import { reconcileProviderCredentialUpdate } from '@moonshot-ai/kimi-code-oauth/provider-credential';

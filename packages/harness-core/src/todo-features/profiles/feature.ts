@@ -1,11 +1,10 @@
 import { createFeature, type Feature } from '#/app/index';
 import {
-  createFacadeToken,
   useCollection,
   useExpose,
   useReady,
   watch,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 
 import type { OsHost } from '#/todo-features/os/host/index';
 
@@ -15,7 +14,6 @@ import {
   buildCatalogView,
   type CatalogEntry,
   type CatalogView,
-  type ProfileCatalog,
 } from './catalog/catalog';
 import type { AgentProfileBasePrompt } from './definition/from-file';
 import { DEFAULT_AGENT_PROFILE_NAME } from './definition/types';
@@ -26,18 +24,17 @@ import {
   createUserFinder,
   createWorkspaceFinder,
 } from './discovery/finders';
+import { ProfileCatalogRef } from './ref';
 
-export interface ProfileCatalogFace extends ProfileCatalog {
-  readonly ready: Promise<void>;
-  reload(): Promise<void>;
-}
+export { ProfileCatalogRef } from './ref';
+export type { ProfileCatalogFace } from './ref';
 
-export const ProfileCatalogRef = createFacadeToken<ProfileCatalogFace>('profiles');
+const _HOME: string | undefined = undefined;
 
 export interface CreateProfilesProps {
   readonly workDir: string;
   readonly host?: OsHost;
-  readonly home?: string;
+  readonly HOME?: string;
   readonly finders?: readonly ProfileFinder[];
   readonly extraAgentDirs?: readonly string[];
   readonly explicitAgentFiles?: readonly string[];
@@ -51,8 +48,8 @@ export function createProfiles(props: CreateProfilesProps): Feature<void> {
         props.onWarn?.(message);
       };
       const host = props.host;
-      const homeDir = props.home ?? process.env['KIMI_CODE_HOME'];
-      const osHomeDir = props.home ?? homeDir;
+      const homeDir = props.HOME ?? _HOME;
+      const osHomeDir = props.HOME ?? homeDir;
       const builtinDefault = getBuiltinDefaultProfile();
       const userFinder =
         host === undefined || homeDir === undefined
@@ -152,6 +149,15 @@ export function createProfiles(props: CreateProfilesProps): Feature<void> {
         );
       };
 
+      const listeners = new Set<() => void>();
+      const notify = (): void => {
+        for (const listener of listeners) {
+          try {
+            listener();
+          } catch {}
+        }
+      };
+
       const runLoad = async (): Promise<void> => {
         try {
           await loadAll();
@@ -159,6 +165,7 @@ export function createProfiles(props: CreateProfilesProps): Feature<void> {
             settled = true;
             resolveReady();
           }
+          notify();
         } catch (error) {
           if (!settled) {
             settled = true;
@@ -181,6 +188,12 @@ export function createProfiles(props: CreateProfilesProps): Feature<void> {
       useReady(ready);
       useExpose(ProfileCatalogRef, {
         ready,
+        onDidChange: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
         list: () => [...view.merged.values()],
         get: (name) => view.merged.get(name),
         getDefault: () => {

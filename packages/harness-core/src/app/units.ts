@@ -15,8 +15,8 @@ import {
   type CertainToken,
   type CollectionToken,
   type UnitRecipe,
-} from '#/kernel/index';
-import { currentUnit, report, type UnitNode } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit, report, type UnitNode } from '#/composition-api/runtime';
 import type { HookFailurePolicy, HookPoint, HookRegistration, LoopHooks, LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { isLoopRecord } from '@moonshot-ai/agent-core/loop/index';
 import {

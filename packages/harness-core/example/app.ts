@@ -2,9 +2,8 @@ import { join, resolve } from 'node:path';
 
 import { createFeature, useSession, type App, type Feature } from '#/app/index';
 import { RootRef } from '#/app/units';
-import { createDefaultApp } from '#/defaults/index';
-import { acpStdioStreams, createAcp } from '#/feature-acp/index';
-import { createHttp, HttpRef, type Http } from '#/feature-http/index';
+import { createDefaultAcp, createDefaultApp, createDefaultHttp, type DefaultApp } from '#/presets/index';
+import { HttpRef, type Http } from '#/feature-http/index';
 import {
   CatalogModels,
   type CatalogModelBinding,
@@ -15,15 +14,14 @@ import {
   watch,
   type ComputedRef,
   type ShallowRef,
-} from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import {
   ConfigRef,
   DEFAULT_MODEL_CONFIG_SECTION,
   type ConfigStore,
 } from '#/todo-features/config/index';
 import { InteractionRef, type Interactions } from '#/todo-features/interaction/index';
-import { detectOpenInApps, type OpenInAppId, type OsHost } from '#/todo-features/os/index';
 
 import { loadKimiCodeDefault } from './kimi-code-config';
 
@@ -49,33 +47,28 @@ export function mountExample(options?: { http?: boolean; acp?: boolean }): Examp
   );
   const port = Number(process.env['PORT'] ?? 8787);
   const probe = createExampleProbe();
-  const { app, host } = createDefaultApp({
-    home,
-    dataRoot,
-    userAgent: 'harness-example',
-    trusted: true,
-  });
+  const base = { home, dataRoot, userAgent: 'harness-example', trusted: true };
+  let assembled: DefaultApp;
+  if (options?.acp === true) {
+    assembled = createDefaultAcp(base);
+  } else if (options?.http === false) {
+    assembled = createDefaultApp(base);
+  } else {
+    assembled = createDefaultHttp({
+      ...base,
+      listen: {
+        port: Number.isFinite(port) ? port : 8787,
+        host: process.env['HOST'] ?? '127.0.0.1',
+      },
+      corsOrigins: (process.env['KIMI_CODE_CORS_ORIGINS'] ?? '')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter((entry) => entry.length > 0),
+    });
+  }
+  const { app } = assembled;
   app.features.add(probe.feature);
   app.features.add(bindExampleDefaultModel(key));
-  if (options?.http !== false) {
-    app.features.add(
-      createHttp({
-        homeDir: home,
-        listen: {
-          port: Number.isFinite(port) ? port : 8787,
-          host: process.env['HOST'] ?? '127.0.0.1',
-        },
-        openInApps: cachedOpenInApps(host),
-        corsOrigins: (process.env['KIMI_CODE_CORS_ORIGINS'] ?? '')
-          .split(',')
-          .map((entry) => entry.trim())
-          .filter((entry) => entry.length > 0),
-      }),
-    );
-  }
-  if (options?.acp === true) {
-    app.features.add(createAcp({ streams: acpStdioStreams() }));
-  }
   return { app, key, dataRoot, probe };
 }
 
@@ -124,12 +117,4 @@ function bindExampleDefaultModel(key: string): Feature<void> {
       );
     },
   });
-}
-
-function cachedOpenInApps(host: OsHost): () => Promise<readonly OpenInAppId[]> {
-  let cached: Promise<readonly OpenInAppId[]> | undefined;
-  return () => {
-    cached ??= detectOpenInApps(host);
-    return cached;
-  };
 }

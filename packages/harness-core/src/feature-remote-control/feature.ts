@@ -1,5 +1,5 @@
 import { createFeature, type Feature } from '#/app/index';
-import { createFacadeToken, useCleanup, useExpose } from '#/kernel/index';
+import { createFacadeToken, useCleanup, useExpose } from '#/composition-api/index';
 
 import { startRemoteControl, type RemoteControlHandle, type RemoteControlOptions } from './client';
 import { createRemoteControlManager, type RemoteControlStatusInfo } from './manager';
@@ -18,14 +18,17 @@ export interface CreateRemoteControlProps {
   readonly localServerToken: () => string;
   readonly clientVersion: string;
   readonly urlSource: string;
-  readonly relayOrigin?: string;
+  readonly REMOTE_CONTROL_RELAY_URL?: string;
   readonly configuredOAuthKey?: () => string | undefined;
   readonly configuredOAuthHost?: () => string | undefined;
   readonly stderr?: Pick<NodeJS.WriteStream, 'write'>;
   readonly start?: (options: RemoteControlOptions) => Promise<RemoteControlHandle>;
 }
 
+const _REMOTE_CONTROL_RELAY_URL: string | undefined = undefined;
+
 export function createRemoteControl(props: CreateRemoteControlProps): Feature<void> {
+  const relayOrigin = props.REMOTE_CONTROL_RELAY_URL ?? _REMOTE_CONTROL_RELAY_URL;
   return createFeature('remote-control', {
     app() {
       const manager = createRemoteControlManager({
@@ -34,7 +37,7 @@ export function createRemoteControl(props: CreateRemoteControlProps): Feature<vo
         localServerToken: props.localServerToken,
         clientVersion: props.clientVersion,
         urlSource: props.urlSource,
-        relayOrigin: props.relayOrigin,
+        relayOrigin,
         configuredOAuthKey: props.configuredOAuthKey,
         configuredOAuthHost: props.configuredOAuthHost,
         stderr: props.stderr,

@@ -18,7 +18,7 @@ import {
   useExpose,
   useFire,
   type RuntimeEvent,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 
 import { CompactError, isContextOverflowError } from './errors';
 import { buildCompactionSeed, compactionContinuationMessage, type CompactionSeed } from './shape';

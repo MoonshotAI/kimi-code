@@ -1,7 +1,7 @@
 import type { BlobContent, BlobRef } from '@moonshot-ai/agent-core/blob/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
-import { createFacadeToken } from '#/kernel/index';
+import { createFacadeToken } from '#/composition-api/index';
 import type { FeatureEvent } from '#/app/index';
 
 import type { FileMeta, StoredFile } from './store';

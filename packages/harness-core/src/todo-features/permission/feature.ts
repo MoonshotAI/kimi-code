@@ -5,7 +5,7 @@ import {
   useFire,
   useInject,
   type ComputedRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 

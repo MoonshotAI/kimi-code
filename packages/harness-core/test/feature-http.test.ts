@@ -11,10 +11,10 @@ import { WebSocket, type RawData } from 'ws';
 
 import { FileTokenStorage } from '@moonshot-ai/kimi-code-oauth';
 
-import { createFeature, useApp, type App, type Feature, createApp, useAgentRuntime, useAgentTools } from '#/app/index';
+import { createFeature, useApp, useAgent, type App, type Feature, createApp, useAgentTools } from '#/app/index';
 import { createUserEntry, type UserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useReady, type FacadeToken } from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+import { useReady, type FacadeToken } from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import { createAssistantMessage, createUserMessage, extractText } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome, TokenUsage } from '@moonshot-ai/agent-core/llm/response';
@@ -46,7 +46,7 @@ import {
   parseKimiFileUrl,
 } from '#/todo-features/files/index';
 import {
-  interaction,
+  createInteraction,
   InteractionRef,
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
@@ -55,6 +55,8 @@ import {
 } from '#/todo-features/interaction/index';
 import { createKimi } from '#/todo-features/kimi/index';
 import { createMedia } from '#/todo-features/media/index';
+
+const interaction = createInteraction();
 import { createMcp, McpRef } from '#/todo-features/mcp/index';
 import { createModelsDev } from '#/features/models-dev/index';
 import { createNodeOsHost, type OsHost, type OsProcess } from '#/todo-features/os/host/index';
@@ -136,7 +138,7 @@ function createMockRequester(): LoopLlmRequester {
 function bindTestLlm(requester: LoopLlmRequester): Feature<void> {
   return createFeature('test-llm', {
     agent() {
-      useAgentRuntime().requester = requester;
+      useAgent().loop.setRequester(requester);
     },
   });
 }
@@ -218,8 +220,8 @@ async function mountHttp(features: readonly Feature<void>[], options: CreateHttp
     createHttp(
       options.server === undefined
         ? {
-            homeDir: await tempDir('http-home-'),
-            disableAuth: options.authTokenService === undefined && options.homeDir === undefined,
+            HOME: await tempDir('http-home-'),
+            disableAuth: options.authTokenService === undefined && options.HOME === undefined,
             ...options,
           }
         : options,
@@ -256,10 +258,10 @@ function fakePersist(initial?: string): { saved: string[]; persist: ConfigPersis
 
 function setRequester(env: HttpEnv, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = env.app.sessions.get(sessionId);
-  const runtime =
-    session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent =
+    session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 async function openMain(env: HttpEnv, sessionId: string): Promise<Session> {
@@ -448,8 +450,7 @@ describe('feature-http facade routes', () => {
     expect((await meta.json()).data.dangerous_bypass_auth).toBe(false);
 
     const home = await tempDir('persistent-auth-');
-    vi.stubEnv('KIMI_CODE_PASSWORD', 'test-password');
-    const persistent = await mountHttp([], { homeDir: home, rpcToken: 'rpc-token' });
+    const persistent = await mountHttp([], { HOME: home, PASSWORD: 'test-password', rpcToken: 'rpc-token' });
     const token = persistent.root.resolve(HttpRef)?.authTokenService?.getToken?.();
     if (token === undefined) throw new Error('default token service did not expose a token');
     if (process.platform !== 'win32') {
@@ -462,7 +463,7 @@ describe('feature-http facade routes', () => {
       expect(accepted.status).toBe(200);
     }
 
-    const reused = await mountHttp([], { homeDir: home });
+    const reused = await mountHttp([], { HOME: home });
     expect(reused.root.resolve(HttpRef)?.authTokenService?.getToken?.()).toBe(token);
     const rotated = await rotateServerToken(home);
     expect(rotated).not.toBe(token);
@@ -2261,10 +2262,32 @@ describe('feature-http API routes', () => {
 
   it('installs, lists, toggles and removes plugins and serves the marketplace', async () => {
     const home = await tempDir('plugin-home-');
-    const env = await mountHttp([
-      createPlugin({ homeDir: home, host: createNodeOsHost() }),
-      bindTestLlm(createMockRequester()),
-    ]);
+    const dir = await tempDir('plugin-marketplace-');
+    const catalogPath = join(dir, 'marketplace.json');
+    await writeFile(
+      catalogPath,
+      JSON.stringify({
+        plugins: [
+          {
+            id: 'demo-official',
+            displayName: 'Demo Official',
+            version: '1.0.0',
+            source: 'https://example.com/demo.zip',
+            tier: 'official',
+            description: 'official demo',
+          },
+          { id: 'local-one', displayName: 'Local One', version: '2.0.0', source: 'https://example.com/local.zip' },
+        ],
+      }),
+      'utf8',
+    );
+    const env = await mountHttp(
+      [
+        createPlugin({ homeDir: home, host: createNodeOsHost() }),
+        bindTestLlm(createMockRequester()),
+      ],
+      { PLUGIN_MARKETPLACE_URL: `file://${catalogPath}` },
+    );
 
     const updates = await post(env, '/plugins/check-updates');
     expect(updates.status).toBe(200);
@@ -2308,26 +2331,6 @@ describe('feature-http API routes', () => {
     const unsupported = await post(env, '/plugins/local-one:bogus');
     expect(unsupported.status).toBe(200);
 
-    const dir = await tempDir('plugin-marketplace-');
-    const catalogPath = join(dir, 'marketplace.json');
-    await writeFile(
-      catalogPath,
-      JSON.stringify({
-        plugins: [
-          {
-            id: 'demo-official',
-            displayName: 'Demo Official',
-            version: '1.0.0',
-            source: 'https://example.com/demo.zip',
-            tier: 'official',
-            description: 'official demo',
-          },
-          { id: 'local-one', displayName: 'Local One', version: '2.0.0', source: 'https://example.com/local.zip' },
-        ],
-      }),
-      'utf8',
-    );
-    vi.stubEnv('KIMI_CODE_PLUGIN_MARKETPLACE_URL', `file://${catalogPath}`);
     const marketplace = await get(env, '/plugins/marketplace');
     expect(marketplace.status).toBe(200);
     const entries = (await marketplace.json()).data.entries as {
@@ -2482,10 +2485,9 @@ describe('feature-http API routes', () => {
   });
 
   it('answers cross-origin requests only for allowed origins', async () => {
-    vi.stubEnv('KIMI_CODE_ALLOWED_HOSTS', 'env.example');
     const env = await mountHttp([], {
       corsOrigins: ['app://renderer'],
-      allowedHosts: ['allowed.example'],
+      ALLOWED_HOSTS: ['env.example', 'allowed.example'],
     });
 
     const allowed = await fetch(`${env.origin}/api/v1/sessions`, {
@@ -2553,7 +2555,7 @@ describe('feature-http API routes', () => {
     });
     await allowedWs.close();
 
-    const hostDisabled = await mountHttp([], { disableHostCheck: true });
+    const hostDisabled = await mountHttp([], { DISABLE_HOST_CHECK: true });
     const unchecked = await requestRaw(`${hostDisabled.origin}/api/v1/sessions`, {
       host: 'evil.example',
     });
@@ -2587,7 +2589,7 @@ describe('feature-http API routes', () => {
     const env = await mountHttp([
       createMcp({
         workDir,
-        home: homeDir,
+        HOME: homeDir,
         trusted: true,
         servers: {
           ghost: { transport: 'stdio', command: process.execPath, args: ['-e', 'process.exit(0)'] },
@@ -2643,7 +2645,7 @@ describe('feature-http API routes', () => {
     const homeDir = await tempDir('mcp-mgmt-home-');
     const workDir = await tempDir('mcp-mgmt-work-');
     const env = await mountHttp([
-      createMcp({ workDir, home: homeDir, host: createNodeOsHost(), trusted: true }),
+      createMcp({ workDir, HOME: homeDir, host: createNodeOsHost(), trusted: true }),
       bindTestLlm(createMockRequester()),
     ]);
 
@@ -2734,7 +2736,7 @@ describe('feature-http API routes', () => {
     const env = await mountHttp([
       createMcp({
         workDir,
-        home: homeDir,
+        HOME: homeDir,
         host: createNodeOsHost(),
         servers: {
           fake: { transport: 'stdio', command: process.execPath, args: [mcpFixturePath] },
@@ -2825,7 +2827,7 @@ describe('feature-http API routes', () => {
       const env = await mountHttp([
         createMcp({
           workDir,
-          home: homeDir,
+          HOME: homeDir,
           servers: {
             auth: { transport: 'http', url: `${oauth.url}/mcp` },
             fake: { transport: 'stdio', command: process.execPath, args: [mcpFixturePath] },
@@ -5129,7 +5131,7 @@ describe('feature-http auth/oauth routes', () => {
     const env = await mountHttp([
       createConfig({ persist: fakePersist().persist }),
       providerCatalog,
-      createKimi({ oauth: { home } }),
+      createKimi({ oauth: { HOME: home } }),
     ]);
 
     const started = await post(env, '/oauth/login', {});
@@ -5183,7 +5185,7 @@ describe('feature-http auth/oauth routes', () => {
     const env = await mountHttp([
       createConfig({ persist: fakePersist().persist }),
       providerCatalog,
-      createKimi({ oauth: { home } }),
+      createKimi({ oauth: { HOME: home } }),
     ]);
 
     const started = await post(env, '/oauth/login', { provider: 'managed:kimi-code' });
@@ -5252,7 +5254,7 @@ describe('feature-http auth/oauth routes', () => {
     const env = await mountHttp([
       createConfig({ persist: file.persist }),
       providerCatalog,
-      createKimi({ oauth: { home } }),
+      createKimi({ oauth: { HOME: home } }),
     ]);
     expect((await (await get(env, '/providers/managed%3Akimi-code')).json()).data).toMatchObject({
       has_api_key: false,
@@ -5337,7 +5339,7 @@ describe('feature-http auth/oauth routes', () => {
     const env = await mountHttp([
       createConfig({ persist: fakePersist(MANAGED_PROVIDER_HTTP_TOML).persist }),
       providerCatalog,
-      createKimi({ oauth: { home } }),
+      createKimi({ oauth: { HOME: home } }),
     ]);
 
     const usage = await get(env, '/oauth/usage');

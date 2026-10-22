@@ -11,7 +11,7 @@ harness-core turns those primitives into a product:
   `SessionSpace` (agent-core); `app.open` / `app.create` return the
   `AppSession` session handler, whose `session.ensureAgent` /
   `session.forkAgent` open agents with the per-agent
-  `AgentRuntime` registry (requester slot, tool registry,
+  `AgentRuntime` registry (tool registry,
   host prompt section); the contribution hooks (`useAgentTools`,
   `useMessageResolver`, …) and durable feature stores (`useFeatureStore`)
   live in `hooks.ts` / `stores.ts` here.
@@ -21,9 +21,10 @@ harness-core turns those primitives into a product:
 - `src/feature-http/`, `src/feature-acp/`, `src/feature-remote-control/` —
   transport surfaces that expose the harness over HTTP/WebSocket, the Agent
   Client Protocol, and the remote-control tunnel.
-- `src/preset.ts` — `harnessPreset`, the default feature bundle.
-- `src/defaults/` — `createDefaultApp`, the common way to create an app
-  instance with the full feature set as the preset.
+- `src/presets/` — `base.ts` assembles an app instance with the full
+  product feature set (`createDefaultApp`); `createDefaultHttp` /
+  `createDefaultAcp` build on it and return the app with the HTTP
+  (plus remote-control) or ACP transport mounted.
 - `example/` — a runnable host that assembles the full stack; it is the
   canonical tutorial for this package.
 
@@ -81,13 +82,8 @@ harness-core has a root entry — everything public is re-exported from
 domain subpath:
 
 ```ts
-import { createApp } from '@moonshot-ai/harness-core';
-import { harnessPreset } from '@moonshot-ai/harness-core/preset';
+import { createApp, createDefaultApp } from '@moonshot-ai/harness-core';
 import { createFeature } from '#/app/index';
-import { useInject, watch } from '#/kernel/index';
+import { useInject, watch } from '#/composition-api/index';
 import { MAIN_AGENT_ID, memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 ```
-
-(The package root re-exports `src/index.ts`; `harnessPreset` lives in
-`src/preset.ts` and is imported via the `@moonshot-ai/harness-core/preset`
-subpath.)

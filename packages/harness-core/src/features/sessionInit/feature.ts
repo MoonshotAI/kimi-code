@@ -14,7 +14,7 @@ import {
   useExpose,
   useInject,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
@@ -90,7 +90,7 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
         if (main === undefined) {
           throw new SessionInitError(AGENT_NOT_FOUND, 'Main agent was not found');
         }
-        const mainRequester = session.agentRuntime(MAIN_AGENT_ID)?.requester;
+        const mainRequester = main.loop.baseRequester;
         if (mainRequester === undefined) {
           throw new SessionInitError(SESSION_INIT_FAILED, 'Main agent has no model bound');
         }
@@ -101,11 +101,11 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
             ?.get(INIT_PROFILE_NAME)
             ?.renderSystemPrompt({ cwd: props.workDir }).text;
           const agentId = `subagent-${crypto.randomUUID().slice(0, 8)}`;
-          const { agent: child, runtime } = await session.ensureAgent(agentId, {
+          const { agent: child } = await session.ensureAgent(agentId, {
             systemPrompt,
             init: { source: SESSION_INIT_SOURCE },
           });
-          runtime.requester = mainRequester;
+          child.loop.setRequester(mainRequester);
           const mode = permissionFaces.get(main)?.value?.mode();
           if (mode !== undefined) {
             await permissionFaces

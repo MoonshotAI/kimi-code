@@ -63,7 +63,7 @@ export * from './todo-features/notify/index';
 export * from './todo-features/shellCommand/index';
 export * from './todo-features/externalHooks/index';
 export * from './features/tokenCounting/index';
-export * from './defaults/index';
+export * from './presets/index';
 export * from './feature-http/index';
 export * from './feature-acp/index';
 export * from './feature-remote-control/index';

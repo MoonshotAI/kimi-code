@@ -24,7 +24,7 @@ import {
   watch,
   type ComputedRef,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import {
   createAssistantMessage,
   type AssistantMessage,
@@ -53,10 +53,12 @@ import {
   INTERACTION_TAG_SESSION_ID,
   INTERACTION_TAG_TOOL_CALL_ID,
   InteractionRef,
-  interaction,
+  createInteraction,
 } from '#/todo-features/interaction/index';
 import { createMedia } from '#/todo-features/media/index';
 import { createMcp, McpRef, type McpFacade, type McpServerConfig } from '#/todo-features/mcp/index';
+
+const interaction = createInteraction();
 import { createNodeOsHost } from '#/todo-features/os/host/index';
 import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
 import { createMemoryPlanStorage, createPlan, PlanRef, type PlanFace } from '#/features/plan/index';
@@ -465,7 +467,7 @@ async function startAcpTest(options?: {
     harness.features.add(
       createMcp({
         workDir: options?.mcpHost === true ? mcpHome : '/tmp/acp-test',
-        home: mcpHome,
+        HOME: mcpHome,
         host: options?.mcpHost === true ? createNodeOsHost() : undefined,
         servers: typeof options?.withMcp === 'object' ? options.withMcp : undefined,
       }),

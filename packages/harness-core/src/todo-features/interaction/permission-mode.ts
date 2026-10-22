@@ -1,5 +1,5 @@
 import { useStepStarting, useToolPermitting } from '#/app/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import {
   createHistoryMessageBuilder,
   type HistoryMessage,
@@ -30,9 +30,7 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
-export function permissionModeReminderEnabled(
-  env: string | undefined = process.env[PERMISSION_MODE_REMINDER_ENV],
-): boolean {
+export function permissionModeReminderEnabled(env: string | undefined): boolean {
   return parseBooleanEnv(env) !== false;
 }
 
@@ -47,9 +45,9 @@ function isPermissionModeReminder(entry: HistoryMessage): boolean {
   return entry.meta?.source === 'reminder' && entry.meta?.key === PERMISSION_REMIND_KEY;
 }
 
-export function useAskUserQuestionAutoMode(): void {
+export function useAskUserQuestionAutoMode(reminderEnabled: boolean): void {
   const permission = useInject(PermissionRef);
-  if (permissionModeReminderEnabled()) {
+  if (reminderEnabled) {
     let lastMode: PermissionMode | undefined;
     useStepStarting(({ messages }) => {
       const currentMode = permission.value?.state.value.mode;

@@ -33,27 +33,39 @@ await app.features.add(
 | `openInApps` | — | advertised "open in" applications on the meta route |
 | `corsOrigins` | — | CORS allow-list (only when the feature owns the server) |
 | `wsHeartbeatMs` | — | WebSocket heartbeat interval |
-| `authTokenService` | created from `homeDir` | custom credential service (`isValid(candidate)`; `getToken()` is optional) |
+| `authTokenService` | created from `HOME` | custom credential service (`isValid(candidate)`; `getToken()` is optional) |
 | `disableAuth` | `false` | disable REST and WebSocket checks without disabling token-service creation |
-| `homeDir` | `KIMI_CODE_HOME` or `~/.kimi-code` | home of the persistent `server.token` |
+| `HOME` | `~/.kimi-code` | home of the persistent `server.token` |
+| `PASSWORD` | — | bcrypt-hashed password credential |
 | `rpcToken` | — | additional timing-safe Bearer credential |
-| `allowedHosts` | `KIMI_CODE_ALLOWED_HOSTS` | extra exact or leading-dot Host allow-list entries; option and env are merged |
-| `disableHostCheck` | `KIMI_CODE_DISABLE_HOST_CHECK=1` | disable Host validation; the explicit option takes precedence |
+| `ALLOWED_HOSTS` | — | extra exact or leading-dot Host allow-list entries |
+| `DISABLE_HOST_CHECK` | `false` | disable Host validation |
 | `bindClass` | `'public'` for wildcard binds | optional `'lan'/'public'` override for wildcard addresses only |
+| `PLUGIN_MARKETPLACE_URL` | built-in catalog URL | source served by the plugin marketplace route |
+
+`createHttp` never reads the process environment — every value above is
+explicit. `createDefaultHttp` (`src/presets/http.ts`) is the composition
+point that maps environment variables onto them: `KIMI_CODE_HOME` → `HOME`,
+`KIMI_CODE_PASSWORD` → `PASSWORD`, `KIMI_CODE_ALLOWED_HOSTS` → `ALLOWED_HOSTS`
+(merged with the explicit list), `KIMI_CODE_DISABLE_HOST_CHECK` →
+`DISABLE_HOST_CHECK`, `KIMI_CODE_PLUGIN_MARKETPLACE_URL` →
+`PLUGIN_MARKETPLACE_URL`. Explicitly passed options always win. It creates
+the app through `src/presets/base.ts` (`createDefaultApp`), mounts the HTTP
+feature plus the remote-control feature, and returns the assembled app.
 
 ## Bearer Auth
 
-By default, `listen` creates `<homeDir>/server.token` before binding and enables
+By default, `listen` creates `<HOME>/server.token` before binding and enables
 authentication. The file is written atomically with mode `0600` and reused on
 subsequent starts. `rotateServerToken(homeDir)` rotates it atomically; the next
 credential check rereads the file, so the old token stops working without a
-restart. `KIMI_CODE_PASSWORD` adds a bcrypt-hashed password credential, and
+restart. `PASSWORD` adds a bcrypt-hashed password credential, and
 `rpcToken` adds a separate timing-safe credential.
 
 ```ts
 await app.features.add(
   createHttp({
-    homeDir,
+    HOME: home,
     rpcToken,
     listen: { port: 8787, host: '127.0.0.1' },
   }),
@@ -78,7 +90,7 @@ When bringing your own server, configure security on that server instead of
 passing the same options again to `createHttp`:
 
 ```ts
-const server = createHttpServer({ homeDir, rpcToken, corsOrigins: ['app://renderer'] });
+const server = createHttpServer({ HOME: home, rpcToken, corsOrigins: ['app://renderer'] });
 await server.listen();
 await app.features.add(createHttp({ server }));
 ```
@@ -86,7 +98,8 @@ await app.features.add(createHttp({ server }));
 ## Transport Protections
 
 - HTTP validates Host before CORS and auth; invalid Host returns HTTP 403 with
-  `40301`. `allowedHosts` and `KIMI_CODE_ALLOWED_HOSTS` are merged.
+  `40301`. Hosts allowed via `ALLOWED_HOSTS` (or `KIMI_CODE_ALLOWED_HOSTS`
+  through `createDefaultHttp`) pass.
 - WebSocket upgrades check Host, then Origin, then credentials. Host or Origin
   rejection returns raw HTTP 403; credential rejection returns raw HTTP 401.
 - Non-loopback REST auth allows 10 failures per source IP in 60 seconds, then

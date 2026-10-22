@@ -207,9 +207,9 @@ function createMockRequester(script: LlmScript): { requester: LoopLlmRequester; 
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 describe('edit feature', () => {

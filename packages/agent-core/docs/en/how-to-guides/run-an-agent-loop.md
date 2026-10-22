@@ -4,7 +4,7 @@ This is a how-to guide: drive one tool-using agent with `src/loop/` + `src/llm/`
 
 ## Steps
 
-1. Build a requester and layer the agent's profile on it: `profile.systemPrompt` and `profile.tools` (tool descriptions). A profile layered here acts as defaults — values set on the loop itself (see below) override it. The loop reads the requester getter once per step, so the returned requester may be swapped between steps.
+1. Build a requester and layer the agent's profile on it: `profile.systemPrompt` and `profile.tools` (tool descriptions). A profile layered here acts as defaults — values set on the loop itself (see below) override it. Hand it to `createLoop({ requester })`, and swap it later at any time with `loop.setRequester(next)`; the loop reads the current requester once per step, so a swap takes effect from the next step. `loop.baseRequester` reads the current one back, and with none set every step or side request fails with `loop has no requester`.
 2. Define a tool with `defineTool` (`src/tool/define.ts`). The schema produces both the `parameters` the model sees and the `args` type inside `execute`. `onUpdate` streams progress (surfaced as `tool.delta`); calling `detach(text)` moves the tool to the background and ends its entry immediately with `text` as the ack.
 3. `createToolExecutor()` dispatches on the tool name. Pass it as `executor` to `createLoop({ requester, executor, hooks })`. `register` installs an implementation; `setTools` or the requester's `profile.tools` installs the description — neither is derived from the other. `invalidate(name, reason)` makes later calls return an in-band error without entering the handler, and `restore(name)` uses the same handler again. `createToolExecutor({ policy: { maxResultChars } })` truncates the final text result. `loop.executor` is the object that was passed in. An object with only `execute` is still a valid executor when there is nothing to dispatch.
 4. The loop starts held. `loop.runTurn(entry)` runs one turn and resolves with its `TurnOutcome`; alternatively `submit` / `notify` queue prompts and `continue()` releases the hold. An aborted turn returns its prompt to the inbox and holds. `loop.close()` aborts a running turn without grace, so unfinished tool calls still get an aborted result before `turn.ended`.
@@ -40,8 +40,7 @@ const requester = kimiRequester
   .with({ model: { spec: { provider: 'kimi', name: 'kimi-k2' } } });
 
 const loop = createLoop({
-  requester: () =>
-    requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [weatherTool] } }),
+  requester: requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [weatherTool] } }),
   executor: tools,
   hooks: [createMaxStepsHook(() => 8)],
 });
@@ -73,7 +72,7 @@ The settled events are durable records (`src/loop/record.ts`), so a profile set 
 
 ## Where to go next
 
-- `loop.state` is a plain projection (the settled profile, status, held, inbox, messages, the running turn, tools including detached ones); `loop.requester` is a requester facade for side requests — it re-reads the host's requester getter and fills in the current history as `content` on every `request`/`generate`, so `.with()` overrides always land on the latest configuration and context; `loop.waitForTasks` waits on background tools, `loop.waitForIdle()` settles the loop.
+- `loop.state` is a plain projection (the settled profile, status, held, inbox, messages, the running turn, tools including detached ones); `loop.requester` is a requester facade for side requests — it re-reads the loop's current base requester and fills in the current history as `content` on every `request`/`generate`, so `.with()` overrides always land on the latest configuration and context; `loop.waitForTasks` waits on background tools, `loop.waitForIdle()` settles the loop.
 - Input commands (`submit`/`notify`/`remind`/`steer`/`cancel`/`setContext`/`setSystemPrompt`/`setTools`) are synchronous everywhere, including inside a `subscribe` listener or a hook: they return their ack and `loop.state` already reflects them. Events reach listeners in one global order, after the state change that produced them.
 - The loop holds no persistence. `src/loop/record.ts` defines its durable contract (`LoopRecord` / `toLoopRecord` / `loopProjection`); for persistence that is already wired, use `src/session/` — see Run a session with subagents.
 - To restore after a crash, fold the records with `loopProjection` and pass `{ profile, messages, nextTurnId, unfinished, inbox: { notify } }` as `input`. With an `unfinished` turn the loop starts with status `interrupted`: `continue()` resumes that turn when its history allows it (`turn.resumed`, same turn id, next step), and every other trigger — `abort`, `runTurn`, `submit`, `notify`, `steer` — first ends it as `aborted` with reason `CRASHED`, filling in aborted results for unanswered tool calls.

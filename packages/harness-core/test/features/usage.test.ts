@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createFeature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome, TokenUsage } from '@moonshot-ai/agent-core/llm/response';
@@ -32,9 +32,9 @@ function user(text: string) {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 const USAGE_A: TokenUsage = { inputOther: 100, output: 10, inputCacheRead: 5, inputCacheCreation: 2 };

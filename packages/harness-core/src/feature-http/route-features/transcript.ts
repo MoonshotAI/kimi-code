@@ -1,5 +1,5 @@
 import { useApp } from '#/app/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {

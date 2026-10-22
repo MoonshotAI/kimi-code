@@ -1,7 +1,7 @@
 import { onScopeDispose } from '@vue/reactivity';
 
 import { useAgent, useSession, useToolHandler } from './units';
-import { useCleanup } from '#/kernel/index';
+import { useCleanup } from '#/composition-api/index';
 import type { MessageResolver } from '@moonshot-ai/agent-core/llm/policy/resolver';
 import type { LlmRecovery } from '@moonshot-ai/agent-core/llm/policy/recovery';
 import type { LlmRetryable } from '@moonshot-ai/agent-core/llm/policy/retry';

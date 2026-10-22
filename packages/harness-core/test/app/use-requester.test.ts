@@ -30,10 +30,9 @@ interface Setup {
 }
 
 async function setup(initial: LoopLlmRequester): Promise<Setup> {
-  let current = initial;
   const app = createApp();
   const session = await app.open('sess');
-  const agent = await session.open('main', { executor: noopExecutor, requester: () => current });
+  const agent = await session.open('main', { executor: noopExecutor, requester: initial });
   let captured: LoopLlmRequester | undefined;
   app.features.add(
     createFeature('capture', {
@@ -50,7 +49,7 @@ async function setup(initial: LoopLlmRequester): Promise<Setup> {
     agent,
     requester,
     use: (next) => {
-      current = next;
+      agent.loop.setRequester(next);
     },
   };
 }
@@ -117,7 +116,7 @@ describe('useRequester', () => {
     await app.close();
   });
 
-  it('reads the caps requester getter on every request', async () => {
+  it('reads the current loop requester on every request', async () => {
     const first = fakeRequester(() => textOutcome('a')).with({ model: { spec } });
     const second = fakeRequester(() => textOutcome('b')).with({
       model: { spec: { provider: 'fake', name: 'other-model' } },

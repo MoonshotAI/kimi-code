@@ -1,6 +1,6 @@
 import type { ToolHooks } from '@moonshot-ai/agent-core/tool/index';
 
-import type { ComputedRef } from '#/kernel/index';
+import type { ComputedRef } from '#/composition-api/index';
 
 import {
   INTERACTION_TAG_AGENT_ID,

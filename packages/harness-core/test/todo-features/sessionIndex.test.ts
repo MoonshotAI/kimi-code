@@ -12,7 +12,7 @@ import {
 import { memoryBlobBackend } from '@moonshot-ai/agent-core/blob/backend/memory';
 import { blobStores } from '@moonshot-ai/agent-core/blob/index';
 import { createAssistantEntry, createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import {
   MAIN_AGENT_ID,

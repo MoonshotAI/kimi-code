@@ -49,6 +49,6 @@ switch (result.type) {
 
 ## Notes
 
-- A requester is immutable: `.with(part)` returns a new requester layered on the previous values. Build the base once, then layer `model` / `profile` per use.
+- A requester is immutable: `.with(part)` returns a new requester layered on the previous values. Build the base once, then layer `model` / `profile` per use. `.with(otherRequester)` instead merges everything the other requester has accumulated (later layers win, dimension fields deep-merge), so one agent's requester can seed another's; a requester that does not carry its contents (not built by `createRequester` / the loop facade) is rejected with a `TypeError`.
 - `generate` never mutates `messages`; the returned assistant message is yours to append to a history.
 - Which failures are classified where, and which are retried automatically, is covered by the errors reference.

@@ -55,6 +55,7 @@ export interface CreateGlobToolProps {
     readonly workDir: string;
     readonly additionalDirs?: readonly string[];
   };
+  readonly shareDir?: string;
 }
 
 interface GlobArguments {
@@ -191,6 +192,7 @@ async function executeGlob(
   args: GlobArguments,
   signal: AbortSignal,
   searchRoot: string,
+  shareDir?: string,
 ): Promise<{ text: string; isError?: true }> {
   try {
     const st = await host.fs.stat(searchRoot);
@@ -210,7 +212,7 @@ async function executeGlob(
 
   let rgPath: string;
   try {
-    const resolution = await ensureRgPath({ signal, allowDownload: true });
+    const resolution = await ensureRgPath({ shareDir, signal, allowDownload: true });
     rgPath = resolution.path;
   } catch (error) {
     if (signal.aborted) {
@@ -431,7 +433,7 @@ export function createGlobTool(props: CreateGlobToolProps): ToolDefinition {
         }
         throw error;
       }
-      const finished = await executeGlob(props.host, workspace, args, signal, searchRoot);
+      const finished = await executeGlob(props.host, workspace, args, signal, searchRoot, props.shareDir);
       return {
         content: [{ type: 'text' as const, text: finished.text }],
         isError: finished.isError,

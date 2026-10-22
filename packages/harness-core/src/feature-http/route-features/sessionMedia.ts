@@ -1,5 +1,5 @@
 import { useApp } from '#/app/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import { FilesRef, KimiFileRegistryRef } from '#/todo-features/files/index';
 

@@ -24,7 +24,7 @@ const noopExecutor = { execute: async () => ({ content: [] }) };
 
 describe('loop.wait', () => {
   it('resolves with the first emitted event of the type passing match', async () => {
-    const loop = createLoop({ requester: echoRequester, executor: noopExecutor });
+    const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const pending = loop.wait('turn.ended', { match: (event) => event.turnId === 1 });
     await loop.runTurn(prompt('one'));
     await loop.runTurn(prompt('two'));
@@ -35,7 +35,7 @@ describe('loop.wait', () => {
   });
 
   it('does not resolve while match fails and rejects on timeout', async () => {
-    const loop = createLoop({ requester: echoRequester, executor: noopExecutor });
+    const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const missing = loop.wait('turn.ended', { match: (event) => event.turnId === 99, timeoutMs: 50 });
     await loop.runTurn(prompt('one'));
     await expect(missing).rejects.toThrow('wait timed out after 50ms');
@@ -45,7 +45,7 @@ describe('loop.wait', () => {
   });
 
   it('rejects when the external signal aborts', async () => {
-    const loop = createLoop({ requester: echoRequester, executor: noopExecutor });
+    const loop = createLoop({ requester: echoRequester(), executor: noopExecutor });
     const controller = new AbortController();
     const pending = loop.wait('turn.ended', { signal: controller.signal });
     controller.abort(new Error('stop-waiting'));

@@ -4,7 +4,7 @@ import {
   createFeature,
   createApp,
 } from '#/app/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import {
   createAssistantEntry,
   createToolEntry,
@@ -105,13 +105,13 @@ describe('tokenCounting feature', () => {
     harness.features.add(probe);
     const session = await harness.open('s1');
     const { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
-    const runtime = session.agentRuntime('main');
-    if (runtime === undefined) throw new Error('runtime missing');
-    runtime.requester = scriptedRequester(() => ({
-      type: 'done',
-      message: createAssistantMessage([{ type: 'text', text: 'hi' }]),
-      usage: usage(120, 30),
-    }));
+    agent.loop.setRequester(
+      scriptedRequester(() => ({
+        type: 'done',
+        message: createAssistantMessage([{ type: 'text', text: 'hi' }]),
+        usage: usage(120, 30),
+      })),
+    );
     expect(face?.status.value).toBe(0);
     const outcome = await agent.loop.runTurn(createUserEntry(createUserMessage('go'), { source: 'input' }));
     expect(outcome.type).toBe('done');

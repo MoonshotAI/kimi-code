@@ -49,6 +49,6 @@ switch (result.type) {
 
 ## 说明
 
-- requester 是不可变的：`.with(part)` 返回一个叠加了前值的新 requester。基础 requester 建一次，之后按用途叠加 `model` / `profile`。
+- requester 是不可变的：`.with(part)` 返回一个叠加了前值的新 requester。基础 requester 建一次，之后按用途叠加 `model` / `profile`。`.with(otherRequester)` 则合并另一个 requester 累积的全部内容（后叠加者胜出，维度字段深合并），因此可以把一个 agent 的 requester 作为另一个的种子；不携带自身内容的 requester（非 `createRequester` / loop facade 构建）会以 `TypeError` 拒绝。
 - `generate` 不会改动 `messages`；返回的 assistant 消息由你自己决定是否追加进历史。
 - 失败如何分类、哪些失败会被自动重试，见错误参考文档。

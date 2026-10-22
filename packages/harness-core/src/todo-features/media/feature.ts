@@ -1,6 +1,6 @@
-import { createFeature, useMessageAppending, type Feature, useAgentRuntime, useAgentTools, useMessageResolver, useLlmRecovery } from '#/app/index';
+import { createFeature, useMessageAppending, type Feature, useAgent, useAgentTools, useMessageResolver, useLlmRecovery } from '#/app/index';
 import type { BlobCache } from '@moonshot-ai/agent-core/blob/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import { createMediaDegradeRecovery } from '@moonshot-ai/agent-core/llm/builtin/policy/media-degrade';
 import {
   createBlobUploadCache,
@@ -52,7 +52,7 @@ export function createMedia(props: CreateMediaProps): Feature {
       useConfigSection(imageConfigSection);
     },
     agent() {
-      const runtime = useAgentRuntime();
+      const agent = useAgent();
       const registryRef = useInject(KimiFileRegistryRef);
       const registry = (): KimiFileRegistry => {
         const current = registryRef.value;
@@ -65,7 +65,7 @@ export function createMedia(props: CreateMediaProps): Feature {
       const putMedia = async (content: MediaContent): Promise<string> =>
         (await registry().put(content)).ref;
       const modelSpec = (): LlmModelSpec | undefined => {
-        const request = runtime.requester?.request({ content: { messages: [] } });
+        const request = agent.loop.baseRequester?.request({ content: { messages: [] } });
         return request?.model.spec;
       };
       useMessageResolver(

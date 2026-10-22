@@ -2,25 +2,18 @@ import type { AppSession } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { LoopLlmRequester, TurnOutcome } from '@moonshot-ai/agent-core/loop/index';
-import { MAIN_AGENT_ID, type Agent } from '@moonshot-ai/agent-core/session/index';
+import { type Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
 import type { OsProcessPort } from '#/todo-features/os/index';
-import type { AgentRuntime } from '#/runtime/index';
 
 import {
   formatBackgroundAck,
   formatForegroundFailure,
   formatForegroundSuccess,
 } from './format';
-import { validateSpawnArgs, type SpawnArgs, type SpawnModelEntry } from './plan';
-import {
-  DEFAULT_AGENT_PROFILE_NAME,
-  rootDelegationExtras,
-  subagentAllowlistFor,
-  withoutDelegatingTargets,
-  type ProfileCatalog,
-} from './profile';
+import { validateSpawnArgs, visibleSpawnProfiles, type SpawnArgs, type SpawnModelEntry } from './plan';
+import { type ProfileCatalog } from './profile';
 import {
   classifyOutcome,
   createSubagentLauncher,
@@ -40,7 +33,6 @@ export interface SpawnToolDeps {
   readonly registry: SpawnRegistry;
   readonly session: AppSession;
   readonly agent: Agent;
-  readonly runtime: AgentRuntime;
   readonly forkEnabled: () => boolean;
   readonly process?: OsProcessPort;
   readonly workDir: string;
@@ -55,7 +47,6 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
     registry,
     session,
     agent,
-    runtime: deps.runtime,
     process: deps.process,
     workDir: deps.workDir,
   });
@@ -79,7 +70,7 @@ export function createSpawnTool(deps: SpawnToolDeps): ToolDefinition {
           args,
           {
             profileName: registry.get(callerAgentId)?.profileName,
-            modelAlias: callerModelName(deps.runtime.requester),
+            modelAlias: callerModelName(agent.loop.baseRequester),
           },
           forkEnabled(),
         );
@@ -172,23 +163,10 @@ function buildSpawnParameters(
 
 function buildSpawnDescription(deps: SpawnToolDeps, callerAgentId: string): string {
   const sections = [SPAWN_DESCRIPTION.trim(), SPAWN_BACKGROUND_DESCRIPTION.trim()];
-  const catalog = deps.catalog;
-  const callerProfileName =
-    deps.registry.get(callerAgentId)?.profileName ?? DEFAULT_AGENT_PROFILE_NAME;
-  const ownProfile = catalog.get(callerProfileName);
-  const own = { profileName: callerProfileName, subagents: ownProfile?.subagents };
-  const extras =
-    callerAgentId === MAIN_AGENT_ID
-      ? rootDelegationExtras(catalog, own, catalog.list())
-      : undefined;
-  let allowlist = subagentAllowlistFor(catalog, own, extras);
-  if (allowlist !== undefined && own.subagents === undefined) {
-    allowlist = withoutDelegatingTargets(catalog, allowlist);
-  }
-  const profiles =
-    allowlist === undefined
-      ? catalog.list()
-      : catalog.list().filter((profile) => allowlist.includes(profile.name));
+  const profiles = visibleSpawnProfiles(deps.catalog, {
+    agentId: callerAgentId,
+    profileName: deps.registry.get(callerAgentId)?.profileName,
+  });
   if (profiles.length > 0) {
     const lines = profiles.map((profile) => {
       const details = [profile.description, profile.whenToUse].filter(

@@ -111,12 +111,9 @@ function bindTestTools(): Feature<void> {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime =
-    session !== undefined
-      ? session.agentRuntime(agentId)
-      : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 interface NotifyTestEnv {
@@ -174,11 +171,6 @@ function toolResultIsErrors(agent: Agent): boolean[] {
     .map((entry) => (entry.meta as ToolMeta | undefined)?.isError === true);
 }
 
-afterEach(() => {
-  delete process.env['KIMI_CODE_EXPERIMENTAL_NOTIFY_USER'];
-  delete process.env['KIMI_CODE_EXPERIMENTAL_FLAG'];
-});
-
 describe('notify feature', () => {
   it('registers the NotifyUser tool and guidance only when available', async () => {
     const off = await startApp(createNotify({ available: () => false }));
@@ -202,19 +194,16 @@ describe('notify feature', () => {
     await on.harness.close();
   });
 
-  it('enables the tool by default through the experimental env flags', async () => {
-    process.env['KIMI_CODE_EXPERIMENTAL_NOTIFY_USER'] = 'true';
-    const flagged = await startApp(createNotify());
+  it('enables the tool by default through the experimental flag prop', async () => {
+    const plain = await startApp(createNotify());
+    await runTurn(plain.main, 'hello');
+    expect(plain.calls[0]!.tools.map((tool) => tool.name)).not.toContain(NOTIFY_USER_TOOL_NAME);
+    await plain.harness.close();
+
+    const flagged = await startApp(createNotify({ EXPERIMENTAL_NOTIFY_USER: true }));
     await runTurn(flagged.main, 'hello');
     expect(flagged.calls[0]!.tools.map((tool) => tool.name)).toContain(NOTIFY_USER_TOOL_NAME);
     await flagged.harness.close();
-
-    delete process.env['KIMI_CODE_EXPERIMENTAL_NOTIFY_USER'];
-    process.env['KIMI_CODE_EXPERIMENTAL_FLAG'] = '1';
-    const master = await startApp(createNotify());
-    await runTurn(master.main, 'hello');
-    expect(master.calls[0]!.tools.map((tool) => tool.name)).toContain(NOTIFY_USER_TOOL_NAME);
-    await master.harness.close();
   });
 
   it('acknowledges a delivered update and emits notify.shown', async () => {

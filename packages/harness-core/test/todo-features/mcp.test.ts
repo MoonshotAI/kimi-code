@@ -12,7 +12,7 @@ import {
   type App,
 } from '#/app/index';
 import { createUserEntry } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -144,9 +144,9 @@ function user(text: string) {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 async function waitFor(check: () => boolean, message: string, timeoutMs = 15_000): Promise<void> {
@@ -188,7 +188,7 @@ async function startApp(opts: {
   const harness = createApp({ space: memorySessionSpace() });
   const feature = createMcp({
     workDir,
-    home: homeDir,
+    HOME: homeDir,
     host: opts.host === null ? undefined : (opts.host ?? createNodeOsHost()),
     trusted: opts.trusted,
     servers: opts.servers,

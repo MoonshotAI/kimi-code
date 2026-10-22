@@ -1,4 +1,4 @@
-import { createCollection, useContribute, type RuntimeEvent } from '#/kernel/index';
+import { createCollection, useContribute, type RuntimeEvent } from '#/composition-api/index';
 import {
   isManagedKimiCodeBaseUrl,
   isOpenPlatformId,

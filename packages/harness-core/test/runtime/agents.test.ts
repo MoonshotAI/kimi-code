@@ -9,7 +9,6 @@ import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
 import type { FeatureStore } from '#/app/index';
-import { agentCaps } from '#/runtime/agents';
 import { createApp, type App } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 
@@ -56,9 +55,9 @@ function userTexts(messages: readonly HistoryMessage[]): string[] {
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 interface ProbeState {
@@ -208,15 +207,14 @@ describe('app agent runtime', () => {
     await harness.close();
   });
 
-  it('exposes the base requester through agentCaps without layering', async () => {
+  it('reads back the base requester set through loop.setRequester without layering', async () => {
     const harness = createApp({ space: memorySessionSpace() });
     const session = await harness.open('s1');
-    await session.ensureAgent('main');
-    const runtime = session.agentRuntime('main');
-    if (runtime === undefined) throw new Error('runtime missing');
-    expect(() => agentCaps(runtime).requester()).toThrow(/no requester/);
-    runtime.requester = mergingRequester();
-    expect(agentCaps(runtime).requester()).toBe(runtime.requester);
+    const { agent } = await session.ensureAgent('main');
+    expect(agent.loop.baseRequester).toBeUndefined();
+    const requester = mergingRequester();
+    agent.loop.setRequester(requester);
+    expect(agent.loop.baseRequester).toBe(requester);
     await harness.close();
   });
 });

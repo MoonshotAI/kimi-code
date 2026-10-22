@@ -1,7 +1,7 @@
 import type { App } from '#/app/index';
-import type { RuntimeEvent } from '#/kernel/index';
-import { createFacadeToken } from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+import type { RuntimeEvent } from '#/composition-api/index';
+import { createFacadeToken } from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { ConfigStore } from '#/todo-features/config/index';

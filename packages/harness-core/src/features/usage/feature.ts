@@ -14,7 +14,7 @@ import {
   useExpose,
   type ComputedRef,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { TokenUsage } from '@moonshot-ai/agent-core/llm/response';
 
 export interface UsageFace {

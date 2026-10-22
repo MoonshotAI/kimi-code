@@ -1,4 +1,4 @@
-import { createFacadeToken, type ComputedRef } from '#/kernel/index';
+import { createFacadeToken, type ComputedRef } from '#/composition-api/index';
 
 import type { PermissionApprovalResultRecord, PermissionState } from './state/projection';
 import type { PermissionMode, PermissionRule } from './types';

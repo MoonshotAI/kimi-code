@@ -9,7 +9,8 @@ import {
   useExpose,
   useReady,
   watch,
-} from '#/kernel/index';
+} from '#/composition-api/index';
+import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/todo-features/plugin/index';
 
 import { DEFAULT_HTTP_PREFIX, useFacadeRoutes } from './route-builtin/index';
 import { useGuiStoreRoutes } from './route-builtin/gui-store';
@@ -55,12 +56,16 @@ export interface CreateHttpOptions {
   readonly wsHeartbeatMs?: number;
   readonly authTokenService?: HttpAuthTokenService;
   readonly disableAuth?: boolean;
-  readonly homeDir?: string;
+  readonly HOME?: string;
+  readonly PASSWORD?: string;
   readonly rpcToken?: string;
-  readonly allowedHosts?: readonly string[];
-  readonly disableHostCheck?: boolean;
+  readonly ALLOWED_HOSTS?: readonly string[];
+  readonly DISABLE_HOST_CHECK?: boolean;
   readonly bindClass?: 'lan' | 'public';
+  readonly PLUGIN_MARKETPLACE_URL?: string;
 }
+
+const _PLUGIN_MARKETPLACE_URL = KIMI_CODE_PLUGIN_MARKETPLACE_URL;
 
 const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
   const http = useHttp();
@@ -86,10 +91,11 @@ export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
         options.server !== undefined &&
         (options.authTokenService !== undefined ||
           options.disableAuth !== undefined ||
-          options.homeDir !== undefined ||
+          options.HOME !== undefined ||
+          options.PASSWORD !== undefined ||
           options.rpcToken !== undefined ||
-          options.allowedHosts !== undefined ||
-          options.disableHostCheck !== undefined ||
+          options.ALLOWED_HOSTS !== undefined ||
+          options.DISABLE_HOST_CHECK !== undefined ||
           options.bindClass !== undefined)
       ) {
         throw new Error('server security options must be configured on the supplied HTTP server');
@@ -101,10 +107,11 @@ export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
           corsOrigins: options.corsOrigins,
           authTokenService: options.authTokenService,
           disableAuth: options.disableAuth,
-          homeDir: options.homeDir,
+          HOME: options.HOME,
+          PASSWORD: options.PASSWORD,
           rpcToken: options.rpcToken,
-          allowedHosts: options.allowedHosts,
-          disableHostCheck: options.disableHostCheck,
+          ALLOWED_HOSTS: options.ALLOWED_HOSTS,
+          DISABLE_HOST_CHECK: options.DISABLE_HOST_CHECK,
           bindClass: options.bindClass,
           apiPrefixes: [prefix, V2_HTTP_PREFIX],
           healthPath: `${prefix.replace(/\/+$/, '')}/healthz`,
@@ -115,7 +122,7 @@ export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
       }
       useExpose(HttpRef, server);
       useFacadeRoutes(prefix);
-      useFeatureFacadeRoutes(prefix);
+      useFeatureFacadeRoutes(prefix, options.PLUGIN_MARKETPLACE_URL ?? _PLUGIN_MARKETPLACE_URL);
       useV2SessionRoutes(V2_HTTP_PREFIX);
       useMetaRoutes(prefix, {
         version: options.version,

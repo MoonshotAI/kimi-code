@@ -1,5 +1,5 @@
 import { createFeature, type Feature, type FeatureUnits, useAgentTools } from '#/app/index';
-import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
+import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 import {
   createKimiDefaultHeaders,
   KIMI_CODE_PROVIDER_NAME,

@@ -21,9 +21,9 @@ export const REMOTE_CONTROL_RELAY_ORIGIN = 'https://code-rc.kimi.com';
 export const REMOTE_CONTROL_RELAY_URL_ENV = 'KIMI_CODE_REMOTE_CONTROL_RELAY_URL';
 
 export function resolveRemoteControlRelayOrigin(
-  env: Readonly<Record<string, string | undefined>> = process.env,
-  fallback: string = REMOTE_CONTROL_RELAY_ORIGIN,
-): string {
+  env: Readonly<Record<string, string | undefined>>,
+  fallback?: string,
+): string | undefined {
   const value = env[REMOTE_CONTROL_RELAY_URL_ENV]?.trim();
   return value === undefined || value.length === 0 ? fallback : value;
 }
@@ -358,8 +358,7 @@ export async function startRemoteControl(
   if (token?.refreshToken === undefined || token.refreshToken.length === 0) {
     throw new Error('Remote Control requires a Kimi login. Run `kimi login` first.');
   }
-  const relayOrigin =
-    options.relayOrigin ?? resolveRemoteControlRelayOrigin(process.env, auth.relayOrigin);
+  const relayOrigin = options.relayOrigin ?? auth.relayOrigin;
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin, options.urlSource);

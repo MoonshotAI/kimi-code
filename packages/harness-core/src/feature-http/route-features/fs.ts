@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 
 import { useApp } from '#/app/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import type { SessionRecord } from '@moonshot-ai/agent-core/session/index';
 import { isAbsolute } from 'pathe';
 import { z } from 'zod';

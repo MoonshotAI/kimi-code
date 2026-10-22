@@ -33,8 +33,7 @@ const session = await createSession({
 });
 
 const researcherCaps: AgentCaps = {
-  requester: () =>
-    requester.with({ profile: { systemPrompt: 'You are a research assistant. Answer briefly.' } }),
+  requester: requester.with({ profile: { systemPrompt: 'You are a research assistant. Answer briefly.' } }),
   executor: {
     execute: async (): Promise<ToolResult> => ({
       content: [{ type: 'text', text: 'no tools available' }],
@@ -70,8 +69,7 @@ const askResearcher = {
 };
 
 const main = await session.open('main', {
-  requester: () =>
-    requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [askResearcher] } }),
+  requester: requester.with({ profile: { systemPrompt: 'You are a helpful assistant.', tools: [askResearcher] } }),
   executor: askResearcher,
   hooks: [createMaxStepsHook(() => 8)],
 });

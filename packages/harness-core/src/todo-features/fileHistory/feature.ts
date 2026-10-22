@@ -4,7 +4,7 @@ import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import { createFeature, useAgent, useSession, useToolStarting, type Feature, useLoopEvent, useFeatureStore } from '#/app/index';
-import { useCleanup, useExpose } from '#/kernel/index';
+import { useCleanup, useExpose } from '#/composition-api/index';
 import { HostFsError, unwrapErrorCause, type OsFsPort } from '#/todo-features/os/host/index';
 
 import { sha256Hex } from '#/sha256';

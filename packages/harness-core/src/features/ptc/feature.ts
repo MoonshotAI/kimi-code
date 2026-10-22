@@ -7,7 +7,8 @@ import { createCodeTool, DEFAULT_PTC_LIMITS, type PtcLimits } from './tool';
 import type { FeatureStore } from '#/app/index';
 
 export const PTC_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_PTC';
-const EXPERIMENTAL_MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
+
+const _EXPERIMENTAL_PTC = false;
 
 export interface CreatePtcProps {
   readonly dir: string;
@@ -15,6 +16,7 @@ export interface CreatePtcProps {
   readonly limits?: Partial<PtcLimits>;
   readonly context?: PtcContextLevel;
   readonly enabled?: () => boolean;
+  readonly EXPERIMENTAL_PTC?: boolean;
 }
 
 const ptcProjection: Projection<PtcStoreState, PtcDispatchedEvent> = {
@@ -29,7 +31,7 @@ export function createPtc(props: CreatePtcProps): Feature<void> {
   const exclude = new Set(props.exclude ?? []);
   const limits: PtcLimits = { ...DEFAULT_PTC_LIMITS, ...props.limits };
   const contextLevel = props.context ?? 'none';
-  const enabled = props.enabled ?? defaultEnabled;
+  const enabled = props.enabled ?? (() => props.EXPERIMENTAL_PTC ?? _EXPERIMENTAL_PTC);
   return createFeature('ptc', {
     agent() {
       if (!enabled()) return;
@@ -55,13 +57,4 @@ export function createPtc(props: CreatePtcProps): Feature<void> {
       );
     },
   });
-}
-
-function defaultEnabled(): boolean {
-  return envFlagEnabled(PTC_FLAG_ENV) || envFlagEnabled(EXPERIMENTAL_MASTER_ENV);
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  return value === 'true' || value === '1';
 }

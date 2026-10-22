@@ -76,6 +76,7 @@ export interface CreateGrepToolProps {
     readonly workDir: string;
     readonly additionalDirs?: readonly string[];
   };
+  readonly shareDir?: string;
 }
 
 interface GrepArguments {
@@ -584,6 +585,7 @@ async function executeGrep(
   args: GrepArguments,
   signal: AbortSignal,
   searchPaths: string[],
+  shareDir?: string,
 ): Promise<{ text: string; isError?: true }> {
   if (signal.aborted) {
     return { text: 'Aborted before search started', isError: true };
@@ -592,7 +594,7 @@ async function executeGrep(
   const pathClass = host.environment.pathClass;
   let rgPath: string;
   try {
-    const resolution = await ensureRgPath({ signal, allowDownload: true });
+    const resolution = await ensureRgPath({ shareDir, signal, allowDownload: true });
     rgPath = resolution.path;
   } catch (error) {
     if (signal.aborted) {
@@ -856,7 +858,7 @@ export function createGrepTool(props: CreateGrepToolProps): ToolDefinition {
         }
         throw error;
       }
-      const finished = await executeGrep(props.host, workspace, args, signal, searchPaths);
+      const finished = await executeGrep(props.host, workspace, args, signal, searchPaths, props.shareDir);
       return {
         content: [{ type: 'text' as const, text: finished.text }],
         isError: finished.isError,

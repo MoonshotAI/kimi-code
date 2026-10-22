@@ -4,7 +4,7 @@ import {
   shallowRef,
   useExpose,
   type Ref,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import { llmStatusErrorMessage } from '@moonshot-ai/agent-core/llm/response';
 
 export interface TraceFace {

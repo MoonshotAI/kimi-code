@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import { OAuthTokensRef } from '#/todo-features/kimi/oauth/index';
 import { ModelsDevError, ModelsDevRef, type ModelsDevFace } from '#/features/models-dev/index';

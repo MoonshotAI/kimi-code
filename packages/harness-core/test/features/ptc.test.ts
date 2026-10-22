@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { createFeature, useToolHandler, type Feature, createApp, type App, useAgentTools, useBlobs } from '#/app/index';
 import { createUserEntry, type ToolMeta } from '@moonshot-ai/agent-core/history/index';
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -20,9 +20,11 @@ import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
 import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 
-import { interaction } from '#/todo-features/interaction/index';
+import { createInteraction } from '#/todo-features/interaction/index';
 import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
 import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
+
+const interaction = createInteraction();
 
 type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
@@ -124,9 +126,9 @@ function capturePermission(): { feature: Feature<void>; face: () => PermissionFa
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
   const session = harness.sessions.get(sessionId);
-  const runtime = session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent = session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 async function startEnv(opts: {

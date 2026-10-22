@@ -26,8 +26,8 @@ import {
   type ComputedRef,
   type RuntimeEvent,
   type ShallowRef,
-} from '#/kernel/index';
-import { currentUnit, type UnitErrorEvent, type UnitNode } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit, type UnitErrorEvent, type UnitNode } from '#/composition-api/runtime';
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 

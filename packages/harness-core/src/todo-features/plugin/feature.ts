@@ -1,5 +1,5 @@
 import { createFeature, useAgent, useSession, useStepStarting, type Feature, useFeatureStore } from '#/app/index';
-import { shallowRef, useCleanup, useExpose, useFire, useInject } from '#/kernel/index';
+import { shallowRef, useCleanup, useExpose, useFire, useInject } from '#/composition-api/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import type { McpServerConfig } from '#/todo-features/mcp/core/config-schema';
@@ -35,7 +35,13 @@ import type {
   ReloadSummary,
 } from './types';
 
+const _BASE_URL: string | undefined = undefined;
+
+const _OAUTH_HOST: string | undefined = undefined;
+
 export function createPlugin(props: CreatePluginProps): Feature<void, { app: PluginEvent }> {
+  const baseUrl = props.BASE_URL ?? _BASE_URL;
+  const oauthHost = props.OAUTH_HOST ?? _OAUTH_HOST;
   return createFeature<{ app: PluginEvent }>('plugin', {
     app() {
       const host = props.host;
@@ -101,7 +107,10 @@ export function createPlugin(props: CreatePluginProps): Feature<void, { app: Plu
       };
 
       const _managedEnv = (): Record<string, string> =>
-        managedKimiCodeEnvForPlugins((providerId) => providerCatalog.value?.providerInfo(providerId));
+        managedKimiCodeEnvForPlugins(
+          (providerId) => providerCatalog.value?.providerInfo(providerId),
+          { baseUrl, oauthHost },
+        );
 
       let refreshSkillIndex: () => Promise<void> = () => Promise.resolve();
 

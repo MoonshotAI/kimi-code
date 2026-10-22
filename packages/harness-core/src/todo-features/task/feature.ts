@@ -8,7 +8,7 @@ import {
   useFire,
   type RuntimeEvent,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { describeToolArguments } from './format';

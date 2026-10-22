@@ -7,9 +7,9 @@ import {
   useReady,
   type ComputedRef,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { Log, Projection } from '@moonshot-ai/agent-core/store/index';
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 
 export type FeatureEvent = RuntimeEvent;
 

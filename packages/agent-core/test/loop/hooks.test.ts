@@ -57,7 +57,7 @@ describe('step.starting', () => {
     const seen: StepStartingEvent[] = [];
     const scripted = requester([done('', [call('c1', 'lookup')]), done('end')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: { execute: async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }) },
       hooks: [
         {
@@ -87,7 +87,7 @@ describe('step.starting', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('resumed')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: { execute: async () => ({ content: [] }) },
       hooks: [
         {
@@ -127,7 +127,7 @@ describe('step.starting', () => {
     const rewritten = prompt('rewritten');
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      requester: () => capturing,
+      requester: capturing,
       executor: { execute: async () => ({ content: [] }) },
       hooks: [
         {
@@ -153,7 +153,7 @@ describe('step.starting', () => {
     });
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: { execute: async () => ({ content: [] }) },
       hooks: [{ point: 'step.starting', id: 'guard', hook: () => ({ blocked: { reason: 'no' } }) }],
     });
@@ -205,7 +205,7 @@ describe('tool.batch-starting', () => {
     );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: tools,
       hooks: [
         {
@@ -284,7 +284,7 @@ describe('tool.batch-starting', () => {
     );
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: tools,
       hooks: [
         {
@@ -340,7 +340,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')])]);
-    const loop = createLoop({ requester: () => scripted, executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(order).toEqual(['starting', 'permitting']);
@@ -381,7 +381,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')])]);
-    const loop = createLoop({ requester: () => scripted, executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
@@ -421,7 +421,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ requester: () => scripted, executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(permitting).toEqual([]);
@@ -452,7 +452,7 @@ describe('tool.permitting', () => {
       },
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ requester: () => scripted, executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     expect(executed).toEqual([]);
@@ -481,7 +481,7 @@ describe('tool.permitting', () => {
       async () => ({ content: [{ type: 'text' as const, text: 'ok' }] }),
     );
     const scripted = requester([done('', [call('c1', 'alpha')]), done('final')]);
-    const loop = createLoop({ requester: () => scripted, executor: tools });
+    const loop = createLoop({ requester: scripted, executor: tools });
     loop.subscribe((event) => events.push(event));
     expect((await loop.runTurn(prompt('work'))).type).toBe('done');
     const failed = events.filter((event) => event.type === 'hook.failed');
@@ -499,7 +499,7 @@ describe('tool.permitting', () => {
       },
     );
     const failedScript = requester([done('', [call('c1', 'alpha')])]);
-    const failedLoop = createLoop({ requester: () => failedScript, executor: failedTools });
+    const failedLoop = createLoop({ requester: failedScript, executor: failedTools });
     const failedEvents: LoopEmitted[] = [];
     failedLoop.subscribe((event) => failedEvents.push(event));
     expect((await failedLoop.runTurn(prompt('work'))).type).toBe('done');
@@ -518,7 +518,7 @@ describe('hook failure policies', () => {
     });
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: { execute: async () => ({ content: [] }) },
       hooks: [
         {
@@ -548,7 +548,7 @@ describe('hook failure policies', () => {
     const scripted = requester([done('after')]);
     const events: LoopEmitted[] = [];
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: { execute: async () => ({ content: [] }) },
       hooks: [
         {
@@ -583,7 +583,7 @@ describe('hook failure policies', () => {
     const events: LoopEmitted[] = [];
     const scripted = requester([done('', [call('c1', 'alpha'), call('c2', 'beta')]), done('final')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: {
         execute: async ({ toolCall }: ToolExecuteInput) => {
           executed.push(toolCall.name);

@@ -6,8 +6,8 @@ import {
   type ListenOpts,
   type MountRootOptions,
   type RuntimeEvent,
-} from '#/kernel/index';
-import type { UnitNode } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import type { UnitNode } from '#/composition-api/runtime';
 import type { WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
 import { consoleLogWriter, createLogger, type Logger } from '@moonshot-ai/agent-core/log/index';
 import {

@@ -68,7 +68,7 @@ describe('loop record', () => {
   it('folds durable loop events back into the loop history and recovers interrupted turns', async () => {
     const scripted = requester([done('hi')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: { execute: async () => ({ content: [] }) },
     });
     const records = record(loop);
@@ -88,7 +88,7 @@ describe('loop record', () => {
       [1, 'failed'],
     ]);
     const restored = createLoop({
-      requester: () => requester([]),
+      requester: requester([]),
       executor: { execute: async () => ({ content: [] }) },
       input: { messages: state.messages, nextTurnId: state.nextTurnId },
     });
@@ -102,7 +102,7 @@ describe('loop record', () => {
     };
     const acting = requester([done('', [call('call-slow', 'slow'), call('call-bg', 'bg')])]);
     const working = createLoop({
-      requester: () => acting,
+      requester: acting,
       executor,
       input: { messages: state.messages, nextTurnId: state.nextTurnId },
     });
@@ -126,7 +126,7 @@ describe('loop record', () => {
 
     const answering = requester([done('next')]);
     const recovered = createLoop({
-      requester: () => answering,
+      requester: answering,
       executor,
       input: { messages: crashed.messages, nextTurnId: crashed.nextTurnId, unfinished: crashed.unfinished },
     });
@@ -164,7 +164,7 @@ describe('loop record', () => {
       },
     };
     const executor = { execute: async () => ({ content: [] }) };
-    const loop = createLoop({ requester: () => capturing, executor });
+    const loop = createLoop({ requester: capturing, executor });
     const records = record(loop);
     const tool = { name: 'lookup', description: 'Find things', parameters: { type: 'object', properties: {} } };
 
@@ -198,14 +198,14 @@ describe('loop record', () => {
     expect(state.profile).toEqual({ tools: [] });
 
     const restored = createLoop({
-      requester: () => capturing,
+      requester: capturing,
       executor,
       input: { messages: state.messages, nextTurnId: state.nextTurnId, profile: { systemPrompt: 'restored', tools: [tool] } },
     });
     expect(restored.state.profile).toEqual({ systemPrompt: 'restored', tools: [tool] });
 
     const stuck = createLoop({
-      requester: () => capturing,
+      requester: capturing,
       executor,
       input: {
         messages: [prompt('stuck')],

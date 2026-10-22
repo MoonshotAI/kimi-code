@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 import { createFeature, type Feature, useAgentTools } from '#/app/index';
-import { createFacadeToken, useExpose, useInject, useReady } from '#/kernel/index';
+import { createFacadeToken, useExpose, useInject, useReady } from '#/composition-api/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import { KimiFileRegistryRef } from '#/todo-features/files/index';
@@ -27,15 +27,19 @@ import {
 
 export const BashRef = createFacadeToken<BashPendingDetach>('bash');
 
+const _HOME = join(homedir(), '.kimi-code');
+
 export interface CreateOsProps {
   readonly workDir: string;
   readonly host?: OsHost;
   readonly additionalDirs?: readonly string[];
   readonly spillDir?: string;
+  readonly HOME?: string;
 }
 
 export function createOs(props: CreateOsProps): Feature<void> {
   const host = props.host ?? createNodeOsHost();
+  const home = props.HOME ?? _HOME;
   return createFeature('os', {
     app() {
       useConfigSection(readConfigSection);
@@ -45,9 +49,7 @@ export function createOs(props: CreateOsProps): Feature<void> {
     },
     agent() {
       const workspace = { workDir: props.workDir, additionalDirs: props.additionalDirs };
-      const spillDir =
-        props.spillDir ??
-        join(process.env['KIMI_CODE_HOME'] ?? join(homedir(), '.kimi-code'), 'tool-results');
+      const spillDir = props.spillDir ?? join(home, 'tool-results');
       const config = useInject(ConfigRef);
       const files = useInject(KimiFileRegistryRef);
       const readSection = (): ReadSection =>
@@ -65,8 +67,8 @@ export function createOs(props: CreateOsProps): Feature<void> {
       });
       useAgentTools(
         bash,
-        createGlobTool({ host, workspace }),
-        createGrepTool({ host, workspace }),
+        createGlobTool({ host, workspace, shareDir: home }),
+        createGrepTool({ host, workspace, shareDir: home }),
         createReadTool({ host, workspace, limits: readSection, files: () => files.value }),
         createWriteTool({ host, workspace }),
       );

@@ -10,7 +10,7 @@ import {
   createApp,
 } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 
 import { createNodeOsHost, type OsHost } from '#/todo-features/os/host/index';
 import {
@@ -186,7 +186,7 @@ describe('buildCatalogView', () => {
 
 describe('profiles feature', () => {
   it('exposes the builtin catalog through the facade', async () => {
-    const { face, close } = await startProfilesApp({ workDir, host, home: homeDir });
+    const { face, close } = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       expect(face.list().map((profile) => profile.name)).toEqual([
         'agent',
@@ -223,6 +223,15 @@ describe('profiles feature', () => {
       ]);
       expect(face.inspect('coder')?.sourceId).toBe('builtin');
       expect(face.get('explore')?.promptPrefix).toBeTypeOf('function');
+      let notified = 0;
+      const unsubscribe = face.onDidChange(() => {
+        notified += 1;
+      });
+      await face.reload();
+      expect(notified).toBe(1);
+      unsubscribe();
+      await face.reload();
+      expect(notified).toBe(1);
     } finally {
       await close();
     }
@@ -244,7 +253,7 @@ describe('profiles feature', () => {
     const { face, close } = await startProfilesApp({
       workDir,
       host,
-      home: homeDir,
+      HOME: homeDir,
       finders: [customFinder, failingFinder],
       onWarn: (message) => warnings.push(message),
     });
@@ -258,7 +267,7 @@ describe('profiles feature', () => {
   });
 
   it('renders the coder system prompt with the shared skeleton and role text', async () => {
-    const { face, close } = await startProfilesApp({ workDir, host, home: homeDir });
+    const { face, close } = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       const rendered = face.get('coder')!.renderSystemPrompt({
         cwd: workDir,
@@ -563,7 +572,7 @@ describe('finders end-to-end', () => {
 
   it('lists workspace agent files and renders their prompt with context vars', async () => {
     await writeAgent('.kimi-code/agents/foo.md', 'name: foo\ndescription: Foo agent', 'You are foo running in ${cwd}.');
-    const { face, close } = await startProfilesApp({ workDir, host, home: homeDir });
+    const { face, close } = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       const foo = face.get('foo');
       expect(foo?.description).toBe('Foo agent');
@@ -579,7 +588,7 @@ describe('finders end-to-end', () => {
 
   it('rejects a same-name builtin without override and honors override: true', async () => {
     await writeAgent('.kimi-code/agents/coder.md', 'name: coder\ndescription: Custom coder', 'Custom body.');
-    const first = await startProfilesApp({ workDir, host, home: homeDir });
+    const first = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       expect(first.face.get('coder')?.description).toContain('General software engineering agent');
       expect(first.face.inspect('coder')?.suppressed).toEqual([
@@ -597,7 +606,7 @@ describe('finders end-to-end', () => {
       join(workDir, '.kimi-code', 'agents', 'coder.md'),
       '---\nname: coder\ndescription: Custom coder\noverride: true\n---\nCustom body.\n',
     );
-    const second = await startProfilesApp({ workDir, host, home: homeDir });
+    const second = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       expect(second.face.get('coder')?.description).toBe('Custom coder');
       expect(second.face.inspect('coder')?.sourceId).toBe('workspace');
@@ -613,7 +622,7 @@ describe('finders end-to-end', () => {
       'name: foo\ndescription: Foo agent',
       'prefix ${base_prompt} suffix',
     );
-    const { face, close } = await startProfilesApp({ workDir, host, home: homeDir });
+    const { face, close } = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       expect(face.getDefault().renderSystemPrompt({}).text).toBe('USER SYSTEM FILE');
       expect(face.get('foo')!.renderSystemPrompt({}).text).toBe('prefix USER SYSTEM FILE suffix');
@@ -629,7 +638,7 @@ describe('finders end-to-end', () => {
       join(homeDir, 'agents', 'helper.md'),
       '---\nname: helper\ndescription: Helper agent\n---\nprefix ${base_prompt} suffix\n',
     );
-    const { face, close } = await startProfilesApp({ workDir, host, home: homeDir });
+    const { face, close } = await startProfilesApp({ workDir, host, HOME: homeDir });
     try {
       expect(face.get('helper')!.renderSystemPrompt({}).text).toBe(
         'prefix USER SYSTEM FILE suffix',

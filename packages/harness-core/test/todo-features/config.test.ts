@@ -7,7 +7,7 @@ import {
   type App,
 } from '#/app/index';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
-import type { ShallowRef } from '#/kernel/index';
+import type { ShallowRef } from '#/composition-api/index';
 
 import {
   createConfig,

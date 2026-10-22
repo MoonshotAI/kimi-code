@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 import {
   createUserEntry,
   type AssistantMeta,

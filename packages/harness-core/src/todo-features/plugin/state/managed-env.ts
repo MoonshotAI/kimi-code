@@ -11,11 +11,11 @@ export const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
 
 export function managedKimiCodeEnvForPlugins(
   providerInfo: (providerId: string) => CatalogProviderInfo | undefined,
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  overrides: { readonly baseUrl?: string; readonly oauthHost?: string } = {},
 ): Record<string, string> {
   const info = providerInfo(KIMI_CODE_PROVIDER_NAME);
-  const envBaseUrl = env[KIMI_CODE_BASE_URL_ENV];
-  const envOAuthHost = env[KIMI_CODE_OAUTH_HOST_ENV] ?? env[KIMI_OAUTH_HOST_ENV];
+  const envBaseUrl = overrides.baseUrl;
+  const envOAuthHost = overrides.oauthHost;
   const hasEnvOverride = envBaseUrl !== undefined || envOAuthHost !== undefined;
   const baseUrl = envBaseUrl !== undefined ? envBaseUrl.replace(/\/+$/, '') : info?.baseUrl;
   const oauthHost = hasEnvOverride ? envOAuthHost : info?.oauth?.oauthHost;

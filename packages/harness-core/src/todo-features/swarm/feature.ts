@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
-import { createFeature, useAgent, useSession, useToolBatchStarting, type Feature, useAgentRuntime, useAgentTools } from '#/app/index';
-import { createFacadeToken, useExpose, useInject } from '#/kernel/index';
+import { createFeature, useAgent, useSession, useToolBatchStarting, type Feature, useAgentTools } from '#/app/index';
+import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
 import {
@@ -12,6 +12,7 @@ import {
 } from '#/todo-features/config/index';
 import { stripEnvBoundFields } from '#/todo-features/os/configSections';
 import type { OsHost } from '#/todo-features/os/index';
+import { ProfileCatalogRef } from '#/todo-features/profiles/ref';
 import {
   SpawnRegistryRef,
   type ProfileCatalog,
@@ -51,12 +52,17 @@ export const swarmConfigSection: ConfigSectionContribution<SwarmConfig> = {
   stripEnv: stripEnvBoundFields<SwarmConfig>(swarmEnvBindings),
 };
 
+const _EXPERIMENTAL_SUBAGENT_FORK = false;
+const _AGENT_SWARM_MAX_CONCURRENCY: number | undefined = undefined;
+
 export interface CreateSwarmProps {
   readonly catalog?: ProfileCatalog;
   readonly models?: readonly SpawnModelEntry[];
   readonly forkEnabled?: () => boolean;
   readonly host?: OsHost;
   readonly workDir?: string;
+  readonly EXPERIMENTAL_SUBAGENT_FORK?: boolean;
+  readonly AGENT_SWARM_MAX_CONCURRENCY?: number;
 }
 
 interface SwarmSessionState {
@@ -69,7 +75,9 @@ const SwarmSessionRef = createFacadeToken<SwarmSessionState>('swarm.session');
 export function createSwarm(props: CreateSwarmProps = {}): Feature<void> {
   const host = props.host;
   const models = props.models ?? [];
-  const forkEnabled = props.forkEnabled ?? defaultForkEnabled;
+  const forkEnabled =
+    props.forkEnabled ?? (() => props.EXPERIMENTAL_SUBAGENT_FORK ?? _EXPERIMENTAL_SUBAGENT_FORK);
+  const maxConcurrency = props.AGENT_SWARM_MAX_CONCURRENCY ?? _AGENT_SWARM_MAX_CONCURRENCY;
   const workDir = props.workDir ?? process.cwd();
   const states = new WeakMap<Session, SwarmSessionState>();
   return createFeature('swarm', {
@@ -95,7 +103,7 @@ export function createSwarm(props: CreateSwarmProps = {}): Feature<void> {
 
       useToolBatchStarting(createSwarmGuard({ isMain: agent.id === MAIN_AGENT_ID }));
 
-      const catalog = props.catalog;
+      const catalog = props.catalog ?? useInject(ProfileCatalogRef).value;
       if (catalog === undefined) return;
       const config = useInject(ConfigRef);
       const timeoutMs = (): number =>
@@ -109,26 +117,14 @@ export function createSwarm(props: CreateSwarmProps = {}): Feature<void> {
           registry,
           session,
           agent,
-          runtime: useAgentRuntime(),
           forkEnabled,
           process: host?.process,
           workDir,
           swarmItems: shared.items,
           timeoutMs,
+          maxConcurrency,
         }),
       );
     },
   });
-}
-
-const SUBAGENT_FORK_FLAG_ENV = 'KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK';
-const EXPERIMENTAL_MASTER_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
-
-function defaultForkEnabled(): boolean {
-  return envFlagEnabled(SUBAGENT_FORK_FLAG_ENV) || envFlagEnabled(EXPERIMENTAL_MASTER_ENV);
-}
-
-function envFlagEnabled(name: string): boolean {
-  const value = process.env[name];
-  return value === 'true' || value === '1';
 }

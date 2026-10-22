@@ -1,4 +1,4 @@
-import type { RuntimeEvent } from '#/kernel/index';
+import type { RuntimeEvent } from '#/composition-api/index';
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
 

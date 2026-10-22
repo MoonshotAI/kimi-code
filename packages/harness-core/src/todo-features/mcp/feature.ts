@@ -8,7 +8,7 @@ import {
   useInject,
   useReady,
   watch,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 import { join } from 'pathe';
@@ -234,6 +234,8 @@ function toOAuthManagementError(error: unknown): McpManagementError {
   return new McpManagementError('mcp.oauth_failed', message, { cause: error });
 }
 
+const _HOME: string | undefined = undefined;
+
 export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpEvent; agent: McpOAuthAuthorizationUrlEvent }> {
   const shared: {
     manager?: McpConnectionManager;
@@ -248,7 +250,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
       const section = (): McpSection =>
         config.value?.get<McpSection>(MCP_CONFIG_SECTION) ?? {};
       const workDir = props.workDir ?? process.cwd();
-      const home = props.home ?? process.env['KIMI_CODE_HOME'];
+      const home = props.HOME ?? _HOME;
       const oauthService = new McpOAuthService({
         store:
           home === undefined || props.host === undefined

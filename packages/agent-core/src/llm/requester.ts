@@ -22,7 +22,11 @@ export type LlmRequestRest<F extends LlmDimension> = LlmRequestFill<F> & {
   readonly [K in Exclude<RequiredDimension, F>]-?: DimensionOf<K>;
 };
 
+export const requesterContents: unique symbol = Symbol('llm.requester.contents');
+
 export interface LlmRequester<F extends LlmDimension = never> {
+  readonly [requesterContents]?: LlmRequestPart;
+  with<G extends LlmDimension>(other: LlmRequester<G>): LlmRequester<F | G>;
   with<P extends LlmRequestFill<F>>(part: P): LlmRequester<F | Extract<keyof P, LlmDimension>>;
   request(rest: LlmRequestRest<F>): LlmRequest;
   generate(rest: LlmRequestRest<F>, control: LlmRunControl): Promise<LlmOutcome>;
@@ -58,10 +62,19 @@ function mergeRequest(base: LlmRequestPart, part: LlmRequestPart): LlmRequestPar
   return mergeFields(base as Fields, part as Fields) as LlmRequestPart;
 }
 
+export function contentsOf(part: LlmRequestPart | LlmRequester<LlmDimension>): LlmRequestPart {
+  if (typeof (part as LlmRequester).with !== 'function') return part as LlmRequestPart;
+  const contents = (part as LlmRequester)[requesterContents];
+  if (contents === undefined) throw new TypeError('requester does not expose its contents');
+  return contents;
+}
+
 function partialRequester<F extends LlmDimension>(filled: LlmRequestPart): LlmRequester<F> {
   const complete = (rest: LlmRequestPart) => mergeRequest(filled, rest) as LlmRequest;
   return {
-    with: (part) => partialRequester(mergeRequest(filled, part)),
+    [requesterContents]: filled,
+    with: ((part: LlmRequestPart | LlmRequester<LlmDimension>) =>
+      partialRequester(mergeRequest(filled, contentsOf(part)))) as LlmRequester<F>['with'],
     request: complete,
     generate: (rest, control) => runLlmRequest(complete(rest), control),
   };

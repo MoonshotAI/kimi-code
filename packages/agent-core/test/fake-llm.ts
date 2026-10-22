@@ -61,13 +61,9 @@ export const noopExecutor: ToolExecutor = {
 };
 
 export function agentCaps(executor: ToolExecutor = noopExecutor, initial: LoopLlmRequester = echoRequester()) {
-  let current = initial;
   return {
     executor,
-    requester: () => current,
-    use: (next: LoopLlmRequester) => {
-      current = next;
-    },
+    requester: initial,
   };
 }
 

@@ -1,10 +1,9 @@
-import { createMaxStepsHook, type HookRegistration, type LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
+import { createMaxStepsHook, type HookRegistration } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent, AgentCaps } from '@moonshot-ai/agent-core/session/index';
 import { createToolExecutor, type ToolDefinition, type ToolExecutorHost } from '@moonshot-ai/agent-core/tool/index';
 
 export interface AgentRuntime {
   readonly agentId: string;
-  requester: LoopLlmRequester | undefined;
   readonly executor: ToolExecutorHost;
   readonly tools: Map<string, ToolDefinition>;
   hostSystemPrompt: string | undefined;
@@ -20,7 +19,6 @@ export interface EnsureAgentOptions {
 export function createAgentRuntime(agentId: string, options: EnsureAgentOptions = {}): AgentRuntime {
   return {
     agentId,
-    requester: undefined,
     executor: createToolExecutor({ policy: { maxResultChars: options.maxResultChars } }),
     tools: new Map(),
     hostSystemPrompt: options.systemPrompt,
@@ -33,11 +31,6 @@ export function agentCaps(runtime: AgentRuntime, options: EnsureAgentOptions = {
     ...(options.hooks ?? []),
   ];
   return {
-    requester: () => {
-      const base = runtime.requester;
-      if (base === undefined) throw new Error(`agent '${runtime.agentId}' has no requester`);
-      return base;
-    },
     executor: runtime.executor,
     hooks,
   };

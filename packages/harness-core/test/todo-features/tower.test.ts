@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createFeature, useAgent, useSession, type Feature, createApp, type App, useAgentRuntime, useAgentTools } from '#/app/index';
+import { createFeature, useAgent, useSession, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import {
   createHistoryMessageBuilder,
   createUserEntry,
@@ -14,7 +14,7 @@ import {
   type HistoryMessage,
   type ToolMeta,
 } from '@moonshot-ai/agent-core/history/index';
-import { useInject, type ShallowRef } from '#/kernel/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -29,10 +29,12 @@ import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, memorySessionSpace, type Agent, type Session } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
-import { interaction } from '#/todo-features/interaction/index';
+import { createInteraction } from '#/todo-features/interaction/index';
 import { createNodeOsHost, type OsHost } from '#/todo-features/os/host/index';
 import { createPlan, PlanRef, type PlanFace } from '#/features/plan/index';
 import { createTask } from '#/todo-features/task/index';
+
+const interaction = createInteraction();
 import {
   createTower,
   createTowerInjection,
@@ -67,8 +69,6 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
 const tmpDirs: string[] = [];
 
 afterEach(async () => {
-  delete process.env['KIMI_CODE_EXPERIMENTAL_TOWER'];
-  delete process.env['KIMI_CODE_EXPERIMENTAL_FLAG'];
   while (tmpDirs.length > 0) {
     await rm(tmpDirs.pop()!, { recursive: true, force: true });
   }
@@ -856,9 +856,8 @@ function bindTestLlm(calls: LlmCall[], script: LlmScript): Feature<void> {
   return createFeature('test-llm', {
     agent() {
       const agent = useAgent();
-      const runtime = useAgentRuntime();
-      if (runtime.requester !== undefined) return;
-      runtime.requester = createMockRequester(agent.id, calls, script);
+      if (agent.loop.baseRequester !== undefined) return;
+      agent.loop.setRequester(createMockRequester(agent.id, calls, script));
     },
   });
 }
@@ -939,6 +938,7 @@ async function startApp(opts?: {
   withPlan?: boolean;
   withHost?: boolean;
   sessionId?: string;
+  EXPERIMENTAL_TOWER?: boolean;
 }): Promise<TowerTestEnv> {
   const sessionId = opts?.sessionId ?? 'sess';
   const workDir = opts?.workDir ?? (await mkdtemp(join(tmpdir(), 'tower-work-')));
@@ -947,7 +947,8 @@ async function startApp(opts?: {
   const tower = createTower({
     workDir,
     host: opts?.withHost === false ? undefined : host,
-    available: opts?.available ?? (() => true),
+    available: opts?.available ?? (opts?.EXPERIMENTAL_TOWER === undefined ? () => true : undefined),
+    EXPERIMENTAL_TOWER: opts?.EXPERIMENTAL_TOWER,
     models: opts?.models,
   });
   const harness = createApp({ space: memorySessionSpace() });
@@ -1064,11 +1065,10 @@ describe('feature gating', () => {
     }
   });
 
-  it('reads the default availability from the experimental env flag', async () => {
-    process.env['KIMI_CODE_EXPERIMENTAL_TOWER'] = '1';
+  it('reads the default availability from the experimental flag prop', async () => {
     const repo = await tmpRepo('tower-env-');
     await commitFile(repo, 'a.txt', 'a', 'initial');
-    const env = await startApp({ workDir: repo, available: undefined });
+    const env = await startApp({ workDir: repo, available: undefined, EXPERIMENTAL_TOWER: true });
     try {
       const face = env.face();
       expect(await face.enter()).toEqual({ entered: true });

@@ -219,7 +219,7 @@ describe('createToolExecutor', () => {
     });
     const scripted = requester([reply('', [call('lookup')]), reply('end')]);
     const loop = createLoop({
-      requester: () => scripted,
+      requester: scripted,
       executor: tools,
     });
     expect(loop.executor).toBe(tools);
@@ -230,7 +230,7 @@ describe('createToolExecutor', () => {
 
     const missingScript = requester([reply('', [call('missing')]), reply('end')]);
     const missing = createLoop({
-      requester: () => missingScript,
+      requester: missingScript,
       executor: createToolExecutor(),
     });
     expect((await missing.runTurn(createUserEntry(createUserMessage('hello')))).type).toBe('done');

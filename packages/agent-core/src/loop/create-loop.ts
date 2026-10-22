@@ -18,7 +18,7 @@ import { createLoopState, type LoopStateEvent, type LoopStateOutput } from './st
 import { createWaitForTasks, type WaitForTasks } from './tool/tasks';
 
 export interface CreateLoopOptions {
-  readonly requester: () => LoopLlmRequester;
+  readonly requester?: LoopLlmRequester;
   readonly executor: ToolExecutor;
   readonly hooks?: readonly HookRegistration[];
   readonly input?: LoopInput;
@@ -51,6 +51,7 @@ export interface LoopState {
 
 export interface Loop {
   readonly state: LoopState;
+  readonly baseRequester: LoopLlmRequester | undefined;
   readonly requester: LoopLlmRequester;
   readonly executor: ToolExecutor;
   readonly waitForTasks: WaitForTasks;
@@ -65,6 +66,7 @@ export interface Loop {
   abort(reason?: unknown): void;
   abortTool(toolCallId: string, reason?: unknown): void;
   detachTool(toolCallId: string): void;
+  setRequester(requester: LoopLlmRequester | undefined): void;
   setContext(messages: HistoryMessage[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
   setSystemPrompt(systemPrompt?: string): LoopAck<'system_prompt.settled' | 'system_prompt.rejected'> | undefined;
   setTools(tools: readonly ToolDescription[]): LoopAck<'tools.settled' | 'tools.rejected'> | undefined;
@@ -81,7 +83,12 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
   const registry = createHookRegistry();
   for (const registration of hooks ?? []) registry.add(registration);
   const policy = createPolicyRegistry();
-  const requester = (): LoopLlmRequester => options.requester().with({ policy: policy.asPolicy() });
+  let baseRequester = options.requester;
+  const requester = (): LoopLlmRequester => {
+    const base = baseRequester;
+    if (base === undefined) throw new Error('loop has no requester');
+    return base.with({ policy: policy.asPolicy() });
+  };
   const state = createLoopState(input);
   const actor = createActor(createLoopMachine({ ...options, requester, hooks: registry }));
   const listeners = new Set<(event: LoopEmitted) => void>();
@@ -188,6 +195,9 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
       };
     },
     requester: createLoopRequester(requester, () => state.getSnapshot().context.durable.messages),
+    get baseRequester(): LoopLlmRequester | undefined {
+      return baseRequester;
+    },
     executor: options.executor,
     waitForTasks: createWaitForTasks(actor),
     hooks: {
@@ -239,6 +249,9 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
     detachTool: (toolCallId) => {
       check({ type: 'input.detach_tool', toolCallId });
       if (open()) send({ type: 'detachTool', toolCallId });
+    },
+    setRequester: (next) => {
+      if (open()) baseRequester = next;
     },
     setContext: (messages, reason) =>
       acknowledge<LoopAck<'context.settled' | 'context.rejected'>>(

@@ -9,8 +9,8 @@ import {
   type RuntimeEvent,
   type UnitContext,
   type UnitRecipe,
-} from '#/kernel/index';
-import { currentUnit } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit } from '#/composition-api/runtime';
 import type { Agent, Session } from '@moonshot-ai/agent-core/session/index';
 
 import type { App } from './app';

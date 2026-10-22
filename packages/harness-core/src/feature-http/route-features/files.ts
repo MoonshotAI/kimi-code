@@ -2,7 +2,7 @@ import { Readable } from 'node:stream';
 
 import type { Request, Response } from 'express';
 
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import { FilesRef } from '#/todo-features/files/index';
 

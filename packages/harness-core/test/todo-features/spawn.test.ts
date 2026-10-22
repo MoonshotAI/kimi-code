@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createFeature, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import { createUserEntry, type ToolMeta, type UserMeta } from '@moonshot-ai/agent-core/history/index';
+import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -33,11 +34,19 @@ import {
   normalizeAgentProfile,
   planSpawn,
   RESUME_WITH_TYPE_UNAVAILABLE,
+  SUBAGENT_PROFILE_CHANGE_REMIND_KEY,
   SUBAGENT_UPDATE_KEY,
   validateSpawnArgs,
+  type AgentProfile,
   type ProfileCatalog,
   type SpawnModelEntry,
 } from '#/todo-features/spawn/index';
+import {
+  createProfiles,
+  ProfileCatalogRef,
+  type ProfileCatalogFace,
+  type ProfileFinder,
+} from '#/todo-features/profiles/index';
 
 const fastModel: SpawnModelEntry = {
   name: 'fast',
@@ -168,8 +177,6 @@ function testCatalog(): ProfileCatalog {
 const tmpDirs: string[] = [];
 
 afterEach(async () => {
-  delete process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'];
-  delete process.env['KIMI_CODE_EXPERIMENTAL_FLAG'];
   while (tmpDirs.length > 0) {
     await rm(tmpDirs.pop()!, { recursive: true, force: true });
   }
@@ -188,6 +195,7 @@ async function startApp(
     models?: readonly SpawnModelEntry[];
     withCatalog?: boolean;
     requesterFilled?: LlmRequestPart;
+    fork?: boolean;
   },
 ): Promise<SpawnTestEnv> {
   const workDir = await mkdtemp(join(tmpdir(), 'spawn-work-'));
@@ -199,6 +207,7 @@ async function startApp(
       catalog: opts?.withCatalog === false ? undefined : testCatalog(),
       models: opts?.models,
       workDir,
+      EXPERIMENTAL_SUBAGENT_FORK: opts?.fork,
     }),
   );
   harness.features.add(bindDummyTools());
@@ -215,10 +224,10 @@ function setRequester(
   requester: LoopLlmRequester,
 ): void {
   const session = harness.sessions.get(sessionId);
-  const runtime =
-    session !== undefined ? session.agentRuntime(agentId) : undefined;
-  if (runtime === undefined) throw new Error(`no runtime for agent '${agentId}'`);
-  runtime.requester = requester;
+  const agent =
+    session !== undefined ? session.liveAgents.get(agentId) : undefined;
+  if (agent === undefined) throw new Error(`no live agent '${agentId}'`);
+  agent.loop.setRequester(requester);
 }
 
 function user(text: string) {
@@ -433,8 +442,7 @@ describe('spawn tool', () => {
     expect(Object.keys(properties)).not.toContain('model');
     await plain.harness.close();
 
-    process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
-    const rich = await startApp(memorySessionSpace(), { models: [fastModel] });
+    const rich = await startApp(memorySessionSpace(), { models: [fastModel], fork: true });
     await rich.main.loop.runTurn(user('hello'));
     const richTool = rich.calls[0]!.tools.find((tool) => tool.name === 'Agent');
     expect(richTool!.description).toContain('Available models (pass via model):');
@@ -487,8 +495,7 @@ describe('spawn tool', () => {
   });
 
   it('trims the subagent tool surface to the profile whitelist', async () => {
-    process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
-    const { harness, session, main } = await startApp();
+    const { harness, session, main } = await startApp(memorySessionSpace(), { fork: true });
     const subagentIds = trackSubagentIds(main);
     await main.loop.runTurn(
       user(agentCall({ prompt: 'SUB:explore it', description: 'explore task', subagent_type: 'explore' })),
@@ -525,8 +532,7 @@ describe('spawn tool', () => {
   });
 
   it('forks the caller context with a snapshot notice and inherits history', async () => {
-    process.env['KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK'] = 'true';
-    const { harness, session, main } = await startApp();
+    const { harness, session, main } = await startApp(memorySessionSpace(), { fork: true });
     const subagentIds = trackSubagentIds(main);
     await main.loop.runTurn(user('hello'));
     await main.loop.runTurn(
@@ -660,10 +666,65 @@ describe('spawn tool', () => {
     await second.harness.close();
   });
 
-  it('does not register the Agent tool when no catalog is available', async () => {
+  it('does not register the Agent tool when no catalog is available, and adopts the live profiles catalog with change reminders', async () => {
     const plain = await startApp(memorySessionSpace(), { withCatalog: false });
     await plain.main.loop.runTurn(user('hello'));
     expect(plain.calls[0]!.tools.find((tool) => tool.name === 'Agent')).toBeUndefined();
     await plain.harness.close();
+
+    const workDir = await mkdtemp(join(tmpdir(), 'spawn-work-'));
+    tmpDirs.push(workDir);
+    const { requester, calls } = createMockRequester(script, {});
+    const extra: AgentProfile[] = [];
+    const finder: ProfileFinder = {
+      sourceId: 'test-extra',
+      priority: 40,
+      load: () => ({ profiles: extra }),
+    };
+    let faceRef: Readonly<ShallowRef<ProfileCatalogFace | undefined>> | undefined;
+    const harness = createApp({ space: memorySessionSpace() });
+    harness.features.add(createProfiles({ workDir, finders: [finder] }));
+    harness.features.add(createSpawn({ workDir }));
+    harness.features.add(bindDummyTools());
+    harness.features.add(
+      createFeature('profiles-probe', {
+        app() {
+          faceRef = useInject(ProfileCatalogRef);
+        },
+      }),
+    );
+    const session = await harness.open('sess');
+    const face = faceRef?.value;
+    expect(face).toBeDefined();
+    const { agent: main } = await session.ensureAgent(MAIN_AGENT_ID, { systemPrompt: 'main-host' });
+    setRequester(harness, 'sess', MAIN_AGENT_ID, requester);
+    await main.loop.runTurn(user('hello'));
+    const agentTool = calls.at(0)?.tools.find((tool) => tool.name === 'Agent');
+    expect(agentTool).toBeDefined();
+    expect(agentTool!.description).toContain('- coder: General software engineering agent');
+
+    const reminded: string[] = [];
+    main.loop.subscribe((event) => {
+      if (
+        event.type === 'prompt.reminded' &&
+        event.entry.meta?.key === SUBAGENT_PROFILE_CHANGE_REMIND_KEY
+      ) {
+        reminded.push(extractText(event.entry.message));
+      }
+    });
+    await face!.reload();
+    expect(reminded).toHaveLength(0);
+    extra.push(
+      normalizeAgentProfile({
+        name: 'reviewer',
+        description: 'Reviews code for regressions',
+        systemPrompt: () => 'reviewer prompt',
+      }),
+    );
+    await face!.reload();
+    expect(reminded).toHaveLength(1);
+    expect(reminded[0]).toContain('The available subagent profiles changed:');
+    expect(reminded[0]).toContain('- Profiles added: reviewer (Reviews code for regressions)');
+    await harness.close();
   });
 });

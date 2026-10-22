@@ -1,6 +1,6 @@
 import type { ZodType } from 'zod';
 
-import type { ShallowRef } from '#/kernel/index';
+import type { ShallowRef } from '#/composition-api/index';
 
 import type { EnvBindings, GetEnv } from './env';
 

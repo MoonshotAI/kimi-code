@@ -13,7 +13,7 @@ import {
   watch,
   type RuntimeEvent,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 
 import { applySectionEnv, type AnyEnvBindings, type GetEnv } from './env';
 import { deepEqual, deepMerge, describeUnknownError, isPlainObject } from './pure';

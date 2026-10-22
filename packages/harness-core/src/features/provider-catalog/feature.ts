@@ -1,4 +1,4 @@
-import { createFeature, useSession, useAgentRuntime, useLlmRecovery, useFeatureStore } from '#/app/index';
+import { createFeature, useSession, useAgent, useLlmRecovery, useFeatureStore } from '#/app/index';
 import { onScopeDispose } from '@vue/reactivity';
 import {
   createCollection,
@@ -12,8 +12,8 @@ import {
   useInject,
   watch,
   type ShallowRef,
-} from '#/kernel/index';
-import { currentUnit } from '#/kernel/runtime';
+} from '#/composition-api/index';
+import { currentUnit } from '#/composition-api/runtime';
 import { createProviderCatalog } from '@moonshot-ai/agent-core/llm/catalog/index';
 import type {
   CatalogModel,
@@ -674,7 +674,7 @@ export const providerCatalog = createFeature<{
       });
     },
     agent() {
-      const runtime = useAgentRuntime();
+      const agent = useAgent();
       useLlmRecovery(credentialsRecovery);
       const config = useInject(ConfigRef);
       const bindings = useCollection(CatalogModels);
@@ -690,7 +690,7 @@ export const providerCatalog = createFeature<{
         return typeof value === 'string' && value.length > 0 ? value : undefined;
       };
       const apply = (): boolean => {
-        if (runtime.requester !== undefined && runtime.requester !== lastApplied) return false;
+        if (agent.loop.baseRequester !== undefined && agent.loop.baseRequester !== lastApplied) return false;
         const alias = effectiveAlias();
         if (alias === undefined) return true;
         const binding = matchCatalogBinding(alias, bindings.value);
@@ -727,7 +727,7 @@ export const providerCatalog = createFeature<{
             },
           });
         }
-        runtime.requester = next;
+        agent.loop.setRequester(next);
         lastApplied = next;
         lastSpec = spec;
         return true;
@@ -759,11 +759,11 @@ export const providerCatalog = createFeature<{
         },
       });
       onScopeDispose(() => {
-        if (lastApplied !== undefined && runtime.requester === lastApplied) {
-          runtime.requester = undefined;
+        if (lastApplied !== undefined && agent.loop.baseRequester === lastApplied) {
+          agent.loop.setRequester(undefined);
         }
       });
-      if (runtime.requester !== undefined) return;
+      if (agent.loop.baseRequester !== undefined) return;
       const stop = watch(
         () => [
           store.state.value,

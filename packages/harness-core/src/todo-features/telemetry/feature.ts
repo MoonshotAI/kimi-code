@@ -10,7 +10,7 @@ import {
   useInject,
   watch,
   type ShallowRef,
-} from '#/kernel/index';
+} from '#/composition-api/index';
 
 import { ConfigRef, useConfigSection, type ConfigSectionContribution } from '#/todo-features/config/index';
 

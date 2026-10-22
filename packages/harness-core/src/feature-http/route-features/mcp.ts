@@ -1,7 +1,7 @@
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
-import { useInject } from '#/kernel/index';
+import { useInject } from '#/composition-api/index';
 
 import {
   McpManagementError,

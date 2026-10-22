@@ -7,7 +7,7 @@ import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { describeUnknownError } from '#/todo-features/config/index';
 import type { OsProcessPort } from '#/todo-features/os/index';
-import { syncAgentTools, type AgentRuntime } from '#/runtime/index';
+import { syncAgentTools } from '#/runtime/index';
 
 import { SUBAGENT_STOPPED_MESSAGE, type SubagentStopReason } from './format';
 import {
@@ -68,7 +68,6 @@ export interface SubagentLauncherDeps {
   readonly registry: SpawnRegistry;
   readonly session: AppSession;
   readonly agent: Agent;
-  readonly runtime: AgentRuntime;
   readonly process?: OsProcessPort;
   readonly workDir: string;
 }
@@ -130,8 +129,8 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
       record.running = false;
       return `Agent instance "${resumeAgentId}" could not be reopened: ${error instanceof Error ? error.message : String(error)}`;
     }
-    if (ensured.runtime.requester === undefined) {
-      ensured.runtime.requester = deps.runtime.requester;
+    if (ensured.agent.loop.baseRequester === undefined) {
+      ensured.agent.loop.setRequester(agent.loop.baseRequester);
     }
     await ensured.agent.flush();
     return {
@@ -156,17 +155,18 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
       ? await session.forkAgent(callerAgentId, agentId, { init: { source } })
       : await session.ensureAgent(agentId, { systemPrompt: rendered, init: { source } });
     const target = ensured.agent;
-    const parentRequester = deps.runtime.requester;
+    const parentRequester = agent.loop.baseRequester;
     if (parentRequester === undefined) {
       if (plan.model.kind === 'explicit') {
         await session.closeAgent(agentId).catch(() => {});
         return MODEL_NOT_CONFIGURED_MESSAGE;
       }
     } else {
-      ensured.runtime.requester =
+      ensured.agent.loop.setRequester(
         plan.model.kind === 'explicit'
           ? parentRequester.with({ model: { spec: plan.model.model } })
-          : parentRequester;
+          : parentRequester,
+      );
     }
     if (plan.fork) {
       target.loop.remind({

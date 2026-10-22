@@ -1,5 +1,5 @@
-import { createCollection, useCleanup } from '#/kernel/index';
-import { currentUnit, lineage, type UnitNode } from '#/kernel/runtime';
+import { createCollection, useCleanup } from '#/composition-api/index';
+import { currentUnit, lineage, type UnitNode } from '#/composition-api/runtime';
 
 import type { McpServerConfig } from '../core/config-schema';
 

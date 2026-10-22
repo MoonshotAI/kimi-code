@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { LlmRequest } from '#/llm/request';
-import { mergeFields, type LlmRequestPart } from '#/llm/requester';
+import { contentsOf, mergeFields, type LlmRequestPart } from '#/llm/requester';
 import { isLoopRecord, type LoopLlmRequester } from '#/loop/index';
 import { SessionError } from '#/session/index';
 import type { Log } from '#/store/index';
@@ -23,8 +23,8 @@ type GenerateRest = Parameters<LoopLlmRequester['generate']>[0];
 
 function profileRequester(defaults: LlmRequestPart, seen: unknown[]): LoopLlmRequester {
   const build = (filled: LlmRequestPart): LoopLlmRequester => ({
-    with: (part) =>
-      build(mergeFields(filled as Record<string, unknown>, part as Record<string, unknown>) as LlmRequestPart),
+    with: (part: LlmRequestPart | LoopLlmRequester) =>
+      build(mergeFields(filled as Record<string, unknown>, contentsOf(part) as Record<string, unknown>) as LlmRequestPart),
     request: (rest) =>
       mergeFields(filled as Record<string, unknown>, rest as Record<string, unknown>) as unknown as LlmRequest,
     generate: async (rest: GenerateRest) => {

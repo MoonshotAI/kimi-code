@@ -9,7 +9,7 @@ runtime rules (facades, events, remounts) that feature code must respect.
 ```
 your host (CLI, desktop app, server, tests)
 └── @moonshot-ai/harness-core        ← this package: the Kimi product
-    ├── src/kernel/                  ← Unit runtime on @vue/reactivity
+    ├── src/composition-api/                  ← Unit runtime on @vue/reactivity
     ├── src/app/                     ← createApp + createFeature + level units + contribution hooks
     ├── src/runtime/                 ← AgentRuntime, agentCaps
     ├── src/features/ (44 features)  ← product behavior as createFeature units
@@ -28,7 +28,7 @@ no reactive runtime and no root entry — you import domain subpaths
 `packages/agent-core/AGENTS.md` is the authoritative description of those
 domains; the agent-core docs cover the LLM boundary, the loop, and sessions
 in depth. The reactive shell — the kernel Unit runtime, the app instance,
-the createFeature seam — lives in this package (`src/kernel/`, `src/app/`).
+the createFeature seam — lives in this package (`src/composition-api/`, `src/app/`).
 
 harness-core owns product: which tools exist, what the system prompt says,
 which events a UI can subscribe to, how models are bound to agents. It has a
@@ -60,8 +60,9 @@ everything the host needs at each step:
    `app.create` return an `AppSession` (`src/app/session.ts`), the session
    handler that owns agent operations:
    `session.ensureAgent(agentId?)` / `session.forkAgent(...)` open an agent
-   with a per-agent `AgentRuntime`: a requester slot, live LLM policy
-   arrays, a tool registry, and the `host` system prompt section. Runtimes
+   with a per-agent `AgentRuntime`: a tool registry and the `host` system
+   prompt section (the LLM requester lives on the loop itself — see
+   `agent.loop.setRequester`). Runtimes
    live in the session handler itself (`session.agentRuntime(agentId)`);
    feature units reach the current agent's record through
    `useAgentRuntime()`. See [Agent Runtime](agent-runtime.md).
@@ -104,8 +105,8 @@ A feature may carry props: `createFeature<Events, P>` typing plus
 unit setup. Features with constructor options are instead exported as
 factories that close over their props and return `Feature<void>` — the
 dominant style in `src/features/` (`createPermission(props)`,
-`createCompaction(deps)`, …); a few are plain constants (`todo`,
-`interaction`, `providerCatalog`).
+`createCompaction(deps)`, `createInteraction(props)`, …); a few are plain
+constants (`todo`, `providerCatalog`).
 
 ### Registration and Scope
 
@@ -137,7 +138,7 @@ Features publish their public surface as **facades**. A facade token is a
 `useExpose(token, face)`; consumers inject it:
 
 ```ts
-import { createFacadeToken, useExpose, useInject, type ShallowRef } from '#/kernel/index';
+import { createFacadeToken, useExpose, useInject, type ShallowRef } from '#/composition-api/index';
 
 export const TodoRef = createFacadeToken<TodoFace>('todo');
 
@@ -263,7 +264,7 @@ agent's `AgentRuntime`:
 | Area | Path |
 |---|---|
 | App, agent runtimes, hooks, feature stores | `src/app/`, `src/runtime/` |
-| Default feature bundle | `src/preset.ts` (`harnessPreset`) |
+| Default assembly | `src/presets/` (`createDefaultApp`, `createDefaultHttp`, `createDefaultAcp`) |
 | Product features | `src/features/<name>/feature.ts` |
 | HTTP/WebSocket transport | `src/feature-http/` |
 | ACP transport | `src/feature-acp/` |
