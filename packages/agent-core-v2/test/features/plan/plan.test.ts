@@ -466,6 +466,67 @@ describe('Plan service', () => {
       expect(toolResultText(llmInput.history)).not.toContain('auto-approved');
     });
 
+    it.each([
+      ['in yolo mode', 'yolo', false],
+      ['with an allow rule in auto mode', 'auto', true],
+      ['with an allow rule in manual mode', 'manual', true],
+    ] as const)('asks the user to review the plan %s', async (_condition, mode, allowRule) => {
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      useTools(['ExitPlanMode']);
+      if (allowRule) {
+        permissionRules.addRules([{ decision: 'allow', scope: 'user', pattern: 'ExitPlanMode' }]);
+      }
+      await ctx.rpc.setPermission({ mode });
+      await plan.enter('test-plan', false);
+      files.set(await expectActivePlanPath(), '# Plan\n\n- Inspect');
+
+      const exitPlanModeCall: ToolCall = {
+        type: 'function',
+        id: 'call_exit_plan',
+        name: 'ExitPlanMode',
+        arguments: '{}',
+      };
+      ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
+      ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
+
+      const approval = await ctx.takeApprovalRequest();
+      await expectPlanActive(true);
+      approval.respond({ decision: 'approved' });
+
+      await ctx.untilTurnEnd();
+      await expectPlanActive(false);
+    });
+
+    it('asks again for the next plan after the user approved one for the whole session', async () => {
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      useTools(['ExitPlanMode']);
+      await ctx.rpc.setPermission({ mode: 'auto' });
+
+      for (const id of ['first-plan', 'second-plan']) {
+        await plan.enter(id, false);
+        files.set(await expectActivePlanPath(), `# Plan ${id}`);
+        const exitPlanModeCall: ToolCall = {
+          type: 'function',
+          id: `call_exit_${id}`,
+          name: 'ExitPlanMode',
+          arguments: '{}',
+        };
+        ctx.mockNextResponse({ type: 'text', text: 'I will present the plan.' }, exitPlanModeCall);
+        ctx.mockNextResponse({ type: 'text', text: 'I can execute after approval.' });
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: `Show ${id}` }] });
+
+        const approval = await ctx.takeApprovalRequest();
+        await expectPlanActive(true);
+        approval.respond({ decision: 'approved', scope: 'session' });
+
+        await ctx.untilTurnEnd();
+        await expectPlanActive(false);
+      }
+    });
+
     it('stops the turn and stays in plan mode when the user rejects the plan', async () => {
       const { files, fakes } = createPlanFileFakes();
       useFakes(fakes);

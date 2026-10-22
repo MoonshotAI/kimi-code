@@ -740,6 +740,37 @@ describe('runV2Print', () => {
     expect(loop.submit).toHaveBeenCalledTimes(1);
   });
 
+  it('keeps stream-json stdout parseable when the resumed session is still in Plan mode', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices, planState } = makeFakeHarness();
+    planState.active = true;
+
+    const index = appServices.get(ISessionIndex) as { get: ReturnType<typeof vi.fn> };
+    index.get.mockResolvedValue({ id: 'ses_1', cwd: process.cwd() });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      await runV2Print(opts({ session: 'ses_1', outputFormat: 'stream-json' }) as never, '1.2.3-test', {
+        stdout,
+        stderr,
+      });
+
+      const lines = stdout.text().split('\n').filter((line) => line.length > 0);
+      expect(lines.length).toBeGreaterThan(0);
+      for (const line of lines) expect(() => JSON.parse(line)).not.toThrow();
+      expect(stdout.text()).not.toContain('Plan mode');
+      expect(stderr.text()).toContain('Session "ses_1" is in Plan mode');
+      expect(process.exitCode).toBeUndefined();
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it('continues the previous session that is still in Plan mode and says its plan cannot be approved', async () => {
     const stdout = writer();
     const stderr = writer();

@@ -117,6 +117,10 @@ describe('PlanModeService dynamic injection content', () => {
     await injectDynamic(ctx);
 
     expect(planReminderMessages(context)).toHaveLength(2);
+    const text = lastPlanReminder(context);
+    expect(text).toContain('If the user approved a plan, carry it out');
+    expect(text).toContain("otherwise follow the user's latest message");
+    expect(text).not.toContain('Continue with the approved plan');
   });
 
   it('does not inject anything when plan mode is inactive from the start', async () => {
