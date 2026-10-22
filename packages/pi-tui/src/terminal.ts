@@ -128,7 +128,7 @@ export interface Terminal {
 	 * Report what the program is doing (OSC 7501). Sent only to terminals that support it; the latest
 	 * status is re-sent when support is confirmed or the terminal restarts.
 	 */
-	setProgramStatus(status: ProgramStatus): void;
+	setProgramStatus?(status: ProgramStatus): void;
 }
 
 const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
@@ -167,8 +167,8 @@ export class ProcessTerminal implements Terminal {
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
-	/** Latest program status, kept across stop() so start() can report it again. */
-	private programStatus?: ProgramStatus;
+	/** Latest program status by record id, kept across stop() so start() can report the records again. */
+	private readonly programStatuses = new Map<string | undefined, ProgramStatus>();
 	/** Whether the terminal confirmed OSC 7501 support since the last start(), or `PI_PROGRAM_STATUS=1`. */
 	private programStatusSupported = false;
 	/** The support query was sent and its DA1 sentinel has not arrived yet. */
@@ -246,7 +246,7 @@ export class ProcessTerminal implements Terminal {
 				if (this.programStatusQueryPending) {
 					this.programStatusQueryPending = false;
 					this.programStatusSupported = true;
-					this.writeProgramStatus();
+					this.writeProgramStatuses();
 				}
 				return;
 			}
@@ -302,7 +302,7 @@ export class ProcessTerminal implements Terminal {
 		this.programStatusQueryPending = programStatusOverride !== "1" && programStatusOverride !== "0";
 		const programStatusQuery = this.programStatusQueryPending ? PROGRAM_STATUS_QUERY : "";
 		process.stdout.write(`${KITTY_KEYBOARD_PROTOCOL_QUERY}${programStatusQuery}${DEVICE_ATTRIBUTES_QUERY}`);
-		this.writeProgramStatus();
+		this.writeProgramStatuses();
 	}
 
 	private handleKeyboardProtocolNegotiationSequence(
@@ -475,7 +475,7 @@ export class ProcessTerminal implements Terminal {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
 		// Remove the status while stopped, for example after exit or while suspended. start() reports it again.
-		if (this.programStatusSupported && this.programStatus) {
+		if (this.programStatusSupported && this.programStatuses.size > 0) {
 			process.stdout.write(formatProgramStatus({ state: "clear" }));
 		}
 		this.programStatusSupported = false;
@@ -527,6 +527,9 @@ export class ProcessTerminal implements Terminal {
 	restoreOnExit(before: string, after: string): void {
 		let sequence = before;
 		if (this.progressInterval) sequence += TERMINAL_PROGRESS_CLEAR_SEQUENCE;
+		if (this.programStatusSupported && this.programStatuses.size > 0) {
+			sequence += formatProgramStatus({ state: "clear" });
+		}
 		sequence += "\x1b[?2004l";
 		if (this.keyboardProtocolPushed || this._kittyProtocolActive) sequence += "\x1b[<u";
 		if (this._modifyOtherKeysActive) sequence += "\x1b[>4;0m";
@@ -595,13 +598,27 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	setProgramStatus(status: ProgramStatus): void {
-		this.programStatus = status.state === "clear" ? undefined : status;
-		if (this.programStatusSupported) process.stdout.write(formatProgramStatus(status));
+		const formatted = formatProgramStatus(status);
+		if (status.state === "clear") {
+			if (status.id === undefined) {
+				this.programStatuses.clear();
+			} else {
+				this.programStatuses.delete(status.id);
+				const descendantPrefix = `${status.id}/`;
+				for (const id of this.programStatuses.keys()) {
+					if (id?.startsWith(descendantPrefix)) this.programStatuses.delete(id);
+				}
+			}
+		} else {
+			this.programStatuses.set(status.id, status);
+		}
+		if (this.programStatusSupported) process.stdout.write(formatted);
 	}
 
-	private writeProgramStatus(): void {
-		if (this.programStatusSupported && this.programStatus) {
-			process.stdout.write(formatProgramStatus(this.programStatus));
+	private writeProgramStatuses(): void {
+		if (!this.programStatusSupported) return;
+		for (const status of this.programStatuses.values()) {
+			process.stdout.write(formatProgramStatus(status));
 		}
 	}
 

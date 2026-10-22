@@ -7,6 +7,11 @@ function decodeMessage(sequence: string): string | undefined {
 	return message === undefined ? undefined : Buffer.from(message, "base64").toString("utf8");
 }
 
+function decodeTitle(sequence: string): string | undefined {
+	const title = /:title=([A-Za-z0-9+/=]*)/.exec(sequence)?.[1];
+	return title === undefined ? undefined : Buffer.from(title, "base64").toString("utf8");
+}
+
 // #10607
 describe("formatProgramStatus", () => {
 	it("encodes state, app, kind, and a base64 message", () => {
@@ -15,6 +20,49 @@ describe("formatProgramStatus", () => {
 			`\x1b]7501;state=blocked:app=pi:kind=permission:msg=${Buffer.from("Allow bash?").toString("base64")}\x1b\\`,
 		);
 		assert.equal(formatProgramStatus({ state: "clear" }), "\x1b]7501;state=clear\x1b\\");
+	});
+
+	it("encodes child ids and titles, including child clears", () => {
+		assert.equal(
+			formatProgramStatus({
+				state: "blocked",
+				app: "pi",
+				kind: "question",
+				id: "agent/one",
+				title: "Review changes",
+			}),
+			`\x1b]7501;state=blocked:app=pi:kind=question:id=agent/one:title=${Buffer.from("Review changes").toString("base64")}\x1b\\`,
+		);
+		assert.equal(formatProgramStatus({ state: "clear", id: "agent/one" }), "\x1b]7501;state=clear:id=agent/one\x1b\\");
+	});
+
+	it("rejects invalid ids instead of falling back to the root record", () => {
+		const invalidIds = [
+			"",
+			"bad id",
+			"bad:id",
+			"/agent",
+			"agent/",
+			"agent//one",
+			"a".repeat(33),
+			Array.from({ length: 9 }, () => "a").join("/"),
+			`${"a".repeat(32)}/${"a".repeat(32)}/${"a".repeat(32)}/${"a".repeat(30)}`,
+		];
+		for (const id of invalidIds) {
+			assert.throws(() => formatProgramStatus({ state: "working", id }), /Invalid program status id/);
+		}
+	});
+
+	it("sanitizes titles and cuts them at a UTF-8 boundary within 192 bytes", () => {
+		assert.equal(
+			decodeTitle(formatProgramStatus({ state: "working", id: "agent", title: "first\nsecond\t" })),
+			"first second",
+		);
+		const title = decodeTitle(
+			formatProgramStatus({ state: "working", id: "agent", title: "é".repeat(200) }),
+		)!;
+		assert.equal(title, "é".repeat(96));
+		assert.ok(Buffer.byteLength(title) <= 192);
 	});
 
 	it("omits kind outside blocked, invalid app names, and empty messages", () => {

@@ -31,7 +31,10 @@ export function promptPlatformSelection(host: SlashCommandHost): Promise<string 
         resolve(undefined);
       },
     });
-    host.mountEditorReplacement(selector);
+    host.mountEditorReplacement(selector, undefined, {
+      kind: 'auth',
+      message: 'Sign in to Kimi Code',
+    });
   });
 }
 
@@ -124,7 +127,10 @@ export function promptApiKey(
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
     );
-    host.mountEditorReplacement(dialog);
+    host.mountEditorReplacement(dialog, undefined, {
+      kind: 'auth',
+      message: 'Sign in to Kimi Code',
+    });
   });
 }
 

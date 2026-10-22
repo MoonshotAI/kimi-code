@@ -101,7 +101,6 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	setProgress(_active: boolean): void {}
-	setProgramStatus(): void {}
 
 	// Test-specific methods not in Terminal interface
 

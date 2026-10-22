@@ -1,5 +1,7 @@
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
+
+import type { ProgramStatusBlocked } from '../controllers/program-status';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
@@ -127,7 +129,11 @@ export interface SlashCommandHost {
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   track(event: string, props?: Record<string, unknown>): void;
-  mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
+  mountEditorReplacement(
+    panel: Component & Focusable,
+    onDisplaced?: () => void,
+    blocked?: ProgramStatusBlocked,
+  ): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
   refreshSlashCommandAutocomplete(): void;

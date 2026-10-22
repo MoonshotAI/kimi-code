@@ -1,6 +1,6 @@
 /**
  * Program Status Protocol (OSC 7501): a program tells the terminal whether it is idle, working,
- * blocked on the user, done, or failed. Only the root record is supported.
+ * blocked on the user, done, or failed.
  *
  * Spec: https://www.superlogical.com/rex/docs/build/program-status
  */
@@ -12,6 +12,10 @@ export interface ProgramStatus {
 	app?: string;
 	/** What a blocked program waits for. Omitted for other states. */
 	kind?: "permission" | "question" | "auth";
+	/** Record path. Absent addresses the root record. Invalid values throw instead of touching the root. */
+	id?: string;
+	/** Short human-readable record label. Control characters become spaces; text is cut to 192 UTF-8 bytes. */
+	title?: string;
 	/** One human-readable line. Control characters become spaces; longer text is cut to the spec limit. */
 	message?: string;
 }
@@ -25,7 +29,9 @@ export function isProgramStatusReply(sequence: string): boolean {
 }
 
 const APP_PATTERN = /^[A-Za-z0-9_.+-]{1,32}$/;
+const ID_PATTERN = /^[A-Za-z0-9_.+-]{1,32}(?:\/[A-Za-z0-9_.+-]{1,32}){0,7}$/;
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]+/g;
+const MAX_TITLE_BYTES = 192;
 /** Decoded `msg` limit. Its base64 encoding stays under the 2732-byte encoded limit. */
 const MAX_MESSAGE_BYTES = 2048;
 
@@ -42,12 +48,23 @@ function truncateUtf8(text: string, maxBytes: number): string {
 	return text.slice(0, end);
 }
 
+function encodeText(text: string | undefined, maxBytes: number): string | undefined {
+	const value = truncateUtf8((text ?? "").replace(CONTROL_CHARACTERS, " ").trim(), maxBytes);
+	return value ? Buffer.from(value, "utf8").toString("base64") : undefined;
+}
+
 /** Encode a status report. Terminals discard reports whose text contains control characters, so they are replaced. */
 export function formatProgramStatus(status: ProgramStatus): string {
+	if (status.id !== undefined && (status.id.length > 128 || !ID_PATTERN.test(status.id))) {
+		throw new RangeError("Invalid program status id");
+	}
 	const pairs = [`state=${status.state}`];
 	if (status.app !== undefined && APP_PATTERN.test(status.app)) pairs.push(`app=${status.app}`);
 	if (status.state === "blocked" && status.kind) pairs.push(`kind=${status.kind}`);
-	const message = truncateUtf8((status.message ?? "").replace(CONTROL_CHARACTERS, " ").trim(), MAX_MESSAGE_BYTES);
-	if (message) pairs.push(`msg=${Buffer.from(message, "utf8").toString("base64")}`);
+	if (status.id !== undefined) pairs.push(`id=${status.id}`);
+	const title = encodeText(status.title, MAX_TITLE_BYTES);
+	if (title !== undefined) pairs.push(`title=${title}`);
+	const message = encodeText(status.message, MAX_MESSAGE_BYTES);
+	if (message !== undefined) pairs.push(`msg=${message}`);
 	return `\x1b]7501;${pairs.join(":")}\x1b\\`;
 }

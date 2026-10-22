@@ -198,3 +198,15 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** An optional `refocusMouseGuardMs` suppresses mouse-button gestures immediately after a terminal focus-in report, before they can activate controls, move a caret, start a selection, or open a link. The default is zero, focus reports still reach host listeners, and wheel handling is unchanged.
 
 **Why not in the app:** The alternate-screen renderer consumes mouse input before later host listeners and owns the component, selection, and OSC 8 activation paths. The app cannot guard all of them through component composition.
+
+### program-status-optional-capability — keep
+
+**Decision:** `Terminal` implementations may omit `setProgramStatus`. Hosts that require reporting declare that capability locally instead of forcing every custom terminal to add a no-op method.
+
+**Why not in the app:** The optional method belongs to the public terminal interface; changing all custom implementations in the app would not make third-party implementations compatible.
+
+### program-status-child-records — keep
+
+**Decision:** OSC 7501 supports `id` and `title`, caches one report per record, clears an id subtree, clears every record during direct-exit restoration, and replays every live record after terminal restart. Invalid ids throw instead of falling back to the root record.
+
+**Why not in the app:** Record replacement, subtree clearing, capability-gated output, and restart replay share the terminal lifecycle that already owns root program status.

@@ -332,6 +332,36 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			});
 		});
 
+		it("replays child records and clears a whole id subtree", () => {
+			withOverride("1", () => {
+				const harness = setupNegotiation();
+				const parentWorking = "\x1b]7501;state=working:id=agent\x1b\\";
+				const childBlocked = "\x1b]7501;state=blocked:kind=question:id=agent/one\x1b\\";
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					harness.terminal.setProgramStatus({ state: "working", id: "agent" });
+					harness.terminal.setProgramStatus({ state: "blocked", kind: "question", id: "agent/one" });
+					harness.terminal.stop();
+
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+					assert.equal(harness.writes.at(-1), childBlocked);
+					assert.ok(harness.writes.includes(parentWorking));
+
+					harness.terminal.setProgramStatus({ state: "clear", id: "agent" });
+					assert.equal(harness.writes.at(-1), "\x1b]7501;state=clear:id=agent\x1b\\");
+					harness.terminal.stop();
+					const writesBeforeRestart = harness.writes.length;
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+					const replayed = harness.writes
+						.slice(writesBeforeRestart)
+						.filter((write) => write.startsWith("\x1b]7501;"));
+					assert.deepEqual(replayed, [working]);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
 		it("clears the status on stop and reports it again after restart", () => {
 			withOverride(undefined, () => {
 				const harness = setupNegotiation();
