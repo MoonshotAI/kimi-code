@@ -3,9 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
-import { BUILTIN_SKILLS, visibleBuiltinSkills } from '#/features/skill/catalog/builtin/builtin';
+import {
+  BUILTIN_SKILLS,
+  IMPORT_FROM_CC_CODEX_SKILL,
+  visibleBuiltinSkills,
+} from '#/features/skill/catalog/builtin/builtin';
 import { BuiltinSkillSource } from '#/features/skill/catalog/builtinSkillSource';
 import { BUILTIN_PRODUCT_SKILLS_SECTION } from '#/features/skill/catalog/configSection';
+import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 
 import { stubFlag } from '../../../app/flag/stubs';
 import { StubConfigService } from '../../../stubs';
@@ -108,5 +113,20 @@ describe('BuiltinSkillSource product-skill switch', () => {
 
     const names = (await loading).skills.map((s) => s.name);
     expect(names).toEqual(NEUTRAL_SKILLS);
+  });
+});
+
+describe('import-from-cc-codex prompt rendering', () => {
+  it('keeps placeholder examples literal and leaves arguments to the trailer', () => {
+    const catalog = new InMemorySkillCatalog();
+    const render = (args: string): string =>
+      catalog.renderSkillPrompt(IMPORT_FROM_CC_CODEX_SKILL, args, { sessionId: 'session-1' });
+
+    expect(render('')).toBe(IMPORT_FROM_CC_CODEX_SKILL.content);
+    expect(render('skills only')).toBe(
+      `${IMPORT_FROM_CC_CODEX_SKILL.content}\n\nARGUMENTS: skills only`,
+    );
+    expect(IMPORT_FROM_CC_CODEX_SKILL.content).toContain('KIMI_SKILL_DIR');
+    expect(IMPORT_FROM_CC_CODEX_SKILL.content).toContain('KIMI_SESSION_ID');
   });
 });

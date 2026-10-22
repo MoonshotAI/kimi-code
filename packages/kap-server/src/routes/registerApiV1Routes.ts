@@ -41,7 +41,6 @@ import { registerShutdownRoutes } from './shutdown';
 import { registerSnapshotRoutes } from './snapshot';
 import { registerSkillsRoutes } from './skills';
 import { registerTasksRoutes } from './tasks';
-import { registerTerminalsRoutes } from './terminals';
 import { registerToolsRoutes } from './tools';
 import { registerTranscriptRoutes } from './transcript';
 import { registerWorkspaceFsRoutes } from './workspaceFs';
@@ -67,7 +66,6 @@ export interface RegisterApiV1RoutesOptions {
   readonly hostIdentity: KimiHostIdentity;
   readonly debugEndpoints?: boolean;
   readonly enableShutdown?: boolean;
-  readonly enableTerminals?: boolean;
   readonly guiStore: IGuiStoreService;
   readonly onShutdown: () => void;
   readonly connectionRegistry: IConnectionRegistry;
@@ -200,12 +198,6 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerFileHistoryRoutes>[0],
         core,
       );
-      if (opts.enableTerminals !== false) {
-        registerTerminalsRoutes(
-          apiV1 as unknown as Parameters<typeof registerTerminalsRoutes>[0],
-          core,
-        );
-      }
       registerConnectionsRoutes(
         apiV1 as unknown as Parameters<typeof registerConnectionsRoutes>[0],
         opts.connectionRegistry,
