@@ -17,8 +17,7 @@ type PlanReviewDisplay = Extract<ToolInputDisplay, { kind: 'plan_review' }>;
 type PlanReviewOption = NonNullable<PlanReviewDisplay['options']>[number];
 
 const PLAN_REVIEW_NON_INTERACTIVE_MESSAGE =
-  'Nobody can review this plan in a non-interactive run, so plan mode is still active and you cannot edit files. ' +
-  'Do not call ExitPlanMode again; report your plan and this limitation in your final message.';
+  'Nobody can review this plan in a non-interactive run, so plan mode stays active for the rest of this run and you cannot edit files other than the plan file.';
 
 export class ExitPlanModeReview {
   constructor(

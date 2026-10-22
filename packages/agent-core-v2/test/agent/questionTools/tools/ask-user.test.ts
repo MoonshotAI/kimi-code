@@ -482,8 +482,7 @@ describe('AskUserQuestionTool', () => {
       });
       expect(result).toMatchObject({
         isError: true,
-        output:
-          'Nobody can answer questions in a non-interactive run. Do NOT call this tool again; decide and continue.',
+        output: 'Nobody can answer questions in a non-interactive run.',
       });
     }
     expect(request).not.toHaveBeenCalled();

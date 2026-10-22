@@ -562,7 +562,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(await svc.status()).not.toBeNull();
     });
 
-    it('keeps plan mode active and stops retries when nobody can review the plan', async () => {
+    it('keeps plan mode active and says why when nobody can review the plan', async () => {
       nonInteractive = true;
       mode = 'auto';
       const svc = await enterPlan();
@@ -574,8 +574,7 @@ describe('AgentPlanService plan-guard listener', () => {
       expect(decision?.veto).toEqual({
         isError: true,
         output:
-          'Nobody can review this plan in a non-interactive run, so plan mode is still active and you cannot edit files. ' +
-          'Do not call ExitPlanMode again; report your plan and this limitation in your final message.',
+          'Nobody can review this plan in a non-interactive run, so plan mode stays active for the rest of this run and you cannot edit files other than the plan file.',
       });
       expect(await svc.status()).not.toBeNull();
       expect(records.some((record) => record.event === 'plan_resolved')).toBe(false);

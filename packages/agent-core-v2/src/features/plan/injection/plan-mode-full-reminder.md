@@ -18,5 +18,5 @@ When you do include multiple approaches in the plan, you MUST pass them as the `
 NEVER write multiple approaches in the plan and call ExitPlanMode without the `options` parameter — the user will only see the default approval controls with no way to choose a specific approach.
 
 Never ask about plan approval via text or AskUserQuestion.
-End your turn with either AskUserQuestion (to clarify a preference that changes the plan) or ExitPlanMode (to request plan approval); in auto permission mode, end it with ExitPlanMode. Do NOT end your turn any other way.
+End a planning turn with either AskUserQuestion (to clarify a preference that changes the plan) or ExitPlanMode (to request plan approval). When the user's message calls for an answer rather than a plan, such as a question about the code, answer in text; plan mode stays on until the user approves a plan or turns it off.
 Do NOT use AskUserQuestion to ask about plan approval or reference "the plan" — the user cannot see the plan until you call ExitPlanMode.

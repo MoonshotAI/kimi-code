@@ -10,4 +10,4 @@ Before proceeding:
   5. Use AskUserQuestion only for preferences or trade-offs the code cannot settle; in auto permission mode, decide from context and record the decision under Assumptions in the plan.
   6. Always edit the plan file before calling ExitPlanMode.
 
-Your turn must end with either AskUserQuestion (to clarify requirements) or ExitPlanMode (to request plan approval); in auto permission mode, end it with ExitPlanMode.
+End a planning turn with either AskUserQuestion (to clarify requirements) or ExitPlanMode (to request plan approval). When the user's message calls for an answer rather than a plan, such as a question about the code, answer in text; plan mode stays on until the user approves a plan or turns it off.
