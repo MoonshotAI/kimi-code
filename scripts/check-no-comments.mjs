@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import ts from 'typescript';
+// TS7 ships no JS compiler API; pin TS6 for AST access.
+import ts from 'typescript-legacy';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const PACKAGES = ['packages/agent-core-v2', 'packages/kap-server', 'packages/transcript'];
