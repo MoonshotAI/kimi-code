@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import fs, { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -7,7 +7,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isError2 } from '#/_base/errors/errors';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { SessionLockHolder } from '#/persistence/interface/sessionLock';
-import { SessionLockService } from '#/persistence/backends/node-fs/sessionLockService';
+import {
+  SESSION_LOCK_ENV,
+  SessionLockService,
+} from '#/persistence/backends/node-fs/sessionLockService';
 import { noopLogger } from '../../../wire/stubs';
 
 const mocks = vi.hoisted(() => ({
@@ -21,10 +24,15 @@ vi.mock('node:child_process', async (importOriginal) => ({
 
 const SID = 'session-1';
 
-function bootstrapStub(homeDir: string, platform = 'test_client'): IBootstrapService {
+function bootstrapStub(
+  homeDir: string,
+  platform = 'test_client',
+  env: Record<string, string> = {},
+): IBootstrapService {
   return {
     homeDir,
     clientIdentity: { productName: 'test', version: '0.0.0', platform },
+    getEnv: (name: string) => env[name],
   } as IBootstrapService;
 }
 
@@ -146,6 +154,95 @@ describe('SessionLockService', () => {
     writeFileSync(lockPath(homeDir, SID), JSON.stringify(foreign), { mode: 0o600 });
     expect(() => serviceA.hold(SID)).toThrowError(/in use by another Kimi Code process/);
     expect(readLockFile(homeDir, SID).token).toBe('foreign-token');
+  });
+
+  it('takeover evicts a live holder and leaves the new lock alone when the old holder releases', () => {
+    serviceB.hold(SID);
+    expect(() => serviceA.hold(SID)).toThrowError(/in use by another Kimi Code process/);
+    serviceA.takeover(SID);
+    serviceA.hold(SID);
+    const token = readLockFile(homeDir, SID).token;
+    serviceB.release(SID);
+    expect(readLockFile(homeDir, SID).token).toBe(token);
+    expect(() => serviceB.hold(SID)).toThrowError(/in use by another Kimi Code process/);
+    serviceA.release(SID);
+  });
+
+  it('takeover evicts a lock from another hostname', () => {
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
+    writeFileSync(
+      lockPath(homeDir, SID),
+      JSON.stringify({
+        version: 1,
+        token: 'foreign-token',
+        pid: 1,
+        hostname: 'definitely-not-this-host',
+        startedAt: 0,
+        clientIdentity: 'ghost',
+      } satisfies SessionLockHolder),
+      { mode: 0o600 },
+    );
+    serviceA.takeover(SID);
+    expect(existsSync(lockPath(homeDir, SID))).toBe(false);
+    expect(() => serviceA.hold(SID)).not.toThrow();
+    serviceA.release(SID);
+  });
+
+  it('takeover evicts the lock even when a stale reclaim marker is left behind', () => {
+    const foreign = JSON.stringify({
+      version: 1,
+      token: 'foreign-token',
+      pid: 1,
+      hostname: 'definitely-not-this-host',
+      startedAt: 0,
+      clientIdentity: 'ghost',
+    } satisfies SessionLockHolder);
+    serviceA.hold('warmup');
+    serviceA.release('warmup');
+    writeFileSync(lockPath(homeDir, SID), foreign, { mode: 0o600 });
+    writeFileSync(`${lockPath(homeDir, SID)}.reclaim`, foreign, { mode: 0o600 });
+    serviceA.takeover(SID);
+    expect(existsSync(lockPath(homeDir, SID))).toBe(false);
+    expect(() => serviceA.hold(SID)).not.toThrow();
+    serviceA.release(SID);
+  });
+
+  it('takeover reports a lock file it cannot remove', () => {
+    serviceB.hold(SID);
+    const denied = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    const unlinkSpy = vi.spyOn(fs, 'unlinkSync').mockImplementation(() => {
+      throw denied;
+    });
+    try {
+      expect(() => serviceA.takeover(SID)).toThrow(denied);
+    } finally {
+      unlinkSpy.mockRestore();
+    }
+    expect(existsSync(lockPath(homeDir, SID))).toBe(true);
+    serviceB.release(SID);
+  });
+
+  it('takeover keeps a lock this service already holds', () => {
+    serviceA.hold(SID);
+    const token = readLockFile(homeDir, SID).token;
+    serviceA.takeover(SID);
+    expect(readLockFile(homeDir, SID).token).toBe(token);
+    serviceA.release(SID);
+  });
+
+  it('skips the lock file when KIMI_CODE_SESSION_LOCK is off', () => {
+    const unlocked = new SessionLockService(
+      bootstrapStub(homeDir, 'client_c', { [SESSION_LOCK_ENV]: '0' }),
+      noopLogger,
+    );
+    serviceB.hold(SID);
+    expect(() => unlocked.hold(SID)).not.toThrow();
+    expect(unlocked.held(SID)).toBe(true);
+    unlocked.release(SID);
+    expect(existsSync(lockPath(homeDir, SID))).toBe(true);
+    serviceB.release(SID);
+    unlocked.dispose();
   });
 
   it('a lease keeps the lock through release until it is released', () => {

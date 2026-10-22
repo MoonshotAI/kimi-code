@@ -157,10 +157,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: |
-          pnpm dlx --package @typescript/native-preview@beta tsgo --version
+          pnpm exec tsc --version
           for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json; do
             echo "Typechecking ${config}"
-            pnpm dlx --package @typescript/native-preview@beta tsgo -p "${config}" --noEmit
+            pnpm exec tsc -p "${config}" --noEmit
           done
       - name: Typecheck VS Code extension
         run: pnpm --filter kimi-code run typecheck

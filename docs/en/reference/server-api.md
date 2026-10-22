@@ -72,7 +72,7 @@ Error codes are grouped by band:
 | `500xx` | Server internal error | `50001` uncaught exception, `50003` persistence failure |
 | `6xxxx` / `7xxxx` / `8xxxx` | Tool runtime / LLM provider / MCP passthrough errors; `msg` carries the upstream text | |
 
-`40931` and `40932` only appear when the same session is open in multiple clients. `40931` means another Kimi Code process is writing to the session right now; wait for it to go idle, then retry. When the session was updated by another client, prompt submission, skill activation, and compaction reload it on the server, push a fresh transcript to subscribers, and run the request again, so callers never see `40932` from them. Only undo returns `40932`: the server has already reloaded the session and nothing was undone; let the user review the refreshed history before undoing again.
+`40931` and `40932` only appear when the same session is open in multiple clients. `40931` means another Kimi Code process is writing to the session right now; wait for it to go idle, then retry. If that process is known to be gone and the lock was left behind, call `POST /api/v1/sessions/{session_id}:takeover` and retry. When the session was updated by another client, prompt submission, skill activation, and compaction reload it on the server, push a fresh transcript to subscribers, and run the request again, so callers never see `40932` from them. Only undo returns `40932`: the server has already reloaded the session and nothing was undone; let the user review the refreshed history before undoing again.
 
 ### Pagination
 
@@ -167,7 +167,7 @@ On success, `data` carries:
 | Field | Type | Description |
 | --- | --- | --- |
 | `server_version` | string | Server version |
-| `capabilities` | object | Capability map — `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, `terminal`, all always `true` |
+| `capabilities` | object | Capability map — `websocket`, `file_upload`, `fs_query`, `mcp`, `tasks`, all always `true` |
 | `server_id` | string | Unique id of this server instance |
 | `started_at` | string | Boot time, ISO 8601 |
 | `open_in_apps` | array | Host apps usable as `open-in` targets (`finder` / `cursor` / `vscode` / `iterm` / `terminal`); currently always empty |
@@ -839,6 +839,14 @@ Reloads the session with the latest on-disk configuration: re-reads `config.toml
 On success, `data` is [the session object](#the-session-object).
 
 - `40901`: the session has an active turn and cannot be reloaded
+
+#### `POST /api/v1/sessions/{session_id}:takeover`
+
+Removes the lock another Kimi Code process holds on the session, so a request that failed with `40931` can be retried. Use it only when that process is gone and left its lock behind: if it is still running, both processes write to the session until it goes idle, and the session history can interleave.
+
+On success, `data` is `{ taken_over: true }`.
+
+- `40401`: session not found
 
 #### `GET /api/v1/sessions/{session_id}/children`
 
@@ -1552,77 +1560,6 @@ On success, `data` is `{ ok: true }`.
 
 - `40001`: missing or unknown action suffix
 - `40419`: no installed plugin with that id
-
-### Terminals
-
-PTY terminal endpoints; mounted only on loopback binds (a non-loopback bind skips them unless `--allow-remote-terminals` is passed). Terminal input, output, and resize flow over WebSocket `terminal_*` frames — the REST surface manages the terminal lifecycle only.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/terminals` | List terminals |
-| `POST /api/v1/sessions/{session_id}/terminals` | Create a terminal |
-| `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}` | Read a terminal |
-| `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close` | Close a terminal |
-
-#### `GET /api/v1/sessions/{session_id}/terminals`
-
-Lists the session's terminals. Reading the list resumes the session when it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ items }` where each item is a terminal object `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`: `status` is `running` / `exited`, and an exited terminal carries `exited_at` plus `exit_code` (`null` when the process reported none, for example after a signal). Scrollback is not part of the object — output replays and streams over the WebSocket.
-
-- `40401`: session not found
-
-#### `POST /api/v1/sessions/{session_id}/terminals`
-
-Creates a PTY terminal for the session.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `runtime_id` | body | string | Runtime to spawn in. Default `local` |
-| `cwd` | body | string | Working directory, relative to the session workspace (an absolute path fails validation). Default the workspace root |
-| `shell` | body | string | Shell executable. Default the runtime's shell |
-| `cols` | body | integer | Terminal width, positive. Default `80` |
-| `rows` | body | integer | Terminal height, positive. Default `24` |
-
-On success, `data` is the terminal object documented under `GET /api/v1/sessions/{session_id}/terminals` above.
-
-- `40001`: validation failure (`details` lists each field)
-- `40401`: session not found
-- `41304`: `cwd` resolves outside the session workspace
-
-#### `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}`
-
-Reads one terminal.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `terminal_id` | path | string | **Required.** Terminal id |
-
-On success, `data` is the terminal object documented under `GET /api/v1/sessions/{session_id}/terminals` above.
-
-- `40401`: session not found
-- `40414`: no terminal with that id
-
-#### `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close`
-
-Closes a terminal, killing its process. The endpoint dispatches through `POST /api/v1/sessions/{session_id}/terminals/{tail}` with `close` as the only action — a bare id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `terminal_id` | path | string | **Required.** Terminal id |
-
-On success, `data` is `{ closed: true }`.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40414`: no terminal with that id
 
 ### Workspaces
 

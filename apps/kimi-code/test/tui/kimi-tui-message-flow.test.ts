@@ -1050,6 +1050,52 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.editor.getText()).toBe(expected);
   });
 
+  it.each([
+    ['takes over the lock and resends', true],
+    ['gives the message back', false],
+  ] as const)('offers takeover once a retry is still occupied and %s', async (_label, takeOver) => {
+    const occupied = new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use');
+    const prompt = vi
+      .fn(async (_input: unknown) => {})
+      .mockRejectedValueOnce(occupied)
+      .mockRejectedValueOnce(occupied);
+    const takeOverLock = vi.fn(async () => {});
+    const session = makeSession({ prompt, takeOverLock });
+    const { driver } = await makeDriver(session);
+    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session in use');
+    });
+    const first = stripSgr(picker().render(80).join(' '));
+    expect(first).not.toContain('Take over');
+    picker().handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session still in use');
+    });
+    expect(stripSgr(picker().render(120).join(' '))).toContain(
+      'If another Kimi Code process is still running, taking over may mix up the history.',
+    );
+    if (takeOver) picker().handleInput('\u001B[B');
+    picker().handleInput('\r');
+
+    if (takeOver) {
+      await vi.waitFor(() => {
+        expect(prompt).toHaveBeenCalledTimes(3);
+      });
+      expect(takeOverLock).toHaveBeenCalledTimes(1);
+    } else {
+      await vi.waitFor(() => {
+        expect(driver.state.editor.getText()).toBe('hello');
+      });
+      expect(prompt).toHaveBeenCalledTimes(2);
+      expect(takeOverLock).not.toHaveBeenCalled();
+    }
+  });
+
   it('renders a bundled replay submission as a single turn', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {
@@ -11246,6 +11292,12 @@ capabilities = ["image_in", "video_in"]
       } as Event,
       vi.fn(),
     );
+    driver.streamingUI.flushNow();
+
+    const streaming = stripSgr(renderTranscript(driver));
+    expect(streaming).toContain('t1');
+    expect(streaming).toContain('t7');
+
     driver.sessionEventHandler.handleEvent(
       {
         type: 'assistant.delta',
@@ -11257,6 +11309,7 @@ capabilities = ["image_in", "video_in"]
     );
 
     const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('t1');
     expect(transcript).toContain('t7');
     expect(transcript).not.toContain('ctrl+o expand');
   });
@@ -12443,18 +12496,35 @@ describe('transcript fold block clicks', () => {
     expect(renderFooterLine1(driver)).toContain('ctrl+o expand');
   });
 
-  it('toggles a long finalized thinking block without advertising it in the footer', async () => {
+  it('toggles live and finalized thinking without advertising it in the footer', async () => {
     const { driver } = await makeDriver();
-    const longThinking = ['think-one', 'think-two', 'think-three', 'think-four'].join('\n');
+    const longThinking = ['think-one', 'think-two', 'think-three'].join('\n');
     driver.streamingUI.onThinkingUpdate(longThinking);
     const streaming = stripSgr(renderTranscript(driver));
-    expect(streaming).toContain('think-four');
+    expect(streaming).toContain('think-three');
     expect(streaming).not.toContain('think-one');
 
-    clickTranscriptLine(driver, 'think-four');
+    clickTranscriptLine(driver, 'think-three');
+    expect(stripSgr(renderTranscript(driver))).toContain('think-one');
+
+    clickTranscriptLine(driver, 'think-one');
     expect(stripSgr(renderTranscript(driver))).not.toContain('think-one');
 
+    clickTranscriptLine(driver, 'think-three');
+    expect(stripSgr(renderTranscript(driver))).toContain('think-one');
+
+    driver.streamingUI.onThinkingUpdate(`${longThinking}\nthink-four`);
+    const growing = stripSgr(renderTranscript(driver));
+    expect(growing).toContain('think-one');
+    expect(growing).toContain('think-four');
+
     driver.streamingUI.onThinkingEnd();
+    const finalized = stripSgr(renderTranscript(driver));
+    expect(finalized).toContain('think-one');
+    expect(finalized).toContain('think-four');
+    expect(renderFooterLine1(driver)).not.toContain('ctrl+o');
+
+    clickTranscriptLine(driver, 'think-four');
 
     const collapsed = stripSgr(renderTranscript(driver));
     expect(collapsed).toContain('think-one');

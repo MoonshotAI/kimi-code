@@ -72,7 +72,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | `500xx` | 服务端内部错误 | `50001` 未捕获异常、`50003` 持久化失败 |
 | `6xxxx` / `7xxxx` / `8xxxx` | 工具运行时 / LLM 供应商 / MCP 透传错误，`msg` 保留上游原文 | |
 
-`40931` 和 `40932` 只在同一会话被多个客户端打开时出现。`40931` 表示另一个 Kimi Code 进程正在写入该会话，等它空闲后重试即可。会话已被其他客户端更新时，提交 prompt、激活 skill 和压缩会在服务端重新载入会话、向订阅者推送最新的 transcript，然后重新执行请求，调用方不会从这些接口收到 `40932`。只有撤销会返回 `40932`：服务端已重新载入会话，本次没有撤销任何内容；请让用户先查看刷新后的历史，再决定是否撤销。
+`40931` 和 `40932` 只在同一会话被多个客户端打开时出现。`40931` 表示另一个 Kimi Code 进程正在写入该会话，等它空闲后重试即可。如果确认该进程已退出、只是留下了锁，可以调用 `POST /api/v1/sessions/{session_id}:takeover` 后再重试。会话已被其他客户端更新时，提交 prompt、激活 skill 和压缩会在服务端重新载入会话、向订阅者推送最新的 transcript，然后重新执行请求，调用方不会从这些接口收到 `40932`。只有撤销会返回 `40932`：服务端已重新载入会话，本次没有撤销任何内容；请让用户先查看刷新后的历史，再决定是否撤销。
 
 ### 分页
 
@@ -167,7 +167,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `server_version` | string | 服务版本 |
-| `capabilities` | object | 能力集——`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`、`terminal`，均恒为 `true` |
+| `capabilities` | object | 能力集——`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`，均恒为 `true` |
 | `server_id` | string | 本服务实例的唯一 id |
 | `started_at` | string | 启动时间，ISO 8601 格式 |
 | `open_in_apps` | array | 可作为 `open-in` 目标的宿主应用（`finder` / `cursor` / `vscode` / `iterm` / `terminal`）；目前恒为空 |
@@ -839,6 +839,14 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 成功时，`data` 为 [session 对象](#session-对象)。
 
 - `40901`：会话有正在运行的轮次，无法重新加载
+
+#### `POST /api/v1/sessions/{session_id}:takeover`
+
+移除其他 Kimi Code 进程在该会话上持有的锁，之后可以重试返回 `40931` 的请求。只应在该进程已退出、锁残留时使用：如果它仍在运行，两个进程会同时写入该会话直到它空闲，会话历史可能交错。
+
+成功时，`data` 为 `{ taken_over: true }`。
+
+- `40401`：会话不存在
 
 #### `GET /api/v1/sessions/{session_id}/children`
 
@@ -1552,77 +1560,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40001`：缺少动作后缀或动作未知
 - `40419`：没有该 id 的已安装插件
-
-### 终端
-
-PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳过它们，除非传入 `--allow-remote-terminals`）。终端的输入、输出与尺寸调整经 WebSocket 的 `terminal_*` 帧传输——REST 侧只管理终端生命周期。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/terminals` | 列出终端 |
-| `POST /api/v1/sessions/{session_id}/terminals` | 创建终端 |
-| `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}` | 读取终端 |
-| `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close` | 关闭终端 |
-
-#### `GET /api/v1/sessions/{session_id}/terminals`
-
-列出会话的终端。会话处于冷态时，读取列表会恢复该会话。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-
-成功时 `data` 为 `{ items }`，每项是一个终端对象 `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`：`status` 为 `running` / `exited`；已退出的终端携带 `exited_at` 与 `exit_code`（进程未报告退出码时为 `null`，例如因信号终止）。回滚缓冲不属于该对象——输出经 WebSocket 回放与流式推送。
-
-- `40401`：会话不存在
-
-#### `POST /api/v1/sessions/{session_id}/terminals`
-
-为会话创建一个 PTY 终端。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `runtime_id` | body | string | 生成终端进程的运行时。默认 `local` |
-| `cwd` | body | string | 工作目录，相对于会话工作区（传绝对路径会校验失败）。默认工作区根目录 |
-| `shell` | body | string | Shell 可执行文件。默认该运行时的 shell |
-| `cols` | body | integer | 终端宽度，正数。默认 `80` |
-| `rows` | body | integer | 终端高度，正数。默认 `24` |
-
-成功时 `data` 为上文 `GET /api/v1/sessions/{session_id}/terminals` 说明的终端对象。
-
-- `40001`：校验失败（`details` 逐字段说明）
-- `40401`：会话不存在
-- `41304`：`cwd` 解析后越出会话工作区
-
-#### `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}`
-
-读取单个终端。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `terminal_id` | path | string | **必填。** 终端 id |
-
-成功时 `data` 为上文 `GET /api/v1/sessions/{session_id}/terminals` 说明的终端对象。
-
-- `40401`：会话不存在
-- `40414`：没有该 id 的终端
-
-#### `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close`
-
-关闭终端并结束其进程。该端点经 `POST /api/v1/sessions/{session_id}/terminals/{tail}` 分发，`close` 是唯一动作——只给 id 或动作未知时返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `terminal_id` | path | string | **必填。** 终端 id |
-
-成功时 `data` 为 `{ closed: true }`。
-
-- `40001`：缺少动作后缀或动作未知
-- `40401`：会话不存在
-- `40414`：没有该 id 的终端
 
 ### 工作区
 
