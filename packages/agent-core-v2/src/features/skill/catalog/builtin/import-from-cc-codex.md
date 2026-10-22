@@ -105,6 +105,8 @@ instructions from each level.
   - `<dir>/.claude/rules/*.md` (recursive)
 - Claude skills, per directory `<dir>`:
   - `<dir>/.claude/skills/`
+- Codex skills, per directory `<dir>`:
+  - `<dir>/.codex/skills/` (still supported by Codex project config layers)
 - Codex instructions, per directory `<dir>`. Codex takes the first file that
   exists in this order and ignores the rest for that directory:
   - `<dir>/AGENTS.override.md`
@@ -121,8 +123,9 @@ Do not scan `AGENTS.md` / `agents.md`, `.agents/**`, or project-root
 `.mcp.json` in this skill: Kimi already reads plain `AGENTS.md` files,
 `<project root>/.agents/skills`, `~/.agents/skills`, `~/.agents/AGENTS.md`,
 and the project-root `.mcp.json`. `.claude/AGENTS.md`, `.codex/AGENTS.md`,
-`.codex/CLAUDE.md`, and `.codex/skills/` are not read by Claude Code or
-Codex; ignore them.
+and `.codex/CLAUDE.md` are not standalone instruction entrypoints; do not
+scan them independently. Follow them when a supported instruction source
+resolves to them through a symlink or an `@path` import.
 
 Claude Code also reads `CLAUDE.md`, `.claude/CLAUDE.md`, `.claude/rules/`, and
 `CLAUDE.local.md` from every directory above the project root, up to the
@@ -150,14 +153,9 @@ Kimi reads `.kimi-code/AGENTS.md` at each level from the project root to the
 current working directory, so the imported file keeps the directory scope it
 had in Claude Code or Codex.
 
-Skip a source when Kimi already receives the same content:
-
-- the source is a symlink (or resolves) to an `AGENTS.md` / `agents.md` in the
-  same directory, or in `~/.agents`;
-- its trimmed content is identical to such an `AGENTS.md`;
-- it consists only of an `@AGENTS.md` / `@./AGENTS.md` import line.
-
-Report these as "already covered by AGENTS.md".
+Plan all selected instruction sources, including symlinks and `@AGENTS.md`
+imports. Check content duplication after applying the import, as described
+below; a matching filename or source content alone is not proof of coverage.
 
 When importing an `AGENTS.override.md`, warn that Codex used it *instead of*
 the `AGENTS.md` in the same directory, while Kimi will read both; ask the user
@@ -168,11 +166,11 @@ scopes the rule to matching files. Kimi has no path-scoped rules:
 
 - If the rule has no `paths`, import its body (without the frontmatter) into
   the target for the directory that owns the `rules/` folder.
-- If every glob in `paths` starts with the same literal directory prefix (for
-  example `apps/web/**` and `apps/web/src/**`), target
-  `<dir>/<that prefix>/.kimi-code/AGENTS.md` and note the narrowed scope.
-- Otherwise skip the rule and list its globs in the warnings; the user can
-  place it in a `.kimi-code/AGENTS.md` by hand.
+- If its frontmatter contains `paths`, skip it and report the source path and
+  globs. Explain that a directory-level AGENTS.md cannot preserve file-pattern
+  conditions, and that the rule needs manual adaptation. This also applies to
+  user-level rules and empty `paths` lists; do not automatically broaden or
+  narrow their scope.
 
 Claude Code expands `@path` import lines (`@./docs/style.md`, `@~/notes.md`)
 inside `CLAUDE.md` files, ignoring `@` inside fenced code blocks, inline code
@@ -182,6 +180,8 @@ in place of the line when the file exists, is a text file, and lives inside
 the project root or the user's home; otherwise leave the line unchanged and
 warn that Kimi will not expand it. Follow imports at most 5 levels deep, and
 never follow a path outside those boundaries.
+Resolve relative imports from the file containing the import, including
+`@AGENTS.md` and `@./AGENTS.md`.
 
 Warn when a `CLAUDE.local.md` is imported: `.kimi-code/AGENTS.md` is not
 private by convention, so the user may want to gitignore `.kimi-code/`.
@@ -210,7 +210,8 @@ Map user-level skill sources to:
 
 - `$KIMI_CODE_HOME/skills/`, or `~/.kimi-code/skills/` if the env var is not set.
 
-Map project-level skill sources (from any `<dir>/.claude/skills/`) to:
+Map project-level skill sources (from any `<dir>/.claude/skills/` or
+`<dir>/.codex/skills/`) to:
 
 - `<project root>/.kimi-code/skills/`
 
@@ -242,8 +243,9 @@ Before planning a copy:
 - If two source entries would write the same target path, keep the first one in
   this order and report the later one as skipped:
   1. project Claude (closest directory to the current working directory first)
-  2. user Claude
-  3. user Codex
+  2. project Codex (closest directory to the current working directory first)
+  3. user Claude
+  4. user Codex
 - Warn when a `SKILL.md` uses fields or syntax that Kimi does not interpret
   the same way. Preserve the file; do not rewrite it unless the user
   explicitly asks.
@@ -323,6 +325,11 @@ Claude Code MCP (user file `.claude.json`):
   repository, otherwise by the directory it was launched from; look up the
   project root first, then the current working directory (compare resolved
   paths).
+- Read `disabledMcpServers` from that project's object before normalizing
+  candidates. Skip any Claude user-scope or local-scope candidate whose name
+  is listed there, and report it as "disabled in the source project; not
+  imported". This is a project-specific choice, so do not turn it into a
+  user-global `enabled: false` entry or silently re-enable the server.
 - Entry shape: optional `type` (`stdio` default, `sse`, `http`,
   `streamable-http`), `command`, `args`, `env`, `url`, `headers`, `timeout`
   (milliseconds per tool call), `alwaysLoad`, `tools`, `role`,
@@ -341,8 +348,9 @@ Claude Code MCP (user file `.claude.json`):
 - Do not import project-root `.mcp.json`; Kimi already reads it. Warn,
   however, when `.claude/settings.json` or `.claude/settings.local.json`
   lists one of its servers under `disabledMcpjsonServers`: Claude rejected
-  that server, while Kimi will start every `.mcp.json` server. Suggest an
-  `"enabled": false` override for that name in `<cwd>/.kimi-code/mcp.json`.
+  that server, while Kimi will start every `.mcp.json` server. Suggest a
+  complete server entry with `"enabled": false` in
+  `<cwd>/.kimi-code/mcp.json`; an entry containing only `enabled` is invalid.
 
 Codex MCP (`config.toml`):
 
@@ -412,7 +420,10 @@ After scanning, show a concise final preview grouped by target file/directory:
 - Will append instruction blocks
 - Will copy skill bundles
 - Will leave these MCP entries pending for a manual `/mcp-config` follow-up
-- Already present / already covered / skipped
+- Already present / skipped, including path-scoped rules and disabled MCP
+  candidates with their reasons
+- Newly appended instruction blocks will be checked for duplication after
+  import; only proven duplicates added by this import may be removed
 - Warnings and blockers
 
 Then ask for explicit confirmation before writing. Use a clear choice such as:
@@ -431,9 +442,37 @@ When the user confirms:
 - Copy skills without overwriting existing target entries.
 - Do not write MCP entries. Show the prepared `/mcp-config` follow-up command
   and mark MCP import as pending user action.
-- Report exactly what changed and what was skipped.
-- Tell the user to start a new session (for example `/new`) or restart Kimi Code
-  for newly imported skills, instructions, and MCP servers to be picked up.
+
+### 6. Check instruction duplication after import
+
+Before the final report, read back the instruction targets and check each
+newly appended block against content Kimi actually loads in the same or a
+broader scope:
+
+- User-global instructions: `<kimi home>/AGENTS.md` and the first readable,
+  non-empty `~/.agents/AGENTS.md` or `~/.agents/agents.md`.
+- Project instructions: those global files, plus each directory from the
+  project root to the target's owning directory. At each level Kimi reads
+  `.kimi-code/AGENTS.md` and the first readable, non-empty `AGENTS.md` or
+  `agents.md`.
+
+Compare trimmed, expanded block bodies with retained instruction content or
+other retained block bodies. Remove only a block appended by this import
+whose content is exactly duplicated by another retained copy in the same or
+a broader scope. Preserve all pre-existing content and keep at least one
+covering copy. A project file cannot cover a global block, and a descendant
+file cannot cover an ancestor's block. An AGENTS.md beside a source in
+`.claude` or `.codex` is not automatically loaded by Kimi.
+
+If content is merely similar, conflicts, or its loading scope is uncertain,
+keep the new block and report the uncertainty. Re-read targets after cleanup
+to verify that each imported instruction remains covered, and report every
+removed block with the path of the retained copy.
+
+Report exactly what changed, what was skipped and why, and the duplication
+check results. Tell the user to start a new session (for example `/new`) or
+restart Kimi Code for newly imported skills and instructions to be picked up;
+MCP import remains pending the manual `/mcp-config` follow-up.
 
 ## Output style
 
