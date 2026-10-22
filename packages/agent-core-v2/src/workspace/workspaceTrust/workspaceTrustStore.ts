@@ -1,0 +1,123 @@
+import { Disposable } from '#/_base/di/lifecycle';
+import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { Emitter } from '#/_base/event';
+import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { LifecycleScope } from '#/app/scopes';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+
+import { trustWorkspaceEnvTrusted } from './trustEnv';
+import { deleteWorkspaceTrust, readWorkspaceTrust, writeWorkspaceTrust } from './trustRecord';
+import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
+
+export interface IWorkspaceTrustEntry extends IWorkspaceTrust {
+  isPersistedTrusted(): boolean;
+}
+
+export interface IWorkspaceTrustStore {
+  readonly _serviceBrand: undefined;
+
+  forRoot(root: string): IWorkspaceTrustEntry;
+}
+
+export const IWorkspaceTrustStore: ServiceIdentifier<IWorkspaceTrustStore> =
+  createDecorator<IWorkspaceTrustStore>('workspaceTrustStore');
+
+class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
+  declare readonly _serviceBrand: undefined;
+
+  readonly ready: Promise<void>;
+  private readonly root: string;
+  private readonly envTrusted: boolean;
+  private trusted = false;
+  private mutationTail: Promise<void> = Promise.resolve();
+  private readonly changeEmitter = this._register(new Emitter<WorkspaceTrustChange>());
+  readonly onDidChange = this.changeEmitter.event;
+
+  constructor(
+    root: string,
+    private readonly docs: IAtomicDocumentStore,
+    private readonly telemetry: ITelemetryService,
+    bootstrap: IBootstrapService,
+  ) {
+    super();
+    this.root = root;
+    this.envTrusted = trustWorkspaceEnvTrusted((name) => bootstrap.getEnv(name));
+    this.ready = this.initialize();
+  }
+
+  isPersistedTrusted(): boolean {
+    return this.trusted;
+  }
+
+  isTrusted(): boolean {
+    return this.envTrusted || this.trusted;
+  }
+
+  async get(): Promise<boolean> {
+    await this.ready;
+    return this.isTrusted();
+  }
+
+  trust(): Promise<void> {
+    return this.mutate(true);
+  }
+
+  untrust(): Promise<void> {
+    return this.mutate(false);
+  }
+
+  private mutate(trusted: boolean): Promise<void> {
+    const mutation = this.mutationTail.catch(() => {}).then(async () => {
+      await this.ready;
+      if (this.trusted === trusted) return;
+      if (trusted) {
+        await writeWorkspaceTrust(this.docs, this.root, Date.now());
+      } else {
+        await deleteWorkspaceTrust(this.docs, this.root);
+      }
+      this.trusted = trusted;
+      this.changeEmitter.fire({ trusted });
+      this.telemetry.track2('workspace_trust_changed', { trusted });
+    });
+    this.mutationTail = mutation;
+    return mutation;
+  }
+
+  private async initialize(): Promise<void> {
+    this.trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
+  }
+}
+
+export class WorkspaceTrustStore extends Disposable implements IWorkspaceTrustStore {
+  declare readonly _serviceBrand: undefined;
+
+  private readonly entries = new Map<string, IWorkspaceTrustEntry>();
+
+  constructor(
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+  ) {
+    super();
+  }
+
+  forRoot(root: string): IWorkspaceTrustEntry {
+    const key = canonicalWorkspaceRoot(root);
+    const existing = this.entries.get(key);
+    if (existing !== undefined) return existing;
+    const entry = this._register(new WorkspaceTrustEntry(root, this.docs, this.telemetry, this.bootstrap));
+    this.entries.set(key, entry);
+    return entry;
+  }
+}
+
+registerScopedService(
+  LifecycleScope.App,
+  IWorkspaceTrustStore,
+  WorkspaceTrustStore,
+  ScopeActivation.OnDemand,
+  'workspaceTrustStore',
+);
