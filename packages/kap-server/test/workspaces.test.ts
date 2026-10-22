@@ -479,6 +479,56 @@ describe('server-v2 /api/v1/workspaces', () => {
     }
   });
 
+  it('reloads project config after a failed initial read under the environment override', async () => {
+    vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-env-recovery-'));
+    try {
+      await mkdir(join(root, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(root, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { projectOnly: { command: 'project-only' } } }),
+        'utf8',
+      );
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const read = docs.get.bind(docs);
+      let shouldFail = true;
+      let failed = false;
+      const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
+        if (shouldFail && scope === 'workspace-trust') {
+          shouldFail = false;
+          failed = true;
+          throw new Error('temporary trust read failure');
+        }
+        return read<T>(scope, key);
+      });
+      let materialized = false;
+      try {
+        const workspace = await manager.getOrCreate({ workspaceId: id, root });
+        materialized = true;
+        await workspace.program.mcpConfig.ready;
+        expect(failed).toBe(true);
+        expect(workspace.program.mcpConfig.servers()).toEqual({});
+
+        const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+        expect(revoked.body.code).toBe(0);
+        expect(revoked.body.data.trusted).toBe(true);
+
+        await vi.waitFor(() => {
+          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+        });
+      } finally {
+        get.mockRestore();
+        if (materialized) await manager.close(id);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('shares route trust changes with an already materialized workspace', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-shared-'));
     const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });

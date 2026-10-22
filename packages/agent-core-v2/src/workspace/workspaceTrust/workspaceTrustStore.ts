@@ -50,12 +50,11 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
 
   get ready(): Promise<void> {
     if (this.initialization !== undefined) return this.initialization;
-    const previous = this.trusted;
     const recovering = this.initializationFailed;
     const initialization = readWorkspaceTrust(this.docs, this.root, this.telemetry).then((trusted) => {
       this.trusted = trusted;
       this.initializationFailed = false;
-      if (recovering && previous !== trusted) this.changeEmitter.fire({ trusted });
+      if (recovering) this.changeEmitter.fire({ trusted });
     });
     this.initialization = initialization;
     void initialization.catch(() => {
