@@ -1,8 +1,8 @@
 import type { HistoryMessage, UserEntry } from '#/history/message';
-import type { LoopProfile } from './command';
 import type { LoopEmitted } from './emitted';
 import type { QueuedItem, TurnTrigger } from './inbox';
 import type { TurnOutcome } from './outcome';
+import type { LoopProfile } from './profile';
 
 export interface TurnStart {
   readonly id: number;

@@ -1,9 +1,9 @@
 import type { ToolCall } from '#/llm/message';
 import type { HistoryMessage } from '#/history/message';
 import type { ToolResult } from '#/tool/index';
-import type { LoopProfile } from './command';
 import type { QueuedItem, TurnTrigger } from './inbox';
 import type { Cause, StepOutcome } from './outcome';
+import type { LoopProfile } from './profile';
 
 export interface TurnStartingEvent {
   readonly turnId: number;

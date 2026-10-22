@@ -19,13 +19,13 @@ export type WaitForTasks = (input: TaskWaitInput) => Promise<TaskWaitOutcome>;
 
 interface LoopSnapshotSource {
   getSnapshot(): {
-    context: { tools: Record<string, { ref: ToolActorRef; toolCall: ToolCall; detached: boolean }> };
+    context: { toolActors: Record<string, { ref: ToolActorRef; toolCall: ToolCall; detached: boolean }> };
   };
 }
 
 export function createWaitForTasks(self: LoopSnapshotSource): WaitForTasks {
   return async ({ taskId, timeoutMs }) => {
-    const detached = Object.values(self.getSnapshot().context.tools).filter((slot) => slot.detached);
+    const detached = Object.values(self.getSnapshot().context.toolActors).filter((slot) => slot.detached);
     const targets = (taskId === undefined ? detached : detached.filter((slot) => slot.toolCall.id === taskId)).map(
       (slot) => ({ id: slot.toolCall.id, ref: slot.ref }),
     );

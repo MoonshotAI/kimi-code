@@ -11,7 +11,7 @@ Module: `@moonshot-ai/harness-core` (root) — source `src/app/`.
 | Hook | Semantics |
 |---|---|
 | `useAgentRuntime()` | Returns the current agent's `AgentRuntime` (tool registry, host prompt section); throws if the agent was not opened via `session.ensureAgent`. The LLM requester is set/read on the loop (`agent.loop.setRequester` / `agent.loop.baseRequester`). Agent level. |
-| `useAgentTools(...definitions)` | Registers tool definitions into the runtime registry **and** the loop executor, then syncs the loop's tool profile (retrying after `step.ended`/`turn.ended` when the profile is frozen mid-turn); withdraws and re-syncs on dispose. Empty name / duplicate name throws. Agent level. |
+| `useAgentTools(...definitions)` | Registers tool definitions into the runtime registry **and** the loop executor, then refreshes the agent's tools profile sync (coalesced into a microtask; until first use the loop's tool list is overwritten, afterwards removals produce a keyed notice and additions wait for `reload()`); withdraws and re-syncs on dispose. Empty name / duplicate name throws. Agent level. |
 | `useMessageResolver(resolver)` | Registers a `MessageResolver` into the agent loop's native policy registry (`loop.policy`), re-read on every attempt of every request; removed on dispose. Agent level. |
 | `useLlmRecovery(recovery)` | Registers an `LlmRecovery` into the agent loop's native policy registry (`loop.policy`); removed on dispose. Agent level. |
 | `useLlmRetryable(retryable)` | Registers an `LlmRetryable` into the agent loop's native policy registry (`loop.policy`); removed on dispose. Agent level. |
@@ -27,7 +27,7 @@ Module: `#/app/index`.
 | Hook | Semantics |
 |---|---|
 | `useApp()` / `useSession()` / `useAgent()` | Returns the domain object of the current level (an agent unit sees all three; a session unit sees session + app). |
-| `useSystemPrompt(...sections)` | Contributes named `{ id, text, priority? }` sections to the `SystemPromptSections` collection; the agent unit assembles them into the loop's system prompt once at agent create — a resumed or forked agent keeps the replayed prompt (see [Agent Runtime](../explanation/agent-runtime.md#system-prompt-sections-as-a-contribution-point)). Empty id throws; the `host` id is reserved for the app's internal host feature. Agent level. |
+| `useSystemPrompt(...sections)` | Contributes named `{ id, text, priority? }` sections to the `SystemPromptSections` collection; the agent unit's prompt profile sync keeps them joined into the loop's system prompt string — overwritten until first use, announced as keyed notices afterwards, and a resumed or forked agent keeps the replayed prompt (see [Agent Runtime](../explanation/agent-runtime.md#system-prompt-sections-as-a-contribution-point)). Empty id throws; the `host` id is reserved for the app's internal host feature. Agent level. |
 | `useRequester()` | Sugar for `useAgent().loop.requester` — the `LoopLlmRequester` for side requests (summaries, titles) filled with the live history. Agent level. |
 | `useToolHandler(definition)` / `useToolHandler(name, handler)` | Registers on the loop's executor registry only (no tool-profile sync — prefer `useAgentTools` for model-visible tools); removed on scope dispose. Agent level. |
 

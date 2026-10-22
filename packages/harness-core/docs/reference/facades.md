@@ -15,7 +15,8 @@ Injection always yields `Readonly<ShallowRef<Face | undefined>>` — see
 |---|---|---|---|
 | `TodoRef` | todo | agent | `{ items, state }` — the current todo list and its projection state |
 | `InteractionRef` | interaction | session | `Interactions` — request/enqueue/respond/findAll/wait for approval, question, and user-tool interactions (helper: `useInteractions()`) |
-| `PermissionRef` | permission | session | `{ state, mode, setMode, recordApprovalResult, addRules }` — permission mode and rules, one state shared by every agent of the session |
+| `PermissionModeRef` | permission.mode | session | `{ state, mode, setMode }` — permission mode, one state shared by every agent of the session |
+| `PermissionPolicyRef` | permission | session | `{ state, recordApprovalResult, addRules }` — permission rules and session approval history, one state shared by every agent of the session |
 | `PlanRef` | plan | agent | `{ state, enter, cancel, clear, exit, recordRevision, status }` — plan mode control |
 | `CronRef` | cron | agent | `{ tasks, now, isDisabled, addTask, removeTasks, getTask, list, isStale, getNextFireForTask, computeDisplayNextFire, tick }` |
 | `TaskRef` | task | agent | `{ records, stop, detach }` — background task tracking |

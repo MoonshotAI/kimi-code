@@ -59,20 +59,22 @@ console.log(outcome.type);
 await loop.close();
 ```
 
-## Set the system prompt and tools
+## Provide the system prompt and tools
 
-`loop.setSystemPrompt(text)` and `loop.setTools(descriptions)` set the profile the loop adds to every LLM request next to the history; read the current values from `loop.state.profile`. Each call acknowledges with `system_prompt.settled` / `tools.settled`, or with `*.rejected` unless the loop is idle or ending a step — like `setContext`, a change made mid-turn takes effect from the next step. Pass `undefined` / `[]` to clear.
+`loop.setSystemPrompt(sections)` sets the system prompt as sections (`{ id, text }`, joined in order when a request is built) and `loop.setTools(descriptions)` sets the tool descriptions. Both are accepted at any time, including mid-turn, and take effect from the next request; read them back from `loop.state.profile.systemPrompt` (sections) and `loop.state.profile.tools`. Use `requestProfileOf(profile)` when you need the assembled request shape.
 
 ```ts
-loop.setSystemPrompt('You are a helpful assistant.');
+loop.setSystemPrompt([{ id: 'host', text: 'You are a helpful assistant.' }]);
 loop.setTools([weatherTool]);
 ```
 
-The settled events are durable records (`src/loop/record.ts`), so a profile set before the first turn comes back when the loop is restored from records. And because a request merges dimensions requester-first, the loop's profile overrides any `profile` layered on the requester — the persisted spec always wins after a reopen.
+When sections and tools come from contributions that change at any time, use `createSystemPromptSync(loop, source)` and `createToolsSync(loop, source)` instead and call `refresh()` after each change. Each keeps its part cacheable on its own: before a request has used the current value it is simply overwritten; afterwards it stays byte-stable and the change is reminded as one system notice (updated and removed sections; removed tools — added or changed tools wait for a reload). `onPending` reports what differs, and `reload()` rewrites the value at once.
+
+`system_prompt.settled` / `tools.settled` are durable records (`src/loop/record.ts`), so a restored loop keeps its profile. And because a request merges dimensions requester-first, the loop's profile overrides any `profile` layered on the requester — the persisted value always wins after a reopen.
 
 ## Where to go next
 
-- `loop.state` is a plain projection (the settled profile, status, held, inbox, messages, the running turn, tools including detached ones); `loop.requester` is a requester facade for side requests — it re-reads the loop's current base requester and fills in the current history as `content` on every `request`/`generate`, so `.with()` overrides always land on the latest configuration and context; `loop.waitForTasks` waits on background tools, `loop.waitForIdle()` settles the loop.
+- `loop.state` is a plain projection (status, held, inbox, the profile, messages, the running turn, and `calls` — the running tool calls including detached ones); `loop.requester` is a requester facade for side requests — it re-reads the loop's current base requester and fills in the current history as `content` on every `request`/`generate`, so `.with()` overrides always land on the latest configuration and context; `loop.waitForTasks` waits on background tools, `loop.waitForIdle()` settles the loop.
 - Input commands (`submit`/`notify`/`remind`/`steer`/`cancel`/`setContext`/`setSystemPrompt`/`setTools`) are synchronous everywhere, including inside a `subscribe` listener or a hook: they return their ack and `loop.state` already reflects them. Events reach listeners in one global order, after the state change that produced them.
 - The loop holds no persistence. `src/loop/record.ts` defines its durable contract (`LoopRecord` / `toLoopRecord` / `loopProjection`); for persistence that is already wired, use `src/session/` — see Run a session with subagents.
 - To restore after a crash, fold the records with `loopProjection` and pass `{ profile, messages, nextTurnId, unfinished, inbox: { notify } }` as `input`. With an `unfinished` turn the loop starts with status `interrupted`: `continue()` resumes that turn when its history allows it (`turn.resumed`, same turn id, next step), and every other trigger — `abort`, `runTurn`, `submit`, `notify`, `steer` — first ends it as `aborted` with reason `CRASHED`, filling in aborted results for unanswered tool calls.

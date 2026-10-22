@@ -20,7 +20,7 @@ import {
   type LlmTiming,
   type TokenUsage,
 } from '#/llm/response';
-
+import { clock } from '#/utils/clock';
 
 function isContentPart(part: StreamedMessagePart): part is ContentPart {
   const t = part.type;
@@ -262,7 +262,7 @@ interface AttemptClock {
 }
 
 function createAttemptClock(): AttemptClock {
-  const startedAt = performance.now();
+  const startedAt = clock();
   let sentAt: number | undefined;
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
@@ -271,25 +271,25 @@ function createAttemptClock(): AttemptClock {
   let eluStart: ReturnType<typeof performance.eventLoopUtilization> | undefined;
   return {
     sent: () => {
-      sentAt = performance.now();
+      sentAt = clock();
     },
     partArrived: () => {
-      const now = performance.now();
+      const arrivedAt = clock();
       if (firstPartAt === undefined) {
-        firstPartAt = now;
+        firstPartAt = arrivedAt;
         eluStart = performance.eventLoopUtilization?.();
       } else {
-        serverDecodeMs += now - lastResumeAt;
+        serverDecodeMs += arrivedAt - lastResumeAt;
       }
-      return now;
+      return arrivedAt;
     },
     partConsumed: (arrivedAt) => {
-      lastResumeAt = performance.now();
+      lastResumeAt = clock();
       clientConsumeMs += lastResumeAt - arrivedAt;
     },
     timing: () => {
       if (firstPartAt === undefined) return undefined;
-      const endedAt = performance.now();
+      const endedAt = clock();
       const sent = sentAt === undefined ? undefined : Math.min(Math.max(sentAt, startedAt), firstPartAt);
       const consumed = Math.round(clientConsumeMs);
       const active = eluStart === undefined ? undefined : performance.eventLoopUtilization(eluStart).active;
@@ -323,7 +323,7 @@ export async function settleLlmRequest(
   let messageId: string | undefined;
   let requestId: string | undefined;
   let failure: { error: LlmErrorMessage; rawError?: unknown } | undefined;
-  const clock = createAttemptClock();
+  const attemptClock = createAttemptClock();
 
   const handle = (event: LlmAttemptEvent): void => {
     switch (event.type) {
@@ -331,7 +331,7 @@ export async function settleLlmRequest(
         onEvent?.(event);
         return;
       case 'attempt.sending':
-        clock.sent();
+        attemptClock.sent();
         return;
       case 'attempt.tool_call_end': {
         const toolCall = inner.toolCallEnd(event.index);
@@ -346,10 +346,10 @@ export async function settleLlmRequest(
         onEvent?.(event);
         return;
       case 'llm.streaming.part': {
-        const arrivedAt = clock.partArrived();
+        const arrivedAt = attemptClock.partArrived();
         inner.push(event.part);
         onEvent?.(event);
-        clock.partConsumed(arrivedAt);
+        attemptClock.partConsumed(arrivedAt);
         return;
       }
       case 'llm.streaming.usage':
@@ -376,7 +376,7 @@ export async function settleLlmRequest(
     finish,
     messageId,
     requestId,
-    timing: clock.timing(),
+    timing: attemptClock.timing(),
   });
 
   const aborted = (): LlmOutcome => ({

@@ -2,6 +2,7 @@ import type { HistoryMessage, UserEntry } from '#/history/message';
 import type { ToolDescription } from '#/llm/message';
 import { isEntry, isObject } from '../guards';
 import type { RemindEntry, TurnTrigger } from './inbox';
+import type { LoopProfile } from './profile';
 
 export interface UnfinishedTurn {
   readonly turnId: number;
@@ -9,11 +10,6 @@ export interface UnfinishedTurn {
   readonly step: number;
   readonly stepUnfinished: boolean;
   readonly appended: boolean;
-}
-
-export interface LoopProfile {
-  readonly systemPrompt?: string;
-  readonly tools?: readonly ToolDescription[];
 }
 
 export interface LoopInput {
@@ -38,7 +34,7 @@ export type LoopCommand =
   | { type: 'input.abort_tool'; toolCallId: string }
   | { type: 'input.detach_tool'; toolCallId: string }
   | { type: 'input.set_context'; messages: HistoryMessage[] }
-  | { type: 'input.set_system_prompt'; systemPrompt?: string }
+  | { type: 'input.set_system_prompt'; systemPrompt: string }
   | { type: 'input.set_tools'; tools: readonly ToolDescription[] };
 
 function isUserEntry(value: unknown): value is UserEntry {
@@ -77,13 +73,8 @@ function isToolDescription(value: unknown): value is ToolDescription {
   );
 }
 
-function isProfile(value: unknown): value is LoopProfile {
-  return (
-    isObject(value) &&
-    (value['systemPrompt'] === undefined || typeof value['systemPrompt'] === 'string') &&
-    (value['tools'] === undefined || arrayOf(value['tools'], isToolDescription))
-  );
-}
+const SYSTEM_PROMPT_ERROR = 'systemPrompt must be a string';
+const TOOLS_ERROR = 'tools must be an array of tool descriptions';
 
 export function inputError(input: LoopInput): string | undefined {
   if (input.messages !== undefined && !arrayOf(input.messages, isEntry)) {
@@ -105,9 +96,9 @@ export function inputError(input: LoopInput): string | undefined {
   if (input.unfinished !== undefined && !isUnfinishedTurn(input.unfinished)) {
     return 'unfinished must describe an unfinished turn';
   }
-  if (input.profile !== undefined && !isProfile(input.profile)) {
-    return 'profile must be a system prompt and an array of tool descriptions';
-  }
+  const profile = input.profile ?? {};
+  if (profile.systemPrompt !== undefined && typeof profile.systemPrompt !== 'string') return SYSTEM_PROMPT_ERROR;
+  if (profile.tools !== undefined && !arrayOf(profile.tools, isToolDescription)) return TOOLS_ERROR;
   return undefined;
 }
 
@@ -131,11 +122,9 @@ export function commandError(command: LoopCommand): string | undefined {
     case 'input.set_context':
       return arrayOf(command.messages, isEntry) ? undefined : 'messages must be an array of history entries';
     case 'input.set_system_prompt':
-      return command.systemPrompt === undefined || typeof command.systemPrompt === 'string'
-        ? undefined
-        : 'systemPrompt must be a string';
+      return typeof command.systemPrompt === 'string' ? undefined : SYSTEM_PROMPT_ERROR;
     case 'input.set_tools':
-      return arrayOf(command.tools, isToolDescription) ? undefined : 'tools must be an array of tool descriptions';
+      return arrayOf(command.tools, isToolDescription) ? undefined : TOOLS_ERROR;
     default:
       return undefined;
   }

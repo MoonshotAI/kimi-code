@@ -13,6 +13,7 @@ import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { Inbox, QueuedItem, RemindEntry, TurnTrigger } from './contract/inbox';
 import { CRASHED, type StepOutcome, type TurnOutcome } from './contract/outcome';
 import type { LoopFact, LoopSignal } from './contract/process';
+import type { LoopProfile } from './contract/profile';
 import { loopProjection, type LoopRecord, type LoopRecordState } from './record';
 import { abortedToolOutcome } from './tool/outcome';
 
@@ -20,10 +21,30 @@ export type LoopPhase = 'idle' | 'running' | 'closed';
 
 export type TurnReply = (outcome?: TurnOutcome) => void;
 
-export interface LiveTurn {
+export interface LoopTurn {
   readonly id: number;
   readonly trigger: TurnTrigger;
   readonly step: number;
+}
+
+export interface LoopToolCall {
+  readonly toolCall: ToolCall;
+  readonly turnId: number;
+  readonly detached: boolean;
+}
+
+export interface LoopState {
+  readonly status: 'idle' | 'running' | 'interrupted';
+  readonly held: boolean;
+  readonly inbox: Readonly<Inbox>;
+  readonly profile: LoopProfile;
+  readonly messages: readonly HistoryMessage[];
+  readonly nextTurnId: number;
+  readonly turn?: LoopTurn;
+  readonly calls: readonly LoopToolCall[];
+}
+
+interface LiveTurn extends LoopTurn {
   readonly reply?: TurnReply;
 }
 
@@ -35,6 +56,7 @@ export interface LoopStateContext {
   readonly seq: number;
   readonly ending: boolean;
   readonly turn?: LiveTurn;
+  readonly calls: readonly LoopToolCall[];
 }
 
 type Reply<T extends LoopEmitted['type']> = (ack: LoopAck<T>) => void;
@@ -51,8 +73,8 @@ export type LoopStateEvent =
       reason?: string;
       reply: Reply<'context.settled' | 'context.rejected'>;
     }
-  | { type: 'setSystemPrompt'; systemPrompt?: string; reply: Reply<'system_prompt.settled' | 'system_prompt.rejected'> }
-  | { type: 'setTools'; tools: readonly ToolDescription[]; reply: Reply<'tools.settled' | 'tools.rejected'> }
+  | { type: 'setSystemPrompt'; systemPrompt: string; reply: Reply<'system_prompt.settled'> }
+  | { type: 'setTools'; tools: readonly ToolDescription[]; reply: Reply<'tools.settled'> }
   | { type: 'runTurn'; entry: UserEntry; reply: TurnReply }
   | { type: 'continue' }
   | { type: 'abort'; reason?: unknown }
@@ -160,7 +182,7 @@ function editable(context: LoopStateContext): boolean {
 
 function start(tx: Tx, turn: LiveTurn, pending: readonly QueuedItem[], resumed?: true): void {
   patch(tx, { phase: 'running', held: false, ending: false, turn });
-  const { messages, profile } = tx.ctx.durable;
+  const { messages } = tx.ctx.durable;
   signal(tx, {
     type: 'turn.start',
     id: turn.id,
@@ -168,7 +190,7 @@ function start(tx: Tx, turn: LiveTurn, pending: readonly QueuedItem[], resumed?:
     step: turn.step,
     pending,
     messages,
-    profile,
+    profile: tx.ctx.durable.profile,
     ...(resumed === true ? { resumed } : {}),
   });
 }
@@ -265,6 +287,30 @@ function runTurn(tx: Tx, entry: UserEntry, reply: TurnReply): void {
   ]);
 }
 
+function follow(tx: Tx, fact: LoopEmitted): void {
+  const { turn, calls } = tx.ctx;
+  switch (fact.type) {
+    case 'step.started':
+      if (turn?.id === fact.turnId) patch(tx, { turn: { ...turn, step: fact.step } });
+      return;
+    case 'tool.started':
+      patch(tx, { calls: [...calls, { toolCall: fact.toolCall, turnId: fact.turnId, detached: false }] });
+      return;
+    case 'tool.ended':
+      patch(tx, {
+        calls: fact.detached
+          ? calls.map((call) => (call.toolCall.id === fact.toolCallId ? { ...call, detached: true } : call))
+          : calls.filter((call) => call.toolCall.id !== fact.toolCallId),
+      });
+      return;
+    case 'tool.async_ended':
+      patch(tx, { calls: calls.filter((call) => call.toolCall.id !== fact.toolCallId) });
+      return;
+    default:
+      return;
+  }
+}
+
 function absorb(tx: Tx, fact: LoopFact): void {
   const { inbox, phase } = tx.ctx;
   switch (fact.type) {
@@ -295,11 +341,12 @@ function absorb(tx: Tx, fact: LoopFact): void {
       return;
     default:
       record(tx, fact);
+      follow(tx, fact);
   }
 }
 
 function initialState(input: LoopInput): LoopStateContext {
-  const unfinished = input.unfinished;
+  const { unfinished, profile = {} } = input;
   return {
     phase: 'idle',
     held: true,
@@ -310,8 +357,8 @@ function initialState(input: LoopInput): LoopStateContext {
     },
     durable: {
       profile: {
-        ...(input.profile?.systemPrompt === undefined ? {} : { systemPrompt: input.profile.systemPrompt }),
-        ...(input.profile?.tools === undefined ? {} : { tools: [...input.profile.tools] }),
+        ...(profile.systemPrompt === undefined ? {} : { systemPrompt: profile.systemPrompt }),
+        ...(profile.tools === undefined ? {} : { tools: [...profile.tools] }),
       },
       messages: [...(input.messages ?? [])],
       nextTurnId: Math.max(input.nextTurnId ?? 0, unfinished === undefined ? 0 : unfinished.turnId + 1),
@@ -321,6 +368,23 @@ function initialState(input: LoopInput): LoopStateContext {
     },
     seq: 0,
     ending: false,
+    calls: [],
+  };
+}
+
+export function viewOf({ phase, held, inbox, durable, turn, calls }: LoopStateContext): LoopState {
+  const { profile, messages, nextTurnId, unfinished } = durable;
+  const current =
+    turn ?? (unfinished === undefined ? undefined : { id: unfinished.turnId, trigger: unfinished.trigger, step: unfinished.step });
+  return {
+    status: phase === 'running' ? 'running' : unfinished !== undefined ? 'interrupted' : 'idle',
+    held,
+    inbox,
+    profile,
+    messages,
+    nextTurnId,
+    ...(current === undefined ? {} : { turn: { id: current.id, trigger: current.trigger, step: current.step } }),
+    calls,
   };
 }
 
@@ -378,22 +442,12 @@ export function createLoopState(input: LoopInput) {
         }),
       setSystemPrompt: (context, { systemPrompt, reply }, enq) =>
         apply(context, enq, (tx) => {
-          if (!editable(tx.ctx)) {
-            const ack = record(tx, { type: 'system_prompt.rejected', systemPrompt });
-            tx.effects.push(() => reply(ack));
-            return;
-          }
           const ack = record(tx, { type: 'system_prompt.settled', systemPrompt });
           if (tx.ctx.phase === 'running') signal(tx, { type: 'profile.set', profile: tx.ctx.durable.profile });
           tx.effects.push(() => reply(ack));
         }),
       setTools: (context, { tools, reply }, enq) =>
         apply(context, enq, (tx) => {
-          if (!editable(tx.ctx)) {
-            const ack = record(tx, { type: 'tools.rejected', tools: [...tools] });
-            tx.effects.push(() => reply(ack));
-            return;
-          }
           const ack = record(tx, { type: 'tools.settled', tools: [...tools] });
           if (tx.ctx.phase === 'running') signal(tx, { type: 'profile.set', profile: tx.ctx.durable.profile });
           tx.effects.push(() => reply(ack));

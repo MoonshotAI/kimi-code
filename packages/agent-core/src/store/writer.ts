@@ -1,4 +1,5 @@
 import { silentLogger, type Logger } from '#/log/index';
+import { now } from '#/utils/now';
 
 import { decodeCommit, encodeCommit, isSeq, LogCorruptError, type Commit, type Event, type Op } from './commit';
 import { createReplica, type MutableReplica, type Replica } from './replica';
@@ -82,7 +83,7 @@ export function openWriter(journal: Journal, options: { logger?: Logger } = {}):
         enqueue(async () => {
           const events = op.events ?? [];
           if (op.rewind === undefined && events.length === 0) return replica.version;
-          clock = Math.max(Date.now(), clock + 1);
+          clock = Math.max(now(), clock + 1);
           const line = encodeCommit({ seq: replica.version, time: clock, rewind: op.rewind, events });
           const commit = decodeCommit<Event>(line);
           try {

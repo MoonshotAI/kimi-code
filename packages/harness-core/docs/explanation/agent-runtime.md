@@ -94,15 +94,18 @@ Tool contribution is two registrations in one hook
 - each `ToolDefinition` goes into `runtime.tools` (empty name and duplicates
   throw) and its handler into `runtime.executor` via agent-core's
   `useToolHandler`, and
-- `syncAgentTools` pushes the full description set into the loop's profile
-  with `loop.setTools`.
+- the agent's tools profile sync (`runtime.profileSync.tools`, built on the
+  harness `createToolsSync` in `#/runtime/profile-sync`) is refreshed.
 
-The loop settles profile changes only while **idle or at a step's ending**;
-a mid-turn `setTools` is rejected with `tools.rejected`. `syncAgentTools`
-absorbs that freeze: on rejection it waits for the next `step.ended` /
-`turn.ended` and retries in a microtask, so tool changes are *eventually
-consistent within the turn* and guaranteed visible from the next step. On
-unit dispose the definitions are withdrawn and the profile re-synced.
+`loop.setTools` is accepted at any time and never rejected: until the first
+request has used the current value (`step.started`), `refresh()` overwrites
+the loop's tool list with the registered set; afterwards the value stays
+byte-stable and a change produces one keyed system notice instead — removed
+tools are announced (`tools-change`), while added or changed tools wait for a
+`reload()` and are only reported to the host through the `tools.pending`
+unit event. Refreshes are coalesced into a microtask, so a batch of
+registrations or a feature remount settles once with the final consistent
+set. On unit dispose the definitions are withdrawn and the sync re-run.
 
 (If you only need the executor half — a handler with no profile entry —
 agent-core's `useToolHandler(definition)` / `useToolHandler(name, handler)`
@@ -111,28 +114,30 @@ does that alone.)
 ## System Prompt: Sections as a Contribution Point
 
 The system prompt is assembled by the harness app layer: `src/app/system-prompt.ts`
-owns a `SystemPromptSections` collection, and every agent unit assembles the
-contributed sections into the loop's profile exactly once at agent create
-(wired into `AgentUnit`).
+owns a `SystemPromptSections` collection, and every agent unit keeps the
+contributed sections synced into the loop's profile through a prompt profile
+sync (`runtime.profileSync.prompt`, built on the harness
+`createSystemPromptSync` in `#/runtime/profile-sync`, wired into `AgentUnit`).
+The loop itself only ever stores the joined string — sections are a
+harness-side concept.
 
 `useSystemPrompt({ id, text, priority? })` (from
 `#/app/index`) contributes a named section, withdrawn
-automatically when the unit unmounts. The create-time assembly sorts by
+automatically when the unit unmounts. The sync sorts by
 `priority` (default 0, registration order breaks ties), drops blank texts,
-lets a later registration replace an earlier one with the same id, joins
-with `'\n\n'`, and lands as a single settle fired from a `useMounted` hook
-registered after the feature mirror's — so by the time it runs, every
-feature unit of the mount pass has already contributed, and the loop is
-still guaranteed idle (the settle runs before `session.open` resolves,
-hence before any turn can start). An agent whose replayed log already
-carries a system prompt — resume or fork — never re-assembles: the prompt is
-reduced from the durable record and later section changes are ignored.
+lets a later registration replace an earlier one with the same id, and joins
+with `'\n\n'`. Until the first request has used the prompt
+(`step.started`), `refresh()` overwrites it with the current sections;
+afterwards the settled bytes stay frozen for prefix-cache stability and a
+section change is announced as a keyed system notice (`system-prompt-change`)
+naming the updated and removed sections. An agent whose replayed log already
+carries a prompt — resume or fork — keeps the replayed value from the start
+and only notices the diff against the current sections.
 
 The reserved `host` section (priority `-100`, so it stays first) is
 contributed by an internal app feature from `runtime.hostSystemPrompt`,
 seeded by `OpenAgentOptions.systemPrompt` (and by the pre-open helpers in
-spawn and session-init). After the create-time settle the prompt is frozen
-for the agent's lifetime.
+spawn and session-init).
 
 ## Managed Model Binding (provider-catalog)
 

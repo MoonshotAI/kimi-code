@@ -47,9 +47,7 @@ export type LoopEmitted =
   | { type: 'turn.ended'; turnId: number; outcome: TurnOutcome }
   | { type: 'context.settled'; messages: HistoryMessage[]; reason?: string }
   | { type: 'context.rejected'; messages: HistoryMessage[]; reason?: string }
-  | { type: 'system_prompt.settled'; systemPrompt?: string }
-  | { type: 'system_prompt.rejected'; systemPrompt?: string }
-  | { type: 'tools.settled'; tools: ToolDescription[] }
-  | { type: 'tools.rejected'; tools: ToolDescription[] };
+  | { type: 'system_prompt.settled'; systemPrompt: string }
+  | { type: 'tools.settled'; tools: ToolDescription[] };
 
 export type LoopAck<T extends LoopEmitted['type']> = Extract<LoopEmitted, { type: T }>;

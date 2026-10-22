@@ -32,6 +32,7 @@ for those. Only the recorded subset below is forwarded.
 | `session.meta_updated` | `app.update(sessionId, patch)` writes title/metadata | `sessionId`, `meta` (the `SessionRecord`) |
 | `agent.opened` | an agent unit mounts (open, reopen, fork) | `agentId` + enriched `sessionId`; `source?` (e.g. `'btw'`), `reopened` |
 | `agent.closed` | an agent unit starts unmounting | enriched `agentId`, `sessionId` |
+| `system_prompt.pending` / `tools.pending` | the settled system prompt / tool list differs from the current contributions after first use; `reload()` would rewrite them | `ids` (section ids / tool names awaiting reload) |
 | `unit.error` | a unit reports an error up the tree | `unit`, `error` |
 
 ## Forwarded Log Commits
@@ -54,8 +55,7 @@ From each agent's loop log (the `LoopRecord` set — see
 | `step.started` / `step.ended` | step (one LLM request) lifecycle (`outcome` on ended) |
 | `message.appended` | a history entry was appended (`turnId`, `step`, `source`, `entry`) |
 | `context.settled` | the history was replaced (`messages`, `reason?`) |
-| `system_prompt.settled` | the system prompt profile value was settled |
-| `tools.settled` | the tool-description profile value was settled |
+| `system_prompt.settled` / `tools.settled` | the system prompt (one joined string) / tool-description list was settled (`systemPrompt` / `tools`) |
 | `tool.started` | a tool call began (`turnId`, `step`, `toolCall`) |
 | `tool.async_ended` | a detached tool completed later (`outcome`, `entry`) |
 | `hook.failed` | a loop hook threw (`point`, `hookId?`, `paused`) |

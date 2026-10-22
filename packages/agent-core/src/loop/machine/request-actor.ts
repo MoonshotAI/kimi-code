@@ -1,12 +1,12 @@
 import { fromCallback } from 'xstate';
 
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
-import type { LlmModelSpec } from '#/llm/request';
+import type { LlmModelSpec, LlmRequestProfile } from '#/llm/request';
 import type { LlmDimension, LlmRequester } from '#/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#/llm/response';
 import { toRequestMessages, type HistoryMessage } from '#/history/message';
 import { usedContextTokens } from '#/history/usage';
-import type { LoopProfile } from '../contract/command';
+import type { LoopProfile } from '../contract/profile';
 import { isLlmOutcome } from '../guards';
 
 export type LoopLlmRequester = LlmRequester<LlmDimension>;
@@ -52,12 +52,17 @@ export function createRequestActor(getRequester: () => LoopLlmRequester) {
       try {
         const requester = getRequester();
         const messages = toRequestMessages(input.messages);
-        const { model, profile } = requester.request({ content: { messages }, profile: input.profile });
+        const { systemPrompt, tools } = input.profile;
+        const requestProfile: LlmRequestProfile = {
+          ...(systemPrompt === undefined || systemPrompt === '' ? {} : { systemPrompt }),
+          ...(tools === undefined ? {} : { tools }),
+        };
+        const { model, profile } = requester.request({ content: { messages }, profile: requestProfile });
         sendBack({ type: 'llm.prepared', model: model?.spec });
         const usedTokens = usedContextTokens(input.messages, profile);
         end(
           await requester.generate(
-            { content: { messages, usedTokens }, profile: input.profile },
+            { content: { messages, usedTokens }, profile: requestProfile },
             { signal: input.signal, onEvent: forward },
           ),
         );

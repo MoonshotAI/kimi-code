@@ -226,7 +226,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
         enqueue(() => turn.scope.abort(params.reason));
         release(enqueue, context, outcome);
         if (context.step !== undefined) enqueue.assign({ step: { ...context.step, outcome } });
-        for (const slot of Object.values(context.tools)) {
+        for (const slot of Object.values(context.toolActors)) {
           if (slot.turnId === turn.id && !slot.detached) {
             enqueue.sendTo(slot.ref, { type: 'tool.abort', reason: params.reason });
           }
@@ -236,14 +236,14 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       finishTurn: enqueueActions(({ context, enqueue }) => {
         enqueue.cancel('abortGrace');
         const turn = context.turn;
-        const tools = { ...context.tools };
-        for (const [key, slot] of Object.entries(tools)) {
+        const toolActors = { ...context.toolActors };
+        for (const [key, slot] of Object.entries(toolActors)) {
           if (slot.turnId === turn?.id && !slot.detached) {
             enqueue.stopChild(slot.ref);
-            delete tools[key];
+            delete toolActors[key];
           }
         }
-        enqueue.assign({ tools, turn: undefined, step: undefined });
+        enqueue.assign({ toolActors, turn: undefined, step: undefined });
         enqueue.emit({ type: 'turn.finished', outcome: turn?.outcome ?? { type: 'aborted' } });
       }),
       recordLlm: enqueueActions(({ context, event, enqueue }) => {
@@ -304,11 +304,11 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
           return;
         }
         enqueue.assign({
-          tools: ({ context: current, spawn }) => {
-            const tools = { ...current.tools };
+          toolActors: ({ context: current, spawn }) => {
+            const toolActors = { ...current.toolActors };
             for (const { key, toolCall } of step.calls) {
               if (step.settled[key] !== undefined) continue;
-              tools[key] = {
+              toolActors[key] = {
                 toolCall,
                 turnId: turn.id,
                 detached: false,
@@ -318,7 +318,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
                 }),
               };
             }
-            return tools;
+            return toolActors;
           },
         });
       }),
@@ -326,19 +326,19 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
         const step = stepOf(context);
         const reason = abortReason(context);
         const settled = { ...step.settled };
-        const tools = { ...context.tools };
+        const toolActors = { ...context.toolActors };
         for (const { key, toolCall } of step.calls) {
           if (settled[key] !== undefined) continue;
-          const slot = tools[key];
+          const slot = toolActors[key];
           if (slot !== undefined) {
             enqueue.stopChild(slot.ref);
-            delete tools[key];
+            delete toolActors[key];
           }
           const outcome = abortedToolOutcome(toolCall, reason);
           settled[key] = outcome.entry;
           enqueue.emit({ type: 'tool.ended', toolCallId: toolCall.id, outcome, detached: false });
         }
-        enqueue.assign({ tools, step: { ...step, settled } });
+        enqueue.assign({ toolActors, step: { ...step, settled } });
       }),
       appendToolEntries: enqueueActions(({ context, enqueue }) => {
         const turn = turnOf(context);
@@ -370,7 +370,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       },
       'input.abort_tool': {
         actions: enqueueActions(({ context, event, enqueue }) => {
-          for (const slot of Object.values(context.tools)) {
+          for (const slot of Object.values(context.toolActors)) {
             if (slot.toolCall.id === event.toolCallId) {
               enqueue.sendTo(slot.ref, { type: 'tool.abort', reason: event.reason });
             }
@@ -379,7 +379,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       },
       'input.detach_tool': {
         actions: enqueueActions(({ context, event, enqueue }) => {
-          for (const slot of Object.values(context.tools)) {
+          for (const slot of Object.values(context.toolActors)) {
             if (slot.toolCall.id !== event.toolCallId || slot.detached) continue;
             enqueue.sendTo(slot.ref, {
               type: 'tool.detach',
@@ -417,13 +417,13 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       'tool.ended': {
         actions: [
           assign(({ context, event }) => {
-            const tools = { ...context.tools };
-            const slot = tools[event.key];
+            const toolActors = { ...context.toolActors };
+            const slot = toolActors[event.key];
             if (slot !== undefined) {
-              if (event.detached) tools[event.key] = { ...slot, detached: true };
-              else delete tools[event.key];
+              if (event.detached) toolActors[event.key] = { ...slot, detached: true };
+              else delete toolActors[event.key];
             }
-            return { tools, step: settle(context.step, event.key, event.outcome) };
+            return { toolActors, step: settle(context.step, event.key, event.outcome) };
           }),
           emit(({ event }) => ({
             type: 'tool.ended' as const,
@@ -435,9 +435,9 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       },
       'tool.async_ended': {
         actions: enqueueActions(({ context, event, enqueue }) => {
-          const tools = { ...context.tools };
-          delete tools[event.key];
-          enqueue.assign({ tools });
+          const toolActors = { ...context.toolActors };
+          delete toolActors[event.key];
+          enqueue.assign({ toolActors });
           enqueue.emit({
             type: 'tool.async_ended',
             toolCallId: event.toolCallId,
@@ -450,23 +450,23 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       },
       'xstate.error.actor.*': [
         {
-          guard: ({ context, event }) => context.tools[event.actorId] !== undefined,
+          guard: ({ context, event }) => context.toolActors[event.actorId] !== undefined,
           actions: enqueueActions(({ context, event, enqueue }) => {
-            const slot = context.tools[event.actorId];
+            const slot = context.toolActors[event.actorId];
             if (slot === undefined) return;
-            const tools = { ...context.tools };
-            delete tools[event.actorId];
+            const toolActors = { ...context.toolActors };
+            delete toolActors[event.actorId];
             if (slot.detached) {
               const outcome = { type: 'failed' as const, error: event.error };
               const entry = completionEntry(slot.toolCall, outcome);
-              enqueue.assign({ tools });
+              enqueue.assign({ toolActors });
               enqueue.emit({ type: 'tool.async_ended', toolCallId: slot.toolCall.id, outcome, entry });
               enqueue.emit({ type: 'prompt.notified', entry });
               queueNotify(enqueue, [entry]);
               return;
             }
             const outcome = failedToolOutcome(slot.toolCall, event.error);
-            enqueue.assign({ tools, step: settle(context.step, event.actorId, outcome) });
+            enqueue.assign({ toolActors, step: settle(context.step, event.actorId, outcome) });
             enqueue.emit({ type: 'tool.ended', toolCallId: slot.toolCall.id, outcome, detached: false });
           }),
         },
@@ -848,7 +848,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
       closed: {
         type: 'final',
         entry: enqueueActions(({ context, enqueue }) => {
-          for (const slot of Object.values(context.tools)) {
+          for (const slot of Object.values(context.toolActors)) {
             if (!slot.detached) continue;
             const outcome = { type: 'aborted' as const, reason: CLOSED };
             enqueue.stopChild(slot.ref);
@@ -859,7 +859,7 @@ export function createLoopMachine({ requester, executor, hooks, abortGraceMs }: 
               entry: completionEntry(slot.toolCall, outcome),
             });
           }
-          enqueue.assign({ tools: {} });
+          enqueue.assign({ toolActors: {} });
           enqueue(() => context.scope.abort());
         }),
       },

@@ -59,20 +59,22 @@ console.log(outcome.type);
 await loop.close();
 ```
 
-## 设置 system prompt 和 tools
+## 提供 system prompt 和 tools
 
-`loop.setSystemPrompt(text)` 和 `loop.setTools(descriptions)` 设置 loop 随每次 LLM 请求在历史之外附加的 profile；当前值读 `loop.state.profile`。每次调用以 `system_prompt.settled` / `tools.settled` 应答；除非 loop 处于 idle 或正在收尾一个 step，否则得到 `*.rejected`——与 `setContext` 一样，turn 中途的修改从下一个 step 生效。传 `undefined` / `[]` 即清除。
+`loop.setSystemPrompt(sections)` 以段落形式（`{ id, text }`，组请求时按顺序拼接）设置 system prompt，`loop.setTools(descriptions)` 设置工具描述。两者任何时候都接受（包括 turn 中途），从下一次请求起生效；当前值读 `loop.state.profile.systemPrompt`（段落）和 `loop.state.profile.tools`。需要拼好的请求形态时用 `requestProfileOf(profile)`。
 
 ```ts
-loop.setSystemPrompt('You are a helpful assistant.');
+loop.setSystemPrompt([{ id: 'host', text: 'You are a helpful assistant.' }]);
 loop.setTools([weatherTool]);
 ```
 
-settled 事件是耐用记录（`src/loop/record.ts`），因此在首个 turn 之前设置的 profile 会在按记录恢复时原样回来。又因为请求按 requester 优先的顺序合并维度，loop 的 profile 会覆盖叠在 requester 上的 `profile`——重开后持久化的 spec 永远赢。
+段落和工具来自随时可能变化的贡献点时，改用 `createSystemPromptSync(loop, source)` 和 `createToolsSync(loop, source)`，每次变化后调用 `refresh()`。两者各自保持自己那部分可缓存：当前值还没被任何请求用过时直接覆盖；用过之后字节不变，变化以一条 system 通告 remind 给模型（更新和移除的段落；被移除的工具——新增或修改的工具要等 reload）。`onPending` 报告哪些不一致，`reload()` 立即重写当前值。
+
+`system_prompt.settled` / `tools.settled` 是耐用记录（`src/loop/record.ts`），因此按记录恢复的 loop 保留原 profile。又因为请求按 requester 优先的顺序合并维度，loop 的 profile 会覆盖叠在 requester 上的 `profile`——重开后持久化的值永远赢。
 
 ## 下一步
 
-- `loop.state` 是一个普通投影（已设置的 profile、status、held、inbox、messages、正在运行的 turn、含后台工具的工具列表）;`loop.requester` 是用于旁路请求的 requester facade——每次 `request`/`generate` 都会重新读取 loop 当前的 base requester 并把当前历史填充为 `content`，因此 `.with()` 的覆盖总是落在最新的配置与上下文上;`loop.waitForTasks` 等待后台工具，`loop.waitForIdle()` 等 loop 停稳。
+- `loop.state` 是一个普通投影（status、held、inbox、profile、messages、正在运行的 turn，以及 `calls`——含后台工具在内的运行中工具调用）;`loop.requester` 是用于旁路请求的 requester facade——每次 `request`/`generate` 都会重新读取 loop 当前的 base requester 并把当前历史填充为 `content`，因此 `.with()` 的覆盖总是落在最新的配置与上下文上;`loop.waitForTasks` 等待后台工具，`loop.waitForIdle()` 等 loop 停稳。
 - 输入命令（`submit`/`notify`/`remind`/`steer`/`cancel`/`setContext`/`setSystemPrompt`/`setTools`）在任何位置都是同步的，包括 `subscribe` 监听器和 hook 内部：调用即返回 ack，返回时 `loop.state` 已经反映了这次修改。事件按唯一的全局顺序投递给监听器，且总在产生它的状态变更之后。
 - loop 本身不做持久化。`src/loop/record.ts` 定义了它的耐用契约（`LoopRecord` / `toLoopRecord` / `loopProjection`）；想要接好的持久化，用 `src/session/`——见「运行一个带 subagent 的 session」。
 - 崩溃后恢复：用 `loopProjection` 回放记录，把 `{ profile, messages, nextTurnId, unfinished, inbox: { notify } }` 作为 `input` 传入。存在 `unfinished` turn 时 loop 以 `interrupted` 状态启动：`continue()` 在历史允许时续跑这个 turn(`turn.resumed`，同一个 turn id，进入下一个 step);其他触发——`abort`、`runTurn`、`submit`、`notify`、`steer`——都会先把它以 `aborted`(reason 为 `CRASHED`)收尾，并为没有结果的工具调用补上 aborted 结果。

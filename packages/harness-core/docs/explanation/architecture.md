@@ -247,9 +247,9 @@ files. An agent-level unit calls harness hooks that register into the
 agent's `AgentRuntime`:
 
 - `useAgentTools(...)` — tool definitions into the registry **and** the
-  loop's tool profile (with freeze-aware re-sync),
+  agent's tools profile sync,
 - `useSystemPrompt(...)` (agent-core) — a section into the system prompt
-  contribution point (assembled once at agent create),
+  contribution point (synced into the loop's profile),
 - `useMessageResolver` / `useLlmRecovery` / `useLlmRetryable` — entries into
   the loop's native policy registry, re-read on every attempt,
 - `useFeatureStore(...)` — a durable, undo-aware event-sourced store,

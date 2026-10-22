@@ -1,3 +1,5 @@
+import { now } from '#/utils/now';
+
 export type LogLevel = 'error' | 'warn' | 'info' | 'debug';
 export type LogLevelConfig = LogLevel | 'off';
 
@@ -63,7 +65,7 @@ function boundLogger(
     if (!levelEnabled(level, state.level)) return;
     const merged = bound === undefined ? context : { ...context, ...bound };
     writer.write({
-      t: Date.now(),
+      t: now(),
       level,
       message,
       context: merged,

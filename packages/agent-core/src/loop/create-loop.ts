@@ -1,20 +1,20 @@
 import { createActor, waitFor } from 'xstate';
 
 import type { HistoryMessage, UserEntry } from '#/history/message';
-import type { ToolCall, ToolDescription } from '#/llm/message';
+import type { ToolDescription } from '#/llm/message';
 import { createPolicyRegistry, type PolicyRegistry } from '#/llm/policy/registry';
 import type { ToolExecutor } from '#/tool/index';
 import { waitEvent, type WaitOpts } from '#/utils/wait';
-import { commandError, inputError, type LoopCommand, type LoopInput, type LoopProfile } from './contract/command';
+import { commandError, inputError, type LoopCommand, type LoopInput } from './contract/command';
 import type { LoopAck, LoopEmitted } from './contract/emitted';
 import type { HookRegistration } from './contract/hook';
-import type { Inbox, RemindEntry, TurnTrigger } from './contract/inbox';
+import type { RemindEntry } from './contract/inbox';
 import type { TurnOutcome } from './contract/outcome';
 import { createHookRegistry, type HookRegistry } from './hook/registry';
 import { createLoopMachine } from './machine/loop';
 import type { LoopLlmRequester } from './machine/request-actor';
 import { createLoopRequester } from './requester';
-import { createLoopState, type LoopStateEvent, type LoopStateOutput } from './state';
+import { createLoopState, viewOf, type LoopState, type LoopStateEvent, type LoopStateOutput } from './state';
 import { createWaitForTasks, type WaitForTasks } from './tool/tasks';
 
 export interface CreateLoopOptions {
@@ -24,29 +24,6 @@ export interface CreateLoopOptions {
   readonly input?: LoopInput;
   readonly abortGraceMs?: number;
   readonly onListenerError?: (error: unknown, event: LoopEmitted) => void;
-}
-
-export interface LoopTurnState {
-  readonly id: number;
-  readonly trigger: TurnTrigger;
-  readonly step: number;
-}
-
-export interface LoopToolState {
-  readonly toolCall: ToolCall;
-  readonly turnId: number;
-  readonly detached: boolean;
-}
-
-export interface LoopState {
-  readonly profile: LoopProfile;
-  readonly status: 'idle' | 'running' | 'interrupted';
-  readonly held: boolean;
-  readonly messages: readonly HistoryMessage[];
-  readonly inbox: Readonly<Inbox>;
-  readonly nextTurnId: number;
-  readonly turn?: LoopTurnState;
-  readonly tools: readonly LoopToolState[];
 }
 
 export interface Loop {
@@ -68,8 +45,8 @@ export interface Loop {
   detachTool(toolCallId: string): void;
   setRequester(requester: LoopLlmRequester | undefined): void;
   setContext(messages: HistoryMessage[], reason?: string): LoopAck<'context.settled' | 'context.rejected'> | undefined;
-  setSystemPrompt(systemPrompt?: string): LoopAck<'system_prompt.settled' | 'system_prompt.rejected'> | undefined;
-  setTools(tools: readonly ToolDescription[]): LoopAck<'tools.settled' | 'tools.rejected'> | undefined;
+  setSystemPrompt(systemPrompt: string): LoopAck<'system_prompt.settled'> | undefined;
+  setTools(tools: readonly ToolDescription[]): LoopAck<'tools.settled'> | undefined;
   subscribe(listener: (event: LoopEmitted) => void): () => void;
   wait<T extends LoopEmitted['type']>(type: T, opts?: WaitOpts<LoopAck<T>>): Promise<LoopAck<T>>;
   runTurn(entry: UserEntry, opts?: { readonly signal?: AbortSignal }): Promise<TurnOutcome>;
@@ -168,31 +145,7 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
     );
   return {
     get state(): LoopState {
-      const { phase, held, inbox, durable, turn } = state.getSnapshot().context;
-      const current =
-        turn !== undefined
-          ? {
-              id: turn.id,
-              trigger: turn.trigger,
-              step: durable.unfinished?.turnId === turn.id ? durable.unfinished.step : turn.step,
-            }
-          : durable.unfinished !== undefined
-            ? { id: durable.unfinished.turnId, trigger: durable.unfinished.trigger, step: durable.unfinished.step }
-            : undefined;
-      return {
-        profile: durable.profile,
-        status: phase === 'running' ? 'running' : durable.unfinished !== undefined ? 'interrupted' : 'idle',
-        held,
-        messages: durable.messages,
-        inbox,
-        nextTurnId: durable.nextTurnId,
-        ...(current === undefined ? {} : { turn: current }),
-        tools: Object.values(actor.getSnapshot().context.tools).map(({ toolCall, turnId, detached }) => ({
-          toolCall,
-          turnId,
-          detached,
-        })),
-      };
+      return viewOf(state.getSnapshot().context);
     },
     requester: createLoopRequester(requester, () => state.getSnapshot().context.durable.messages),
     get baseRequester(): LoopLlmRequester | undefined {
@@ -259,12 +212,13 @@ export function createLoop({ input = {}, hooks, onListenerError, ...options }: C
         (reply) => ({ type: 'setContext', messages, reason, reply }),
       ),
     setSystemPrompt: (systemPrompt) =>
-      acknowledge<LoopAck<'system_prompt.settled' | 'system_prompt.rejected'>>(
-        { type: 'input.set_system_prompt', systemPrompt },
-        (reply) => ({ type: 'setSystemPrompt', systemPrompt, reply }),
-      ),
+      acknowledge<LoopAck<'system_prompt.settled'>>({ type: 'input.set_system_prompt', systemPrompt }, (reply) => ({
+        type: 'setSystemPrompt',
+        systemPrompt,
+        reply,
+      })),
     setTools: (tools) =>
-      acknowledge<LoopAck<'tools.settled' | 'tools.rejected'>>({ type: 'input.set_tools', tools }, (reply) => ({
+      acknowledge<LoopAck<'tools.settled'>>({ type: 'input.set_tools', tools }, (reply) => ({
         type: 'setTools',
         tools,
         reply,

@@ -16,6 +16,7 @@ import {
   type MediaSupport,
 } from '#/llm/protocol/rules/media';
 import { capabilityAccepts, type LlmFiles, type LlmModelSpec } from '#/llm/request';
+import { now } from '#/utils/now';
 
 import { mediaKindForMime, mediaMimeForPath, sniffMediaMime } from './mime';
 import type { Placeholder, RefStore, StoredContent, UploadCache } from './ports';
@@ -73,7 +74,7 @@ function resolveMimeType(content: StoredContent, kind: MediaKind): string | unde
 }
 
 function isFresh(expiresAt: number | undefined): boolean {
-  return expiresAt === undefined || expiresAt > Date.now();
+  return expiresAt === undefined || expiresAt > now();
 }
 
 function referenceBytes(source: MediaSource): number {

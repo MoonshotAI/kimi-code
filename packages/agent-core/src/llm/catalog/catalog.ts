@@ -1,5 +1,6 @@
 import { createUserMessage } from '#/llm/message';
 import type { LlmRequester } from '#/llm/requester';
+import { now } from '#/utils/now';
 import { abortReason } from '#/utils/wait';
 
 import { listSnapshotModels, resolveSnapshotModel } from './merge';
@@ -308,7 +309,7 @@ export async function createProviderCatalog(
           credentials.invalidate?.();
           outcome = await generate();
         }
-        const durationMs = Date.now() - request.startedAt;
+        const durationMs = now() - request.startedAt;
         if (outcome.type === 'failed') {
           return { ok: false, durationMs, error: outcome.error.message };
         }
@@ -342,7 +343,7 @@ export async function createProviderCatalog(
     } catch (error) {
       return {
         ok: false,
-        durationMs: Date.now() - request.startedAt,
+        durationMs: now() - request.startedAt,
         error: error instanceof Error ? error.message : String(error),
       };
     }
@@ -497,7 +498,7 @@ export async function createProviderCatalog(
       promise,
       resolve: resolvePromise,
       reject: rejectPromise,
-      startedAt: Date.now(),
+      startedAt: now(),
       settled: false,
     };
     pingTasks.set(key, task);
@@ -588,7 +589,7 @@ export async function createProviderCatalog(
       for (const task of pingTasks.values()) {
         settlePing(task, {
           ok: false,
-          durationMs: Date.now() - task.startedAt,
+          durationMs: now() - task.startedAt,
           error: 'Provider catalog is closed',
         });
       }

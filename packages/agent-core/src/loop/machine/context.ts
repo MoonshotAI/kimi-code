@@ -9,10 +9,10 @@ import {
   type UserEntry,
 } from '#/history/message';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';
-import type { LoopProfile } from '../contract/command';
 import type { MessageSource, QueuedItem, TurnTrigger } from '../contract/inbox';
 import type { Cause, StepOutcome, ToolCallOutcome, TurnOutcome } from '../contract/outcome';
 import type { TurnStart } from '../contract/process';
+import type { LoopProfile } from '../contract/profile';
 import type { HookFailure } from '../hook/failure';
 import type { ToolActorRef } from '../tool/machine';
 
@@ -50,7 +50,7 @@ export interface StepState {
 export interface LoopMachineContext {
   profile: LoopProfile;
   messages: HistoryMessage[];
-  tools: Record<string, ToolSlot>;
+  toolActors: Record<string, ToolSlot>;
   scope: AbortScope;
   turn?: TurnState;
   step?: StepState;
@@ -63,7 +63,7 @@ export type AppendedItem =
 type Patch = Partial<LoopMachineContext>;
 
 export function initialContext(): LoopMachineContext {
-  return { profile: {}, messages: [], tools: {}, scope: createAbortScope() };
+  return { profile: {}, messages: [], toolActors: {}, scope: createAbortScope() };
 }
 
 export function beginTurn(context: LoopMachineContext, start: TurnStart): Patch {

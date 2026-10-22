@@ -1,7 +1,8 @@
 import type { HistoryMessage, ToolMeta, UserEntry, UserMeta } from '#/history/message';
 import type { Event, Projection } from '#/store/index';
-import type { LoopProfile, UnfinishedTurn } from './contract/command';
+import type { UnfinishedTurn } from './contract/command';
 import type { LoopEmitted } from './contract/emitted';
+import type { LoopProfile } from './contract/profile';
 import { INTERRUPTED, type TurnOutcome } from './contract/outcome';
 import { completionEntry } from './tool/outcome';
 
@@ -112,7 +113,7 @@ function appended(state: LoopRecordState, event: Extract<LoopRecord, { type: 'me
 
 export function loopProjection(): Projection<LoopRecordState, LoopRecord> {
   return {
-    initial: () => ({ messages: [], nextTurnId: 0, turns: [], notify: [], profile: {} }),
+    initial: () => ({ profile: {}, messages: [], nextTurnId: 0, turns: [], notify: [] }),
     reduce: (state, { seq, event }) => {
       switch (event.type) {
         case 'message.appended':

@@ -116,8 +116,8 @@ refs and methods, no internal handles.
 ## Register Tools
 
 Use `useAgentTools` (from `@moonshot-ai/harness-core`), never the raw loop,
-so the definition lands in the runtime registry *and* the loop's tool
-profile with freeze-aware re-sync:
+so the definition lands in the runtime registry *and* the agent's tools
+profile sync:
 
 ```ts
 import { useAgentTools, useFeatureStore } from '@moonshot-ai/harness-core';
