@@ -1050,6 +1050,53 @@ describe('KimiTUI message flow', () => {
     expect(driver.state.editor.getText()).toBe(expected);
   });
 
+  it.each([
+    ['takes over the lock and resends', true],
+    ['gives the message back', false],
+  ] as const)('offers takeover once a retry is still occupied and %s', async (_label, takeOver) => {
+    const occupied = new KimiError(ErrorCodes.SESSION_OCCUPIED, 'in use', {
+      details: { holder: { clientIdentity: 'kimi_code_cli', pid: 4321, hostname: 'host-a' } },
+    });
+    const prompt = vi
+      .fn(async (_input: unknown) => {})
+      .mockRejectedValueOnce(occupied)
+      .mockRejectedValueOnce(occupied);
+    const takeOverLock = vi.fn(async () => {});
+    const session = makeSession({ prompt, takeOverLock });
+    const { driver } = await makeDriver(session);
+    type Picker = { handleInput(data: string): void; render(width: number): string[] };
+    const picker = (): Picker => driver.state.editorContainer.children[0] as Picker;
+
+    driver.handleUserInput('hello');
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session in use');
+    });
+    const first = stripSgr(picker().render(80).join(' '));
+    expect(first).not.toContain('Take over');
+    expect(first).not.toContain('Held by process');
+    picker().handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(stripSgr(picker().render(80).join(' '))).toContain('Session still in use');
+    });
+    expect(stripSgr(picker().render(80).join(' '))).toContain('Held by process 4321 on host-a.');
+    if (takeOver) picker().handleInput('\u001B[B');
+    picker().handleInput('\r');
+
+    if (takeOver) {
+      await vi.waitFor(() => {
+        expect(prompt).toHaveBeenCalledTimes(3);
+      });
+      expect(takeOverLock).toHaveBeenCalledTimes(1);
+    } else {
+      await vi.waitFor(() => {
+        expect(driver.state.editor.getText()).toBe('hello');
+      });
+      expect(prompt).toHaveBeenCalledTimes(2);
+      expect(takeOverLock).not.toHaveBeenCalled();
+    }
+  });
+
   it('renders a bundled replay submission as a single turn', async () => {
     const session = makeSession({ id: 'ses-lazy' });
     const startupInput: KimiTUIStartupInput = {

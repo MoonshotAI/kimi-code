@@ -8,8 +8,25 @@ export function isSessionStaleError(error: unknown): boolean {
   return isKimiError(error) && error.code === ErrorCodes.SESSION_STALE;
 }
 
+interface OccupiedHolder {
+  readonly clientIdentity?: string;
+  readonly pid?: number;
+  readonly hostname?: string;
+}
+
+function occupiedHolder(error: unknown): OccupiedHolder | undefined {
+  if (!isKimiError(error)) return undefined;
+  const details = error.details as { holder?: OccupiedHolder } | null | undefined;
+  return details?.holder;
+}
+
 export function occupiedHolderClientId(error: unknown): string {
-  if (!isKimiError(error)) return 'unknown';
-  const details = error.details as { holder?: { clientIdentity?: string } } | null | undefined;
-  return details?.holder?.clientIdentity ?? 'unknown';
+  return occupiedHolder(error)?.clientIdentity ?? 'unknown';
+}
+
+export function occupiedHolderSummary(error: unknown): string | undefined {
+  const holder = occupiedHolder(error);
+  if (holder?.pid === undefined || holder.pid <= 0) return undefined;
+  if (holder.hostname === undefined || holder.hostname === '') return undefined;
+  return `Held by process ${holder.pid} on ${holder.hostname}.`;
 }

@@ -197,7 +197,11 @@ import { REPLAY_FETCH_TURN_LIMIT } from './utils/message-replay';
 import { hasPatchChanges } from './utils/object-patch';
 import { beginScreenTakeover, endScreenTakeover, type ScreenTakeover } from './utils/screen-takeover';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
-import { isSessionOccupiedError, occupiedHolderClientId } from './utils/session-lock-errors';
+import {
+  isSessionOccupiedError,
+  occupiedHolderClientId,
+  occupiedHolderSummary,
+} from './utils/session-lock-errors';
 import { CLI_MSH_PLATFORM } from '#/constant/app';
 import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -330,6 +334,7 @@ interface SendMessageOptions {
    * it — the queue item owns the raw ids and re-leases at dequeue.
    */
   readonly lease?: StagingLease;
+  readonly occupiedRetry?: boolean;
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1695,6 +1700,7 @@ export class KimiTUI {
     text: string,
     activations: readonly InlineSkillActivation[],
     extraction: ReturnType<typeof extractMediaAttachments>,
+    occupiedRetry = false,
   ): void {
     let prepared: PreparedSkillActivations | undefined;
     let input: string | readonly PromptPart[];
@@ -1741,7 +1747,8 @@ export class KimiTUI {
         session,
         error,
         entries: [entry],
-        retry: () => this.runInlineSkillActivations(session, text, activations, extraction),
+        retried: occupiedRetry,
+        retry: () => this.runInlineSkillActivations(session, text, activations, extraction, true),
         restore: () => {
           this.staging.releaseRecalled([
             ...extraction.imageAttachmentIds,
@@ -2036,6 +2043,7 @@ export class KimiTUI {
         parts,
         imageAttachmentIds: item.imageAttachmentIds,
         videoAttachmentIds: item.videoAttachmentIds,
+        occupiedRetry: item.occupiedRetry,
       });
     });
   }
@@ -2149,7 +2157,10 @@ export class KimiTUI {
       );
     const submissionId = stagingLease?.submissionId;
     const resend = (): void => {
-      this.state.queuedMessages.unshift(this.toQueuedMessage(input, options));
+      this.state.queuedMessages.unshift({
+        ...this.toQueuedMessage(input, options),
+        occupiedRetry: true,
+      });
       this.updateQueueDisplay();
       this.drainQueueIfIdle();
     };
@@ -2170,6 +2181,7 @@ export class KimiTUI {
           session,
           error,
           entries: [entry],
+          retried: options?.occupiedRetry === true,
           retry: resend,
           restore: restoreInput,
         });
@@ -2190,6 +2202,7 @@ export class KimiTUI {
         session,
         error,
         entries: [entry],
+        retried: options?.occupiedRetry === true,
         retry: resend,
         restore: restoreInput,
       });
@@ -2217,15 +2230,20 @@ export class KimiTUI {
     session: Session;
     error: unknown;
     entries?: readonly TranscriptEntry[];
+    retried: boolean;
     retry: () => void;
     restore: () => void;
   }): boolean {
-    const { session, error, entries, retry, restore } = args;
+    const { session, error, entries, retried, retry, restore } = args;
     if (this.session?.id !== session.id || !isSessionOccupiedError(error)) return false;
     if (entries !== undefined) this.removeTranscriptEntries(entries);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
-    this.showSessionOccupied(error, retry, restore);
+    if (retried) {
+      this.showSessionTakeover(session, error, retry, restore);
+    } else {
+      this.showSessionOccupied(error, retry, restore);
+    }
     return true;
   }
 
@@ -2242,7 +2260,7 @@ export class KimiTUI {
     this.mountEditorReplacement(
       new ChoicePickerComponent({
         title: 'Session in use',
-        notice: formatErrorMessage(error),
+        notice: error instanceof Error ? error.message : String(error),
         noticeTone: 'warning',
         options: [
           { value: 'retry', label: 'Retry', description: 'send again now' },
@@ -2257,6 +2275,52 @@ export class KimiTUI {
           this.track('occupied_choice', { choice: 'retry', holder_client: holderClient });
           this.restoreEditor();
           retry();
+        },
+        onCancel: cancel,
+      }),
+    );
+  }
+
+  private showSessionTakeover(
+    session: Session,
+    error: unknown,
+    retry: () => void,
+    restore: () => void,
+  ): void {
+    const holderClient = occupiedHolderClientId(error);
+    const cancel = (): void => {
+      this.track('occupied_choice', { choice: 'cancel', holder_client: holderClient });
+      restore();
+    };
+    const holderSummary = occupiedHolderSummary(error);
+    const risk =
+      'If that process is no longer running, take over the session. If it is still running, both processes will write to this session and its history can interleave.';
+    this.mountEditorReplacement(
+      new ChoicePickerComponent({
+        title: 'Session still in use',
+        notice: holderSummary === undefined ? risk : `${holderSummary}\n${risk}`,
+        noticeTone: 'warning',
+        options: [
+          { value: 'cancel', label: 'Cancel', description: 'get your message back' },
+          {
+            value: 'takeover',
+            label: 'Take over',
+            tone: 'danger',
+            description: "remove the other process's lock and send again",
+          },
+        ],
+        spaceSelect: false,
+        onSelect: (action) => {
+          if (action !== 'takeover') {
+            cancel();
+            return;
+          }
+          this.track('occupied_choice', { choice: 'takeover', holder_client: holderClient });
+          this.restoreEditor();
+          void session.takeOverLock().then(retry, (takeoverError: unknown) => {
+            this.showError(`Failed to take over the session: ${formatErrorMessage(takeoverError)}`);
+            restore();
+          });
         },
         onCancel: cancel,
       }),
@@ -2283,6 +2347,7 @@ export class KimiTUI {
     pluginId: string,
     commandName: string,
     args: string,
+    occupiedRetry = false,
   ): void {
     let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
     try {
@@ -2308,7 +2373,8 @@ export class KimiTUI {
         const recovered = this.handlePromptConflict({
           session,
           error,
-          retry: () => this.activatePluginCommand(session, pluginId, commandName, args),
+          retried: occupiedRetry,
+          retry: () => this.activatePluginCommand(session, pluginId, commandName, args, true),
           restore: () => {
             this.staging.releaseRecalled(rewrite.imageAttachmentIds);
             this.restoreInputText(`/${pluginId}:${commandName}${args.length > 0 ? ` ${args}` : ''}`);
@@ -2480,6 +2546,7 @@ export class KimiTUI {
     input: readonly SteerInputItem[],
     onSettled?: (steered: boolean) => void,
     manual = false,
+    occupiedRetry = false,
   ): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
       if (onSettled !== undefined) {
@@ -2576,7 +2643,8 @@ export class KimiTUI {
         session,
         error,
         entries: prepared === undefined && !manual ? steeredEntries : undefined,
-        retry: () => this.steerMessage(session, input, onSettled, manual),
+        retried: occupiedRetry,
+        retry: () => this.steerMessage(session, input, onSettled, manual, true),
         restore: () => {
           this.staging.releaseRecalled(mediaAttachmentIds);
           this.restoreInputText(input.map((item) => item.text).join('\n'));

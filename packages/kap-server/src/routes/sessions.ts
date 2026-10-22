@@ -40,6 +40,7 @@ import {
   type SessionSummary,
   type SubagentModelPoolSnapshot,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { ErrorCode } from '../protocol/error-codes';
 import { pageResponseSchema } from '../protocol/pagination';
@@ -58,6 +59,7 @@ import {
   sessionStatusResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
+  takeoverSessionResponseSchema,
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
@@ -620,6 +622,7 @@ export function registerSessionsRoutes(
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
           deleteSessionResponseSchema,
+          takeoverSessionResponseSchema,
         ]),
       },
       errors: {
@@ -879,7 +882,8 @@ type SessionAction =
   | 'restore'
   | 'archive'
   | 'delete'
-  | 'reload';
+  | 'reload'
+  | 'takeover';
 
 interface SessionActionExtra {
   readonly core: Scope;
@@ -902,6 +906,7 @@ const sessionActions: ActionTable<SessionAction, SessionActionExtra> = {
   archive: { handle: archiveSessionAction },
   delete: { handle: deleteSessionAction },
   reload: { handle: reloadSessionAction },
+  takeover: { handle: takeoverSessionAction },
 };
 
 async function forkSessionAction(
@@ -1022,6 +1027,17 @@ async function archiveSessionAction(ctx: SessionActionCtx): Promise<void> {
   await setSessionArchived(core.accessor, id, true);
   requestLog(req)?.info({ session_id: id, action: 'archive' }, 'session action completed');
   reply.send(okEnvelope({ archived: true }, req.id));
+}
+
+async function takeoverSessionAction(ctx: SessionActionCtx): Promise<void> {
+  const { core, req, reply, id } = ctx;
+  const summary = await core.accessor.get(ISessionManager).status(id);
+  if (summary === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
+  }
+  core.accessor.get(ISessionLockService).takeover(id);
+  requestLog(req)?.info({ session_id: id, action: 'takeover' }, 'session action completed');
+  reply.send(okEnvelope({ taken_over: true }, req.id));
 }
 
 async function deleteSessionAction(ctx: SessionActionCtx): Promise<void> {
