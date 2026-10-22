@@ -117,8 +117,8 @@ Hook 命令的工作目录是当前会话的项目目录。
 | `PermissionRequest` | 工具名 | — | 即将等待用户审批前触发 |
 | `PermissionResult` | 工具名 | — | 审批结束后触发 |
 | `SessionStart` | `startup` 或 `resume` | — | 新会话启动或历史会话恢复后触发；payload 含 `source`、`model`、`profile` |
-| `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出 |
-| `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次，仅配置本事件时计时器才运行；payload 含 `uptime_ms` |
+| `SessionEnd` | `exit` 或 `archive` | — | 会话关闭后触发；`archive` 表示会话被归档而非退出；`kimi web` 将空闲会话从内存卸载时不触发，之后归档或删除这个已卸载的会话也不触发；透明恢复不触发 `SessionStart` |
+| `SessionHeartbeat` | 空字符串 | — | 会话存活期间每 60 秒触发一次，仅配置本事件时计时器才运行；payload 含 `uptime_ms`；`kimi web` 卸载会话期间暂停，恢复后 `uptime_ms` 重新计时 |
 | `SubagentStart` | subagent 名称 | — | subagent 开始运行前触发 |
 | `SubagentStop` | subagent 名称 | — | subagent 成功完成后触发 |
 | `TaskStarted` | 任务类型（`agent`、`process` 或 `question`） | — | 后台任务启动时触发；payload 含 `task_id`、`description`、`detached` |

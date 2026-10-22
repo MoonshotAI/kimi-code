@@ -6,6 +6,27 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.3.0 (2026-10-21)
+
+### Features
+
+- Plugin skills are now invoked by qualified name `<pluginID>:<skillName>`, so same-named skills from different plugins no longer shadow each other; bare-name invocation no longer works.
+- When the same session is open in multiple clients, sending a message from another client now shows an occupancy prompt, with options to retry or cancel.
+- A session title is now generated automatically after the first turn and shown as the terminal window title.
+- Switching models mid-session now shows a confirmation dialog: start a new session, compact and continue, or continue directly.
+- Remote control now supports streaming, and the limit is raised from 10 MiB to 100 MiB.
+
+### Polish
+
+- `/compact` now queues while the agent is busy instead of failing with an error.
+- The session rating toggle moves from tui.toml to config.toml.
+- `dangerous_command_guard = false` now disables all built-in confirmation guardrails, not only dangerous commands.
+
+### Bug Fixes
+
+- Hooks now run in the session's project directory instead of the server startup directory.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.2.0 (2026-10-14)
 
 ### Features

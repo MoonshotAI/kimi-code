@@ -10,8 +10,12 @@ import { IAgentScopeContext, makeAgentScopeContext, type IAgentScopeContext as A
 import { IEventBus, ISessionEventBus } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
+
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { AgentTodoService, IAgentTodoService } from '#/features/todo/todoService';
@@ -44,6 +48,8 @@ const noopLog: IAppendLogStore = {
   close: async () => {},
   acquire: () => toDisposable(() => {}),
   drainRetirements: () => Promise.resolve(),
+  externallyModified: () => false,
+  bindWriteGuard: () => ({ dispose: () => undefined }),
 };
 
 const noopBlob: IAgentBlobService = {
@@ -75,6 +81,16 @@ export function testWireScope(scope: string, journal: string): string {
   return `${scope}/${journal}`;
 }
 
+function stubSessionContext(): ISessionContext {
+  return makeSessionContext({
+    sessionId: 'test-session',
+    workspaceId: 'test-workspace',
+    sessionDir: '/tmp/test-session',
+    sessionScope: 'sessions/test-workspace/test-session',
+    cwd: '/tmp/test-session',
+  });
+}
+
 export function stubAgentScopeContext(scope: string, agentId = 'test-agent'): AgentScopeContext {
   return makeAgentScopeContext({ agentId, agentScope: scope, generation: 0 });
 }
@@ -98,6 +114,14 @@ export function registerTestAgentWire(
   if (dependencies.telemetry !== undefined) {
     ix.stub(ITelemetryService, dependencies.telemetry);
   }
+  const previousContext = ix.set(ISessionContext, stubSessionContext());
+  if (previousContext !== undefined) {
+    ix.set(ISessionContext, previousContext as ISessionContext);
+  }
+  const previousLocks = ix.set(ISessionLockService, new InMemorySessionLockService());
+  if (previousLocks !== undefined) {
+    ix.set(ISessionLockService, previousLocks as ISessionLockService);
+  }
   ix.set(IWireService, new SyncDescriptor(WireService));
   const eventBus = ix.get(IEventBus);
   if (typeof (eventBus as Partial<ISessionEventBus>).activateAgent === 'function') {
@@ -118,6 +142,8 @@ export function registerTestAgentWireServices(
   registration.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
   registration.defineInstance(ILogService, noopLogger);
   registration.defineInstance(ITelemetryService, noopTelemetryService);
+  registration.defineInstance(ISessionContext, stubSessionContext());
+  registration.defineInstance(ISessionLockService, new InMemorySessionLockService());
   registration.defineInstance(IAgentStateService, new AgentStateService());
   registration.define(IWireService, WireService);
   registration.define(IEventDispatcher, EventDispatcherService);
@@ -168,6 +194,7 @@ export function stubAgentWire(
     lineCount: () => 0,
     lastContextClearLine: () => undefined,
     journalPath: () => undefined,
+    externallyModified: () => false,
     journalRef: { tree: 'stub', branch: 'main' },
     append: () => {},
     read: async function* () {},
@@ -228,5 +255,7 @@ export function recordingWireLog(
     close: async () => {},
     acquire: () => toDisposable(() => {}),
     drainRetirements: () => Promise.resolve(),
+    externallyModified: () => false,
+    bindWriteGuard: () => ({ dispose: () => undefined }),
   };
 }

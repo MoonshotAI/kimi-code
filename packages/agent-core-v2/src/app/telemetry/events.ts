@@ -1,4 +1,5 @@
 import type { TowerExitReason } from '#/features/tower/tower';
+import type { SessionCloseReason } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
 import type { TelemetryPrimitive } from './telemetry';
 
@@ -589,7 +590,7 @@ export interface AgentCreateFailedEvent {
 }
 
 export interface SessionEndedEvent {
-  reason: 'exit' | 'archive';
+  reason: SessionCloseReason;
 }
 
 export interface WebFetchFallbackEvent {

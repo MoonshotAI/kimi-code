@@ -1,10 +1,16 @@
 import {
   type KimiHarness,
+  type RefreshProviderModelsOptions,
   type RefreshProviderModelsResponse,
   type Session,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import {
+  confirmThenPerformModelSwitch,
+  matchedModelSwitchRule,
+} from '../commands/config';
+import type { SlashCommandHost } from '../commands/dispatch';
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
 import type { AppState, KimiTUIOptions } from '../types';
@@ -84,10 +90,13 @@ export class AuthFlowController {
 
   /**
    * Re-read config and reactivate the persisted model after login or a
-   * config-refreshing command. Returns whatever the activation reports (see
-   * {@link activateModelAfterLogin}); `false` when no activation ran.
+   * config-refreshing command. `effortOverride` is the caller's picked effort
+   * and wins over the config-derived one when the confirmation gate mounts.
+   * Returns whatever the activation reports (see {@link
+   * activateModelAfterLogin}), 'gated' when a cloud rule handed the switch to
+   * the confirmation dialog instead, and `false` when no activation ran.
    */
-  async refreshConfigAfterLogin(): Promise<boolean> {
+  async refreshConfigAfterLogin(effortOverride?: ThinkingEffort): Promise<boolean | 'gated'> {
     const { host } = this;
     const config = await host.harness.getConfig({ reload: true });
     const availableModels = config.models ?? {};
@@ -105,10 +114,26 @@ export class AuthFlowController {
       return false;
     }
 
-    const activated = await this.activateModelAfterLogin(
-      defaultModel,
-      thinkingEffortFromConfig(config.thinking),
-    );
+    const effort = thinkingEffortFromConfig(config.thinking);
+    const slashHost = this.host as unknown as SlashCommandHost;
+    host.setAppState({ availableModels, availableProviders });
+    if (matchedModelSwitchRule(slashHost, defaultModel) !== undefined) {
+      // A matching cloud rule gates the activation exactly like a picker
+      // switch: the dialog's actions own the session switch ('session' scope —
+      // the persisted default is already in config), so this refresh must not
+      // force the model patch over the user's choice. The catalog refresh must
+      // land BEFORE the match above, or an alias introduced by this login is
+      // invisible to the matcher and the gate never fires.
+      confirmThenPerformModelSwitch(
+        slashHost,
+        defaultModel,
+        effortOverride ?? effort ?? slashHost.state.appState.thinkingEffort,
+        'session',
+      );
+      return 'gated';
+    }
+
+    const activated = await this.activateModelAfterLogin(defaultModel, effort);
     if (host.session === undefined) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.
@@ -153,11 +178,14 @@ export class AuthFlowController {
    * config.  Runs best-effort: individual provider failures are collected
    * and returned instead of thrown.
    */
-  async refreshProviderModels(): Promise<RefreshProviderModelsResponse> {
-    const result = await this.host.harness.refreshProviderModels();
-    if (result.changed.length > 0) {
-      await this.refreshAvailableModels();
-    }
+  async refreshProviderModels(
+    options?: RefreshProviderModelsOptions,
+  ): Promise<RefreshProviderModelsResponse> {
+    const result = await this.host.harness.refreshProviderModels(options);
+    // The engine persists provider-only config changes (type, baseUrl, …)
+    // while reporting the provider as unchanged, so reload even when no model
+    // changed.
+    await this.refreshAvailableModels();
     return result;
   }
 

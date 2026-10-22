@@ -479,15 +479,17 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     this.ensureHighWater();
     const mapped = this.wireToExport.get(event.turnId);
-    let turnId: string;
-    let ordinal: number;
-    if (
+    const reentry =
       mapped !== undefined &&
       this.currentTurn?.turnId === mapped &&
-      this.currentTurn.state === 'running'
-    ) {
+      this.currentTurn.state === 'running';
+    const ops: TranscriptOperation[] = [];
+    if (!reentry) this.closeWedgedCurrentTurn(ops);
+    let turnId: string;
+    let ordinal: number;
+    if (reentry && mapped !== undefined) {
       turnId = mapped;
-      ordinal = this.currentTurn.ordinal;
+      ordinal = this.currentTurn!.ordinal;
     } else {
       const alloc = allocateExportTurn(
         event.turnId,
@@ -500,7 +502,6 @@ export class AgentTranscriptProjector {
       turnId = alloc.turnId;
       ordinal = alloc.ordinal;
     }
-    const ops: TranscriptOperation[] = [];
     const attachmentIds: string[] = [];
     for (const input of event.promptAttachments ?? []) {
       const attachment: TranscriptAttachment =
@@ -539,6 +540,56 @@ export class AgentTranscriptProjector {
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     ops.push({ op: 'meta.merge', meta: { activity: 'turn' } });
     return ops;
+  }
+
+  private closeWedgedCurrentTurn(ops: TranscriptOperation[]): void {
+    const turn = this.currentTurn;
+    if (turn === undefined || turn.state !== 'running') return;
+    const turnId = turn.turnId;
+    this.flushOpenFrames(ops);
+    if (this.currentStep !== undefined && this.currentStep.state === 'running') {
+      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
+      this.currentStep = step;
+      ops.push({ op: 'step.upsert', turnId: step.turnId, step });
+    }
+    if (this.currentStep === undefined && this.pendingSteers.length > 0) {
+      const ordinal = (this.stepOrdinals.get(turnId) ?? this.lookups?.stepOrdinal?.(turnId) ?? 0) + 1;
+      const step: StepHeader = {
+        kind: 'step',
+        stepId: `${turnId}.${ordinal}`,
+        turnId,
+        ordinal,
+        state: 'interrupted',
+        endedAt: nowIso(),
+      };
+      this.stepOrdinals.set(turnId, ordinal);
+      this.currentStep = step;
+      ops.push({ op: 'step.upsert', turnId, step });
+    }
+    if (this.currentStep !== undefined) {
+      for (const pending of this.pendingSteers) {
+        this.steerUserFrame(
+          ops,
+          turnId,
+          this.currentStep.stepId,
+          pending.input,
+          pending.files,
+          pending.promptIds,
+          pending.origin,
+        );
+      }
+    }
+    this.pendingSteers = [];
+    this.currentStep = undefined;
+    ops.push({
+      op: 'turn.upsert',
+      turn: {
+        ...turn,
+        state: 'failed',
+        wedged: true,
+        usage: this.takeTurnUsage(turnId) ?? turn.usage,
+      },
+    });
   }
 
   private onTurnEnded(event: {

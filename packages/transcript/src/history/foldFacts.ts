@@ -1,10 +1,11 @@
 import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
+import { turnId as exportTurnKey } from '../model/ids';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
 import type { TodoItem, TranscriptTodo } from '../model/todo';
-import type { StepUsage, TranscriptTurn } from '../model/turn';
+import type { StepUsage, TranscriptStep, TranscriptTurn } from '../model/turn';
 import type { AgentTranscriptSnapshot } from '../ops/operation';
 
 export interface HistoryWireRecord {
@@ -246,7 +247,11 @@ function readTodoItems(raw: unknown): TodoItem[] {
 export function foldWireRecordFacts(
   records: Iterable<HistoryWireRecord>,
   base: AgentTranscriptSnapshot,
-  options?: { readonly agentId?: string; readonly resolvePlanRevisionKey?: (key: string) => string },
+  options?: {
+    readonly agentId?: string;
+    readonly resolvePlanRevisionKey?: (key: string) => string;
+    readonly activeWireTurnId?: number;
+  },
 ): AgentTranscriptSnapshot {
   const tasks = new Map<string, TranscriptTask>();
   const interactions = new Map<string, TranscriptInteraction>();
@@ -254,6 +259,8 @@ export function foldWireRecordFacts(
   const interruptedSteps = new Map<number, Map<number, HistoryWireRecord>>();
   const turnPromptIds = new Map<number, string>();
   const turnOrigins = new Map<number, unknown>();
+  const turnStartedTimes = new Map<number, string>();
+  const turnPromptTimes = new Map<number, string>();
   let hasExplicitTurnId = false;
   let nextTurnId = 0;
   const cancelledTurnIds = new Set<number>();
@@ -636,6 +643,14 @@ export function foldWireRecordFacts(
         }
         break;
       }
+      case 'agent.turn.started': {
+        const turnId = record['turnId'];
+        const at = recordTimeIso(record);
+        if (typeof turnId === 'number' && Number.isInteger(turnId) && at !== undefined) {
+          turnStartedTimes.set(turnId, at);
+        }
+        break;
+      }
       case 'turn.step.interrupted': {
         const payload = record as TurnStepInterruptedPayload;
         if (
@@ -660,6 +675,8 @@ export function foldWireRecordFacts(
         hasExplicitTurnId ||= typeof payload.turnId === 'number';
         nextTurnId = Math.max(nextTurnId, turnId + 1);
         turnOrigins.set(turnId, payload.origin);
+        const promptAt = recordTimeIso(record);
+        if (promptAt !== undefined) turnPromptTimes.set(turnId, promptAt);
         if (typeof payload.promptId === 'string') turnPromptIds.set(turnId, payload.promptId);
         if (isUndoAnchorTurnOrigin(payload.origin)) pendingUndoAnchorTurnIds.push(turnId);
         if (!isVisibleTurnOrigin(payload.origin)) hiddenTurnIds.add(turnId);
@@ -822,6 +839,57 @@ export function foldWireRecordFacts(
         })
       : base.items;
 
+  const wireIdByOrdinal = new Map<number, number>();
+  if (hasExplicitTurnId) {
+    for (const [rawTurnId, ordinal] of ordinalByRawTurnId) {
+      wireIdByOrdinal.set(ordinal, rawTurnId);
+    }
+  }
+  const wedgedTurnIds = new Set<number>();
+  if (wireIdByOrdinal.size > 0) {
+    let latestPromptTurnId: number | undefined;
+    for (const rawTurnId of turnOrigins.keys()) {
+      if (latestPromptTurnId === undefined || rawTurnId > latestPromptTurnId) {
+        latestPromptTurnId = rawTurnId;
+      }
+    }
+    for (const rawTurnId of turnOrigins.keys()) {
+      if (endedTurns.has(rawTurnId) || activeCancelTurnIds.has(rawTurnId)) continue;
+      if (rawTurnId === latestPromptTurnId && options?.activeWireTurnId === rawTurnId) continue;
+      wedgedTurnIds.add(rawTurnId);
+    }
+  }
+  const realignedItems =
+    wireIdByOrdinal.size === 0
+      ? items
+      : (() => {
+          const keptOrdinals = new Set<number>();
+          for (const item of items) {
+            if (item.kind === 'turn' && !wireIdByOrdinal.has(item.ordinal)) {
+              keptOrdinals.add(item.ordinal);
+            }
+          }
+          return items.map((item) => {
+            if (item.kind !== 'turn') return item;
+            const wireId = wireIdByOrdinal.get(item.ordinal);
+            if (wireId === undefined) return item;
+            const renumber = wireId !== item.ordinal && !keptOrdinals.has(wireId);
+            const nextTurnId = renumber ? exportTurnKey(wireId) : item.turnId;
+            const wedged = wedgedTurnIds.has(wireId);
+            return {
+              ...item,
+              turnId: nextTurnId,
+              ordinal: renumber ? wireId : item.ordinal,
+              startedAt: item.startedAt ?? turnStartedTimes.get(wireId) ?? turnPromptTimes.get(wireId),
+              state: wedged ? 'failed' : item.state,
+              wedged: wedged ? true : item.wedged,
+              steps: renumber
+                ? item.steps.map((step) => renameTurnStep(step, item.turnId, nextTurnId))
+                : item.steps,
+            };
+          });
+        })();
+
   const modesTouched = planActive !== undefined || swarmActive !== undefined || towerActive !== undefined;
   const meta: TranscriptMeta = {
     ...base.meta,
@@ -841,7 +909,7 @@ export function foldWireRecordFacts(
       : base.meta.modes,
   };
 
-  let restoredItems = appended.length > 0 ? [...items, ...appended] : items;
+  let restoredItems = appended.length > 0 ? [...realignedItems, ...appended] : realignedItems;
   if (subagentRefs.size > 0) {
     restoredItems = restoredItems.map((item) => {
       if (item.kind !== 'turn') return item;
@@ -872,5 +940,22 @@ export function foldWireRecordFacts(
     interactions: [...interactions.values()],
     todos: todo !== undefined ? [todo] : base.todos,
     meta,
+  };
+}
+
+function renameTurnStep(step: TranscriptStep, fromTurnId: string, toTurnId: string): TranscriptStep {
+  const stepId = step.stepId.startsWith(`${fromTurnId}.`)
+    ? `${toTurnId}.${step.stepId.slice(fromTurnId.length + 1)}`
+    : step.stepId;
+  return {
+    ...step,
+    stepId,
+    turnId: toTurnId,
+    frames: step.frames.map((frame) => ({
+      ...frame,
+      frameId: frame.frameId.startsWith(`${step.stepId}.`)
+        ? `${stepId}.${frame.frameId.slice(step.stepId.length + 1)}`
+        : frame.frameId,
+    })),
   };
 }

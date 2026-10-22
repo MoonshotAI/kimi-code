@@ -311,6 +311,9 @@ function makeStreamingProcess(lines: readonly string[]): {
 function telemetryStub(events: Array<{ event: string; properties: Record<string, unknown> }>): ITelemetryService {
   return {
     _serviceBrand: undefined,
+    track: (event, properties) => {
+      events.push({ event, properties: properties ?? {} });
+    },
     track2: (event, properties) => {
       events.push({ event, properties: (properties as TelemetryProperties | undefined) ?? {} });
     },

@@ -6,6 +6,7 @@ import {
   type Event2,
   IEventBus,
   IAgentLifecycleService,
+  ISessionManager,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -282,4 +283,25 @@ describe('server-v2 /api/v1/ws resync', () => {
     c.ws.close();
     await c.closed;
   });
+
+  it('resumes a reclaimed session on a pure WS reconnect', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+    const manager = server!.core.accessor.get(ISessionManager);
+    expect(await manager.closeIfIdle(sid, 0)).toBe(true);
+    expect(manager.get(sid)).toBeUndefined();
+
+    const c = await openConn(wsUrl, server!.authTokenService.getToken());
+    await c.next((f) => f.type === 'server_hello');
+    c.send({
+      type: 'client_hello',
+      id: 'h1',
+      payload: withToken({ client_id: 'cli', subscriptions: [sid] }),
+    });
+    const ack = await c.next((f) => f.type === 'ack' && f.id === 'h1');
+    expect(ack.payload).toMatchObject({ accepted_subscriptions: [sid], resync_required: [] });
+    expect(manager.get(sid)).toBeDefined();
+    c.ws.close();
+    await c.closed;
+  }, 30_000);
 });
