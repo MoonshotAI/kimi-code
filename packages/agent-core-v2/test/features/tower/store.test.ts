@@ -4459,6 +4459,58 @@ describe('state lock recovery and prepared writes', () => {
     expect(messages.filter((item) => item.action === 'complete')).toHaveLength(1);
   });
 
+  it('serializes inbox publication with completion commits', async () => {
+    const mission = await setupMission({
+      title: 'feature x',
+      scope: 'src/x/**',
+      file: 'src/x/x.ts',
+      content: 'x\n',
+      status: 'active',
+    });
+    await store.registerAgent(
+      rosterEntry({ name: 'w1', kind: 'worker', missionId: mission.id }),
+    );
+    type SaveDriver = { save(state: TowerState): Promise<void> };
+    const driver = store as unknown as SaveDriver;
+    const original = driver.save;
+    const paused = deferred();
+    const release = deferred();
+    let intercepted = false;
+    driver.save = async (state) => {
+      if (
+        !intercepted &&
+        state.missions.some((candidate) => candidate.id === mission.id && candidate.status === 'completed')
+      ) {
+        intercepted = true;
+        paused.resolve();
+        await release.promise;
+      }
+      return original.call(store, state);
+    };
+    const completing = store.complete('w1', 'completion report');
+    let sending: Promise<string> | undefined;
+    try {
+      await paused.promise;
+      sending = store.send('tower', { to: 'w1', subject: 'last instruction', body: 'x' });
+      await delay(20);
+      expect(
+        (await store.readInbox('w1', 50)).some((item) => item.subject === 'last instruction'),
+      ).toBe(false);
+      release.resolve();
+      await completing;
+      await sending;
+      expect(
+        (await store.readInbox('w1', 50)).some((item) => item.subject === 'last instruction'),
+      ).toBe(true);
+    } finally {
+      release.resolve();
+      driver.save = original;
+      await Promise.allSettled(
+        sending === undefined ? [completing] : [completing, sending],
+      );
+    }
+  });
+
   it('persists spawn roster and ownership atomically when mission validation fails', async () => {
     const [mission] = await store.plan([{ title: 'feature x', scope: ['src/x/**'] }]);
     const entry = rosterEntry({ name: 'w1', kind: 'worker', missionId: mission!.id });

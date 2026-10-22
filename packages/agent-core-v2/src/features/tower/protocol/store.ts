@@ -395,7 +395,22 @@ export class TowerStore {
   }
 
   private async withStateLock<T>(fn: () => Promise<T>): Promise<T> {
-    const lockPath = `${this.abs(STATE_FILE)}.lock`;
+    return this.withProtocolLock(`${this.abs(STATE_FILE)}.lock`, 'state', fn);
+  }
+
+  private async withInboxPublicationLock<T>(fn: () => Promise<T>): Promise<T> {
+    return this.withProtocolLock(`${this.abs(INBOX_DIR)}.lock`, 'inbox publication', fn);
+  }
+
+  private async withCompletionLock<T>(fn: () => Promise<T>): Promise<T> {
+    return this.withStateLock(() => this.withInboxPublicationLock(fn));
+  }
+
+  private async withProtocolLock<T>(
+    lockPath: string,
+    kind: 'state' | 'inbox publication',
+    fn: () => Promise<T>,
+  ): Promise<T> {
     const deadline = Date.now() + this.stateLockTimeoutMs;
     const token = randomUUID();
     let lastStaleCheckAt = 0;
@@ -415,10 +430,14 @@ export class TowerStore {
         } catch {
         }
         const explanation = sameProcess
-          ? 'another tower tool call in this process is writing state.json; wait for it to finish'
-          : 'another tower process may be writing state.json; a confirmed dead holder is reclaimed automatically, so inspect the holder if this persists';
+          ? kind === 'state'
+            ? 'another tower tool call in this process is writing state.json; wait for it to finish'
+            : 'another tower tool call in this process is publishing an inbox message; wait for it to finish'
+          : kind === 'state'
+            ? 'another tower process may be writing state.json; a confirmed dead holder is reclaimed automatically, so inspect the holder if this persists'
+            : 'another tower process may be publishing an inbox message; a confirmed dead holder is reclaimed automatically, so inspect the holder if this persists';
         throw new TowerProtocolError(
-          `timed out after ${String(this.stateLockTimeoutMs)}ms waiting for the tower state lock "${lockPath}"${holder} — ${explanation}`,
+          `timed out after ${String(this.stateLockTimeoutMs)}ms waiting for the tower ${kind} lock "${lockPath}"${holder} — ${explanation}`,
         );
       }
       await new Promise<void>((resolve) => {
@@ -1278,7 +1297,7 @@ export class TowerStore {
         return { snapshot, inboxFiles: inbox.files };
       },
       (prepared) =>
-        this.withStateLock(async () => {
+        this.withCompletionLock(async () => {
           const state = await this.assertPreparationCurrent(
             prepared.snapshot,
             prepared.inboxFiles,
@@ -1521,7 +1540,7 @@ export class TowerStore {
 
   async sendDetailed(callerName: string, input: TowerSendInput): Promise<TowerSendResult> {
     const state = await this.load();
-    return this.sendDetailedSnapshot(callerName, input, state);
+    return this.withInboxPublicationLock(() => this.sendDetailedSnapshot(callerName, input, state));
   }
 
   private async sendDetailedSnapshot(
@@ -1618,7 +1637,7 @@ export class TowerStore {
         return { snapshot, inboxFiles: inbox.files, inboxItems: inbox.items };
       },
       (prepared) =>
-        this.withStateLock(async () => {
+        this.withCompletionLock(async () => {
           const state = await this.assertPreparationCurrent(
             prepared.snapshot,
             prepared.inboxFiles,
