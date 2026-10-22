@@ -2293,8 +2293,7 @@ export class KimiTUI {
       restore();
     };
     const holderSummary = occupiedHolderSummary(error);
-    const risk =
-      'If that process has exited, you can take over. If it is still running, the history may get mixed up.';
+    const risk = 'If that process is still running, taking over may mix up the history.';
     this.mountEditorReplacement(
       new ChoicePickerComponent({
         title: 'Session still in use',
