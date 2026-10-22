@@ -169,7 +169,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     );
   }
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
-  const enableTerminals = exposureClass === 'loopback';
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
   const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
   const onUnhandledRejection = (reason: unknown): void => {
@@ -448,7 +447,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'questions', description: 'Question resolution & dismiss' },
           { name: 'tools', description: 'Tool & MCP server management' },
           { name: 'tasks', description: 'Task management' },
-          { name: 'terminals', description: 'PTY terminal sessions' },
           { name: 'fs', description: 'Filesystem operations' },
           { name: 'files', description: 'File upload & download' },
           { name: 'remote-control', description: 'Remote Control tunnel' },
@@ -470,7 +468,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     hostIdentity: opts.hostIdentity,
     debugEndpoints,
     enableShutdown,
-    enableTerminals,
     guiStore,
     pluginMarketplaceUrl: (() => {
       const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
