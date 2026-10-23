@@ -785,29 +785,35 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_completion_tokens']).toBeUndefined();
   });
 
-  it('uses max_completion_tokens for reasoning models without a trait', async () => {
-    const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
-    await requester.generate(
-      { model: { ...model, model: 'gpt-5.1' }, maxCompletionTokens: 1000 },
-      { messages },
-      { signal: new AbortController().signal },
-    );
-    expect(client.body()['max_completion_tokens']).toBe(1000);
-    expect(client.body()['max_tokens']).toBeUndefined();
-  });
+  it.each(['gpt-5.1', 'gpt-6', 'gpt-6.1-example', 'gpt-10', 'o3'])(
+    'uses max_completion_tokens for %s without a trait',
+    async (modelName) => {
+      const client = stubOpenAIClient(chatCompletionChunks);
+      const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        { model: { ...model, model: modelName }, maxCompletionTokens: 1000 },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      expect(client.body()['max_completion_tokens']).toBe(1000);
+      expect(client.body()['max_tokens']).toBeUndefined();
+    },
+  );
 
-  it('uses max_tokens for other models without a trait', async () => {
-    const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
-    await requester.generate(
-      { model: { ...model, model: 'gpt-4o' }, maxCompletionTokens: 1000 },
-      { messages },
-      { signal: new AbortController().signal },
-    );
-    expect(client.body()['max_tokens']).toBe(1000);
-    expect(client.body()['max_completion_tokens']).toBeUndefined();
-  });
+  it.each(['gpt-4o', 'gpt-35-turbo', 'GPT-35-TURBO-0613'])(
+    'uses max_tokens for %s without a trait',
+    async (modelName) => {
+      const client = stubOpenAIClient(chatCompletionChunks);
+      const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+      await requester.generate(
+        { model: { ...model, model: modelName }, maxCompletionTokens: 1000 },
+        { messages },
+        { signal: new AbortController().signal },
+      );
+      expect(client.body()['max_tokens']).toBe(1000);
+      expect(client.body()['max_completion_tokens']).toBeUndefined();
+    },
+  );
 
   it('caps by the remaining context budget', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
