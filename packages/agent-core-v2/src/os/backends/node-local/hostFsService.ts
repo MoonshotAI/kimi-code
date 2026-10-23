@@ -41,6 +41,8 @@ function* splitLinesKeepingTerminator(text: string): Generator<string> {
 export class HostFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
+  readonly strictTextReads = true;
+
   async readText(
     path: string,
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
