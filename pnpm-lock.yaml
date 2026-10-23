@@ -118,6 +118,9 @@ importers:
       '@moonshot-ai/remote-control':
         specifier: workspace:^
         version: link:../../packages/remote-control
+      '@moonshot-ai/session-import':
+        specifier: workspace:^
+        version: link:../../packages/session-import
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
@@ -855,6 +858,8 @@ importers:
       '@types/ws':
         specifier: ^8.18.0
         version: 8.18.1
+
+  packages/session-import: {}
 
   packages/telemetry: {}
 

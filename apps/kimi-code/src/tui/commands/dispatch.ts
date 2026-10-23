@@ -39,6 +39,7 @@ import {
   showSettingsSelector,
 } from './config';
 import { handleGoalCommand } from './goal';
+import { handleImportSessionsCommand } from './import-sessions';
 import { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
@@ -525,6 +526,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'export-debug-zip':
       await handleExportDebugZipCommand(host);
+      return;
+    case 'import-sessions':
+      handleImportSessionsCommand(host);
       return;
     case 'copy':
       await handleCopyCommand(host);
