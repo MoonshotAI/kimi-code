@@ -2,10 +2,8 @@ import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { toInputJsonSchema } from '#/tool/input-schema';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/features/plan/plan';
 import type { PlanData } from '#/features/plan/plan';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 
 import DESCRIPTION from './exit-plan-mode.md?raw';
 import {
@@ -25,18 +23,14 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ExitPlanModeInputSchema);
 
-  constructor(
-    @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-  ) {}
+  constructor(@IAgentPlanService private readonly planMode: IAgentPlanService) {}
 
   async resolveExecution(args: ExitPlanModeInput): Promise<ToolExecution> {
     return {
       description: 'Presenting plan and exiting plan mode',
       display: await this.resolvePlanReviewDisplay(args),
       approvalRule: this.name,
-      execute: () => this.execution(args),
+      execute: () => this.execution(),
     };
   }
 
@@ -65,55 +59,24 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
     return display;
   }
 
-  private async execution(args: ExitPlanModeInput): Promise<ExecutableToolResult> {
+  private async execution(): Promise<ExecutableToolResult> {
     const status = await this.planMode.status();
     if (status === null) {
       return {
         isError: true,
         output:
-          'ExitPlanMode can only be called while plan mode is active. Use EnterPlanMode (or /plan) first.',
+          'ExitPlanMode can only be called while plan mode is active. Only the user can turn plan mode on.',
       };
     }
 
     const resolvedPlan = await this.resolvePlan();
     if (!resolvedPlan.ok) return resolvedPlan.error;
 
-    this.telemetry.track2('plan_submitted', {
-      has_options: args.options !== undefined && args.options.length >= 2,
-    });
-
-    const failed = this.exitPlanMode();
-    if (failed !== undefined) return failed;
-
-    if (this.permissionMode.mode === 'auto') {
-      this.telemetry.track2('plan_resolved', {
-        outcome: 'auto_approved',
-      });
-      return {
-        isError: false,
-        output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
-      };
-    }
-
-    this.telemetry.track2('plan_resolved', {
-      outcome: 'approved',
-    });
     return {
-      isError: false,
-      output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      isError: true,
+      output:
+        'The plan could not be shown to the user for review, so plan mode is still active. Call ExitPlanMode again.',
     };
-  }
-
-  private exitPlanMode(): ExecutableToolResult | undefined {
-    try {
-      this.planMode.exit();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to exit plan mode.';
-      return {
-        isError: true,
-        output: `Failed to exit plan mode: ${message}`,
-      };
-    }
   }
 
   private async resolvePlan(): Promise<ResolvePlanResult> {
@@ -150,14 +113,4 @@ export class ExitPlanModeTool implements IExitPlanModeTool {
       },
     };
   }
-}
-
-function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {
-  const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
-  return `Plan mode deactivated. All tools are now available.\nNote: this plan was auto-approved without user review — the user has NOT explicitly approved it. Follow the user's original instructions on whether to proceed with execution; if they asked you to stop, wait, or only summarize after planning, do not start executing.\n${savedTo}## Plan (auto-approved, not user-reviewed):\n${plan}`;
-}
-
-function formatPlanForOutput(plan: string, path: string | undefined): string {
-  const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
-  return `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${plan}`;
 }

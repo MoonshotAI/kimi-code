@@ -184,116 +184,6 @@ export const abortAckPayloadSchema = z.object({
 
 export const abortAckMessageSchema = wsAckEnvelopeSchema(abortAckPayloadSchema);
 
-export const terminalAttachPayloadSchema = z.object({
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-  since_seq: z.number().int().nonnegative().optional(),
-});
-
-export const terminalAttachMessageSchema = z.object({
-  type: z.literal('terminal_attach'),
-  id: z.string(),
-  payload: terminalAttachPayloadSchema,
-});
-
-export type TerminalAttachMessage = z.infer<typeof terminalAttachMessageSchema>;
-
-export const terminalAttachAckPayloadSchema = z.object({
-  attached: z.literal(true),
-  replayed: z.number().int().nonnegative(),
-});
-
-export const terminalAttachAckMessageSchema = wsAckEnvelopeSchema(
-  terminalAttachAckPayloadSchema,
-);
-
-export const terminalDetachPayloadSchema = z.object({
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-});
-
-export const terminalDetachMessageSchema = z.object({
-  type: z.literal('terminal_detach'),
-  id: z.string(),
-  payload: terminalDetachPayloadSchema,
-});
-
-export type TerminalDetachMessage = z.infer<typeof terminalDetachMessageSchema>;
-
-export const terminalDetachAckPayloadSchema = z.object({
-  detached: z.literal(true),
-});
-
-export const terminalDetachAckMessageSchema = wsAckEnvelopeSchema(
-  terminalDetachAckPayloadSchema,
-);
-
-export const terminalInputPayloadSchema = z.object({
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-  data: z.string(),
-});
-
-export const terminalInputMessageSchema = z.object({
-  type: z.literal('terminal_input'),
-  id: z.string(),
-  payload: terminalInputPayloadSchema,
-});
-
-export type TerminalInputMessage = z.infer<typeof terminalInputMessageSchema>;
-
-export const terminalInputAckPayloadSchema = z.object({
-  accepted: z.literal(true),
-});
-
-export const terminalInputAckMessageSchema = wsAckEnvelopeSchema(
-  terminalInputAckPayloadSchema,
-);
-
-export const terminalResizePayloadSchema = z.object({
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-  cols: z.number().int().positive(),
-  rows: z.number().int().positive(),
-});
-
-export const terminalResizeMessageSchema = z.object({
-  type: z.literal('terminal_resize'),
-  id: z.string(),
-  payload: terminalResizePayloadSchema,
-});
-
-export type TerminalResizeMessage = z.infer<typeof terminalResizeMessageSchema>;
-
-export const terminalResizeAckPayloadSchema = z.object({
-  resized: z.literal(true),
-});
-
-export const terminalResizeAckMessageSchema = wsAckEnvelopeSchema(
-  terminalResizeAckPayloadSchema,
-);
-
-export const terminalClosePayloadSchema = z.object({
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-});
-
-export const terminalCloseMessageSchema = z.object({
-  type: z.literal('terminal_close'),
-  id: z.string(),
-  payload: terminalClosePayloadSchema,
-});
-
-export type TerminalCloseMessage = z.infer<typeof terminalCloseMessageSchema>;
-
-export const terminalCloseAckPayloadSchema = z.object({
-  closed: z.literal(true),
-});
-
-export const terminalCloseAckMessageSchema = wsAckEnvelopeSchema(
-  terminalCloseAckPayloadSchema,
-);
-
 export const pingPayloadSchema = z.object({
   nonce: z.string(),
 });
@@ -350,35 +240,6 @@ export type WsErrorMessage = z.infer<typeof wsErrorMessageSchema>;
 
 export const sessionEventMessageSchema = wsEventEnvelopeSchema(eventSchema);
 
-export const terminalOutputPayloadSchema = z.object({
-  data: z.string(),
-});
-
-export const terminalOutputMessageSchema = z.object({
-  type: z.literal('terminal_output'),
-  seq: z.number().int().positive(),
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-  timestamp: isoDateTimeSchema,
-  payload: terminalOutputPayloadSchema,
-});
-
-export type TerminalOutputMessage = z.infer<typeof terminalOutputMessageSchema>;
-
-export const terminalExitPayloadSchema = z.object({
-  exit_code: z.number().int().nullable().optional(),
-});
-
-export const terminalExitMessageSchema = z.object({
-  type: z.literal('terminal_exit'),
-  session_id: z.string().min(1),
-  terminal_id: z.string().min(1),
-  timestamp: isoDateTimeSchema,
-  payload: terminalExitPayloadSchema,
-});
-
-export type TerminalExitMessage = z.infer<typeof terminalExitMessageSchema>;
-
 export const clientControlMessageSchema = z.discriminatedUnion('type', [
   clientHelloMessageSchema,
   subscribeMessageSchema,
@@ -386,11 +247,6 @@ export const clientControlMessageSchema = z.discriminatedUnion('type', [
   unsubscribeMessageSchema,
   unsubscribeV2MessageSchema,
   abortMessageSchema,
-  terminalAttachMessageSchema,
-  terminalDetachMessageSchema,
-  terminalInputMessageSchema,
-  terminalResizeMessageSchema,
-  terminalCloseMessageSchema,
   pongMessageSchema,
 ]);
 
@@ -468,46 +324,6 @@ export const clientControlOperations = [
     messageSchema: abortMessageSchema,
     ackSchema: abortAckMessageSchema,
     description: 'Abort a running prompt in a session.',
-  },
-  {
-    type: 'terminal_attach',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: terminalAttachMessageSchema,
-    ackSchema: terminalAttachAckMessageSchema,
-    description: 'Attach this connection to a terminal stream.',
-  },
-  {
-    type: 'terminal_detach',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: terminalDetachMessageSchema,
-    ackSchema: terminalDetachAckMessageSchema,
-    description: 'Detach this connection from a terminal stream.',
-  },
-  {
-    type: 'terminal_input',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: terminalInputMessageSchema,
-    ackSchema: terminalInputAckMessageSchema,
-    description: 'Write raw input bytes to a terminal.',
-  },
-  {
-    type: 'terminal_resize',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: terminalResizeMessageSchema,
-    ackSchema: terminalResizeAckMessageSchema,
-    description: 'Resize a terminal.',
-  },
-  {
-    type: 'terminal_close',
-    direction: 'client_to_server',
-    kind: 'control',
-    messageSchema: terminalCloseMessageSchema,
-    ackSchema: terminalCloseAckMessageSchema,
-    description: 'Close a terminal.',
   },
   {
     type: 'pong',

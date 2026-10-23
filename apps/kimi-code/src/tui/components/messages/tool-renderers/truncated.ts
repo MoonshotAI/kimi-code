@@ -86,9 +86,11 @@ export class TruncatedOutputComponent implements Component {
 
   render(width: number): string[] {
     const contentLines = this.textComponent.render(width);
-    this.truncatedAtLastRender = contentLines.length > this.maxLines;
+    // Collapsing swaps the hidden rows for a one-line hint, so a single
+    // hidden row would render at the same height as the full output.
+    this.truncatedAtLastRender = contentLines.length > this.maxLines + 1;
 
-    if (this.expanded || contentLines.length <= this.maxLines) {
+    if (this.expanded || contentLines.length <= this.maxLines + 1) {
       return contentLines;
     }
 

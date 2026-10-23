@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/kimi-code",
-  "version": "2.2.0",
+  "version": "2.3.1",
   "description": "The Starting Point for Next-Gen Agents",
   "license": "MIT",
   "author": "Moonshot AI",
@@ -78,14 +78,14 @@
     "postinstall": "node scripts/postinstall.mjs"
   },
   "optionalDependencies": {
-    "@mariozechner/clipboard": "^0.3.9",
-    "node-pty": "^1.1.0"
+    "@mariozechner/clipboard": "^0.3.9"
   },
   "devDependencies": {
     "@moonshot-ai/acp-server": "workspace:^",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "@moonshot-ai/kimi-code-product": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
     "@moonshot-ai/kimi-telemetry": "workspace:^",
     "@moonshot-ai/migration-legacy": "workspace:^",
