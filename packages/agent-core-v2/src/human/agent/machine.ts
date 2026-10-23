@@ -90,6 +90,8 @@ export type AgentEvent =
   | { type: 'input.abort'; reason?: unknown }
   | { type: 'input.pause' }
   | { type: 'input.continue' }
+  | { type: 'input.hold_queue' }
+  | { type: 'input.release_queue' }
   | { type: 'input.close' }
   | { type: 'turn.spawn_tools'; toolCalls: ToolCall[] }
   | { type: 'turn.drain' }
@@ -153,6 +155,7 @@ export interface AgentMachineContext {
   drainedId?: string;
   drainedEntry?: UserEntry;
   paused: boolean;
+  queueHeld: boolean;
   abortReason?: unknown;
 }
 
@@ -230,8 +233,12 @@ function turnOutcomeEvent(context: AgentMachineContext, output: TurnOutput): Age
   return { type: 'turn.done', messages: context.messages, branchId: context.branchId };
 }
 
+function startableHead(context: AgentMachineContext): UserEntry | undefined {
+  return context.queueHeld ? undefined : context.queue[0];
+}
+
 function hasPendingWork(context: AgentMachineContext): boolean {
-  return context.notifications.length > 0 || context.queue.length > 0;
+  return context.notifications.length > 0 || startableHead(context) !== undefined;
 }
 
 function historyEndsMidToolChain(messages: readonly HistoryMessage[]): boolean {
@@ -248,7 +255,7 @@ function hasBackgroundWork(context: AgentMachineContext): boolean {
 function drainPendingPatch(
   context: AgentMachineContext,
 ): Pick<AgentMachineContext, 'messages' | 'notifications' | 'queue' | 'drainedId' | 'drainedEntry'> {
-  const [head, ...rest] = context.queue;
+  const head = startableHead(context);
   return {
     messages: [
       ...context.messages,
@@ -256,7 +263,7 @@ function drainPendingPatch(
       ...(head === undefined ? [] : [head]),
     ],
     notifications: [],
-    queue: rest,
+    queue: head === undefined ? context.queue : context.queue.slice(1),
     drainedId: head?.meta?.promptId,
     drainedEntry: head,
   };
@@ -344,7 +351,7 @@ export function createAgentMachine({
         self._parent?.send(event);
       },
       commitPendingToHistory: enqueueActions(({ context, enqueue }) => {
-        const head = context.queue[0];
+        const head = startableHead(context);
         enqueue.sendTo('store', {
           type: 'store.append' as const,
           event: [
@@ -443,6 +450,7 @@ export function createAgentMachine({
       turnId: 0,
       branchId: 'main',
       paused: false,
+      queueHeld: false,
     }),
     invoke: {
       src: 'controllerGuard',
@@ -536,6 +544,12 @@ export function createAgentMachine({
       },
       'input.continue': {
         actions: assign({ paused: false }),
+      },
+      'input.hold_queue': {
+        actions: assign({ queueHeld: true }),
+      },
+      'input.release_queue': {
+        actions: assign({ queueHeld: false }),
       },
       'store.error': {
         actions: 'forwardToParent',
@@ -632,7 +646,9 @@ export function createAgentMachine({
             always: [
               {
                 guard: ({ context }) =>
-                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                  context.promptGate !== undefined &&
+                  startableHead(context) !== undefined &&
+                  !context.paused,
                 target: 'gating',
               },
               {
@@ -650,7 +666,9 @@ export function createAgentMachine({
             always: [
               {
                 guard: ({ context }) =>
-                  context.promptGate !== undefined && context.queue.length > 0 && !context.paused,
+                  context.promptGate !== undefined &&
+                  startableHead(context) !== undefined &&
+                  !context.paused,
                 target: 'gating',
               },
               {
@@ -667,7 +685,7 @@ export function createAgentMachine({
               onDone: [
                 {
                   guard: ({ context, event }) =>
-                    context.paused || context.queue[0]?.meta?.promptId !== event.output.id,
+                    context.paused || startableHead(context)?.meta?.promptId !== event.output.id,
                   target: 'ready',
                 },
                 {

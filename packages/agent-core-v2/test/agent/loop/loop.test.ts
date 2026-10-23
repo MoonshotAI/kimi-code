@@ -370,6 +370,52 @@ describe('Agent loop', () => {
     expect(ctx.llmCalls).toHaveLength(2);
   });
 
+  it.each([
+    ['immediately', 0],
+    ['after a delay', 20],
+  ])('keeps a prompt queued behind a turn that a loop error handler retries %s', async (_label, delayMs) => {
+    profile.update({ activeToolNames: [] });
+    loop.registerLoopErrorHandler({
+      id: 'test-retry-with-queued-prompt',
+      match: () => true,
+      handle: async (hookCtx) => {
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        hookCtx.retry();
+        return true;
+      },
+    });
+    const gatedPrompts: string[] = [];
+    loop.hooks.onBeforeSubmitPrompt.register('test-count-gated-prompts', async (hookCtx, next) => {
+      gatedPrompts.push(
+        hookCtx.promptMessage.content.map((part) => (part.type === 'text' ? part.text : '')).join(''),
+      );
+      await next();
+    });
+    ctx.mockNextProviderResponse({ error: new Error('first attempt failed') });
+    ctx.mockNextResponse({ type: 'text', text: 'Recovered.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Next answer.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Next question' }] });
+    await loop.settled();
+
+    expect(ctx.llmCalls).toHaveLength(3);
+    const textsOf = (index: number) =>
+      ctx.llmCalls[index]!.history.flatMap((message) =>
+        message.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])),
+      );
+    expect(textsOf(1)).toEqual(['Hello']);
+    expect(textsOf(2)).toEqual(['Hello', 'Recovered.', 'Next question']);
+    expect(gatedPrompts).toEqual(['Hello', 'Next question']);
+    const ended = ctx.allEvents.filter(
+      (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',
+    );
+    expect(ended.map((entry) => (entry.args as { reason?: string }).reason)).toEqual([
+      'completed',
+      'completed',
+    ]);
+  });
+
   it('reports an untyped LLM error message without an internal-code prefix', async () => {
     profile.update({ activeToolNames: [] });
 
