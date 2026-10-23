@@ -43,6 +43,8 @@ import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import {
   cancelInteractionsForTurn,
@@ -50,6 +52,10 @@ import {
 } from '#/agent/interaction/interactionWiring';
 import { interactions } from '#/human/interaction/facade';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { getOrRestoreAgent } from '#/session/agentLifecycle/getOrRestoreAgent';
+import { ISessionBtwService, SIDE_QUESTION_SYSTEM_REMINDER } from '#/features/btw/btw';
+import { SessionBtwService } from '#/features/btw/btwService';
+import { IAgentToolApprovalService } from '#/agent/toolApproval/toolApproval';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
@@ -88,7 +94,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -244,6 +250,8 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
     close: () => Promise.resolve(),
     acquire: () => ({ dispose: () => {} }),
     drainRetirements: () => Promise.resolve(),
+    externallyModified: () => false,
+    bindWriteGuard: () => ({ dispose: () => undefined }),
   };
   return {
     appended,
@@ -545,6 +553,7 @@ describe('AgentLifecycleService', () => {
         },
       },
     );
+    ix.stub(ISessionLockService, new InMemorySessionLockService());
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -1273,6 +1282,148 @@ describe('AgentLifecycleService', () => {
     expect(first).toBe(second);
     expect(registerAgent).toHaveBeenCalledTimes(1);
     expect(ix.get(IAgentLifecycleService).list()).toEqual([first]);
+  });
+
+  function sessionHandle(): ISessionScopeHandle {
+    return { id: 'sess_test', kind: LifecycleScope.Session, accessor: ix, dispose: () => {} };
+  }
+
+  function stubPersistedAgents(
+    agents: Record<string, AgentMeta>,
+  ): ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>> {
+    const tracked = vi.fn<ISessionMetadata['registerAgent']>(async (agentId, meta) => {
+      agents[agentId] = meta;
+    });
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChangeMetadata: () => ({ dispose: () => {} }),
+      read: () =>
+        Promise.resolve({ id: 'sess_test', createdAt: 0, updatedAt: 0, archived: false, agents }),
+      update: () => Promise.resolve(),
+      setTitle: () => Promise.resolve(),
+      setArchived: () => Promise.resolve(),
+      registerAgent: tracked,
+    });
+    return tracked;
+  }
+
+  it('getOrRestoreAgent returns the live handle when the agent already exists', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    const handle = await getOrRestoreAgent(sessionHandle(), 'main');
+
+    expect(handle).toBe(svc.handleOf('main'));
+  });
+
+  it('getOrRestoreAgent returns undefined for an agent missing from session metadata', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+
+    await expect(getOrRestoreAgent(sessionHandle(), 'agent-7')).resolves.toBeUndefined();
+    expect(svc.get('agent-7')).toBeUndefined();
+  });
+
+  it('getOrRestoreAgent rebuilds a registered agent with its persisted identity', async () => {
+    const agents: Record<string, AgentMeta> = {
+      'agent-3': {
+        homedir: '/tmp/kimi-agentLifecycle-home/agents/agent-3',
+        type: 'sub',
+        parentAgentId: 'main',
+        forkedFrom: 'main',
+        labels: { parentAgentId: 'main', btw: 'true' },
+      },
+    };
+    const tracked = stubPersistedAgents(agents);
+    const svc = ix.get(IAgentLifecycleService);
+
+    const handle = await getOrRestoreAgent(sessionHandle(), 'agent-3');
+
+    expect(handle).toBeDefined();
+    expect(handle).toBe(svc.handleOf('agent-3'));
+    expect(svc.handleOf('agent-3')!.accessor.get(IAgentScopeContext).forkedFrom).toBe('main');
+    expect(tracked).toHaveBeenCalledWith(
+      'agent-3',
+      expect.objectContaining({
+        forkedFrom: 'main',
+        labels: { parentAgentId: 'main', btw: 'true' },
+      }),
+    );
+  });
+
+  it('getOrRestoreAgent returns one handle when rebuild calls start concurrently', async () => {
+    const agents: Record<string, AgentMeta> = {
+      'agent-4': { type: 'sub', parentAgentId: 'main', forkedFrom: 'main' },
+    };
+    const tracked = stubPersistedAgents(agents);
+    const session = sessionHandle();
+
+    const [first, second] = await Promise.all([
+      getOrRestoreAgent(session, 'agent-4'),
+      getOrRestoreAgent(session, 'agent-4'),
+    ]);
+
+    expect(first).toBeDefined();
+    expect(first).toBe(second);
+    expect(tracked).toHaveBeenCalledTimes(1);
+  });
+
+  it('getOrRestoreAgent restores the rebuilt agent context from the wire journal', async () => {
+    const agents: Record<string, AgentMeta> = {};
+    stubPersistedAgents(agents);
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const child = await svc.fork(agentContextOf(svc.handleOf('main')!), { agentId: 'agent-btw' });
+    svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).append({
+      role: 'user',
+      content: [{ type: 'text', text: 'persisted side question' }],
+      toolCalls: [],
+    });
+    await svc.remove(svc.get(child.agentId)!);
+    expect(svc.handleOf(child.agentId)).toBeUndefined();
+
+    const rebuilt = await getOrRestoreAgent(sessionHandle(), child.agentId);
+
+    expect(rebuilt).toBeDefined();
+    const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
+    expect(
+      restored.some(
+        (m) =>
+          m.role === 'user' &&
+          m.content.some((p) => p.type === 'text' && p.text === 'persisted side question'),
+      ),
+    ).toBe(true);
+  });
+
+  it('rebuilds a btw agent with its reminder context and read-only veto', async () => {
+    const agents: Record<string, AgentMeta> = {};
+    stubPersistedAgents(agents);
+    ix.stub(IAgentToolApprovalService, {
+      _serviceBrand: undefined,
+      formatDenyMessage: (message: string) => message,
+    } as unknown as IAgentToolApprovalService);
+    ix.set(ISessionBtwService, new SyncDescriptor(SessionBtwService));
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    const beforePlain = beforeExecuteListeners;
+    await svc.create({ agentId: 'plain' });
+    const baseline = beforeExecuteListeners - beforePlain;
+
+    const childId = await ix.get(ISessionBtwService).start();
+    expect(agents[childId]?.labels?.['btw']).toBe('true');
+    await svc.remove(svc.get(childId)!);
+
+    const beforeRebuild = beforeExecuteListeners;
+    const rebuilt = await getOrRestoreAgent(sessionHandle(), childId);
+
+    expect(rebuilt).toBeDefined();
+    expect(beforeExecuteListeners - beforeRebuild).toBe(baseline + 1);
+    const restored = rebuilt!.accessor.get(IAgentContextMemoryService).get();
+    expect(
+      restored.some((m) =>
+        m.content.some((p) => p.type === 'text' && p.text.includes(SIDE_QUESTION_SYSTEM_REMINDER)),
+      ),
+    ).toBe(true);
   });
 
   it('drops the handle when creation bootstrap fails so the next create starts clean', async () => {

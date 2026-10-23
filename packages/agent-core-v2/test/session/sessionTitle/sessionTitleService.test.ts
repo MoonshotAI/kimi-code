@@ -34,6 +34,7 @@ import {
   type SessionMetaPatch,
   type SessionMetadataChangedEvent,
 } from '#/session/sessionMetadata/sessionMetadata';
+import { isUntitled } from '#/session/sessionMetadata/promptMetadata';
 import { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 
 import { registerLogServices } from '../../_base/log/stubs';
@@ -86,6 +87,15 @@ class FakeSessionMetadata implements ISessionMetadata {
     this.meta = { ...this.meta, ...patch };
     this.emitter.fire({ changed: Object.keys(patch) as (keyof SessionMeta)[] });
     return Promise.resolve();
+  }
+
+  async applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean> {
+    const applyTitle = this.meta.titleKind !== 'custom' && isUntitled(this.meta.title);
+    const patch: SessionMetaPatch = applyTitle
+      ? { lastPrompt, title, titleKind: 'replaceable' }
+      : { lastPrompt };
+    await this.update(patch);
+    return applyTitle;
   }
 
   setTitle(title: string): Promise<void> {

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createKimiHarness, type Event, type KimiHarness } from '#/index';
 
 import { TEST_IDENTITY } from './test-identity';
+import { waitForAgentWireEvent } from './session-runtime-helpers';
 
 const MODEL_URL = 'https://model.example.test/v1/chat/completions';
 
@@ -575,6 +576,7 @@ describe('Session.prompt events', () => {
       expect(legacySnapshot.agents['main']?.userTurnCount).toBeUndefined();
 
       await resumed.compact();
+      await waitForAgentWireEvent(homeDir, source.id, 'context.apply_compaction');
       const compacted = await harness.reloadSession({ id: source.id });
       expect(compacted.getResumeState()?.agents['main']).toMatchObject({ userTurnCount: 3 });
       await runPrompt(compacted, 'follow-up question', 'follow-up answer');

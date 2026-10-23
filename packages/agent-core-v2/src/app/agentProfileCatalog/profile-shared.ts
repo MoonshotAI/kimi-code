@@ -115,6 +115,9 @@ export const NOTIFY_USER_GUIDANCE =
 export const TODO_LIST_GUIDANCE =
   'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
 
+export const PLAN_MODE_GUIDANCE =
+  'Plan mode is a read-only planning state that only the user can turn on, from the app (for example with Shift-Tab or `/plan` in the terminal); you cannot enter it yourself. If the user asks for plan mode, tell them how to turn it on. When they ask you to plan first, wait for their go-ahead before changing code.';
+
 export function renderAgentProfilePrompt(
   profile: AgentProfile,
   context: AgentProfileContext,
@@ -152,6 +155,7 @@ export function systemPromptVars(
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
     notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
     todo_list_guidance: context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '',
+    plan_mode_guidance: context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '',
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
