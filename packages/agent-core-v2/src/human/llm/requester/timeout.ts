@@ -1,8 +1,11 @@
 import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
 
 export const LLM_HEADERS_TIMEOUT_ENV = 'KIMI_CODE_LLM_HEADERS_TIMEOUT_MS';
+export const LLM_STREAM_IDLE_TIMEOUT_ENV = 'KIMI_CODE_LLM_STREAM_IDLE_TIMEOUT_MS';
 
-const MAX_HEADERS_TIMEOUT_MS = 2 ** 31 - 1;
+export const DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS = 300_000;
+
+const MAX_LLM_TIMEOUT_MS = 2 ** 31 - 1;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -10,12 +13,82 @@ export function resolveLlmHeadersTimeoutMs(env: Env = process.env): number | und
   const raw = env[LLM_HEADERS_TIMEOUT_ENV];
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0 || value > MAX_HEADERS_TIMEOUT_MS) {
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_LLM_TIMEOUT_MS) {
     throw new Error(
-      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_HEADERS_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
+      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_LLM_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
     );
   }
   return value;
+}
+
+export function resolveLlmStreamIdleTimeoutMs(env: Env = process.env): number {
+  const raw = env[LLM_STREAM_IDLE_TIMEOUT_ENV];
+  if (raw === undefined || raw.trim() === '') return DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_LLM_TIMEOUT_MS) {
+    throw new Error(
+      `${LLM_STREAM_IDLE_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_LLM_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
+    );
+  }
+  return value;
+}
+
+export class StreamIdleTimeoutError extends Error {
+  constructor(idleTimeoutMs: number) {
+    super(`LLM response stream idle timeout: no data received for ${idleTimeoutMs} ms.`);
+    this.name = 'StreamIdleTimeoutError';
+  }
+}
+
+export type AsyncIterableValue<S> = S extends AsyncIterable<infer T> ? T : never;
+
+export interface LlmStreamWatchdog {
+  readonly signal: AbortSignal;
+  watch<S extends AsyncIterable<unknown>>(stream: S): AsyncIterable<AsyncIterableValue<S>>;
+}
+
+export function createLlmStreamWatchdog(
+  signal: AbortSignal,
+  idleTimeoutMs: number,
+): LlmStreamWatchdog {
+  const controller = new AbortController();
+  return {
+    signal: AbortSignal.any([signal, controller.signal]),
+    async *watch<S extends AsyncIterable<unknown>>(
+      stream: S,
+    ): AsyncIterable<AsyncIterableValue<S>> {
+      const iterator = stream[Symbol.asyncIterator]() as AsyncIterator<AsyncIterableValue<S>>;
+      try {
+        for (;;) {
+          let rejectIdle!: (error: StreamIdleTimeoutError) => void;
+          const idle = new Promise<never>((_, reject) => {
+            rejectIdle = reject;
+          });
+          const timer = setTimeout(() => {
+            rejectIdle(new StreamIdleTimeoutError(idleTimeoutMs));
+            controller.abort();
+          }, idleTimeoutMs);
+          timer.unref?.();
+          const next = iterator.next();
+          let result: IteratorResult<AsyncIterableValue<S>>;
+          try {
+            result = await Promise.race([next, idle]);
+          } catch (error: unknown) {
+            next.catch(() => {});
+            throw error;
+          } finally {
+            clearTimeout(timer);
+          }
+          if (result.done === true) {
+            return;
+          }
+          yield result.value;
+        }
+      } finally {
+        await iterator.return?.().catch(() => {});
+      }
+    },
+  };
 }
 
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);
@@ -71,12 +144,12 @@ let warnedSocksProxy = false;
 let warnedInvalidProxy = false;
 let cached: { readonly key: string; readonly dispatcher: Dispatcher | undefined } | undefined;
 
-export function getLlmHeadersTimeoutDispatcher(
-  timeoutMs: number,
+export function getLlmDispatcher(
+  headersTimeoutMs: number | undefined,
   env: Env = process.env,
 ): Dispatcher | undefined {
   const key = JSON.stringify([
-    timeoutMs,
+    headersTimeoutMs ?? null,
     env['http_proxy'],
     env['HTTP_PROXY'],
     env['https_proxy'],
@@ -95,14 +168,15 @@ export function getLlmHeadersTimeoutDispatcher(
         httpProxy: httpProxyUrls.httpProxy ?? '',
         httpsProxy: httpProxyUrls.httpsProxy ?? '',
         noProxy: resolveNoProxy(env),
-        headersTimeout: timeoutMs,
+        bodyTimeout: 0,
+        headersTimeout: headersTimeoutMs,
       });
     } catch (error) {
       if (!warnedInvalidProxy) {
         warnedInvalidProxy = true;
         const reason = error instanceof Error ? error.message : String(error);
         process.stderr.write(
-          `kimi: ${LLM_HEADERS_TIMEOUT_ENV}: ignoring invalid proxy configuration (${reason}); requests keep the default headers timeout\n`,
+          `kimi: ignoring invalid proxy configuration (${reason}); LLM requests fall back to the default transport and ${LLM_HEADERS_TIMEOUT_ENV} is not applied\n`,
         );
       }
       dispatcher = undefined;
@@ -111,12 +185,12 @@ export function getLlmHeadersTimeoutDispatcher(
     if (!warnedSocksProxy) {
       warnedSocksProxy = true;
       process.stderr.write(
-        `kimi: ${LLM_HEADERS_TIMEOUT_ENV} is not supported with SOCKS proxies; requests keep the default headers timeout\n`,
+        `kimi: LLM request timeout overrides (${LLM_HEADERS_TIMEOUT_ENV}, ${LLM_STREAM_IDLE_TIMEOUT_ENV}) are not supported with SOCKS proxies; requests keep the transport defaults\n`,
       );
     }
     dispatcher = undefined;
   } else {
-    dispatcher = new Agent({ headersTimeout: timeoutMs });
+    dispatcher = new Agent({ bodyTimeout: 0, headersTimeout: headersTimeoutMs });
   }
   cached = { key, dispatcher };
   return dispatcher;

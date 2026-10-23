@@ -102,7 +102,7 @@ describe('default client headers timeout', () => {
         calls += 1;
         expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
         expect(fetchStub).toHaveBeenCalledTimes(calls);
-        expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
+        expect(fetchStub.mock.calls[calls - 1]?.[1]).toHaveProperty('dispatcher');
 
         process.env[LLM_HEADERS_TIMEOUT_ENV] = '45000';
         events = await generate(protocol.create());

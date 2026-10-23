@@ -45,6 +45,11 @@ llm/
 │   │                     (messageResolvers, abort scope, event sendBack); invoked by the turn
 │   ├── retry.ts / recovery.ts   pure retry/recovery policy functions (driven by the turn machine; propose is pure)
 │   ├── empty-response.ts emptyResponseError: pure empty-response judgment; the turn raises it as llm.failed.remote at llm.done
+│   ├── timeout.ts          stream idle watchdog + LLM transport dispatcher: the watchdog composes the
+│   │                       turn's signal with a private per-request controller and fails a response
+│   │                       silent beyond KIMI_CODE_LLM_STREAM_IDLE_TIMEOUT_MS (default 300 s) as a
+│   │                       retryable timeout; the dispatcher removes the transport's fixed body cap so
+│   │                       slow streams are never cut off while still delivering data
 │   └── bases/            four protocol bases: openai / openai-responses / anthropic / google-genai
 │                         each with contract / format / lower / patterns / capability / extra-params / trait / requester
 │                         (public seam: contract / trait / requester; format / lower / patterns stay internal)

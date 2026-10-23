@@ -45,6 +45,10 @@ llm/
 │   │                     （messageResolvers、abort 作用域、事件 sendBack），由 turn invoke
 │   ├── retry.ts / recovery.ts   重试/恢复策略纯函数（由 turn machine 驱动；propose 为纯函数）
 │   ├── empty-response.ts emptyResponseError：空响应判定纯函数，由 turn 在 llm.done 时转为 llm.failed.remote
+│   ├── timeout.ts          流空闲看门狗 + LLM 传输层 dispatcher：看门狗把 turn 的 signal 与每次请求私有的
+│   │                       controller 组合，响应沉默超过 KIMI_CODE_LLM_STREAM_IDLE_TIMEOUT_MS（默认 300 秒）
+│   │                       即以可重试的 timeout 失败；dispatcher 移除传输层固定的 body 上限，只要流仍在
+│   │                       送达数据，慢速响应就不会被截断
 │   └── bases/            四个协议基座：openai / openai-responses / anthropic / google-genai
 │                         各自含 contract / format / lower / patterns / capability / extra-params / trait / requester
 │                         （公开接缝：contract / trait / requester；format / lower / patterns 保持内部）
