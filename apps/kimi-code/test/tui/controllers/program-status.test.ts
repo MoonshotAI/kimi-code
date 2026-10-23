@@ -255,14 +255,26 @@ describe('ProgramStatusController', () => {
   it('restores the underlying state after visible and auth blocks close', () => {
     const harness = makeHarness();
     harness.controller.refresh();
-    harness.controller.setAuthBlocked(true);
+    const releaseAuthBlock = harness.controller.beginAuthBlock();
     expect(harness.root()).toMatchObject({ state: 'blocked', kind: 'auth' });
 
     harness.controller.setEditorBlocked({ kind: 'permission', message: 'Workspace trust required' });
     expect(harness.root()).toMatchObject({ state: 'blocked', kind: 'permission' });
     harness.controller.setEditorBlocked(undefined);
     expect(harness.root()).toMatchObject({ state: 'blocked', kind: 'auth' });
-    harness.controller.setAuthBlocked(false);
+    releaseAuthBlock();
+    expect(harness.root()).toEqual({ state: 'idle', app: 'kimi-code' });
+  });
+
+  it('keeps auth blocked until overlapping flows release their own blocks', () => {
+    const harness = makeHarness();
+    const releaseFirst = harness.controller.beginAuthBlock();
+    const releaseSecond = harness.controller.beginAuthBlock();
+
+    releaseFirst();
+    releaseFirst();
+    expect(harness.root()).toMatchObject({ state: 'blocked', kind: 'auth' });
+    releaseSecond();
     expect(harness.root()).toEqual({ state: 'idle', app: 'kimi-code' });
   });
 });

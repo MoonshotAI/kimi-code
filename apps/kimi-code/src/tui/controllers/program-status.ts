@@ -76,7 +76,7 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
   private rootReport: string | undefined;
   private outcome: WorkOutcome = { state: 'idle' };
   private editorBlocked: ProgramStatusBlocked | undefined;
-  private authBlocked = false;
+  private readonly authBlocks = new Set<symbol>();
   private settlementOrder = 0;
 
   constructor(
@@ -114,7 +114,7 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     this.rootReport = undefined;
     this.outcome = { state: 'idle' };
     this.editorBlocked = undefined;
-    this.authBlocked = false;
+    this.authBlocks.clear();
     this.publishRoot({ state: 'idle', app: 'kimi-code' });
   }
 
@@ -236,13 +236,18 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     this.refresh();
   }
 
-  setAuthBlocked(blocked: boolean): void {
-    this.authBlocked = blocked;
+  beginAuthBlock(): () => void {
+    const token = Symbol();
+    this.authBlocks.add(token);
     this.refresh();
+    return () => {
+      if (!this.authBlocks.delete(token)) return;
+      this.refresh();
+    };
   }
 
   private rootStatus(): ProgramStatus {
-    const blocked = this.editorBlocked ?? (this.authBlocked ? AUTH_BLOCKED : undefined);
+    const blocked = this.editorBlocked ?? (this.authBlocks.size > 0 ? AUTH_BLOCKED : undefined);
     if (blocked !== undefined) {
       return { state: 'blocked', app: 'kimi-code', ...blocked };
     }

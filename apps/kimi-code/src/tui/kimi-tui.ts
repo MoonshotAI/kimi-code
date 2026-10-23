@@ -3872,6 +3872,10 @@ export class KimiTUI {
     };
   }
 
+  beginAuthBlock(): () => void {
+    return this.programStatus.beginAuthBlock();
+  }
+
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
@@ -3883,11 +3887,9 @@ export class KimiTUI {
       }),
     );
     this.state.ui.requestRender();
-    this.programStatus.setAuthBlocked(true);
     const spinner = this.showLoginProgressSpinner('Waiting for authorization…');
     return {
       stop: (result) => {
-        this.programStatus.setAuthBlocked(false);
         spinner.stop(result);
       },
       setLabel: (label) => {
