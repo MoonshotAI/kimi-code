@@ -6,6 +6,8 @@ import type { Workspace } from './workspace';
 export interface PersistedWorkspaceEntry {
   readonly root: string;
   readonly name: string;
+  readonly kind?: string;
+  readonly additional_dirs?: readonly string[];
   readonly created_at: string;
   readonly last_opened_at: string;
 }
@@ -14,11 +16,13 @@ export interface PersistedWorkspaceFile {
   readonly version: number;
   readonly workspaces: Record<string, PersistedWorkspaceEntry>;
   readonly deleted_workspace_ids: string[];
+  readonly idempotency_keys?: Record<string, string>;
 }
 
 export interface WorkspaceCatalog {
   readonly workspaces: readonly Workspace[];
   readonly deletedIds: readonly string[];
+  readonly idempotencyKeys?: Readonly<Record<string, string>>;
 }
 
 export interface IWorkspacePersistence {

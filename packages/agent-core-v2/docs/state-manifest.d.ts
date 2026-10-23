@@ -27,11 +27,12 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
+// Index (App: 0 keys · Workspace: 7 keys · Session: 9 keys · Agent: 74 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
 //     workspaceDirs.fileDirs               src/workspace/workspaceDirs/workspaceDirsService.ts
+//     workspaceDirs.registryDirs           src/workspace/workspaceDirs/workspaceDirsService.ts
 //     workspaceInstructions.current        src/workspace/workspaceInstructions/workspaceInstructionsService.ts
 //     workspaceSkillCatalog.contributions  src/features/skill/workspace/workspaceSkillCatalogService.ts
 //     workspaceSkillCatalog.merged         src/features/skill/workspace/workspaceSkillCatalogService.ts
@@ -389,6 +390,7 @@ export interface WorkspaceStateSnapshot {
   // src/workspace/workspaceDirs/workspaceDirsService.ts
   'workspaceDirs.ephemeralDirs': readonly string[];
   'workspaceDirs.fileDirs': readonly string[];
+  'workspaceDirs.registryDirs': readonly string[];
   // src/workspace/workspaceInstructions/workspaceInstructionsService.ts
   'workspaceInstructions.current': /* WorkspaceInstructionsSnapshot — packages/agent-core-v2/src/workspace/workspaceInstructions/workspaceInstructions.ts */ {
     readonly agentsMd: string | undefined;

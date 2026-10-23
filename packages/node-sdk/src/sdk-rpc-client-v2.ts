@@ -128,7 +128,7 @@
 import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
+import { encodeWorkDirKey, workspaceRootKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { McpConnectionManager } from '@moonshot-ai/agent-core-v2/mcpCore/connection-manager';
 import { ITowerRateLimitService } from '@moonshot-ai/agent-core-v2/features/tower/towerRateLimit';
 import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/tower/tools/status/statusReader';
@@ -1254,16 +1254,24 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   }
 
   /**
-   * Every v2 workspace-id bucket addressing `workDir` (already normalized):
-   * the registered workspace's alias set when the catalog knows the root, or
-   * the freshly minted bucket key for index-only sessions (mirrors how v1's
-   * store lists a bucket that never touched the workspace registry).
+   * Directory view for `workDir` (already normalized): the hash bucket of the
+   * directory itself (plus its spelling aliases) unioned with every registered
+   * workspace whose dir set (root + additionalDirs) contains the directory —
+   * whether the directory is the workspace's primary or a member root.
    */
   private async workspaceIdsFor(workDir: string): Promise<readonly string[]> {
-    const workspaces = await this.klient.global.workspaces.list();
-    const match = workspaces.find((workspace) => normalizeWorkDir(workspace.root) === workDir);
-    if (match === undefined) return [encodeWorkDirKey(workDir)];
-    return this.engineAccessor.get(IWorkspaceAliases).resolveAliasIds(match.id);
+    const hashIds = await this.engineAccessor
+      .get(IWorkspaceAliases)
+      .resolveAliasIds(encodeWorkDirKey(workDir));
+    const rootKey = workspaceRootKey(workDir);
+    const memberIds = (await this.klient.global.workspaces.list())
+      .filter((workspace) =>
+        [workspace.root, ...workspace.additionalDirs].some(
+          (dir) => workspaceRootKey(dir) === rootKey,
+        ),
+      )
+      .map((workspace) => workspace.id);
+    return [...new Set([...hashIds, ...memberIds])];
   }
 
   override async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
@@ -1751,12 +1759,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   /**
    * Through the session's handler (`IWorkspaceDirs`, workspace scope) — the
    * workspace-level add-dir surface: `persist: true` (default) appends to the
-   * project-local `.kimi-code/local.toml`, `persist: false` joins the
-   * handler's shared in-memory set. The set is shared by every session of
-   * the workspace (a v1 `persist: false` dir was session-scoped and written
-   * into session metadata to survive a resume; the v2 handler keeps it for
-   * every session of the workspace until the process exits). Returns the
-   * same `{additionalDirs, projectRoot, configPath, persisted}` shape as v1.
+   * workspace entry in the registry, `persist: false` joins the handler's
+   * shared in-memory set. The in-memory set is shared by every session of the
+   * workspace (a v1 `persist: false` dir was session-scoped and written into
+   * session metadata to survive a resume; the v2 handler keeps it for every
+   * session of the workspace until the process exits). Returns the
+   * `{additionalDirs, persisted}` shape.
    */
   override async addAdditionalDir(input: AddAdditionalDirInput): Promise<AddAdditionalDirResult> {
     const handle = this.requireLiveSession(input.id);

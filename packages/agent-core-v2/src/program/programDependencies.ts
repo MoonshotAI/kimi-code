@@ -14,6 +14,8 @@ import type { IBuiltinSkillSource } from '#/features/skill/catalog/builtinSkillS
 import type { IUserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
 import type { IAppStateService } from '#/app/state/appState';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { IWorkspaceService } from '#/app/workspace/workspace';
+import type { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
@@ -60,5 +62,7 @@ export interface ProgramDependencies {
   readonly userSkills: IUserFileSkillSource;
   readonly telemetry: ITelemetryService;
   readonly docs: IAtomicDocumentStore;
+  readonly workspaces: IWorkspaceService;
+  readonly workspaceStore: IWorkspacePersistence;
   createSessionController(input: ProgramSessionControllerInput): SessionLifecycleService;
 }

@@ -218,6 +218,7 @@ export function registerSessionsRoutes(
 
       const registry = core.accessor.get(IWorkspaceService);
       let workDir: string;
+      let bucket: { readonly id: string; readonly root: string } | undefined;
       if (workspaceId !== undefined) {
         const workspace = await registry.get(workspaceId);
         if (workspace === undefined) {
@@ -245,14 +246,15 @@ export function registerSessionsRoutes(
           return;
         }
         workDir = workspace.root;
+        bucket = (await registry.touch(workspace.id)) ?? workspace;
       } else {
         workDir = callerCwd as string;
       }
 
       try {
-        const touched = await registry.createOrTouch(workDir);
+        const resolved = bucket ?? (await registry.createOrTouch(workDir));
         const handle = await core.accessor.get(ISessionManager).create({
-          workspaceId: touched.id,
+          workspaceId: resolved.id,
           workDir,
         });
         if (typeof body.title === 'string') {
@@ -260,8 +262,8 @@ export function registerSessionsRoutes(
         }
         const meta = await handle.accessor.get(ISessionMetadata).read();
         const session = toWireSession(
-          { ...meta, workspaceId: touched.id },
-          touched.root,
+          { ...meta, workspaceId: resolved.id },
+          resolved.root,
           { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
         );
         core.accessor.get(IEventService).publish(

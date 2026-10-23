@@ -18,12 +18,14 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
 import type { Event2 } from '#/app/event/event2';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
@@ -88,6 +90,10 @@ describe('WorkspaceService (file-backed)', () => {
       stubPair(ILogService, noopLog),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(
+        IProjectLocalConfigService,
+        new FileProjectLocalConfigService(stubBootstrap(homeDir), hostFs),
+      ),
       stubPair(IEventService, {
         publish: (event: Event2<any>) => {
           published.push({
@@ -535,6 +541,305 @@ describe('WorkspaceService (file-backed)', () => {
 
     expect(lower.id).not.toBe(upper.id);
     expect((await registry.list()).map((w) => w.root).toSorted()).toEqual(['/tmp/Foo', '/tmp/foo']);
+  });
+
+  it('create mints a wm_ id with additional_dirs and coexists with the hash entry of the same root', async () => {
+    const registry = build();
+    const extra = join(homeDir, 'extra');
+    await fsp.mkdir(extra, { recursive: true });
+    const implicit = await registry.createOrTouch(homeDir);
+
+    const created = await registry.create({ root: homeDir, additionalDirs: [extra], name: 'proj' });
+
+    expect(created.id).toMatch(/^wm_[0-9a-f-]{36}$/);
+    expect(created.additionalDirs).toEqual([extra]);
+    const list = await registry.list();
+    expect(list.map((w) => w.id).toSorted()).toEqual([implicit.id, created.id].toSorted());
+
+    const saved = await readWorkspacesJson();
+    const record = saved.workspaces[created.id] as unknown as Record<string, unknown>;
+    expect(record['additional_dirs']).toEqual([extra]);
+    expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
+      [implicit.id, created.id].toSorted(),
+    );
+  });
+
+  it('create dedupes retries by idempotency key across restarts', async () => {
+    const registry = build();
+    const first = await registry.create({ root: homeDir, idempotencyKey: 'key-1' });
+    const second = await registry.create({ root: homeDir, idempotencyKey: 'key-1' });
+    expect(second.id).toBe(first.id);
+
+    const other = await registry.create({ root: homeDir, idempotencyKey: 'key-2' });
+    expect(other.id).not.toBe(first.id);
+
+    const afterRestart = await restart().create({ root: homeDir, idempotencyKey: 'key-1' });
+    expect(afterRestart.id).toBe(first.id);
+  });
+
+  it('create rejects additional dirs that are missing or duplicate the root', async () => {
+    const registry = build();
+    await expect(
+      registry.create({ root: homeDir, additionalDirs: [join(homeDir, 'missing')] }),
+    ).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+    await expect(
+      registry.create({ root: homeDir, additionalDirs: [homeDir] }),
+    ).rejects.toMatchObject({ code: ErrorCodes.CONFIG_INVALID });
+    await expect(registry.create({ root: join(homeDir, 'missing-root') })).rejects.toMatchObject({
+      code: ErrorCodes.FS_PATH_NOT_FOUND,
+    });
+  });
+
+  it('createOrTouch mints a separate hash entry when only a wm_ entry holds the root', async () => {
+    const registry = build();
+    const project = await registry.create({ root: homeDir, name: 'proj' });
+
+    const touched = await registry.createOrTouch(homeDir);
+
+    expect(touched.id).toBe(encodeWorkDirKey(homeDir));
+    expect(touched.id).not.toBe(project.id);
+    expect((await registry.list()).map((w) => w.id).toSorted()).toEqual(
+      [project.id, touched.id].toSorted(),
+    );
+  });
+
+  it('update replaces additional_dirs wholesale and clears the field on empty', async () => {
+    const registry = build();
+    const extraA = join(homeDir, 'extra-a');
+    const extraB = join(homeDir, 'extra-b');
+    await fsp.mkdir(extraA, { recursive: true });
+    await fsp.mkdir(extraB, { recursive: true });
+    const created = await registry.create({ root: homeDir, additionalDirs: [extraA] });
+
+    const replaced = await registry.update(created.id, { additionalDirs: [extraB] });
+    expect(replaced?.additionalDirs).toEqual([extraB]);
+    let saved = await readWorkspacesJson();
+    expect((saved.workspaces[created.id] as unknown as Record<string, unknown>)['additional_dirs']).toEqual([extraB]);
+
+    const cleared = await registry.update(created.id, { additionalDirs: [] });
+    expect(cleared?.additionalDirs).toEqual([]);
+    saved = await readWorkspacesJson();
+    expect((saved.workspaces[created.id] as unknown as Record<string, unknown>)['additional_dirs']).toBeUndefined();
+
+    const renamed = await registry.update(created.id, { name: 'renamed' });
+    expect(renamed?.name).toBe('renamed');
+    expect(renamed?.additionalDirs).toEqual([]);
+  });
+
+  it('delete of a wm_ entry tombstones only itself and keeps the same-root hash entry', async () => {
+    const registry = build();
+    const implicit = await registry.createOrTouch(homeDir);
+    const project = await registry.create({ root: homeDir, name: 'proj' });
+
+    await registry.delete(project.id);
+
+    expect((await registry.list()).map((w) => w.id)).toEqual([implicit.id]);
+    const saved = await readWorkspacesJson();
+    expect(saved.deleted_workspace_ids).toEqual([project.id]);
+    expect(Object.keys(saved.workspaces)).toEqual([implicit.id]);
+  });
+
+  it('delete of a hash entry leaves the same-root wm_ entry registered', async () => {
+    const registry = build();
+    const implicit = await registry.createOrTouch(homeDir);
+    const project = await registry.create({ root: homeDir, name: 'proj' });
+
+    await registry.delete(implicit.id);
+
+    expect((await registry.list()).map((w) => w.id)).toEqual([project.id]);
+    const saved = await readWorkspacesJson();
+    expect(Object.keys(saved.workspaces)).toEqual([project.id]);
+    expect(saved.deleted_workspace_ids).toEqual([implicit.id]);
+  });
+
+  it('create ignores local.toml additional_dir and leaves the file untouched', async () => {
+    const extraA = join(homeDir, 'extra-a');
+    const extraB = join(homeDir, 'extra-b');
+    await fsp.mkdir(extraA, { recursive: true });
+    await fsp.mkdir(extraB, { recursive: true });
+    await fsp.mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await fsp.writeFile(
+      join(homeDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["${extraA.replaceAll('\\', '\\\\')}", "${extraB.replaceAll('\\', '\\\\')}"]\nother_key = "keep"\n`,
+      'utf8',
+    );
+
+    const registry = build();
+    const created = await registry.create({ root: homeDir, additionalDirs: [extraA] });
+    expect(created.additionalDirs).toEqual([extraA]);
+
+    const text = await fsp.readFile(join(homeDir, '.kimi-code', 'local.toml'), 'utf8');
+    expect(text).toContain('other_key');
+    expect(text).toContain('extra-a');
+    expect(text).toContain('extra-b');
+  });
+
+  it('persists kind per channel and defaults legacy entries to implicit', async () => {
+    const registry = build();
+    const managed = await registry.create({ root: homeDir, name: 'proj' });
+    expect(managed.kind).toBe('managed');
+    const implicit = await registry.createOrTouch(homeDir);
+    expect(implicit.kind).toBe('implicit');
+
+    const saved = await readWorkspacesJson();
+    expect(saved.workspaces[managed.id]?.kind).toBe('managed');
+    expect(saved.workspaces[implicit.id]?.kind).toBe('implicit');
+
+    const raw = JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
+      workspaces: Record<string, Record<string, unknown>>;
+    };
+    delete raw.workspaces[implicit.id]?.['kind'];
+    await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify(raw), 'utf8');
+
+    expect((await registry.get(implicit.id))?.kind).toBe('implicit');
+    expect((await registry.get(managed.id))?.kind).toBe('managed');
+  });
+
+  it('readProjectConfigDirs returns resolved local.toml dirs without mutating anything', async () => {
+    const extra = join(homeDir, 'extra');
+    await fsp.mkdir(extra, { recursive: true });
+    await fsp.mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await fsp.writeFile(
+      join(homeDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["${extra.replaceAll('\\', '\\\\')}"]\n`,
+      'utf8',
+    );
+
+    const registry = build();
+    expect(await registry.readProjectConfigDirs(homeDir)).toEqual([extra]);
+
+    const text = await fsp.readFile(join(homeDir, '.kimi-code', 'local.toml'), 'utf8');
+    expect(text).toContain('extra');
+  });
+
+  it('readProjectConfigDirs drops the root itself and duplicate entries', async () => {
+    const extra = join(homeDir, 'extra');
+    await fsp.mkdir(extra, { recursive: true });
+    await fsp.mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await fsp.writeFile(
+      join(homeDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["${homeDir.replaceAll('\\', '\\\\')}", "${extra.replaceAll('\\', '\\\\')}", "${extra.replaceAll('\\', '\\\\')}"]\n`,
+      'utf8',
+    );
+
+    const registry = build();
+    expect(await registry.readProjectConfigDirs(homeDir)).toEqual([extra]);
+  });
+
+  it('readProjectConfigDirs returns empty when local.toml is missing or invalid', async () => {
+    const registry = build();
+    expect(await registry.readProjectConfigDirs(homeDir)).toEqual([]);
+
+    await fsp.mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await fsp.writeFile(join(homeDir, '.kimi-code', 'local.toml'), 'not toml at all = [', 'utf8');
+    expect(await registry.readProjectConfigDirs(homeDir)).toEqual([]);
+  });
+
+  it('setPrimary swaps root with an additional dir atomically and keeps id and bucket', async () => {
+    const registry = build();
+    const extraA = join(homeDir, 'extra-a');
+    const extraB = join(homeDir, 'extra-b');
+    await fsp.mkdir(extraA, { recursive: true });
+    await fsp.mkdir(extraB, { recursive: true });
+    const created = await registry.create({
+      root: homeDir,
+      additionalDirs: [extraA, extraB],
+      name: 'proj',
+    });
+
+    const promoted = await registry.setPrimary(created.id, extraA);
+    expect(promoted?.id).toBe(created.id);
+    expect(promoted?.root).toBe(extraA);
+    expect(promoted?.additionalDirs).toEqual([homeDir, extraB]);
+
+    const saved = await readWorkspacesJson();
+    expect(saved.workspaces[created.id]?.root).toBe(extraA);
+    expect((await restart().get(created.id))?.additionalDirs).toEqual([homeDir, extraB]);
+
+    const noop = await registry.setPrimary(created.id, extraA);
+    expect(noop?.root).toBe(extraA);
+    expect(noop?.additionalDirs).toEqual([homeDir, extraB]);
+  });
+
+  it('setPrimary rejects a path outside the dir set, a missing path, or an unknown id', async () => {
+    const registry = build();
+    const outside = join(homeDir, 'outside');
+    await fsp.mkdir(outside, { recursive: true });
+    const created = await registry.create({ root: homeDir });
+
+    await expect(registry.setPrimary(created.id, outside)).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
+    await expect(registry.setPrimary(created.id, join(homeDir, 'missing'))).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+    });
+    expect(await registry.setPrimary('wd_missing_000000000000', homeDir)).toBeUndefined();
+  });
+
+  it('merge and rebuild skip session-index lines written into wm_ buckets', async () => {
+    const workA = join(homeDir, 'proj-a');
+    const workB = join(homeDir, 'proj-b');
+    await seedSessionIndex([
+      {
+        sessionId: 's1',
+        sessionDir: join(homeDir, 'sessions', 'wm_7f3a9c1e-1111-2222-3333-444455556666', 's1'),
+        workDir: workA,
+      },
+      {
+        sessionId: 's2',
+        sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(workB), 's2'),
+        workDir: workB,
+      },
+    ]);
+
+    const list = await build().list();
+    expect(list.map((w) => w.id)).toEqual([encodeWorkDirKey(workB)]);
+  });
+
+  it('save preserves unknown entry and top-level fields while bumping the version', async () => {
+    const id = encodeWorkDirKey(homeDir);
+    await writeWorkspacesJson(
+      {
+        [id]: {
+          root: homeDir,
+          name: 'proj',
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+          icon: 'rocket-2',
+        } as PersistedWorkspaceEntry,
+      } as Record<string, PersistedWorkspaceEntry>,
+    );
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({
+        ...JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as object,
+        future_top_level: { nested: true },
+      }),
+      'utf8',
+    );
+
+    const registry = build();
+    await registry.touch(id);
+
+    const saved = JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
+      version: number;
+      workspaces: Record<string, Record<string, unknown>>;
+      future_top_level?: unknown;
+    };
+    expect(saved.version).toBe(2);
+    expect(saved.workspaces[id]?.['icon']).toBe('rocket-2');
+    expect(saved.future_top_level).toEqual({ nested: true });
+  });
+
+  it('createOrTouch resurrects a tombstoned hash entry through the implicit channel', async () => {
+    const registry = build();
+    const implicit = await registry.createOrTouch(homeDir);
+    await registry.delete(implicit.id);
+    expect(await registry.list()).toEqual([]);
+
+    const revived = await registry.createOrTouch(homeDir);
+    expect(revived.id).toBe(implicit.id);
+    expect((await registry.list()).map((w) => w.id)).toEqual([implicit.id]);
   });
 
 

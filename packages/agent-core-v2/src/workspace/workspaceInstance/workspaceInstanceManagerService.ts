@@ -22,6 +22,7 @@ import { IAppStateService } from '#/app/state/appState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
+import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -80,6 +81,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     private readonly unitHostFactory: RuntimeUnitHostFactory = new SharedRuntimeUnitHostFactory(),
   ) {
     this.providers.set('local', new LocalRuntimeProviderFactory());
@@ -221,6 +223,8 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         userSkills: this.userSkills,
         telemetry: this.telemetry,
         docs: this.docs,
+        workspaces: this.workspaces,
+        workspaceStore: this.workspaceStore,
         createSessionController: (input) => new SessionLifecycleService(
           this.instantiation,
           input.context,

@@ -4,7 +4,10 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import { TimeoutTimer } from '#/_base/utils/timer';
 import { subtreeWatchFilter } from '#/_base/utils/paths';
+import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
+import { IWorkspaceService } from '#/app/workspace/workspace';
+import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import type { ISessionWorkspaceInfo } from '#/session/workspaceInfo/workspaceInfo';
 import { IWorkspaceStateService } from '#/workspace/state/workspaceState';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -26,6 +29,10 @@ export const workspaceDirsEphemeralDirsKey = defineState<readonly string[]>(
   'workspaceDirs.ephemeralDirs',
   () => [],
 );
+export const workspaceDirsRegistryDirsKey = defineState<readonly string[]>(
+  'workspaceDirs.registryDirs',
+  () => [],
+);
 
 export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
   declare readonly _serviceBrand: undefined;
@@ -41,16 +48,30 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
   constructor(
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IProjectLocalConfigService private readonly localConfig: IProjectLocalConfigService,
+    @IWorkspaceService private readonly workspaces: IWorkspaceService,
+    @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
     super();
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
+    this.states.contributeState(workspaceDirsRegistryDirsKey);
     this.projectRoot = workspace.cwd;
     this.configPath = '';
-    this.ready = this.enqueue(() => this.reloadFromDisk());
-    void this.ready.then(() => this.watchLocalToml());
+    const legacyProjectConfig = workspace.meta.kind !== 'managed';
+    this.ready = this.enqueue(async () => {
+      if (legacyProjectConfig) await this.reloadFromDisk();
+      await this.reloadFromRegistry();
+    });
+    if (legacyProjectConfig) void this.ready.then(() => this.watchLocalToml());
+    this._register(
+      this.workspaceStore.onDidChange(() => {
+        void this.enqueue(() => this.reloadFromRegistry()).catch((error) => {
+          this.log.warn(`workspace registry reload failed: ${String(error)}`);
+        });
+      }),
+    );
   }
 
   private get fileDirs(): readonly string[] {
@@ -69,8 +90,16 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     this.states.set(workspaceDirsEphemeralDirsKey, value);
   }
 
+  private get registryDirs(): readonly string[] {
+    return this.states.get(workspaceDirsRegistryDirsKey);
+  }
+
+  private set registryDirs(value: readonly string[]) {
+    this.states.set(workspaceDirsRegistryDirsKey, value);
+  }
+
   get additionalDirs(): readonly string[] {
-    return [...new Set([...this.fileDirs, ...this.ephemeralDirs])];
+    return [...new Set([...this.fileDirs, ...this.registryDirs, ...this.ephemeralDirs])];
   }
 
   addDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
@@ -103,22 +132,26 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     const persist = input.persist ?? true;
 
     if (persist) {
-      const persisted = await this.localConfig.appendAdditionalDir(
-        this.workspace.cwd,
+      const resolved = await this.localConfig.resolveAdditionalDirs(this.workspace.cwd, [
         input.path,
-      );
-      this.projectRoot = persisted.projectRoot;
-      this.configPath = persisted.configPath;
-      const changed = this.setFileDirs(persisted.additionalDirs);
-      if (changed) {
-        this.onDidChangeEmitter.fire();
+      ]);
+      const dir = resolved[0];
+      if (dir === undefined) {
+        throw new Error(`additional dir ${input.path} did not resolve`);
       }
-      return {
-        projectRoot: persisted.projectRoot,
-        configPath: persisted.configPath,
-        additionalDirs: this.additionalDirs,
-        persisted: true,
-      };
+      const existing = await this.workspaces.get(this.workspace.workspaceId);
+      const target = existing ?? (await this.workspaces.createOrTouch(this.workspace.cwd));
+      const dirKey = workspaceRootKey(dir);
+      const inSet =
+        workspaceRootKey(target.root) === dirKey ||
+        target.additionalDirs.some((kept) => workspaceRootKey(kept) === dirKey);
+      if (!inSet) {
+        await this.workspaces.update(target.id, {
+          additionalDirs: [...target.additionalDirs, dir],
+        });
+        await this.reloadFromRegistry();
+      }
+      return { additionalDirs: this.additionalDirs, persisted: true };
     }
 
     const onDisk = await this.localConfig.readAdditionalDirs(this.workspace.cwd);
@@ -131,12 +164,7 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     if (changed) {
       this.onDidChangeEmitter.fire();
     }
-    return {
-      projectRoot: onDisk.projectRoot,
-      configPath: onDisk.configPath,
-      additionalDirs: this.additionalDirs,
-      persisted: false,
-    };
+    return { additionalDirs: this.additionalDirs, persisted: false };
   }
 
   private async reloadFromDisk(): Promise<void> {
@@ -152,6 +180,26 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     const before = this.additionalDirs;
     this.fileDirs = dirs;
     return !sameStringList(before, this.additionalDirs);
+  }
+
+  private async reloadFromRegistry(): Promise<void> {
+    const entries = await this.workspaces.list();
+    const cwdKey = workspaceRootKey(this.workspace.cwd);
+    const dirs: string[] = [];
+    for (const entry of entries) {
+      const set = [entry.root, ...entry.additionalDirs];
+      if (!set.some((dir) => workspaceRootKey(dir) === cwdKey)) continue;
+      for (const dir of set) {
+        if (workspaceRootKey(dir) === cwdKey) continue;
+        if (dirs.some((kept) => workspaceRootKey(kept) === workspaceRootKey(dir))) continue;
+        dirs.push(dir);
+      }
+    }
+    const before = this.additionalDirs;
+    this.registryDirs = dirs;
+    if (!sameStringList(before, this.additionalDirs)) {
+      this.onDidChangeEmitter.fire();
+    }
   }
 
   private unionEphemeral(dirs: readonly string[]): boolean {

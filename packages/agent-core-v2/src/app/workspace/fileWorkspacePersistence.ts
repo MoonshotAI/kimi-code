@@ -18,7 +18,7 @@ import {
   type WorkspaceCatalog,
 } from './workspacePersistence';
 
-const WORKSPACE_CATALOG_VERSION = 1;
+const WORKSPACE_CATALOG_VERSION = 2;
 const WORKSPACE_CATALOG_SCOPE = '';
 const WORKSPACE_CATALOG_KEY = 'workspaces.json';
 const WATCH_DEBOUNCE_MS = 150;
@@ -71,6 +71,8 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
         id,
         root: entry.root,
         name: entry.name,
+        kind: entry.kind === 'managed' ? 'managed' : 'implicit',
+        additionalDirs: entry.additional_dirs ?? [],
         createdAt: parseTime(entry.created_at, now),
         lastOpenedAt: parseTime(entry.last_opened_at, now),
       });
@@ -79,23 +81,50 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
     const deletedIds = Array.isArray(rawDeleted)
       ? rawDeleted.filter((id): id is string => typeof id === 'string')
       : [];
-    return { workspaces, deletedIds };
+    const rawKeys = (file as { idempotency_keys?: unknown }).idempotency_keys;
+    const idempotencyKeys: Record<string, string> = {};
+    if (typeof rawKeys === 'object' && rawKeys !== null) {
+      for (const [key, value] of Object.entries(rawKeys)) {
+        if (typeof value === 'string') idempotencyKeys[key] = value;
+      }
+    }
+    return { workspaces, deletedIds, idempotencyKeys };
   }
 
   async save(catalog: WorkspaceCatalog): Promise<void> {
+    const existing = await this.docs.get<PersistedWorkspaceFile>(
+      WORKSPACE_CATALOG_SCOPE,
+      WORKSPACE_CATALOG_KEY,
+    );
+    const existingWorkspaces =
+      existing !== undefined &&
+      typeof existing.workspaces === 'object' &&
+      existing.workspaces !== null
+        ? existing.workspaces
+        : {};
     const record: Record<string, PersistedWorkspaceEntry> = {};
     for (const ws of catalog.workspaces) {
-      record[ws.id] = {
-        root: ws.root,
-        name: ws.name,
-        created_at: new Date(ws.createdAt).toISOString(),
-        last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
-      };
+      const rawEntry = existingWorkspaces[ws.id];
+      const merged: Record<string, unknown> =
+        typeof rawEntry === 'object' && rawEntry !== null ? { ...rawEntry } : {};
+      if (ws.additionalDirs.length > 0) {
+        merged['additional_dirs'] = [...ws.additionalDirs];
+      } else {
+        delete merged['additional_dirs'];
+      }
+      merged['root'] = ws.root;
+      merged['name'] = ws.name;
+      merged['kind'] = ws.kind;
+      merged['created_at'] = new Date(ws.createdAt).toISOString();
+      merged['last_opened_at'] = new Date(ws.lastOpenedAt).toISOString();
+      record[ws.id] = merged as unknown as PersistedWorkspaceEntry;
     }
     const file: PersistedWorkspaceFile = {
+      ...existing,
       version: WORKSPACE_CATALOG_VERSION,
       workspaces: record,
       deleted_workspace_ids: [...catalog.deletedIds],
+      idempotency_keys: { ...(catalog.idempotencyKeys ?? existing?.idempotency_keys) },
     };
     await this.docs.set(WORKSPACE_CATALOG_SCOPE, WORKSPACE_CATALOG_KEY, file);
     this.changeEmitter.fire();
@@ -113,9 +142,15 @@ function sanitizeEntry(value: unknown): PersistedWorkspaceEntry | null {
   ) {
     return null;
   }
+  const rawDirs = v.additional_dirs;
+  const additionalDirs = Array.isArray(rawDirs)
+    ? rawDirs.filter((dir): dir is string => typeof dir === 'string')
+    : undefined;
   return {
     root: v.root,
     name: v.name,
+    kind: typeof v.kind === 'string' ? v.kind : undefined,
+    additional_dirs: additionalDirs,
     created_at: v.created_at,
     last_opened_at: v.last_opened_at,
   };

@@ -77,7 +77,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
       >;
       deleted_workspace_ids: string[];
     };
-    expect(workspacesFile.version).toBe(1);
+    expect(workspacesFile.version).toBe(2);
     expect(Object.keys(workspacesFile.workspaces)).toEqual([workspaceId]);
     expect(workspacesFile.workspaces[workspaceId]).toMatchObject({ root: workDir });
     expect(workspacesFile.deleted_workspace_ids).toEqual([]);

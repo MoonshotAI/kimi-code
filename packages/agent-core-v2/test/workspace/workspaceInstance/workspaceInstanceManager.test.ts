@@ -23,7 +23,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void } {
 }
 
 function workspace(id: string): Workspace {
-  return { id, root: `/${id}`, name: id, createdAt: 0, lastOpenedAt: 0 };
+  return { id, root: `/${id}`, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
 }
 
 function runtime(workspaceId: string, runtimeId: string, status: Runtime['status'] = 'connecting'): FakeRuntime {
@@ -126,12 +126,20 @@ function manager(
     _serviceBrand: undefined,
     list: async () => values,
     get: vi.fn(async (id: string) => byId.get(id)),
+    create: vi.fn(async (input: { root: string }) => {
+      const value = values.find((entry) => entry.root === input.root);
+      if (value === undefined) throw new Error(`unknown root ${input.root}`);
+      return value;
+    }),
     createOrTouch: vi.fn(async (root: string) => {
       const value = values.find((entry) => entry.root === root);
       if (value === undefined) throw new Error(`unknown root ${root}`);
       return value;
     }),
+    touch: vi.fn(async (id: string) => byId.get(id)),
     update: async () => undefined,
+    setPrimary: async () => undefined,
+    readProjectConfigDirs: async () => [],
     delete: async () => {},
   };
   const args: unknown[] = [
@@ -139,7 +147,7 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 24 }, () => undefined),
+    ...Array.from({ length: 25 }, () => undefined),
     new TestRuntimeUnitHostFactory(),
   ];
   args[18] = { entries: () => [] };
@@ -233,7 +241,7 @@ describe('WorkspaceInstanceManager', () => {
 
   describe('findContaining', () => {
     function rootedWorkspace(id: string, root: string): Workspace {
-      return { id, root, name: id, createdAt: 0, lastOpenedAt: 0 };
+      return { id, root, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
     }
 
     it('matches exact and nested cwds, preferring the longest containing root', async () => {
