@@ -6,6 +6,22 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.3.1 (2026-10-23)
+
+### Features
+
+- Offer to take over a session that is still in use after a retry, so sessions left locked by an exited process can be used again, and add a `KIMI_CODE_SESSION_LOCK=0` switch that turns off the session lock.
+
+### Polish
+
+- Show the holding client's name in session-in-use errors.
+
+### Bug Fixes
+
+- Fix sessions occasionally remaining occupied after an application crash on macOS and Linux.
+- Fix workspace trust failures when Git Bash is unavailable on Windows.
+- web: Improved interactions and fixed known bugs.
+
 ## 2.3.0 (2026-10-21)
 
 ### Features
