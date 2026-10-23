@@ -103,6 +103,8 @@ For connecting to the OpenAI Chat Completions protocol, as well as any third-par
 
 Third-party reasoning models (DeepSeek, Qwen, One API, etc.) work out of the box: the CLI automatically handles the `reasoning_content` field and `reasoning_effort` injection. If your gateway returns reasoning content under a non-standard field name, set `reasoning_key` on the model alias to override.
 
+Some gateways also require gateway-specific headers. Requests to `opencode.ai` inference endpoints (Chat Completions, Responses, or Messages) automatically carry a stable per-process `x-opencode-session` identifier, which that gateway requires for request routing; a `custom_headers` entry with the same name overrides the automatic value.
+
 - Default `base_url`: `https://api.openai.com/v1`
 - Credential key names: `OPENAI_API_KEY`, `OPENAI_BASE_URL`
 

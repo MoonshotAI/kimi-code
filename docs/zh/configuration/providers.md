@@ -103,6 +103,8 @@ max_context_size = 200000
 
 第三方推理模型（DeepSeek、Qwen、One API 等）开箱即用：CLI 自动处理 `reasoning_content` 字段和 `reasoning_effort` 注入。如果你的网关用非标准字段名返回推理内容，在模型别名上设 `reasoning_key` 覆盖。
 
+部分网关还要求特定的请求头。发往 `opencode.ai` inference 端点的请求（Chat Completions、Responses 或 Messages）会自动携带一个按进程稳定的 `x-opencode-session` 标识符，该网关用它做请求路由；如果 `custom_headers` 中设置了同名条目，则以你的设置为准。
+
 - 默认 `base_url`：`https://api.openai.com/v1`
 - 凭证键名：`OPENAI_API_KEY`、`OPENAI_BASE_URL`
 
