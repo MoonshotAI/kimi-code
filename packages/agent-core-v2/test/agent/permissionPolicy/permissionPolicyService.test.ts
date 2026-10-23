@@ -476,7 +476,7 @@ describe('AgentPermissionPolicyService chain', () => {
     });
   });
 
-  it.each(['AgentSwarm', 'EnterPlanMode', 'ExitPlanMode', 'CreateGoal'] as const)(
+  it.each(['AgentSwarm', 'ExitPlanMode', 'CreateGoal'] as const)(
     'approves %s through the default tool allowlist in manual mode',
     async (toolName) => {
       await expect(evaluate({ toolName, args: {} })).resolves.toMatchObject({

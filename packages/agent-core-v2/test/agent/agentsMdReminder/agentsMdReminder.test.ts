@@ -205,7 +205,7 @@ function createHarness(
         acquire: (): RuntimeLease => ({
           runtime: {
             identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
-            capabilities: new Set(['fs', 'process', 'terminal']),
+            capabilities: new Set(['fs', 'process']),
             environment: hostEnvironment,
             path: {
               separator: options.pathClass === 'win32' ? '\\' : '/',

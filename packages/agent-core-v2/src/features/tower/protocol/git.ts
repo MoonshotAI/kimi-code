@@ -17,6 +17,7 @@ export class GitError extends Error {
 
 export interface GitOptions {
   readonly env?: Readonly<Record<string, string>>;
+  readonly input?: string;
 }
 
 export async function git(
@@ -25,7 +26,7 @@ export async function git(
   options: GitOptions = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(
+    const child = execFile(
       'git',
       [...args],
       {
@@ -48,6 +49,7 @@ export async function git(
         resolve(stdout.trimEnd());
       },
     );
+    if (options.input !== undefined) child.stdin?.end(options.input);
   });
 }
 

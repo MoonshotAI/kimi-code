@@ -1,4 +1,4 @@
-import { createReadStream } from 'node:fs';
+import { createReadStream, statSync } from 'node:fs';
 import { mkdir, open, readFile, readdir, stat, unlink } from 'node:fs/promises';
 import { dirname, join } from 'pathe';
 
@@ -159,6 +159,16 @@ export class FileStorageService implements IFileSystemStorageService {
     const filePath = this.pathFor(scope, key);
     try {
       return (await stat(filePath)).size;
+    } catch (error) {
+      if (isEnoent(error)) return undefined;
+      throw toStorageIoError(error, { path: filePath, op: 'stat' });
+    }
+  }
+
+  sizeSync(scope: string, key: string): number | undefined {
+    const filePath = this.pathFor(scope, key);
+    try {
+      return statSync(filePath).size;
     } catch (error) {
       if (isEnoent(error)) return undefined;
       throw toStorageIoError(error, { path: filePath, op: 'stat' });
