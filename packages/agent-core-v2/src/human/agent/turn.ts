@@ -53,6 +53,7 @@ export interface UserMeta extends EntryMeta {
   promptId?: string;
   origin?: PromptOrigin;
   tracked?: boolean;
+  gated?: boolean;
   createdAt?: string;
   userMessageId?: string;
 }
