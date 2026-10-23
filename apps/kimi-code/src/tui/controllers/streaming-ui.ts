@@ -2,7 +2,6 @@ import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
-import { currentWorkingTip } from '../components/chrome/working-tips';
 import { CompactionComponent } from '../components/dialogs/compaction';
 import { ReadGroupComponent } from '../components/messages/read-group';
 import { ThinkingComponent } from '../components/messages/thinking';
@@ -56,7 +55,7 @@ export class StreamingUIController {
   private _thinkingDraft = '';
   private _streamingBlock: { component: AssistantMessageComponent; entry: TranscriptEntry } | null = null;
   private _activeThinkingComponent: ThinkingComponent | undefined = undefined;
-  private _activeCompactionBlock: CompactionComponent | undefined = undefined;
+  private _activeCompaction: { instruction: string | undefined } | undefined = undefined;
   private _activeToolCalls = new Map<string, ToolCallBlockData>();
   private _runningWaitForCalls = new Set<string>();
   private _streamingToolCallArguments = new Map<
@@ -432,11 +431,8 @@ export class StreamingUIController {
     this._pendingToolComponents.clear();
   }
 
-  disposeActiveCompactionBlock(): void {
-    if (this._activeCompactionBlock !== undefined) {
-      this._activeCompactionBlock.dispose();
-      this._activeCompactionBlock = undefined;
-    }
+  clearActiveCompaction(): void {
+    this._activeCompaction = undefined;
   }
 
   // ---------------------------------------------------------------------------
@@ -749,34 +745,37 @@ export class StreamingUIController {
   }
 
   beginCompaction(instruction?: string): void {
-    const { state } = this.host;
-    if (this._activeCompactionBlock !== undefined) {
-      this._activeCompactionBlock.markDone();
-      this._activeCompactionBlock = undefined;
-    }
-    const block = new CompactionComponent(state.ui, instruction, currentWorkingTip()?.text);
-    this._activeCompactionBlock = block;
-    state.transcriptContainer.addChild(block);
-    if (state.toolOutputExpanded) {
-      block.setExpanded(true);
-    }
-    state.ui.requestRender();
+    if (this._activeCompaction !== undefined) this.endCompaction();
+    this._activeCompaction = { instruction };
+    this.host.state.ui.requestRender();
   }
 
   endCompaction(tokensBefore?: number, tokensAfter?: number, summary?: string): void {
-    const block = this._activeCompactionBlock;
-    if (block === undefined) return;
+    const compaction = this._activeCompaction;
+    if (compaction === undefined) return;
+    const { state } = this.host;
+    const block = new CompactionComponent(state.ui, compaction.instruction);
     block.markDone(tokensBefore, tokensAfter, summary);
-    this._activeCompactionBlock = undefined;
-    this.host.state.ui.requestRender();
+    this._activeCompaction = undefined;
+    this.mountCompactionBlock(block);
+    state.ui.requestRender();
   }
 
   cancelCompaction(): void {
-    const block = this._activeCompactionBlock;
-    if (block === undefined) return;
+    const compaction = this._activeCompaction;
+    if (compaction === undefined) return;
+    const { state } = this.host;
+    const block = new CompactionComponent(state.ui, compaction.instruction);
     block.markCanceled();
-    this._activeCompactionBlock = undefined;
-    this.host.state.ui.requestRender();
+    this._activeCompaction = undefined;
+    this.mountCompactionBlock(block);
+    state.ui.requestRender();
+  }
+
+  private mountCompactionBlock(block: CompactionComponent): void {
+    const { state } = this.host;
+    state.transcriptContainer.addChild(block);
+    if (state.toolOutputExpanded) block.setExpanded(true);
   }
 
   // ---------------------------------------------------------------------------

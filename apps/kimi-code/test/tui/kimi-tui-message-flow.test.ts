@@ -7368,7 +7368,7 @@ capabilities = ["image_in", "video_in"]
     }
   });
 
-  it('stores the live compaction summary and expands it with tool output expansion', async () => {
+  it('keeps live compaction progress out of the transcript and expands the completed summary', async () => {
     const { driver } = await makeDriver();
     const sendQueued = vi.fn();
 
@@ -7381,6 +7381,11 @@ capabilities = ["image_in", "video_in"]
       } as Event,
       sendQueued,
     );
+
+    const activity = driver.state.activityContainer.render(120).map(stripSgr).join('\n');
+    const inProgress = driver.state.transcriptContainer.render(120).map(stripSgr).join('\n');
+    expect(activity).toContain('Compacting…');
+    expect(inProgress).not.toContain('Compacting context…');
 
     driver.sessionEventHandler.handleEvent(
       {
