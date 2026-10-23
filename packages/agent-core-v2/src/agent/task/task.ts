@@ -1,4 +1,5 @@
 import { createDecorator } from '#/_base/di/instantiation';
+import type { Event } from '#/_base/event';
 import type { ITaskHandle } from '#/app/task/task';
 import type {
   AgentTask,
@@ -27,6 +28,17 @@ export interface AgentTaskOutputSnapshot {
   readonly truncated: boolean;
   readonly fullOutputAvailable: boolean;
   readonly preview: string;
+}
+
+export interface AgentTaskOutputChunk {
+  readonly taskId: string;
+  readonly offset: number;
+  readonly text: string;
+}
+
+export interface AgentTaskOutputTail {
+  readonly offset: number;
+  readonly data: Uint8Array;
 }
 
 export interface RegisterAgentTaskOptions {
@@ -74,6 +86,8 @@ export interface AgentTaskWaitDelivery {
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
 
+  readonly onDidAppendOutput: Event<AgentTaskOutputChunk>;
+
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
@@ -84,6 +98,7 @@ export interface IAgentTaskService {
     maxPreviewBytes: number,
   ): Promise<AgentTaskOutputSnapshot>;
   readOutput(taskId: string, tail?: number): Promise<string>;
+  readOutputTail(taskId: string, maxBytes: number): Promise<AgentTaskOutputTail>;
   suppressTerminalNotification(taskId: string): Promise<void>;
   suppressAllTerminalNotifications(): Promise<void>;
   markTasksDeliveredViaWait(tasks: readonly AgentTaskWaitDelivery[]): void;

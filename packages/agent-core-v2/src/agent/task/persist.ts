@@ -127,6 +127,16 @@ export class AgentTaskPersistence {
     return textDecoder.decode(output.data.subarray(start, end));
   }
 
+  async readTaskOutputTail(
+    taskId: string,
+    maxBytes: number,
+  ): Promise<{ readonly offset: number; readonly data: Uint8Array } | undefined> {
+    const output = await this.readTaskOutputData(taskId);
+    if (output === undefined) return undefined;
+    const offset = Math.max(0, output.data.byteLength - Math.max(0, Math.trunc(maxBytes)));
+    return { offset, data: output.data.subarray(offset) };
+  }
+
   async readTaskOutputSnapshot(
     taskId: string,
     maxPreviewBytes: number,

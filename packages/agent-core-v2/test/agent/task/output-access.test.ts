@@ -272,6 +272,55 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     }
   });
 
+  it('onDidAppendOutput reports contiguous UTF-8 byte offsets', async () => {
+    const chunks: { offset: number; text: string }[] = [];
+    const subscription = manager.onDidAppendOutput(({ offset, text }) => chunks.push({ offset, text }));
+    const output = '  VITE ready\n  ➜  Local: http://localhost:5173/\n';
+    const taskId = registerProcess(manager, immediateProcess(0, output), 'npm run dev', 'dev server');
+
+    await manager.wait(taskId);
+    subscription.dispose();
+
+    expect(chunks.map((chunk) => chunk.text).join('')).toBe(output);
+    let expectedOffset = 0;
+    for (const chunk of chunks) {
+      expect(chunk.offset).toBe(expectedOffset);
+      expectedOffset += Buffer.byteLength(chunk.text, 'utf-8');
+    }
+    expect(expectedOffset).toBe(Buffer.byteLength(output, 'utf-8'));
+  });
+
+  it('readOutputTail returns the persisted tail bytes with their offset', async () => {
+    const output = 'HEAD\n' + 'x'.repeat(200 * 1024) + '➜ TAIL\n';
+    const taskId = registerProcess(manager, immediateProcess(0, output), 'echo big', 'large');
+
+    await manager.wait(taskId);
+    const tail = await manager.readOutputTail(taskId, 4096);
+
+    const total = Buffer.byteLength(output, 'utf-8');
+    expect(tail.offset).toBe(total - 4096);
+    expect(tail.data.byteLength).toBe(4096);
+    expect(Buffer.from(tail.data).toString('utf-8').endsWith('➜ TAIL\n')).toBe(true);
+  });
+
+  it('readOutputTail returns the in-memory tail before output is persisted', async () => {
+    const taskId = registerProcess(manager, immediateProcess(0, 'short ➜ line\n'), 'echo', 'demo');
+
+    await waitForOutput(manager, taskId, 'short');
+    const tail = await manager.readOutputTail(taskId, 4096);
+
+    expect(tail.offset).toBe(0);
+    expect(Buffer.from(tail.data).toString('utf-8')).toBe('short ➜ line\n');
+    await manager.wait(taskId);
+  });
+
+  it('readOutputTail returns nothing for unknown task ids', async () => {
+    const tail = await manager.readOutputTail('bash-deadbeef', 4096);
+
+    expect(tail.offset).toBe(0);
+    expect(tail.data.byteLength).toBe(0);
+  });
+
   it('readOutput respects tail length', async () => {
     const taskId = registerProcess(
       manager,

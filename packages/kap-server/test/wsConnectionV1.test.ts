@@ -1,8 +1,14 @@
 import type { WebSocket } from 'ws';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { AgentTaskOutputChunk, IAgentTaskService } from '@moonshot-ai/agent-core-v2';
+
 import type { IConnectionRegistry } from '../src/transport/ws/connectionRegistry';
 import type { SessionEventBroadcaster } from '../src/transport/ws/v1/sessionEventBroadcaster';
+import {
+  TASK_OUTPUT_TAIL_BYTES,
+  type TaskOutputSource,
+} from '../src/transport/ws/v1/taskOutputStream';
 import {
   type WsConnectionV1Options,
   WsConnectionV1,
@@ -898,5 +904,328 @@ describe('WsConnectionV1 global target registration', () => {
     );
     await vi.waitFor(() => expect(diOptIns).toEqual([conn]));
     conn.close();
+  });
+});
+
+describe('WsConnectionV1 task output', () => {
+  interface FakeTaskOutput {
+    readonly source: TaskOutputSource;
+    write(text: string): void;
+    readonly listenerCount: () => number;
+    holdTailRead(): () => void;
+    failTailRead(): void;
+  }
+
+  function makeTaskOutput(taskId: string, initial = ''): FakeTaskOutput {
+    let bytes = Buffer.from(initial, 'utf-8');
+    const listeners = new Set<(chunk: AgentTaskOutputChunk) => void>();
+    let gate: Promise<void> | undefined;
+    let tailReadFails = false;
+    const tasks = {
+      getTask: (id: string) => (id === taskId ? { taskId } : undefined),
+      onDidAppendOutput: (listener: (chunk: AgentTaskOutputChunk) => void) => {
+        listeners.add(listener);
+        return { dispose: () => listeners.delete(listener) };
+      },
+      readOutputTail: async (_id: string, maxBytes: number) => {
+        await gate;
+        if (tailReadFails) throw new Error('EACCES: permission denied');
+        const offset = Math.max(0, bytes.byteLength - maxBytes);
+        return { offset, data: new Uint8Array(bytes.subarray(offset)) };
+      },
+    } as unknown as IAgentTaskService;
+    return {
+      source: async (sessionId, id) => {
+        if (sessionId !== 's1') return { kind: 'session_not_found' };
+        if (id !== taskId) return { kind: 'task_not_found' };
+        return { kind: 'found', tasks };
+      },
+      write: (text) => {
+        const offset = bytes.byteLength;
+        bytes = Buffer.concat([bytes, Buffer.from(text, 'utf-8')]);
+        for (const listener of listeners) listener({ taskId, offset, text });
+      },
+      listenerCount: () => listeners.size,
+      holdTailRead: () => {
+        let release!: () => void;
+        gate = new Promise((resolve) => {
+          release = resolve;
+        });
+        return () => {
+          gate = undefined;
+          release();
+        };
+      },
+      failTailRead: () => {
+        tailReadFails = true;
+      },
+    };
+  }
+
+  function send(socket: FakeSocket, frame: Record<string, unknown>): void {
+    socket.emit('message', JSON.stringify(frame));
+  }
+
+  function taskFrames(socket: FakeSocket): unknown[] {
+    return socket.frames().filter((frame) => (frame as { type: string }).type !== 'server_hello');
+  }
+
+  const startLines =
+    '\n> web@0.1.0 dev\n> vite\n\n  VITE v6.3.5  ready in 412 ms\n\n  ➜  Local:   http://localhost:5173/\n';
+  const hmrLine = '4:42:10 PM [vite] hmr update /src/App.vue\n';
+
+  it('replies, sends the current output from offset 0, then streams new output', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    output.write(hmrLine);
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 0 },
+      { type: 'task.output', session_id: 's1', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+      {
+        type: 'task.output',
+        session_id: 's1',
+        task_id: 'bash-k3f9x2ab',
+        offset: Buffer.byteLength(startLines, 'utf-8'),
+        text: hmrLine,
+      },
+    ]);
+    conn.close();
+  });
+
+  it('sends only the output after since_offset when it is within the tail', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines + hmrLine);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+    const since = Buffer.byteLength(startLines, 'utf-8');
+
+    send(socket, {
+      type: 'task.attach',
+      request_id: 'r1',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: since,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toEqual({
+      type: 'task.output',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      offset: since,
+      text: hmrLine,
+    });
+    conn.close();
+  });
+
+  it('sends nothing after the reply when since_offset is already at the end', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, {
+      type: 'task.attach',
+      request_id: 'r1',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: Buffer.byteLength(startLines, 'utf-8'),
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)).toEqual([{ type: 'response', request_id: 'r1', code: 0 }]);
+    conn.close();
+  });
+
+  it('falls back to the last 4 KiB aligned to a character boundary when since_offset is too old', async () => {
+    const filler = 'x'.repeat(TASK_OUTPUT_TAIL_BYTES * 2);
+    const total = filler + '➜' + 'y'.repeat(TASK_OUTPUT_TAIL_BYTES - 2);
+    const output = makeTaskOutput('bash-k3f9x2ab', total);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, {
+      type: 'task.attach',
+      request_id: 'r1',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: 12,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    const totalBytes = Buffer.byteLength(total, 'utf-8');
+    const first = taskFrames(socket)[1] as { offset: number; text: string };
+    expect(first.offset).toBe(totalBytes - TASK_OUTPUT_TAIL_BYTES + 2);
+    expect(first.text).toBe('y'.repeat(TASK_OUTPUT_TAIL_BYTES - 2));
+    expect(first.text).not.toContain('\uFFFD');
+    conn.close();
+  });
+
+  it('falls back to the tail start when since_offset splits a character', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+    const arrowStart = Buffer.from(startLines, 'utf-8').indexOf(Buffer.from('➜', 'utf-8'));
+
+    send(socket, {
+      type: 'task.attach',
+      request_id: 'r1',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      since_offset: arrowStart + 1,
+    });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toEqual({
+      type: 'task.output',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      offset: 0,
+      text: startLines,
+    });
+    conn.close();
+  });
+
+  it('drops output already covered by the first chunk and forwards output written during the read', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+    const release = output.holdTailRead();
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
+    output.write(hmrLine);
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 0 },
+      {
+        type: 'task.output',
+        session_id: 's1',
+        task_id: 'bash-k3f9x2ab',
+        offset: 0,
+        text: startLines + hmrLine,
+      },
+    ]);
+    conn.close();
+  });
+
+  it('stops streaming after task.detach and replies to it', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    send(socket, { type: 'task.detach', request_id: 'r2', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+    output.write(hmrLine);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)[2]).toEqual({ type: 'response', request_id: 'r2', code: 0 });
+    expect(taskFrames(socket)).toHaveLength(3);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('replies with error codes for unknown sessions, unknown tasks, and invalid messages', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's2', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r2', session_id: 's1', task_id: 'bash-00000000' });
+    send(socket, { type: 'task.attach', request_id: 'r3', session_id: 's1' });
+    send(socket, { type: 'task.attach', request_id: 'r4', session_id: 's1', task_id: '' });
+    send(socket, { type: 'task.detach', request_id: 'r5', session_id: '', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(5));
+
+    const codes = Object.fromEntries(
+      (taskFrames(socket) as Array<{ request_id: string; code: number }>).map((frame) => [
+        frame.request_id,
+        frame.code,
+      ]),
+    );
+    expect(codes).toEqual({ r1: 40401, r2: 40406, r3: 40001, r4: 40001, r5: 40001 });
+    conn.close();
+  });
+
+  it('replies with an internal error when the task lookup throws', async () => {
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, {
+      taskOutputSource: async () => {
+        throw new Error('session restore failed');
+      },
+    });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 50001, msg: 'internal error' },
+    ]);
+    conn.close();
+  });
+
+  it('replies with a persistence error and releases the attachment when the output cannot be read', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    output.failTailRead();
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+    output.write(hmrLine);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 50003, msg: 'task output unavailable' },
+    ]);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('closes the connection with 1008 when a task output message has no readable request_id', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(socket.closeCalls).toHaveLength(1));
+
+    expect(socket.closeCalls[0]).toEqual({ code: 1008, reason: 'invalid message' });
+    expect(taskFrames(socket)).toEqual([]);
+  });
+
+  it('releases attachments when the connection closes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+    conn.close();
+
+    expect(output.listenerCount()).toBe(0);
+  });
+
+  it('merges contiguous task.output frames for the same task in one batch', () => {
+    const a = { type: 'task.output', session_id: 's1', task_id: 't1', offset: 0, text: '➜ a\n' };
+    const b = { type: 'task.output', session_id: 's1', task_id: 't1', offset: 6, text: 'b\n' };
+    const gap = { type: 'task.output', session_id: 's1', task_id: 't1', offset: 20, text: 'c\n' };
+    const other = { type: 'task.output', session_id: 's1', task_id: 't2', offset: 22, text: 'd\n' };
+
+    expect(coalesceFrames([a, b, gap, other])).toEqual([
+      { ...a, text: '➜ a\nb\n' },
+      gap,
+      other,
+    ]);
   });
 });

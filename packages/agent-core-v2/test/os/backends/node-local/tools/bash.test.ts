@@ -6,6 +6,7 @@ import {
   IAgentTaskService,
   type AgentTask,
   type AgentTaskInfo,
+  type AgentTaskOutputChunk,
   type AgentTaskOutputSnapshot,
   type AgentTaskStatus,
   type ForegroundTaskReleaseReason,
@@ -13,6 +14,7 @@ import {
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
 import { userCancellationReason } from '#/_base/utils/abort';
+import { Event } from '#/_base/event';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/agent/tools/os/bash/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -467,6 +469,7 @@ function createFakeTaskService(
 
   const service: IAgentTaskService = {
     _serviceBrand: undefined,
+    onDidAppendOutput: Event.None as Event<AgentTaskOutputChunk>,
     track(): never {
       throw new Error('fake IAgentTaskService.track is not implemented');
     },
@@ -588,6 +591,10 @@ function createFakeTaskService(
       const output = entry === undefined ? '' : entry.outputChunks.join('');
       if (tail === undefined) return output;
       return output.slice(-Math.max(0, Math.trunc(tail)));
+    },
+
+    async readOutputTail(): Promise<never> {
+      throw new Error('fake IAgentTaskService.readOutputTail is not implemented');
     },
 
     async suppressTerminalNotification(): Promise<void> {

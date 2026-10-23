@@ -3,9 +3,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  type AgentTask,
   type Event2,
   IEventBus,
   IAgentLifecycleService,
+  IAgentTaskService,
   ISessionManager,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
@@ -303,5 +305,51 @@ describe('server-v2 /api/v1/ws resync', () => {
     expect(manager.get(sid)).toBeDefined();
     c.ws.close();
     await c.closed;
+  }, 30_000);
+
+  it('streams task output to an attached connection and resumes from since_offset', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+    const main = getLiveSessionById(server!.core.accessor, sid)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf('main')!;
+    let sink: Parameters<AgentTask['start']>[0] | undefined;
+    const taskId = main.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'npm run dev',
+      start: (s) => {
+        sink = s;
+        s.appendOutput('  VITE ready\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'npm run dev', pid: 0, exitCode: null }),
+    });
+    const isOutput = (f: Frame): boolean => f.type === 'task.output';
+
+    const c1 = await openConn(wsUrl, server!.authTokenService.getToken());
+    c1.send({ type: 'task.attach', request_id: 'r1', session_id: sid, task_id: taskId });
+    expect(await c1.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
+    expect(await c1.next(isOutput)).toMatchObject({ task_id: taskId, offset: 0, text: '  VITE ready\n' });
+
+    sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
+    const live = await c1.next(isOutput);
+    expect(live).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
+    c1.ws.close();
+    await c1.closed;
+
+    sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
+    const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
+    const c2 = await openConn(wsUrl, server!.authTokenService.getToken());
+    c2.send({ type: 'task.attach', request_id: 'r2', session_id: sid, task_id: taskId, since_offset: since });
+    expect(await c2.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r2', code: 0 });
+    expect(await c2.next(isOutput)).toMatchObject({
+      offset: since,
+      text: '4:42:10 PM [vite] hmr update /src/App.vue\n',
+    });
+
+    c2.send({ type: 'task.attach', request_id: 'r3', session_id: sid, task_id: 'bash-00000000' });
+    expect(await c2.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
+    c2.ws.close();
+    await c2.closed;
   }, 30_000);
 });

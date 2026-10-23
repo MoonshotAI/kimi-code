@@ -31,6 +31,12 @@ import {
   type SessionEventBroadcaster,
   type TargetSubscription,
 } from './sessionEventBroadcaster';
+import {
+  isTaskOutputMessageType,
+  TaskOutputAttachments,
+  type TaskOutputFrame,
+  type TaskOutputSource,
+} from './taskOutputStream';
 
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
 
@@ -54,6 +60,7 @@ interface InboundFrame {
 export interface WsConnectionV1Options {
   readonly socket: WebSocket;
   readonly broadcaster: SessionEventBroadcaster;
+  readonly taskOutputSource?: TaskOutputSource;
   readonly connectionRegistry: IConnectionRegistry;
   readonly validateCredential?: CredentialValidator;
   readonly remoteAddress: string | null;
@@ -81,6 +88,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly highWaterMarkBytes: number;
   private readonly heartbeatIntervalMs: number;
   private readonly logger?: JournalLogger;
+  private readonly taskOutputs?: TaskOutputAttachments;
 
   private closed = false;
   private gotClientHello = false;
@@ -109,6 +117,19 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
     this.highWaterMarkBytes = opts.highWaterMarkBytes ?? DEFAULT_HIGH_WATER_MARK_BYTES;
     this.heartbeatIntervalMs = opts.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+    if (opts.taskOutputSource !== undefined) {
+      this.taskOutputs = new TaskOutputAttachments(opts.taskOutputSource, {
+        respond: (frame) => {
+          this.sendImmediateFrame(frame);
+        },
+        output: (frame: TaskOutputFrame) => {
+          this.sendSubscribedFrame(frame);
+        },
+        rejectUnreadable: () => {
+          this.close(1008, 'invalid message');
+        },
+      });
+    }
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
@@ -136,7 +157,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).sort();
+    return Array.from(this.subscriptions.keys()).toSorted();
   }
 
   send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
@@ -154,6 +175,12 @@ export class WsConnectionV1 implements BroadcastTarget {
     }
     if (typeof frame?.type !== 'string') return;
     this.lastInboundAt = Date.now();
+
+    if (isTaskOutputMessageType(frame.type)) {
+      void this.taskOutputs?.handle(frame).catch(() => {
+      });
+      return;
+    }
 
     switch (frame.type) {
       case 'pong':
@@ -490,6 +517,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     if (this.heartbeatTimer !== undefined) clearInterval(this.heartbeatTimer);
     this.outbound = [];
+    this.taskOutputs?.dispose();
     this.broadcaster.removeGlobalTarget(this);
     for (const sid of this.subscriptions.keys()) this.broadcaster.unsubscribe(sid, this);
   }
@@ -545,10 +573,33 @@ function isCoalescableDelta(frame: unknown): frame is CoalescableDelta {
   return typeof (payload as Record<string, unknown>)['delta'] === 'string';
 }
 
+function isTaskOutputFrame(frame: unknown): frame is TaskOutputFrame {
+  if (typeof frame !== 'object' || frame === null) return false;
+  const f = frame as Record<string, unknown>;
+  return f['type'] === 'task.output' && typeof f['offset'] === 'number' && typeof f['text'] === 'string';
+}
+
+function continuesTaskOutput(last: TaskOutputFrame, frame: TaskOutputFrame): boolean {
+  return (
+    last.session_id === frame.session_id &&
+    last.task_id === frame.task_id &&
+    last.offset + Buffer.byteLength(last.text, 'utf-8') === frame.offset
+  );
+}
+
 export function coalesceFrames(frames: readonly unknown[]): unknown[] {
   const out: unknown[] = [];
   for (const frame of frames) {
     const last = out.at(-1);
+    if (
+      last !== undefined &&
+      isTaskOutputFrame(last) &&
+      isTaskOutputFrame(frame) &&
+      continuesTaskOutput(last, frame)
+    ) {
+      out[out.length - 1] = { ...last, text: last.text + frame.text };
+      continue;
+    }
     if (
       last !== undefined &&
       isCoalescableDelta(last) &&

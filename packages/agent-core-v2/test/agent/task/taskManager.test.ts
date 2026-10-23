@@ -754,6 +754,37 @@ describe('AgentTaskService', () => {
     }
   });
 
+  it('publishes only the output that is kept once the output limit trips', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-publish-'));
+    try {
+      const { manager } = createAgentTaskService({ sessionDir });
+      const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
+      const { proc } = sigtermIgnoringProcess(chunks);
+      let publishedEnd = 0;
+      const subscription = manager.onDidAppendOutput(({ offset, text }) => {
+        publishedEnd = offset + Buffer.byteLength(text, 'utf-8');
+      });
+
+      const taskId = manager.registerTask(
+        new ProcessTask(proc, 'runaway', 'hash', () => {}),
+        {
+          detached: false,
+          signal: new AbortController().signal,
+          timeoutMs: 60_000,
+        },
+      );
+
+      await waitForTerminal(manager, taskId);
+      subscription.dispose();
+      const tail = await manager.readOutputTail(taskId, 1);
+
+      expect(publishedEnd).toBeLessThanOrEqual(LIMIT_BYTES);
+      expect(publishedEnd).toBe(tail.offset + tail.data.byteLength);
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    }
+  });
+
   it('stops appending persisted output once the output limit trips for a detached process task', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-limit-bg-'));
     try {
