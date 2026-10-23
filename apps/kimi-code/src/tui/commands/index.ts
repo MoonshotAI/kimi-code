@@ -1,3 +1,4 @@
+export * from './did-you-mean';
 export * from './experimental-flags';
 export * from './parse';
 export * from './registry';

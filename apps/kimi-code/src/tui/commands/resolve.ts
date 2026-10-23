@@ -4,6 +4,7 @@ import {
   type BuiltinSlashCommand,
   type BuiltinSlashCommandName,
 } from './registry';
+import { knownSlashCommandNames, suggestSlashCommands } from './did-you-mean';
 import { isExperimentalFlagEnabled } from './experimental-flags';
 import { parseSlashInput } from './parse';
 import type { TUIState } from '../tui-state';
@@ -48,6 +49,8 @@ export type SlashCommandIntent =
       readonly kind: 'invalid';
       readonly commandName: string;
       readonly reason: SlashCommandInvalidReason;
+      /** Did-you-mean candidates from the currently known command names. */
+      readonly suggestions: readonly string[];
     };
 
 export interface ResolveSlashCommandInput {
@@ -136,9 +139,26 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
     return skillCommandIntent(parsed, shorthandSkillName);
   }
 
+  // The parser splits the name at the first space only, so a pasted multi-line
+  // text leaves `name` spanning newlines or tabs. That is text that starts
+  // with '/', not a command attempt: keep the message path (and its inline
+  // skill scan) for it.
+  if (/\s/.test(parsed.name)) {
+    return {
+      kind: 'message',
+      input: options.input,
+    };
+  }
+  // A clean single-token name nothing resolved is a mistyped command:
+  // hard-block it locally instead of forwarding it to the model verbatim.
   return {
-    kind: 'message',
-    input: options.input,
+    kind: 'invalid',
+    commandName: parsed.name,
+    reason: 'unknown',
+    suggestions: suggestSlashCommands(
+      parsed.name,
+      knownSlashCommandNames(options.skillCommandMap, options.pluginCommandMap),
+    ),
   };
 }
 
@@ -202,6 +222,20 @@ export function slashBusyMessage(
     return `Cannot /${commandName} while streaming — press Esc or Ctrl-C first.`;
   }
   return `Cannot /${commandName} while compacting — wait for compaction to finish first.`;
+}
+
+export function unknownSlashCommandMessage(
+  commandName: string,
+  suggestions: readonly string[],
+): string {
+  if (suggestions.length === 0) {
+    return `Unknown command: /${commandName}. Type "/" for a list of supported commands. To send it as a message, start the line with a space.`;
+  }
+  if (suggestions.length === 1) {
+    return `Unknown command: /${commandName}. Did you mean /${suggestions[0]}?`;
+  }
+  const list = suggestions.map((name) => `/${name}`).join(', ');
+  return `Unknown command: /${commandName}. Did you mean one of ${list}?`;
 }
 
 /**

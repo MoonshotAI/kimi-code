@@ -1,8 +1,11 @@
 import {
+  knownSlashCommandNames,
   resolveSlashCommandInput,
   setExperimentalFeatures,
   slashBusyMessage,
   slashCommandBusyReason,
+  suggestSlashCommands,
+  unknownSlashCommandMessage,
 } from '#/tui/commands/index';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -54,7 +57,7 @@ describe('resolveUserInput', () => {
       input: '/skill:security\n/quick /skill:security',
       skills: [{ skillName: 'security' }, { skillName: 'review' }],
     },
-    { input: '/unknown /skill:review src/app.ts', skills: [{ skillName: 'review' }] },
+    { input: '/unknown /skill:review src/app.ts', skills: [] },
     { input: '/help /skill:review', skills: [] },
     { input: '/example:deploy /skill:review', skills: [] },
     { input: 'check src/app.ts https://example.com/review and 1/2', skills: [] },
@@ -287,10 +290,37 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('returns message for unknown slash input', () => {
+  it('returns invalid for unknown slash input instead of forwarding it as a message', () => {
     expect(resolve('/does-not-exist arg')).toEqual({
+      kind: 'invalid',
+      commandName: 'does-not-exist',
+      reason: 'unknown',
+      suggestions: [],
+    });
+  });
+
+  it('returns invalid with did-you-mean suggestions for a mistyped command', () => {
+    expect(resolve('/usgae')).toEqual({
+      kind: 'invalid',
+      commandName: 'usgae',
+      reason: 'unknown',
+      suggestions: ['usage'],
+    });
+  });
+
+  it('returns invalid for an unknown slash input even while busy, without enqueuing', () => {
+    expect(resolve('/usgae', { isStreaming: true })).toEqual({
+      kind: 'invalid',
+      commandName: 'usgae',
+      reason: 'unknown',
+      suggestions: ['usage'],
+    });
+  });
+
+  it('keeps the message path for multi-line input whose parsed name spans a newline', () => {
+    expect(resolve('/unknown\nhello world')).toEqual({
       kind: 'message',
-      input: '/does-not-exist arg',
+      input: '/unknown\nhello world',
     });
   });
 
@@ -312,11 +342,15 @@ describe('resolveSlashCommandInput', () => {
     });
   });
 
-  it('does not resolve /tower as a builtin when the tower flag is disabled', () => {
+  it('returns invalid for /tower when the tower flag is disabled, excluding it from suggestions', () => {
     expect(resolve('/tower Ship feature X')).toEqual({
-      kind: 'message',
-      input: '/tower Ship feature X',
+      kind: 'invalid',
+      commandName: 'tower',
+      reason: 'unknown',
+      suggestions: [],
     });
+    // A near-miss of a disabled command does not suggest it either.
+    expect(resolve('/towr')).toMatchObject({ kind: 'invalid', suggestions: [] });
   });
 });
 
@@ -454,5 +488,89 @@ describe('slash command busy helpers', () => {
       commandName: 'my-plugin:deploy',
       reason: 'streaming',
     });
+  });
+});
+
+describe('knownSlashCommandNames', () => {
+  afterEach(() => {
+    setExperimentalFeatures([]);
+  });
+
+  it('includes built-in names and aliases plus skill and plugin command keys', () => {
+    const names = knownSlashCommandNames(
+      new Map([['skill:review', 'review'], ['quick', 'review']]),
+      new Map([['my-plugin:deploy', 'Deploy']]),
+    );
+
+    expect(names.has('help')).toBe(true); // built-in name
+    expect(names.has('h')).toBe(true); // built-in alias
+    expect(names.has('q')).toBe(true); // built-in alias of exit
+    expect(names.has('skill:review')).toBe(true); // skill key
+    expect(names.has('quick')).toBe(true); // unprefixed skill key
+    expect(names.has('my-plugin:deploy')).toBe(true); // plugin command key
+  });
+
+  it('excludes commands gated behind a disabled experiment, and their aliases', () => {
+    expect(knownSlashCommandNames(new Map(), new Map()).has('tower')).toBe(false);
+
+    setExperimentalFeatures([{ id: 'tower', enabled: true }]);
+    expect(knownSlashCommandNames(new Map(), new Map()).has('tower')).toBe(true);
+  });
+
+  it('deduplicates a skill key that collides with a built-in name', () => {
+    const names = knownSlashCommandNames(new Map([['help', 'help']]), new Map());
+    expect([...names].filter((name) => name === 'help')).toHaveLength(1);
+  });
+});
+
+describe('suggestSlashCommands', () => {
+  it('counts a transposition as one edit (usgae → usage)', () => {
+    expect(suggestSlashCommands('usgae', new Set(['usage']))).toEqual(['usage']);
+  });
+
+  it('accepts candidates at distance 2 and rejects distance 3', () => {
+    expect(suggestSlashCommands('usg', new Set(['usage']))).toEqual(['usage']);
+    expect(suggestSlashCommands('usg', new Set(['usagex']))).toEqual([]);
+  });
+
+  it('orders by distance ascending, then name ascending', () => {
+    // 'a' (distance 2) loses to every distance-1 candidate despite being
+    // alphabetically first, and the cap drops it from the result.
+    const candidates = new Set(['a', 'ab', 'abx', 'aac']);
+    expect(suggestSlashCommands('abc', candidates)).toEqual(['aac', 'ab', 'abx']);
+  });
+
+  it('caps the list at three suggestions', () => {
+    const candidates = new Set(['aaaa', 'aaba', 'abaa', 'baaa', 'bbaa']);
+    expect(suggestSlashCommands('aaaa', candidates)).toEqual(['aaaa', 'aaba', 'abaa']);
+  });
+
+  it('returns no duplicates when the pool holds a name once', () => {
+    expect(suggestSlashCommands('hepl', new Set(['help']))).toEqual(['help']);
+  });
+});
+
+describe('unknownSlashCommandMessage', () => {
+  it('offers a single suggestion', () => {
+    expect(unknownSlashCommandMessage('usgae', ['usage'])).toBe(
+      'Unknown command: /usgae. Did you mean /usage?',
+    );
+  });
+
+  it('offers several suggestions', () => {
+    expect(unknownSlashCommandMessage('xyz', ['a', 'b', 'c'])).toBe(
+      'Unknown command: /xyz. Did you mean one of /a, /b, /c?',
+    );
+  });
+
+  it('points at the command list and the leading-space escape hatch when there are no suggestions', () => {
+    expect(unknownSlashCommandMessage('xyz', [])).toBe(
+      'Unknown command: /xyz. Type "/" for a list of supported commands. To send it as a message, start the line with a space.',
+    );
+  });
+
+  it('shows the escape hatch only in the no-suggestion branch', () => {
+    expect(unknownSlashCommandMessage('usgae', ['usage'])).not.toContain('start the line with a space');
+    expect(unknownSlashCommandMessage('xyz', ['a', 'b'])).not.toContain('start the line with a space');
   });
 });
