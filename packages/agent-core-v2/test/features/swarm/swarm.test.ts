@@ -55,6 +55,8 @@ import { IConfigService } from '#/app/config/config';
 import { normalizeAgentProfile, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -295,6 +297,7 @@ describe('AgentSwarmService', () => {
     } as unknown as ISessionTokenCountingService);
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.stub(ISessionLockService, new InMemorySessionLockService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const loop = stubLoopWithHooks();
     ix.stub(IAgentLoopService, loop);
@@ -570,6 +573,7 @@ describe('AgentSwarmService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     registerTestAgentWire(ix2, testWireScope('wire', 'swarm-replay'), {
       log: ix2.get(IAppendLogStore),

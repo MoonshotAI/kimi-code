@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -52,6 +52,21 @@ import {
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
 import { SessionEventJournal, type EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
 import { TranscriptService } from '../src/services/transcript/transcriptService';
+
+const fsMock = vi.hoisted(() => ({ blockedAppends: new Set<string>() }));
+
+vi.mock('node:fs/promises', async (importActual) => {
+  const actual = await importActual<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    appendFile: async (...args: Parameters<typeof actual.appendFile>) => {
+      if (typeof args[0] === 'string' && fsMock.blockedAppends.has(args[0])) {
+        throw Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' });
+      }
+      return actual.appendFile(...args);
+    },
+  };
+});
 
 type FakeBusEvent = { type: string };
 
@@ -525,6 +540,7 @@ describe('SessionEventBroadcaster', () => {
   });
 
   afterEach(async () => {
+    fsMock.blockedAppends.clear();
     await bc.close();
     for (const sessionId of sessions.keys()) interactions.purgeSession(sessionId);
     await rm(dir, { recursive: true, force: true });
@@ -871,6 +887,139 @@ describe('SessionEventBroadcaster', () => {
     const result = await bc.getBufferedSince('s1', { seq: 0 });
     expect(result.resyncRequired).toBe('buffer_overflow');
     expect(result.currentSeq).toBe(6);
+  });
+
+  describe('disk replay coverage', () => {
+    async function reopenJournal(seqs = [1]) {
+      const filePath = join(dir, 's1.jsonl');
+      const epoch = 'ep_example';
+      await writeFile(
+        filePath,
+        [
+          { kind: 'journal_header', version: 1, epoch, created_at: 0 },
+          ...seqs.map((seq) => ({
+            kind: 'event',
+            seq,
+            envelope: {
+              type: 'tool.result',
+              seq,
+              epoch,
+              session_id: 's1',
+              timestamp: '2026-10-22T00:00:00.000Z',
+              payload: { type: 'tool.result', agentId: 'main', toolCallId: `call-${seq}`, output: 'ok' },
+            },
+          })),
+        ].map((line) => JSON.stringify(line)).join('\n') + '\n',
+      );
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const sub = lc.addAgent('agent-0');
+      sessions.set('s1', lc);
+      await bc.subscribe('s1', collectingTarget().target);
+      expect(await bc.getCursor('s1')).toEqual({ seq: Math.max(...seqs), epoch });
+      return { filePath, main, sub, epoch };
+    }
+
+    it('combines cold history with live events whose append keeps failing', async () => {
+      const { filePath, main, epoch } = await reopenJournal();
+      fsMock.blockedAppends.add(filePath);
+      main.bus.emit(agentEvent('tool.result', { toolCallId: 'call-2', output: 'pending' }));
+      expect(await bc.getCursor('s1')).toEqual({ seq: 2, epoch });
+
+      const result = await bc.getBufferedSince('s1', { seq: 0, epoch });
+
+      expect(result.resyncRequired).toBe(false);
+      expect(result.currentSeq).toBe(2);
+      expect(result.events.map((entry) => entry.seq)).toEqual([1, 2]);
+      expect((await readFile(filePath, 'utf8')).trim().split('\n')).toHaveLength(2);
+    });
+
+    it('sorts and deduplicates events covered by both the journal and live tail', async () => {
+      const { main, epoch } = await reopenJournal([2, 1]);
+      main.bus.emit(agentEvent('tool.result', { toolCallId: 'call-3', output: 'ok' }));
+      await bc.getCursor('s1');
+
+      const result = await bc.getBufferedSince('s1', { seq: 0, epoch });
+
+      expect(result.resyncRequired).toBe(false);
+      expect(result.events.map((entry) => entry.seq)).toEqual([1, 2, 3]);
+      expect(result.currentSeq).toBe(3);
+    });
+
+    it.each(['agent filter', 'transcript grades'])(
+      'checks coverage before applying %s',
+      async (filterKind) => {
+        const { filePath, sub, epoch } = await reopenJournal();
+        fsMock.blockedAppends.add(filePath);
+        sub.bus.emit(agentEvent('tool.result', { toolCallId: 'call-2', output: 'pending' }));
+        await bc.getCursor('s1');
+
+        const result = await bc.getBufferedSince(
+          's1',
+          { seq: 0, epoch },
+          filterKind === 'agent filter' ? new Set(['main']) : undefined,
+          filterKind === 'transcript grades' ? { 'agent-0': 'delta' } : undefined,
+        );
+
+        expect(result.resyncRequired).toBe(false);
+        expect(result.currentSeq).toBe(2);
+        expect(result.events.map((entry) => entry.seq)).toEqual([1]);
+      },
+    );
+
+    it.each([false, true])(
+      'captures the replay range before awaiting the journal when appends recover: %s',
+      async (recoverAppends) => {
+        const { filePath, main, epoch } = await reopenJournal();
+        fsMock.blockedAppends.add(filePath);
+        main.bus.emit(agentEvent('tool.result', { toolCallId: 'call-2', output: 'pending' }));
+        await bc.getCursor('s1');
+        let enter!: () => void;
+        let release!: () => void;
+        const entered = new Promise<void>((resolve) => { enter = resolve; });
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const readSince = SessionEventJournal.prototype.readSince;
+        const reading = vi.spyOn(SessionEventJournal.prototype, 'readSince').mockImplementation(
+          async function (this: SessionEventJournal, fromSeq, limit) {
+            enter();
+            await gate;
+            return readSince.call(this, fromSeq, limit);
+          },
+        );
+        try {
+          const replay = bc.getBufferedSince('s1', { seq: 0, epoch });
+          await entered;
+          for (let seq = 3; seq <= 5; seq++) {
+            main.bus.emit(agentEvent('tool.result', { toolCallId: `call-${seq}`, output: 'newer' }));
+          }
+          expect((await bc.getCursor('s1')).seq).toBe(5);
+          if (recoverAppends) fsMock.blockedAppends.delete(filePath);
+          release();
+
+          const result = await replay;
+
+          expect(result.resyncRequired).toBe(false);
+          expect(result.currentSeq).toBe(2);
+          expect(result.events.map((entry) => entry.seq)).toEqual([1, 2]);
+        } finally {
+          release();
+          reading.mockRestore();
+        }
+      },
+    );
+
+    it('requires resync when the journal and live tail cannot fill a historical gap', async () => {
+      const { epoch } = await reopenJournal([1, 3]);
+
+      const result = await bc.getBufferedSince('s1', { seq: 0, epoch });
+
+      expect(result).toEqual({
+        events: [],
+        resyncRequired: 'buffer_overflow',
+        currentSeq: 3,
+        epoch,
+      });
+    });
   });
 
   const TURN_STARTED_WIRE_KEYS = ['agentId', 'origin', 'prompt', 'sessionId', 'turnId', 'type'];
@@ -1304,6 +1453,78 @@ describe('SessionEventBroadcaster', () => {
     expect(await bc.subscribe('s1', collectingTarget().target)).toBe(true);
     expect(await bc.getCursor('s1')).toEqual(before);
   });
+
+  it.each(['close', 'archive'] as const)(
+    'preserves a resumed transcript while the previous %s finishes journal cleanup',
+    async (reason) => {
+      const managerEvents = new FakeManagerEvents();
+      const core = makeCore(sessions, eventBus, {}, managerEvents);
+      const service = new TranscriptService({ homeDir: dir, core });
+      await bc.close();
+      bc = new SessionEventBroadcaster({
+        eventsDir: dir,
+        core,
+        transcriptService: service,
+      });
+      const previous = new FakeLifecycle();
+      previous.addAgent('main');
+      sessions.set('s1', previous);
+      const { target } = collectingTarget();
+      await bc.subscribe('s1', target);
+      service.forSessionLive('s1');
+      await service.whenReady('s1');
+      bc.unsubscribe('s1', target);
+
+      let markCloseStarted!: () => void;
+      const closeStarted = new Promise<void>((resolve) => {
+        markCloseStarted = resolve;
+      });
+      let releaseClose!: () => void;
+      const closeGate = new Promise<void>((resolve) => {
+        releaseClose = resolve;
+      });
+      const close = SessionEventJournal.prototype.close;
+      const closeSpy = vi.spyOn(SessionEventJournal.prototype, 'close')
+        .mockImplementationOnce(async function (this: SessionEventJournal) {
+          markCloseStarted();
+          await closeGate;
+          await close.call(this);
+        });
+      try {
+        sessions.delete('s1');
+        if (reason === 'close') managerEvents.fireDidClose('s1');
+        else managerEvents.fireDidArchive('s1');
+        await closeStarted;
+
+        const resumed = new FakeLifecycle();
+        const main = resumed.addAgent('main');
+        sessions.set('s1', resumed);
+        const store = service.forSessionLive('s1')!;
+        await service.whenReady('s1');
+        const clientMetadata = [{ display_text: 'Resumed prompt' }];
+        main.bus.emit(agentEvent('turn.started', {
+          turnId: 2,
+          origin: { kind: 'user', clientMetadata },
+        }));
+        expect(store.getAgent('main')!.getItems()).toContainEqual(expect.objectContaining({
+          kind: 'turn',
+          origin: expect.objectContaining({ payload: { kind: 'user', clientMetadata } }),
+        }));
+
+        releaseClose();
+        await bc.getCursor('s1');
+        expect(service.forSessionLive('s1')).toBe(store);
+        expect(store.getAgent('main')!.getItems()).toContainEqual(expect.objectContaining({
+          kind: 'turn',
+          origin: expect.objectContaining({ payload: { kind: 'user', clientMetadata } }),
+        }));
+      } finally {
+        releaseClose();
+        await bc.close();
+        closeSpy.mockRestore();
+      }
+    },
+  );
 
   it('subscribe returns false for an unknown session', async () => {
     const { target } = collectingTarget();

@@ -15,6 +15,7 @@ import { encodeWorkDirKey, workspaceRootKey } from '#/_base/utils/workdir-slug';
 import { ErrorCodes, Error2 } from '#/errors';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -80,7 +81,7 @@ describe('WorkspaceService (file-backed)', () => {
     storage?: IFileSystemStorageService,
   ): IWorkspaceService {
     const fileStorage = storage ?? new FileStorageService(homeDir);
-    appendLogs = new AppendLogStore(fileStorage, noopLog);
+    appendLogs = new AppendLogStore(fileStorage, noopLog, new InMemorySessionLockService());
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),

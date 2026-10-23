@@ -25,6 +25,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -53,6 +55,7 @@ beforeEach(() => {
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
@@ -86,6 +89,7 @@ function createFreshHost(logKey: string): {
 } {
   const freshIx = disposables.add(new TestInstantiationService());
   freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
+  freshIx.stub(ISessionLockService, new InMemorySessionLockService());
   freshIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   freshIx.set(ISessionUsageService, new SyncDescriptor(SessionUsageService));
   const freshLog = freshIx.get(IAppendLogStore);

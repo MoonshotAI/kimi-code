@@ -1288,7 +1288,7 @@ describe('server-v2 /api/v1 prompts', () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
     const form = new FormData();
-    form.set('file', new Blob([avifBytes()], { type: 'image/avif' }), 'photo.avif');
+    form.set('file', new Blob([new Uint8Array(avifBytes())], { type: 'image/avif' }), 'photo.avif');
     const uploadRes = await fetch(`${base}/api/v1/files`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer),
@@ -1334,7 +1334,7 @@ describe('server-v2 /api/v1 prompts', () => {
     name: string,
   ): Promise<{ id: string; size: number }> {
     const form = new FormData();
-    form.set('file', new Blob([bytes], { type: mediaType }), name);
+    form.set('file', new Blob([new Uint8Array(bytes)], { type: mediaType }), name);
     const uploadRes = await fetch(`${base}/api/v1/files`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer),

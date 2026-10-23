@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
@@ -21,6 +22,8 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { ContentPart } from '#human/llm/message';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -32,6 +35,7 @@ import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 
 import {
+  noopLogger,
   registerTestAgentWire,
   registerTestEventDispatcher,
   restoreTestEventDispatcher,
@@ -142,6 +146,8 @@ function textOf(message: DeepReadonly<ContextMessage>): string {
 
 let disposables: DisposableStore;
 let blob: StubBlobService;
+let hosts: Host[];
+let instantiations: TestInstantiationService[];
 
 interface Host {
   wire: IWireService;
@@ -170,7 +176,10 @@ const noopTokenCounting: ISessionTokenCountingService = {
 
 function buildHost(key: string): Host {
   const ix = disposables.add(new TestInstantiationService());
+  instantiations.push(ix);
+  ix.stub(ILogService, noopLogger);
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.stub(IAgentBlobService, blob);
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
@@ -182,7 +191,7 @@ function buildHost(key: string): Host {
     eventBus: ix.get(IEventBus),
   });
   const dispatcher = registerTestEventDispatcher(ix);
-  return {
+  const host = {
     wire,
     dispatcher,
     agentState: ix.get(IAgentStateService),
@@ -190,6 +199,8 @@ function buildHost(key: string): Host {
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
   };
+  hosts.push(host);
+  return host;
 }
 
 async function readRecords(log: IAppendLogStore, key = KEY): Promise<WireRecord[]> {
@@ -203,9 +214,18 @@ async function readRecords(log: IAppendLogStore, key = KEY): Promise<WireRecord[
 beforeEach(() => {
   disposables = new DisposableStore();
   blob = new StubBlobService();
+  hosts = [];
+  instantiations = [];
 });
 
-afterEach(() => disposables.dispose());
+afterEach(async () => {
+  try {
+    await Promise.all(hosts.map((host) => host.dispatcher.flush()));
+  } finally {
+    disposables.dispose();
+    await Promise.all(instantiations.map((ix) => ix.disposeAsync()));
+  }
+});
 
 describe('AgentContextMemoryService (wire-backed)', () => {
   it('splice/append/undo/apply_compaction/clear/append_loop_event each update getState with a NEW reference and persist flat records', async () => {

@@ -75,6 +75,7 @@ import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { SubagentRosterTracker } from './subagentRosterTracker';
 import {
   type EventEnvelope,
+  type JournalEntry,
   type JournalLogger,
   SessionEventJournal,
   sessionJournalPath,
@@ -516,8 +517,20 @@ export class SessionEventBroadcaster {
       const events = applyFilter(tail.filter((e) => e.seq > cursor.seq));
       return { events, resyncRequired: false, currentSeq, epoch };
     }
+    const replayTail = tail.filter((entry) => entry.seq > cursor.seq && entry.seq <= currentSeq);
     const fromDisk = await journal.readSince(cursor.seq, this.maxBufferSize);
-    return { events: applyFilter(fromDisk), resyncRequired: false, currentSeq, epoch };
+    const entriesBySeq = new Map<number, JournalEntry>();
+    for (const entry of [...fromDisk, ...replayTail]) {
+      if (entry.seq > cursor.seq && entry.seq <= currentSeq) entriesBySeq.set(entry.seq, entry);
+    }
+    const events = [...entriesBySeq.values()].toSorted((a, b) => a.seq - b.seq);
+    if (
+      events.length !== currentSeq - cursor.seq ||
+      events.some((entry, index) => entry.seq !== cursor.seq + index + 1)
+    ) {
+      return { events: [], resyncRequired: 'buffer_overflow', currentSeq, epoch };
+    }
+    return { events: applyFilter(events), resyncRequired: false, currentSeq, epoch };
   }
 
   async getCursor(sessionId: string): Promise<{ seq: number; epoch: string }> {
@@ -599,8 +612,8 @@ export class SessionEventBroadcaster {
   private evictSession(sessionId: string): void {
     const state = this.sessions.get(sessionId);
     const pending = this.pendingStates.get(sessionId);
+    this.opts.transcriptService?.dropSession(sessionId);
     if (state === undefined && pending === undefined) {
-      this.opts.transcriptService?.dropSession(sessionId);
       return;
     }
     if (state !== undefined) this.sessions.delete(sessionId);
@@ -635,7 +648,6 @@ export class SessionEventBroadcaster {
       await disposeSessionState(state);
       this.dropActivityTrackers(sessionId);
     }
-    this.opts.transcriptService?.dropSession(sessionId);
   }
 
   private detachSession(sessionId: string): void {

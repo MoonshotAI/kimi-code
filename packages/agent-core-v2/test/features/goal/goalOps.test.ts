@@ -20,6 +20,8 @@ import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -114,6 +116,7 @@ async function restoreGoalDispatcher(
 function buildHost(key: string): GoalHost {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentLoopService, createLoopStub());

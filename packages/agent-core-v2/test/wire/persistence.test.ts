@@ -57,6 +57,7 @@ function createAppendLogHarness(storage: IFileSystemStorageService): IAppendLogS
 
   const ix = disposable.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   return ix.get(IAppendLogStore);
 }

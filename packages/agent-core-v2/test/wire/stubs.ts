@@ -39,6 +39,7 @@ interface TestAgentWireDependencies {
 const noopLog: IAppendLogStore = {
   _serviceBrand: undefined,
   onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
+  onDidRecover: Event.None as IAppendLogStore['onDidRecover'],
   append: () => {},
   read: async function* () {},
   rewrite: async () => {},
@@ -117,9 +118,8 @@ export function registerTestAgentWire(
   if (previousContext !== undefined) {
     ix.set(ISessionContext, previousContext as ISessionContext);
   }
-  const previousLocks = ix.set(ISessionLockService, new InMemorySessionLockService());
-  if (previousLocks !== undefined) {
-    ix.set(ISessionLockService, previousLocks as ISessionLockService);
+  if (ix.get(ISessionLockService) === undefined) {
+    ix.set(ISessionLockService, new InMemorySessionLockService());
   }
   ix.set(IWireService, new SyncDescriptor(WireService));
   const eventBus = ix.get(IEventBus);
@@ -238,6 +238,7 @@ export function recordingWireLog(
   return {
     _serviceBrand: undefined,
     onDidWrite: Event.None as IAppendLogStore['onDidWrite'],
+    onDidRecover: Event.None as IAppendLogStore['onDidRecover'],
     append: (_scope, _key, record) => {
       records.push(record as WireRecord);
       onAppend?.(record as WireRecord);

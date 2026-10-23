@@ -12,6 +12,8 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { IAgentStateService } from '#/agent/state/agentState';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -160,6 +162,7 @@ describe('restore from a corrupted journal', () => {
     const bus = ix.get(IEventBus);
     const storage = new InMemoryStorageService();
     ix.stub(IFileSystemStorageService, storage);
+    ix.stub(ISessionLockService, new InMemorySessionLockService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log = ix.get(IAppendLogStore);
     const scope = testWireScope(SCOPE, KEY);

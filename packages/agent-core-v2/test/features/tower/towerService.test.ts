@@ -65,6 +65,8 @@ import {
 } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import type { ToolCall } from '#human/llm/message';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -169,6 +171,7 @@ describe('AgentTowerService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.stub(ISessionLockService, new InMemorySessionLockService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     executorEvents = stubToolExecutorEvents();
@@ -1006,6 +1009,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-replay'), {
       log: ix2.get(IAppendLogStore),
@@ -1031,6 +1035,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     registerTestAgentWire(ix2, testWireScope('wire', 'tower-legacy'), {
       log: ix2.get(IAppendLogStore),
@@ -1868,6 +1873,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -1970,6 +1976,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2037,6 +2044,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2111,6 +2119,7 @@ describe('AgentTowerService', () => {
 
       const ix2 = disposables.add(new TestInstantiationService());
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+      ix2.stub(ISessionLockService, new InMemorySessionLockService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2222,6 +2231,7 @@ describe('AgentTowerService', () => {
 
       const ix2 = disposables.add(new TestInstantiationService());
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+      ix2.stub(ISessionLockService, new InMemorySessionLockService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2317,6 +2327,7 @@ describe('AgentTowerService', () => {
 
       const ix2 = disposables.add(new TestInstantiationService());
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+      ix2.stub(ISessionLockService, new InMemorySessionLockService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2407,6 +2418,7 @@ describe('AgentTowerService', () => {
 
       const ix2 = disposables.add(new TestInstantiationService());
       ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+      ix2.stub(ISessionLockService, new InMemorySessionLockService());
       ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
       ix2.set(IEventBus, new SyncDescriptor(EventBusService));
       ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2488,6 +2500,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2565,6 +2578,7 @@ describe('AgentTowerService', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);
@@ -2623,6 +2637,7 @@ describe('AgentTowerService', () => {
   it('restore does not touch the profile tool overlay while tower mode is inactive', async () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
     ix2.stub(IAgentToolExecutorService, stubToolExecutorEvents().executor);

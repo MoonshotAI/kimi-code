@@ -23,6 +23,8 @@ import {
   ContextClear,
   ContextUndo,
 } from '#/agent/contextMemory/contextEvents';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -123,6 +125,7 @@ describe('v1 wire vocabulary', () => {
     disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.stub(ISessionLockService, new InMemorySessionLockService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     log = ix.get(IAppendLogStore);
     registerTestAgentWire(ix, SCOPE, { log });
@@ -235,6 +238,7 @@ describe('v1 wire vocabulary', () => {
     disposables.add(store);
     const ix2 = store.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });
@@ -259,6 +263,7 @@ describe('v1 wire vocabulary', () => {
     disposables.add(store);
     const ix2 = store.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, SCOPE, { log: log2 });

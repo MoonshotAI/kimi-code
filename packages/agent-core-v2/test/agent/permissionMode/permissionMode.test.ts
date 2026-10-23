@@ -17,6 +17,8 @@ import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -81,6 +83,7 @@ beforeEach(() => {
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.stub(IAgentReminderService, injectorStub);
   ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-home', bootstrapEnv));
@@ -246,6 +249,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
   it('replay rebuilds mode from a persisted record on a fresh dispatcher (silent)', async () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     const log2 = ix2.get(IAppendLogStore);
     registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-mode-replay'), {
@@ -276,6 +280,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     registeredInjection = undefined;
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.stub(IAgentReminderService, injectorStub);
     ix2.stub(
@@ -301,6 +306,7 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     registeredInjection = undefined;
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.stub(IAgentReminderService, injectorStub);
     ix2.stub(
