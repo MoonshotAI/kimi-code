@@ -83,6 +83,7 @@ function isSettingsSelection(value: string): value is SettingsSelection {
 export interface SettingsSelectorOptions {
   readonly onSelect: (value: SettingsSelection) => void;
   readonly onCancel: () => void;
+  readonly isFocusingClick?: () => boolean;
 }
 
 export class SettingsSelectorComponent extends ChoicePickerComponent {
@@ -94,6 +95,7 @@ export class SettingsSelectorComponent extends ChoicePickerComponent {
         if (isSettingsSelection(value)) opts.onSelect(value);
       },
       onCancel: opts.onCancel,
+      isFocusingClick: opts.isFocusingClick,
     });
   }
 }
