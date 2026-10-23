@@ -80,6 +80,106 @@ describe('createEventStore', () => {
     expect(Object.isFrozen(notes)).toBe(true);
   });
 
+  it('matches immutable replay and preserves subsequent live update semantics', async () => {
+    const tree = await openTree();
+    const raiserSlice = createSlice({
+      name: 'raiser',
+      initialState: () => 0,
+      reducers: {
+        'test.counter_added': (draft, event: CounterAdded, ctx) => {
+          ctx.enqueue.raise({ type: 'test.counter_bumped_internal' });
+          return draft + event.amount;
+        },
+      },
+    });
+    const liveSlices = { counter: counterSlice, notes: notesSlice, raiser: raiserSlice };
+    const journal = await openJournal(tree);
+    const live = await createEventStore({ journal, slices: liveSlices });
+    await live.dispatch(counterAdded({ amount: 5 }));
+    await live.dispatch(noteTagged({ tag: 'a' }));
+    await live.flush();
+
+    const expected = await createEventStore({ journal, slices: liveSlices });
+    const actual = await createEventStore({ journal, slices: liveSlices, mutableReplay: true });
+    expect(actual.getState()).toEqual(expected.getState());
+    expect(Object.isFrozen(actual.slice('notes'))).toBe(true);
+
+    const restored = actual.getState();
+    await actual.dispatch(noteTagged({ tag: 'b' }));
+    await actual.dispatch(counterAdded({ amount: 1 }));
+    expect(actual.getState()).toEqual({ counter: 206, notes: ['a', 'b'], raiser: 6 });
+    expect(restored).toEqual({ counter: 105, notes: ['a'], raiser: 5 });
+
+    await actual.reset(journal);
+    expect(actual.getState()).toEqual({ counter: 206, notes: ['a', 'b'], raiser: 6 });
+    expect(Object.isFrozen(actual.slice('notes'))).toBe(true);
+  });
+
+  it('restores the previous state and journal when mutable replay fails', async () => {
+    const failingSlice = createSlice({
+      name: 'failing',
+      initialState: () => 0,
+      reducers: {
+        'test.note_tagged': () => {
+          throw new Error('fold failure');
+        },
+      },
+    });
+    const goodJournal = await openJournal(await openTree());
+    const store = await createEventStore({
+      journal: goodJournal,
+      slices: { counter: counterSlice, notes: notesSlice, failing: failingSlice },
+      mutableReplay: true,
+    });
+    const before = store.getState();
+    const beforeRef = store.ref;
+    const badJournal = await openJournal(await openTree());
+    await badJournal.append({
+      type: 'test.note_tagged',
+      kind: 'event',
+      data: { type: 'test.note_tagged', time: 1, tag: 'bad' },
+    });
+
+    await expect(store.reset(badJournal)).rejects.toThrow('fold failure');
+    expect(store.getState()).toBe(before);
+    expect(store.ref).toEqual(beforeRef);
+
+    await store.dispatch(counterAdded({ amount: 1 }));
+    const records = [];
+    for await (const record of goodJournal.read()) records.push(record);
+    expect(records.at(-1)?.type).toBe('test.counter_added');
+  });
+
+  it('rolls back a failed slice registration and allows a retry', async () => {
+    let shouldFail = true;
+    const flakySlice = createSlice({
+      name: 'flaky',
+      initialState: () => [] as string[],
+      reducers: {
+        'test.note_tagged': (draft, event: NoteTagged) => {
+          if (shouldFail) {
+            shouldFail = false;
+            throw new Error('fold failure');
+          }
+          draft.push(event.tag);
+        },
+      },
+    });
+    const journal = await openJournal(await openTree());
+    await journal.append({
+      type: 'test.note_tagged',
+      kind: 'event',
+      data: { type: 'test.note_tagged', time: 1, tag: 'a' },
+    });
+    const store = await createEventStore({ journal, slices: { notes: notesSlice }, mutableReplay: true });
+
+    await expect(store.registerSlice(flakySlice)).rejects.toThrow('fold failure');
+    expect(store.getState()).toEqual({ notes: ['a'] });
+
+    await store.registerSlice(flakySlice);
+    expect(store.getState()).toEqual({ notes: ['a'], flaky: ['a'] });
+  });
+
   it('ignores legacy snapshot entries when folding', async () => {
     const tree = await openTree();
     const journal = await openJournal(tree);

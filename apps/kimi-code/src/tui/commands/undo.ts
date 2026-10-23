@@ -22,6 +22,7 @@ import { UserMessageComponent } from '../components/messages/user-message';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
+import { isSessionOccupiedError, isSessionStaleError } from '../utils/session-lock-errors';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { SlashCommandHost } from './dispatch';
@@ -100,6 +101,14 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
     const limit = undoLimitFromError(error);
     if (limit !== undefined) {
       showUndoLimitStatus(host, formatUndoLimitMessage(limit.requestedCount, limit));
+      return false;
+    }
+    if (isSessionOccupiedError(error)) {
+      host.showError(formatErrorMessage(error));
+      return false;
+    }
+    if (isSessionStaleError(error)) {
+      host.showStatus('Loaded updates from another client. Review and run /undo again.', 'warning');
       return false;
     }
     const message = formatErrorMessage(error);

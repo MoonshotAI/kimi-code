@@ -114,6 +114,33 @@ describe('server-v2 OpenAPI', () => {
       }),
     ).toBe(true);
   });
+
+  it('documents session conflicts for session mutation routes', async () => {
+    const doc = await fetchOpenApi();
+    const paths = [
+      '/api/v1/sessions/{session_id}/profile',
+      '/api/v1/sessions/{session_id}/title/generate',
+      '/api/v1/sessions/{session_id}/children',
+      '/api/v1/sessions/{session_id}/skills/{tail}',
+    ];
+    for (const path of paths) {
+      const op = operation(doc, path, 'post');
+      const responses = asRecord(op['responses']);
+      const content = asRecord(asRecord(responses['200'])['content']);
+      const schema = asRecord(asRecord(content['application/json'])['schema']);
+      const variants = schema['oneOf'];
+      expect(Array.isArray(variants)).toBe(true);
+      for (const code of [40931, 40932]) {
+        expect(
+          (variants as unknown[]).some((variant) => {
+            const properties = asRecord(asRecord(variant)['properties']);
+            const values = asRecord(properties['code'])['enum'];
+            return Array.isArray(values) && values.includes(code);
+          }),
+        ).toBe(true);
+      }
+    }
+  });
 });
 
 function asRecord(value: unknown): Record<string, unknown> {
