@@ -14,6 +14,7 @@ import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
 import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { IConfigService } from '#/app/config/config';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -23,6 +24,7 @@ import {
   SENSITIVE_DOT_VARIANT_SUFFIXES,
   type WorkspaceConfig,
 } from '#/tool/path-access';
+import { TOOLS_SECTION } from '#/agent/toolPolicy/configSection';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -71,7 +73,8 @@ export class GrepTool implements IGrepTool {
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog | undefined,
+    @IConfigService private readonly config: IConfigService,
   ) {}
 
   private workspace(view: RuntimeWorkspaceView): WorkspaceConfig {
@@ -100,6 +103,12 @@ export class GrepTool implements IGrepTool {
     }
     const searchPaths = [path ?? workspace.workspaceDir];
     const searchPath = args.path ?? workspace.workspaceDir;
+
+    const effectiveIncludeIgnored =
+      args.include_ignored ?? this.config.get<{ search?: { follow_gitignore?: boolean } }>(TOOLS_SECTION)?.search?.follow_gitignore === false;
+
+    const executionArgs = { ...args, include_ignored: effectiveIncludeIgnored };
+
     return {
       accesses: ToolAccesses.searchTree(searchPaths[0]!),
       description: `Searching for '${args.pattern}' in ${searchPath}`,
@@ -112,7 +121,7 @@ export class GrepTool implements IGrepTool {
           if (lease.runtime.identity.generation !== inspected.identity.generation) {
             return { isError: true, output: 'Runtime changed before execution. Retry the tool call.' };
           }
-          return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, args, signal, searchPaths);
+          return await this.execution(lease.runtime.process!, lease.runtime.fs!, env, workspace, executionArgs, signal, searchPaths);
         } finally {
           lease.dispose();
         }
