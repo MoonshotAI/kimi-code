@@ -1540,7 +1540,7 @@ describe('OpenAILegacyChatProvider', () => {
       ]);
     });
 
-    it('yields an empty ThinkPart from an explicitly empty streaming reasoning field', async () => {
+    it('skips empty streaming reasoning fields so gateways that keep reasoning_content: "" do not bloat the journal', async () => {
       const provider = new OpenAILegacyChatProvider({
         model: 'deepseek-reasoner',
         apiKey: 'test-key',
@@ -1548,7 +1548,9 @@ describe('OpenAILegacyChatProvider', () => {
       });
 
       async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: 'hmm' } }] };
         yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: '' } }] };
+        yield { id: 'c1', choices: [{ index: 0, delta: { content: 'hi' } }] };
       }
 
       (provider as any)._client.chat.completions.create = vi
@@ -1559,7 +1561,53 @@ describe('OpenAILegacyChatProvider', () => {
       const parts: StreamedMessagePart[] = [];
       for await (const part of stream) parts.push(part);
 
-      expect(parts).toEqual([{ type: 'think', think: '' }]);
+      expect(parts).toEqual([
+        { type: 'think', think: 'hmm' },
+        { type: 'text', text: 'hi' },
+      ]);
+    });
+
+    it('keeps one empty reasoning marker when a streamed tool call has only empty reasoning', async () => {
+      const provider = new OpenAILegacyChatProvider({
+        model: 'deepseek-reasoner',
+        apiKey: 'test-key',
+        stream: true,
+      });
+
+      async function* mockedStream(): AsyncIterable<Record<string, unknown>> {
+        yield { id: 'c1', choices: [{ index: 0, delta: { reasoning_content: '' } }] };
+        yield {
+          id: 'c1',
+          choices: [
+            {
+              index: 0,
+              delta: {
+                reasoning_content: '',
+                tool_calls: [
+                  {
+                    index: 0,
+                    id: 'call_1',
+                    type: 'function',
+                    function: { name: 'lookup', arguments: '{}' },
+                  },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            },
+          ],
+        };
+      }
+
+      (provider as any)._client.chat.completions.create = vi
+        .fn()
+        .mockResolvedValue(mockedStream());
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts.filter((p) => p.type === 'think')).toEqual([{ type: 'think', think: '' }]);
+      expect(parts.some((p) => p.type === 'function')).toBe(true);
     });
 
     it('treats blank reasoning_key as unset so defaults still apply', async () => {
@@ -1909,7 +1957,7 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
     ]);
   });
 
-  it('yields an empty ThinkPart when the non-stream reasoning field is explicitly empty', async () => {
+  it('keeps a single empty marker for an explicitly empty non-stream reasoning field', async () => {
     const provider = new OpenAILegacyChatProvider({
       model: 'deepseek-reasoner',
       apiKey: 'test-key',
@@ -1921,12 +1969,15 @@ describe('OpenAILegacyChatProvider — non-stream response parsing', () => {
       provider,
       makeNonStreamResponse({
         role: 'assistant',
-        content: null,
+        content: 'hi',
         reasoning_content: '',
       }),
     );
 
-    expect(parts).toEqual([{ type: 'think', think: '' }]);
+    expect(parts).toEqual([
+      { type: 'think', think: '' },
+      { type: 'text', text: 'hi' },
+    ]);
   });
 
   it('non-stream response yields ToolCall parts when tool_calls present', async () => {
