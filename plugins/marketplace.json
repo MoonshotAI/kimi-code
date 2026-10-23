@@ -55,6 +55,16 @@
       "homepage": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit",
       "keywords": ["cloudbase", "tencent-cloud", "baas", "database", "cloud-function", "mcp"],
       "source": "https://github.com/TencentCloudBase/CloudBase-AI-Toolkit/releases/latest/download/cloudbase-kimi.zip"
+    },
+    {
+      "id": "buildyourwolfpack",
+      "tier": "curated",
+      "displayName": "BuildYourWolfpack",
+      "version": "1.0.0",
+      "description": "Roast-to-order coffee with a game built in: missions, Pack Points, and your own wolf pack.",
+      "homepage": "https://buildyourwolfpack.com",
+      "keywords": ["coffee", "loyalty", "gamification", "missions", "wolf pack", "mcp", "rewards", "veteran-owned"],
+      "source": "https://github.com/DomMasteroftheGame/buildyourwolfpack-kimi-plugin"
     }
   ]
 }
