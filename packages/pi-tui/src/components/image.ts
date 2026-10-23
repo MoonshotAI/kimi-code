@@ -18,7 +18,7 @@ import { truncateToWidth } from "../utils.ts";
 export type ImageTranscoder = (base64Data: string, mimeType: string) => string | null;
 
 let imageTranscoder: ImageTranscoder | undefined;
-// Backstop for callers that recreate Image instances. Keyed by source data, least recently used first.
+// Backstop for callers that recreate Image instances. Keyed by source data and MIME type, LRU first.
 const pngCache = new Map<string, string | null>();
 
 /**
@@ -32,10 +32,11 @@ export function setImageTranscoder(transcoder: ImageTranscoder | undefined): voi
 
 function toPng(base64Data: string, mimeType: string): string | null {
 	if (!imageTranscoder) return null;
-	const cached = pngCache.get(base64Data);
+	const cacheKey = `${mimeType}\0${base64Data}`;
+	const cached = pngCache.get(cacheKey);
 	const png = cached === undefined ? imageTranscoder(base64Data, mimeType) : cached;
-	pngCache.delete(base64Data);
-	pngCache.set(base64Data, png);
+	pngCache.delete(cacheKey);
+	pngCache.set(cacheKey, png);
 	if (pngCache.size > 32) pngCache.delete(pngCache.keys().next().value!);
 	return png;
 }

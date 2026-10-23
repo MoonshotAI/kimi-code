@@ -199,6 +199,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** The alternate-screen renderer consumes mouse input before later host listeners and owns the component, selection, and OSC 8 activation paths. The app cannot guard all of them through component composition.
 
+### image-transcoder-cache-includes-mime — keep
+
+**Decision:** Shared PNG conversion results are keyed by both source data and MIME type, so one MIME type's conversion or failure is never reused for another.
+
+**Why not in the app:** The cache sits inside the reusable `Image` render path, before any host-specific rendering policy runs.
+
 ### program-status-optional-capability — keep
 
 **Decision:** `Terminal` implementations may omit `setProgramStatus`. Hosts that require reporting declare that capability locally instead of forcing every custom terminal to add a no-op method.
