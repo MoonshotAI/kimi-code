@@ -164,6 +164,7 @@ interface SettingsState {
   workDirModalOpen: boolean;
   currentWorkDir: string | null;
   workspaceRoot: string | null;
+  isRemote: boolean;
   models: ModelConfig[];
   defaultModel: string | null;
   defaultThinking: boolean;
@@ -183,6 +184,7 @@ interface SettingsState {
   setWorkDirModalOpen: (open: boolean) => void;
   setCurrentWorkDir: (workDir: string | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
+  setIsRemote: (isRemote: boolean) => void;
   initModels: (models: ModelConfig[], defaultModel: string | null, defaultThinking: boolean, defaultThinkingEffort?: string) => void;
   setWireSlashCommands: (commands: SlashCommandInfo[]) => void;
   setIsLoggedIn: (loggedIn: boolean) => void;
@@ -197,6 +199,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   workDirModalOpen: false,
   currentWorkDir: null,
   workspaceRoot: null,
+  isRemote: false,
   models: [],
   defaultModel: null,
   defaultThinking: false,
@@ -312,6 +315,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   setCurrentWorkDir: (currentWorkDir) => set({ currentWorkDir }),
 
   setWorkspaceRoot: (workspaceRoot) => set({ workspaceRoot }),
+
+  setIsRemote: (isRemote) => {
+    set({ isRemote });
+  },
 
   initModels: (models, defaultModel, defaultThinking, defaultThinkingEffort) => {
     settingsSaveRevision += 1;

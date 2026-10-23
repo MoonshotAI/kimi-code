@@ -58,7 +58,7 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
-  const { initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot } = useSettingsStore();
+  const { initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot, setIsRemote } = useSettingsStore();
 
   const refresh = useCallback(() => {
     setState({ status: "loading", errorMessage: null, modelsCount: 0 });
@@ -81,7 +81,9 @@ export function useAppInit(): AppInitState {
           return;
         }
 
+        setIsRemote(workspace.isRemote);
         if (!workspace.hasWorkspace) {
+          setWorkspaceRoot(null);
           setState({ status: "no-workspace", errorMessage: null, modelsCount: 0 });
           return;
         }
@@ -127,11 +129,11 @@ export function useAppInit(): AppInitState {
         }
 
         setState({ status: "ready", errorMessage: null, modelsCount });
-      } catch (err) {
+      } catch (error) {
         if (!cancelled) {
           setState({
             status: "runtime-error",
-            errorMessage: err instanceof Error ? err.message : "Failed to initialize",
+            errorMessage: error instanceof Error ? error.message : "Failed to initialize",
             modelsCount: 0,
           });
         }
@@ -142,7 +144,7 @@ export function useAppInit(): AppInitState {
     return () => {
       cancelled = true;
     };
-  }, [initKey, initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn]);
+  }, [initKey, initModels, setExtensionConfig, setWireSlashCommands, setIsLoggedIn, setWorkspaceRoot, setIsRemote]);
 
   return { ...state, refresh };
 }
