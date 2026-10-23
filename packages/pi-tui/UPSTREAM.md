@@ -8,7 +8,7 @@ Update this section after every sync. Do not reuse the previous range.
 
 - **Repo:** `https://github.com/earendil-works/pi.git`
 - **Subtree:** `packages/tui`
-- **Commit:** `53816d7dcc5ebe3a0eedec3cd07196c3a66d83fd` (2026-09-14; v0.85.1 plus upstream main through this commit)
+- **Commit:** `7c22a93d0ed02092142fa63823e63d76aa4e2406` (2026-10-22; v1.4.0 plus upstream main through this commit)
 - **This commit is an upstream marker.** It may not exist in this repo's object database.
 
 ## Reconstruct the fork
@@ -192,3 +192,15 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** Fullscreen hosts can register synchronous `addLayoutEffect` callbacks after layout and search reveal, before terminal output. An effect's `requestRender` coalesces into another complete layout pass without invalidating component caches; only the settled frame is written. Search keeps its selected occurrence while effect-driven layout shifts rendered rows; selections retain their content when effects only add or remove leading empty rows. Effects must converge within ten passes or rendering throws. With no effects registered, the existing rendering path is preserved.
 
 **Why not in the app:** The settled scroll state and the opportunity to repeat layout before terminal output belong to the alternate-screen render path. Hosts cannot reach this point through component composition alone.
+
+### program-status-optional-capability — keep
+
+**Decision:** `Terminal` implementations may omit `setProgramStatus`. Hosts that require reporting declare that capability locally instead of forcing every custom terminal to add a no-op method.
+
+**Why not in the app:** The optional method belongs to the public terminal interface; changing all custom implementations in the app would not make third-party implementations compatible.
+
+### program-status-child-records — keep
+
+**Decision:** OSC 7501 supports `id` and `title`, caches one report per record, clears an id subtree, clears every record during direct-exit restoration, and replays every live record after terminal restart. Invalid ids throw instead of falling back to the root record.
+
+**Why not in the app:** Record replacement, subtree clearing, capability-gated output, and restart replay share the terminal lifecycle that already owns root program status.

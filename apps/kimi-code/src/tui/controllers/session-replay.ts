@@ -1,5 +1,6 @@
 import type {
   AgentReplayRecord,
+  BackgroundTaskInfo,
   ContextMessage,
   GoalChange,
   PermissionMode,
@@ -70,6 +71,7 @@ export interface SessionReplayHost {
   showError(msg: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   mergeAllTurnSteps(): void;
+  restoreProgramStatusBackground?(tasks: readonly BackgroundTaskInfo[]): void;
 }
 
 function extractBashTag(
@@ -211,6 +213,7 @@ export class SessionReplayRenderer {
     for (const info of agent.background) {
       sessionEventHandler.backgroundTasks.set(info.taskId, info);
     }
+    this.host.restoreProgramStatusBackground?.(agent.background);
     sessionEventHandler.backgroundTaskTranscriptedTerminal.clear();
     for (const info of agent.background) {
       if (isTerminalBackgroundTask(info)) {

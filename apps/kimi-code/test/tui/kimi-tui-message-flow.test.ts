@@ -5240,6 +5240,39 @@ command = "vim"
     expect(driver.state.queuedMessages.map((m) => m.text)).toEqual(['/compact foo', 'msg2']);
   });
 
+  it('clears settled background records when Ctrl-S steers a queued message', async () => {
+    const { driver, session } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    driver.handleUserInput('msg1');
+    driver.sessionEventHandler.handleEvent(
+      {
+        sessionId: 'ses-1',
+        agentId: 'main',
+        type: 'background.task.terminated',
+        info: {
+          taskId: 'agent-done',
+          kind: 'agent',
+          agentId: 'agent-done',
+          description: 'finished task',
+          status: 'completed',
+          startedAt: 0,
+          endedAt: 1,
+        },
+      } as Event,
+      (item) => {
+        driver.sendQueuedMessage(session, item);
+      },
+    );
+    const setProgramStatus = vi.spyOn(driver.state.terminal, 'setProgramStatus');
+
+    driver.state.editor.onCtrlS?.();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(session.steer).toHaveBeenCalledWith('msg1');
+    expect(setProgramStatus).toHaveBeenCalledWith({ state: 'clear', id: expect.any(String) });
+  });
+
   it('steers nothing on Ctrl-S when only /compact items are queued', async () => {
     const { driver, session } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';

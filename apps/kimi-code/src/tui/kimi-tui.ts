@@ -135,6 +135,10 @@ import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { ModelMigrationController } from './controllers/model-migration';
+import {
+  ProgramStatusController,
+  type ProgramStatusBlocked,
+} from './controllers/program-status';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { showSessionOccupancyPrompt } from './controllers/session-occupancy';
 import { SessionReplayRenderer } from './controllers/session-replay';
@@ -396,6 +400,7 @@ export class KimiTUI {
     { entry: TranscriptEntry; component: ShellRunComponent; taskId?: string }
   >();
   readonly streamingUI: StreamingUIController;
+  readonly programStatus: ProgramStatusController;
   readonly authFlow: AuthFlowController;
   readonly btwPanelController: BtwPanelController;
   readonly sessionEventHandler: SessionEventHandler;
@@ -485,6 +490,7 @@ export class KimiTUI {
     this.telemetryDisabled = startupInput.telemetryDisabled ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
+    this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
     this.state.transcriptContainer.setUnhandledClick((index) =>
       this.toggleClickedFoldBlock(index),
@@ -786,6 +792,7 @@ export class KimiTUI {
     // event loop (e.g. a future TUI reconnect) can't stack duplicate listeners.
     this.disposeTerminalTracking();
     this.state.ui.start();
+    this.programStatus.refresh();
     this.startClipboardImageHintController();
     this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
     this.refreshTerminalThemeTracking();
@@ -1911,6 +1918,7 @@ export class KimiTUI {
       compactInstruction: instruction,
       queuedAfterAutoSerial: this.autoCompactionSerial,
     });
+    this.programStatus.beginUserInstruction();
     this.updateQueueDisplay();
     this.state.ui.requestRender();
     return true;
@@ -1935,6 +1943,7 @@ export class KimiTUI {
   }
 
   failSessionRequest(message: string): void {
+    this.programStatus.failRequest(message);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
     this.showError(message);
@@ -2046,11 +2055,13 @@ export class KimiTUI {
   handleTurnStarted(event: TurnStartedEvent): void {
     this.staging.handleTurnStarted(event);
     this.surveyController.notifyTurnStarted(event.origin);
+    this.programStatus.beginTurn(event.origin);
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
+    this.programStatus.finishTurn(event);
     this.state.footer.refreshGitStatus();
     if (event.reason === 'completed') void this.maybeAutoGenerateSessionTitle();
   }
@@ -2303,6 +2314,7 @@ export class KimiTUI {
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
+    this.programStatus.beginUserInstruction();
     // Submission order must survive a mid-turn compaction: objectives queued
     // while compacting stay queued when the turn outlives the compaction, so
     // steering this input ahead of them would reorder the conversation.
@@ -2372,6 +2384,7 @@ export class KimiTUI {
       ? beforeBarrier.filter((message) => message.mode !== 'bash')
       : beforeBarrier;
     if (batch.length === 0 || (!manual && !batch.every(isSteerableQueuedMessage))) return;
+    if (manual) this.programStatus.beginUserInstruction();
     const pending = [...batch];
     const sendNext = (): void => {
       if (this.deferUserMessages || this.state.appState.isCompacting) return;
@@ -2637,6 +2650,18 @@ export class KimiTUI {
     return this.sessionEventHandler.backgroundTasks;
   }
 
+  handleBackgroundTaskStatus(info: BackgroundTaskInfo): void {
+    this.programStatus.updateBackgroundTask(info);
+  }
+
+  restoreProgramStatusBackground(tasks: readonly BackgroundTaskInfo[]): void {
+    this.programStatus.restoreBackgroundTasks(tasks);
+  }
+
+  handleCompactionCancelled(): void {
+    this.programStatus.finishCompaction(true);
+  }
+
   getCurrentSessionId(): string {
     return this.state.appState.sessionId;
   }
@@ -2678,6 +2703,7 @@ export class KimiTUI {
       this.updateQueueDisplay();
       this.sessionEventHandler.retryQueuedGoalPromotion();
     }
+    if (busyChanged || 'sessionTitle' in patch) this.programStatus.refresh();
     if (additionalDirsChanged) this.setupAutocomplete();
     this.modelMigration.retry();
     this.state.ui.requestRender();
@@ -2987,11 +3013,17 @@ export class KimiTUI {
   private registerSessionHandlers(session: Session): void {
     session.setStaleReloadHandler(() => this.refreshAfterStaleReload(session));
     session.setApprovalHandler(
-      createApprovalRequestHandler(this.approvalController, (request, response) => {
-        this.appendApprovalTranscriptEntry(request, response);
-      }),
+      createApprovalRequestHandler(
+        this.approvalController,
+        (request, response) => {
+          this.appendApprovalTranscriptEntry(request, response);
+        },
+        this.programStatus,
+      ),
     );
-    session.setQuestionHandler(createQuestionAskHandler(this.questionController));
+    session.setQuestionHandler(
+      createQuestionAskHandler(this.questionController, this.programStatus),
+    );
   }
 
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {
@@ -3107,6 +3139,7 @@ export class KimiTUI {
     this.surveyController.reset();
     this.streamingUI.discardPending();
     if (options?.keepQueuedMessages !== true) this.clearQueuedMessages();
+    this.programStatus.resetSession();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -3864,6 +3897,10 @@ export class KimiTUI {
     };
   }
 
+  beginAuthBlock(): () => void {
+    return this.programStatus.beginAuthBlock();
+  }
+
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
@@ -3875,7 +3912,15 @@ export class KimiTUI {
       }),
     );
     this.state.ui.requestRender();
-    return this.showLoginProgressSpinner('Waiting for authorization…');
+    const spinner = this.showLoginProgressSpinner('Waiting for authorization…');
+    return {
+      stop: (result) => {
+        spinner.stop(result);
+      },
+      setLabel: (label) => {
+        spinner.setLabel(label);
+      },
+    };
   }
 
   // =========================================================================
@@ -4022,6 +4067,7 @@ export class KimiTUI {
   }
 
   updateQueueDisplay(): void {
+    this.programStatus.refresh();
     this.state.queueContainer.clear();
     const queued = this.state.queuedMessages;
     if (queued.length === 0) return;
@@ -4353,7 +4399,11 @@ export class KimiTUI {
   // Dialogs / Selectors
   // =========================================================================
 
-  mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void {
+  mountEditorReplacement(
+    panel: Component & Focusable,
+    onDisplaced?: () => void,
+    blocked?: ProgramStatusBlocked,
+  ): void {
     const previousOnDisplaced = this.editorReplacementOnDisplaced;
     this.editorReplacementOnDisplaced = onDisplaced;
     this.surveyController.notifyDisplaced();
@@ -4364,9 +4414,11 @@ export class KimiTUI {
     this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
     previousOnDisplaced?.();
+    this.programStatus.setEditorBlocked(blocked);
   }
 
   restoreEditor(): void {
+    this.programStatus.setEditorBlocked(undefined);
     const onDisplaced = this.editorReplacementOnDisplaced;
     this.editorReplacementOnDisplaced = undefined;
     this.state.editorReplacementMounted = false;
@@ -4401,6 +4453,7 @@ export class KimiTUI {
   /** Compaction shrinks the cached prefix — reset the cache-break baseline. */
   noteCompactionFinished(): void {
     this.cacheHint.resetCacheBreakBaseline();
+    this.programStatus.finishCompaction(false);
   }
 
   /** /undo cut the context — the next step's cache drop is expected. */
@@ -4477,6 +4530,8 @@ export class KimiTUI {
             resolve(c);
           },
         }),
+        undefined,
+        { kind: 'permission', message: 'Workspace trust required' },
       );
     });
     this.state.activeDialog = null;
@@ -4741,7 +4796,10 @@ export class KimiTUI {
       },
     );
     this.activeApprovalPanel = panel;
-    this.mountEditorReplacement(panel);
+    this.mountEditorReplacement(panel, undefined, {
+      kind: 'permission',
+      message: 'Approval required',
+    });
   }
 
   private hideApprovalPanel(): void {
@@ -4801,7 +4859,10 @@ export class KimiTUI {
         this.toggleToolOutputExpansion();
       },
     );
-    this.mountEditorReplacement(dialog);
+    this.mountEditorReplacement(dialog, undefined, {
+      kind: 'question',
+      message: 'Answer required',
+    });
   }
 
   private hideQuestionDialog(): void {

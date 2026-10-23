@@ -112,6 +112,8 @@ export interface SessionEventHost {
   recordSessionActivity(): void;
   noteStepUsage(usage: TokenUsage | undefined): void;
   noteCompactionFinished(): void;
+  handleCompactionCancelled?(): void;
+  handleBackgroundTaskStatus?(info: BackgroundTaskInfo): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -275,6 +277,9 @@ export class SessionEventHandler {
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
     this.notifications.handleEvent(event);
+    if (event.type === 'background.task.started' || event.type === 'background.task.terminated') {
+      this.host.handleBackgroundTaskStatus?.(event.info);
+    }
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
@@ -1185,6 +1190,7 @@ export class SessionEventHandler {
     sendQueued: (item: QueuedMessage) => void,
   ): void {
     this.host.streamingUI.cancelCompaction();
+    this.host.handleCompactionCancelled?.();
     this.finishCompaction(sendQueued);
   }
 

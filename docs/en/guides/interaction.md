@@ -134,6 +134,16 @@ The input box remains usable while the agent is thinking or calling tools, and s
 
 When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` steers it in and ends that wait early; messages already queued when the wait starts are steered in automatically as well. If the queue holds a shell command or a skill, automatic steering is skipped and the queue and new input stay queued until the turn ends. Press `Ctrl-S` to manually steer non-shell inputs from the editor and the queue. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 
+## Terminal program status
+
+On compatible terminals, Kimi Code CLI reports persistent program status using OSC 7501 (a protocol for telling the terminal what the program is doing). The terminal chooses the presentation, such as a tab badge for working, blocked, done, or error.
+
+The root status covers foreground turns, compaction, queued messages, and background subagents. It stays working while any background subagent is still running, even after the foreground turn ends. Each background subagent also has its own status record. Background shell commands and monitor tasks do not participate.
+
+Approvals, questions, workspace trust prompts, and sign-in flows report blocked. Normal exit clears all records. Status reports use session titles, short action labels, or the first line of an error; they do not include full prompts, tool arguments, model output, working directories, or stack traces.
+
+This applies only to the interactive TUI, not `kimi -p`. Percentage progress and desktop notifications remain separate channels. Terminal support is auto-detected by default; see [`PI_PROGRAM_STATUS`](../configuration/env-vars.md#runtime-switches) to force it on or off.
+
 ## External editor
 
 Press `Ctrl-G` to send the current input content to an external editor. When you save and close, the text is written back into the input box; if you close without saving, the original content is preserved. This is handy when you need to enter large blocks of text or content with complex formatting.
