@@ -231,6 +231,7 @@ import type { EnvironmentDisclosureSnapshot } from '#/app/agentProfileCatalog/ag
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
+import { LLM_STREAM_IDLE_TIMEOUT_ENV } from '#human/llm/requester/timeout';
 
 import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
@@ -243,6 +244,9 @@ import {
   type EventSnapshotEntry,
   type WireSnapshotEntry,
 } from './snapshots';
+
+const HARNESS_STREAM_IDLE_WATCHDOG_DISABLED = '0';
+process.env[LLM_STREAM_IDLE_TIMEOUT_ENV] ??= HARNESS_STREAM_IDLE_WATCHDOG_DISABLED;
 
 const TEST_HOME_DIR = '/home/test';
 
