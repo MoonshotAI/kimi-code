@@ -365,18 +365,24 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
         if (typeof delta.content === 'string' && delta.content.length > 0) {
           emit({ type: 'text', text: delta.content });
         }
-        let replayedDiscardedMarker = false;
-        for (const toolCall of delta.tool_calls ?? []) {
-          const parts = convertStreamToolCall(toolCall);
-          if (!replayedDiscardedMarker && parts.length > 0) {
-            replayedDiscardedMarker = true;
-            const survivor = discardedMarkers.at(-1);
-            const key = survivor?.reasoningKey;
-            if (survivor !== undefined && key !== undefined && !emittedThinkKeys.has(key)) {
+        const toolCallParts = (delta.tool_calls ?? []).map((toolCall) =>
+          convertStreamToolCall(toolCall),
+        );
+        const flatToolParts = toolCallParts.flat();
+        if (flatToolParts.length > 0) {
+          const survivor = discardedMarkers.at(-1);
+          const key = survivor?.reasoningKey;
+          if (survivor !== undefined && key !== undefined && !emittedThinkKeys.has(key)) {
+            const retainsReplay = flatToolParts.some(
+              (part) => part.type !== 'tool_call_part' || part.index === undefined,
+            );
+            if (retainsReplay) {
               emittedThinkKeys.add(key);
-              emit(survivor);
             }
+            emit(survivor);
           }
+        }
+        for (const parts of toolCallParts) {
           for (const part of parts) {
             emit(part);
           }

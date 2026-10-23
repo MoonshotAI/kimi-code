@@ -982,6 +982,72 @@ describe('openai requester thinking', () => {
     ]);
   });
 
+  it('keeps a replayed empty marker eligible when the same chunk only routes arguments', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        {
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '' },
+            },
+          ],
+        },
+        { content: 'hello' },
+        {
+          reasoning: '',
+          content: ' world',
+          tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }],
+        },
+        { content: '!' },
+        {
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 1,
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{}' },
+            },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world!' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([
+      expect.objectContaining({ id: 'call_1', name: 'lookup', arguments: '{"q":"x"}' }),
+      expect.objectContaining({ id: 'call_2', name: 'lookup', arguments: '{}' }),
+    ]);
+    const [wire] = lowerMessage(message, {
+      reasoningKey: 'reasoning_content',
+      preserveThinking: false,
+      toolMessageConversion: undefined,
+    });
+    expect(wire).toMatchObject({
+      role: 'assistant',
+      content: 'hello world!',
+      reasoning: '',
+    });
+  });
+
   it('keeps an empty reasoning marker when argument deltas route to a flushed tool', async () => {
     const client = stubOpenAIClient(
       chatCompletionChunks([
