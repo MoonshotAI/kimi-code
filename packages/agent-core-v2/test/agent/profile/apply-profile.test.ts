@@ -1,12 +1,13 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative, resolve } from 'pathe';
+import { basename, dirname, isAbsolute, join, normalize, relative, resolve } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Emitter, Event } from '#/_base/event';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { Runtime, RuntimeCapability, RuntimeStatus } from '#/runtime/runtime';
 import { normalizeAgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
@@ -135,6 +136,22 @@ describe('AgentProfileService.applyProfile', () => {
     });
   });
 
+  it('marks plan mode available only when the profile can submit plans', async () => {
+    const planAware = (name: string, tools: readonly string[]): ResolvedAgentProfile =>
+      normalizeAgentProfile({
+        name,
+        systemPrompt: (context) => `plan:${context.planModeAvailable === true ? 'yes' : 'no'}`,
+        tools,
+      });
+    const { profile: svc } = buildContext();
+
+    await svc.applyProfile(planAware('with-exit-plan', ['Read', 'ExitPlanMode']));
+    expect(svc.data().systemPrompt).toBe('plan:yes');
+
+    await svc.applyProfile(planAware('without-exit-plan', ['Read']));
+    expect(svc.data().systemPrompt).toBe('plan:no');
+  });
+
   it('loads AGENTS.md into the rendered system prompt', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
     const { profile: svc } = buildContext();
@@ -144,6 +161,29 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.data().systemPrompt).toContain('project instructions');
     expect(svc.data().systemPrompt).toContain(`<!-- From: ${join(workDir, 'AGENTS.md')} -->`);
     expect(svc.getAgentsMdWarning()).toBeUndefined();
+  });
+
+  it('seeds change-notifier beliefs from the applied profile context', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+    const { profile: svc } = buildContext(
+      agentService(IAgentChangeNotifierService, {
+        _serviceBrand: undefined,
+        notifyAgentsMdChanges: async () => {},
+        notifySkillChanges: async () => {},
+        notifySubagentChanges: async () => {},
+        seedBeliefs,
+        mute: () => {},
+        unmute: () => {},
+      }),
+    );
+
+    await svc.applyProfile(profile);
+
+    expect(seedBeliefs).toHaveBeenCalledTimes(1);
+    const seed = seedBeliefs.mock.calls[0]?.[0];
+    expect(seed?.agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+    expect(seed?.agentsMd).toContain('project instructions');
   });
 
   it('renders the complete runtime context exactly', async () => {

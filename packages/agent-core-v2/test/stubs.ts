@@ -9,6 +9,8 @@ import {
 } from '#/app/config/config';
 import type { IProviderDiscoveryService, RetiredModel } from '#/app/kosongConfig/discovery';
 import type { IModelOAuthTokens } from '#/llm-adapter/model/model-oauth';
+import type { ISessionLockService } from '#/persistence/interface/sessionLock';
+import type { ISessionRunGate } from '#/session/sessionActivity/sessionRunGate';
 
 export class StubConfigService implements IConfigService {
   declare readonly _serviceBrand: undefined;
@@ -163,5 +165,15 @@ export function stubModelOAuthTokens(
         : tokenProvider.getAccessToken(
             options?.force === true ? { force: true } : undefined,
           ),
+  };
+}
+
+export function stubSessionRunGate(
+  locks: ISessionLockService,
+  sessionId = 'test-session',
+): ISessionRunGate {
+  return {
+    _serviceBrand: undefined,
+    begin: () => locks.hold(sessionId),
   };
 }

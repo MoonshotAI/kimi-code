@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { AgentEvent2 } from '#/app/event/event2';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { defineState } from '#/state/state';
 
 import '#/agent/contextMemory/conversationTime';
@@ -85,6 +86,7 @@ export const planKey = defineState('plan', (): PlanState => ({ active: false }))
   .replayable({ schema: z.custom<PlanState>() })
   .undoable()
   .on(PlanModeEnter, (s, e, ctx) => {
+    if (e.agentId !== MAIN_AGENT_ID) return;
     if (!(s.active && s.id === e.id)) {
       s.active = true;
       s.id = e.id;

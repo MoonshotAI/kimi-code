@@ -1,38 +1,108 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { IConfigService } from '#/app/config/config';
 import {
   ITowerRateLimitService,
   type TowerRateLimitSnapshot,
 } from '#/features/tower/towerRateLimit';
 import {
   RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS,
-  TOWER_MAX_BUDGET,
   TOWER_SPAWN_PAUSE_MS,
   TowerRateLimitService,
 } from '#/features/tower/towerRateLimitService';
 
+import { StubConfigService } from '../../stubs';
+
 describe('TowerRateLimitService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let config: StubConfigService;
   let now: number;
 
   beforeEach(() => {
     now = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.set(ITowerRateLimitService, new SyncDescriptor(TowerRateLimitService, [() => now]));
+    config = new StubConfigService();
+    ix.stub(IConfigService, config);
+    ix.set(ITowerRateLimitService, new SyncDescriptor(TowerRateLimitService));
   });
-  afterEach(() => disposables.dispose());
+  afterEach(() => {
+    disposables.dispose();
+    vi.restoreAllMocks();
+  });
 
   function snapshot(): TowerRateLimitSnapshot {
     return ix.get(ITowerRateLimitService).snapshot();
   }
 
-  it('starts uncapped at the tower max budget with no pause', () => {
-    expect(snapshot()).toEqual({ budget: TOWER_MAX_BUDGET, inflight: 0, blockedUntil: null });
+  it('starts with a 256-agent budget and no pause', () => {
+    expect(snapshot()).toEqual({
+      budget: 256,
+      inflight: 0,
+      blockedUntil: null,
+    });
+  });
+
+  it('refuses new spawns above the default budget', () => {
+    const limiter = ix.get(ITowerRateLimitService);
+    for (let index = 0; index < 256; index += 1) {
+      expect(limiter.acquire()).toEqual({ ok: true });
+    }
+
+    const gate = limiter.acquire();
+    expect(gate.ok).toBe(false);
+    if (gate.ok) throw new Error('expected acquire to be refused');
+    expect(gate.reason).toContain('tower concurrency budget exhausted (256/256');
+  });
+
+  it('allows explicit maxRunningTasks to exceed the default budget', () => {
+    config.setSilent('task', { maxRunningTasks: 300 });
+
+    expect(snapshot().budget).toBe(300);
+  });
+
+  it('uses task maxRunningTasks to limit the budget and new acquisitions', () => {
+    config.setSilent('task', { maxRunningTasks: 2 });
+    const limiter = ix.get(ITowerRateLimitService);
+
+    expect(snapshot().budget).toBe(2);
+    expect(limiter.acquire()).toEqual({ ok: true });
+    expect(limiter.acquire()).toEqual({ ok: true });
+
+    const gate = limiter.acquire();
+    expect(gate.ok).toBe(false);
+    if (gate.ok) throw new Error('expected acquire to be refused');
+    expect(gate.reason).toContain('tower concurrency budget exhausted (2/2');
+  });
+
+  it('uses legacy background maxRunningTasks when task is unset', () => {
+    config.setSilent('background', { maxRunningTasks: 3 });
+
+    expect(snapshot().budget).toBe(3);
+  });
+
+  it('prefers task maxRunningTasks over the legacy background value', () => {
+    config.setSilent('background', { maxRunningTasks: 2 });
+    config.setSilent('task', { maxRunningTasks: 5 });
+
+    expect(snapshot().budget).toBe(5);
+  });
+
+  it('re-reads maxRunningTasks when the configuration changes', () => {
+    config.setSilent('task', { maxRunningTasks: 2 });
+    const limiter = ix.get(ITowerRateLimitService);
+    expect(limiter.budget()).toBe(2);
+
+    config.setSilent('task', { maxRunningTasks: 4 });
+    expect(limiter.budget()).toBe(4);
+
+    config.setSilent('task', undefined);
+    expect(limiter.budget()).toBe(256);
   });
 
   it('acquire / release track inflight agents', () => {
@@ -119,17 +189,20 @@ describe('TowerRateLimitService', () => {
     expect(limiter.budget()).toBe(3);
   });
 
-  it('never recovers beyond the tower max budget', () => {
+  it('combines 429 recovery with the configured maxRunningTasks cap', () => {
+    config.setSilent('task', { maxRunningTasks: 3 });
     const limiter = ix.get(ITowerRateLimitService);
     expect(limiter.acquire().ok).toBe(true);
+    expect(limiter.acquire().ok).toBe(true);
+    expect(limiter.acquire().ok).toBe(true);
     limiter.reportRateLimited();
+    expect(snapshot().budget).toBe(2);
 
-    for (let i = 0; i < TOWER_MAX_BUDGET + 4; i += 1) {
-      now += RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
-      limiter.budget();
-    }
+    now += RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
+    expect(limiter.budget()).toBe(3);
 
-    expect(snapshot().budget).toBe(TOWER_MAX_BUDGET);
+    now += RATE_LIMIT_CAPACITY_RECOVERY_INTERVAL_MS;
+    expect(limiter.budget()).toBe(3);
   });
 
   it('reset restores the pristine state', () => {
@@ -139,6 +212,10 @@ describe('TowerRateLimitService', () => {
 
     limiter.reset();
 
-    expect(snapshot()).toEqual({ budget: TOWER_MAX_BUDGET, inflight: 0, blockedUntil: null });
+    expect(snapshot()).toEqual({
+      budget: 256,
+      inflight: 0,
+      blockedUntil: null,
+    });
   });
 });

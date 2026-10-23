@@ -89,17 +89,18 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     fileStorage: FileStorageService = new FileStorageService(homeDir),
     persistence?: IWorkspacePersistence,
   ): IWorkspaceAliases {
+    const noopLog = {
+      error: () => {},
+      warn: () => {},
+      info: () => {},
+      debug: () => {},
+    } as unknown as ILogService;
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
-      stubPair(ILogService, {
-        error: () => {},
-        warn: () => {},
-        info: () => {},
-        debug: () => {},
-      } as unknown as ILogService),
+      stubPair(IAppendLogStore, new AppendLogStore(fileStorage, noopLog)),
+      stubPair(ILogService, noopLog),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
       stubPair(IEventService, {

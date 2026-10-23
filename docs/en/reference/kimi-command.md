@@ -21,7 +21,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
 | `--yolo` | `-y` | Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask |
-| `--auto` | | Start in Never Ask mode: never interrupts you; everything runs and is decided automatically |
+| `--auto` | | Start in Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 | `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
@@ -42,6 +42,8 @@ The following combinations are rejected at startup:
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
+
+Nobody can review a plan in non-interactive mode, so `default_plan_mode` is not applied to new sessions. A resumed session that is already in Plan mode still runs and stays in Plan mode, but its plan cannot be approved in non-interactive mode: it waits for your review the next time you open the session with `kimi -r`.
 
 When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to Never Ask mode.
 
