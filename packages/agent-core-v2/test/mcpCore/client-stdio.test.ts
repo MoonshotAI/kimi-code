@@ -5,7 +5,12 @@ import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import { Error2 } from '#/errors';
-import { mergeStdioEnv, StdioMcpClient, type StdioMcpClientOptions } from '#/mcpCore/client-stdio';
+import {
+  drainStdioMcpShutdowns,
+  mergeStdioEnv,
+  StdioMcpClient,
+  type StdioMcpClientOptions,
+} from '#/mcpCore/client-stdio';
 import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -13,6 +18,7 @@ import { FakeRuntime } from '#/runtime/fakeRuntime';
 import {
   crashAfterConnectFixture,
   cwdStdioFixture,
+  sharedAgentStdioFixture,
   stderrThenExitFixture,
   stdioFixture,
 } from './stubs';
@@ -20,6 +26,7 @@ import {
 function createClient(
   config: McpServerStdioConfig,
   options: Partial<StdioMcpClientOptions> = {},
+  tracked: Array<{ dispose(): void | Promise<void> }> = [],
 ): StdioMcpClient {
   const runtime = Object.assign(
     new FakeRuntime(
@@ -34,7 +41,10 @@ function createClient(
       inspect: () => runtime,
       acquire: () => ({
         runtime,
-        track: (resource) => resource,
+        track: (resource) => {
+          tracked.push(resource);
+          return resource;
+        },
         dispose: () => {},
       }),
     },
@@ -43,6 +53,29 @@ function createClient(
     defaultCwd: process.cwd(),
     ...options,
   });
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitUntilExited(pid: number, timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!isAlive(pid)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return !isAlive(pid);
+}
+
+async function spawnAgentPid(client: StdioMcpClient): Promise<number> {
+  const result = await client.callTool('spawn_agent', {});
+  return Number((result.content[0] as { type: 'text'; text: string }).text);
 }
 
 function isPostCloseTransportError(error: unknown): boolean {
@@ -346,6 +379,122 @@ describe('StdioMcpClient', () => {
     await client.close();
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
+  }, 15000);
+
+  it('closes stdin and lets the server exit without killing processes it started', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      expect(isAlive(agentPid)).toBe(true);
+      await client.close();
+      await new Promise((r) => setTimeout(r, 200));
+      expect(isAlive(agentPid)).toBe(true);
+    } finally {
+      await client.close();
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('force-kills the server tree when it ignores stdin EOF past the grace period', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+      env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      await client.close();
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+    } finally {
+      await client.close();
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('makes a repeated close wait for the shutdown already in flight', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+      env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      const first = client.close();
+      await client.close();
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+      await first;
+    } finally {
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('makes runtime disposal wait for a close already in flight', async () => {
+    const tracked: Array<{ dispose(): void | Promise<void> }> = [];
+    const client = createClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [sharedAgentStdioFixture],
+        env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+      },
+      {},
+      tracked,
+    );
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      const closing = client.close();
+      await Promise.all(
+        tracked.map(async (resource) => {
+          await resource.dispose();
+        }),
+      );
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+      await closing;
+    } finally {
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('lets hosts drain a fire-and-forget close until the fallback kill lands', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+      env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      void client.close();
+      await drainStdioMcpShutdowns();
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+    } finally {
+      await client.close();
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
   }, 15000);
 });
 

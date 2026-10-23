@@ -33,6 +33,15 @@ export interface StdioMcpClientOptions {
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const STDIO_CLOSE_GRACE_MS = 2_000;
+
+const pendingShutdowns = new Set<Promise<void>>();
+
+export async function drainStdioMcpShutdowns(): Promise<void> {
+  while (pendingShutdowns.size > 0) {
+    await Promise.all(pendingShutdowns);
+  }
+}
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
@@ -42,6 +51,7 @@ export class StdioMcpClient implements MCPClient {
   private readonly stderrBuffer = new BoundedTail(STDERR_BUFFER_CAPACITY);
   private started = false;
   private closed = false;
+  private closing: Promise<void> | undefined;
   private ready = false;
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
@@ -83,8 +93,12 @@ export class StdioMcpClient implements MCPClient {
     this.ready = true;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    this.closing ??= this.closeOnce();
+    return this.closing;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.closed = true;
     await this.closeStartedClient();
   }
@@ -163,6 +177,7 @@ class RuntimeStdioTransport implements Transport {
   private lease: ReturnType<IRuntimeResolver['acquire']> | undefined;
   private started = false;
   private closed = false;
+  private closing: Promise<void> | undefined;
 
   constructor(
     private readonly config: McpServerStdioConfig,
@@ -227,15 +242,27 @@ class RuntimeStdioTransport implements Transport {
     return this.close();
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    if (this.closing === undefined) {
+      const closing = this.closeOnce();
+      this.closing = closing;
+      const tracked = closing.then(
+        () => undefined,
+        () => undefined,
+      );
+      pendingShutdowns.add(tracked);
+      void tracked.finally(() => pendingShutdowns.delete(tracked));
+    }
+    return this.closing;
+  }
+
+  private async closeOnce(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     const process = this.process;
     this.process = undefined;
     if (process !== undefined) {
-      try {
-        await process.kill();
-      } catch {}
+      await shutdownStdioServer(process);
       void process.dispose();
     }
     this.readBuffer.clear();
@@ -267,6 +294,36 @@ class RuntimeStdioTransport implements Transport {
     this.lease = undefined;
     lease?.dispose();
     this.onclose?.();
+  }
+}
+
+async function shutdownStdioServer(process: IHostProcess): Promise<void> {
+  if (process.exitCode !== null) return;
+  try {
+    process.stdin.end();
+  } catch {}
+  if (await exitsWithin(process, STDIO_CLOSE_GRACE_MS)) return;
+  try {
+    await process.kill();
+  } catch {}
+}
+
+async function exitsWithin(process: IHostProcess, timeoutMs: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      process.wait().then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => {
+          resolve(false);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

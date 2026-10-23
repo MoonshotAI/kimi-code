@@ -3,6 +3,7 @@ import {
   drainQueryStoreDisposals,
   drainSessionMetadataWrites,
   drainSessionIndexMirror,
+  drainStdioMcpShutdowns,
   drainLogCloses,
   ConfigWarning,
   CapabilityChanged,
@@ -364,6 +365,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await drainGlobalSearchDisposals();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
+      await drainStdioMcpShutdowns();
       await drainLogCloses();
     } finally {
       try {
