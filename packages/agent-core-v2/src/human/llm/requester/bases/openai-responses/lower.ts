@@ -5,6 +5,7 @@ import { convertToolResultToPlainText } from '../tool-result-text';
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: unsupported audio format)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
+const EMPTY_TOOL_OUTPUT_PLACEHOLDER = 'Tool output is empty.';
 
 function contentPartsToInputItems(parts: readonly ContentPart[]): ResponsesInputContentItem[] {
   const items: ResponsesInputContentItem[] = [];
@@ -135,12 +136,18 @@ export function lowerMessage(
 ): ResponsesInputItem[] {
   const { modelName, extractText } = lower;
   if (message.role === 'tool') {
+    const output = extractText
+      ? convertToolResultToPlainText(message)
+      : messageContentToFunctionOutputItems(message.content);
     return [
       {
         call_id: message.toolCallId,
-        output: extractText
-          ? convertToolResultToPlainText(message)
-          : messageContentToFunctionOutputItems(message.content),
+        output:
+          output.length === 0
+            ? extractText
+              ? EMPTY_TOOL_OUTPUT_PLACEHOLDER
+              : [{ type: 'input_text', text: EMPTY_TOOL_OUTPUT_PLACEHOLDER }]
+            : output,
         type: 'function_call_output',
       },
     ];
