@@ -43,6 +43,7 @@ export class StdioMcpClient implements MCPClient {
   private readonly stderrBuffer = new BoundedTail(STDERR_BUFFER_CAPACITY);
   private started = false;
   private closed = false;
+  private closing: Promise<void> | undefined;
   private ready = false;
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
@@ -84,8 +85,12 @@ export class StdioMcpClient implements MCPClient {
     this.ready = true;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    this.closing ??= this.closeOnce();
+    return this.closing;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.closed = true;
     await this.closeStartedClient();
   }
@@ -164,6 +169,7 @@ class RuntimeStdioTransport implements Transport {
   private lease: ReturnType<IRuntimeResolver['acquire']> | undefined;
   private started = false;
   private closed = false;
+  private closing: Promise<void> | undefined;
 
   constructor(
     private readonly config: McpServerStdioConfig,
@@ -228,7 +234,12 @@ class RuntimeStdioTransport implements Transport {
     return this.close();
   }
 
-  async close(): Promise<void> {
+  close(): Promise<void> {
+    this.closing ??= this.closeOnce();
+    return this.closing;
+  }
+
+  private async closeOnce(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
     const process = this.process;
@@ -289,7 +300,9 @@ async function exitsWithin(process: IHostProcess, timeoutMs: number): Promise<bo
         () => true,
       ),
       new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer = setTimeout(() => {
+          resolve(false);
+        }, timeoutMs);
       }),
     ]);
   } finally {

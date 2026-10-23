@@ -21,6 +21,7 @@ import {
 function createClient(
   config: McpServerStdioConfig,
   options: Partial<StdioMcpClientOptions> = {},
+  tracked: Array<{ dispose(): void | Promise<void> }> = [],
 ): StdioMcpClient {
   const runtime = Object.assign(
     new FakeRuntime(
@@ -35,7 +36,10 @@ function createClient(
       inspect: () => runtime,
       acquire: () => ({
         runtime,
-        track: (resource) => resource,
+        track: (resource) => {
+          tracked.push(resource);
+          return resource;
+        },
         dispose: () => {},
       }),
     },
@@ -409,6 +413,59 @@ describe('StdioMcpClient', () => {
       expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
     } finally {
       await client.close();
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('makes a repeated close wait for the shutdown already in flight', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+      env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      const first = client.close();
+      await client.close();
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+      await first;
+    } finally {
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('makes runtime disposal wait for a close already in flight', async () => {
+    const tracked: Array<{ dispose(): void | Promise<void> }> = [];
+    const client = createClient(
+      {
+        transport: 'stdio',
+        command: process.execPath,
+        args: [sharedAgentStdioFixture],
+        env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+      },
+      {},
+      tracked,
+    );
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      const closing = client.close();
+      await Promise.all(
+        tracked.map(async (resource) => {
+          await resource.dispose();
+        }),
+      );
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+      await closing;
+    } finally {
       if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
     }
   }, 15000);
