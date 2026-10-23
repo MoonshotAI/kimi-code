@@ -179,6 +179,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
     } else if (notice !== undefined) {
       const tone = this.opts.noticeTone ?? 'success';
       const noticeWidth = Math.max(1, width - 1);
+      lines.push('');
       for (const noticeLine of notice.split(/\r?\n/)) {
         for (const wrapped of wrapDescription(noticeLine, noticeWidth)) {
           lines.push(currentTheme.fg(tone, ` ${wrapped}`));

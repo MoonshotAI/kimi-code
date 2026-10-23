@@ -145,6 +145,7 @@ export interface IFileSystemStorageService {
   list(scope: string, prefix?: string): Promise<readonly string[]>;
   delete(scope: string, key: string): Promise<void>;
   size(scope: string, key: string): Promise<number | undefined>;
+  sizeSync(scope: string, key: string): number | undefined;
   mtime(scope: string, key: string): Promise<number | undefined>;
   pathFor(scope: string, key: string): string | undefined;
   flush(): Promise<void>;

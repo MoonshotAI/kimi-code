@@ -19,6 +19,8 @@ export const ErrorCodes = {
   SESSION_STATE_NOT_FOUND: 'session.state_not_found',
   SESSION_STATE_INVALID: 'session.state_invalid',
   SESSION_FORK_ACTIVE_TURN: 'session.fork_active_turn',
+  SESSION_OCCUPIED: 'session.occupied',
+  SESSION_STALE: 'session.stale',
   SESSION_EXPORT_NOT_FOUND: 'session.export_not_found',
   SESSION_EXPORT_MISSING_VERSION: 'session.export_missing_version',
   SESSION_CLOSED: 'session.closed',
@@ -151,6 +153,18 @@ export const KIMI_ERROR_INFO = {
     retryable: true,
     public: true,
     action: 'Wait for the active turn to complete before forking.',
+  },
+  'session.occupied': {
+    title: 'Session is in use by another client',
+    retryable: true,
+    public: true,
+    action: 'Wait for the other client to finish, then retry.',
+  },
+  'session.stale': {
+    title: 'Session was updated by another client',
+    retryable: false,
+    public: true,
+    action: 'Reload the session to load the latest updates, then retry.',
   },
   'session.export_not_found': {
     title: 'Session export directory missing',

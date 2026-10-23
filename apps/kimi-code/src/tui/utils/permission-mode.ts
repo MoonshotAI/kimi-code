@@ -9,5 +9,5 @@ export const PERMISSION_MODE_DISPLAY_NAMES: Readonly<Record<PermissionMode, stri
 export const PERMISSION_MODE_DESCRIPTIONS: Readonly<Record<PermissionMode, string>> = {
   manual: 'Auto-read only; everything else needs your approval first.',
   yolo: 'Routine edits and commands run automatically; risky actions, questions, and plans still ask.',
-  auto: 'Never interrupts you; everything runs and is decided automatically.',
+  auto: 'Everything runs and is decided automatically; only plans in Plan mode wait for your review.',
 };
