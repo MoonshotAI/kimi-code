@@ -254,8 +254,34 @@ describe('cleanTelemetryString (absolute path redaction)', () => {
   });
 
   it('redacts extensionless POSIX paths separated by prose', () => {
-    expect(cleanTelemetryString('open /home/alice/cache see /tmp/log')).toBe(`open ${REDACTED}`);
-    expect(cleanTelemetryString('open /home/alice/node_modules/pkg see /tmp/log')).toBe(`open ${REDACTED}`);
+    expect(cleanTelemetryString('open /home/alice/cache see /tmp/log')).toBe(
+      `open ${REDACTED} see ${REDACTED}`,
+    );
+    expect(cleanTelemetryString('open /home/alice/node_modules/pkg see /tmp/log')).toBe(
+      `open node_modules/pkg see ${REDACTED}`,
+    );
+  });
+
+  it('stops before a drive path wrapped in punctuation', () => {
+    expect(cleanTelemetryString(String.raw`paths C:\Users\alice\cache (D:\Users\bob\private)`)).toBe(
+      `paths ${REDACTED} (${REDACTED})`,
+    );
+    expect(cleanTelemetryString(String.raw`C:\Program Files (x86)\app\secret.txt`)).toBe(REDACTED);
+  });
+
+  it('keeps diagnostics after an extensionless POSIX path', () => {
+    expect(cleanTelemetryString('failed at /home/alice/cache could not be read')).toBe(
+      `failed at ${REDACTED} could not be read`,
+    );
+  });
+
+  it('counts line separators against the value budget', () => {
+    const started = performance.now();
+    const cleaned = cleanTelemetryString('\n'.repeat(1_000_000));
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(cleaned.endsWith('<REDACTED: oversized telemetry-line>')).toBe(true);
+    expect(cleaned.length).toBeLessThan(40_000);
+    expect(cleaned.split('<REDACTED: oversized telemetry-line>')).toHaveLength(2);
   });
 
   it('redacts POSIX components ending in spaces', () => {
