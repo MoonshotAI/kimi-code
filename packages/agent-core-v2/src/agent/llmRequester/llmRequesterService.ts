@@ -761,12 +761,19 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     for (const id of this.turnConfigs.keys()) {
       if (id < turnId) this.turnConfigs.delete(id);
     }
+    const systemPrompt = this.profile.getSystemPrompt();
     let snapshot = this.turnConfigs.get(turnId);
     if (snapshot === undefined) {
       snapshot = {
         resolved: this.profile.resolveModelContext(),
         params: this.profile.resolveRequestParams(),
-        systemPrompt: this.profile.getSystemPrompt(),
+        systemPrompt,
+      };
+      this.turnConfigs.set(turnId, snapshot);
+    } else if (snapshot.systemPrompt !== systemPrompt) {
+      snapshot = {
+        ...snapshot,
+        systemPrompt,
       };
       this.turnConfigs.set(turnId, snapshot);
     }
