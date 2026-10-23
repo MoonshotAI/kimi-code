@@ -62,7 +62,7 @@ keep = "all"
 max_attempts_per_step = 10
 reserved_context_size = 50000
 
-[background]
+[task]
 max_running_tasks = 4
 keep_alive_on_exit = false
 
@@ -109,7 +109,7 @@ timeout = 5
 | [`models`](#models) | `table` | — | 模型别名表 |
 | [`thinking`](#thinking) | `table` | — | Thinking 模式默认参数 |
 | [`loop_control`](#loop_control) | `table` | — | Agent 循环控制参数 |
-| [`background`](#background) | `table` | — | 后台任务运行参数 |
+| [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
@@ -344,13 +344,15 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 
 `strategy` 可被环境变量 `KIMI_TOKEN_COUNTING_STRATEGY` 覆盖，优先级高于 `config.toml`。
 
-## `background`
+<a id="background"></a>
 
-`background` 控制后台任务（通过 `Bash` 工具或 `Agent` 工具的 `run_in_background=true` 参数启动）的并发数。
+## `task`
+
+`task` 控制后台任务（通过 `Bash` 工具或 `Agent` 工具的 `run_in_background=true` 参数启动）的并发数。legacy `background` 配置节接受相同字段。同时设置两个配置节时，`task` 中已设置的字段覆盖对应的 `background` 值；未在 `task` 中设置的字段仍沿用旧配置节的值。
 
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数 |
+| `max_running_tasks` | `integer` | — | 同时运行的最大后台任务数；也限制 Tower worker 和 reviewer，Tower 默认上限为 256 |
 | `keep_alive_on_exit` | `boolean` | `false` | 会话关闭时是否保留仍在运行的后台任务；print 模式下仅作 `print_background_mode` 的回退：`true` 等价于 `drain` |
 | `kill_grace_period_ms` | `integer` | `5000` | 任务被请求正常终止后，等待自行结束的宽限时间（毫秒），超时后强制停止 |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | 前台 `Bash` 命令超时后转为后台任务而非终止；设为 `false` 恢复超时即终止 |
@@ -359,7 +361,9 @@ k3-max = "同一模型的 max Thinking 档位。适合最难的子任务。"
 | `print_wait_ceiling_s` | `integer` | `2147483` | 等待/steer 循环的墙钟上限（秒），非 print 模式或 `"exit"` 时无效 |
 | `print_max_turns` | `integer` | `100000` | steer 模式下后台任务触发新 turn 的数量上限，防止 steer 循环失控 |
 
-`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`max_running_tasks` 可被 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 覆盖，`bash_task_timeout_s` 可被 `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` 覆盖，`print_background_mode`、`print_wait_ceiling_s`、`print_max_turns` 可分别被 `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`、`KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`、`KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` 覆盖，优先级均高于配置文件。
+对 Tower 而言，`max_running_tasks` 同时限制 worker 和 reviewer 的总运行数量。如果两个配置节与 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 都未设置该值，默认合计最多运行 256 个。
+
+`keep_alive_on_exit` 可被环境变量 `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` 覆盖，`max_running_tasks` 可被 `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` 覆盖，`bash_task_timeout_s` 可被 `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` 覆盖，`print_background_mode`、`print_wait_ceiling_s`、`print_max_turns` 可分别被 `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`、`KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`、`KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS` 覆盖，优先级均高于两个配置节。
 
 在 print 模式（`kimi -p "<prompt>"`）下，只要还有未决的后台任务，Kimi Code 在 main agent 的 turn 结束后不会退出：每个任务完成都会以合成 user 消息回馈给 main agent，steer 出新的 turn（默认 `print_background_mode = "steer"`），直到某 turn 结束时没有任何未决任务才退出。该循环受 `print_wait_ceiling_s` 与 `print_max_turns` 约束，默认值都近似不设限。print 模式下后台工作也不会被墙钟超时杀掉：后台 `Bash` 任务默认无超时（`bash_task_timeout_s = 0`），subagent 默认无超时（`[subagent] timeout_ms` 与 `[swarm] timeout_ms` 未显式设置时均为 `0`），只有模型自己能停止任务。将 `print_background_mode` 设为 `"drain"` 可等待任务结束但不回馈结果，设为 `"exit"` 则在 main agent 结束后立即退出。
 

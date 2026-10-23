@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, stat, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,7 +19,11 @@ import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { TOWER_TOOL_CONTRIBUTIONS } from '#/features/tower/towerFeature';
 import { IAgentTowerService } from '#/features/tower/tower';
 import { ITowerRateLimitService } from '#/features/tower/towerRateLimit';
-import { TowerStore, parseFrontmatter } from '#/features/tower/protocol/index';
+import {
+  TOWER_GIT_CONCURRENCY,
+  TowerStore,
+  parseFrontmatter,
+} from '#/features/tower/protocol/index';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ExecutableTool } from '#/tool/toolContract';
@@ -83,6 +88,7 @@ let currentAgentId: string;
 let currentSessionId: string;
 let liveSessionIds: string[];
 let liveAgentTaskIds: string[];
+let towerBudget: number;
 const agentContexts = new Map<string, AgentContext>();
 const agentLoops = new Map<string, { state: 'idle' | 'running'; submitted: string[] }>();
 
@@ -97,6 +103,7 @@ beforeEach(async () => {
   currentAgentId = 'main';
   liveSessionIds = [];
   liveAgentTaskIds = [];
+  towerBudget = 2;
   currentSessionId = 'session-test';
   agentContexts.clear();
   agentLoops.clear();
@@ -151,7 +158,7 @@ beforeEach(async () => {
         get: (id: string) => (liveSessionIds.includes(id) ? {} : undefined),
       } as unknown as ISessionManager);
       reg.definePartialInstance(ITowerRateLimitService, {
-        snapshot: () => ({ budget: 2, inflight: 0, blockedUntil: null }),
+        snapshot: () => ({ budget: towerBudget, inflight: 0, blockedUntil: null }),
       });
       reg.definePartialInstance(IAgentTaskService, {
         list: () =>
@@ -874,6 +881,19 @@ describe('TowerStatusTool', () => {
     });
   });
 
+  it('renders a non-finite budget as unlimited in the dashboard and summary', async () => {
+    await initViaTool();
+    towerBudget = Number.POSITIVE_INFINITY;
+
+    const dashboard = await run(ix.get(ITowerStatusTool), {});
+    const summary = await readStatusSummary();
+
+    expect(dashboard.output).toContain('budget: unlimited agent(s) · inflight: 0 · spawns open');
+    expect(summary).toContain('Concurrency: budget: unlimited agent(s) · inflight: 0 · spawns open');
+    expect(dashboard.output).not.toContain('Infinity agent(s)');
+    expect(summary).not.toContain('Infinity agent(s)');
+  });
+
   it('keeps the Markdown dashboard available to tower workers', async () => {
     await initViaTool();
     await new TowerStore(repo).registerAgent({
@@ -1054,6 +1074,45 @@ describe('TowerStatusTool', () => {
     expect(workerStatus.output).toContain('BLOCKED reasons=worker-unknown');
     expect(workerStatus.output).toContain('unknown is not idle');
     expect(workerStatus.output).not.toContain('READY reasons=none');
+  });
+
+  it('computes independent mission gates with bounded parallelism and stable mission order', async () => {
+    await initViaTool();
+    await run(ix.get(ITowerPlanTool), {
+      missions: Array.from({ length: 6 }, (_, index) => ({
+        title: `Mission ${String(index)}`,
+        scope: [`src/m${String(index)}/**`],
+      })),
+    });
+    let active = 0;
+    let maximum = 0;
+    const gate = vi.spyOn(TowerStore.prototype, 'missionGate').mockImplementation(async () => {
+      active += 1;
+      maximum = Math.max(maximum, active);
+      await delay(5);
+      active -= 1;
+      return {
+        ready: false,
+        noop: false,
+        blocks: [{ reason: 'not-completed', message: 'blocked' }],
+        observations: {},
+      } as never;
+    });
+    try {
+      const status = await readStatus();
+      if (!status.initialized) throw new Error('expected initialized status');
+      expect(status.gate.map((mission) => mission.missionId)).toEqual([
+        'M1',
+        'M2',
+        'M3',
+        'M4',
+        'M5',
+        'M6',
+      ]);
+      expect(maximum).toBe(TOWER_GIT_CONCURRENCY);
+    } finally {
+      gate.mockRestore();
+    }
   });
 });
 
