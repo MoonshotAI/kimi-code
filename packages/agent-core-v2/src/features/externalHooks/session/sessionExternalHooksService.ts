@@ -18,6 +18,7 @@ import {
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 
 import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import { extractHookMessages } from '../internal/userPrompt';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
 
 type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reclaimed'>;
@@ -33,6 +34,7 @@ export class SessionExternalHooksService
 
   private sessionTitle: string | undefined;
   private readonly createdAt = Date.now();
+  private readonly sessionStartMessages: string[] = [];
 
   constructor(
     @ISessionContext private readonly context: ISessionContext,
@@ -95,6 +97,10 @@ export class SessionExternalHooksService
     this._register(this.runner.onDidReload(() => this.syncHeartbeat()));
   }
 
+  drainSessionStartMessages(): readonly string[] {
+    return this.sessionStartMessages.splice(0);
+  }
+
   private readonly heartbeat = this._register(new IntervalTimer({ unref: true }));
 
   private syncHeartbeat(): void {
@@ -108,7 +114,7 @@ export class SessionExternalHooksService
   }
 
   private async triggerSessionStart(source: SessionStartHookSource): Promise<void> {
-    await this.runner.trigger('SessionStart', {
+    const results = await this.runner.trigger('SessionStart', {
       matcherValue: source,
       cwd: this.context.cwd,
       sessionId: this.context.sessionId,
@@ -119,6 +125,7 @@ export class SessionExternalHooksService
         profile: await this.defaultProfileName(),
       },
     });
+    this.sessionStartMessages.push(...extractHookMessages(results, { allowPlainStdout: true }));
   }
 
   private async defaultProfileName(): Promise<string | undefined> {

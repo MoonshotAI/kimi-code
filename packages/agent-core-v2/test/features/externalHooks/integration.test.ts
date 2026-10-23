@@ -1457,4 +1457,243 @@ describe('IExternalHooksRunnerService integration', () => {
       vi.useRealTimers();
     }
   });
+
+  it('extracts hookSpecificOutput.additionalContext on UserPromptSubmit and runs on user-slash skill activations with string prompt', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const loop = stubLoopWithHooks();
+      const context = stubContextMemory();
+      const engine = makeHookRunner([
+        {
+          event: 'UserPromptSubmit',
+          command: stdinScript([
+            'if (typeof parsed.prompt !== "string") process.exit(1);',
+            'process.stdout.write(JSON.stringify({',
+            '  hookSpecificOutput: {',
+            '    hookEventName: "UserPromptSubmit",',
+            '    additionalContext: "[hook-ctx] seen:" + parsed.prompt,',
+            '  },',
+            '}));',
+          ].join('\n')),
+          timeout: 5,
+        },
+      ]);
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.definePartialInstance(IConfigService, {});
+          reg.definePartialInstance(IPluginService, {});
+          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLoopService, loop);
+          registerAgentEventBus(reg);
+          reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentFullCompactionService, {
+            hooks: createHooks(['onWillCompact']),
+          });
+          reg.definePartialInstance(IAgentTaskService, {});
+        },
+      });
+      activateAgentEventBus(ix);
+      ix.set(IExternalHooksRunnerService, engine);
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+
+      const hookParts: Array<{ type: 'text'; text: string }> = [];
+      const submitCtx = {
+        promptId: 'p-skill',
+        promptMessage: {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: '<skill_name>my-skill</skill_name>' }],
+          toolCalls: [],
+          origin: {
+            kind: 'skill_activation' as const,
+            activationId: 'act-1',
+            trigger: 'user-slash' as const,
+            skillName: 'my-skill',
+            skillArgs: 'arg1',
+          },
+        },
+        hookParts,
+        isSteer: false,
+        block: false,
+      };
+
+      await loop.hooks.onBeforeSubmitPrompt.run(submitCtx);
+      expect(submitCtx.block).toBe(false);
+      expect(hookParts).toHaveLength(1);
+      expect(hookParts[0]?.text).toContain('[hook-ctx] seen:/my-skill arg1');
+
+      const pluginParts: Array<{ type: 'text'; text: string }> = [];
+      const pluginCtx = {
+        promptMessage: {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: 'expanded body' }],
+          toolCalls: [],
+          origin: {
+            kind: 'plugin_command' as const,
+            activationId: 'act-2',
+            trigger: 'user-slash' as const,
+            pluginId: 'demo',
+            commandName: 'deploy',
+            commandArgs: 'prod',
+          },
+        },
+        hookParts: pluginParts,
+        isSteer: false,
+        block: false,
+      };
+      await loop.hooks.onBeforeSubmitPrompt.run(pluginCtx);
+      expect(pluginParts).toHaveLength(1);
+      expect(pluginParts[0]?.text).toContain('[hook-ctx] seen:/demo:deploy prod');
+
+      const mediaParts: Array<{ type: 'text'; text: string }> = [];
+      const mediaCtx = {
+        promptMessage: {
+          role: 'user' as const,
+          content: [{ type: 'image_url' as const, imageUrl: { url: 'https://example.com/a.png' } }],
+          toolCalls: [],
+        },
+        hookParts: mediaParts,
+        isSteer: false,
+        block: false,
+      };
+      await loop.hooks.onBeforeSubmitPrompt.run(mediaCtx);
+      expect(mediaParts).toHaveLength(1);
+      expect(mediaParts[0]?.text).toContain('[hook-ctx] seen:');
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
+
+  it('injects PreToolUse and PostToolUse additionalContext, applies updatedInput, and ignores noisy plain stdout on tool hooks', async () => {
+    const disposables = new DisposableStore();
+    let ix: TestInstantiationService | undefined;
+    try {
+      const loop = stubLoopWithHooks();
+      const context = stubContextMemory();
+      const beforeEmitter = disposables.add(new Emitter<any>());
+      const baseToolExec = stubToolExecutor();
+      const toolExecutor: IAgentToolExecutorService = {
+        ...baseToolExec,
+        onBeforeExecuteTool: beforeEmitter.event,
+      };
+      const engine = makeHookRunner([
+        {
+          event: 'PreToolUse',
+          matcher: 'Edit|Write',
+          command: stdinScript([
+            'process.stdout.write(JSON.stringify({',
+            '  hookSpecificOutput: {',
+            '    hookEventName: "PreToolUse",',
+            '    additionalContext: "[pre-hook] file warning for " + parsed.tool_input.file_path,',
+            '    updatedInput: { file_path: parsed.tool_input.file_path, patched: true },',
+            '  },',
+            '}));',
+          ].join('\n')),
+          timeout: 5,
+        },
+        {
+          event: 'PreToolUse',
+          matcher: 'Edit|Write',
+          command: nodeCommand('process.stdout.write("noisy plain stdout");'),
+          timeout: 5,
+        },
+        {
+          event: 'PostToolUse',
+          matcher: 'Edit|Write',
+          command: stdinScript([
+            'process.stdout.write(JSON.stringify({',
+            '  systemMessage: "[post-status] ok",',
+            '  hookSpecificOutput: {',
+            '    hookEventName: "PostToolUse",',
+            '    additionalContext: "[post-hook] saw response:" + parsed.tool_response,',
+            '  },',
+            '}));',
+          ].join('\n')),
+          timeout: 5,
+        },
+      ]);
+
+      ix = createServices(disposables, {
+        strict: true,
+        additionalServices: (reg) => {
+          registerStateServices(reg);
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
+          reg.defineInstance(IBootstrapService, stubBootstrap());
+          reg.defineInstance(ISessionContext, stubSessionContext());
+          reg.defineInstance(ISessionMetadata, stubSessionMetadata());
+          reg.definePartialInstance(IConfigService, {});
+          reg.definePartialInstance(IPluginService, {});
+          reg.defineInstance(IAgentContextMemoryService, context);
+          reg.defineInstance(IAgentLoopService, loop);
+          registerAgentEventBus(reg);
+          reg.defineInstance(IAgentToolExecutorService, toolExecutor);
+          reg.definePartialInstance(IAgentPermissionGate, {});
+          reg.definePartialInstance(IAgentFullCompactionService, {
+            hooks: createHooks(['onWillCompact']),
+          });
+          reg.definePartialInstance(IAgentTaskService, {});
+        },
+      });
+      activateAgentEventBus(ix);
+      ix.set(IExternalHooksRunnerService, engine);
+      ix.set(IAgentExternalHooksService, new SyncDescriptor(AgentExternalHooksService));
+      ix.get(IAgentExternalHooksService);
+
+      const args: Record<string, unknown> = { file_path: 'src/app.ts' };
+      let updatedArgs: Record<string, unknown> | undefined;
+      const signal = new AbortController().signal;
+      for (const listener of (beforeEmitter as any)._listeners ?? []) {
+        await listener.listener.call(listener.thisArg, {
+          turnId: 1,
+          signal,
+          toolCall: { id: 'c1', type: 'function', name: 'Edit', arguments: '{}' },
+          toolCalls: [],
+          args,
+          execution: { execute: async () => ({ output: 'ok' }) },
+          veto: () => {},
+          allow: () => {},
+          pass: () => {},
+          updateArgs: (nextArgs: Record<string, unknown>) => {
+            updatedArgs = nextArgs;
+          },
+          waitUntil: () => {},
+        });
+      }
+
+      expect(updatedArgs).toEqual({ file_path: 'src/app.ts', patched: true });
+      expect(context.messages).toHaveLength(0);
+
+      await toolExecutor.hooks.onDidExecuteTool.run({
+        turnId: 1,
+        signal,
+        toolCall: { id: 'c1', type: 'function', name: 'Edit', arguments: '{}' },
+        toolCalls: [],
+        args: updatedArgs,
+        outcome: 'executed',
+        result: { output: 'file edited' },
+      });
+
+      expect(context.messages).toHaveLength(2);
+      expect((context.messages[0]?.content[0] as any)?.text).toContain(
+        '[pre-hook] file warning for src/app.ts',
+      );
+      expect((context.messages[1]?.content[0] as any)?.text).toContain('[post-status] ok');
+      expect((context.messages[1]?.content[0] as any)?.text).toContain(
+        '[post-hook] saw response:file edited',
+      );
+    } finally {
+      ix?.dispose();
+      disposables.dispose();
+    }
+  });
 });
