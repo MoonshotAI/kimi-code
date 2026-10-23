@@ -501,6 +501,7 @@ export * from '#/workspace/sessionLifecycle/sessionLifecycle';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleEvents';
 export * from '#/workspace/sessionLifecycle/sessionLifecycleService';
 export * from '#/workspace/sessionLifecycle/coldSessionArchive';
+export * from '#/workspace/sessionLifecycle/sessionDelete';
 export * from '#/workspace/sessionLifecycle/internal/addressing';
 import '#/app/sessionExport/errors';
 export * from '#/app/sessionExport/sessionExport';

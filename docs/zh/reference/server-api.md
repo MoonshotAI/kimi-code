@@ -624,7 +624,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/profile` | 读取会话档案 |
 | `POST /api/v1/sessions/{session_id}/profile` | 更新标题、元数据、Agent 配置 |
 | `POST /api/v1/sessions/{session_id}/title/generate` | 通过托管的 `chat_title` 工具生成标题 |
-| `POST /api/v1/sessions/{session_id}:{action}` | 会话动作：`fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` |
+| `POST /api/v1/sessions/{session_id}:{action}` | 会话动作：`fork` / `compact` / `undo` / `abort` / `btw` / `archive` / `restore` / `delete` |
 | `GET /api/v1/sessions/{session_id}/children` | 列出子会话 |
 | `POST /api/v1/sessions/{session_id}/children` | 创建子会话（fork 并打标） |
 | `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
@@ -831,6 +831,14 @@ schema 还接受 `agent_config` 内的 `system_prompt`、`tools`、`mcp_servers`
 取消会话的归档状态并恢复它。
 
 成功时，`data` 为 `archived: false` 的 [session 对象](#session-对象)。
+
+#### `POST /api/v1/sessions/{session_id}:delete`
+
+硬删除会话：任意状态都可删除——没有 archived/busy 守卫。仍在线的会话先关闭，随后物理删除其会话目录；冷会话直接删除目录。删除会广播全局 `event.session.deleted` 事件。
+
+成功时，`data` 为 `{ deleted: true }`。
+
+- `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}:reload`
 
@@ -2144,6 +2152,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `GET /api/v2/sessions` | 新一代会话列表，见下文 |
 | `POST /api/v2/sessions:archive` | 批量归档会话，见下文 |
 | `POST /api/v2/sessions:restore` | 批量恢复已归档会话，见下文 |
+| `POST /api/v2/sessions:delete` | 批量删除会话，见下文 |
 | `/api/v2/mcp/*` | 统一的 MCP 管理面，见下文 |
 | `/api/v1/debug/*` | 反射式调试 RPC，仅 `--debug-endpoints` 且 loopback 时挂载，不属于稳定协议 |
 
@@ -2242,6 +2251,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
   "request_id": "req_..."
 }
 ```
+
+### `POST /api/v2/sessions:delete`
+
+面向会话管理页的批量硬删除。请求体与响应形态同 `:archive` / `:restore`：`{ "ids": ["session_..."] }`——非空、去重后不超过 5000 条；只有请求体校验失败才会让整个请求失败（`40001`），`data.results` 保持输入顺序按条返回，不存在的 id 在自身条目里报 `40401`，并附 `succeeded` / `failed` 计数。
+
+单项语义与 v1 `:delete` 一致：任意状态硬删除，没有 archived/busy 守卫——仍在线的会话先关闭再物理删除会话目录，冷会话直接删除目录；每个成功项广播全局 `event.session.deleted` 事件。
 
 ### MCP 管理（`/api/v2/mcp`）
 

@@ -566,6 +566,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v2/sessions:delete",
+    ],
+    [
+      "POST",
       "/api/v2/sessions:restore",
     ],
     [

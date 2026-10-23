@@ -6,6 +6,7 @@ import {
   ISessionIndexMirror,
   IWorkspaceAliases,
   IWorkspaceService,
+  deleteSessionsBatch,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
@@ -458,6 +459,33 @@ async function runBatchArchive(
     okEnvelope({ results, succeeded, failed: results.length - succeeded }, requestId),
   );
 }
+
+async function runBatchDelete(
+  core: Scope,
+  rawIds: readonly string[],
+  requestId: string,
+  reply: { send(payload: unknown): unknown },
+): Promise<void> {
+  const ids = [...new Set(rawIds)];
+  const outcomes = await deleteSessionsBatch(core.accessor, ids);
+  const results: V2BatchItemResult[] = outcomes.map((outcome) =>
+    outcome.ok
+      ? { id: outcome.id, ok: true }
+      : {
+          id: outcome.id,
+          ok: false,
+          error:
+            outcome.reason === 'not_found'
+              ? { code: ErrorCode.SESSION_NOT_FOUND, message: outcome.message }
+              : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
+        },
+  );
+  await core.accessor.get(ISessionIndexMirror).drain();
+  const succeeded = results.filter((result) => result.ok).length;
+  reply.send(
+    okEnvelope({ results, succeeded, failed: results.length - succeeded }, requestId),
+  );
+}
 export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope): void {
   const gitResolver = new GitDomainResolver(core);
 
@@ -773,4 +801,27 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       batchRoute.handler as Parameters<V2SessionsRouteHost['post']>[2],
     );
   }
+
+  const deleteRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions::delete',
+      body: v2SessionsBatchBodySchema,
+      success: { data: v2SessionsBatchResultSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+      },
+      description:
+        'Batch-delete sessions by id ({ ids }, ≤5000 unique). Per-item results — a missing session folds into its own item; live sessions are closed before their session directories are removed, cold sessions are deleted on disk directly.',
+      tags: ['v2-sessions'],
+    },
+    async (req, reply) => {
+      await runBatchDelete(core, req.body.ids, req.id, reply);
+    },
+  );
+  app.post(
+    deleteRoute.path,
+    deleteRoute.options,
+    deleteRoute.handler as Parameters<V2SessionsRouteHost['post']>[2],
+  );
 }
