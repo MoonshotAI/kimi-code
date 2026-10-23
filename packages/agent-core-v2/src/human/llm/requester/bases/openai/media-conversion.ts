@@ -1,5 +1,7 @@
 import type { ContentPart, Message, ThinkPart, ToolMessage, UserMessage } from '#/llm/message';
+import { toolResultToPlainText } from '#/llm/protocol/patterns';
 import type { Pattern } from '#/llm/protocol/rewrite';
+import type { ToolMessageConversion } from '#/llm/requester/requester';
 
 export const TOOL_RESULT_MEDIA_PROMPT = 'Attached media from tool result:';
 export const TOOL_RESULT_MEDIA_PLACEHOLDER = '(see attached media)';
@@ -53,3 +55,10 @@ export const extractToolMedia: Pattern<Message> = {
     return { consumed: run.length, replacement: [...stripped, mediaUser] };
   },
 };
+
+export function openAIMediaConversionPatterns(
+  conversion: ToolMessageConversion | undefined,
+): readonly Pattern<Message>[] {
+  if (conversion === 'keep_parts') return [];
+  return [conversion === 'extract_text' ? toolResultToPlainText : extractToolMedia];
+}

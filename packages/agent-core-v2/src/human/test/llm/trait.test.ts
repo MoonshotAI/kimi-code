@@ -22,14 +22,15 @@ import { KimiFiles, kimiFilesBaseUrl } from '#/llm-kimi/files';
 import { kimiMediaContribution } from '#/llm-kimi/media';
 import { kimiProvider } from '#/llm-kimi/provider';
 import {
+  createKimiAnthropicRequester,
+  createKimiOpenAIRequester,
   KIMI_API_KEY_ENV,
   KIMI_BASE_URL_ENV,
   KIMI_DEFAULT_BASE_URL,
-  kimiAnthropicTrait,
   kimiConnection,
-  kimiOpenAITrait,
-} from '#/llm-kimi/trait';
+} from '#/llm-kimi/protocol';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
+import type { Pattern } from '#/llm/protocol/rewrite';
 import { anthropicProvider, googleGenAIConnection, openaiProvider } from '#/llm/provider/providers/standard';
 import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 import type { TokenUsage } from '#/llm/usage';
@@ -37,13 +38,16 @@ import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
 } from '#/llm/requester/bases/tool-call-id';
+import { anthropicProtocol, type AnthropicNativeMessage } from '#/llm/requester/bases/anthropic/protocol';
 import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
 import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
 import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
+import { openAIProtocol } from '#/llm/requester/bases/openai/protocol';
 import {
   createOpenAIRequester,
   openAIBase,
 } from '#/llm/requester/bases/openai/requester';
+import { createRunRequester } from '#/llm/requester/run';
 
 const model: LlmModel = {
   provider: 'test',
@@ -55,15 +59,40 @@ const messages: readonly Message[] = [createUserMessage('hi')];
 
 const kimiOpenAI = {
   connection: kimiConnection,
-  trait: kimiOpenAITrait,
   classifyError: classifyKimiQuotaError,
 } as const;
 
 const kimiAnthropic = {
   connection: kimiConnection,
-  trait: kimiAnthropicTrait,
   classifyError: classifyKimiQuotaError,
 } as const;
+
+function openAIRequesterWithPatch(
+  patch: Parameters<typeof openAIProtocol.with>[0],
+  clientFactory: (request: LlmClientContext) => never,
+): LlmRequester {
+  return createRunRequester(openAIProtocol.with(patch), {
+    clientFactory,
+    options: (config) => ({
+      extras: config.extraParams?.openai,
+      toolMessageConversion: config.toolMessageConversion,
+    }),
+  });
+}
+
+function anthropicRequesterWithPatch(
+  patch: Parameters<typeof anthropicProtocol.with>[0],
+  clientFactory: (request: LlmClientContext) => never,
+  betaApi?: boolean,
+): LlmRequester {
+  return createRunRequester(anthropicProtocol.with(patch), {
+    clientFactory,
+    options: (config) => ({
+      betaApi: betaApi === true || config.model.betaApi === true ? true : undefined,
+      extras: config.extraParams?.anthropic,
+    }),
+  });
+}
 
 async function generateAndCollectUsage(
   requester: LlmRequester,
@@ -509,7 +538,7 @@ describe('endpoint', () => {
         },
       };
     });
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -663,7 +692,7 @@ describe('convertTool', () => {
 
   it('maps $-prefixed tools to builtin_function', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -681,7 +710,7 @@ describe('convertTool', () => {
 
   it('normalizes tool schemas for kimi', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -699,7 +728,7 @@ describe('convertTool', () => {
     expect(properties['unit']?.['type']).toBe('string');
   });
 
-  it('uses the default tool mapping without a trait', async () => {
+  it('uses the default tool mapping without a protocol patch', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -724,7 +753,7 @@ describe('message-level tools', () => {
 
   it('serializes system message tools for kimi', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -742,7 +771,7 @@ describe('message-level tools', () => {
     ]);
   });
 
-  it('drops system message tools without a trait', async () => {
+  it('drops system message tools without the kimi protocol', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -756,9 +785,9 @@ describe('message-level tools', () => {
 });
 
 describe('withMaxCompletionTokens', () => {
-  it('encodes max completion tokens via the kimi trait', async () => {
+  it('encodes max completion tokens via the kimi protocol', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -785,7 +814,7 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_completion_tokens']).toBeUndefined();
   });
 
-  it('uses max_completion_tokens for reasoning models without a trait', async () => {
+  it('uses max_completion_tokens for reasoning models on the plain openai requester', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -797,7 +826,7 @@ describe('withMaxCompletionTokens', () => {
     expect(client.body()['max_tokens']).toBeUndefined();
   });
 
-  it('uses max_tokens for other models without a trait', async () => {
+  it('uses max_tokens for other models on the plain openai requester', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -859,12 +888,14 @@ describe('withMaxCompletionTokens', () => {
 });
 
 describe('buildParams', () => {
-  it('lets the trait reshape the final params', async () => {
+  it('lets a protocol patch reshape the final params', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
-      trait: { buildParams: (params) => ({ ...params, x_custom: 1 }) },
-      clientFactory: client.clientFactory,
-    });
+    const requester = openAIRequesterWithPatch(
+      {
+        finalize: (native) => ({ ...native, params: { ...native.params, x_custom: 1 } }),
+      },
+      client.clientFactory,
+    );
     await requester.generate(
       { model },
       { messages },
@@ -892,7 +923,7 @@ describe('extractUsage', () => {
         ],
       },
     ]);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -906,7 +937,7 @@ describe('extractUsage', () => {
       { id: 'c1', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }] },
       { id: 'c1', object: 'chat.completion.chunk', created: 0, model: 'test-model', choices: [{ index: 0, delta: {}, finish_reason: 'stop', usage: { prompt_tokens: 4, completion_tokens: 6 } }] },
     ]);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -915,7 +946,7 @@ describe('extractUsage', () => {
     expect(usage?.inputOther).toBe(4);
   });
 
-  it('parses top-level usage without a trait', async () => {
+  it('parses top-level usage on the plain openai requester', async () => {
     const client = stubOpenAIClient([
       {
         id: 'chatcmpl-1',
@@ -1052,17 +1083,17 @@ describe('toolCallIdPolicy', () => {
     expect(bodyMessages[2]?.['tool_call_id']).toBe('call_abc');
   });
 
-  it('lets the trait override the policy', async () => {
+  it('lets a protocol patch override the policy', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
-      trait: {
-        toolCallIdPolicy: {
+    const requester = openAIRequesterWithPatch(
+      {
+        toolCallId: {
           normalize: (id) => sanitizeToolCallId(id, 4),
           maxLength: 4,
         },
       },
-      clientFactory: client.clientFactory,
-    });
+      client.clientFactory,
+    );
     await requester.generate(
       { model },
       {
@@ -1111,12 +1142,17 @@ describe('toolCallIdPolicy', () => {
 
 
 describe('mergeHistory', () => {
-  it('lets the trait merge the converted history', async () => {
+  it('lets a protocol patch merge the converted history', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
-      trait: { mergeHistory: (history) => [...history, { role: 'user', content: 'extra' }] },
-      clientFactory: client.clientFactory,
-    });
+    const requester = openAIRequesterWithPatch(
+      {
+        finalize: (native) => ({
+          ...native,
+          messages: [...native.messages, { role: 'user', content: 'extra' }],
+        }),
+      },
+      client.clientFactory,
+    );
     await requester.generate(
       { model },
       { messages },
@@ -1128,47 +1164,49 @@ describe('mergeHistory', () => {
 });
 
 describe('request pipeline', () => {
-  it('composes format stages and trait hooks in a fixed order', async () => {
+  it('composes the pipeline stages in a fixed order', async () => {
     const order: string[] = [];
     let historySeenByMerge: readonly unknown[] | undefined;
+    let systemSeen: string | undefined;
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
-      trait: {
-        encodeCacheKey: (key) => {
-          order.push('encodeCacheKey');
-          return { prompt_cache_key: key };
+    const requester = openAIRequesterWithPatch(
+      (base) => ({
+        cacheKey: (key) => {
+          order.push('cacheKey');
+          return base.cacheKey?.(key) ?? {};
         },
-        thinking: () => {
+        thinking: (thinking, module) => {
           order.push('thinking');
-          return { kwargs: { reasoning_effort: 'high' } };
+          return base.thinking(thinking, module);
         },
-        convertMessage: (message, converted) => {
-          order.push(`convertMessage:${message.role}`);
-          return converted;
+        message: (message, module) => {
+          order.push(`message:${message.role}`);
+          return base.message(message, module);
         },
-        mergeHistory: (history) => {
-          order.push('mergeHistory');
-          historySeenByMerge = history;
-          return history;
+        tool: (tool) => {
+          order.push('tool');
+          return base.tool(tool);
         },
-        convertTool: (tool) => {
-          order.push('convertTool');
-          return {
-            type: 'function',
-            function: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.parameters,
+        mergeTurns: [
+          {
+            name: 'probeMergeTurns',
+            rewrite: (items, index) => {
+              if (index === 0) {
+                order.push('mergeTurns');
+                historySeenByMerge = items;
+              }
+              return null;
             },
-          };
+          },
+        ],
+        finalize: (native) => {
+          order.push('finalize');
+          systemSeen = native.system;
+          return native;
         },
-        buildParams: (params) => {
-          order.push('buildParams');
-          return params;
-        },
-      },
-      clientFactory: client.clientFactory,
-    });
+      }),
+      client.clientFactory,
+    );
     await requester.generate(
       {
         model,
@@ -1181,17 +1219,18 @@ describe('request pipeline', () => {
       { signal: new AbortController().signal },
     );
     expect(order).toEqual([
-      'encodeCacheKey',
+      'cacheKey',
       'thinking',
-      'convertMessage:user',
-      'mergeHistory',
-      'convertTool',
-      'buildParams',
+      'message:user',
+      'tool',
+      'mergeTurns',
+      'finalize',
     ]);
     const body = client.body();
     expect(body['prompt_cache_key']).toBe('cache-1');
     expect(body['reasoning_effort']).toBe('high');
-    expect(historySeenByMerge?.[0]).toEqual({ role: 'system', content: 'sys' });
+    expect(systemSeen).toBe('sys');
+    expect(historySeenByMerge?.[0]).toEqual({ role: 'user', content: 'hi' });
     const bodyMessages = body['messages'] as Record<string, unknown>[];
     expect(bodyMessages[0]).toEqual({ role: 'system', content: 'sys' });
   });
@@ -1246,12 +1285,23 @@ describe('toolMessageConversion request config', () => {
     ]);
   });
 
-  it('lets the request config override the trait default', async () => {
+  it('lets the request config override the kimi keep_parts default', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
+    await requester.generate(
+      { model },
+      { messages: toolHistory },
+      { signal: new AbortController().signal },
+    );
+    const defaultMessages = client.body()['messages'] as Record<string, unknown>[];
+    const defaultTool = defaultMessages.find((message) => message['role'] === 'tool');
+    expect(defaultTool?.['content']).toEqual([
+      { type: 'text', text: 'sunny' },
+      { type: 'image_url', image_url: { url: 'https://example.test/x.png' } },
+    ]);
     await requester.generate(
       { model, toolMessageConversion: 'extract_text' },
       { messages: toolHistory },
@@ -1280,35 +1330,44 @@ describe('toolMessageConversion request config', () => {
   });
 });
 
-describe('anthropic trait', () => {
-  it('lets the trait reshape messages, history, and tools', async () => {
+describe('anthropic protocol patches', () => {
+  it('lets protocol patches reshape messages, history, and tools', async () => {
     const client = stubAnthropicClient(anthropicStreamEvents);
-    const requester = createAnthropicRequester({
-      trait: {
-        convertMessage: (message, converted) => {
+    const appendExtra: Pattern<AnthropicNativeMessage> = {
+      name: 'appendExtra',
+      rewrite(items, index) {
+        if (index !== items.length - 1) return null;
+        const last = items[index];
+        if (last === undefined) return null;
+        return {
+          consumed: 1,
+          replacement: [last, { role: 'user', content: [{ type: 'text', text: 'extra' }] }],
+        };
+      },
+    };
+    const requester = anthropicRequesterWithPatch(
+      (base) => ({
+        message: (message, module) => {
           if (extractText(message) === 'drop me') {
-            return null;
+            return [];
           }
-          return {
-            ...converted,
+          return base.message(message, module).map((native) => ({
+            ...native,
             content: [
-              ...(converted['content'] as Record<string, unknown>[]),
+              ...(native['content'] as Record<string, unknown>[]),
               { type: 'text', text: 'suffix' },
             ],
-          };
+          }));
         },
-        mergeHistory: (history) => [
-          ...history,
-          { role: 'user', content: [{ type: 'text', text: 'extra' }] },
-        ],
-        convertTool: (tool) => ({
+        mergeTurns: [...(base.mergeTurns ?? []), appendExtra],
+        tool: (tool) => ({
           name: `x_${tool.name}`,
           description: tool.description,
           input_schema: tool.parameters,
         }),
-      },
-      clientFactory: client.clientFactory,
-    });
+      }),
+      client.clientFactory,
+    );
     await requester.generate(
       {
         model,
@@ -1459,7 +1518,7 @@ describe('anthropic cache control', () => {
 
 
 describe('anthropic thinking kwargs', () => {
-  it('applies the kimi thinking trait, the anthropic-beta protocol, and thinking echo rules', async () => {
+  it('applies the kimi thinking protocol, the anthropic-beta api, and thinking echo rules', async () => {
     const client = stubAnthropicClient([
       { type: 'message_start', message: { usage: { input_tokens: 10, output_tokens: 1 } } },
       {
@@ -1474,7 +1533,7 @@ describe('anthropic thinking kwargs', () => {
       { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 2 } },
       { type: 'message_stop' },
     ]);
-    const requester = createAnthropicRequester({
+    const requester = createKimiAnthropicRequester({
       ...kimiAnthropic,
       betaApi: true,
       clientFactory: client.clientFactory,
@@ -1525,19 +1584,17 @@ describe('anthropic thinking kwargs', () => {
     expect(body['betas']).toEqual(['context-management-2025-06-27']);
     expect(client.betaCalled()).toBe(true);
 
-    const betaFeatureTrait = {
+    const betaFeaturePatch = {
       thinking: () => ({
-        kwargs: {
-          thinking: { type: 'enabled' },
-          betaFeatures: ['interleaved-thinking-2025-05-14', 'custom-beta'],
-        },
+        thinking: { type: 'enabled' },
+        betaFeatures: ['interleaved-thinking-2025-05-14', 'custom-beta'],
       }),
     };
-    const betaRequester = createAnthropicRequester({
-      trait: betaFeatureTrait,
-      betaApi: true,
-      clientFactory: client.clientFactory,
-    });
+    const betaRequester = anthropicRequesterWithPatch(
+      betaFeaturePatch,
+      client.clientFactory,
+      true,
+    );
     await betaRequester.generate(
       { model, thinking: { effort: 'on' } },
       { messages },
@@ -1563,10 +1620,10 @@ describe('anthropic thinking kwargs', () => {
       'context-management-2025-06-27',
     ]);
 
-    const plainBetaRequester = createAnthropicRequester({
-      trait: betaFeatureTrait,
-      clientFactory: client.clientFactory,
-    });
+    const plainBetaRequester = anthropicRequesterWithPatch(
+      betaFeaturePatch,
+      client.clientFactory,
+    );
     await plainBetaRequester.generate(
       { model, thinking: { effort: 'on' } },
       { messages },

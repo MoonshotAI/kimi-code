@@ -1,15 +1,14 @@
 import { BugIndicatingError } from '#/_base/errors/errors';
 import type { ModelCapability as HumanModelCapability } from '#human/llm/capability';
 import type { ProtocolEndpoint, ProviderConnection } from '#human/llm/protocol/connection';
-import type { ProtocolTraitFor } from '#human/llm/provider/definition';
-import type { LlmErrorClassifier } from '#human/llm/requester/requester';
+import type { LlmErrorClassifier, LlmRequester } from '#human/llm/requester/requester';
 import {
-  kimiAnthropicTrait,
+  createKimiAnthropicRequester,
+  createKimiOpenAIRequester,
+  createKimiResponsesRequester,
   kimiConnection,
-  kimiOpenAITrait,
-  kimiResponsesTrait,
   KIMI_DEFAULT_BASE_URL,
-} from '#human/llm-kimi/trait';
+} from '#human/llm-kimi/protocol';
 import { classifyKimiQuotaError } from '#human/llm-kimi/errors';
 
 import type { Protocol } from '../protocol/protocol';
@@ -47,10 +46,21 @@ export const kimiEndpoint: ProtocolEndpoint = {
   defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
 };
 
+export interface ProviderRequesterFactoryOptions {
+  readonly connection?: ProviderConnection;
+  readonly classifyError?: LlmErrorClassifier;
+  readonly reasoningKey?: string;
+  readonly betaApi?: boolean;
+}
+
+export type ProviderRequesterFactory = (options: ProviderRequesterFactoryOptions) => LlmRequester;
+
 export interface ProviderDefinition<N extends Protocol = Protocol> {
   readonly id: string;
   readonly baseProtocol: N;
-  readonly trait?: ProtocolTraitFor<N>;
+  readonly requester?: ProviderRequesterFactory;
+  readonly thinkingDriven?: boolean;
+  readonly strictThinkingValidation?: boolean;
   readonly connection?: ProviderConnection;
   readonly classifyError?: LlmErrorClassifier;
   readonly capability?: (modelName: string) => HumanModelCapability | undefined;
@@ -225,7 +235,9 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai',
-  trait: kimiOpenAITrait,
+  requester: createKimiOpenAIRequester,
+  thinkingDriven: true,
+  strictThinkingValidation: true,
   connection: kimiConnection,
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
@@ -236,7 +248,8 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'anthropic',
-  trait: kimiAnthropicTrait,
+  requester: createKimiAnthropicRequester,
+  thinkingDriven: true,
   connection: kimiConnection,
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,
@@ -247,7 +260,8 @@ registerProviderDefinition({
 registerProviderDefinition({
   id: 'kimi',
   baseProtocol: 'openai_responses',
-  trait: kimiResponsesTrait,
+  requester: createKimiResponsesRequester,
+  thinkingDriven: true,
   connection: kimiConnection,
   classifyError: classifyKimiQuotaError,
   endpoint: kimiEndpoint,

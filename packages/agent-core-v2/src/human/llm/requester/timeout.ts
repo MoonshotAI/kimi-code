@@ -71,6 +71,15 @@ let warnedSocksProxy = false;
 let warnedInvalidProxy = false;
 let cached: { readonly key: string; readonly dispatcher: Dispatcher | undefined } | undefined;
 
+export function createLlmHeadersTimeoutFetch(env: Env = process.env): typeof fetch {
+  const timeoutMs = resolveLlmHeadersTimeoutMs(env);
+  const dispatcher =
+    timeoutMs === undefined ? undefined : getLlmHeadersTimeoutDispatcher(timeoutMs, env);
+  if (dispatcher === undefined) return fetch;
+  return ((input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) =>
+    fetch(input, { ...init, dispatcher } as unknown as Parameters<typeof fetch>[1])) as typeof fetch;
+}
+
 export function getLlmHeadersTimeoutDispatcher(
   timeoutMs: number,
   env: Env = process.env,

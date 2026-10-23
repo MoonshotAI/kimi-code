@@ -7,7 +7,7 @@ import type { ImageURLPart, VideoURLPart } from '#/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#/llm/media/upload';
 import type { LlmModel } from '#/llm/model';
 
-import { KIMI_DEFAULT_BASE_URL } from './trait';
+import { KIMI_DEFAULT_BASE_URL } from './protocol';
 
 export function kimiFilesBaseUrl(model: LlmModel): string {
   const base = model.baseUrl ?? KIMI_DEFAULT_BASE_URL;

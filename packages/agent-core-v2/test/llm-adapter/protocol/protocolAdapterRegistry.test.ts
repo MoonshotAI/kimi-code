@@ -103,30 +103,31 @@ describe('supportedProtocols', () => {
 });
 
 describe('resolveAdapterIdentity', () => {
-  it('resolves the kimi pair registrations to their vendor traits', () => {
+  it('resolves the kimi pair registrations to their vendor protocol bindings', () => {
     expect(registry.resolveAdapterIdentity('openai', 'kimi').baseId).toBe('openai');
-    expect(registry.resolveAdapterIdentity('openai', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').strictThinkingValidation).toBe(true);
     expect(registry.resolveAdapterIdentity('anthropic', 'kimi').baseId).toBe('anthropic');
-    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').thinkingDriven).toBe(true);
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').baseId).toBe(
       'openai_responses',
     );
-    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').thinkingDriven).toBe(true);
   });
 
   it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
     const google = registry.resolveAdapterIdentity('google-genai', 'kimi');
     expect(google.baseId).toBe('google-genai');
-    expect(google.trait).toBeUndefined();
+    expect(google.thinkingDriven).toBeUndefined();
     const unknown = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(unknown.baseId).toBe('openai');
-    expect(unknown.trait).toBeUndefined();
+    expect(unknown.thinkingDriven).toBeUndefined();
   });
 
   it('resolves the no-providerType branch identically', () => {
     const identity = registry.resolveAdapterIdentity('openai');
     expect(identity.baseId).toBe('openai');
-    expect(identity.trait).toBeUndefined();
+    expect(identity.thinkingDriven).toBeUndefined();
   });
 });
 
@@ -269,11 +270,11 @@ describe('kimi provider definitions', () => {
     const anthropic = getProviderDefinition('kimi', 'anthropic');
     const responses = getProviderDefinition('kimi', 'openai_responses');
     expect(native?.baseProtocol).toBe('openai');
-    expect(native?.trait).toBeDefined();
+    expect(native?.requester).toBeDefined();
     expect(anthropic?.baseProtocol).toBe('anthropic');
-    expect(anthropic?.trait).toBeDefined();
+    expect(anthropic?.requester).toBeDefined();
     expect(responses?.baseProtocol).toBe('openai_responses');
-    expect(responses?.trait).toBeDefined();
+    expect(responses?.requester).toBeDefined();
     for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',

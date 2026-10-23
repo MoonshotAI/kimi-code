@@ -1,77 +1,103 @@
 # llm 模块指南
 
-llm 是 human 层内一个独立的 LLM 请求库（`src/human/llm/`），提供「一次 LLM 请求」的完整能力：多协议（openai / openai-responses / anthropic / google-genai）请求编解码、流式事件、thinking、媒体、错误分类、重试与恢复、provider 与模型目录管理。它不依赖也不感知任何外部 agent 框架，所有职责划分与扩展方式都遵循下述设计原则。
+llm 是 human 层内独立的 LLM 请求库（`src/human/llm/`），提供「单次 LLM 请求」的完整能力：多协议（openai / openai-responses / anthropic / google-genai）的请求编码/解码、流式事件、thinking、媒体、错误分类、重试与恢复、供应商/模型目录管理。它不依赖、也不感知任何外部 agent 框架；所有职责边界与扩展机制遵循以下设计原则。
 
 ## 设计原则
 
-1. **边界极简：llm = 「一次请求」**。llm 只负责请求编解码与事件回传。auth、usage 统计、HistoryMessage/meta、compaction、switch、媒体文件系统、Tool Message 拼装全部不属于 llm——要么上移到 turn/agent 层，要么以贡献点接入。
-2. **流式原生、事件即契约**。对外只暴露一条纯可序列化的事件流（requester 层：`llm.sent / streaming.headers / streaming.part / streaming.usage / streaming.finish / streaming.message_id / failed.syntax / failed.remote / done`，另有 `llm.request.retrying` 表示调用方在 turn 之下重试本 attempt、已流出的流式状态需作废；turn 层补充 `llm.retrying / llm.recovering`，`llm.sent` 携带最近一次 recovery 记录），流式与非流式同构（非流式也走流式累积，只是不发 delta）；事件收到即发，不缓存、不兜底。
-3. **format 屏蔽协议间差异，trait 表达 provider 定制**。format 位于 protocol 层，负责请求、响应、错误、usage 和 finish 的编解码。每种协议拥有自己的类型化 trait 接口（`OpenAITrait` / `OpenAIResponsesTrait` / `AnthropicTrait` / `GoogleGenAITrait`），只暴露该协议实际消费的定制点——协议不支持的 hook 在类型上无法表达，而不是配了却静默无效。format 与 trait 互不 import：双方只共享协议 `contract.ts` 里的中立 wire/chunk 类型。requester 是组合根——`generate` 执行每个协议固定的流水线（`prepareOpenAIRequest` 等），交替调用纯 format 阶段（lower → assemble → encode → stream parser）与 trait hooks（encodeCacheKey/thinking/encodeMaxCompletionTokens → convertMessage → mergeHistory → convertTool → buildParams → extractUsage），定制逻辑是显式的数据流，而不是捕获在 format 闭包里。endpoint/环境变量解析与默认 headers 属于 provider `connection`，错误归类是 requester 选项，模型能力是 provider binding 字段——都不是 format 的职责。每个 base 的公开接缝是 contract + trait + requester；format、lower、patterns 是 requester 流水线的内部模块——只有 bases 内代码和测试可以 import（lint 强制）。协议差异不允许泄漏到 turn 或 requester 的装饰层。
-4. **错误两层模型**。内部 throw SDK 原生错误；本地请求校验抛共享的 `SyntaxRequestFormatError`（`llm/syntax-errors.ts`），由 requester 经 `toLlmSyntaxErrorMessage` 统一转换，不加中间层。对外只有 `llm.failed.syntax`（本地消息语法错误，不重试）与 `llm.failed.remote`（远程流式错误，细分为 connection/timeout/rate_limit/quota_exhausted/context_overflow/request_structure 等），由 format 在边界完成转换。
-5. **无状态内核 + turn 驱动的编排**。`generate(config, content, control)` 是无状态函数，错误走 onEvent 不 throw；turn machine 直接 invoke 请求 actor（`createRequestActor`）：actor 包装单次请求（messageResolvers、abort 作用域、事件 sendBack），turn 借助 retry.ts / recovery.ts 的纯策略函数驱动重试与 recovery：recovery 是一条由调用方组装的策略链（engine 先尝试 `credentialsRecovery`，再尝试配置的媒体降级等替换消息策略），每个策略的纯函数 `propose` 返回自描述记录（`strategy`/`action`、可选替换 `attemptMessageOverride`、可选不透明 `beforeNextAttempt` 副作用），turn 执行 `beforeNextAttempt` 和/或替换消息并重进 `thinking`（attempt 重置为 1）；覆盖值沿用到同一步的后续重试，直到被替换或在进入下一步前清空；重试走 `retrying` 状态的 backoff（尊重 Retry-After），两者分别由 turn 对外补发 `llm.recovering / llm.retrying` 事件；empty response 由 turn 在 `llm.done` 时经纯函数 `emptyResponseError` 判定并重新转为 `llm.failed.remote`，进入同一失败级联；abort 由 turn 持有的 AbortController 承载：controller 经 `LlmInput.signal` 传入 request actor，turn 在 `turn.abort` 时直接 abort 它，请求随即以 `llm.failed.remote` 收尾；request actor 不自建 controller、回收时不触碰任何 signal，正常完成的请求绝不可能误 abort 共享 signal。累积器由 turn 持有并随事件流喂入，在 `llm.retrying / llm.recovering / llm.request.retrying` 时 rollback 并重建，每次 attempt 从零累积，从而尽可能保留中断现场（turn 在 `llm.done` 时从累加器 finish 出完整消息）；被中断 attempt 已实时转发给父机/UI 的 part 不回收，只重置累加器与 tool call id normalizer。
-6. **不兜底**。配置是什么就是什么；beta 特性、thinking、empty response 等场景先定义明确报错条件，在请求阶段报错并引导用户修正，而不是静默兜底。
-7. **一切可变能力都是贡献点**。provider、媒体上传/降级、usage、traceId、错误恢复（compaction/媒体降级）都通过扩展点接入，llm 内核不含这些概念。
-8. **数据即数据**。model 是无函数的纯数据（endpoint url + model 唯一标识一个模型），可序列化、可直接作为 generate 输入；catalog 是 `provider -> models` 的派生缓存，依赖方向只能从 models-dev 指向 llm 内部，不能反向依赖。
-9. **Message 转换用编译器范式**。通用 Message[] 到协议报文是 N:M 转换，用 MLIR 式 Pattern Rewriter：有序、独立的 Pattern 将 MessageRange 替换为 MessageRange，最后 lowering；toolMessageConversion、media 映射也是 Pattern。
+1. **最小边界：llm = 「单次请求」**。llm 只处理请求编解码与事件发射。auth、usage 记账、HistoryMessage/meta、compaction、switch、媒体文件系统、Tool Message 组装都在边界之外——要么上移到 turn/agent 层，要么作为贡献点接入。
+2. **流式优先；事件即契约**。对外唯一表面是一条纯可序列化的事件流（requester 级：`llm.sent / streaming.headers / streaming.part / streaming.usage / streaming.finish / streaming.message_id / failed.syntax / failed.remote / done`，外加调用方在 turn 之下重试单个 attempt、需要丢弃已流式状态时发出的 `llm.request.retrying`；turn 级再加 `llm.retrying / llm.recovering`，且 `llm.sent` 携带最近一次恢复记录）。流式与非流式同构（非流式同样在流上累积，只是没有增量——`stream: false` 把完整响应经同一解码器 replay）。事件到达即发——不缓存、不回退。
+3. **pipeline 屏蔽协议间差异；协议补丁表达供应商定制**。每个协议核心都是 `defineProtocol` 对象（`src/human/llm/protocol/protocol.ts`）：由 `runPipeline` 按 `PipelineSpec` 组合 `encode`（阶段：cacheKey → thinking → responseFormat → maxOutputTokens → sampling → tool → message → mergeTurns → annotate → finalize → flatten，前置 `legalize` 各 pass：media → relocate → tool-call-ids → patterns → thinking-history → model）；流式 `decoder` 把原始 chunk 转成中立 sink 回调；`replay` 服务非流式；`decodeError`；以及 `client`/`send`/`sendStream` 传输。定制是穿越 spec 的数据流：供应商经 `protocol.with(patch)` 派生自己的协议（`src/human/llm-kimi/protocol.ts` 的 kimi 是范例），覆盖阶段（`thinking`、`tool`、`message`、`legality`、`flatten`、`decoder`……）而不是包装 requester。endpoint/env 解析与默认头构成 provider `connection`；错误分类是 requester 选项（`classifyError`，hook 优先）；模型 capability 是 base 字段——它们都不是 pipeline 的事。协议差异不得泄漏到 turn 或 requester 装饰器。
+4. **两层错误模型**。内部抛 SDK 原生错误；本地请求校验抛共享的 `SyntaxRequestFormatError`（`llm/syntax-errors.ts`），经 `toLlmSyntaxErrorMessage` 统一转换，无中间层。对外只有 `llm.failed.syntax`（本地消息语法错误，永不重试）与 `llm.failed.remote`（远端流式错误，细分 connection / timeout / rate_limit / quota_exhausted / context_overflow / request_structure 等），在边界由协议的 `decodeError` 转换。
+5. **无状态核心 + turn 驱动编排**。`generate(config, content, control)` 是无状态函数；错误经 onEvent 投递，从不抛出。A 词汇 requester 接缝（`llm/requester/run.ts`）以 `maxAttemptsPerStep: 1`、无 recoveries 的政策驱动运行循环（`llm/policy/policy.ts` → `settleLlmRequest`），每次调用恰好一次 attempt，政策机制保持惰性；turn 机器经 retry.ts / recovery.ts 的纯政策函数驱动重试与恢复：恢复是调用方组合的策略链（引擎先试 `credentialsRecovery`，再试配置的替换消息策略如媒体降级）；每个策略的纯 `propose` 返回自描述记录（`strategy`/`action`、可选替换 `attemptMessageOverride`、可选不透明 `beforeNextAttempt` 效果）——turn 执行 `beforeNextAttempt` 和/或替换消息并以 attempt 重置为 1 重新进入 `thinking`；override 在同一步的后续重试中持续生效，直到被替换或在下一步前清除；重试在 `retrying` 状态退避（尊重 Retry-After），turn 分别发出 `llm.recovering / llm.retrying`。settle 阶段累积流式 parts 并自行判定空响应，接缝将这类请求以 `llm.failed.remote` 结束且前置没有 `llm.done`；turn 自己的 done 路径空判因此不再触发，而 `emptyResponseError` 仍导出供直接消费者使用。abort 由 turn 持有的 AbortController 承载：控制器经 `LlmInput.signal` 传入请求 actor，turn 在 `turn.abort` 时直接中止它，请求以 kind 为 `abort` 的 `llm.failed.remote` 结束；请求 actor 既不自建控制器、也不在拆除时触碰任何信号，已完成的请求永远不会中止共享信号。累积器由 turn 持有、由事件流喂入；在 `llm.retrying / llm.recovering / llm.request.retrying` 时 turn 回滚并重建它，因此每个 attempt 从零累积，同时尽量保留被中断的状态（turn 在 `llm.done` 时由累积器完成完整消息）。被中断 attempt 已转发给父机或 UI 的 parts 不回收；只有累积器与工具调用 id 归一器重置。
+6. **不做静默回退**。配置严格按给定使用。beta 特性、thinking、空响应等场景，先定义明确的错误条件，在请求时失败，并引导用户修正配置——永不静默回退。
+7. **一切可变能力都是贡献点**。供应商（经 `protocol.with`）、媒体上传/降级、usage、traceId、错误恢复（compaction / 媒体降级）都经扩展点接入；llm 核心不含这些概念。
+8. **数据即数据**。model 是纯的、无函数的数据（endpoint url + model 唯一标识一个模型），可序列化、可直接作为 generate 输入。catalog 是派生的 `provider -> models` 缓存；依赖方向只允许从 models-dev 进入 llm 内部，绝不反向。
+9. **消息转换用编译器范式**。把通用 Message[] 转成协议载荷是 N:M 映射，用 MLIR 式 Pattern Rewriter 完成：有序、独立的 Pattern 各自把一个 MessageRange 重写为另一个 MessageRange，最后做终态 lowering。toolMessageConversion 与媒体映射也是 Pattern。
 
 ## 架构
 
 ```
 llm/
-├── message.ts            通用 Message 模型（按 role 拆分；tool 声明独立）
+├── message.ts            通用 Message 模型（按 role 拆分；工具声明独立）
 ├── model.ts              LlmModel：纯数据，provider+model+endpoint 覆盖
 ├── capability.ts / thinking.ts / usage.ts / finish-reason.ts / response-format.ts / syntax-errors.ts
-├── errors.ts             LlmErrorKind 两层（syntax | remote 各细分 kind）
-├── toolCallIdNormalizer.ts  流式 tool call id 去重：重复的 raw id 按序重映射为新 id
+├── errors.ts             两层 LlmErrorKind（syntax | remote，各自细分）
+├── toolCallIdNormalizer.ts  流式工具调用 id 去重：重复的原始 id 按序重映射
 │
-├── protocol/             协议通用层（跨基座共享）
-│   ├── base.ts           ProtocolName / ProtocolBase<TTrait> / ProtocolRequesterOptions / TraitContext
-│   ├── format.ts         ProtocolFormat：createStreamParser(sink 回调 + resolveUsage 选项)
-│   ├── connection.ts     ProviderConnection：endpoint 环境变量声明 + 默认 headers
-│   ├── thinking.ts       ThinkingStrategy → ThinkingContribution → applyThinking → AppliedThinking
-│   └── patterns.ts / rewrite.ts   MLIR 式 Pattern Rewriter（Message N:M 转换）
+├── request.ts            核心请求契约：LlmModelSpec、LlmRequestModel、LlmSampling、
+│                         LlmCredential(Provider)、LlmEndpoint、LlmProtocolBinding（base+options+stream）、
+│                         LlmRequestProfile/Content、LlmRequest
+├── response.ts           运行级类型：LlmStreamEvent、LlmSentEvent、LlmRetrying、LlmTiming、
+│                         LlmOutput、LlmOutcome、LlmNotice
+├── endpoint.ts           ResolvedEndpoint + resolveEndpoint（凭据按 attempt 解析）
+├── generate.ts           attempt 驱动：encode → client → send/sendStream（+replay）→ decoder；
+│                         发出 attempt.sending / streaming.* / attempt.failed
+├── policy/
+│   ├── policy.ts         runLlmRequest：attempt 循环（resolvers、recoveries 账本、
+│   │                     退避重试）——由接缝接线为单 attempt
+│   ├── settle.ts         单次 attempt 的结算：累积、空响应判定、计时、outcome 合成
+│   │                     （done / failed / aborted）
+│   ├── recovery.ts       纯恢复策略 + 账本（propose/record/apply）
+│   └── resolver.ts       政策驱动的消息解析端口 MessageResolver
+│
+├── protocol/             共享协议层（各 base 通用）
+│   ├── protocol.ts       Protocol / ProtocolDefinition / DefinedProtocol / defineProtocol（.with）、
+│   │                     DecodeSink/Decoder、ProtocolReply
+│   ├── pipeline.ts       PipelineSpec 阶段 + runPipeline + NativeModule
+│   ├── rules/            legalize 各 pass：media、model（legality/clamp/严格 effort）、
+│   │                     tool-call-ids、index（pass 顺序）
+│   ├── kit/              http（requestIdFromHeader）/ params（withExtras）
+│   ├── base.ts           ProtocolName / ProtocolBase / ProtocolRequesterOptions
+│   ├── connection.ts     ProviderConnection：endpoint env 声明 + 默认头
+│   └── rewrite.ts / patterns.ts   MLIR 式 Pattern Rewriter（消息 N:M 转换）
 │
 ├── requester/
-│   ├── requester.ts      LlmRequester.generate(config, content, control)；
-│   │                     ExtraParams 按协议带类型 {openai?, responses?, anthropic?, googleGenai?}；
-│   │                     LlmRequestConfig.credentialProvider：凭证贡献点
-│   │                     （resolve/canRecover/invalidate），由调用方在每次 attempt 前解析；
-│   │                     工厂与 credentialsRecovery 策略位于 human/credentials
-│   │                     （createStaticCredentialProvider / createOAuthCredentialProvider；createKimiOAuthCredentialProvider
-│   │                     适配 Kimi OAuth token）；供 direct 调用方使用的
-│   │                     runWithCredentialRecovery / streamWithCredentialRecovery 执行器
-│   │                     位于 llm-adapter/model/credential-recovery
+│   ├── requester.ts      LlmRequester.generate(config, content, control)——A 词汇接缝
+│   │                     （LlmRequestEvent 封闭联合；config 增加 stream?: boolean）；
+│   │                     ExtraParams 按协议分型 {openai?, responses?, anthropic?, googleGenai?}；
+│   │                     LlmRequestConfig.credentialProvider：凭据贡献点
+│   │                     （resolve/canRecover/invalidate），由调用方按 attempt 解析；
+│   │                     工厂与 credentialsRecovery 策略在 human/credentials
+│   │                     （createStaticCredentialProvider / createOAuthCredentialProvider；
+│   │                     createKimiOAuthCredentialProvider 适配 Kimi OAuth token）；
+│   │                     面向直接调用方的 runWithCredentialRecovery /
+│   │                     streamWithCredentialRecovery 执行器在 llm-adapter/model/credential-recovery
+│   ├── run.ts            接缝：config+content → LlmRequest，政策 maxAttemptsPerStep:1，
+│   │                     运行循环事件 → A 词汇，outcome → llm.done / llm.failed.* /
+│   │                     abort 转 remote；每次 attempt 构造 headers 超时 fetch
 │   ├── actor.ts          请求 actor：包装单次请求的 fromCallback
-│   │                     （messageResolvers、abort 作用域、事件 sendBack），由 turn invoke
-│   ├── retry.ts / recovery.ts   重试/恢复策略纯函数（由 turn machine 驱动；propose 为纯函数）
-│   ├── empty-response.ts emptyResponseError：空响应判定纯函数，由 turn 在 llm.done 时转为 llm.failed.remote
-│   └── bases/            四个协议基座：openai / openai-responses / anthropic / google-genai
-│                         各自含 contract / format / lower / patterns / capability / extra-params / trait / requester
-│                         （公开接缝：contract / trait / requester；format / lower / patterns 保持内部）
+│   │                     （messageResolvers、abort 域、事件 sendBack）；由 turn 调用
+│   ├── retry.ts / recovery.ts   纯重试/恢复政策函数（由 turn 机器驱动；propose 为纯函数）
+│   ├── empty-response.ts emptyResponseError：纯空响应判定（settle 在源头应用；
+│   │                     turn 保留用于自身检查）
+│   └── bases/            四个协议 base：openai / openai-responses / anthropic / google-genai
+│                         各含 decode / legalize / lower / protocol（defineProtocol 对象：
+│                         client/send/sendStream/replay/decodeError）、capability、extra-params、
+│                         contract（wire 类型），以及基于 createRunRequester 的薄 requester.ts 接缝工厂
 │
 ├── provider/
-│   ├── definition.ts     ProviderDefinition{id, protocols{base+trait+connection+classifyError+capability}, media, models}
-│   │                     createProvider()（无 registry）→ Provider{listModels, resolveModel, createRequester}
-│   └── providers/        standard 等内建 provider（经贡献点注册）
+│   ├── definition.ts     ProviderDefinition{id, protocols{base+connection+classifyError+capability}, media, models}
+│   │                     createProvider()（无注册表）→ Provider{listModels, resolveModel, createRequester}
+│   └── providers/        内置 provider 如 standard（经贡献点注册）
 │
-├── provider-catalog.ts   xstate 状态机：refresh/upsert/remove/ping 输入，changed 输出；
-│                         provider -> models 结构；远程 pulled 与本地 models 双真相源
+├── provider-catalog.ts   xstate 机器：refresh/upsert/remove/ping 入，changed 出；
+│                         provider -> models 结构；远端拉取与本地模型双数据源
 │
 └── media/                媒体贡献点：cache / degrade / ref / resolver / store / upload
 ```
 
-请求生命周期：`generate` 收到 (config, content, control) → 调用方在每次 attempt 前把 `config.credentialProvider` 解析成带完整凭证的 model（machine 路径由 request actor 完成），请求因此始终携带新鲜凭证，而凭证刷新恢复（可恢复的 401 → `credentials.invalidate()`，以 `llm.recovering`（strategy 为 `credentials`）发出）在重发时自然重新解析（不经状态机的 direct 调用方——ping、generate、full compaction、媒体上传——通过 `runWithCredentialRecovery` / `streamWithCredentialRecovery` 共享同一套单次重试恢复） → requester 的 `prepare*Request` 函数将纯 format 阶段与 trait hooks 组合为协议 requestParams（format 将通用 Message[] 经 Pattern Rewriter 降低，trait 在其间调整 kwargs、转换消息、合并历史、转换 tools 并收尾 params） → `execute*Request` 调用官方 SDK → 流式 chunk 经无状态 parser 回调转换为 `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` 事件 → 错误由 format 转换为 `llm.failed.*`；成功时 requester 发出 `llm.done`，失败时以 `llm.failed.syntax / llm.failed.remote` 收尾、不再发 `llm.done`。turn 在 `llm.done` 时经 `emptyResponseError` 判定空响应并重新转为 `llm.failed.remote`；turn machine 对 `llm.failed.remote` 先尝试恢复（由 engine 组装的策略链——可恢复 401 的凭证刷新在前、替换消息策略在后——经纯函数 `propose` 产出带不透明 `beforeNextAttempt` 副作用的记录，发 `llm.recovering`），再按策略 backoff 重试（尊重 Retry-After，发 `llm.retrying`），耗尽后才将 turn 置为失败。turn 持有 HistoryAccumulator 随事件流累积，在 `llm.retrying / llm.recovering / llm.request.retrying` 时 rollback 并重建累加器，`llm.done` 时 finish 出完整消息；usage 统计、trace、compaction、媒体降级均以插件/贡献点身份挂接在事件流上。
+请求生命周期：`generate` 接收 (config, content, control) → 调用方在每个 attempt 前把 `config.credentialProvider` 解析为带完整凭据的模型（机器路径上的请求 actor），因此请求始终携带新鲜凭据，凭据刷新恢复（可恢复 401 → `credentials.invalidate()`，以 strategy `credentials` 发出 `llm.recovering`）在重发时自然重新解析（状态机之外的直接调用方——ping、generate、full compaction、媒体上传——经 `runWithCredentialRecovery` / `streamWithCredentialRecovery` 共享同一条单次重试恢复）→ 接缝构建 `LlmRequest`（由解析后模型得到 model spec，由 systemPrompt+tools 得到 profile，政策单 attempt，endpoint 携带静态凭据与按 attempt 构造的 headers 超时 fetch）→ `runLlmRequest` → `settleLlmRequest` → attempt 驱动 `generate.ts` 经协议 pipeline 编码（`legalize` 各 pass 归一媒体、工具调用 id、供应商 pattern、thinking 历史与模型 legality；`runPipeline` 再经 spec 的 `message` 阶段 lowering 消息、转换工具、合并 turn、标注缓存、finalize 并 flatten 参数——kimi 的协议补丁在这一层替换或包装个别阶段）→ `client` + `sendStream`（`stream: false` 时 `send` + `replay`）→ 流式 chunk 解码为 `llm.streaming.part / streaming.usage / streaming.finish / streaming.message_id` 事件 → 错误经 `decodeError` 转成 `llm.failed.*`；settle 阶段累积 parts、计时，并合成 outcome：`done`（→ `llm.done`）、`failed`（→ `llm.failed.syntax / llm.failed.remote`，其后绝不跟 `llm.done`）、`aborted`（→ kind 为 `abort` 的 `llm.failed.remote`）。turn 持有 HistoryAccumulator，由事件流喂入，在 `llm.retrying / llm.recovering / llm.request.retrying` 时回滚重建，并在 `llm.done` 完成完整消息；usage 记账、追踪、compaction、媒体降级都以插件/贡献点挂在事件流上。
 
-## 已被否决的方案（不要再引入）
+## 已否决方案（勿重新引入）
 
-- 拆分 llmActor / llmStreamActor 两个 actor —— 每次请求一个 actor，非流式也走流式累积。
-- 给请求 actor 再包一层专用 llm 状态机 —— turn machine 直接 invoke actor 并持有重试/recovery，额外的 machine 层没有任何被消费的状态。
-- DDD 领域方法包装（Generation Domain 等）—— 用 format/trait/provider 分层。
-- 用一个跨协议 trait 大包承载所有厂商 hooks（旧的 ProtocolTrait）—— 按协议拆分的类型化 trait，由 requester 的请求流水线组合。
-- 把 trait 绑定进 format（`createOpenAIFormat(trait)` 闭包，或把 trait hooks 作为 formatRequest 选项传入）—— requester 流水线显式交替调用 format 阶段与 trait hooks，双方只共享中立的 `contract.ts` 类型。
-- 函数式 `toWireMessage` / `WireAdapter` 命名 —— adapter interface，命名中不出现 Wire。
-- Provider registry / `defineProvider` —— `createProvider` 导出 const。
-- 出站时把 system 消息 hoisting 出原位 —— system 消息留在历史原位转换。
-- llm 输出 `{message, meta}` 的 Context 对象 —— meta 归 turn 领域，llm 只发事件。
-- 在 llm 与 turn 各实现一次 accumulator —— accumulator 只由 turn 持有，随事件流喂入。
-- beta 特性无限兜底 —— 协议拆分为 `anthropic` / `anthropic_beta`，不传就不发，传错就报错；需要 beta 特性的 provider 必须显式使用 `anthropic_beta` 协议。
+- 把请求 actor 拆成 llmActor / llmStreamActor——一次请求一个 actor；非流式同样在流上累积。
+- 用专门的 llm 状态机包装请求 actor——turn 机器直接调用 actor 并持有重试/恢复；额外机器层没有任何被消费的状态。
+- DDD 领域方法包装（Generation Domain 等）——用 pipeline/protocol/provider 分层。
+- 传给 requester 工厂的按请求 trait 钩子对象（旧的 OpenAITrait/AnthropicTrait/… 接缝）——供应商定制属于 `protocol.with(patch)` 组合；trait 袋让被协议忽略的钩子静默失效，也模糊了每个行为归属哪个阶段。
+- 把定制以闭包绑进 format（`createOpenAIFormat(trait)`，或把钩子作为 formatRequest 选项传入）——pipeline 显式交替纯阶段；供应商补丁 spec，而非 requester。
+- 函数式 `toWireMessage` / `WireAdapter` 命名——用 adapter 接口；名字里不出现 "Wire"。
+- provider 注册表 / `defineProvider`——`createProvider` 导出常量。
+- 出站时把 system 消息从原位提出来——system 消息在历史中原位保留、原位转换。
+- llm 发 `{message, meta}` Context 对象——meta 属于 turn 域；llm 只发事件。
+- 在 llm 与 turn 各实现一份累积器——累积器只由 turn 持有、由事件流喂入（settle 内部的累积器只服务 outcome 合成）。
+- beta 特性无限回退——协议经 `betaApi` 选项区分 `anthropic` / `anthropic_beta`；未声明即不发送，配错即报错；需要 beta 特性的 provider 必须显式使用 beta API。

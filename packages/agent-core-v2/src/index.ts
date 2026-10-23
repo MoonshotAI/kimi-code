@@ -156,7 +156,7 @@ export type { VideoUploadInput } from '#human/llm/media/upload';
 export type { ToolCallIdPolicy } from '#human/llm/requester/requester';
 export type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 export * from '#/llm-adapter/contract/request-trace';
-export type { KimiThinkingConfig } from '#human/llm-kimi/trait';
+export type { KimiThinkingConfig } from '#human/llm-kimi/protocol';
 
 export * from '#/app/sessionIndex/sessionIndex';
 export * from '#/app/sessionIndex/sessionIndexService';

@@ -17,7 +17,7 @@ export { resolveThinkingKeep } from '#human/llm/thinking';
 export function drivesThinkingThroughTraits(providerType: string | undefined): boolean {
   if (providerType === undefined) return false;
   return getProviderDefinitions(providerType).some(
-    (definition) => definition.trait?.thinking !== undefined,
+    (definition) => definition.thinkingDriven === true,
   );
 }
 
@@ -26,9 +26,7 @@ export function usesTraitDrivenThinking(
   protocol: Protocol,
   providerType?: string,
 ): boolean {
-  return (
-    registry.resolveAdapterIdentity(protocol, providerType).trait?.thinking !== undefined
-  );
+  return registry.resolveAdapterIdentity(protocol, providerType).thinkingDriven === true;
 }
 
 export function requiresStrictThinkingValidation(
@@ -37,9 +35,7 @@ export function requiresStrictThinkingValidation(
   providerType?: string,
 ): boolean {
   if (providerType === undefined) return false;
-  const trait = registry.resolveAdapterIdentity(protocol, providerType).trait;
-  if (trait === undefined || trait.thinking === undefined) return false;
-  return 'strictThinkingValidation' in trait && trait.strictThinkingValidation === true;
+  return registry.resolveAdapterIdentity(protocol, providerType).strictThinkingValidation === true;
 }
 
 export function wireHasProtocolThinkingDisable(protocol: string | undefined): boolean {

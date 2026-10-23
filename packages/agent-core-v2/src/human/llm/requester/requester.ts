@@ -10,10 +10,14 @@ import type { ResponseFormat } from '#/llm/response-format';
 import type { ThinkingRequestOptions } from '#/llm/thinking';
 import type { TokenUsage } from '#/llm/usage';
 
+import type { LlmCredentialProvider } from '#/llm/request';
+
 import type { AnthropicExtraParams } from './bases/anthropic/extra-params';
 import type { GoogleGenAIExtraParams } from './bases/google-genai/extra-params';
 import type { OpenAIExtraParams } from './bases/openai/extra-params';
 import type { OpenAIResponsesExtraParams } from './bases/openai-responses/extra-params';
+
+export type { LlmCredential, LlmCredentialProvider } from '#/llm/request';
 
 export interface ToolCallIdPolicy {
   normalize: (id: string) => string;
@@ -43,17 +47,6 @@ export interface ExtraParams {
 
 export type ToolMessageConversion = 'extract_text' | 'keep_parts';
 
-export interface LlmCredential {
-  readonly apiKey?: string;
-  readonly headers?: Record<string, string>;
-}
-
-export interface LlmCredentialProvider {
-  resolve(): Promise<LlmCredential | undefined> | LlmCredential | undefined;
-  canRecover?(error: unknown): boolean;
-  invalidate?(): void;
-}
-
 export interface LlmRequestConfig {
   readonly model: LlmModel;
   readonly credentialProvider?: LlmCredentialProvider;
@@ -66,6 +59,7 @@ export interface LlmRequestConfig {
   readonly maxContextTokens?: number;
   readonly extraParams?: ExtraParams;
   readonly toolMessageConversion?: ToolMessageConversion;
+  readonly stream?: boolean;
 }
 
 export interface LlmRequestContent {

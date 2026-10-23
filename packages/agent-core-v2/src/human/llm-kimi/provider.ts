@@ -1,30 +1,29 @@
 import { createProvider } from '#/llm/provider/definition';
-import { anthropicBetaBase } from '#/llm/requester/bases/anthropic/requester';
-import { openAIBase } from '#/llm/requester/bases/openai/requester';
-import { openAIResponsesBase } from '#/llm/requester/bases/openai-responses/requester';
 
-import { kimiAnthropicTrait, kimiConnection, kimiOpenAITrait, kimiResponsesTrait } from './trait';
 import { classifyKimiQuotaError } from './errors';
 import { kimiMediaContribution } from './media';
+import {
+  kimiAnthropicBase,
+  kimiConnection,
+  kimiOpenAIBase,
+  kimiResponsesBase,
+} from './protocol';
 
 export const kimiProvider = createProvider({
   id: 'kimi',
   protocols: {
     openai: {
-      base: openAIBase,
-      trait: kimiOpenAITrait,
+      base: kimiOpenAIBase,
       connection: kimiConnection,
       classifyError: classifyKimiQuotaError,
     },
     anthropic: {
-      base: anthropicBetaBase,
-      trait: kimiAnthropicTrait,
+      base: kimiAnthropicBase,
       connection: kimiConnection,
       classifyError: classifyKimiQuotaError,
     },
     openai_responses: {
-      base: openAIResponsesBase,
-      trait: kimiResponsesTrait,
+      base: kimiResponsesBase,
       connection: kimiConnection,
       classifyError: classifyKimiQuotaError,
     },

@@ -26,6 +26,9 @@ const openAISse = [
 ].join('\n');
 
 const responsesSse = [
+  'event: response.output_text.delta',
+  'data: {"type":"response.output_text.delta","delta":"hi"}',
+  '',
   'event: response.completed',
   'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
   '',

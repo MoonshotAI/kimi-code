@@ -3,24 +3,10 @@ import type { ProviderMediaContribution } from '#/llm/media/upload';
 import type { LlmConnection, LlmModel } from '#/llm/model';
 import type { ProtocolBase, ProtocolName } from '#/llm/protocol/base';
 import type { ProviderConnection } from '#/llm/protocol/connection';
-import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
-import type { GoogleGenAITrait } from '#/llm/requester/bases/google-genai/trait';
-import type { OpenAIResponsesTrait } from '#/llm/requester/bases/openai-responses/trait';
-import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
 import type { LlmErrorClassifier, LlmRequester } from '#/llm/requester/requester';
 
-interface ProtocolTraitsByName {
-  readonly openai: OpenAITrait;
-  readonly openai_responses: OpenAIResponsesTrait;
-  readonly anthropic: AnthropicTrait;
-  readonly 'google-genai': GoogleGenAITrait;
-}
-
-export type ProtocolTraitFor<N extends ProtocolName> = ProtocolTraitsByName[N];
-
-export interface ProtocolBinding<N extends ProtocolName = ProtocolName> {
-  readonly base: ProtocolBase<ProtocolTraitFor<N>>;
-  readonly trait?: ProtocolTraitFor<N>;
+export interface ProtocolBinding {
+  readonly base: ProtocolBase;
   readonly connection?: ProviderConnection;
   readonly classifyError?: LlmErrorClassifier;
   readonly capability?: (modelName: string) => ModelCapability | undefined;
@@ -38,7 +24,7 @@ export type ProviderModelSource = () => Promise<readonly LlmModelSeed[]>;
 
 export interface ProviderDefinition {
   readonly id: string;
-  readonly protocols: Readonly<{ [N in ProtocolName]?: ProtocolBinding<N> }>;
+  readonly protocols: Readonly<{ [N in ProtocolName]?: ProtocolBinding }>;
   readonly media?: ProviderMediaContribution;
   readonly models?: ProviderModelSource;
 }
@@ -121,7 +107,6 @@ export function createProvider(definition: ProviderDefinition): Provider {
       const binding = bindingFor(protocol);
       return binding.base.createRequester({
         connection: binding.connection,
-        trait: binding.trait,
         classifyError: binding.classifyError,
       });
     },

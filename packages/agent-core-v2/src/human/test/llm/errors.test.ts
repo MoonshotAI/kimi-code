@@ -10,9 +10,9 @@ import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { createAssistantMessage, createUserMessage, type Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
-import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
+import { createKimiOpenAIRequester, kimiConnection } from '#/llm-kimi/protocol';
 import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
-import { convertOpenAIError } from '#/llm/requester/bases/openai/format';
+import { convertOpenAIError } from '#/llm/requester/bases/openai/decode';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
 import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
 
@@ -291,9 +291,8 @@ describe('requester error conversion', () => {
   });
 
   it('converts a kimi quota response to quota_exhausted', async () => {
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       connection: kimiConnection,
-      trait: kimiOpenAITrait,
       classifyError: classifyKimiQuotaError,
       clientFactory: failingOpenAIClient(
         new RawOpenAISDKAPIError(

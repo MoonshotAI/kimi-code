@@ -169,6 +169,7 @@ export class ModelRequesterImpl implements ModelRequester {
       maxCompletionTokens: params?.maxCompletionTokens,
       maxContextTokens: params?.maxContextTokens,
       extraParams: samplingExtraParams(resolved.protocol, params?.sampling),
+      stream: params?.stream,
     };
     const content: LlmRequestContent = {
       messages: input.messages.map(toLlmMessage),

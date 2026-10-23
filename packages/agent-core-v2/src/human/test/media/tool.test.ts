@@ -28,7 +28,7 @@ import { createMemoryMediaStore } from '#/llm/media/store';
 import type { LlmModel } from '#/llm/model';
 import { createProvider } from '#/llm/provider/definition';
 import type { LlmRequester } from '#/llm/requester/requester';
-import { openAIBase, prepareOpenAIRequest } from '#/llm/requester/bases/openai/requester';
+import { createOpenAIRequester, openAIBase } from '#/llm/requester/bases/openai/requester';
 import { createReadMediaFileTool } from '#/media/tool';
 
 const CAPABILITY: ModelCapability = {
@@ -209,12 +209,36 @@ describe('media stack wiring', () => {
     ]);
     expect(uploadVideo).toHaveBeenCalledTimes(1);
 
-    const wire = prepareOpenAIRequest({
-      model,
-      messages: seenMessages[1] as readonly Message[],
-      tools: [],
+    const captured: Record<string, unknown>[] = [];
+    const wireRequester = createOpenAIRequester({
+      clientFactory: () =>
+        ({
+          chat: {
+            completions: {
+              create: (params: Record<string, unknown>) => {
+                captured.push(params);
+                return {
+                  withResponse: async () => ({
+                    data: {
+                      id: 'chatcmpl-1',
+                      choices: [
+                        { message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' },
+                      ],
+                    },
+                    response: new Response(null),
+                  }),
+                };
+              },
+            },
+          },
+        }) as never,
     });
-    const wireMessages = wire.params.messages as unknown as Record<string, unknown>[];
+    await wireRequester.generate(
+      { model },
+      { messages: seenMessages[1] as readonly Message[] },
+      { signal: new AbortController().signal },
+    );
+    const wireMessages = captured[0]?.['messages'] as Record<string, unknown>[];
     const toolWire = wireMessages.find((message) => message['role'] === 'tool');
     expect(String(toolWire?.['content'])).not.toContain('video omitted');
     const mediaUser = wireMessages.find(

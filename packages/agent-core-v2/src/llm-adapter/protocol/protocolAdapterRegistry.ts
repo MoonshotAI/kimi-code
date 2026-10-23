@@ -5,17 +5,14 @@ import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../co
 import type { ModelThinkingMetadata } from '#human/llm/thinking';
 import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
-import type { ProtocolBase } from '#human/llm/protocol/base';
 import type { ProviderConnection } from '#human/llm/protocol/connection';
-import type { ProtocolTraitFor } from '#human/llm/provider/definition';
-import type { LlmErrorClassifier } from '#human/llm/requester/requester';
+import type { LlmErrorClassifier, LlmRequester } from '#human/llm/requester/requester';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
   createGoogleGenAIBase,
   googleGenAIBase,
 } from '#human/llm/requester/bases/google-genai/requester';
-import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
-import { openAIBase } from '#human/llm/requester/bases/openai/requester';
+import { createOpenAIRequester } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
 import { KimiFiles, kimiFilesBaseUrl } from '#human/llm-kimi/files';
 
@@ -27,6 +24,7 @@ import {
   getProviderDefinition,
   openAIConnection,
   vertexConnection,
+  type ProviderRequesterFactoryOptions,
 } from '../provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type Protocol } from './protocol';
@@ -50,17 +48,20 @@ const kimiMedia: ProviderMediaContribution = {
 };
 
 interface AdapterRoute {
-  readonly base: ProtocolBase<ProtocolTraitFor<Protocol>>;
-  readonly trait?: ProtocolTraitFor<Protocol>;
+  readonly createRequester: (options: AdapterRequesterOptions) => LlmRequester;
   readonly connection?: ProviderConnection;
   readonly classifyError?: LlmErrorClassifier;
   readonly providerId: string;
   readonly media?: ProviderMediaContribution;
 }
 
-function openAIReasoningTraitFor(model: Model): OpenAITrait | undefined {
-  const reasoningKey = model.providerOptions?.reasoningKey ?? model.reasoningKey;
-  return reasoningKey === undefined ? undefined : { reasoningKey };
+interface AdapterRequesterOptions {
+  readonly connection?: ProviderConnection;
+  readonly classifyError?: LlmErrorClassifier;
+}
+
+function openAIReasoningKeyFor(model: Model): string | undefined {
+  return model.providerOptions?.reasoningKey ?? model.reasoningKey;
 }
 
 function routeFor(model: Model): AdapterRoute {
@@ -69,67 +70,53 @@ function routeFor(model: Model): AdapterRoute {
       ? undefined
       : getProviderDefinition(model.providerType, model.protocol);
   const routeMedia = definition?.modelSource === 'oauth-catalog' ? kimiMedia : undefined;
-  const custom =
-    definition !== undefined &&
-    (definition.trait !== undefined ||
-      definition.connection !== undefined ||
-      definition.classifyError !== undefined)
-      ? definition
+  const customFactory =
+    definition !== undefined && definition.requester !== undefined
+      ? (options: ProviderRequesterFactoryOptions) => definition.requester!(options)
       : undefined;
   switch (model.protocol) {
     case 'openai':
-      return custom !== undefined
-        ? {
-            base: openAIBase,
-            trait: custom.trait,
-            connection: custom.connection,
-            classifyError: custom.classifyError,
-            providerId: 'openai',
-            media: routeMedia,
-          }
-        : {
-            base: openAIBase,
-            trait: openAIReasoningTraitFor(model),
-            connection: openAIConnection,
-            providerId: 'openai',
-          };
+      return {
+        createRequester:
+          customFactory ??
+          ((options) =>
+            createOpenAIRequester({ ...options, reasoningKey: openAIReasoningKeyFor(model) })),
+        connection: definition?.connection ?? openAIConnection,
+        classifyError: definition?.classifyError,
+        providerId: 'openai',
+        media: routeMedia,
+      };
     case 'openai_responses':
-      return custom !== undefined
-        ? {
-            base: openAIResponsesBase,
-            trait: custom.trait,
-            connection: custom.connection,
-            classifyError: custom.classifyError,
-            providerId: 'openai-responses',
-            media: routeMedia,
-          }
-        : {
-            base: openAIResponsesBase,
-            connection: openAIConnection,
-            providerId: 'openai-responses',
-          };
+      return {
+        createRequester: customFactory ?? ((options) => openAIResponsesBase.createRequester(options)),
+        connection: definition?.connection ?? openAIConnection,
+        classifyError: definition?.classifyError,
+        providerId: 'openai-responses',
+        media: routeMedia,
+      };
     case 'anthropic': {
-      const base = model.providerOptions?.betaApi === true ? anthropicBetaBase : anthropicBase;
-      return custom !== undefined
-        ? {
-            base,
-            trait: custom.trait,
-            connection: custom.connection,
-            classifyError: custom.classifyError,
-            providerId: 'anthropic',
-            media: routeMedia,
-          }
-        : { base, connection: anthropicConnection, providerId: 'anthropic' };
+      const betaApi = model.providerOptions?.betaApi === true;
+      const base = betaApi ? anthropicBetaBase : anthropicBase;
+      return {
+        createRequester:
+          customFactory !== undefined
+            ? (options) => customFactory({ ...options, betaApi: betaApi ? true : undefined })
+            : (options) => base.createRequester(options),
+        connection: definition?.connection ?? anthropicConnection,
+        classifyError: definition?.classifyError,
+        providerId: 'anthropic',
+        media: routeMedia,
+      };
     }
     case 'google-genai':
       return model.providerOptions?.vertexai === true
         ? {
-            base: vertexGenAIBase,
+            createRequester: (options) => vertexGenAIBase.createRequester(options),
             connection: vertexConnection,
             providerId: 'google_genai',
           }
         : {
-            base: googleGenAIBase,
+            createRequester: (options) => googleGenAIBase.createRequester(options),
             connection: geminiConnection,
             providerId: 'google_genai',
           };
@@ -147,7 +134,11 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     const baseId: ProtocolBaseId = definition?.baseProtocol ?? protocol;
-    return { baseId, trait: definition?.trait };
+    return {
+      baseId,
+      thinkingDriven: definition?.thinkingDriven,
+      strictThinkingValidation: definition?.strictThinkingValidation,
+    };
   }
 
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
@@ -173,9 +164,8 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
 
   resolve(model: Model): ResolvedLlmModel {
     const route = routeFor(model);
-    const requester = route.base.createRequester({
+    const requester = route.createRequester({
       connection: route.connection,
-      trait: route.trait,
       classifyError: route.classifyError,
     });
     const llmModel: LlmModel & ModelThinkingMetadata = {

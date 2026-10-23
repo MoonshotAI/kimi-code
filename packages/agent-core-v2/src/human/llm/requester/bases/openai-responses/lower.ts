@@ -1,82 +1,48 @@
-import type { ContentPart, Message } from '#/llm/message';
+import type OpenAI from 'openai';
+import { shake } from 'radashi';
 
-import type { ResponsesInputContentItem, ResponsesInputItem } from './contract';
+import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import type { ContentPart, Message, ToolDescription } from '#/llm/message';
+import type { LlmModel } from '#/llm/model';
+import type { LlmModelSpec, LlmSampling } from '#/llm/request';
+import type { ResponseFormat } from '#/llm/response-format';
+import { resolveThinkingEffort, type ThinkingRequestOptions } from '#/llm/thinking';
+import { withExtras } from '#/llm/protocol/kit/params';
+import type { NativeModule, PipelineSpec } from '#/llm/protocol/pipeline';
+import type { LlmModule } from '#/llm/protocol/protocol';
+import type { MediaSupport } from '#/llm/protocol/rules/media';
+
+import { sanitizeOpenAIResponsesCallId } from '../tool-call-id';
 import { convertToolResultToPlainText } from '../tool-result-text';
+import type { ResponsesInputContentItem, ResponsesInputItem } from './contract';
+import { asRawObject } from './decode';
+import { openAIResponsesModelLegality } from './legalize';
+import type { OpenAIResponsesOptions } from './protocol';
+
+export type NativePart = ResponsesInputContentItem;
+
+export type NativeMessage = ResponsesInputItem;
+
+export type NativeTool = Readonly<Record<string, unknown>>;
+
+export type OpenAIResponsesParams = {
+  readonly prompt_cache_key?: string;
+  readonly reasoning?: { readonly effort?: string; readonly summary?: string };
+  readonly include?: readonly string[];
+  readonly text?: Record<string, unknown>;
+  readonly max_output_tokens?: number;
+  readonly temperature?: number;
+  readonly top_p?: number;
+} & Readonly<Record<string, unknown>>;
+
+export interface Request {
+  readonly params: Omit<OpenAI.Responses.ResponseCreateParamsNonStreaming, 'stream'>;
+}
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: unsupported audio format)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
 
-function contentPartsToInputItems(parts: readonly ContentPart[]): ResponsesInputContentItem[] {
-  const items: ResponsesInputContentItem[] = [];
-  for (const part of parts) {
-    switch (part.type) {
-      case 'text':
-        if (part.text) {
-          items.push({ type: 'input_text', text: part.text });
-        }
-        break;
-      case 'image_url':
-        items.push({
-          type: 'input_image',
-          detail: 'auto',
-          image_url: part.imageUrl.url,
-        });
-        break;
-      case 'audio_url': {
-        const mapped = mapAudioUrlToInputItem(part.audioUrl.url);
-        items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
-        break;
-      }
-      case 'video_url':
-        items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
-        break;
-      case 'think':
-        break;
-    }
-  }
-  return items;
-}
-
-function contentPartsToOutputItems(parts: readonly ContentPart[]): ResponsesInputContentItem[] {
-  const items: ResponsesInputContentItem[] = [];
-  for (const part of parts) {
-    if (part.type === 'text' && part.text) {
-      items.push({ type: 'output_text', text: part.text, annotations: [] });
-    }
-  }
-  return items;
-}
-
-function messageContentToFunctionOutputItems(
-  content: readonly ContentPart[],
-): ResponsesInputContentItem[] {
-  const items: ResponsesInputContentItem[] = [];
-  for (const part of content) {
-    switch (part.type) {
-      case 'text':
-        if (part.text) {
-          items.push({ type: 'input_text', text: part.text });
-        }
-        break;
-      case 'image_url':
-        items.push({ type: 'input_image', image_url: part.imageUrl.url });
-        break;
-      case 'audio_url': {
-        const mapped = mapAudioUrlToInputItem(part.audioUrl.url);
-        items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
-        break;
-      }
-      case 'video_url':
-        items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
-        break;
-      case 'think':
-        break;
-    }
-  }
-  return items;
-}
-
-function mapAudioUrlToInputItem(url: string): ResponsesInputContentItem | null {
+function mapAudioUrlToInputItem(url: string): NativePart | null {
   if (url.startsWith('data:audio/')) {
     try {
       const parts = url.split(',', 2);
@@ -99,6 +65,50 @@ function mapAudioUrlToInputItem(url: string): ResponsesInputContentItem | null {
     return { type: 'input_file', file_url: url };
   }
   return null;
+}
+
+function contentPartsToInputItems(
+  parts: readonly ContentPart[],
+  detail: 'auto' | undefined,
+): NativePart[] {
+  const items: NativePart[] = [];
+  for (const part of parts) {
+    switch (part.type) {
+      case 'text':
+        if (part.text) {
+          items.push({ type: 'input_text', text: part.text });
+        }
+        break;
+      case 'image_url':
+        items.push(
+          detail === undefined
+            ? { type: 'input_image', image_url: part.imageUrl.url }
+            : { type: 'input_image', detail, image_url: part.imageUrl.url },
+        );
+        break;
+      case 'audio_url': {
+        const mapped = mapAudioUrlToInputItem(part.audioUrl.url);
+        items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
+        break;
+      }
+      case 'video_url':
+        items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
+        break;
+      case 'think':
+        break;
+    }
+  }
+  return items;
+}
+
+function contentPartsToOutputItems(parts: readonly ContentPart[]): NativePart[] {
+  const items: NativePart[] = [];
+  for (const part of parts) {
+    if (part.type === 'text' && part.text) {
+      items.push({ type: 'output_text', text: part.text, annotations: [] });
+    }
+  }
+  return items;
 }
 
 const OPENAI_RESPONSES_DEVELOPER_ROLE_MODELS = new Set([
@@ -124,33 +134,27 @@ function usesOpenAIResponsesDeveloperRole(modelName: string): boolean {
   return false;
 }
 
-export interface OpenAIResponsesLowerContext {
-  readonly modelName: string;
-  readonly extractText: boolean;
-}
+type OpenAIResponsesModule = LlmModule<OpenAIResponsesOptions>;
 
-export function lowerMessage(
-  message: Message,
-  lower: OpenAIResponsesLowerContext,
-): ResponsesInputItem[] {
-  const { modelName, extractText } = lower;
+function lowerMessage(message: Message, module: OpenAIResponsesModule): NativeMessage[] {
   if (message.role === 'tool') {
     return [
       {
         call_id: message.toolCallId,
-        output: extractText
-          ? convertToolResultToPlainText(message)
-          : messageContentToFunctionOutputItems(message.content),
+        output:
+          module.options?.toolMessageConversion === 'extract_text'
+            ? convertToolResultToPlainText(message)
+            : contentPartsToInputItems(message.content, undefined),
         type: 'function_call_output',
       },
     ];
   }
 
   let role: string = message.role;
-  if (usesOpenAIResponsesDeveloperRole(modelName) && role === 'system') {
+  if (usesOpenAIResponsesDeveloperRole(module.model.spec.name) && role === 'system') {
     role = 'developer';
   }
-  const result: ResponsesInputItem[] = [];
+  const result: NativeMessage[] = [];
 
   if (message.content.length > 0) {
     const pendingParts: ContentPart[] = [];
@@ -165,7 +169,7 @@ export function lowerMessage(
         });
       } else {
         result.push({
-          content: contentPartsToInputItems(pendingParts),
+          content: contentPartsToInputItems(pendingParts, 'auto'),
           role,
           type: 'message',
         });
@@ -220,3 +224,105 @@ export function lowerMessage(
 
   return result;
 }
+
+function thinkingModelOf(spec: LlmModelSpec): LlmModel {
+  return {
+    provider: spec.provider,
+    model: spec.name,
+    capability: spec.capability ?? UNKNOWN_CAPABILITY,
+    ...spec.thinking,
+  };
+}
+
+function encodeThinking(
+  thinking: ThinkingRequestOptions | undefined,
+  module: OpenAIResponsesModule,
+): Partial<OpenAIResponsesParams> | undefined {
+  if (thinking === undefined) return undefined;
+  const resolution = resolveThinkingEffort(thinking, thinkingModelOf(module.model.spec));
+  if (!resolution.ok) throw resolution.error;
+  if (resolution.encode !== 'effort') return undefined;
+  return {
+    reasoning: { effort: resolution.value, summary: 'auto' },
+    include: ['reasoning.encrypted_content'],
+  };
+}
+
+function encodeResponseFormat(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
+  }
+  return {
+    type: 'json_schema',
+    name: format.jsonSchema.name,
+    schema: format.jsonSchema.schema,
+    strict: format.jsonSchema.strict,
+    description: format.jsonSchema.description,
+  };
+}
+
+function encodeSampling(sampling: LlmSampling): Partial<OpenAIResponsesParams> {
+  return shake({
+    temperature: sampling.temperature,
+    top_p: sampling.topP,
+  });
+}
+
+function defaultTool(tool: ToolDescription): Record<string, unknown> {
+  return {
+    type: 'function',
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.parameters,
+    strict: false,
+  };
+}
+
+function flatten(
+  native: NativeModule<NativeMessage, NativeTool, OpenAIResponsesParams>,
+  module: OpenAIResponsesModule,
+): Request {
+  const params = withExtras(
+    {
+      model: module.model.spec.name,
+      instructions: native.system ? native.system : undefined,
+      input: native.messages,
+      tools: native.tools.length === 0 ? undefined : native.tools,
+      store: false,
+      ...native.params,
+    },
+    module.options?.extras,
+  );
+  return { params: params as unknown as Request['params'] };
+}
+
+export const openAIResponsesMedia: MediaSupport = {
+  kinds: {
+    image: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    audio: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    video: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+  },
+};
+
+export const openAIResponsesPipeline: PipelineSpec<
+  OpenAIResponsesOptions,
+  NativeMessage,
+  NativeTool,
+  OpenAIResponsesParams,
+  Request
+> = {
+  media: openAIResponsesMedia,
+  toolCallId: { normalize: (id) => sanitizeOpenAIResponsesCallId(id, 64), maxLength: 64 },
+  legality: openAIResponsesModelLegality,
+  cacheKey: (key) => ({ prompt_cache_key: key }),
+  thinking: encodeThinking,
+  responseFormat: (params, format) => ({
+    ...params,
+    text: { ...asRawObject(params.text), format: encodeResponseFormat(format) },
+  }),
+  maxOutputTokens: (cap) => ({ max_output_tokens: cap }),
+  sampling: encodeSampling,
+  tool: defaultTool,
+  message: lowerMessage,
+  flatten,
+};

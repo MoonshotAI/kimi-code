@@ -52,7 +52,7 @@ const HUMAN_VOCABULARY = new Set([
   'llm/media/image-formats',
   'llm/requester/requester',
   'llm/toolCallIdNormalizer',
-  'llm-kimi/trait',
+  'llm-kimi/protocol',
   'interaction/interaction',
   'interaction/machine',
   'interaction/facade',

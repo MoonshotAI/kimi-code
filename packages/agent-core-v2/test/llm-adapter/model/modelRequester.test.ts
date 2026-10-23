@@ -164,6 +164,7 @@ describe('ModelRequesterImpl request execution', () => {
           maxCompletionTokens: 1024,
           usedContextTokens: 5000,
           maxContextTokens: 128000,
+          stream: false,
         },
       ),
     );
@@ -177,6 +178,7 @@ describe('ModelRequesterImpl request execution', () => {
     expect(call.config.responseFormat).toEqual({ type: 'json_object' });
     expect(call.config.maxCompletionTokens).toBe(1024);
     expect(call.config.maxContextTokens).toBe(128000);
+    expect(call.config.stream).toBe(false);
     expect(call.config.extraParams).toEqual({ openai: { temperature: 0.5, top_p: 0.9 } });
     expect(call.config.model.apiKey).toBe('sk-1');
     expect(call.content.usedContextTokens).toBe(5000);

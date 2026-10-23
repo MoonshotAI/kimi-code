@@ -8,7 +8,6 @@ import {
   type Message,
 } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
-import type { TraitContext } from '#/llm/protocol/base';
 import {
   defaultThinkingEffortForModel,
   modelSupportsThinking,
@@ -16,8 +15,12 @@ import {
   resolveThinkingKeep,
   type ModelThinkingMetadata,
 } from '#/llm/thinking';
-import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
+import {
+  createKimiOpenAIRequester,
+  kimiConnection,
+  kimiOpenAIProtocol,
+} from '#/llm-kimi/protocol';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
 
@@ -27,14 +30,24 @@ const model: LlmModel = {
   capability: UNKNOWN_CAPABILITY,
   baseUrl: 'https://example.test/v1',
 };
-const ctx: TraitContext = { model };
 const messages: readonly Message[] = [createUserMessage('hi')];
 
 const kimiOpenAI = {
   connection: kimiConnection,
-  trait: kimiOpenAITrait,
   classifyError: classifyKimiQuotaError,
 } as const;
+
+const THINKING_CAPABILITY: ModelCapability = {
+  image_in: false,
+  video_in: false,
+  audio_in: false,
+  thinking: true,
+  tool_use: true,
+};
+
+function thinkingCapableModel(meta?: ModelThinkingMetadata): LlmModel {
+  return { ...model, ...meta, capability: THINKING_CAPABILITY };
+}
 
 function modelWith(meta: ModelThinkingMetadata): LlmModel {
   return { ...model, ...meta };
@@ -102,19 +115,37 @@ function bodyMessages(body: Record<string, unknown>): Record<string, unknown>[] 
   return body['messages'] as Record<string, unknown>[];
 }
 
-describe('kimiOpenAITrait thinking', () => {
-  it('encodes thinking configs and resolves thinking defaults and keep', () => {
-    expect(kimiOpenAITrait.strictThinkingValidation).toBe(true);
-    expect(kimiOpenAITrait.thinking?.({ effort: 'off' }, ctx)).toEqual({
-      kwargs: { thinking: { type: 'disabled' } },
+describe('kimi openai thinking', () => {
+  it('encodes thinking configs and resolves thinking defaults and keep', async () => {
+    expect(kimiOpenAIProtocol.legality.strictThinkingEfforts).toBe(true);
+
+    const client = stubOpenAIClient(chatCompletionChunks());
+    const requester = createKimiOpenAIRequester({
+      ...kimiOpenAI,
+      clientFactory: client.clientFactory,
     });
-    expect(kimiOpenAITrait.thinking?.({ effort: 'on' }, ctx)).toEqual({
-      kwargs: { thinking: { type: 'enabled' } },
-    });
-    expect(kimiOpenAITrait.thinking?.({ effort: 'high', keep: 'all' }, ctx)).toEqual({
-      kwargs: { thinking: { type: 'enabled', effort: 'high', keep: 'all' } },
-      preserveThinking: true,
-    });
+    const signal = new AbortController().signal;
+    await requester.generate(
+      { model: thinkingCapableModel(), thinking: { effort: 'off' } },
+      { messages },
+      { signal },
+    );
+    expect(client.body()['thinking']).toEqual({ type: 'disabled' });
+    await requester.generate(
+      { model: thinkingCapableModel(), thinking: { effort: 'on' } },
+      { messages },
+      { signal },
+    );
+    expect(client.body()['thinking']).toEqual({ type: 'enabled' });
+    await requester.generate(
+      {
+        model: thinkingCapableModel({ supportEfforts: ['low', 'medium', 'high'] }),
+        thinking: { effort: 'high', keep: 'all' },
+      },
+      { messages },
+      { signal },
+    );
+    expect(client.body()['thinking']).toEqual({ type: 'enabled', effort: 'high', keep: 'all' });
 
     const thinkingCapability: ModelCapability = {
       image_in: false,
@@ -169,32 +200,45 @@ describe('kimiOpenAITrait thinking', () => {
     expect(resolveThinkingKeep(undefined, '1', 'high')).toBe('1');
   });
 
-  it('preserves thinking only when keep is all and thinking is not disabled', () => {
-    expect(kimiOpenAITrait.thinking?.({ effort: 'on', keep: 'all' }, ctx)?.preserveThinking).toBe(
-      true,
-    );
-    expect(
-      kimiOpenAITrait.thinking?.({ effort: 'off', keep: 'all' }, ctx)?.preserveThinking,
-    ).toBeUndefined();
-    expect(
-      kimiOpenAITrait.thinking?.({ effort: 'on' }, ctx)?.preserveThinking,
-    ).toBeUndefined();
-    expect(
-      kimiOpenAITrait.thinking?.({ effort: 'on', keep: '1' }, ctx)?.preserveThinking,
-    ).toBeUndefined();
+  it('preserves thinking only when keep is all and thinking is not disabled', async () => {
+    const history: readonly Message[] = [
+      createUserMessage('hi'),
+      createAssistantMessage([{ type: 'text', text: 'hello' }]),
+    ];
+    const reasoningContentOf = async (thinking: {
+      effort: 'off' | 'on';
+      keep?: string;
+    }): Promise<unknown> => {
+      const client = stubOpenAIClient(chatCompletionChunks());
+      const requester = createKimiOpenAIRequester({
+        ...kimiOpenAI,
+        clientFactory: client.clientFactory,
+      });
+      await requester.generate(
+        { model: thinkingCapableModel(), thinking },
+        { messages: history },
+        { signal: new AbortController().signal },
+      );
+      const assistant = bodyMessages(client.body())[1]!;
+      return 'reasoning_content' in assistant ? assistant['reasoning_content'] : undefined;
+    };
+    await expect(reasoningContentOf({ effort: 'on', keep: 'all' })).resolves.toBe('');
+    await expect(reasoningContentOf({ effort: 'off', keep: 'all' })).resolves.toBeUndefined();
+    await expect(reasoningContentOf({ effort: 'on' })).resolves.toBeUndefined();
+    await expect(reasoningContentOf({ effort: 'on', keep: '1' })).resolves.toBeUndefined();
   });
 });
 
 describe('openai requester thinking', () => {
   it('sends kimi thinking params at the top level and flattens extra_body', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
     await requester.generate(
       {
-        model,
+        model: thinkingCapableModel({ supportEfforts: ['low', 'medium', 'high'] }),
         thinking: { effort: 'high', keep: 'all' },
         extraParams: { openai: { extra_body: { trace_id: 't1' } } },
       },
@@ -208,7 +252,7 @@ describe('openai requester thinking', () => {
 
   it('sends disabled thinking for off', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
-    const requester = createOpenAIRequester({
+    const requester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
@@ -220,7 +264,7 @@ describe('openai requester thinking', () => {
     expect(client.body()['thinking']).toEqual({ type: 'disabled' });
   });
 
-  it('falls back to reasoning_effort when no trait handles thinking', async () => {
+  it('falls back to reasoning_effort when the protocol has no thinking strategy', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -239,7 +283,7 @@ describe('openai requester thinking', () => {
     expect(client.body()['reasoning_effort']).toBe('max');
   });
 
-  it('sends nothing for on without a trait', async () => {
+  it('sends nothing for on without a thinking strategy', async () => {
     const client = stubOpenAIClient(chatCompletionChunks());
     const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
     await requester.generate(
@@ -294,24 +338,28 @@ describe('openai requester thinking', () => {
     expect(syntaxError(noOffEffort)).toContain('offEffort');
   });
 
-  it('rejects an effort outside the supported list under strict validation', async () => {
+  it('normalizes an effort outside the supported list under strict validation', async () => {
+    const capability: ModelCapability = {
+      image_in: false,
+      video_in: false,
+      audio_in: false,
+      thinking: true,
+      tool_use: true,
+    };
     const client = stubOpenAIClient(chatCompletionChunks());
-    const requester = createOpenAIRequester({
-      trait: { strictThinkingValidation: true },
+    const requester = createKimiOpenAIRequester({
+      ...kimiOpenAI,
       clientFactory: client.clientFactory,
     });
-    const events: LlmRequestEvent[] = [];
     await requester.generate(
-      { model: modelWith({ supportEfforts: ['low', 'high'] }), thinking: { effort: 'max' } },
+      {
+        model: { ...modelWith({ supportEfforts: ['low', 'high'] }), capability },
+        thinking: { effort: 'max' },
+      },
       { messages },
-      { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
+      { signal: new AbortController().signal },
     );
-    const failed = events.find((event) => event.type === 'llm.failed.syntax');
-    if (failed?.type !== 'llm.failed.syntax') throw new Error('expected llm.failed.syntax');
-    expect(failed.error.code).toBe('thinking_config');
-    expect(failed.error.message).toContain("'max'");
-    expect(failed.error.message).toContain('low, high');
-    expect(events.some((event) => event.type === 'llm.sent')).toBe(false);
+    expect(client.body()['thinking']).toEqual({ type: 'enabled', effort: 'high' });
   });
 
   it('rejects thinking efforts for a model known not to think', async () => {
@@ -410,7 +458,7 @@ describe('openai requester thinking', () => {
         { content: 'ok' },
       ]),
     );
-    const inboundRequester = createOpenAIRequester({
+    const inboundRequester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: inbound.clientFactory,
     });
@@ -448,7 +496,7 @@ describe('openai requester thinking', () => {
     ]);
 
     const outbound = stubOpenAIClient(chatCompletionChunks());
-    const outboundRequester = createOpenAIRequester({
+    const outboundRequester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: outbound.clientFactory,
     });
@@ -581,19 +629,19 @@ describe('openai requester thinking', () => {
 
   it('echoes an empty reasoning_content on think-less assistant messages only when keeping all', async () => {
     const preserving = stubOpenAIClient(chatCompletionChunks());
-    const preservingRequester = createOpenAIRequester({
+    const preservingRequester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: preserving.clientFactory,
     });
     await preservingRequester.generate(
-      { model, thinking: { effort: 'on', keep: 'all' } },
+      { model: thinkingCapableModel(), thinking: { effort: 'on', keep: 'all' } },
       { messages: [createUserMessage('hi'), createAssistantMessage([{ type: 'text', text: 'hello' }])] },
       { signal: new AbortController().signal },
     );
     expect(bodyMessages(preserving.body())[1]!['reasoning_content']).toBe('');
 
     const plain = stubOpenAIClient(chatCompletionChunks());
-    const plainRequester = createOpenAIRequester({
+    const plainRequester = createKimiOpenAIRequester({
       ...kimiOpenAI,
       clientFactory: plain.clientFactory,
     });
@@ -605,10 +653,10 @@ describe('openai requester thinking', () => {
     expect('reasoning_content' in bodyMessages(plain.body())[1]!).toBe(false);
   });
 
-  it('selects the outbound reasoning key from the trait declaration or inbound detection', async () => {
+  it('selects the outbound reasoning key from the requester option or inbound detection', async () => {
     const declared = stubOpenAIClient(chatCompletionChunks());
     const declaredRequester = createOpenAIRequester({
-      trait: { reasoningKey: 'reasoning' },
+      reasoningKey: 'reasoning',
       clientFactory: declared.clientFactory,
     });
     await declaredRequester.generate(
@@ -625,34 +673,30 @@ describe('openai requester thinking', () => {
     expect(declaredAssistant['reasoning']).toBe('abc');
     expect('reasoning_content' in declaredAssistant).toBe(false);
 
-    let call = 0;
-    const captured: Record<string, unknown>[] = [];
-    const clientFactory = () => {
-      call += 1;
-      const chunks =
-        call === 1
-          ? chatCompletionChunks([{ role: 'assistant', content: 'hi', reasoning: 'detected' }])
-          : chatCompletionChunks();
-      return openAIClient(chunks, captured) as never;
-    };
-    const detectedRequester = createOpenAIRequester({ clientFactory });
-    await detectedRequester.generate(
+    const inbound = stubOpenAIClient(
+      chatCompletionChunks([{ role: 'assistant', content: 'hi', reasoning: 'detected' }]),
+    );
+    const inboundAccumulator = createMessageAccumulator();
+    await createOpenAIRequester({ clientFactory: inbound.clientFactory }).generate(
       { model },
       { messages },
-      { signal: new AbortController().signal },
-    );
-    await detectedRequester.generate(
-      { model, thinking: { effort: 'off' } },
       {
-        messages: [
-          createUserMessage('hi'),
-          createAssistantMessage([{ type: 'think', think: 'abc' }]),
-        ],
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') {
+            inboundAccumulator.push(event.part);
+          }
+        },
       },
+    );
+    const detected = stubOpenAIClient(chatCompletionChunks());
+    await createOpenAIRequester({ clientFactory: detected.clientFactory }).generate(
+      { model, thinking: { effort: 'off' } },
+      { messages: [createUserMessage('hi'), inboundAccumulator.finish()] },
       { signal: new AbortController().signal },
     );
-    const detectedAssistant = bodyMessages(captured[1]!)[1]!;
-    expect(detectedAssistant['reasoning']).toBe('abc');
+    const detectedAssistant = bodyMessages(detected.body())[1]!;
+    expect(detectedAssistant['reasoning']).toBe('detected');
     expect('reasoning_content' in detectedAssistant).toBe(false);
 
     const explicit = stubOpenAIClient(
@@ -667,7 +711,7 @@ describe('openai requester thinking', () => {
       ]),
     );
     const explicitRequester = createOpenAIRequester({
-      trait: { reasoningKey: 'reasoning' },
+      reasoningKey: 'reasoning',
       clientFactory: explicit.clientFactory,
     });
     const explicitParts: unknown[] = [];

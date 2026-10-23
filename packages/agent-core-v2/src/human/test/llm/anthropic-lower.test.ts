@@ -4,10 +4,9 @@ import { UNKNOWN_CAPABILITY } from '#/llm/capability';
 import { providerImagePolicy } from '#/llm/media/image-formats';
 import type { Message } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
+import { createKimiAnthropicRequester } from '#/llm-kimi/protocol';
 import { lowerMessage } from '#/llm/requester/bases/anthropic/lower';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
 import type { LlmClientContext } from '#/llm/requester/requester';
-import { kimiAnthropicTrait } from '#/llm-kimi/trait';
 
 const routedModel: LlmModel = {
   provider: 'anthropic',
@@ -71,7 +70,7 @@ describe('anthropic lowering of inline images', () => {
     expect(wire[0]?.content[0]).toEqual(HEIC_BLOCK);
   });
 
-  it('refuses a base64 image outside the baseline set when no trait widens it', () => {
+  it('refuses a base64 image outside the baseline set when no policy widens it', () => {
     expect(() => lowerMessage(message, providerImagePolicy().acceptedMimes)).toThrow(
       /Unsupported media type for base64 image: image\/heic/,
     );
@@ -79,8 +78,7 @@ describe('anthropic lowering of inline images', () => {
 
   it('sends the HEIC block on the wire when Kimi is reached over the Anthropic protocol', async () => {
     const client = stubAnthropicClient();
-    const requester = createAnthropicRequester({
-      trait: kimiAnthropicTrait,
+    const requester = createKimiAnthropicRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(
