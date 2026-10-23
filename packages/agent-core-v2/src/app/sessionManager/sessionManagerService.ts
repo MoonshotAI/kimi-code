@@ -1,25 +1,29 @@
-
+import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { normalizeRemoteCwd } from '#/environment/environmentDefaults';
+import { Error2, ErrorCodes, isError2, SessionErrors, unwrapErrorCause } from '#/errors';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAgentCronService } from '#/features/cron/cronService';
-import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
-import {
-  type CreateChildSessionOptions,
-  type ForkSessionOptions,
-  type ResumeSessionOptions,
-  type SessionArchivedEvent,
-  type SessionClosedEvent,
-  type SessionCreatedEvent,
-  type SessionForkedEvent,
-  type SessionWillCloseEvent,
-  type SessionWillCreateEvent,
+import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import type {
+  CreateChildSessionOptions,
+  ForkSessionOptions,
+  ResumeSessionOptions,
+  SessionArchivedEvent,
+  SessionClosedEvent,
+  SessionCreatedEvent,
+  SessionForkedEvent,
+  SessionWillCloseEvent,
+  SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
 import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
@@ -65,31 +69,92 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
 
-  async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
+  async resolveCreationEnvironment(options: CreateManagedSessionOptions) {
+    await this.environments.ready;
+    const declarations = options.environmentId === LOCAL_ENVIRONMENT_ID
+      ? undefined
+      : await this.environmentDeclarations.declarations();
+    const environmentId = options.environmentId ?? declarations?.defaultId;
+    const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
+    if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
     const workspace = await this.workspaces.getOrCreate(
       options.workspaceId === undefined
         ? { root: options.workDir }
         : { workspaceId: options.workspaceId, root: options.workDir },
     );
-    const create = () => this.controllerForWorkspace(workspace.id).create(options);
+    if (!remote) return { workspaceId: workspace.id, environmentId, environmentCwd: options.environmentCwd };
+    const registrationError = this.environmentDeclarations.registrationError(environmentId);
+    if (registrationError !== undefined) throw registrationError;
+    const declared = declarations?.entries.find((entry) => entry.id === environmentId);
+    if (declared === undefined && this.environments.current(environmentId) === undefined) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        `environment "${environmentId}" is not declared in [environments]`,
+      );
+    }
+    const cwd = options.environmentCwd ?? declared?.entry.defaultCwd;
+    if (cwd === undefined) {
+      throw new Error2(
+        ErrorCodes.CONFIG_INVALID,
+        declared === undefined
+          ? `environment "${environmentId}" requires a cwd`
+          : `environment "${environmentId}" does not set defaultCwd in [environments]`,
+      );
+    }
+    return { workspaceId: workspace.id, environmentId, environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd) };
+  }
+
+  async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
+    const { workspaceId, environmentId, environmentCwd } = await this.resolveCreationEnvironment(options);
+    const effective = environmentId === undefined && environmentCwd === undefined
+      ? options
+      : { ...options, environmentId, environmentCwd };
+    const create = () => this.controllerForWorkspace(workspaceId).create(effective);
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
+  }
+
+  private async assertUsableWorkDir(workDir: string): Promise<void> {
+    let stat;
+    try {
+      stat = await this.hostFs.stat(workDir);
+    } catch (error) {
+      const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${workDir} does not exist`);
+      }
+      throw error;
+    }
+    if (!stat.isDirectory) {
+      try {
+        stat = await this.hostFs.stat(await this.hostFs.realpath(workDir));
+      } catch {
+      }
+    }
+    if (!stat.isDirectory) {
+      throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${workDir} is not a directory`);
+    }
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
-    const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(
+    const promise = this.serializeLifecycle(sessionId, async () => {
+      const controller = await this.controllerForSession(sessionId);
+      if (controller === undefined) return undefined;
+      return controller.resume(
         sessionId,
         options,
         this.reclaimed.has(sessionId) ? 'reclaimed' : 'resume',
-      ),
-    ).finally(() => this.pendingResumes.delete(sessionId));
+      );
+    }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
@@ -203,7 +268,9 @@ export class SessionManager implements ISessionManager {
     sessionId: string,
     options?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    return (await this.controllerForSession(sessionId))?.restore(sessionId, options);
+    const controller = await this.controllerForSession(sessionId);
+    if (controller === undefined) return undefined;
+    return controller.restore(sessionId, options);
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -338,6 +405,7 @@ export class SessionManager implements ISessionManager {
     if (live !== undefined) return live;
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
+    await this.environments.ready;
     const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
     return this.controllerForWorkspace(workspace.id);
   }

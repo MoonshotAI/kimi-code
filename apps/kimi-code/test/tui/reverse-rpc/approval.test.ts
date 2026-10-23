@@ -139,4 +139,21 @@ describe('approval reverse-rpc', () => {
       feedback: 'approval handler failed',
     });
   });
+
+  it('shows the panel without a badge when the environment lookup fails', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const handler = createApprovalRequestHandler(
+      controller,
+      undefined,
+      vi.fn(() => {
+        throw new Error('environment gone');
+      }),
+    );
+
+    await expect(handler(approvalEvent())).resolves.toEqual({ decision: 'approved' });
+    expect(show).toHaveBeenCalledWith(
+      expect.not.objectContaining({ environment: expect.anything() }),
+    );
+  });
 });

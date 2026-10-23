@@ -7,6 +7,7 @@ import {
   readdir,
   mkdir,
   realpath as nodeRealpath,
+  rename as nodeRename,
   rm,
   stat as nodeStat,
   writeFile,
@@ -93,7 +94,7 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async writeBytes(path: string, data: Uint8Array): Promise<void> {
+  async writeBytes(path: string, data: Uint8Array | AsyncIterable<Uint8Array>): Promise<void> {
     try {
       await writeFile(path, data);
     } catch (error) {
@@ -147,6 +148,7 @@ export class HostFileSystem implements IHostFileSystem {
         size: s.size,
         mtimeMs: s.mtimeMs,
         ino: s.ino,
+        mode: s.mode & 0o7777,
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'stat' });
@@ -163,6 +165,7 @@ export class HostFileSystem implements IHostFileSystem {
         size: s.size,
         mtimeMs: s.mtimeMs,
         ino: s.ino,
+        mode: s.mode & 0o7777,
       };
     } catch (error) {
       throw toHostFsError(error, { path, op: 'lstat' });
@@ -196,6 +199,14 @@ export class HostFileSystem implements IHostFileSystem {
       await rm(path, { recursive: true, force: true });
     } catch (error) {
       throw toHostFsError(error, { path, op: 'remove' });
+    }
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    try {
+      await nodeRename(from, to);
+    } catch (error) {
+      throw toHostFsError(error, { path: from, op: 'rename' });
     }
   }
 

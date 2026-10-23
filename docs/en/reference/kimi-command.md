@@ -28,7 +28,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--agent-file <path>` | | Load a custom agent from a Markdown file for the new session and select it. Cannot be repeated or combined with `--agent`, `--session`, or `--continue` |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
-`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
+`-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output. The hidden `--environment <id>` flag binds the new session to a configured remote environment, and `--environment-cwd <path>` overrides that environment's working directory (see [Remote environments](../guides/remote-environment.md#kimi-environment-and-environment-cwd)).
 
 ::: warning
 `--yolo` skips human approval for regular tool calls, including file writes and shell command execution. Use it only in trusted working directories. Plan mode exit approval is not bypassed by `--yolo`; `Bash` inside Plan mode is handled under the regular allow rules.
@@ -42,6 +42,8 @@ The following combinations are rejected at startup:
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
+- `--environment` cannot be combined with `--session`/`--continue` — the environment is bound at session creation and the bound environment is restored automatically on resume
+- `--environment-cwd` requires `--environment`; both flags are creation-only and cannot be combined with `--session`/`--continue`
 
 Nobody can review a plan in non-interactive mode, so `default_plan_mode` is not applied to new sessions. A resumed session that is already in Plan mode still runs and stays in Plan mode, but its plan cannot be approved in non-interactive mode: it waits for your review the next time you open the session with `kimi -r`.
 
@@ -241,7 +243,7 @@ When an explicit path is passed, the file must exist. The command exits with `0`
 # Check the default config files
 kimi doctor
 
-# Check only the default runtime config
+# Check only the default environment config
 kimi doctor config
 
 # Check a candidate TUI config before replacing the live config

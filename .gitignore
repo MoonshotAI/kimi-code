@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-single/
 dist-native/
+dist-executor/
 .tmp-api-extractor/
 .contract-types-tmp/
 .local/

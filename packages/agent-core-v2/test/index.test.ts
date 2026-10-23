@@ -91,7 +91,7 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'interruptionReminder.recorded',
   'plugin.session_start',
   'changeNotifier.snapshot',
-  'runtime.set_binding',
+  'environment.set_binding',
   'turn.ended',
   'prompt.aborted',
   'prompt.completed',

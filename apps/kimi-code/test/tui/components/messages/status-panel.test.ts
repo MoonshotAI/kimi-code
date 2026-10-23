@@ -66,7 +66,7 @@ describe('status panel report lines', () => {
     expect(output).toContain('8% used');
     expect(output).not.toContain('Account');
     expect(output).not.toContain('AGENTS.md');
-    expect(output).not.toContain('Runtime');
+    expect(output).not.toContain('Environment');
   });
 
   it('prefers the fetched status tower mode over the cached value', () => {

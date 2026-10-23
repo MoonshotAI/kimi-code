@@ -61,20 +61,17 @@ export class WorkspaceService implements IWorkspaceService {
       let stat;
       try {
         stat = await this.hostFs.stat(root);
-      } catch (error) {
-        const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
-        if (code === 'ENOENT' || code === 'ENOTDIR') {
-          throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} does not exist`);
-        }
-        throw error;
+      } catch {
+        stat = undefined;
       }
-      if (!stat.isDirectory) {
+      if (stat !== undefined && !stat.isDirectory) {
         try {
           stat = await this.hostFs.stat(await this.hostFs.realpath(root));
         } catch {
+          stat = undefined;
         }
       }
-      if (!stat.isDirectory) {
+      if (stat !== undefined && !stat.isDirectory) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);
       }
       await this.ensureMerged();

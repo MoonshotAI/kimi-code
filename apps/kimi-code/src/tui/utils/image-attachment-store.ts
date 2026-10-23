@@ -34,11 +34,11 @@ export interface ImageAttachmentOriginal {
   readonly byteLength: number;
   readonly mime: string;
   /**
-   * Where the original was persisted for readback (ReadMediaFile + region).
-   * Undefined until dispatch-time persistence succeeds; failures are retried
-   * at the next dispatch.
+   * Local resend copy, independent of the session attachment used for
+   * ReadMediaFile. Undefined until persistence succeeds; retried on dispatch.
    */
   path?: string;
+  attachment?: { readonly sessionId: string; readonly reference: string };
 }
 
 export interface ImageAttachment {

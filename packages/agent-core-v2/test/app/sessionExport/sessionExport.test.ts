@@ -886,6 +886,7 @@ function registerSessionExportServices(
   });
   reg.defineInstance(ISessionManager, {
     _serviceBrand: undefined,
+    resolveCreationEnvironment: async () => { throw new Error('environment resolution should not be called by session export'); },
     create: async () => {
       throw new Error('create should not be called by session export');
     },

@@ -4,7 +4,8 @@ import {
   Error2,
   ErrorCodes,
   EXTRA_SKILL_DIRS_SECTION,
-  IAgentRuntimeBindingService,
+  IAgentEnvironmentBindingService,
+  IAgentEnvironmentService,
   IAgentSkillService,
   IBootstrapService,
   IConfigService,
@@ -47,6 +48,7 @@ import {
   contentToCoreParts,
   resolvePromptMediaFiles,
   resolvePromptSessionMediaRefs,
+  environmentMediaTargets,
   type PromptMediaPreparation,
 } from '../lib/promptMedia';
 import { requestLog } from '../lib/requestLog';
@@ -61,7 +63,11 @@ import {
 import { workspaceIdParamSchema } from '../protocol/rest-workspace';
 import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
-import { sendMappedError, sessionConflictErrors } from './sessionErrors';
+import { sendEnvironmentError } from './environment';
+import {
+  sendMappedError as sendSessionMappedError,
+  sessionConflictErrors,
+} from './sessionErrors';
 
 interface SkillsRouteHost {
   get(
@@ -193,6 +199,8 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         [ErrorCode.SKILL_NOT_FOUND]: {},
         [ErrorCode.SKILL_NOT_ACTIVATABLE]: {},
         [ErrorCode.FILE_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
         ...sessionConflictErrors,
       },
       description: 'Activate a skill in a session (REST analogue of the /<skill> slash command)',
@@ -231,10 +239,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           if (attachments.length > 0) {
             if (contentHasPathRefs(attachments)) {
               const mainAgent = await ensureMainAgentHandle(resolved.handle);
-              if (mainAgent.accessor.get(IAgentRuntimeBindingService).get().runtimeId !== 'local') {
+              if (mainAgent.accessor.get(IAgentEnvironmentBindingService).current.environmentId !== 'local') {
                 throw new Error2(
                   ErrorCodes.REQUEST_INVALID,
-                  'file attachments by server-local path require the local runtime',
+                  'file attachments by server-local path require the local environment',
                 );
               }
             }
@@ -258,19 +266,32 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
             );
             const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
             const sessionDir = resolved.handle.accessor.get(ISessionContext).sessionDir;
-            preparedMedia = await resolvePromptMediaFiles(
-              resolvedSessionMedia,
-              core.accessor.get(IFileService),
-              core.accessor.get(IBootstrapService).cacheDir,
-              {
-                telemetry,
-                providerType: (await ensureMainAgentHandle(resolved.handle)).accessor
-                  .get(IAgentProfileService)
-                  .getModelProviderType(),
-                resolveOriginalsDir: async () => sessionMediaOriginalsDir(sessionDir),
-                resolveAttachmentsDir: async () => join(sessionDir, 'attachments'),
-              },
+            const mainAgent = await ensureMainAgentHandle(resolved.handle);
+            const environmentMedia = environmentMediaTargets(
+              mainAgent.accessor.get(IAgentEnvironmentBindingService).current,
+              mainAgent.accessor.get(IAgentEnvironmentService),
             );
+            try {
+              preparedMedia = await resolvePromptMediaFiles(
+                resolvedSessionMedia,
+                core.accessor.get(IFileService),
+                core.accessor.get(IBootstrapService).cacheDir,
+                {
+                  telemetry,
+                  providerType: mainAgent.accessor
+                    .get(IAgentProfileService)
+                    .getModelProviderType(),
+                  resolveOriginalsTarget: environmentMedia.resolveOriginalsTarget ?? (async () => ({
+                    dir: sessionMediaOriginalsDir(sessionDir),
+                  })),
+                  resolveAttachmentsTarget: environmentMedia.resolveAttachmentsTarget ?? (async () => ({
+                    dir: join(sessionDir, 'attachments'),
+                  })),
+                },
+              );
+            } finally {
+              environmentMedia.dispose();
+            }
             attachmentParts.push(...contentToCoreParts(preparedMedia.content));
           }
           const mainAgent = await ensureMainAgentHandle(resolved.handle);
@@ -290,7 +311,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
           requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
           reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
         } catch (error) {
-          await preparedMedia?.discard();
+          await preparedMedia?.discardStaged();
           throw error;
         }
       };
@@ -379,4 +400,13 @@ function toProtocolSkill(skill: SkillElement): SkillDescriptor {
       : {}),
     scopes: skill.scopes === undefined ? undefined : [...skill.scopes],
   };
+}
+
+function sendMappedError(
+  reply: { send(payload: unknown): unknown },
+  req: { id: string },
+  error: unknown,
+): void {
+  if (sendEnvironmentError(reply, req.id, error)) return;
+  sendSessionMappedError(reply, req, error);
 }

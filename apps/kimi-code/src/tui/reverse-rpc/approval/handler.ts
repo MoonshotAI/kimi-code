@@ -6,10 +6,22 @@ import type { ApprovalController } from './controller';
 export function createApprovalRequestHandler(
   controller: ApprovalController,
   onResponse?: (request: ApprovalRequest, response: ApprovalResponse) => void,
+  resolveEnvironment?: () => string | undefined,
 ): ApprovalHandler {
-  return async (event): Promise<ApprovalResponse> => {
+  return async (event: ApprovalRequest): Promise<ApprovalResponse> => {
     try {
-      const response = await controller.show(adaptApprovalRequest(event));
+      const data = adaptApprovalRequest(event);
+      // A badge lookup failure must never cancel the approval itself — it
+      // degrades to no badge.
+      let environment: string | undefined;
+      try {
+        environment = resolveEnvironment?.();
+      } catch {
+        environment = undefined;
+      }
+      const response = await controller.show(
+        environment === undefined ? data : { ...data, environment },
+      );
       onResponse?.(event, response);
       return response;
     } catch {

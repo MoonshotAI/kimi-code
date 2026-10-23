@@ -637,6 +637,36 @@ export interface WorkspaceTrustReadFailedEvent {
 }
 
 export const telemetryEventDefinitions = {
+  environment_connected: defineTelemetryEvent<{
+    environment_type: 'ssh' | 'docker' | 'command';
+    duration_ms: number;
+    outcome: 'ok' | 'error' | 'cancelled';
+    error_type?: 'missing' | 'timeout' | 'incompatible' | 'other';
+    is_reconnect: boolean;
+  }>({
+    owner: 'kimi-code',
+    comment: 'A physical remote environment connection attempt settles.',
+    properties: {
+      environment_type: 'Launcher type',
+      duration_ms: 'Connection attempt duration in milliseconds',
+      outcome: 'Connection attempt outcome',
+      error_type: 'Bounded handshake failure category',
+      is_reconnect: 'Whether this launcher previously connected successfully',
+    },
+  }),
+  environment_disconnected: defineTelemetryEvent<{
+    environment_type: 'ssh' | 'docker' | 'command';
+    uptime_ms: number;
+    reason: 'eof' | 'pipe_error' | 'protocol_error' | 'client_closed' | 'liveness' | 'other';
+  }>({
+    owner: 'kimi-code',
+    comment: 'An established remote environment connection unexpectedly closes.',
+    properties: {
+      environment_type: 'Launcher type',
+      uptime_ms: 'Established connection duration in milliseconds',
+      reason: 'Bounded connection close category',
+    },
+  }),
   wire_plan_revision_migrated: defineAgentTelemetryEvent<WirePlanRevisionMigratedEvent>({
     owner: 'kimi-code',
     comment: 'A legacy plan revision wire record is normalized during restore.',

@@ -63,6 +63,8 @@ Foreground mode blocks the current turn until the command completes or times out
 
 **`FetchURL`** accepts a single `url` parameter and returns the page content. For HTML pages, the host extracts the body text rather than returning the full HTML; plain text or Markdown pages are passed through directly. Also requires a host-provided implementation.
 
+Both web tools always run from the machine running Kimi Code, even when the session is bound to a [remote environment](../guides/remote-environment.md) — requests never egress from the target environment.
+
 ## Plan Mode
 
 | Tool | Default Approval | Description |
@@ -155,3 +157,4 @@ To prevent all users from firing at the same time on the hour, the scheduler app
 - [Agent & Sub-Agents](../customization/agents.md) — Scheduling mechanics and context isolation for the `Agent` tool
 - [Hooks](../customization/hooks.md) — Trigger local scripts before and after tool calls
 - [Slash Commands](./slash-commands.md) — Quick reference for TUI built-in control commands
+- [Remote environments](../guides/remote-environment.md) — Creation-time environment binding and declared environments

@@ -35,6 +35,14 @@
       "types": "./src/index.ts",
       "default": "./src/index.ts"
     },
+    "./remote": {
+      "types": "./src/remote/index.ts",
+      "default": "./src/remote/index.ts"
+    },
+    "./remote/server": {
+      "types": "./src/remote/server/index.ts",
+      "default": "./src/remote/server/index.ts"
+    },
     "./package.json": {
       "types": "./package.json",
       "default": "./package.json"
@@ -46,6 +54,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "build:executor": "tsdown --config tsdown.executor.config.ts",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "gen:contract-types": "node scripts/gen-contract-types.mjs",
@@ -53,7 +62,7 @@
     "gen:wire-manifest": "tsx --import ../../build/register-raw-text-loader.mjs scripts/gen-wire-manifest.mts",
     "gen:state-manifest": "tsx scripts/gen-state-manifest.mts",
     "lint:imports": "node scripts/check-import-boundaries.mjs",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist dist-executor"
   },
   "dependencies": {
     "@antfu/utils": "^9.3.0",

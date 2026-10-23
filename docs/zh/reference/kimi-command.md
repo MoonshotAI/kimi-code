@@ -28,7 +28,7 @@ kimi <subcommand> [options]
 | `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent 并为新会话选中它。不可重复传入，也不能与 `--agent`、`--session` 或 `--continue` 同时使用 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
-`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
+`-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。隐藏标志 `--environment <id>` 让新会话绑定到已配置的远程环境，`--environment-cwd <path>` 覆盖该环境的工作目录（详见 [远程环境](../guides/remote-environment.md#kimi-environment-与-environment-cwd)）。
 
 ::: warning 注意
 `--yolo` 会跳过普通工具调用的人工确认，包括文件写入和 Shell 命令执行，请只在受信任的工作目录下使用。Plan 模式的退出审批不会被 `--yolo` 跳过；Plan 模式下的 `Bash` 按普通放行规则处理。
@@ -42,6 +42,8 @@ kimi <subcommand> [options]
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
+- `--environment` 不能与 `--session`/`--continue` 组合——环境在会话创建时绑定，恢复会话时会自动还原已绑定的环境
+- `--environment-cwd` 必须与 `--environment` 一起使用；两者都只在创建会话时生效，不能与 `--session`/`--continue` 组合
 
 非交互模式下没人能审阅计划，所以新会话不应用 `default_plan_mode`。恢复已经处于 Plan 模式的会话时照常运行，会话仍在 Plan 模式中，但计划无法在非交互模式下批准，会等你下次用 `kimi -r` 打开会话时审阅。
 
