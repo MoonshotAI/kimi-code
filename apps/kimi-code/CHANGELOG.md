@@ -1,5 +1,19 @@
 # @moonshot-ai/kimi-code
 
+## 2.3.1
+
+### Patch Changes
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix workspace trust failures when Git Bash is unavailable on Windows.
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix sessions occasionally remaining occupied after an application crash on macOS and Linux.
+
+- [#4356](https://github.com/MoonshotAI/kimi-code/pull/4356) [`0e3980e`](https://github.com/MoonshotAI/kimi-code/commit/0e3980e75e9af9d28955a5e93cff82d616b11353) Thanks [@7Sageer](https://github.com/7Sageer)! - Show the holding client's name in session-in-use errors.
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - Offer to take over a session that is still in use after a retry, so sessions left locked by an exited process can be used again, and add a `KIMI_CODE_SESSION_LOCK=0` switch that turns off the session lock.
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Improved interactions and fixed known bugs.
+
 ## 2.3.0
 
 ### Minor Changes
