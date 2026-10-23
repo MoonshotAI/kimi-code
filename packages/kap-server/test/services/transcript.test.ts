@@ -51,6 +51,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { bindSessionTranscript } from '../../src/services/transcript/coreBinding';
 import { toWireQuestion } from '../../src/protocol/question-wire';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type { PromptOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import type { LegacyActivityApproval } from '../../src/services/legacyStatus/legacyStatus';
 import {
   AgentTranscriptProjector,
@@ -2247,6 +2248,16 @@ describe('AgentTranscriptProjector', () => {
       createdAt: '2026-01-01T00:00:04.000Z',
       finishedAt: '2026-01-01T00:00:04.000Z',
     });
+
+    const continuation = { kind: 'system_trigger', name: 'goal_continuation' } as const;
+    feed(ev({ type: 'prompt.submitted', promptId: 'p5', userMessageId: 'm5', status: 'running', content: [{ type: 'text', text: 'continue the goal' }], createdAt: '2026-01-01T00:00:05.000Z', origin: continuation }));
+    feed(ev({ type: 'prompt.queued', promptId: 'p6', content: [{ type: 'text', text: 'queued continuation' }], queueLength: 1, origin: continuation }));
+    feed(ev({ type: 'prompt.started', promptId: 'p5', origin: continuation }));
+    feed(ev({ type: 'prompt.completed', promptId: 'p5', finishedAt: '2026-01-01T00:00:06.000Z', reason: 'completed', origin: continuation }));
+    feed(ev({ type: 'prompt.aborted', promptId: 'p7', abortedAt: '2026-01-01T00:00:07.000Z', origin: continuation }));
+    expect(tx.getPrompt('p5')).toMatchObject({ status: 'completed', userMessageId: 'm5' });
+    expect(tx.getPrompt('p6')).toMatchObject({ status: 'queued' });
+    expect(tx.getPrompt('p7')).toMatchObject({ status: 'aborted' });
   });
 
   it('keeps restored prompt content when steering after a late projector attach', () => {
@@ -2283,7 +2294,7 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('prefers store prompt content after backfill over a pre-backfill steered cache', () => {
+  it('leaves an unknown steer parent unframed and keeps backfill authoritative', () => {
     const prompts = new Map<string, NonNullable<ReturnType<AgentTranscript['getPrompt']>>>();
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
       prompt: (promptId) => prompts.get(promptId),
@@ -2298,6 +2309,16 @@ describe('AgentTranscriptProjector', () => {
 
     feed(
       ev({
+        type: 'prompt.submitted',
+        promptId: 'p2',
+        userMessageId: 'm2',
+        status: 'queued',
+        content: [{ type: 'text', text: 'second' }],
+        createdAt: '2026-01-01T00:00:01.000Z',
+      }),
+    );
+    feed(
+      ev({
         type: 'prompt.steered',
         activePromptId: 'p1',
         promptIds: ['p2'],
@@ -2305,7 +2326,11 @@ describe('AgentTranscriptProjector', () => {
         steeredAt: '2026-01-01T00:00:02.000Z',
       }),
     );
-    expect(tx.getPrompt('p1')?.content).toEqual([{ type: 'text', text: 'second' }]);
+    expect(tx.getPrompt('p1')).toBeUndefined();
+    expect(tx.getPrompt('p2')).toMatchObject({
+      status: 'completed',
+      steeredAt: '2026-01-01T00:00:02.000Z',
+    });
 
     const restored = {
       promptId: 'p1',
@@ -2336,6 +2361,7 @@ describe('AgentTranscriptProjector', () => {
     const tx = new AgentTranscript('main');
     const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
 
+    feed(ev({ type: 'prompt.started', promptId: 'p1' }));
     feed(
       ev({
         type: 'prompt.steered',
@@ -2715,6 +2741,16 @@ describe('AgentTranscriptProjector', () => {
       ops.push(...projector.map(event));
     };
 
+    feed(
+      ev({
+        type: 'prompt.submitted',
+        promptId: 'p2',
+        userMessageId: 'm2',
+        status: 'queued',
+        content: [{ type: 'text', text: 'steered mid-attach' }],
+        createdAt: '2026-01-01T00:00:01.000Z',
+      }),
+    );
     feed(
       ev({
         type: 'prompt.steered',
@@ -3723,7 +3759,7 @@ describe('bindSessionTranscript', () => {
       this.closeHandlers.add(cb);
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string; activePromptOrigin?: PromptOrigin; activePromptText?: string }): FakeAgentHandle {
       const bus = this.handles.get(id)?.bus ?? new FakeBus();
       const undoParticipants = new Map<string, AgentConversationUndoParticipant>();
       const scope = makeAgentScopeContext({
@@ -3778,9 +3814,9 @@ describe('bindSessionTranscript', () => {
                       state: 'running' as const,
                       message: {
                         role: 'user' as const,
-                        content: [{ type: 'text' as const, text: 'hi' }],
+                        content: [{ type: 'text' as const, text: opts?.activePromptText ?? 'hi' }],
                         toolCalls: [],
-                        origin: { kind: 'user' as const },
+                        origin: opts?.activePromptOrigin ?? { kind: 'user' as const },
                       },
                       launched: Promise.resolve(undefined),
                       completion: new Promise(() => {}),
@@ -4357,10 +4393,31 @@ describe('bindSessionTranscript', () => {
   it('overlays the in-flight turn as running after a backfill', async () => {
     const home = await seedWireHome();
     try {
+      const subWireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'sub-1');
+      await mkdir(subWireDir, { recursive: true });
+      await writeFile(
+        join(subWireDir, 'wire.jsonl'),
+        `${JSON.stringify({
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'sub hi' }],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: new Date().toISOString(),
+        })}\n`,
+      );
       const agents = new FakeAgents();
       agents.add('main', {
         loopStatus: { state: 'running', activeTurnId: 0 },
         activePromptId: 'prompt-1',
+      });
+      agents.add('sub-1', {
+        loopStatus: { state: 'running', activeTurnId: 0 },
+        activePromptId: 'prompt-goal',
+        activePromptOrigin: { kind: 'system_trigger', name: 'goal_continuation' },
+        activePromptText: 'Continue working toward the active goal.',
       });
       const service = new TranscriptService({
         homeDir: home,
@@ -4368,11 +4425,14 @@ describe('bindSessionTranscript', () => {
       });
       const store = service.forSessionLive('s1');
       await service.whenReady('s1');
+      await service.ensureAgentHistory('s1', 'sub-1');
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
         state: 'running',
         triggerPromptId: 'prompt-1',
         prompt: 'hi',
       });
+      expect(store?.getAgent('main')?.getPrompt('prompt-1')).toMatchObject({ status: 'running' });
+      expect(store?.getAgent('sub-1')?.getPrompt('prompt-goal')).toMatchObject({ status: 'running' });
       service.dropSession('s1');
     } finally {
       await rm(home, { recursive: true, force: true });

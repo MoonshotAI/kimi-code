@@ -557,6 +557,12 @@ interface PromptAbortedPayload {
   agentId: string;
   promptId: string;
   abortedAt: string;
+  /** PromptOriginProjection */
+  origin?: {
+    kind: string;
+    name?: string;
+    trigger?: string;
+  };
 }
 
 /**
@@ -569,6 +575,12 @@ interface PromptCompletedPayload {
   promptId: string;
   finishedAt: string;
   reason: 'completed' | 'failed' | 'blocked';
+  /** PromptOriginProjection */
+  origin?: {
+    kind: string;
+    name?: string;
+    trigger?: string;
+  };
 }
 
 /**

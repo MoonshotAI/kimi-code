@@ -106,6 +106,7 @@ function stubAttachEngine(): MachineEngine {
   return {
     submit: () => {},
     steer: () => {},
+    steerGateResolved: () => {},
     notify: () => {},
     remind: () => {},
     cancelQueueItem: () => {},

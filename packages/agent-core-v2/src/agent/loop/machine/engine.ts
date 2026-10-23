@@ -4,7 +4,7 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
-import { createAgentMachine, type PromptGate, type PromptGateVerdict } from '#human/agent/machine';
+import { createAgentMachine, type PromptGate, type PromptGateVerdict, type SteerGateOutcome } from '#human/agent/machine';
 import { createTurnMachine, type AssistantEntry, type HistoryMessage, type SystemEntry, type UserEntry } from '#human/agent/turn';
 import { messageAppended, turnEnded } from '#human/agent/events';
 import { agentSlices, type AgentEventStore } from '#human/agent/slices';
@@ -30,7 +30,7 @@ import { createMachineRequester, type MachineRequester, type MachineRequesterGat
 import { createMachineTools, type MachineTools, type ToolResultExtras } from './tools';
 import { appendedStoreJournal, seededStoreJournal } from './storeJournal';
 
-export type { PromptGateVerdict };
+export type { PromptGateVerdict, SteerGateOutcome };
 
 export type MachineEngineDelta =
   | { readonly kind: 'assistant'; readonly delta: string }
@@ -112,6 +112,8 @@ export type MachineEngineEvent =
   | { readonly type: 'promptBlocked'; readonly queueItemId?: string; readonly entry?: UserEntry }
   | { readonly type: 'promptGateFailed'; readonly queueItemId?: string; readonly error: unknown; readonly entry?: UserEntry }
   | { readonly type: 'promptSteered'; readonly queueItemIds: readonly string[]; readonly entries: readonly UserEntry[] }
+  | { readonly type: 'steerGateRequested'; readonly entries: readonly UserEntry[] }
+  | { readonly type: 'steerGateDropped'; readonly outcomes: readonly SteerGateOutcome[] }
   | { readonly type: 'aborting' };
 
 export interface CreateMachineEngineOptions {
@@ -175,6 +177,7 @@ export interface MachineEngineSnapshot {
 export interface MachineEngine {
   submit(entry: UserEntry): void;
   steer(id: string | readonly string[]): void;
+  steerGateResolved(outcomes: readonly SteerGateOutcome[]): void;
   notify(entry: UserEntry): void;
   remind(key: string, entry: SystemEntry | UserEntry): void;
   cancelQueueItem(id: string): void;
@@ -473,6 +476,12 @@ export function attachMachineEngine(
     ref.on('prompt.steered', (event) => {
       publish({ type: 'promptSteered', queueItemIds: event.queueItemIds, entries: event.entries });
     }),
+    ref.on('steerGate.requested', (event) => {
+      publish({ type: 'steerGateRequested', entries: event.entries });
+    }),
+    ref.on('steerGate.dropped', (event) => {
+      publish({ type: 'steerGateDropped', outcomes: event.outcomes });
+    }),
     ref.on('turn.aborting', () => {
       publish({ type: 'aborting' });
     }),
@@ -509,6 +518,9 @@ export function attachMachineEngine(
     steer: (id) => {
       tools.sync();
       ref.send({ type: 'input.steer', id });
+    },
+    steerGateResolved: (outcomes) => {
+      ref.send({ type: 'steerGate.resolved', outcomes });
     },
     notify: (entry) => {
       tools.sync();

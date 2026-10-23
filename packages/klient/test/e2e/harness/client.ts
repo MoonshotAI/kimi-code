@@ -42,7 +42,6 @@ import type {
 } from '@moonshot-ai/kap-server/protocol/rest-modelCatalog';
 import type {
   PromptAbortResponse,
-  PromptListResponse,
   PromptPermissionMode,
   PromptSubmission,
   PromptSteerResult,
@@ -286,9 +285,6 @@ export class DaemonClient {
     body: PromptSubmission,
   ): Promise<PromptSubmitResult> {
     return this.http.submitPrompt(sid, body);
-  }
-  listPrompts(sid: string): Promise<PromptListResponse> {
-    return this.http.listPrompts(sid);
   }
   steerPrompt(sid: string, pid: string): Promise<PromptSteerResult> {
     return this.http.steerPrompt(sid, pid);
