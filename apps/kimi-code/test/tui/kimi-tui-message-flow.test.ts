@@ -111,6 +111,16 @@ vi.mock('../../src/feedback/archive', async (importOriginal) => {
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
+vi.mock('#/utils/client-configs', () => ({
+  clientConfigs: {
+    region: vi.fn(() => 'mainland-cn'),
+    get: vi.fn(async () => undefined),
+    fetch: vi.fn(async () => undefined),
+    peek: vi.fn(() => undefined),
+    reset: vi.fn(),
+  },
+}));
+
 vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: vi.fn(async () => 'native'),
 }));
