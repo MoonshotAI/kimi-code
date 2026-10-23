@@ -5,7 +5,12 @@ import { join } from 'pathe';
 import { describe, expect, it } from 'vitest';
 
 import { Error2 } from '#/errors';
-import { mergeStdioEnv, StdioMcpClient, type StdioMcpClientOptions } from '#/mcpCore/client-stdio';
+import {
+  drainStdioMcpShutdowns,
+  mergeStdioEnv,
+  StdioMcpClient,
+  type StdioMcpClientOptions,
+} from '#/mcpCore/client-stdio';
 import type { McpServerStdioConfig } from '#/mcpCore/config-schema';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeRuntime } from '#/runtime/fakeRuntime';
@@ -466,6 +471,28 @@ describe('StdioMcpClient', () => {
       expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
       await closing;
     } finally {
+      if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
+    }
+  }, 15000);
+
+  it('lets hosts drain a fire-and-forget close until the fallback kill lands', async () => {
+    const client = createClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [sharedAgentStdioFixture],
+      env: { KIMI_TEST_MCP_IGNORE_EOF: '1' },
+    });
+    let agentPid: number | undefined;
+    try {
+      await client.connect();
+      agentPid = await spawnAgentPid(client);
+      const startedAt = Date.now();
+      void client.close();
+      await drainStdioMcpShutdowns();
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(1_900);
+      expect(await waitUntilExited(agentPid, 5_000)).toBe(true);
+    } finally {
+      await client.close();
       if (agentPid !== undefined && isAlive(agentPid)) process.kill(agentPid);
     }
   }, 15000);

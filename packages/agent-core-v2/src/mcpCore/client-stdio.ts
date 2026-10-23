@@ -35,6 +35,14 @@ export interface StdioMcpClientOptions {
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
 const STDIO_CLOSE_GRACE_MS = 2_000;
 
+const pendingShutdowns = new Set<Promise<void>>();
+
+export async function drainStdioMcpShutdowns(): Promise<void> {
+  while (pendingShutdowns.size > 0) {
+    await Promise.all(pendingShutdowns);
+  }
+}
+
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
   private readonly transport: RuntimeStdioTransport;
@@ -235,7 +243,16 @@ class RuntimeStdioTransport implements Transport {
   }
 
   close(): Promise<void> {
-    this.closing ??= this.closeOnce();
+    if (this.closing === undefined) {
+      const closing = this.closeOnce();
+      this.closing = closing;
+      const tracked = closing.then(
+        () => undefined,
+        () => undefined,
+      );
+      pendingShutdowns.add(tracked);
+      void tracked.finally(() => pendingShutdowns.delete(tracked));
+    }
     return this.closing;
   }
 

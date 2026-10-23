@@ -142,6 +142,7 @@ import {
   drainLogCloses,
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
+  drainStdioMcpShutdowns,
   ensureKimiHome,
   ensureMainAgent,
   getOrRestoreAgent,
@@ -538,6 +539,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await appendLogStore.drainRetirements();
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
+    await drainStdioMcpShutdowns();
     await drainLogCloses();
   }
 

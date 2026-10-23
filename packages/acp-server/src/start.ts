@@ -20,6 +20,7 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   drainSessionMetadataWrites,
+  drainStdioMcpShutdowns,
   ensureMainAgent,
   getLiveSessionById,
   IAgentLifecycleService,
@@ -215,6 +216,7 @@ export async function runAcpServerWithStream(
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();
       await drainSessionMetadataWrites();
+      await drainStdioMcpShutdowns();
       await drainLogCloses();
     })();
     return closePromise;
