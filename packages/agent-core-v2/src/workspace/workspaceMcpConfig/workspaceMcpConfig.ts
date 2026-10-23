@@ -13,6 +13,8 @@ export interface McpTunables {
   readonly startupTimeoutMs?: number;
   readonly toolTimeoutMs?: number;
   readonly defaultDeferred?: boolean;
+  readonly reconnectInitialDelayMs?: number;
+  readonly reconnectMaxDelayMs?: number;
 }
 
 export interface IWorkspaceMcpConfigService {

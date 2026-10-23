@@ -29,6 +29,7 @@ import {
   McpToolsDiscovered,
   type McpToolCollision,
 } from './mcpDiscoveryOps';
+import { McpServerFailed } from './mcpFailureOps';
 import { AgentErrorEvent, McpServerStatus, ToolListUpdated } from './mcpEvents';
 
 interface McpToolRegistration {
@@ -49,6 +50,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];
+  private readonly failedServerEpisodes = new Set<string>();
 
   constructor(
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
@@ -180,17 +182,28 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       }),
     );
     if (entry.status === 'connected') {
+      this.failedServerEpisodes.delete(entry.name);
       this.registerConnectedMcpServer(entry);
       return;
     }
     if (entry.status === 'needs-auth') {
+      this.failedServerEpisodes.delete(entry.name);
       this.registerNeedsAuthMcpServer(entry);
       return;
     }
-    if (entry.status === 'failed' || entry.status === 'pending' || entry.status === 'removed') {
+    if (entry.status === 'failed') {
+      this.recordServerFailure(entry);
+      return;
+    }
+    if (entry.status === 'pending') {
+      return;
+    }
+    if (entry.status === 'removed') {
+      this.failedServerEpisodes.delete(entry.name);
       return;
     }
     if (entry.status === 'disabled') {
+      this.failedServerEpisodes.delete(entry.name);
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
         void this.dispatcher.dispatch(
@@ -202,6 +215,26 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         );
       }
     }
+  }
+
+  private recordServerFailure(entry: McpServerEntry): void {
+    if (this.failedServerEpisodes.has(entry.name)) return;
+    this.failedServerEpisodes.add(entry.name);
+    const work = (): void => {
+      void this.dispatcher.dispatch(
+        new McpServerFailed({
+          agentId: this.scopeContext.agentId,
+          serverName: entry.name,
+          transport: entry.transport,
+          error: entry.error,
+        }),
+      );
+    };
+    if (!this.discoveryWritesReady) {
+      this.pendingDiscoveries.push(work);
+      return;
+    }
+    work();
   }
 
   private registerConnectedMcpServer(entry: McpServerEntry): void {

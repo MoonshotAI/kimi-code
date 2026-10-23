@@ -1,6 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, realpathSync } from 'node:fs';
-import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type Server as HttpServer,
+  type ServerResponse,
+} from 'node:http';
 import type { AddressInfo as HttpAddress } from 'node:net';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -77,6 +82,31 @@ function stdioConfig(args: string[] = [stdioFixture]) {
   };
 }
 
+function createPerSessionMcpHandler(name: string) {
+  const sessions = new Map<string, StreamableHTTPServerTransport>();
+  return (req: IncomingMessage, res: ServerResponse): void => {
+    const sessionId = req.headers['mcp-session-id'];
+    const existing = typeof sessionId === 'string' ? sessions.get(sessionId) : undefined;
+    if (existing !== undefined) {
+      void existing.handleRequest(req, res);
+      return;
+    }
+    const mcpServer = new McpServer({ name, version: '0.0.1' });
+    mcpServer.registerTool(
+      'echo',
+      { description: 'Echoes text', inputSchema: { text: z.string() } },
+      ({ text }) => ({ content: [{ type: 'text', text }] }),
+    );
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
+      onsessioninitialized: (id) => {
+        sessions.set(id, transport);
+      },
+    });
+    void mcpServer.connect(transport).then(() => transport.handleRequest(req, res));
+  };
+}
+
 describe('McpConnectionManager', () => {
   it('connects servers in parallel and exposes connected entries with their tool count', async () => {
     const cm = createManager();
@@ -94,8 +124,13 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
-  it('isolates failures: a bad server is marked failed without blocking the rest', async () => {
-    const cm = createManager();
+  it('isolates failures: a permanently failing server is marked failed once without retry or blocking the rest', async () => {
+    const statuses: string[] = [];
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
+    });
+    cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
     try {
       await cm.connectAll({
         good: stdioConfig(),
@@ -104,12 +139,15 @@ describe('McpConnectionManager', () => {
       expect(cm.get('good')?.status).toBe('connected');
       expect(cm.get('bad')?.status).toBe('failed');
       expect(cm.get('bad')?.error).toBeDefined();
+      await sleep(300);
+      expect(cm.get('bad')?.status).toBe('failed');
+      expect(statuses.filter((s) => s.startsWith('bad:'))).toEqual(['bad:pending', 'bad:failed']);
     } finally {
       await cm.shutdown();
     }
   }, 20000);
 
-  it('markRemoved tombstones the entry: client closed, entry kept, reconnect rejected, re-connect revives', async () => {
+  it('markRemoved tombstones the entry: client closed, entry kept, reconnect rejected, in-flight connects invalidated, re-connect revives', async () => {
     const cm = createManager();
     try {
       await cm.connectAll({ alpha: stdioConfig() });
@@ -132,6 +170,26 @@ describe('McpConnectionManager', () => {
       await cm.connect('alpha', stdioConfig());
       expect(cm.get('alpha')?.status).toBe('connected');
       expect(cm.resolved('alpha')).toBeDefined();
+
+      const delayedMockServer = `setTimeout(() => import(${JSON.stringify(
+        pathToFileURL(stdioFixture).href,
+      )}), 400)`;
+      const connecting = cm.connect('slow', {
+        transport: 'stdio',
+        command: process.execPath,
+        args: ['-e', delayedMockServer],
+        startupTimeoutMs: 5_000,
+      });
+      await sleep(50);
+      expect(await cm.markRemoved('slow')).toBe(true);
+      await connecting;
+      await sleep(600);
+      expect(cm.get('slow')?.status).toBe('removed');
+      expect(cm.resolved('slow')).toBeUndefined();
+      expect(statuses.filter((s) => s.startsWith('slow:'))).toEqual([
+        'slow:pending',
+        'slow:removed',
+      ]);
     } finally {
       await cm.shutdown();
     }
@@ -158,40 +216,33 @@ describe('McpConnectionManager', () => {
     }
   }, 20000);
 
-  it('marks HTTP servers failed when configured bearer token env var is missing', async () => {
-    const cm = createManager({ envLookup: () => undefined });
-    try {
-      await cm.connectAll({
-        remote: {
-          transport: 'http',
-          url: 'https://example.invalid/mcp',
-          bearerTokenEnvVar: 'REMOTE_MCP_TOKEN',
-        },
+  it('marks remote servers failed without retry when the configured bearer token env var is missing', async () => {
+    const cases = [
+      { transport: 'http' as const, url: 'https://example.invalid/mcp', envVar: 'REMOTE_MCP_TOKEN' },
+      { transport: 'sse' as const, url: 'https://example.invalid/sse', envVar: 'LEGACY_MCP_TOKEN' },
+    ];
+    for (const { transport, url, envVar } of cases) {
+      const statuses: string[] = [];
+      const cm = createManager({
+        envLookup: () => undefined,
+        reconnectRetryEnabled: true,
+        resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
       });
-      const entry = cm.get('remote');
-      expect(entry?.status).toBe('failed');
-      expect(entry?.error).toContain('"REMOTE_MCP_TOKEN" is not set or is empty');
-    } finally {
-      await cm.shutdown();
-    }
-  });
-
-  it('marks SSE servers failed when configured bearer token env var is missing', async () => {
-    const cm = createManager({ envLookup: () => undefined });
-    try {
-      await cm.connectAll({
-        legacy: {
-          transport: 'sse',
-          url: 'https://example.invalid/sse',
-          bearerTokenEnvVar: 'LEGACY_MCP_TOKEN',
-        },
-      });
-      const entry = cm.get('legacy');
-      expect(entry?.transport).toBe('sse');
-      expect(entry?.status).toBe('failed');
-      expect(entry?.error).toContain('"LEGACY_MCP_TOKEN" is not set or is empty');
-    } finally {
-      await cm.shutdown();
+      cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
+      try {
+        await cm.connectAll({
+          remote: { transport, url, bearerTokenEnvVar: envVar },
+        });
+        const entry = cm.get('remote');
+        expect(entry?.transport).toBe(transport);
+        expect(entry?.status).toBe('failed');
+        expect(entry?.error).toContain(`"${envVar}" is not set or is empty`);
+        await sleep(250);
+        expect(cm.get('remote')?.status).toBe('failed');
+        expect(statuses).toEqual(['remote:pending', 'remote:failed']);
+      } finally {
+        await cm.shutdown();
+      }
     }
   });
 
@@ -376,7 +427,6 @@ describe('McpConnectionManager', () => {
       });
       expect(seen.filter((event) => event.name === 'slow').map((event) => event.status)).toEqual([
         'pending',
-        'pending',
         'connected',
       ]);
     } finally {
@@ -495,22 +545,31 @@ describe('McpConnectionManager', () => {
     expect(seen).toEqual([{ name: 'slowList', status: 'pending' }]);
   }, 2000);
 
-  it('honors startupTimeoutMs by marking slow servers failed', async () => {
-    const cm = createManager();
-    try {
-      await cm.connectAll({
-        slow: {
-          transport: 'stdio',
-          command: process.execPath,
-          args: [slowStdioFixture],
-          startupTimeoutMs: 100,
-        },
-      });
-      const entry = cm.get('slow');
-      expect(entry?.status).toBe('failed');
-      expect(entry?.error?.toLowerCase()).toContain('timed out');
-    } finally {
-      await cm.shutdown();
+  it('honors startupTimeoutMs from the entry or the resolved default by marking slow servers failed', async () => {
+    const variants: Array<{
+      options?: McpConnectionManagerOptions;
+      startupTimeoutMs?: number;
+    }> = [
+      { startupTimeoutMs: 100 },
+      { options: { resolveDefaults: () => ({ startupTimeoutMs: 100 }) } },
+    ];
+    for (const variant of variants) {
+      const cm = createManager(variant.options);
+      try {
+        await cm.connectAll({
+          slow: {
+            transport: 'stdio',
+            command: process.execPath,
+            args: [slowStdioFixture],
+            startupTimeoutMs: variant.startupTimeoutMs,
+          },
+        });
+        const entry = cm.get('slow');
+        expect(entry?.status).toBe('failed');
+        expect(entry?.error?.toLowerCase()).toContain('timed out');
+      } finally {
+        await cm.shutdown();
+      }
     }
   }, 15000);
 
@@ -539,26 +598,6 @@ describe('McpConnectionManager', () => {
       await Promise.race([connectPromise.catch(() => {}), sleep(1_000)]);
     }
   }, 7000);
-
-  it('applies the resolved default startup timeout when the server entry omits startupTimeoutMs', async () => {
-    const cm = createManager({
-      resolveDefaults: () => ({ startupTimeoutMs: 100 }),
-    });
-    try {
-      await cm.connectAll({
-        slow: {
-          transport: 'stdio',
-          command: process.execPath,
-          args: [slowStdioFixture],
-        },
-      });
-      const entry = cm.get('slow');
-      expect(entry?.status).toBe('failed');
-      expect(entry?.error?.toLowerCase()).toContain('timed out');
-    } finally {
-      await cm.shutdown();
-    }
-  }, 15000);
 
   it.each([
     ['stdio', stdioConfig()],
@@ -676,7 +715,13 @@ describe('McpConnectionManager', () => {
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as HttpAddress).port;
     const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = createManager({ oauthService });
+    const cm = createManager({
+      oauthService,
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
+    });
+    const statuses: string[] = [];
+    cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
     try {
       await cm.connectAll({
         gated: {
@@ -689,6 +734,9 @@ describe('McpConnectionManager', () => {
       expect(entry?.status).toBe('needs-auth');
       expect(entry?.error).toContain('run /mcp-config login gated');
       expect(entry?.toolCount).toBe(0);
+      await sleep(250);
+      expect(cm.get('gated')?.status).toBe('needs-auth');
+      expect(statuses).toEqual(['gated:pending', 'gated:needs-auth']);
     } finally {
       await cm.shutdown();
       await closeServer(server);
@@ -728,29 +776,159 @@ describe('McpConnectionManager', () => {
     }
   }, 15000);
 
-  it('keeps a headers-only HTTP server failed (not needs-auth) on 401', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: 'unauthorized' }));
+  it('retries a transient first-connect failure until the server comes up, without manual intervention', async () => {
+    const mcpServer = new McpServer({ name: 'cm-retry', version: '0.0.1' });
+    mcpServer.registerTool(
+      'echo',
+      { description: 'Echoes text', inputSchema: { text: z.string() } },
+      ({ text }) => ({ content: [{ type: 'text', text }] }),
+    );
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: () => randomUUID(),
     });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
-    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = createManager({ oauthService });
+    await mcpServer.connect(transport);
+    let hits = 0;
+    const httpServer = createHttpServer((req, res) => {
+      hits += 1;
+      if (hits <= 2) {
+        res.writeHead(500).end();
+        return;
+      }
+      void transport.handleRequest(req, res);
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const port = (httpServer.address() as HttpAddress).port;
+
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
+    });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     try {
       await cm.connectAll({
-        keyed: {
+        remote: {
           transport: 'http',
           url: `http://127.0.0.1:${port}/mcp`,
-          headers: { Authorization: 'Bearer static-key' },
           startupTimeoutMs: 5_000,
         },
       });
-      const entry = cm.get('keyed');
-      expect(entry?.status).toBe('failed');
+      expect(cm.get('remote')?.status).toBe('failed');
+
+      for (let i = 0; i < 100; i++) {
+        if (cm.get('remote')?.status === 'connected') break;
+        await sleep(50);
+      }
+      const entry = cm.get('remote');
+      expect(entry?.status).toBe('connected');
+      expect(entry?.toolCount).toBe(1);
+      expect(cm.resolved('remote')).toBeDefined();
+      expect(seen.filter((s) => s.name === 'remote').map((s) => s.status)).toEqual([
+        'pending',
+        'failed',
+        'pending',
+        'failed',
+        'pending',
+        'connected',
+      ]);
     } finally {
       await cm.shutdown();
-      await closeServer(server);
+      await closeServer(httpServer);
+    }
+  }, 15000);
+
+  it('recovers through interleaved scheduled retries and manual reconnects as a single chain', async () => {
+    let hits = 0;
+    const handler = createPerSessionMcpHandler('cm-coord');
+    const httpServer = createHttpServer((req, res) => {
+      hits += 1;
+      if (hits <= 2) {
+        res.writeHead(500).end();
+        return;
+      }
+      handler(req, res);
+    });
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const port = (httpServer.address() as HttpAddress).port;
+
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 150, reconnectMaxDelayMs: 300 }),
+    });
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    try {
+      await cm.connectAll({
+        remote: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          startupTimeoutMs: 5_000,
+        },
+      });
+      expect(cm.get('remote')?.status).toBe('failed');
+
+      await cm.reconnectAndJoin('remote');
+      expect(cm.get('remote')?.status).toBe('failed');
+
+      for (let i = 0; i < 100; i++) {
+        if (cm.get('remote')?.status === 'connected') break;
+        await sleep(25);
+      }
+      expect(cm.get('remote')?.status).toBe('connected');
+      expect(cm.resolved('remote')).toBeDefined();
+      expect(seen.filter((s) => s.name === 'remote').map((s) => s.status)).toEqual([
+        'pending',
+        'failed',
+        'pending',
+        'failed',
+        'pending',
+        'connected',
+      ]);
+    } finally {
+      await cm.shutdown();
+      await closeServer(httpServer);
+    }
+  }, 15000);
+
+  it('marks HTTP servers with pinned static headers failed (not needs-auth) on 401/403 without retry', async () => {
+    const headerSets: Array<Record<string, string>> = [
+      { Authorization: 'Bearer static-key' },
+      { 'X-API-Key': 'wrong' },
+    ];
+    for (const headers of headerSets) {
+      for (const statusCode of [401, 403]) {
+        const server: HttpServer = createHttpServer((_req, res) => {
+          res.writeHead(statusCode, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ error: 'unauthorized' }));
+        });
+        await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+        const port = (server.address() as HttpAddress).port;
+        const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
+        const cm = createManager({
+          oauthService,
+          reconnectRetryEnabled: true,
+          resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
+        });
+        const statuses: string[] = [];
+        cm.onStatusChange((entry) => statuses.push(`${entry.name}:${entry.status}`));
+        try {
+          await cm.connectAll({
+            keyed: {
+              transport: 'http',
+              url: `http://127.0.0.1:${port}/mcp`,
+              headers,
+              startupTimeoutMs: 5_000,
+            },
+          });
+          expect(cm.get('keyed')?.status).toBe('failed');
+          await sleep(250);
+          expect(cm.get('keyed')?.status).toBe('failed');
+          expect(statuses).toEqual(['keyed:pending', 'keyed:failed']);
+        } finally {
+          await cm.shutdown();
+          await closeServer(server);
+        }
+      }
     }
   }, 15000);
 
@@ -945,24 +1123,67 @@ describe('McpConnectionManager', () => {
     }
   }, 10000);
 
-  it('flips connected HTTP servers to failed when the SDK reports a terminal transport error', async () => {
-    const mcpServer = new McpServer({ name: 'cm-terminal', version: '0.0.1' });
-    mcpServer.registerTool(
-      'echo',
-      { description: 'Echoes text', inputSchema: { text: z.string() } },
-      ({ text }) => ({ content: [{ type: 'text', text }] }),
-    );
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: () => randomUUID(),
+  it('keeps a healthy server silently connected when weak session evidence probes fine', async () => {
+    const httpServer = createHttpServer(createPerSessionMcpHandler('cm-weak-ok'));
+    await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
+    const port = (httpServer.address() as HttpAddress).port;
+
+    const ping = vi.spyOn(Client.prototype, 'ping');
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
     });
-    await mcpServer.connect(transport);
+    const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
+    cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
+    try {
+      await cm.connectAll({
+        remote: {
+          transport: 'http',
+          url: `http://127.0.0.1:${port}/mcp`,
+          startupTimeoutMs: 5_000,
+        },
+      });
+      expect(cm.get('remote')?.status).toBe('connected');
+      const clientBefore = cm.resolved('remote')?.client;
+      expect(clientBefore).toBeDefined();
+      seen.length = 0;
+      ping.mockClear();
+
+      const internalClient = (cm as unknown as {
+        entries: Map<string, { client?: { client: { onerror?: (e: Error) => void } } }>;
+      }).entries.get('remote')?.client?.client;
+      internalClient?.onerror?.(new Error('Maximum reconnection attempts (3) exceeded.'));
+
+      await sleep(300);
+      expect(ping.mock.calls.length).toBeGreaterThan(0);
+      expect(cm.get('remote')?.status).toBe('connected');
+      expect(cm.get('remote')?.toolCount).toBe(1);
+      expect(cm.resolved('remote')?.client).toBe(clientBefore);
+      expect(seen).toEqual([]);
+    } finally {
+      ping.mockRestore();
+      await cm.shutdown();
+      await closeServer(httpServer);
+    }
+  }, 15000);
+
+  it('reconnects automatically when weak session evidence proves the session dead', async () => {
+    let healthy = true;
+    const handler = createPerSessionMcpHandler('cm-weak-dead');
     const httpServer = createHttpServer((req, res) => {
-      void transport.handleRequest(req, res);
+      if (!healthy) {
+        res.writeHead(500).end();
+        return;
+      }
+      handler(req, res);
     });
     await new Promise<void>((resolve) => httpServer.listen(0, '127.0.0.1', resolve));
     const port = (httpServer.address() as HttpAddress).port;
 
-    const cm = createManager();
+    const cm = createManager({
+      reconnectRetryEnabled: true,
+      resolveDefaults: () => ({ reconnectInitialDelayMs: 50, reconnectMaxDelayMs: 100 }),
+    });
     const seen: Array<{ name: string; status: McpServerEntry['status'] }> = [];
     cm.onStatusChange((e) => seen.push({ name: e.name, status: e.status }));
     try {
@@ -978,9 +1199,10 @@ describe('McpConnectionManager', () => {
       const internalClient = (cm as unknown as {
         entries: Map<string, { client?: { client: { onerror?: (e: Error) => void } } }>;
       }).entries.get('remote')?.client?.client;
+      healthy = false;
       internalClient?.onerror?.(new Error('Maximum reconnection attempts (3) exceeded.'));
 
-      for (let i = 0; i < 50; i++) {
+      for (let i = 0; i < 100; i++) {
         if (cm.get('remote')?.status === 'failed') break;
         await sleep(25);
       }
@@ -988,38 +1210,25 @@ describe('McpConnectionManager', () => {
       expect(entry?.status).toBe('failed');
       expect(entry?.toolCount).toBe(0);
       expect(entry?.error).toContain('Maximum reconnection attempts');
-      expect(seen.filter((s) => s.name === 'remote').map((s) => s.status)).toEqual([
-        'pending',
-        'connected',
-        'failed',
-      ]);
+      expect(entry?.nextRetryAt).toBeDefined();
+
+      healthy = true;
+      for (let i = 0; i < 100; i++) {
+        if (cm.get('remote')?.status === 'connected') break;
+        await sleep(25);
+      }
+      const recovered = cm.get('remote');
+      expect(recovered?.status).toBe('connected');
+      expect(recovered?.toolCount).toBe(1);
+      expect(recovered?.nextRetryAt).toBeUndefined();
+      expect(cm.resolved('remote')).toBeDefined();
+
+      const remoteStatuses = seen.filter((s) => s.name === 'remote').map((s) => s.status);
+      expect(remoteStatuses.slice(0, 3)).toEqual(['pending', 'connected', 'failed']);
+      expect(remoteStatuses.slice(-2)).toEqual(['pending', 'connected']);
     } finally {
       await cm.shutdown();
       await closeServer(httpServer);
-    }
-  }, 15000);
-
-  it('marks HTTP 401 as failed when the user pinned static headers', async () => {
-    const server: HttpServer = createHttpServer((_req, res) => {
-      res.writeHead(401).end('nope');
-    });
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as HttpAddress).port;
-    const oauthService = new McpOAuthService({ store: createMemoryMcpOAuthStore() });
-    const cm = createManager({ oauthService });
-    try {
-      await cm.connectAll({
-        keyed: {
-          transport: 'http',
-          url: `http://127.0.0.1:${port}/mcp`,
-          headers: { 'X-API-Key': 'wrong' },
-          startupTimeoutMs: 5_000,
-        },
-      });
-      expect(cm.get('keyed')?.status).toBe('failed');
-    } finally {
-      await cm.shutdown();
-      await closeServer(server);
     }
   }, 15000);
 

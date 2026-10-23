@@ -11,7 +11,23 @@ export interface UnexpectedCloseReason {
   readonly stderr?: string;
 }
 
-export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
+export type SessionEvidence =
+  | { readonly kind: 'hard'; readonly reason: UnexpectedCloseReason }
+  | { readonly kind: 'weak'; readonly reason: UnexpectedCloseReason };
+
+export type SessionEvidenceListener = (evidence: SessionEvidence) => void;
+
+export type McpFailureKind = 'config' | 'auth-static' | 'auth-oauth' | 'transport';
+
+export class McpClassifiedStartupError extends Error {
+  readonly failureKind: McpFailureKind;
+
+  constructor(failureKind: McpFailureKind, message: string, options?: { readonly cause?: unknown }) {
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause });
+    this.name = 'McpClassifiedStartupError';
+    this.failureKind = failureKind;
+  }
+}
 
 export function isMcpConnectionClosedError(error: unknown): boolean {
   return (

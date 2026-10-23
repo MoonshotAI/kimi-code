@@ -65,6 +65,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       runtimeResolver: this.runtimeResolver,
       workspaceId: workspace.workspaceId,
       runtimeId: 'local',
+      reconnectRetryEnabled: true,
       resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });

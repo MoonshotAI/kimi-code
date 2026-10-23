@@ -583,6 +583,7 @@ export function projectContext(
       case 'llm.tools_snapshot':
       case 'llm.request':
       case 'mcp.tools_discovered':
+      case 'mcp.server_failed':
       case 'file_history.checkpoint':
       case 'file_history.tracked':
         break;

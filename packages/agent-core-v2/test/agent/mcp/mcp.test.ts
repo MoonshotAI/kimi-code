@@ -1311,19 +1311,43 @@ describe('AgentMcpService', () => {
     manager.setResolved('s', client, await discoverTools(client));
     createService(manager);
 
-    manager.connect('s');
-    manager.fail('s');
+    const { records, off } = collectWireRecords('mcp.server_failed');
+    try {
+      manager.connect('s');
+      manager.fail('s');
 
-    expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
-    expect(events).not.toContainEqual(
-      expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.failed' }),
-    );
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        type: 'mcp.server.status',
-        server: expect.objectContaining({ name: 's', status: 'failed' }),
-      }),
-    );
+      expect(ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp')).toHaveLength(2);
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: 'tool.list.updated', reason: 'mcp.failed' }),
+      );
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: 'mcp.server.status',
+          server: expect.objectContaining({ name: 's', status: 'failed' }),
+        }),
+      );
+      expect(records).toHaveLength(0);
+
+      await dispatcher.restore();
+      await dispatcher.flush();
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({
+        type: 'mcp.server_failed',
+        serverName: 's',
+        transport: 'stdio',
+      });
+
+      manager.fail('s');
+      await wire.flush();
+      expect(records).toHaveLength(1);
+
+      manager.connect('s');
+      manager.fail('s');
+      await wire.flush();
+      expect(records).toHaveLength(2);
+    } finally {
+      off.dispose();
+    }
   });
 
   it('keeps tools registered while the server is reconnecting', async () => {
@@ -1351,13 +1375,13 @@ describe('AgentMcpService', () => {
     },
   };
 
-  function collectDiscoveries(): {
+  function collectWireRecords(recordType: string): {
     records: { type: string; [key: string]: unknown }[];
     off: { dispose(): void };
   } {
     const records: { type: string; [key: string]: unknown }[] = [];
     const listener = (record: WireRecord): void => {
-      if (record.type === 'mcp.tools_discovered') {
+      if (record.type === recordType) {
         records.push(record as { type: string; [key: string]: unknown });
       }
     };
@@ -1378,7 +1402,7 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
 
-    const { records, off } = collectDiscoveries();
+    const { records, off } = collectWireRecords('mcp.tools_discovered');
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
@@ -1418,7 +1442,7 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
 
-    const { records, off } = collectDiscoveries();
+    const { records, off } = collectWireRecords('mcp.tools_discovered');
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
@@ -1444,7 +1468,7 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
 
-    const { records, off } = collectDiscoveries();
+    const { records, off } = collectWireRecords('mcp.tools_discovered');
     try {
       manager.connect('grafana');
       enabledNames.clear();
@@ -1480,7 +1504,7 @@ describe('AgentMcpService', () => {
     await dispatcher.restore();
     await dispatcher.flush();
 
-    const { records, off } = collectDiscoveries();
+    const { records, off } = collectWireRecords('mcp.tools_discovered');
     try {
       const client = fakeMcpClient([RAW_QUERY]);
       const rawTools = await client.listTools();
