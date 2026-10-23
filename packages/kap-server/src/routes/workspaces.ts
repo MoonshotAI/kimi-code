@@ -1,11 +1,11 @@
 import {
   IBootstrapService,
-  IDefaultWorkspace,
   IHostFileSystem,
   IWorkspaceInstanceManager,
   IWorkspaceService,
   IWorkspaceSessions,
   IWorkspaceTrust,
+  IWorkspaceTrustStore,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
@@ -368,22 +368,15 @@ async function resolveTrust(
     );
     return undefined;
   }
-  const workspace = await core
-    .accessor.get(IWorkspaceInstanceManager)
-    .getOrCreate({ workspaceId, root: ws.root });
-  return workspace.program.trust;
+  return core.accessor.get(IWorkspaceTrustStore).forRoot(ws.root);
 }
 
 export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
-  const [sessionCount, isDefault] = await Promise.all([
-    core.accessor.get(IWorkspaceSessions).count(ws.id),
-    core.accessor.get(IDefaultWorkspace).isDefault(ws.root),
-  ]);
+  const sessionCount = await core.accessor.get(IWorkspaceSessions).count(ws.id);
   return {
     id: ws.id,
     root: ws.root,
     name: ws.name,
-    is_default: isDefault,
     created_at: new Date(ws.createdAt).toISOString(),
     last_opened_at: new Date(ws.lastOpenedAt).toISOString(),
     session_count: sessionCount,

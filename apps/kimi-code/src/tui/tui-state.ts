@@ -75,7 +75,7 @@ export interface TUIState {
   /** A follow-up session page fetch is in flight. */
   sessionsLoadingMore: boolean;
   sessionsScope: 'cwd' | 'all';
-  activeDialog: 'session-picker' | 'help' | 'trust-prompt' | 'cache-hint' | null;
+  activeDialog: 'session-picker' | 'help' | 'trust-prompt' | 'cache-hint' | 'model-switch-confirm' | null;
   /**
    * True while an editor-replacement panel (help, trust prompt, goal queue
    * manager, …) is mounted in place of the editor. Delayed input restores

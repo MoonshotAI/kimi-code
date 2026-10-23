@@ -1,6 +1,8 @@
 import type { IAgentTaskService } from '#/agent/task/task';
 import {
+  mapWithConcurrency,
   resolveTowerRepoRoot,
+  TOWER_GIT_CONCURRENCY,
   TowerStore,
   type TowerMissionGateBlock,
   type TowerReviewBinding,
@@ -90,27 +92,30 @@ export async function readTowerStatus(input: ReadTowerStatusInput): Promise<Towe
             ),
         )
       : undefined;
-  const gate: TowerStatusGate[] = [];
-  for (const mission of pending) {
-    const result = await store.missionGate(state, mission, { activeAgentIds });
-    gate.push({
-      missionId: mission.id,
-      branch: mission.branch,
-      ready: result.ready,
-      noop: result.noop,
-      blocks: result.blocks,
-      selectedReview:
-        result.selectedReview === undefined
-          ? undefined
-          : {
-              reviewer: result.selectedReview.reviewer,
-              round: result.selectedReview.round,
-              status: result.selectedReview.status,
-              merge: result.selectedReview.merge,
-            },
-      reviewBinding: result.reviewBinding,
-    });
-  }
+  const gate = await mapWithConcurrency(
+    pending,
+    TOWER_GIT_CONCURRENCY,
+    async (mission): Promise<TowerStatusGate> => {
+      const result = await store.missionGate(state, mission, { activeAgentIds });
+      return {
+        missionId: mission.id,
+        branch: mission.branch,
+        ready: result.ready,
+        noop: result.noop,
+        blocks: result.blocks,
+        selectedReview:
+          result.selectedReview === undefined
+            ? undefined
+            : {
+                reviewer: result.selectedReview.reviewer,
+                round: result.selectedReview.round,
+                status: result.selectedReview.status,
+                merge: result.selectedReview.merge,
+              },
+        reviewBinding: result.reviewBinding,
+      };
+    },
+  );
   const inbox = await store.readInbox(caller, INBOX_COUNT_LIMIT);
   const concurrency = input.concurrency();
   const recentActivity = await store.recentLog(RECENT_LOG_LINES);
@@ -206,7 +211,8 @@ function summaryGate(gate: readonly TowerStatusGate[]): string[] {
 }
 
 function summaryConcurrency(snapshot: TowerStatusConcurrency): string {
-  const base = `budget: ${String(snapshot.budget)} agent(s) · inflight: ${String(snapshot.inflight)}`;
+  const budget = Number.isFinite(snapshot.budget) ? String(snapshot.budget) : 'unlimited';
+  const base = `budget: ${budget} agent(s) · inflight: ${String(snapshot.inflight)}`;
   if (snapshot.blockedUntil === null) return `${base} · spawns open`;
   const remainingMs = snapshot.blockedUntil - Date.now();
   return remainingMs > 0

@@ -28,7 +28,6 @@ import {
   ISessionManager,
   ISessionTokenCountingService,
   ISessionUsageService,
-  IDefaultWorkspace,
   IWorkspaceInstanceManager,
   IWorkspaceSessions,
   MAIN_AGENT_ID,
@@ -463,6 +462,7 @@ function makeCore(
       if (token === ISessionManager) {
         return {
           get: sessionFor,
+          resume: async (sessionId: string) => sessionFor(sessionId),
           list: () => [...sessions.keys()].map((sessionId) => sessionFor(sessionId)),
           onWillDeleteSession: managerEvents?.onWillDeleteSession,
           onDidCloseSession: managerEvents?.onDidCloseSession,
@@ -477,9 +477,6 @@ function makeCore(
       }
       if (token === IWorkspaceSessions) {
         return { listRecent: async () => [], count: async () => 3 };
-      }
-      if (token === IDefaultWorkspace) {
-        return { isDefault: async () => false };
       }
       return undefined;
     },
@@ -1275,6 +1272,39 @@ describe('SessionEventBroadcaster', () => {
     expect(after.subagents).toEqual([]);
   });
 
+  it('releases a detached state with no targets and rebuilds from the preserved journal', async () => {
+    const managerEvents = new FakeManagerEvents();
+    await bc.close();
+    bc = new SessionEventBroadcaster({
+      eventsDir: dir,
+      core: makeCore(sessions, eventBus, {}, managerEvents),
+      maxBufferSize: 3,
+    });
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target } = collectingTarget();
+    await bc.subscribe('s1', target);
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    const before = await bc.getCursor('s1');
+    expect(before.seq).toBeGreaterThan(0);
+
+    bc.unsubscribe('s1', target);
+    managerEvents.fireDidClose('s1');
+    await vi.waitFor(() => {
+      expect((bc as unknown as { sessions: Map<string, unknown> }).sessions.has('s1')).toBe(false);
+    });
+    await vi.waitFor(async () => {
+      const contents = await readFile(join(dir, 's1.jsonl'), 'utf8');
+      expect(contents).toContain(before.epoch);
+      expect(contents).toContain(`"seq":${before.seq}`);
+    });
+
+    sessions.set('s1', new FakeLifecycle());
+    expect(await bc.subscribe('s1', collectingTarget().target)).toBe(true);
+    expect(await bc.getCursor('s1')).toEqual(before);
+  });
+
   it('subscribe returns false for an unknown session', async () => {
     const { target } = collectingTarget();
     expect(await bc.subscribe('nope', target)).toBe(false);
@@ -1423,7 +1453,6 @@ describe('SessionEventBroadcaster', () => {
           id: 'wd_a',
           root: '/repo/a',
           name: 'repo-a',
-          is_default: false,
           created_at: new Date(1_000).toISOString(),
           last_opened_at: new Date(2_000).toISOString(),
           session_count: 3,

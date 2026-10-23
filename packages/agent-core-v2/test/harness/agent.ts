@@ -162,7 +162,6 @@ import {
   ISessionTokenCountingService,
   IAppStateService,
   ITelemetryService,
-  IHostTerminalService,
   IAgentToolRegistryService,
   IAgentToolActivationService,
   IAgentUserToolService,
@@ -1211,7 +1210,6 @@ export class AgentTestContext {
               resolveExternalHooksRunner(options.hookEngine),
             );
           }
-          reg.defineInstance(IHostTerminalService, createHostTerminalService());
           reg.defineInstance(IHostFileSystem, new HostFileSystem());
           reg.defineInstance(
             IHostEnvironment,
@@ -1358,7 +1356,6 @@ export class AgentTestContext {
               this.root.accessor.get(IHostEnvironment),
               this.root.accessor.get(IHostFileSystem),
               this.root.accessor.get(IHostProcessService),
-              this.root.accessor.get(IHostTerminalService),
             );
             reg.defineInstance<IAgentRuntimeService>(IAgentRuntimeService, {
               _serviceBrand: undefined,
@@ -2383,19 +2380,6 @@ function createPermissionRulesStub(
       rules = [...rules, ...nextRules];
     },
     recordApprovalResult: () => { },
-  };
-}
-
-function createHostTerminalService(): IHostTerminalService {
-  return {
-    _serviceBrand: undefined,
-    spawn: async () => ({
-      onProcessData: Event.None as Event<string>,
-      onProcessExit: Event.None as Event<{ exitCode: number | null }>,
-      write: () => { },
-      resize: () => { },
-      kill: () => { },
-    }),
   };
 }
 

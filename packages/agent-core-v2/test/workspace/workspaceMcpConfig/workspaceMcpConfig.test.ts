@@ -89,7 +89,10 @@ describe('WorkspaceMcpConfigService', () => {
     ]);
   });
 
-  function createService(mcpSection?: McpSection): IWorkspaceMcpConfigService {
+  function createService(
+    mcpSection?: McpSection,
+    trustReady: () => Promise<void> = () => Promise.resolve(),
+  ): IWorkspaceMcpConfigService {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
@@ -107,7 +110,9 @@ describe('WorkspaceMcpConfigService', () => {
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {
-          ready: Promise.resolve(),
+          get ready() {
+            return trustReady();
+          },
           isTrusted: () => trusted,
           onDidChange: trustFlips.event,
         });
@@ -154,6 +159,37 @@ describe('WorkspaceMcpConfigService', () => {
     const service = createService();
     await service.ready;
 
+    expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+  });
+
+  it('skips the project-level config files when trust initialization fails', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+
+    const service = createService(undefined, () => Promise.reject(new Error('trust storage unavailable')));
+    await service.ready;
+
+    expect(service.servers()).toEqual({});
+  });
+
+  it('retries full initialization after trust recovery', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+    pluginServers = { pluginOnly: stdioConfig('plugin') };
+    trusted = false;
+    let attempts = 0;
+    const service = createService(undefined, () => {
+      attempts++;
+      return attempts === 1
+        ? Promise.reject(new Error('trust storage unavailable'))
+        : Promise.resolve();
+    });
+    await service.ready;
+    expect(service.servers()).toEqual({});
+
+    trustFlips.fire({ trusted: false });
+
+    await vi.waitFor(() => {
+      expect(changes).toEqual([{ upsert: { pluginOnly: stdioConfig('plugin') }, remove: [] }]);
+    });
     expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
   });
 

@@ -135,6 +135,7 @@ import { readTowerStatusSummary } from '@moonshot-ai/agent-core-v2/features/towe
 import { loadMcpServers } from '@moonshot-ai/agent-core-v2/app/mcpConfig/configLoader';
 import { fsSuggestRequestSchema } from '@moonshot-ai/agent-core-v2/workspace/workspaceFs/fs';
 import { IAppendLogStore } from '@moonshot-ai/agent-core-v2/persistence/interface/appendLogStore';
+import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import {
   bootstrap,
   DEFAULT_AGENT_PROFILE_NAME,
@@ -2080,6 +2081,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       },
       false,
     );
+  }
+
+  override async takeOverSessionLock(input: SessionIdRpcInput): Promise<void> {
+    this.engineAccessor.get(ISessionLockService).takeover(input.sessionId);
   }
 
   /**

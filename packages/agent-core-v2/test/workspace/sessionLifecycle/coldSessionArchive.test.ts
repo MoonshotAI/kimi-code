@@ -239,6 +239,7 @@ function sessionManagerResuming(sessionId: string): SessionManager {
   return new SessionManager(
     { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager,
     { get: async () => summary } as unknown as ISessionIndex,
+    new InMemorySessionLockService(),
   );
 }
 

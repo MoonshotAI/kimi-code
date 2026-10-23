@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import type { PromptOrigin } from '@moonshot-ai/agent-core-v2';
 
-import { isSurveyTurnOrigin } from './survey-turns';
+import { isSurveyTurnOrigin, type SurveyTurnRecovery } from './survey-turns';
 
 import type { RatingCooldownStore } from './cooldown-store';
 import {
@@ -82,6 +82,7 @@ export interface SessionRatingDeps {
 
 export interface SessionRatingMount {
   observe(fact: SessionFact): void;
+  recover(recovery: SurveyTurnRecovery): void;
   evaluate(): RatingOffer | undefined;
   end(): void;
 }
@@ -116,13 +117,14 @@ function resumedSubagentCount(
 class SessionRatingMountImpl implements SessionRatingMount {
   private readonly mountId = Symbol();
   private ended = false;
-  private readonly mountedAt: number;
+  private mountedAt: number;
   private currentTurnUserOrigin: boolean | undefined;
   private turnInProgress = false;
   private evaluationPending = false;
   private pendingTraceId: string | undefined;
   private idleSince: number | undefined;
   private userTurnsSinceMount = 0;
+  private recoveredUserTurns = 0;
   private lastShownAt: number | undefined;
   private userTurnsAtLastShown: number | undefined;
   private appearanceCount = 0;
@@ -165,6 +167,21 @@ class SessionRatingMountImpl implements SessionRatingMount {
       case 'compaction-completed':
         this.compactionCount += 1;
     }
+  }
+
+  recover(recovery: SurveyTurnRecovery): void {
+    if (this.ended || this.turnInProgress || this.evaluationPending || this.userTurnsSinceMount > 0) return;
+    this.recoveredUserTurns = recovery.userTurnCount;
+    this.userTurnsSinceMount = recovery.userTurnCount;
+    if (recovery.firstPromptAt !== undefined) {
+      this.mountedAt = this.now() - Math.max(0, this.wallNow() - recovery.firstPromptAt);
+    }
+    if (isSurveyTurnOrigin(recovery.origin) !== true) return;
+    this.evaluationPending = true;
+    this.pendingTraceId = recovery.traceId;
+    this.idleSince = recovery.endedAt === undefined
+      ? this.now()
+      : this.now() - Math.max(0, this.wallNow() - recovery.endedAt);
   }
 
   evaluate(): RatingOffer | undefined {
@@ -343,7 +360,7 @@ class SessionRatingMountImpl implements SessionRatingMount {
       user_turn_count:
         environment.historyUserTurnCount === undefined
           ? undefined
-          : environment.historyUserTurnCount + this.userTurnsSinceMount,
+          : environment.historyUserTurnCount + this.userTurnsSinceMount - this.recoveredUserTurns,
       cumulative_tokens: environment.cumulativeTokens,
       virtual_context_tokens: environment.contextTokens,
       tool_call_count: this.toolCallCount,

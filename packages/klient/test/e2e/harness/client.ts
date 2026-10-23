@@ -23,7 +23,6 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -62,11 +61,6 @@ import type {
   UndoSessionRequest,
   UndoSessionResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
-import type {
-  CloseTerminalResponse,
-  CreateTerminalRequest,
-  ListTerminalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-terminal';
 import type {
   Session,
   SessionChildCreate,
@@ -141,36 +135,6 @@ export const DEFAULT_PROMPT_CONTROLS = {
 export type PromptSubmitInput =
   Pick<PromptSubmission, 'content'>
   & Partial<Pick<PromptSubmission, 'metadata' | 'model' | 'thinking' | 'permission_mode' | 'plan_mode'>>;
-
-export interface TerminalAttachOptions {
-  sinceSeq?: number;
-  timeoutMs?: number;
-}
-
-export interface TerminalControlOptions {
-  timeoutMs?: number;
-}
-
-export interface TerminalAttachResult {
-  attached: true;
-  replayed: number;
-}
-
-export interface TerminalDetachResult {
-  detached: true;
-}
-
-export interface TerminalInputResult {
-  accepted: true;
-}
-
-export interface TerminalResizeResult {
-  resized: true;
-}
-
-export interface TerminalCloseResult {
-  closed: true;
-}
 
 function fillPromptDefaults(input: PromptSubmitInput): PromptSubmission {
   return { ...DEFAULT_PROMPT_CONTROLS, ...input };
@@ -269,26 +233,6 @@ export class DaemonClient {
   }
   createChild(sid: string, body: SessionChildCreate = {}): Promise<Session> {
     return this.http.createChild(sid, body);
-  }
-
-  // ── Terminals ──────────────────────────────────────────────────────────
-  listTerminals(sid: string): Promise<ListTerminalsResponse> {
-    return this.http.listTerminals(sid);
-  }
-  createTerminal(
-    sid: string,
-    body: CreateTerminalRequest = {},
-  ): Promise<Terminal> {
-    return this.http.createTerminal(sid, body);
-  }
-  getTerminal(sid: string, terminalId: string): Promise<Terminal> {
-    return this.http.getTerminal(sid, terminalId);
-  }
-  closeTerminal(
-    sid: string,
-    terminalId: string,
-  ): Promise<CloseTerminalResponse> {
-    return this.http.closeTerminal(sid, terminalId);
   }
 
   // ── Workspaces + folder picker ──────────────────────────────────────────
@@ -502,74 +446,6 @@ export class DaemonClient {
     return waitForSessionBusy(this.http, sid, busy, opts);
   }
 
-  // ── Terminal WS controls ───────────────────────────────────────────────
-  attachTerminal(
-    sid: string,
-    terminalId: string,
-    options: TerminalAttachOptions = {},
-  ): Promise<TerminalAttachResult> {
-    return this._sendWsControl<TerminalAttachResult>(
-      'terminal_attach',
-      {
-        session_id: sid,
-        terminal_id: terminalId,
-        since_seq: options.sinceSeq,
-      },
-      options.timeoutMs,
-    );
-  }
-
-  detachTerminal(
-    sid: string,
-    terminalId: string,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalDetachResult> {
-    return this._sendWsControl<TerminalDetachResult>(
-      'terminal_detach',
-      { session_id: sid, terminal_id: terminalId },
-      options.timeoutMs,
-    );
-  }
-
-  writeTerminalInput(
-    sid: string,
-    terminalId: string,
-    data: string,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalInputResult> {
-    return this._sendWsControl<TerminalInputResult>(
-      'terminal_input',
-      { session_id: sid, terminal_id: terminalId, data },
-      options.timeoutMs,
-    );
-  }
-
-  resizeTerminal(
-    sid: string,
-    terminalId: string,
-    cols: number,
-    rows: number,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalResizeResult> {
-    return this._sendWsControl<TerminalResizeResult>(
-      'terminal_resize',
-      { session_id: sid, terminal_id: terminalId, cols, rows },
-      options.timeoutMs,
-    );
-  }
-
-  closeTerminalControl(
-    sid: string,
-    terminalId: string,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalCloseResult> {
-    return this._sendWsControl<TerminalCloseResult>(
-      'terminal_close',
-      { session_id: sid, terminal_id: terminalId },
-      options.timeoutMs,
-    );
-  }
-
   // ── Reverse RPC (approval + question) ───────────────────────────────────
   /**
    * Install a handler invoked on every `event.approval.requested` frame.
@@ -682,22 +558,6 @@ export class DaemonClient {
       throw new Error('ws not connected — call `await client.connect()` first');
     }
     return this._ws;
-  }
-
-  private async _sendWsControl<T>(
-    type: string,
-    payload: Record<string, unknown>,
-    timeoutMs?: number,
-  ): Promise<T> {
-    const id = `${type}-${ulid()}`;
-    const ack = await this._requireWs().sendAndAwaitAck(
-      { type, id, payload },
-      timeoutMs ?? this._controlAckTimeoutMs,
-    );
-    if (ack.code !== 0) {
-      throw new Error(`${type} rejected (code=${ack.code ?? 'unknown'}): ${ack.msg ?? 'no message'}`);
-    }
-    return (ack.payload ?? {}) as T;
   }
 }
 

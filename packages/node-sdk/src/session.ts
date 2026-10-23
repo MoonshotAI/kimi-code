@@ -408,6 +408,16 @@ export class Session {
     await this.rpc.undoHistory({ sessionId: this.id, count });
   }
 
+  /**
+   * Evicts another process's lock on this session so the next call that
+   * fails with `session.occupied` can be retried. If that process is still
+   * running, both processes write to the session until it goes idle.
+   */
+  async takeOverLock(): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.takeOverSessionLock({ sessionId: this.id });
+  }
+
   async getTodos(): Promise<readonly SessionTodoItem[]> {
     this.ensureOpen();
     return this.rpc.getTodos({ sessionId: this.id });

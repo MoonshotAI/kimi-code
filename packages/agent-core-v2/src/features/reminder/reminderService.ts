@@ -77,6 +77,7 @@ function providerContext(
   runtime: AgentActorContext<null>,
   entry: ReminderEntry,
   isNewTurn: boolean,
+  signal?: AbortSignal,
 ): ContextInjectionContext<unknown> {
   const history = runtime.get(IAgentContextMemoryService).get();
   const injectedPositions = findInjections(history, entry.variant);
@@ -91,6 +92,7 @@ function providerContext(
         ? lastInjection.origin.disclosure
         : undefined,
     isNewTurn,
+    signal,
   };
 }
 
@@ -98,11 +100,13 @@ async function injectEntry(
   runtime: AgentActorContext<null>,
   entry: ReminderEntry,
   isNewTurn: boolean,
+  signal?: AbortSignal,
 ): Promise<void> {
   let content: Awaited<ReturnType<ContextInjectionProvider>>;
   try {
-    content = await entry.provider(providerContext(runtime, entry, isNewTurn));
+    content = await entry.provider(providerContext(runtime, entry, isNewTurn, signal));
   } catch (error) {
+    signal?.throwIfAborted();
     runtime.get(ILogService).error('context provider failed; skipping it', {
       name: entry.variant,
       error,
@@ -161,13 +165,13 @@ function appendResult(
   });
 }
 
-async function inject(runtime: AgentActorContext<null>, isNewTurn: boolean): Promise<void> {
+async function inject(runtime: AgentActorContext<null>, isNewTurn: boolean, signal: AbortSignal): Promise<void> {
   const entries = [...actorContext(runtime).entries].sort(
     (left, right) =>
       (REMINDER_VARIANT_PRIORITY.get(left.variant) ?? 0) -
       (REMINDER_VARIANT_PRIORITY.get(right.variant) ?? 0),
   );
-  for (const entry of entries) await injectEntry(runtime, entry, isNewTurn);
+  for (const entry of entries) await injectEntry(runtime, entry, isNewTurn, signal);
 }
 
 const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: AgentActorContext<null> } }) => {
@@ -183,9 +187,9 @@ const reminderEffects = fromCallback(({ input }: { input: { readonly runtime: Ag
     next: (context?: BeforeStepContext) => Promise<void>,
   ): Promise<void> => {
     const rearmed = takeCompactionRearm();
-    await inject(input.runtime, context.firstStepOfTurn || rearmed);
+    await inject(input.runtime, context.firstStepOfTurn || rearmed, context.signal);
     await next();
-    if (takeCompactionRearm()) await inject(input.runtime, true);
+    if (takeCompactionRearm()) await inject(input.runtime, true, context.signal);
   };
   let hook: IDisposable;
   try {
