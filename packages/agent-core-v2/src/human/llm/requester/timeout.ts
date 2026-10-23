@@ -5,7 +5,7 @@ export const LLM_STREAM_IDLE_TIMEOUT_ENV = 'KIMI_CODE_LLM_STREAM_IDLE_TIMEOUT_MS
 
 export const DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS = 300_000;
 
-const MAX_HEADERS_TIMEOUT_MS = 2 ** 31 - 1;
+const MAX_LLM_TIMEOUT_MS = 2 ** 31 - 1;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -13,9 +13,9 @@ export function resolveLlmHeadersTimeoutMs(env: Env = process.env): number | und
   const raw = env[LLM_HEADERS_TIMEOUT_ENV];
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0 || value > MAX_HEADERS_TIMEOUT_MS) {
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_LLM_TIMEOUT_MS) {
     throw new Error(
-      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_HEADERS_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
+      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_LLM_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
     );
   }
   return value;
@@ -25,9 +25,9 @@ export function resolveLlmStreamIdleTimeoutMs(env: Env = process.env): number {
   const raw = env[LLM_STREAM_IDLE_TIMEOUT_ENV];
   if (raw === undefined || raw.trim() === '') return DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0) {
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_LLM_TIMEOUT_MS) {
     throw new Error(
-      `${LLM_STREAM_IDLE_TIMEOUT_ENV} must be a positive integer, got ${JSON.stringify(raw)}.`,
+      `${LLM_STREAM_IDLE_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_LLM_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
     );
   }
   return value;
@@ -65,8 +65,8 @@ export function createLlmStreamWatchdog(
             rejectIdle = reject;
           });
           const timer = setTimeout(() => {
-            controller.abort();
             rejectIdle(new StreamIdleTimeoutError(idleTimeoutMs));
+            controller.abort();
           }, idleTimeoutMs);
           timer.unref?.();
           const next = iterator.next();

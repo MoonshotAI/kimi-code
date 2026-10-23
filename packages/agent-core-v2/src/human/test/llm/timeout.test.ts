@@ -53,6 +53,14 @@ describe('resolveLlmStreamIdleTimeoutMs', () => {
       ).toThrow(LLM_STREAM_IDLE_TIMEOUT_ENV);
     }
   });
+
+  it('rejects values above the timer maximum', () => {
+    for (const raw of ['2147483648', '9999999999999']) {
+      expect(() =>
+        resolveLlmStreamIdleTimeoutMs({ [LLM_STREAM_IDLE_TIMEOUT_ENV]: raw }),
+      ).toThrow(LLM_STREAM_IDLE_TIMEOUT_ENV);
+    }
+  });
 });
 
 describe('createLlmStreamWatchdog', () => {
@@ -93,6 +101,30 @@ describe('createLlmStreamWatchdog', () => {
     };
     const stalled = (async () => {
       for await (const _ of watchdog.watch(hanging)) {
+        throw new Error('no chunk expected');
+      }
+    })();
+    await expect(stalled).rejects.toThrow(StreamIdleTimeoutError);
+  });
+
+  it('surfaces the idle timeout even when the pending read rejects on abort', async () => {
+    const watchdog = createLlmStreamWatchdog(parent(), 40);
+    const sdkLike: AsyncIterable<number> = {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () =>
+            new Promise<never>((_, reject) => {
+              watchdog.signal.addEventListener('abort', () => {
+                const error = new Error('The operation was aborted');
+                error.name = 'AbortError';
+                reject(error);
+              });
+            }),
+        };
+      },
+    };
+    const stalled = (async () => {
+      for await (const _ of watchdog.watch(sdkLike)) {
         throw new Error('no chunk expected');
       }
     })();
