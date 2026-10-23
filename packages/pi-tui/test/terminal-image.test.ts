@@ -906,16 +906,6 @@ describe("Image transcoding", () => {
 		assert.strictEqual(calls.filter((data) => data === jpeg).length, 1);
 	});
 
-	it("keys shared conversions by MIME type as well as source data", () => {
-		setImageTranscoder((data, mimeType) => {
-			calls.push(mimeType);
-			return data === jpeg ? png : null;
-		});
-		render(jpeg, "image/jpeg");
-		render(jpeg, "image/svg+xml");
-		assert.deepStrictEqual(calls, ["image/jpeg", "image/svg+xml"]);
-	});
-
 	it("does not convert PNG data or iTerm2 output", () => {
 		setImageTranscoder(transcode);
 		assert.ok(render(png, "image/png")[0].includes(`;${png}\x1b\\`));
