@@ -610,6 +610,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const output = (await this.getOutputSnapshot(taskId, Number.MAX_SAFE_INTEGER)).preview;
     if (tail === undefined) return output;
     const tailChars = Math.max(0, Math.trunc(tail));
+    if (tailChars === 0) return output;
     return output.slice(codePointBoundaryStart(output, Math.max(0, output.length - tailChars)));
   }
 
