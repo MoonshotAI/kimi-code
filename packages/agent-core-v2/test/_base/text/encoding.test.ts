@@ -262,6 +262,15 @@ describe('decodeUnicodeText', () => {
       expect(decodeUnicodeText(new Uint8Array(), encoding)).toBe('');
     }
   });
+
+  it('preserves a leading U+FEFF content character in the BOM-split body', () => {
+    expect(decodeUnicodeText(Buffer.from([0xef, 0xbb, 0xbf, 0x68]), 'utf-8')).toBe('\uFEFFh');
+    expect(decodeUnicodeText(Buffer.from([0xff, 0xfe, 0x68, 0x00]), 'utf-16le')).toBe('\uFEFFh');
+    expect(decodeUnicodeText(Buffer.from([0xfe, 0xff, 0x00, 0x68]), 'utf-16be')).toBe('\uFEFFh');
+    expect(
+      decodeUnicodeText(Buffer.from([0xff, 0xfe, 0x00, 0x00, 0x68, 0x00, 0x00, 0x00]), 'utf-32le'),
+    ).toBe('\uFEFFh');
+  });
 });
 
 describe('encodeUnicodeText', () => {
