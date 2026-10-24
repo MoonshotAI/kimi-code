@@ -2,7 +2,8 @@
  * In-process dispatcher — resolves a wire triple `(service, method, args)`
  * against a live engine scope and mirrors kap-server's dispatcher semantics
  * (reflection call, non-function members are property reads, `main` agent
- * auto-materialized via `ensureMainAgent`). Scope routing resolves workspace
+ * auto-materialized via `ensureMainAgent`, other registered agents lazily
+ * rebuilt via `getOrRestoreAgent`). Scope routing resolves workspace
  * instances through `IWorkspaceInstanceManager` and live sessions through the
  * App `SessionManager`, matching the server's `resolveScope`. Every argument,
  * result, and event payload passes
@@ -22,6 +23,7 @@ import { getLiveSessionById } from '@moonshot-ai/agent-core-v2/app/sessionManage
 import { IAgentLifecycleService } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/agentLifecycle';
 import { ensureMainAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/mainAgent';
+import { getOrRestoreAgent } from '@moonshot-ai/agent-core-v2/session/agentLifecycle/getOrRestoreAgent';
 import { agentContextOf } from '@moonshot-ai/agent-core-v2/agent/scopeContext/scopeContext';
 import {
   INTERACTION_TAG_AGENT_ID,
@@ -311,7 +313,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return { kind: 'agent', like: handle };
     }
-    const agent = session.accessor.get(IAgentLifecycleService).handleOf(scope.agentId);
+    const agent = await getOrRestoreAgent(session, scope.agentId);
     if (agent === undefined) {
       throw new RPCError(NOT_FOUND, `agent not found: ${scope.agentId}`);
     }
