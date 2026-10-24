@@ -297,6 +297,18 @@ describe('encodeUnicodeText', () => {
       expect(decodeUnicodeText(split.body, encoding)).toBe('hi 世界 🚀');
     }
   });
+
+  it('rejects unpaired surrogates for all five encodings', () => {
+    for (const encoding of ['utf-8', 'utf-16le', 'utf-16be', 'utf-32le', 'utf-32be'] as const) {
+      expect(() => encodeUnicodeText('a\uD800b', encoding)).toThrow(TypeError);
+      expect(() => encodeUnicodeText('a\uDC00b', encoding)).toThrow(TypeError);
+    }
+  });
+
+  it('accepts paired surrogates (astral characters)', () => {
+    expect(() => encodeUnicodeText('a\uD83D\uDE00b', 'utf-16le')).not.toThrow();
+    expect(() => encodeUnicodeText('a\uD83D\uDE00b', 'utf-32le')).not.toThrow();
+  });
 });
 
 describe('splitLinesKeepingTerminator', () => {
