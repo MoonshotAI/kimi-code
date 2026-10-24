@@ -86,6 +86,17 @@ export class AcpHostFileSystem implements IHostFileSystem {
    */
   private readonly inner = new HostFileSystem();
 
+  /**
+   * Text operations are served by the ACP client buffer once the
+   * `fs.readTextFile` capability is negotiated, while byte operations always
+   * hit the local disk and may be stale relative to unsaved client changes.
+   * Consumers that combine text and byte reads (e.g. BOM-preserving edits)
+   * must treat byte reads as untrusted content for such filesystems.
+   */
+  get clientBackedText(): boolean {
+    return this.connection.fsReadTextFile;
+  }
+
   constructor(
     @ISessionContext private readonly ctx: ISessionContext,
     @IAcpConnection private readonly connection: IAcpConnection,
