@@ -1,10 +1,7 @@
+import { RESOURCE_CONFIGS_PATH, type ClientConfigFetchOptions } from '@moonshot-ai/kimi-code-product/client-configs/node';
 import { z } from 'zod';
 
-import {
-  fetchClientConfig,
-  RESOURCE_CONFIGS_PATH,
-  type ClientConfigFetchOptions,
-} from '#/utils/client-configs';
+import { clientConfigs } from '#/utils/client-configs';
 
 /** The tips/banner payload is one named resource on the resource-configs endpoint. */
 const CONFIG_NAME = 'client_banner';
@@ -25,7 +22,7 @@ export type BannerConfigFetchOptions = ClientConfigFetchOptions;
 export async function getBannerConfig(
   options: BannerConfigFetchOptions = {},
 ): Promise<BannerConfig | undefined> {
-  return fetchClientConfig(CONFIG_NAME, bannerConfigSchema, {
+  return clientConfigs.fetch(CONFIG_NAME, bannerConfigSchema, {
     ...options,
     path: RESOURCE_CONFIGS_PATH,
   });

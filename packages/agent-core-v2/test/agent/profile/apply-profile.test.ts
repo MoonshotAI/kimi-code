@@ -136,6 +136,22 @@ describe('AgentProfileService.applyProfile', () => {
     });
   });
 
+  it('marks plan mode available only when the profile can submit plans', async () => {
+    const planAware = (name: string, tools: readonly string[]): ResolvedAgentProfile =>
+      normalizeAgentProfile({
+        name,
+        systemPrompt: (context) => `plan:${context.planModeAvailable === true ? 'yes' : 'no'}`,
+        tools,
+      });
+    const { profile: svc } = buildContext();
+
+    await svc.applyProfile(planAware('with-exit-plan', ['Read', 'ExitPlanMode']));
+    expect(svc.data().systemPrompt).toBe('plan:yes');
+
+    await svc.applyProfile(planAware('without-exit-plan', ['Read']));
+    expect(svc.data().systemPrompt).toBe('plan:no');
+  });
+
   it('loads AGENTS.md into the rendered system prompt', async () => {
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
     const { profile: svc } = buildContext();

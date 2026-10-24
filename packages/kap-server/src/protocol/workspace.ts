@@ -14,7 +14,6 @@ export const workspaceSchema = z.object({
   id: workspaceIdSchema,
   root: z.string().min(1),
   name: z.string().min(1).max(100),
-  is_default: z.boolean(),
   created_at: isoDateTimeSchema,
   last_opened_at: isoDateTimeSchema,
   session_count: z.number().int().nonnegative(),

@@ -11,11 +11,9 @@ import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-c
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
-  DefaultWorkspaceUnavailableError,
   Error2,
   ErrorCodes,
   IBootstrapService,
-  IDefaultWorkspace,
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
@@ -30,6 +28,7 @@ import {
   IEventService,
   ISessionManager,
   ISessionMetadata,
+  ISessionTitleService,
   IWireService,
   IWorkspaceService,
   MAIN_AGENT_ID,
@@ -40,6 +39,7 @@ import {
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
@@ -133,7 +133,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  async function restartWithFreshHome(seeds?: ScopeSeed): Promise<void> {
+  async function restartWithFreshHome(): Promise<void> {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -150,7 +150,6 @@ describe('server-v2 /api/v1/sessions', () => {
       homeDir: home,
       logLevel: 'silent',
       debugEndpoints: true,
-      seeds,
     });
     base = `http://127.0.0.1:${server.port}`;
   }
@@ -388,78 +387,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const { body } = await postJson<null>('/api/v1/sessions', { title: 'no cwd' });
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('metadata.cwd');
-  });
-
-  describe('default workspace', () => {
-    function defaultWorkspaceStub(
-      root: string,
-      ensure: () => Promise<string> = async () => {
-        await mkdir(root, { recursive: true });
-        return root;
-      },
-    ): ScopeSeed {
-      const stub: IDefaultWorkspace = {
-        _serviceBrand: undefined,
-        ensure,
-        isDefault: async (candidate) => candidate === root,
-      };
-      return [[IDefaultWorkspace, stub]];
-    }
-
-    it('creates sessions in the default workspace and flags it on the workspace wire', async () => {
-      const root = join(tmpdir(), `kimi-default-workspace-${randomBytes(4).toString('hex')}`);
-      await restartWithFreshHome(defaultWorkspaceStub(root));
-      try {
-        const first = await postJson<SessionWire>('/api/v1/sessions', { default_workspace: true });
-        const second = await postJson<SessionWire>('/api/v1/sessions', { default_workspace: true });
-
-        expect(first.body.code).toBe(0);
-        expect(first.body.data.metadata.cwd).toBe(root);
-        expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
-
-        const workspaces = await getJson<{ items: { id: string; is_default: boolean }[] }>(
-          '/api/v1/workspaces',
-        );
-        expect(workspaces.body.data.items).toEqual([
-          expect.objectContaining({ id: first.body.data.workspace_id, is_default: true }),
-        ]);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    });
-
-    it.each([
-      ['workspace_id', { workspace_id: 'wd_missing_000000000000' }],
-      ['metadata', { metadata: { cwd: '/x' } }],
-    ])('rejects default_workspace combined with %s (40001)', async (_label, extra) => {
-      const { body } = await postJson<null>('/api/v1/sessions', {
-        default_workspace: true,
-        ...extra,
-      });
-      expect(body.code).toBe(40001);
-      expect(body.details?.[0]?.path).toBe('default_workspace');
-    });
-
-    it('reports an unusable default workspace as 40930 with path and reason', async () => {
-      const root = join(tmpdir(), 'kimi-default-workspace-denied');
-      await restartWithFreshHome(
-        defaultWorkspaceStub(root, async () => {
-          throw new DefaultWorkspaceUnavailableError(
-            { path: root, reason: 'permission_denied' },
-            `default workspace ${root} is unavailable: permission denied`,
-          );
-        }),
-      );
-
-      const { body } = await postJson<{ path: string; reason: string }>('/api/v1/sessions', {
-        default_workspace: true,
-      });
-      expect(body.code).toBe(40930);
-      expect(body.data).toEqual({ path: root, reason: 'permission_denied' });
-
-      const workspaces = await getJson<{ items: unknown[] }>('/api/v1/workspaces');
-      expect(workspaces.body.data.items).toEqual([]);
-    });
   });
 
   it('rejects create with unknown workspace_id (40410)', async () => {
@@ -746,6 +673,7 @@ describe('server-v2 /api/v1/sessions', () => {
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
       getRegion: () => 'mainland-cn',
+      getRegionAsync: async () => 'mainland-cn',
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -835,6 +763,39 @@ describe('server-v2 /api/v1/sessions', () => {
     );
 
     expect(generated.body.code).toBe(40401);
+  });
+
+  it('serializes occupied errors from metadata mutation routes', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const handle = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    const occupied = new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+
+    const setTitle = vi
+      .spyOn(handle.accessor.get(ISessionMetadata), 'setTitle')
+      .mockRejectedValue(occupied);
+    const profile = await postJson(`/api/v1/sessions/${id}/profile`, { title: 'occupied' });
+    expect(profile.status).toBe(200);
+    expect(profile.body.code).toBe(40931);
+    setTitle.mockRestore();
+
+    const generateTitle = vi
+      .spyOn(handle.accessor.get(ISessionTitleService), 'generateTitle')
+      .mockRejectedValue(occupied);
+    const generated = await postJson(`/api/v1/sessions/${id}/title/generate`);
+    expect(generated.status).toBe(200);
+    expect(generated.body.code).toBe(40931);
+    generateTitle.mockRestore();
+
+    const createChild = vi
+      .spyOn((server as RunningServer).core.accessor.get(ISessionManager), 'createChild')
+      .mockRejectedValue(occupied);
+    const child = await postJson(`/api/v1/sessions/${id}/children`, {});
+    expect(child.status).toBe(200);
+    expect(child.body.code).toBe(40931);
+    createChild.mockRestore();
   });
 
   it('returns best-effort status for a live session', async () => {
@@ -975,6 +936,29 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(refreshed.body.data?.status).toBe('active');
     } finally {
       await rig.cancel();
+    }
+  });
+
+  it('takes over the session lock via :takeover', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const takeover = vi.spyOn(
+      (server as RunningServer).core.accessor.get(ISessionLockService),
+      'takeover',
+    );
+    try {
+      const taken = await postJson<{ taken_over: boolean }>(`/api/v1/sessions/${id}:takeover`);
+      expect(taken.body.code).toBe(0);
+      expect(taken.body.data).toEqual({ taken_over: true });
+      expect(takeover).toHaveBeenCalledWith(id);
+
+      const missing = await postJson<null>('/api/v1/sessions/sess_missing_takeover:takeover');
+      expect(missing.body.code).toBe(40401);
+      expect(takeover).toHaveBeenCalledTimes(1);
+    } finally {
+      takeover.mockRestore();
     }
   });
 

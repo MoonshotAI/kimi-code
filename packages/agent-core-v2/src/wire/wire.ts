@@ -25,6 +25,7 @@ export interface IWireService extends IAgentJournal {
   lineCount(): number;
   lastContextClearLine(): number | undefined;
   journalPath(): string | undefined;
+  externallyModified(): boolean;
 }
 
 export const IWireService: ServiceIdentifier<IWireService> =

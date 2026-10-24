@@ -36,6 +36,7 @@ export interface ReplayableOptions<S> {
   readonly schema: z.ZodType<S>;
   readonly durable?: boolean;
   readonly blobs?: StateBlobCodec<S>;
+  readonly mutableReplay?: boolean;
 }
 
 export interface UndoableOptions<S> {
@@ -46,6 +47,7 @@ export interface ReplayableStateMeta<S> {
   readonly schema: z.ZodType<S>;
   readonly durable: boolean;
   readonly blobs?: StateBlobCodec<S>;
+  readonly mutableReplay: boolean;
   readonly undoable?: UndoableOptions<S>;
   readonly folds: ReadonlyMap<Event2Class<any, any>, StateFold<S, any>>;
 }
@@ -68,6 +70,7 @@ class ReplayableStateKeyImpl<S> implements ReplayableStateKey<S> {
     readonly schema: z.ZodType<S>;
     readonly durable: boolean;
     readonly blobs?: StateBlobCodec<S>;
+    readonly mutableReplay: boolean;
     undoable?: UndoableOptions<S>;
     readonly folds: Map<Event2Class<any, any>, StateFold<S, any>>;
   };
@@ -82,6 +85,7 @@ class ReplayableStateKeyImpl<S> implements ReplayableStateKey<S> {
       schema: opts.schema,
       durable: opts.durable ?? true,
       blobs: opts.blobs,
+      mutableReplay: opts.mutableReplay === true,
       folds: new Map(),
     };
   }
@@ -164,6 +168,9 @@ export function expandedStateFolds(
   key: ReplayableStateKey<any>,
 ): ReadonlyMap<Event2Class<any, any>, StateFold<any, any>> {
   const meta = key.replayable;
+  if (meta.mutableReplay && meta.undoable?.onUndo === undefined) {
+    throw new BugIndicatingError(`State key '${key.name}' requires custom onUndo for mutable replay`);
+  }
   if (meta.undoable === undefined) return meta.folds;
   if (undoableProtocol === undefined) {
     throw new BugIndicatingError(
