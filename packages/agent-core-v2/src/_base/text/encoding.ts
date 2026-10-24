@@ -187,7 +187,12 @@ export function decodeUnicodeText(bytes: Uint8Array, encoding: ByteOrderMark): s
   return text;
 }
 
+const UNPAIRED_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
 export function encodeUnicodeText(text: string, encoding: ByteOrderMark): Uint8Array {
+  if (UNPAIRED_SURROGATE_RE.test(text)) {
+    throw new TypeError('Invalid text: unpaired surrogate');
+  }
   if (encoding === 'utf-8') {
     return new TextEncoder().encode(text);
   }
