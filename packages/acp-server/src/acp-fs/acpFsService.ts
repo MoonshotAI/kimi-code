@@ -1,9 +1,11 @@
 /**
  * ACP-backed `IHostFileSystem` — Session-scoped `IHostFileSystem` that routes
  * text file reads/writes through the ACP client (`fs.readTextFile` /
- * `fs.writeTextFile`, keyed by this session's `sessionId`) and delegates every
- * other operation (binary IO, stat/realpath/readdir/mkdir/remove, exclusive
- * create) to a node-local inner backend.
+ * `fs.writeTextFile`, keyed by this session's `sessionId`) and delegates the
+ * remaining operations (binary reads, stat/realpath/readdir/mkdir/remove,
+ * exclusive create) to a node-local inner backend. Byte writes are bridged
+ * through the client when the payload decodes as UTF-8 or BOM'd
+ * UTF-8/UTF-16/UTF-32 text.
  *
  * Registered at Session scope so it shadows the App-scope node-local
  * `IHostFileSystem` for Session- and Agent-scope consumers (the os file tools),
@@ -17,6 +19,7 @@
 
 import { RequestError } from '@agentclientprotocol/sdk';
 import {
+  decodeUnicodeText,
   HostFileSystem,
   type HostDirEntry,
   type HostFileStat,
@@ -25,6 +28,7 @@ import {
   LifecycleScope,
   registerScopedService,
   ScopeActivation,
+  splitByteOrderMark,
 } from '@moonshot-ai/agent-core-v2';
 
 import { IAcpConnection } from './acpConnection';
@@ -50,13 +54,35 @@ function isResourceNotFound(error: unknown): boolean {
   return error instanceof RequestError && error.code === -32002;
 }
 
+/**
+ * Decode a byte payload as text when it is unambiguously text: valid UTF-8,
+ * or a BOM'd UTF-8/UTF-16/UTF-32 payload (the BOM is an encoding marker, not
+ * part of the client's text). Returns `undefined` for binary data.
+ */
+function decodeTextPayload(data: Uint8Array): string | undefined {
+  const { bom, body } = splitByteOrderMark(data);
+  if (bom !== undefined) {
+    try {
+      return decodeUnicodeText(body, bom);
+    } catch {
+      return undefined;
+    }
+  }
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(data);
+  } catch {
+    return undefined;
+  }
+}
+
 export class AcpHostFileSystem implements IHostFileSystem {
   declare readonly _serviceBrand: undefined;
 
   /**
    * Local inner backend for every operation the ACP `fs` protocol cannot
-   * express (binary IO, stat, realpath, directory ops, exclusive create),
-   * plus capability fallbacks for text operations.
+   * express (binary reads, stat, realpath, directory ops, exclusive create),
+   * plus capability fallbacks for text operations and for byte writes whose
+   * payload does not decode as text.
    */
   private readonly inner = new HostFileSystem();
 
@@ -115,17 +141,18 @@ export class AcpHostFileSystem implements IHostFileSystem {
   }
 
   /**
-   * Bridge byte writes only when the payload is valid UTF-8. Binary data stays
-   * on the local backend rather than being silently replaced with U+FFFD.
+   * Bridge text payloads through the client whenever they decode cleanly:
+   * UTF-8 directly, or a BOM'd UTF-8/UTF-16/UTF-32 payload after decoding, so
+   * the client buffer (and the file's encoding on save) stays consistent.
+   * Binary data stays on the local backend rather than being silently
+   * replaced with U+FFFD.
    */
   async writeBytes(path: string, data: Uint8Array): Promise<void> {
     if (!this.connection.fsWriteTextFile) {
       return this.inner.writeBytes(path, data);
     }
-    let text: string;
-    try {
-      text = new TextDecoder('utf-8', { fatal: true }).decode(data);
-    } catch {
+    const text = decodeTextPayload(data);
+    if (text === undefined) {
       return this.inner.writeBytes(path, data);
     }
     await this.writeText(path, text);
