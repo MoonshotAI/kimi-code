@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code-sdk": patch
+"@moonshot-ai/kimi-code": patch
 ---
 
-fix: bind `--agent`/`--agent-file` profile on interactive session create (v2)
+Apply the profile selected with `--agent` or `--agent-file` to interactive sessions.
