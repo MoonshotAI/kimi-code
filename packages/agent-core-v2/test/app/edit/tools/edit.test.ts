@@ -41,17 +41,63 @@ function createTestEnv(home = '/home'): IHostEnvironment {
   };
 }
 
+type SpiedReadText = (path: string, options?: { encoding?: string; errors?: string }) => Promise<string>;
+type SpiedWriteText = (path: string, data: string) => Promise<void>;
+type SpiedReadBytes = (path: string, n?: number) => Promise<Uint8Array>;
+type SpiedWriteBytes = (path: string, data: Uint8Array) => Promise<void>;
+
 function createSpiedEditFs(
   options: {
-    readText?: ReturnType<typeof vi.fn>;
-    writeText?: ReturnType<typeof vi.fn>;
+    readText?: SpiedReadText;
+    writeText?: SpiedWriteText;
+    readBytes?: SpiedReadBytes;
+    writeBytes?: SpiedWriteBytes;
   } = {},
 ) {
-  const readText = options.readText ?? vi.fn(async () => '');
-  const writeText = options.writeText ?? vi.fn(async () => undefined);
+  const readText: SpiedReadText = options.readText ?? (async () => '');
+  const writeText: SpiedWriteText = options.writeText ?? (async () => undefined);
+  const readBytes: SpiedReadBytes =
+    options.readBytes ??
+    (async (_path: string, n?: number) => {
+      const bytes = new TextEncoder().encode(await readText(_path));
+      return n === undefined ? bytes : bytes.subarray(0, n);
+    });
+  const writeBytes: SpiedWriteBytes =
+    options.writeBytes ??
+    (async (_path: string, data: Uint8Array) => {
+      await writeText(_path, new TextDecoder('utf-8').decode(data));
+    });
   const stat = vi.fn(async () => ({ isFile: true, isDirectory: false, size: 0 }));
-  const fs = { readText, writeText, stat } as unknown as IHostFileSystem;
-  return { fs, readText, writeText };
+  const fs = { readText, writeText, readBytes, writeBytes, stat } as unknown as IHostFileSystem;
+  return { fs, readText, writeText, readBytes, writeBytes };
+}
+
+function utf16Be(text: string): Buffer {
+  const le = Buffer.from(text, 'utf16le');
+  const be = Buffer.alloc(le.length);
+  for (let i = 0; i < le.length; i += 2) {
+    be[i] = le[i + 1]!;
+    be[i + 1] = le[i]!;
+  }
+  return be;
+}
+
+function utf32Le(text: string): Buffer {
+  const units = Array.from(text);
+  const buf = Buffer.alloc(units.length * 4);
+  units.forEach((u, i) => buf.writeUInt32LE(u.codePointAt(0)!, i * 4));
+  return buf;
+}
+
+function utf32Be(text: string): Buffer {
+  const units = Array.from(text);
+  const buf = Buffer.alloc(units.length * 4);
+  units.forEach((u, i) => buf.writeUInt32BE(u.codePointAt(0)!, i * 4));
+  return buf;
+}
+
+function headReadBytes(full: Uint8Array): SpiedReadBytes {
+  return vi.fn(async (_path: string, n?: number) => (n === undefined ? full : full.subarray(0, n)));
 }
 
 function buildTool(
@@ -609,5 +655,215 @@ describe('EditTool', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it('preserves a UTF-8 BOM and re-encodes the edit in UTF-8', async () => {
+    const content = 'alpha beta';
+    const full = new TextEncoder().encode(`\uFEFF${content}`);
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const writeText = vi.fn(async () => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => content),
+      writeText,
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeBytes).toHaveBeenCalledTimes(1);
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual([
+      0xef,
+      0xbb,
+      0xbf,
+      ...new TextEncoder().encode('alpha gamma'),
+    ]);
+    expect(writeText).not.toHaveBeenCalled();
+  });
+
+  it('preserves a UTF-16LE BOM and re-encodes the edit in UTF-16LE', async () => {
+    const content = 'alpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(content, 'utf16le')]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async (_path: string, options?: { encoding?: string }) => {
+        if (options?.encoding === 'utf16le') return content;
+        throw new Error('encoded text is not valid UTF-8');
+      }),
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/le.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('alpha gamma', 'utf16le')])),
+    );
+  });
+
+  it('preserves a UTF-16BE BOM and re-encodes the edit in UTF-16BE', async () => {
+    const content = 'alpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0xfe, 0xff]), utf16Be(content)]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => {
+        throw new Error('encoded text is not valid UTF-8');
+      }),
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/be.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xfe, 0xff]), utf16Be('alpha gamma')])),
+    );
+  });
+
+  it('preserves a UTF-32LE BOM and re-encodes the edit in UTF-32LE', async () => {
+    const content = 'alpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe, 0x00, 0x00]), utf32Le(content)]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => {
+        throw new Error('encoded text is not valid UTF-8');
+      }),
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/u32le.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xff, 0xfe, 0x00, 0x00]), utf32Le('alpha gamma')])),
+    );
+  });
+
+  it('preserves a UTF-32BE BOM and re-encodes the edit in UTF-32BE', async () => {
+    const content = 'alpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0x00, 0x00, 0xfe, 0xff]), utf32Be(content)]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => {
+        throw new Error('encoded text is not valid UTF-8');
+      }),
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/u32be.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0x00, 0x00, 0xfe, 0xff]), utf32Be('alpha gamma')])),
+    );
+  });
+
+  it('falls back to the byte-level decode when a UTF-16BE mis-decode yields NULs', async () => {
+    const content = 'alpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0xfe, 0xff]), utf16Be(content)]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const readBytes = headReadBytes(full);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => {
+        const misdecoded = Buffer.concat([Buffer.from([0xfe, 0xff]), utf16Be(content)]).toString('utf8');
+        return misdecoded;
+      }),
+      readBytes,
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/be-nul.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(readBytes).toHaveBeenCalledTimes(2);
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xfe, 0xff]), utf16Be('alpha gamma')])),
+    );
+  });
+
+  it('round-trips the BOM and encoding on disk for every Unicode encoding', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'edit-bom-'));
+    const cases: { bom: number[]; encode: (text: string) => Buffer }[] = [
+      { bom: [0xef, 0xbb, 0xbf], encode: (text) => Buffer.from(text, 'utf8') },
+      { bom: [0xff, 0xfe], encode: (text) => Buffer.from(text, 'utf16le') },
+      { bom: [0xfe, 0xff], encode: utf16Be },
+      { bom: [0xff, 0xfe, 0x00, 0x00], encode: utf32Le },
+      { bom: [0x00, 0x00, 0xfe, 0xff], encode: utf32Be },
+    ];
+    try {
+      for (let i = 0; i < cases.length; i++) {
+        const { bom, encode } = cases[i]!;
+        const file = join(dir, `sample-${i}.txt`);
+        await writeFile(file, Buffer.concat([Buffer.from(bom), encode('alpha beta')]));
+        const service = new FileEditService(new HostFileSystem());
+        const result = await service.edit({
+          path: file,
+          displayPath: file,
+          old_string: 'beta',
+          new_string: 'gamma',
+          replace_all: false,
+        });
+
+        expect(result.ok).toBe(true);
+        const after = await readFile(file);
+        expect(Buffer.compare(after, Buffer.concat([Buffer.from(bom), encode('alpha gamma')]))).toBe(0);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not add a BOM to a BOM-less file', async () => {
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => 'alpha beta'),
+      readBytes: headReadBytes(new TextEncoder().encode('alpha beta')),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/plain.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeBytes).not.toHaveBeenCalled();
   });
 });
