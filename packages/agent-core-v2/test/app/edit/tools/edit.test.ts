@@ -866,4 +866,80 @@ describe('EditTool', () => {
     expect(result.output).toContain('Replaced 1 occurrence');
     expect(writeBytes).not.toHaveBeenCalled();
   });
+
+  it('falls back to the plain text path when byte sniffing is unavailable', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const writeBytes = vi.fn(async () => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn().mockResolvedValue('alpha beta'),
+      writeText,
+      writeBytes,
+      readBytes: vi.fn(async () => {
+        throw Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' });
+      }),
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/buffer.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/buffer.txt', 'alpha gamma');
+    expect(writeBytes).not.toHaveBeenCalled();
+  });
+
+  it('preserves a leading U+FEFF content character after a UTF-8 BOM', async () => {
+    const content = '\uFEFFalpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(content, 'utf8')]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => content),
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/bom-zwnbsp.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual([
+      0xef,
+      0xbb,
+      0xbf,
+      ...Buffer.from('\uFEFFalpha gamma', 'utf8'),
+    ]);
+  });
+
+  it('preserves a leading U+FEFF content character after a UTF-16LE BOM', async () => {
+    const content = '\uFEFFalpha beta';
+    const full = new Uint8Array(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(content, 'utf16le')]));
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async (_path: string, options?: { encoding?: string }) => {
+        if (options?.encoding === 'utf16le') return content;
+        throw new Error('encoded text is not valid UTF-8');
+      }),
+      readBytes: headReadBytes(full),
+      writeBytes,
+    });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/le-zwnbsp.txt',
+      old_string: 'beta',
+      new_string: 'gamma',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual(
+      Array.from(Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('\uFEFFalpha gamma', 'utf16le')])),
+    );
+  });
 });
