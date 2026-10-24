@@ -192,3 +192,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** Fullscreen hosts can register synchronous `addLayoutEffect` callbacks after layout and search reveal, before terminal output. An effect's `requestRender` coalesces into another complete layout pass without invalidating component caches; only the settled frame is written. Search keeps its selected occurrence while effect-driven layout shifts rendered rows; selections retain their content when effects only add or remove leading empty rows. Effects must converge within ten passes or rendering throws. With no effects registered, the existing rendering path is preserved.
 
 **Why not in the app:** The settled scroll state and the opportunity to repeat layout before terminal output belong to the alternate-screen render path. Hosts cannot reach this point through component composition alone.
+
+### wezterm-images-survive-repaint — keep
+
+**Decision:** On WezTerm, capability detection reports the iTerm2 inline-image protocol instead of kitty.
+
+**Why not in the app:** WezTerm's kitty placements are cell-anchored and lose image content wherever text rows are rewritten, so a scrolling transcript pokes holes in the image until only a sliver remains (wezterm#986); the right protocol is a property of the terminal, not of the app. The per-terminal choice already lives in `detectCapabilitiesFromEnvironment`, and driving it from the app would mean re-detecting the terminal there just to call `setCapabilityOverrides`.
