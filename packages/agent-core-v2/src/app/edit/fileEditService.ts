@@ -25,15 +25,11 @@ async function readBomText(fs: IHostFileSystem, path: string, bom: ByteOrderMark
   try {
     const text = await fs.readText(path, options);
     if (!text.includes('\0')) {
-      return stripLeadingBomChar(text);
+      return text;
     }
   } catch {}
   const bytes = await fs.readBytes(path);
   return decodeUnicodeText(splitByteOrderMark(bytes).body, bom);
-}
-
-function stripLeadingBomChar(text: string): string {
-  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 export class FileEditService implements IFileEditService {
@@ -47,7 +43,10 @@ export class FileEditService implements IFileEditService {
 
   async edit(input: FileEditInput, fs: IHostFileSystem = this.fs): Promise<FileEditResult> {
     try {
-      const bom = splitByteOrderMark(await fs.readBytes(input.path, BOM_SNIFF_BYTES)).bom;
+      let bom: ByteOrderMark | undefined;
+      try {
+        bom = splitByteOrderMark(await fs.readBytes(input.path, BOM_SNIFF_BYTES)).bom;
+      } catch {}
       const raw = bom === undefined
         ? await fs.readText(input.path, { errors: 'strict' })
         : await readBomText(fs, input.path, bom);
