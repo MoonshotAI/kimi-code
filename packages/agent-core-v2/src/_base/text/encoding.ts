@@ -18,6 +18,8 @@ const MIN_ZERO_BYTES_FOR_UTF16 = 2;
 
 const UTF16BE_BOM = [0xfe, 0xff] as const;
 const UTF16LE_BOM = [0xff, 0xfe] as const;
+const UTF32BE_BOM = [0x00, 0x00, 0xfe, 0xff] as const;
+const UTF32LE_BOM = [0xff, 0xfe, 0x00, 0x00] as const;
 const UTF8_BOM = [0xef, 0xbb, 0xbf] as const;
 
 function sniffTextEncoding(sample: Uint8Array): TextEncodingDetection {
@@ -110,4 +112,108 @@ export function detectTextEncoding(sample: Uint8Array): TextEncodingDetection {
 
 export function decodeUtfText(bytes: Uint8Array, encoding: UtfTextEncoding): string {
   return new TextDecoder(encoding, { fatal: false }).decode(bytes);
+}
+
+export type ByteOrderMark = 'utf-8' | 'utf-16le' | 'utf-16be' | 'utf-32le' | 'utf-32be';
+
+export interface ByteOrderMarkSplit {
+  readonly bom: ByteOrderMark | undefined;
+  readonly body: Uint8Array;
+}
+
+export function splitByteOrderMark(bytes: Uint8Array): ByteOrderMarkSplit {
+  const b0 = bytes[0];
+  const b1 = bytes[1];
+  if (
+    b0 === UTF32BE_BOM[0] &&
+    b1 === UTF32BE_BOM[1] &&
+    bytes[2] === UTF32BE_BOM[2] &&
+    bytes[3] === UTF32BE_BOM[3]
+  ) {
+    return { bom: 'utf-32be', body: bytes.subarray(4) };
+  }
+  if (
+    b0 === UTF32LE_BOM[0] &&
+    b1 === UTF32LE_BOM[1] &&
+    bytes[2] === UTF32LE_BOM[2] &&
+    bytes[3] === UTF32LE_BOM[3]
+  ) {
+    return { bom: 'utf-32le', body: bytes.subarray(4) };
+  }
+  if (b0 === UTF8_BOM[0] && b1 === UTF8_BOM[1] && bytes[2] === UTF8_BOM[2]) {
+    return { bom: 'utf-8', body: bytes.subarray(3) };
+  }
+  if (b0 === UTF16BE_BOM[0] && b1 === UTF16BE_BOM[1]) {
+    return { bom: 'utf-16be', body: bytes.subarray(2) };
+  }
+  if (b0 === UTF16LE_BOM[0] && b1 === UTF16LE_BOM[1]) {
+    return { bom: 'utf-16le', body: bytes.subarray(2) };
+  }
+  return { bom: undefined, body: bytes };
+}
+
+export function byteOrderMarkBytes(bom: ByteOrderMark): Uint8Array {
+  switch (bom) {
+    case 'utf-8':
+      return Uint8Array.of(UTF8_BOM[0], UTF8_BOM[1], UTF8_BOM[2]);
+    case 'utf-16le':
+      return Uint8Array.of(UTF16LE_BOM[0], UTF16LE_BOM[1]);
+    case 'utf-16be':
+      return Uint8Array.of(UTF16BE_BOM[0], UTF16BE_BOM[1]);
+    case 'utf-32le':
+      return Uint8Array.of(UTF32LE_BOM[0], UTF32LE_BOM[1], UTF32LE_BOM[2], UTF32LE_BOM[3]);
+    case 'utf-32be':
+      return Uint8Array.of(UTF32BE_BOM[0], UTF32BE_BOM[1], UTF32BE_BOM[2], UTF32BE_BOM[3]);
+  }
+}
+
+export function decodeUnicodeText(bytes: Uint8Array, encoding: ByteOrderMark): string {
+  if (encoding === 'utf-8' || encoding === 'utf-16le' || encoding === 'utf-16be') {
+    return new TextDecoder(encoding, { fatal: true, ignoreBOM: true }).decode(bytes);
+  }
+  if (bytes.length % 4 !== 0) {
+    throw new TypeError('Invalid UTF-32 byte length');
+  }
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const little = encoding === 'utf-32le';
+  let text = '';
+  for (let i = 0; i < bytes.length; i += 4) {
+    const codePoint = view.getUint32(i, little);
+    if ((codePoint >= 0xd800 && codePoint <= 0xdfff) || codePoint > 0x10ffff) {
+      throw new TypeError('Invalid UTF-32 code point');
+    }
+    text += String.fromCodePoint(codePoint);
+  }
+  return text;
+}
+
+const UNPAIRED_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+export function encodeUnicodeText(text: string, encoding: ByteOrderMark): Uint8Array {
+  if (UNPAIRED_SURROGATE_RE.test(text)) {
+    throw new TypeError('Invalid text: unpaired surrogate');
+  }
+  if (encoding === 'utf-8') {
+    return new TextEncoder().encode(text);
+  }
+  if (encoding === 'utf-16le' || encoding === 'utf-16be') {
+    const le = Buffer.from(text, 'utf16le');
+    if (encoding === 'utf-16le') {
+      return le;
+    }
+    const be = Buffer.alloc(le.length);
+    for (let i = 0; i + 1 < le.length; i += 2) {
+      be[i] = le[i + 1]!;
+      be[i + 1] = le[i]!;
+    }
+    return be;
+  }
+  const units = Array.from(text);
+  const body = Buffer.alloc(units.length * 4);
+  const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+  const little = encoding === 'utf-32le';
+  for (let i = 0; i < units.length; i++) {
+    view.setUint32(i * 4, units[i]!.codePointAt(0)!, little);
+  }
+  return body;
 }

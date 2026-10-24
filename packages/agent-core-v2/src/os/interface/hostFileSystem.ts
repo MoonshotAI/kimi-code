@@ -19,6 +19,7 @@ export interface HostDirEntry {
 
 export interface IHostFileSystem {
   readonly _serviceBrand: undefined;
+  readonly clientBackedText?: boolean;
 
   readText(
     path: string,
