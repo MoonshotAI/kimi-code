@@ -22,7 +22,9 @@ import {
   ISessionIndex,
   ISessionManager,
   MAIN_AGENT_ID,
+  followSessionLifecycles,
   getLiveSessionById,
+  resumeSessionById,
   interactions,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
@@ -118,6 +120,7 @@ interface SessionState {
   readonly tracker: InFlightTurnTracker;
   readonly roster: SubagentRosterTracker;
   deferredWork?: SessionActivityState;
+  detached?: true;
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
   readonly targets: Map<BroadcastTarget, TargetSubscription>;
   queue: Promise<void>;
@@ -147,10 +150,13 @@ export class SessionEventBroadcaster {
   private readonly globalTargets = new Set<BroadcastTarget>();
   private readonly diEventTargets = new Set<BroadcastTarget>();
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
+  private readonly evictions = new Map<string, Promise<void>>();
   private readonly activityTrackers = new Map<string, LegacyActivityTracker>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private readonly deletionSubscription: IDisposable | undefined;
+  private readonly createSubscription: IDisposable | undefined;
+  private readonly lifecycleSubscription: IDisposable;
   private closed = false;
 
   constructor(
@@ -163,11 +169,34 @@ export class SessionEventBroadcaster {
     },
   ) {
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
-    this.deletionSubscription = opts.core.accessor.get(ISessionManager).onWillDeleteSession?.(
+    const sessionManager = opts.core.accessor.get(ISessionManager);
+    this.deletionSubscription = sessionManager.onWillDeleteSession?.(
       (event) => {
         event.waitUntil(this.purgeSession(event.sessionId));
       },
     );
+    this.lifecycleSubscription = followSessionLifecycles(opts.core.accessor, (service) => {
+      const closeSubscription = service.onDidCloseSession((event) => {
+        this.detachSession(event.sessionId);
+      });
+      const archiveSubscription = service.onDidArchiveSession((event) => {
+        this.evictSession(event.sessionId);
+      });
+      return {
+        dispose: () => {
+          closeSubscription.dispose();
+          archiveSubscription.dispose();
+        },
+      };
+    });
+    this.createSubscription = sessionManager.onDidCreateSession?.((event) => {
+      void this.reattachSession(event.sessionId).catch((error: unknown) =>
+        this.opts.logger?.warn(
+          { sessionId: event.sessionId, err: error },
+          'session event reattach failed',
+        ),
+      );
+    });
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
@@ -193,8 +222,17 @@ export class SessionEventBroadcaster {
     transcriptGrades?: TranscriptGradeSpec,
     opts?: { deferTranscriptReset?: boolean; transcriptSince?: Record<string, number> },
   ): Promise<boolean> {
+    try {
+      await resumeSessionById(this.opts.core.accessor, sessionId);
+    } catch (error) {
+      this.opts.logger?.warn(
+        { sessionId, err: error instanceof Error ? error.message : String(error) },
+        'session subscribe resume failed',
+      );
+      return false;
+    }
     const state = await this.ensureState(sessionId);
-    if (state === undefined) return false;
+    if (state === undefined || this.sessions.get(sessionId) !== state) return false;
     const prev = state.targets.get(target);
     state.targets.set(target, { agentFilter: filter, transcriptGrades });
     if (transcriptGrades !== undefined) {
@@ -256,6 +294,7 @@ export class SessionEventBroadcaster {
     state.targets.delete(target);
     state.transcriptSeeded.delete(target);
     state.deferredTranscriptSeeds.delete(target);
+    this.evictDetachedSession(sessionId);
   }
 
   unsubscribeTranscript(
@@ -527,15 +566,22 @@ export class SessionEventBroadcaster {
     this.closed = true;
     this.coreEventSubscription.dispose();
     this.deletionSubscription?.dispose();
-    await Promise.all(
-      [...this.pendingStates.values()].map((pending) => pending.catch(() => undefined)),
-    );
+    this.createSubscription?.dispose();
+    this.lifecycleSubscription.dispose();
+    const disposals: Promise<void>[] = [];
     for (const [sessionId, state] of this.sessions) {
-      await disposeSessionState(state);
+      disposals.push(disposeSessionState(state));
       this.dropActivityTrackers(sessionId);
       this.opts.transcriptService?.dropSession(sessionId);
     }
     this.sessions.clear();
+    await Promise.all(
+      [...this.pendingStates.values()].map((pending) => pending.catch(() => undefined)),
+    );
+    await Promise.all(
+      [...this.evictions.values()].map((eviction) => eviction.catch(() => undefined)),
+    );
+    await Promise.all(disposals);
   }
 
   private dropActivityTrackers(sessionId: string): void {
@@ -545,22 +591,105 @@ export class SessionEventBroadcaster {
   }
 
   private async purgeSession(sessionId: string): Promise<void> {
-    await this.pendingStates.get(sessionId);
+    this.evictSession(sessionId);
+    await this.evictions.get(sessionId);
+    await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
+  }
+
+  private evictSession(sessionId: string): void {
     const state = this.sessions.get(sessionId);
+    const pending = this.pendingStates.get(sessionId);
+    if (state === undefined && pending === undefined) {
+      this.opts.transcriptService?.dropSession(sessionId);
+      return;
+    }
+    if (state !== undefined) this.sessions.delete(sessionId);
+    const eviction = this.disposeLifecycleState(sessionId, state, pending).catch(
+      (error: unknown) => this.logDispatchDropped(sessionId, 'session.evict', error),
+    );
+    this.evictions.set(sessionId, eviction);
+    void eviction.finally(() => {
+      if (this.evictions.get(sessionId) === eviction) this.evictions.delete(sessionId);
+    });
+  }
+
+  private async disposeLifecycleState(
+    sessionId: string,
+    state: SessionState | undefined,
+    pending: Promise<SessionState | undefined> | undefined,
+  ): Promise<void> {
+    if (pending !== undefined) {
+      await pending.catch(() => undefined);
+      const late = this.sessions.get(sessionId);
+      if (late !== undefined) this.sessions.delete(sessionId);
+      await this.disposeEvicted(sessionId, state ?? late);
+      return;
+    }
+    await this.disposeEvicted(sessionId, state);
+  }
+
+  private async disposeEvicted(sessionId: string, state: SessionState | undefined): Promise<void> {
     if (state !== undefined) {
-      this.sessions.delete(sessionId);
       state.targets.clear();
+      await state.queue.catch(() => undefined);
       await disposeSessionState(state);
       this.dropActivityTrackers(sessionId);
     }
     this.opts.transcriptService?.dropSession(sessionId);
-    await rm(sessionJournalPath(this.opts.eventsDir, sessionId), { force: true });
   }
 
-  private ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return Promise.resolve(undefined);
+  private detachSession(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached === true) return;
+    state.detached = true;
+    for (const disposable of state.lifecycleDisposables) disposable.dispose();
+    state.lifecycleDisposables.length = 0;
+    for (const disposable of state.agentDisposables.values()) disposable.dispose();
+    state.agentDisposables.clear();
+    state.knownInteractions.clear();
+    state.tracker.clear(sessionId);
+    state.roster.clear(sessionId);
+    state.deferredWork = undefined;
+    state.transcriptSeeded.clear();
+    state.deferredTranscriptSeeds.clear();
+    state.transcriptStream = undefined;
+    this.dropActivityTrackers(sessionId);
+    this.opts.transcriptService?.dropSession(sessionId);
+    this.evictDetachedSession(sessionId);
+  }
+
+  private evictDetachedSession(sessionId: string): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached !== true || state.targets.size > 0) return;
+    this.evictSession(sessionId);
+  }
+
+  private async reattachSession(sessionId: string): Promise<void> {
+    await this.pendingStates.get(sessionId);
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached !== true) return;
+    const session = getLiveSessionById(this.opts.core.accessor, sessionId);
+    if (session === undefined) return;
+    state.detached = undefined;
+    this.attachWorkView(session, state);
+    this.attachAgents(sessionId, session, state);
+    this.attachInteractions(sessionId, state);
+    for (const [target, subscription] of state.targets) {
+      if (subscription.transcriptGrades === undefined) continue;
+      await this.subscribeTranscript(state, target, subscription.transcriptGrades, undefined);
+      if (state.targets.has(target)) state.transcriptSeeded.add(target);
+    }
+  }
+
+  private async ensureState(sessionId: string): Promise<SessionState | undefined> {
+    if (this.closed) return undefined;
+    await this.evictions.get(sessionId);
     const existing = this.sessions.get(sessionId);
-    if (existing !== undefined) return Promise.resolve(existing);
+    if (existing !== undefined) {
+      if (existing.detached !== true) return existing;
+      await this.reattachSession(sessionId);
+      return existing.detached === true ? undefined : existing;
+    }
     let pending = this.pendingStates.get(sessionId);
     if (pending === undefined) {
       pending = this.createSessionState(sessionId).finally(() => {

@@ -29,6 +29,8 @@ export interface ISessionActivityView {
 
   state(): SessionActivityState;
 
+  lastActiveAt(): number;
+
   readonly onDidChange: Event<SessionActivityChangedEvent>;
 }
 

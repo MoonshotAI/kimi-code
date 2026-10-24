@@ -80,7 +80,7 @@ describe('WorkspaceService (file-backed)', () => {
     storage?: IFileSystemStorageService,
   ): IWorkspaceService {
     const fileStorage = storage ?? new FileStorageService(homeDir);
-    appendLogs = new AppendLogStore(fileStorage);
+    appendLogs = new AppendLogStore(fileStorage, noopLog);
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),

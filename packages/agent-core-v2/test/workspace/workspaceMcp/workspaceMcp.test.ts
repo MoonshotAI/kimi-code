@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vite
 import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
 
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
 import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
@@ -385,6 +385,7 @@ describe('WorkspaceMcpService', () => {
       const disposers: Array<() => void> = [];
       const event: SessionWillCreateEvent = {
         sessionId: 's1',
+        onDidCreateScope: () => Disposable.None,
         readSeed: <T>(id: ServiceIdentifier<T>): T => seeds.get(id) as T,
         contributeSeed: (id, value) => {
           contributed.set(id, value);
