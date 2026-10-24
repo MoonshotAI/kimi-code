@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { IAtomicDocumentStore, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -329,6 +330,229 @@ describe('server-v2 /api/v1/workspaces', () => {
 
     const { body } = await postJson<null>(`/api/v1/workspaces/${id}/add-dir`, {});
     expect(body.code).toBe(40001);
+  });
+
+  it('reads and writes trust without materializing the workspace runtime', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-no-runtime-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      expect(created.body.code).toBe(0);
+      const id = created.body.data.id;
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const getOrCreate = vi.spyOn(manager, 'getOrCreate').mockRejectedValue(
+        new Error('runtime environment unavailable'),
+      );
+      try {
+        const initial = await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+        expect(initial.body.code).toBe(0);
+        expect(initial.body.data.trusted).toBe(false);
+
+        const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+        expect(trusted.body.code).toBe(0);
+        expect(trusted.body.data.trusted).toBe(true);
+
+        const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+        expect(revoked.body.code).toBe(0);
+        expect(revoked.body.data.trusted).toBe(false);
+        expect(getOrCreate).not.toHaveBeenCalled();
+      } finally {
+        getOrCreate.mockRestore();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns trust storage errors with their original message and request id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-error-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      const failure = new Error('trust storage unavailable');
+      const read = vi.spyOn(docs, 'get').mockRejectedValue(failure);
+      try {
+        const responses = [
+          await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`),
+          await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`),
+          await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`),
+        ];
+        for (const response of responses) {
+          expect(response.body.code).toBe(50001);
+          expect(response.body.msg).toBe(failure.message);
+          expect(response.body.request_id).not.toBe('');
+        }
+      } finally {
+        read.mockRestore();
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns trust write and delete failures and allows later mutations to succeed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-mutation-error-'));
+    try {
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      await getJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+
+      const writeFailure = new Error('trust marker write failed');
+      const write = vi.spyOn(docs, 'set').mockRejectedValueOnce(writeFailure);
+      const writeError = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(writeError.body.code).toBe(50001);
+      expect(writeError.body.msg).toBe(writeFailure.message);
+      expect(writeError.body.request_id).not.toBe('');
+      write.mockRestore();
+
+      const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(trusted.body.code).toBe(0);
+      expect(trusted.body.data.trusted).toBe(true);
+
+      const deleteFailure = new Error('trust marker delete failed');
+      const deletion = vi.spyOn(docs, 'delete').mockRejectedValueOnce(deleteFailure);
+      const deleteError = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(deleteError.body.code).toBe(50001);
+      expect(deleteError.body.msg).toBe(deleteFailure.message);
+      expect(deleteError.body.request_id).not.toBe('');
+      deletion.mockRestore();
+
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.code).toBe(0);
+      expect(revoked.body.data.trusted).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reloads project config when trust initialization recovers to an existing marker', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-recovery-'));
+    try {
+      await mkdir(join(root, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(root, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { projectOnly: { command: 'project-only' } } }),
+        'utf8',
+      );
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      await docs.set('workspace-trust', encodeWorkDirKey(root), { root, trustedAt: 1 });
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const read = docs.get.bind(docs);
+      let shouldFail = true;
+      let failed = false;
+      const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
+        if (shouldFail && scope === 'workspace-trust') {
+          shouldFail = false;
+          failed = true;
+          throw new Error('temporary trust read failure');
+        }
+        return read<T>(scope, key);
+      });
+      let materialized = false;
+      try {
+        const workspace = await manager.getOrCreate({ workspaceId: id, root });
+        materialized = true;
+        await workspace.program.mcpConfig.ready;
+        expect(failed).toBe(true);
+        expect(workspace.program.mcpConfig.servers()).toEqual({});
+        const recovered: boolean[] = [];
+        workspace.program.trust.onDidChange((change) => recovered.push(change.trusted));
+
+        const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+        expect(trusted.body.code).toBe(0);
+        expect(trusted.body.data.trusted).toBe(true);
+        expect(workspace.program.trust.isTrusted()).toBe(true);
+
+        await vi.waitFor(() => {
+          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+        });
+        expect(recovered).toEqual([true]);
+      } finally {
+        get.mockRestore();
+        if (materialized) await manager.close(id);
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reloads project config after a failed initial read under the environment override', async () => {
+    vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-env-recovery-'));
+    try {
+      await mkdir(join(root, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(root, '.kimi-code', 'mcp.json'),
+        JSON.stringify({ mcpServers: { projectOnly: { command: 'project-only' } } }),
+        'utf8',
+      );
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
+      const docs = (server as RunningServer).core.accessor.get(IAtomicDocumentStore);
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const read = docs.get.bind(docs);
+      let shouldFail = true;
+      let failed = false;
+      const get = vi.spyOn(docs, 'get').mockImplementation(async <T>(scope: string, key: string) => {
+        if (shouldFail && scope === 'workspace-trust') {
+          shouldFail = false;
+          failed = true;
+          throw new Error('temporary trust read failure');
+        }
+        return read<T>(scope, key);
+      });
+      let materialized = false;
+      try {
+        const workspace = await manager.getOrCreate({ workspaceId: id, root });
+        materialized = true;
+        await workspace.program.mcpConfig.ready;
+        expect(failed).toBe(true);
+        expect(workspace.program.mcpConfig.servers()).toEqual({});
+
+        const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+        expect(revoked.body.code).toBe(0);
+        expect(revoked.body.data.trusted).toBe(true);
+
+        await vi.waitFor(() => {
+          expect(workspace.program.mcpConfig.servers()).toHaveProperty('projectOnly');
+        });
+      } finally {
+        get.mockRestore();
+        if (materialized) await manager.close(id);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('shares route trust changes with an already materialized workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-trust-shared-'));
+    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+    expect(created.body.code).toBe(0);
+    const id = created.body.data.id;
+    const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+    try {
+      const workspace = await manager.getOrCreate({ workspaceId: id, root });
+      await workspace.program.trust.ready;
+      const events: boolean[] = [];
+      workspace.program.trust.onDidChange((change) => events.push(change.trusted));
+
+      const trusted = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/trust`);
+      expect(trusted.body.code).toBe(0);
+      expect(workspace.program.trust.isTrusted()).toBe(true);
+
+      const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
+      expect(revoked.body.code).toBe(0);
+      expect(workspace.program.trust.isTrusted()).toBe(false);
+      expect(events).toEqual([true, false]);
+    } finally {
+      await manager.close(id);
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('reports the effective trust state after untrust while KIMI_CODE_TRUST_WORKSPACE is set', async () => {

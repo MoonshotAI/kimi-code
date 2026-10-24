@@ -56,16 +56,22 @@ describe('RuntimeRegistry', () => {
 
   it('allows degraded generations only when every required capability remains available', () => {
     const registry = new RuntimeRegistry('workspace');
-    const current = runtime('one');
+    const current = Object.assign(
+      new FakeRuntime(
+        { workspaceId: 'workspace', runtimeId: 'local', generation: 'one' },
+        { capabilities: ['fs'] },
+      ),
+      { fs: {} as never },
+    );
     registry.register(current);
     current.setStatus('degraded');
 
-    const lease = registry.acquire({ workspaceId: 'workspace', runtimeId: 'local' }, ['fs', 'process']);
+    const lease = registry.acquire({ workspaceId: 'workspace', runtimeId: 'local' }, ['fs']);
     expect(lease.runtime).toBe(current);
     lease.dispose();
     expect(() => registry.acquire(
       { workspaceId: 'workspace', runtimeId: 'local' },
-      ['terminal'],
+      ['process'],
     )).toThrowError(expect.objectContaining<Partial<RuntimeError>>({ code: 'runtime.unavailable' }));
   });
 

@@ -41,6 +41,8 @@ export const PREFLIGHT_CODES = new Set<string>([
   "session.state_not_found",
   "session.state_invalid",
   "session.init_failed",
+  "session.occupied",
+  "session.stale",
   "shell.git_bash_not_found",
 ]);
 
@@ -80,6 +82,9 @@ export const ERROR_MESSAGES: Record<string, string> = {
   "session.init_failed": "Failed to initialize the session.",
   "session.closed": "Session was closed.",
   "session.fork_active_turn": "Wait for the current response before forking.",
+  "session.occupied":
+    "This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.",
+  "session.stale": "Session was updated by another client. Reopen the session to load the latest updates.",
   "turn.agent_busy": "A message is being sent. Please wait.",
   "provider.api_error": "Service temporarily unavailable.",
   "provider.rate_limit": "Too many requests. Please try again later.",

@@ -5,7 +5,6 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "postinstall": "node scripts/fix-node-pty-perms.mjs",
     "build": "pnpm -r run build",
     "build:packages": "pnpm -r --filter './packages/*' run build",
     "dev:cli": "pnpm -C apps/kimi-code run dev",
@@ -45,9 +44,10 @@
     "pkg-pr-new": "0.0.75",
     "publint": "0.3.18",
     "sherif": "1.11.1",
-    "tsdown": "0.22.0",
+    "tsdown": "0.23.1",
     "tsx": "^4.21.0",
-    "typescript": "6.0.2",
+    "typescript": "7.0.2",
+    "typescript-legacy": "npm:typescript@6.0.2",
     "vitest": "4.1.4"
   },
   "lint-staged": {

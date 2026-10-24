@@ -28,6 +28,7 @@ import {
   IEventService,
   ISessionManager,
   ISessionMetadata,
+  ISessionTitleService,
   IWireService,
   IWorkspaceService,
   MAIN_AGENT_ID,
@@ -38,6 +39,7 @@ import {
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
@@ -671,6 +673,7 @@ describe('server-v2 /api/v1/sessions', () => {
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
       getRegion: () => 'mainland-cn',
+      getRegionAsync: async () => 'mainland-cn',
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -760,6 +763,39 @@ describe('server-v2 /api/v1/sessions', () => {
     );
 
     expect(generated.body.code).toBe(40401);
+  });
+
+  it('serializes occupied errors from metadata mutation routes', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const handle = getLiveSessionById((server as RunningServer).core.accessor, id)!;
+    const occupied = new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied');
+
+    const setTitle = vi
+      .spyOn(handle.accessor.get(ISessionMetadata), 'setTitle')
+      .mockRejectedValue(occupied);
+    const profile = await postJson(`/api/v1/sessions/${id}/profile`, { title: 'occupied' });
+    expect(profile.status).toBe(200);
+    expect(profile.body.code).toBe(40931);
+    setTitle.mockRestore();
+
+    const generateTitle = vi
+      .spyOn(handle.accessor.get(ISessionTitleService), 'generateTitle')
+      .mockRejectedValue(occupied);
+    const generated = await postJson(`/api/v1/sessions/${id}/title/generate`);
+    expect(generated.status).toBe(200);
+    expect(generated.body.code).toBe(40931);
+    generateTitle.mockRestore();
+
+    const createChild = vi
+      .spyOn((server as RunningServer).core.accessor.get(ISessionManager), 'createChild')
+      .mockRejectedValue(occupied);
+    const child = await postJson(`/api/v1/sessions/${id}/children`, {});
+    expect(child.status).toBe(200);
+    expect(child.body.code).toBe(40931);
+    createChild.mockRestore();
   });
 
   it('returns best-effort status for a live session', async () => {
@@ -900,6 +936,29 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(refreshed.body.data?.status).toBe('active');
     } finally {
       await rig.cancel();
+    }
+  });
+
+  it('takes over the session lock via :takeover', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const takeover = vi.spyOn(
+      (server as RunningServer).core.accessor.get(ISessionLockService),
+      'takeover',
+    );
+    try {
+      const taken = await postJson<{ taken_over: boolean }>(`/api/v1/sessions/${id}:takeover`);
+      expect(taken.body.code).toBe(0);
+      expect(taken.body.data).toEqual({ taken_over: true });
+      expect(takeover).toHaveBeenCalledWith(id);
+
+      const missing = await postJson<null>('/api/v1/sessions/sess_missing_takeover:takeover');
+      expect(missing.body.code).toBe(40401);
+      expect(takeover).toHaveBeenCalledTimes(1);
+    } finally {
+      takeover.mockRestore();
     }
   });
 
