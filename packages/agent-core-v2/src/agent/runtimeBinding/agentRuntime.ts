@@ -4,7 +4,7 @@ import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope } from '#/app/scopes';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
-import { runtimeStatusAllows, type RuntimeGenerationSnapshot } from '#/runtime/runtimeRegistry';
+import { RuntimeError, runtimeStatusAllows, type RuntimeGenerationSnapshot } from '#/runtime/runtimeRegistry';
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
@@ -76,7 +76,13 @@ export class AgentRuntimeService implements IAgentRuntimeService {
   }
 
   inspect(): Runtime {
-    return this.resolver.inspect(this.binding.current);
+    try {
+      return this.resolver.inspect(this.binding.current);
+    } catch (error) {
+      if (!(error instanceof RuntimeError) || error.code !== 'runtime.not_found') throw error;
+      this.heal(error);
+      return this.resolver.inspect(this.binding.current);
+    }
   }
 
   isAvailable(required: readonly RuntimeCapability[] = []): boolean {
@@ -89,7 +95,13 @@ export class AgentRuntimeService implements IAgentRuntimeService {
   }
 
   acquire(required: readonly RuntimeCapability[] = []): RuntimeLease {
-    return this.resolver.acquire(this.binding.current, required);
+    try {
+      return this.resolver.acquire(this.binding.current, required);
+    } catch (error) {
+      if (!(error instanceof RuntimeError) || error.code !== 'runtime.not_found') throw error;
+      this.heal(error);
+      return this.resolver.acquire(this.binding.current, required);
+    }
   }
 
   dispose(): void {
@@ -102,6 +114,17 @@ export class AgentRuntimeService implements IAgentRuntimeService {
   private rebind(): void {
     this.bindRegistry();
     this.changeEmitter.fire();
+  }
+
+  private heal(error: RuntimeError): void {
+    const current = this.binding.current;
+    if (current.runtimeId === 'local') throw error;
+    try {
+      this.binding.set({ workspaceId: current.workspaceId, runtimeId: 'local' });
+    } catch (fallbackError) {
+      error.cause = fallbackError;
+      throw error;
+    }
   }
 
   private bindRegistry(): void {
