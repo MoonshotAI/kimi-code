@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  byteOrderMarkBytes,
   classifyTextSample,
+  decodeUnicodeText,
   decodeUtfText,
   detectTextEncoding,
+  encodeUnicodeText,
   ENCODING_DETECTION_SAMPLE_BYTES,
+  splitByteOrderMark,
 } from '#/_base/text/encoding';
 import { splitLinesKeepingTerminator } from '#/_base/text/line-endings';
 
@@ -20,6 +24,20 @@ function utf16Be(text: string): Buffer {
     be[i + 1] = le[i]!;
   }
   return be;
+}
+
+function utf32Le(text: string): Buffer {
+  const units = Array.from(text);
+  const buf = Buffer.alloc(units.length * 4);
+  units.forEach((u, i) => buf.writeUInt32LE(u.codePointAt(0)!, i * 4));
+  return buf;
+}
+
+function utf32Be(text: string): Buffer {
+  const units = Array.from(text);
+  const buf = Buffer.alloc(units.length * 4);
+  units.forEach((u, i) => buf.writeUInt32BE(u.codePointAt(0)!, i * 4));
+  return buf;
 }
 
 describe('detectTextEncoding', () => {
@@ -161,6 +179,114 @@ describe('decodeUtfText', () => {
 
   it('replaces malformed sequences instead of throwing', () => {
     expect(decodeUtfText(Buffer.from([0xff]), 'utf-16le')).toBe('�');
+  });
+});
+
+describe('splitByteOrderMark', () => {
+  it('splits a UTF-8 BOM from the body', () => {
+    const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('text', 'utf8')]);
+    const split = splitByteOrderMark(bytes);
+    expect(split.bom).toBe('utf-8');
+    expect(Buffer.from(split.body).toString('utf8')).toBe('text');
+  });
+
+  it('splits UTF-16 LE/BE BOMs from the body', () => {
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe]), utf16Le('hi')]);
+    expect(splitByteOrderMark(le).bom).toBe('utf-16le');
+    const be = Buffer.concat([Buffer.from([0xfe, 0xff]), utf16Be('hi')]);
+    expect(splitByteOrderMark(be).bom).toBe('utf-16be');
+  });
+
+  it('splits UTF-32 LE/BE BOMs from the body', () => {
+    const le = Buffer.concat([Buffer.from([0xff, 0xfe, 0x00, 0x00]), utf32Le('hi')]);
+    expect(splitByteOrderMark(le).bom).toBe('utf-32le');
+    expect(Buffer.from(splitByteOrderMark(le).body).equals(utf32Le('hi'))).toBe(true);
+    const be = Buffer.concat([Buffer.from([0x00, 0x00, 0xfe, 0xff]), utf32Be('hi')]);
+    expect(splitByteOrderMark(be).bom).toBe('utf-32be');
+    expect(Buffer.from(splitByteOrderMark(be).body).equals(utf32Be('hi'))).toBe(true);
+  });
+
+  it('prefers the UTF-32LE BOM over the UTF-16LE prefix it starts with', () => {
+    expect(splitByteOrderMark(Buffer.from([0xff, 0xfe, 0x00, 0x00, 0x61])).bom).toBe('utf-32le');
+  });
+
+  it('returns the original bytes when there is no BOM', () => {
+    const bytes = Buffer.from('plain', 'utf8');
+    const split = splitByteOrderMark(bytes);
+    expect(split.bom).toBeUndefined();
+    expect(split.body).toBe(bytes);
+  });
+
+  it('does not misread short or BOM-like prefixes', () => {
+    expect(splitByteOrderMark(Buffer.from([0xef, 0xbb])).bom).toBeUndefined();
+    expect(splitByteOrderMark(Buffer.from([0xef])).bom).toBeUndefined();
+    expect(splitByteOrderMark(new Uint8Array()).bom).toBeUndefined();
+    expect(splitByteOrderMark(Buffer.from([0xff, 0x00])).bom).toBeUndefined();
+    expect(splitByteOrderMark(Buffer.from([0xff, 0xfe, 0x00, 0x61])).bom).toBe('utf-16le');
+    expect(splitByteOrderMark(Buffer.from([0x00, 0x00, 0xfe, 0x61])).bom).toBeUndefined();
+  });
+});
+
+describe('byteOrderMarkBytes', () => {
+  it('returns the canonical BOM byte sequences', () => {
+    expect(Array.from(byteOrderMarkBytes('utf-8'))).toEqual([0xef, 0xbb, 0xbf]);
+    expect(Array.from(byteOrderMarkBytes('utf-16le'))).toEqual([0xff, 0xfe]);
+    expect(Array.from(byteOrderMarkBytes('utf-16be'))).toEqual([0xfe, 0xff]);
+    expect(Array.from(byteOrderMarkBytes('utf-32le'))).toEqual([0xff, 0xfe, 0x00, 0x00]);
+    expect(Array.from(byteOrderMarkBytes('utf-32be'))).toEqual([0x00, 0x00, 0xfe, 0xff]);
+  });
+});
+
+describe('decodeUnicodeText', () => {
+  it('decodes all five encodings strictly', () => {
+    const text = 'hi 世界 🚀\n';
+    expect(decodeUnicodeText(new TextEncoder().encode(text), 'utf-8')).toBe(text);
+    expect(decodeUnicodeText(utf16Le(text), 'utf-16le')).toBe(text);
+    expect(decodeUnicodeText(utf16Be(text), 'utf-16be')).toBe(text);
+    expect(decodeUnicodeText(utf32Le(text), 'utf-32le')).toBe(text);
+    expect(decodeUnicodeText(utf32Be(text), 'utf-32be')).toBe(text);
+  });
+
+  it('throws on malformed payloads instead of replacing', () => {
+    expect(() => decodeUnicodeText(Buffer.from([0xff]), 'utf-8')).toThrow();
+    expect(() => decodeUnicodeText(Buffer.from([0x61]), 'utf-16le')).toThrow();
+    expect(() => decodeUnicodeText(utf32Le('hi').subarray(0, 6), 'utf-32le')).toThrow();
+    const surrogate = Buffer.from([0x00, 0x00, 0xd8, 0x00]);
+    expect(() => decodeUnicodeText(surrogate, 'utf-32be')).toThrow();
+    const beyondAstral = Buffer.from([0x00, 0x11, 0x00, 0x00]);
+    expect(() => decodeUnicodeText(beyondAstral, 'utf-32be')).toThrow();
+  });
+
+  it('decodes an empty body', () => {
+    for (const encoding of ['utf-8', 'utf-16le', 'utf-16be', 'utf-32le', 'utf-32be'] as const) {
+      expect(decodeUnicodeText(new Uint8Array(), encoding)).toBe('');
+    }
+  });
+});
+
+describe('encodeUnicodeText', () => {
+  it('encodes UTF-8 without adding a BOM', () => {
+    expect(Array.from(encodeUnicodeText('abc', 'utf-8'))).toEqual(Array.from(Buffer.from('abc', 'utf8')));
+  });
+
+  it('encodes UTF-16 LE/BE with the expected byte order', () => {
+    expect(Array.from(encodeUnicodeText('你好', 'utf-16le'))).toEqual(Array.from(utf16Le('你好')));
+    expect(Array.from(encodeUnicodeText('你好', 'utf-16be'))).toEqual(Array.from(utf16Be('你好')));
+  });
+
+  it('encodes UTF-32 LE/BE with the expected byte order', () => {
+    expect(Array.from(encodeUnicodeText('hi 🚀', 'utf-32le'))).toEqual(Array.from(utf32Le('hi 🚀')));
+    expect(Array.from(encodeUnicodeText('hi 🚀', 'utf-32be'))).toEqual(Array.from(utf32Be('hi 🚀')));
+  });
+
+  it('round-trips through byteOrderMarkBytes + decodeUnicodeText for all five encodings', () => {
+    for (const encoding of ['utf-8', 'utf-16le', 'utf-16be', 'utf-32le', 'utf-32be'] as const) {
+      const bom = byteOrderMarkBytes(encoding);
+      const payload = Buffer.concat([Buffer.from(bom), Buffer.from(encodeUnicodeText('hi 世界 🚀', encoding))]);
+      const split = splitByteOrderMark(payload);
+      expect(split.bom).toBe(encoding);
+      expect(decodeUnicodeText(split.body, encoding)).toBe('hi 世界 🚀');
+    }
   });
 });
 
