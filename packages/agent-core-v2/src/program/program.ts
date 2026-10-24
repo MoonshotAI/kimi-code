@@ -151,7 +151,6 @@ export class Program {
   get skills(): IWorkspaceSkillCatalog { return this.requireGeneration().skills; }
   get agentProfiles(): IWorkspaceAgentProfileLoader { return this.requireGeneration().agentProfiles; }
   get userAgentProfiles(): IUserAgentProfileLoader { return this.requireGeneration().userAgentProfiles; }
-  get explicitAgentProfiles(): IExplicitAgentProfileLoader { return this.requireGeneration().explicitAgentProfiles; }
   get sessionControllerGeneration(): string { return this.requireGeneration().id; }
 
   createSessionController(): SessionLifecycleService {

@@ -10,6 +10,7 @@ import {
   IAgentProfileRegistry,
   type AgentProfileRegistration,
 } from '#/app/agentProfileCatalog/agentProfileRegistry';
+import { AGENT_PROFILE_SOURCE_PRIORITY } from '#/app/agentProfileCatalog/agentProfileContribution';
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 
 import { ISessionAgentProfileCatalogSeed } from './agentProfileCatalogSeed';
@@ -92,9 +93,20 @@ export class SessionAgentProfileCatalogService
 
   private relevantEntries(): AgentProfileRegistration[] {
     const key = this.seed.workspaceKey;
-    return this.registry
+    const shared = this.registry
       .entries()
       .filter((e) => e.workspaceKey === undefined || e.workspaceKey === key);
+    const sessionProfiles = this.seed.profiles;
+    if (sessionProfiles === undefined || sessionProfiles.length === 0) return shared;
+    return [
+      {
+        sourceId: 'explicit',
+        priority: AGENT_PROFILE_SOURCE_PRIORITY.explicit,
+        workspaceKey: key,
+        contribution: { profiles: sessionProfiles },
+      },
+      ...shared,
+    ];
   }
 
   private reproject(): void {

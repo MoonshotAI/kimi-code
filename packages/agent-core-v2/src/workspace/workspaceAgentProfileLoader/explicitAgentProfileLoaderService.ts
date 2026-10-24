@@ -43,19 +43,35 @@ export class ExplicitAgentProfileLoaderService
   }
 
   protected async load(): Promise<AgentProfileContribution> {
-    const files = this.bootstrap.args.agentFiles ?? [];
-    const profiles: AgentProfile[] = [];
-    for (const file of files) {
-      const filePath = resolveAgentPath(file, this.workspace.cwd, this.bootstrap.osHomeDir);
-      const text = await this.fs.readText(filePath);
-      profiles.push(
-        agentProfileFromFile(
-          parseAgentFileText({ path: filePath, source: 'explicit', text }),
-          (context) => this.user.getDefaultProfile().renderSystemPrompt(context),
-        ),
-      );
-    }
+    const profiles = await loadExplicitAgentProfiles(
+      this.bootstrap.args.agentFiles ?? [],
+      this.workspace.cwd,
+      this.bootstrap.osHomeDir,
+      this.fs,
+      this.user,
+    );
     return { profiles };
   }
+}
+
+export async function loadExplicitAgentProfiles(
+  files: readonly string[],
+  cwd: string,
+  osHomeDir: string,
+  fs: IHostFileSystem,
+  user: IUserAgentProfileLoader,
+): Promise<AgentProfile[]> {
+  const profiles: AgentProfile[] = [];
+  for (const file of files) {
+    const filePath = resolveAgentPath(file, cwd, osHomeDir);
+    const text = await fs.readText(filePath);
+    profiles.push(
+      agentProfileFromFile(
+        parseAgentFileText({ path: filePath, source: 'explicit', text }),
+        (context) => user.getDefaultProfile().renderSystemPrompt(context),
+      ),
+    );
+  }
+  return profiles;
 }
 

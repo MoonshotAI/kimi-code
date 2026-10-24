@@ -1399,11 +1399,11 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // `--agent` / `--agent-file` select the main-agent profile; an agent file
     // is parsed before the session exists so a bad file creates nothing.
     const agentProfileName = await this.resolveStartupAgentProfile(input, workDir);
-    await this.seedSessionAgentFiles(input, workDir);
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
       additionalDirs: input.additionalDirs,
+      agentFiles: input.agentFiles,
     });
     // Wired before the optional main-agent materialization so a profile-bind
     // warning (oversized AGENTS.md) reaches the listeners like v1's create.
@@ -1925,33 +1925,6 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         { cause: error },
       );
     }
-  }
-
-  /**
-   * The workspace explicit-profile loader reads only
-   * `IBootstrapService.args.agentFiles`, and this client bootstraps without
-   * them, so a profile supplied only through `agentFiles` would be missing
-   * from the session catalog. Seed the session's files through that channel
-   * (the one print mode fills at bootstrap) and reload the loader so the
-   * catalog has the profile before the main agent binds it. Clearing on the
-   * no-agent-file path stops a previous session's files leaking into the
-   * next workspace.
-   */
-  private async seedSessionAgentFiles(input: CreateSessionOptions, workDir: string): Promise<void> {
-    const sessionAgentFiles =
-      input.agentFiles !== undefined && input.agentFiles.length > 0
-        ? [...input.agentFiles]
-        : undefined;
-    const hostArgs = this.engineAccessor.get(IBootstrapService).args as {
-      agentFiles?: readonly string[];
-    };
-    if (sessionAgentFiles === undefined && hostArgs.agentFiles === undefined) return;
-    hostArgs.agentFiles = sessionAgentFiles;
-    const workspace = await this.engineAccessor
-      .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: workDir });
-    await workspace.program.ready;
-    await workspace.program.explicitAgentProfiles.reload();
   }
 
   /** The target agent's live scope handle (see the section header). */

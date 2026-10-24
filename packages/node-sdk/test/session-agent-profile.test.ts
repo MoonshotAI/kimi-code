@@ -23,6 +23,7 @@ import {
   IAgentLifecycleService,
   IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
+import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 
 import { SDKRpcClientV2 } from '#/index';
 
@@ -142,7 +143,7 @@ describe('SDKRpcClientV2.createSession startup agent profile', () => {
     // Supplied solely through `agentFiles`: the file lives at the (otherwise
     // empty) workDir root — not under <homeDir>/agents and not under any
     // project agent root (.kimi-code/agents / .agents/agents) — so only the
-    // engine's explicit loader (which the SDK seeds from `agentFiles`) can
+    // session's own agent files (passed through to session create) can
     // register it. Without that registration the parsed profile name is absent
     // from the session catalog and `profile.bind` would reject it as unknown.
     const agentFilePath = join(workDir, 'explicit-only.md');
@@ -190,6 +191,58 @@ You are an explicit agent-file-only profile.
       expect(listed.map((session) => session.id)).not.toContain(id);
       const retry = await rpc.createSession({ id, workDir, model: 'kimi-test-model' });
       expect(retry.id).toBe(id);
+    } finally {
+      await rpc.close();
+    }
+  });
+
+  it('keeps --agent-file profiles scoped to the session that supplied them', async () => {
+    const homeDir = await makeTempDir('kimi-sdk-agent-file-home-');
+    const workDir = await makeTempDir('kimi-sdk-agent-file-work-');
+    await writeTestHome(homeDir);
+    const writeAgentFile = async (name: string, tool: string): Promise<string> => {
+      const filePath = join(workDir, `${name}.md`);
+      await writeFile(
+        filePath,
+        `---
+name: ${name}
+description: Agent-file-only profile ${name}.
+tools:
+  - ${tool}
+---
+
+You are ${name}.
+`,
+        'utf-8',
+      );
+      return filePath;
+    };
+    const alphaFile = await writeAgentFile('alpha-only', 'Read');
+    const betaFile = await writeAgentFile('beta-only', 'Glob');
+    const rpc = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const catalogNames = (sessionId: string): string[] => {
+      const session = getLiveSessionById(rpc.engineAccessor, sessionId);
+      if (session === undefined) throw new Error(`live session "${sessionId}" not found`);
+      return session.accessor
+        .get(ISessionAgentProfileCatalog)
+        .list()
+        .map((profile) => profile.name);
+    };
+    try {
+      const [alpha, beta] = await Promise.all([
+        rpc.createSession({ workDir, model: 'kimi-test-model', agentFiles: [alphaFile] }),
+        rpc.createSession({ workDir, model: 'kimi-test-model', agentFiles: [betaFile] }),
+      ]);
+      const plain = await rpc.createSession({ workDir, model: 'kimi-test-model' });
+
+      expect((await mainAgentProfileData(rpc, alpha.id)).profileName).toBe('alpha-only');
+      expect((await mainAgentProfileData(rpc, beta.id)).profileName).toBe('beta-only');
+      expect(catalogNames(alpha.id)).toContain('alpha-only');
+      expect(catalogNames(alpha.id)).not.toContain('beta-only');
+      expect(catalogNames(beta.id)).toContain('beta-only');
+      expect(catalogNames(beta.id)).not.toContain('alpha-only');
+      expect(catalogNames(plain.id)).not.toContain('alpha-only');
+      expect(catalogNames(plain.id)).not.toContain('beta-only');
     } finally {
       await rpc.close();
     }
