@@ -169,7 +169,7 @@ export function byteOrderMarkBytes(bom: ByteOrderMark): Uint8Array {
 
 export function decodeUnicodeText(bytes: Uint8Array, encoding: ByteOrderMark): string {
   if (encoding === 'utf-8' || encoding === 'utf-16le' || encoding === 'utf-16be') {
-    return new TextDecoder(encoding, { fatal: true }).decode(bytes);
+    return new TextDecoder(encoding, { fatal: true, ignoreBOM: true }).decode(bytes);
   }
   if (bytes.length % 4 !== 0) {
     throw new TypeError('Invalid UTF-32 byte length');
