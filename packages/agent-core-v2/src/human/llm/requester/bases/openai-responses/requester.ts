@@ -33,6 +33,7 @@ import { convertOpenAIError } from '../openai/format';
 import { getOpenAIResponsesModelCapability } from './capability';
 import type { OpenAIResponsesRawChunk } from './contract';
 import type { OpenAIResponsesTrait } from './trait';
+import { isOfficialOpenAIBaseUrl } from '../openai-base-url';
 import {
   applyOpenAIResponsesResponseFormat,
   assembleOpenAIResponsesRequest,
@@ -82,7 +83,10 @@ export function prepareOpenAIResponsesRequest(
   let kwargs: Record<string, unknown> = {};
   if (input.cacheKey !== undefined) {
     kwargs =
-      trait?.encodeCacheKey?.(input.cacheKey, ctx) ?? encodeOpenAIResponsesCacheKey(input.cacheKey);
+      trait?.encodeCacheKey?.(input.cacheKey, ctx) ??
+      (isOfficialOpenAIBaseUrl(ctx.model.baseUrl)
+        ? encodeOpenAIResponsesCacheKey(input.cacheKey)
+        : {});
   }
   if (input.thinking !== undefined) {
     kwargs = applyThinking(kwargs, input.thinking, trait?.thinking, ctx, (t) =>
