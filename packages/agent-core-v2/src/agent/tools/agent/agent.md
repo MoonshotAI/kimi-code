@@ -12,6 +12,6 @@ Usage notes:
 
 When NOT to use Agent: skip delegation for trivial work you can do directly — reading a file whose path you already know, searching a small known set of files, or any task that takes only a step or two. Delegation has a context-handoff cost; it pays off only when the task is substantial enough to outweigh it.
 
-If the user didn't request the usage of subagents, do not create or call subagents.
+If the user didn't request the usage of subagents, do not create or call subagents, unless a mode or workflow explicitly directs you to delegate (e.g. Plan mode's exploration step).
 
 Once a subagent is running, leave that scope to it: do not redo its searches or reads in parallel, and do not abandon it midway and finish the job manually. Both undo the context savings the delegation was meant to buy.

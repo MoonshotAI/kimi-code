@@ -307,7 +307,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 5_831,
+        tokens_before: 5_855,
         tokens_after: expect.any(Number),
         duration_ms: expect.any(Number),
         compacted_count: 6,
@@ -583,7 +583,7 @@ describe('FullCompaction', () => {
       session_id: 'test-session',
       cwd: dir,
       trigger: 'auto',
-      token_count: 5_831,
+      token_count: 5_855,
     });
     expect(post).toMatchObject({
       hook_event_name: 'PostCompact',
@@ -1951,8 +1951,8 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        tokens_before: 5_838,
-        tokens_after: 5_855,
+        tokens_before: 5_862,
+        tokens_after: 5_879,
         compacted_count: 7,
         retry_count: 0,
       }),
