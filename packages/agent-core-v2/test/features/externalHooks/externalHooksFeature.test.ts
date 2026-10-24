@@ -53,7 +53,12 @@ describe('ExternalHooksFeature — assembly (src/features/externalHooks)', () =>
       [IBootstrapService, stubBootstrap()],
       [
         IConfigService,
-        { _serviceBrand: undefined, ready: Promise.resolve(), get: () => undefined },
+        {
+          _serviceBrand: undefined,
+          ready: Promise.resolve(),
+          get: () => undefined,
+          onDidChangeConfiguration: Event.None as IConfigService['onDidChangeConfiguration'],
+        },
       ],
       [
         IPluginService,
