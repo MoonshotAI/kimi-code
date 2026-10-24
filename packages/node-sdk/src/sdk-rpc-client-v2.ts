@@ -125,7 +125,7 @@
  *   `toolCall` keeps the base class's "not supported" answer, which the
  *   interaction bridge already relies on.
  */
-import { readdir } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
@@ -211,6 +211,8 @@ import {
   PRINT_WAIT_CEILING_S_DEFAULT,
   ProfileError,
   ProfileErrors,
+  parseAgentFileText,
+  resolveAgentPath,
   Error2 as V2Error2,
   ErrorCodes as V2ErrorCodes,
   resolveAgentTaskConfig,
@@ -1394,6 +1396,10 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         );
       }
     }
+    // `--agent` / `--agent-file` select the main-agent profile; an agent file
+    // is parsed before the session exists so a bad file creates nothing.
+    const agentProfileName = await this.resolveStartupAgentProfile(input, workDir);
+    await this.seedSessionAgentFiles(input, workDir);
     const handle = await this.engineAccessor.get(ISessionManager).create({
       sessionId: input.id,
       workDir,
@@ -1403,14 +1409,30 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     // warning (oversized AGENTS.md) reaches the listeners like v1's create.
     this.wireSession(handle);
     if (
+      agentProfileName !== undefined ||
       input.model !== undefined ||
       input.thinking !== undefined ||
       input.permission !== undefined
     ) {
-      const agent = await this.materializeMainAgent(handle, {
-        model: input.model,
-        thinking: input.thinking,
-      });
+      let agent: IAgentScopeHandle;
+      try {
+        agent = await this.materializeMainAgent(handle, {
+          profile: agentProfileName,
+          model: input.model,
+          thinking: input.thinking,
+        });
+      } catch (error) {
+        // The session is already indexed; drop it so a failed startup-profile
+        // bind (e.g. an unknown `--agent` name) leaves nothing behind and the
+        // id can be reused.
+        if (agentProfileName !== undefined) {
+          await this.engineAccessor
+            .get(ISessionManager)
+            .delete(handle.id)
+            .catch(() => undefined);
+        }
+        throw error;
+      }
       if (input.permission !== undefined) {
         agent.accessor.get(IAgentPermissionModeService).setMode(input.permission);
       }
@@ -1836,7 +1858,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    */
   private async materializeMainAgent(
     session: ISessionScopeHandle,
-    binding?: { readonly model?: string; readonly thinking?: string },
+    binding?: { readonly profile?: string; readonly model?: string; readonly thinking?: string },
   ): Promise<IAgentScopeHandle> {
     await this.modelReady;
     const context = await ensureMainAgent(session);
@@ -1848,7 +1870,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (binding !== undefined || profile.data().profileName === undefined) {
       try {
         await profile.bind({
-          profile: DEFAULT_AGENT_PROFILE_NAME,
+          profile: binding?.profile ?? DEFAULT_AGENT_PROFILE_NAME,
           model: binding?.model,
           thinking: binding?.thinking,
         });
@@ -1864,6 +1886,72 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       }
     }
     return agent;
+  }
+
+  /**
+   * Resolve the `--agent` / `--agent-file` main-agent profile for a new
+   * session: an explicit `--agent` name wins; otherwise the first
+   * `--agent-file` contributes the profile under its frontmatter `name`
+   * (parsed here, fatal on error), the same precedence print mode applies.
+   */
+  private async resolveStartupAgentProfile(
+    input: CreateSessionOptions,
+    workDir: string,
+  ): Promise<string | undefined> {
+    if (input.agentProfile !== undefined) return input.agentProfile;
+    const agentFile = input.agentFiles?.[0];
+    if (agentFile === undefined) return undefined;
+    const agentFilePath = resolveAgentPath(
+      agentFile,
+      workDir,
+      this.engineAccessor.get(IBootstrapService).osHomeDir,
+    );
+    let text: string;
+    try {
+      text = await readFile(agentFilePath, 'utf8');
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Failed to read agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    try {
+      return parseAgentFileText({ path: agentFilePath, source: 'explicit', text }).name;
+    } catch (error) {
+      throw new KimiError(
+        ErrorCodes.AGENT_NOT_FOUND,
+        `Invalid agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  /**
+   * The workspace explicit-profile loader reads only
+   * `IBootstrapService.args.agentFiles`, and this client bootstraps without
+   * them, so a profile supplied only through `agentFiles` would be missing
+   * from the session catalog. Seed the session's files through that channel
+   * (the one print mode fills at bootstrap) and reload the loader so the
+   * catalog has the profile before the main agent binds it. Clearing on the
+   * no-agent-file path stops a previous session's files leaking into the
+   * next workspace.
+   */
+  private async seedSessionAgentFiles(input: CreateSessionOptions, workDir: string): Promise<void> {
+    const sessionAgentFiles =
+      input.agentFiles !== undefined && input.agentFiles.length > 0
+        ? [...input.agentFiles]
+        : undefined;
+    const hostArgs = this.engineAccessor.get(IBootstrapService).args as {
+      agentFiles?: readonly string[];
+    };
+    if (sessionAgentFiles === undefined && hostArgs.agentFiles === undefined) return;
+    hostArgs.agentFiles = sessionAgentFiles;
+    const workspace = await this.engineAccessor
+      .get(IWorkspaceInstanceManager)
+      .getOrCreate({ root: workDir });
+    await workspace.program.ready;
+    await workspace.program.explicitAgentProfiles.reload();
   }
 
   /** The target agent's live scope handle (see the section header). */
