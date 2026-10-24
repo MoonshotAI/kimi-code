@@ -18,16 +18,9 @@ import { TextModel } from './textModel';
 const BOM_SNIFF_BYTES = 4;
 
 async function readBomText(fs: IHostFileSystem, path: string, bom: ByteOrderMark): Promise<string> {
-  const options = {
-    encoding: bom === 'utf-16le' ? ('utf16le' as const) : undefined,
-    errors: 'strict' as const,
-  };
-  try {
-    const text = await fs.readText(path, options);
-    if (!text.includes('\0')) {
-      return text;
-    }
-  } catch {}
+  if (fs.clientBackedText) {
+    return fs.readText(path);
+  }
   const bytes = await fs.readBytes(path);
   return decodeUnicodeText(splitByteOrderMark(bytes).body, bom);
 }
