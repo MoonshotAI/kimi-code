@@ -1,6 +1,8 @@
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 
+import { Emitter } from '#/_base/event';
+import type { HookDef } from '#/features/externalHooks/internal/types';
 import type { ContentPart } from '#human/llm/message';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -386,5 +388,21 @@ describe('ExternalHooksRunnerService', () => {
     expect(runner.hasHooksFor('PreToolUse')).toBe(true);
     expect(runner.hasHooksFor('SessionHeartbeat')).toBe(true);
     expect(runner.hasHooksFor('Stop')).toBe(false);
+  });
+
+  it('rebuilds the hook index when hooks arrive through a config change', async () => {
+    const hooks: HookDef[] = [];
+    const emitter = new Emitter<void>();
+    const runner = makeHookRunner(hooks, { onDidChangeConfiguration: emitter.event });
+
+    await runner.ready;
+    expect(runner.hasHooksFor('SessionStart')).toBe(false);
+
+    hooks.push({ event: 'SessionStart', command: nodeCommand('process.exit(0);'), timeout: 5 });
+    emitter.fire();
+
+    const results = await runner.trigger('SessionStart');
+    expect(results).toHaveLength(1);
+    expect(runner.hasHooksFor('SessionStart')).toBe(true);
   });
 });

@@ -20,6 +20,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
 
   private byEvent = new Map<string, HookDef[]>();
   readonly ready: Promise<void>;
+  private reloadChain: Promise<void> = Promise.resolve();
 
   private readonly _onDidReload = this._register(new Emitter<void>());
   readonly onDidReload: Event<void> = this._onDidReload.event;
@@ -36,7 +37,12 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     this.ready = this.loadSafe();
     this._register(
       this.plugins.onDidReload(() => {
-        void this.reloadSafe();
+        this.queueReload();
+      }),
+    );
+    this._register(
+      this.config.onDidChangeConfiguration(() => {
+        this.queueReload();
       }),
     );
   }
@@ -84,6 +90,7 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     args: ExternalHooksRunnerTriggerArgs,
   ): Promise<HookResult[]> {
     await this.ready;
+    await this.reloadChain;
     const results = await runMatchedHooks(
       this.hostProcess,
       this.byEvent,
@@ -117,10 +124,8 @@ export class ExternalHooksRunnerService extends Disposable implements IExternalH
     } catch {}
   }
 
-  private async reloadSafe(): Promise<void> {
-    try {
-      await this.load();
-    } catch {}
+  private queueReload(): void {
+    this.reloadChain = this.reloadChain.then(() => this.loadSafe());
   }
 
   private async load(): Promise<void> {

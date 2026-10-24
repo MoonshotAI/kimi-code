@@ -643,6 +643,7 @@ describe('IExternalHooksRunnerService integration', () => {
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.defineInstance(ISessionMetadata, stubSessionMetadata());
           reg.definePartialInstance(IConfigService, {
+            onDidChangeConfiguration: Event.None as IConfigService['onDidChangeConfiguration'],
             ready,
             get: <T = unknown>(domain: string): T =>
               (domain === HOOKS_SECTION
@@ -925,6 +926,7 @@ describe('IExternalHooksRunnerService integration', () => {
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
           });
           reg.definePartialInstance(IConfigService, {
+            onDidChangeConfiguration: Event.None as IConfigService['onDidChangeConfiguration'],
             ready: Promise.resolve(),
             get: <T = unknown>(domain: string): T =>
               (domain === HOOKS_SECTION
@@ -1125,6 +1127,7 @@ describe('IExternalHooksRunnerService integration', () => {
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
           });
           reg.definePartialInstance(IConfigService, {
+            onDidChangeConfiguration: Event.None as IConfigService['onDidChangeConfiguration'],
             ready: Promise.resolve(),
             get: <T = unknown>(domain: string): T =>
               (domain === HOOKS_SECTION
