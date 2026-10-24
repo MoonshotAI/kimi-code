@@ -210,6 +210,53 @@ describe('acp-server config surface', () => {
   );
 
   it(
+    'agent swarm forwards subagent progress into tool_call_update',
+    async () => {
+      const session = Object.create(AcpSession.prototype) as AcpSession;
+      const updates: unknown[] = [];
+      Object.assign(session as unknown as Record<string, unknown>, {
+        sessionId: 'session-test',
+        conn: { sessionUpdate: async (update: unknown) => updates.push(update) },
+        swarmCalls: new Map(),
+      });
+
+      (session as unknown as { onToolCallStarted(event: unknown): void }).onToolCallStarted({
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: { description: 'Compute two expressions', items: ['a', 'b'] },
+      });
+
+      const subagentEvent = (
+        kind: string,
+        payload: Record<string, unknown>,
+      ): void => {
+        (
+          session as unknown as {
+            onSwarmSubagentEvent(kind: string, event: unknown): void;
+          }
+        ).onSwarmSubagentEvent(kind, payload);
+      };
+
+      subagentEvent('spawned', { parentToolCallId: 'call_swarm', subagentId: 'a1', subagentName: 'coder' });
+      subagentEvent('spawned', { parentToolCallId: 'call_swarm', subagentId: 'a2', subagentName: 'coder' });
+      subagentEvent('completed', { parentToolCallId: 'call_swarm', subagentId: 'a1', resultSummary: '4' });
+
+      const last = updates.at(-1) as {
+        update: {
+          toolCallId: string;
+          title: string;
+          content: Array<{ content: { text: string } }>;
+        };
+      };
+      expect(last.update.toolCallId).toBe('1:call_swarm');
+      expect(last.update.title).toContain('(1/2)');
+      expect(last.update.content[0]?.content.text).toContain('4');
+    },
+    30_000,
+  );
+
+  it(
     'session/set_config_option mode also pushes current_mode_update',
     async () => {
       await boot();
