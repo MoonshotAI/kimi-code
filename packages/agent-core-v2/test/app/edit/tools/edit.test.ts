@@ -891,6 +891,34 @@ describe('EditTool', () => {
     expect(writeBytes).not.toHaveBeenCalled();
   });
 
+  it('uses the client text and never the stale local bytes for a client-backed filesystem', async () => {
+    const writeBytes = vi.fn(async (_path: string, data: Uint8Array) => undefined);
+    const stale = new Uint8Array(
+      Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from('alpha beta', 'utf8')]),
+    );
+    const { fs } = createSpiedEditFs({
+      readText: vi.fn(async () => 'gamma delta'),
+      readBytes: headReadBytes(stale),
+      writeBytes,
+    });
+    Object.defineProperty(fs, 'clientBackedText', { value: true });
+    const tool = buildTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, {
+      path: '/tmp/client.txt',
+      old_string: 'delta',
+      new_string: 'epsilon',
+    });
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(Array.from(writeBytes.mock.calls[0]![1])).toEqual([
+      0xef,
+      0xbb,
+      0xbf,
+      ...new TextEncoder().encode('gamma epsilon'),
+    ]);
+  });
+
   it('preserves a leading U+FEFF content character after a UTF-8 BOM', async () => {
     const content = '\uFEFFalpha beta';
     const full = new Uint8Array(Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(content, 'utf8')]));
