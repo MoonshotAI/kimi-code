@@ -247,6 +247,15 @@ describe('AcpHostFileSystem', () => {
     expect(Array.from(await readFile(path))).toEqual([0xff, 0xfe, 0x61]);
   });
 
+  it('reports clientBackedText only when the readTextFile capability is negotiated', () => {
+    const client = {
+      readTextFile: async () => ({ content: '' }),
+      writeTextFile: async () => undefined,
+    };
+    expect(makeFileSystem(client).clientBackedText).toBe(true);
+    expect(makeFileSystem(client, { read: false, write: true }).clientBackedText).toBe(false);
+  });
+
   it('falls back to the local filesystem when text capabilities are unavailable', async () => {
     tempDir = await mkdtemp(join(tmpdir(), 'acp-fs-'));
     const path = join(tempDir, 'buffer.txt');
