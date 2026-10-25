@@ -29,6 +29,7 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { createActor } from '#human/xstate2';
 import { createAgentMachine } from '#human/agent/machine';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
+import { IAgentSwarmService } from '#/features/swarm/agent/swarm';
 import {
   AgentSwarmToolInputSchema,
   type AgentSwarmToolInput,
@@ -66,6 +67,7 @@ import {
   type RunAgentOptions,
 } from '#/session/subagent/subagent';
 import { IEventBus } from '#/app/event/eventBus';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { Event2 } from '#/app/event/event2';
 import { IConfigService } from '#/app/config/config';
 import { IFlagService } from '#/app/flag/flag';
@@ -497,6 +499,11 @@ function agentSwarmTool(ctx: TestAgentContext): ExecutableTool<AgentSwarmToolInp
   const tool = ctx.get(IAgentToolRegistryService).resolve('AgentSwarm');
   expect(tool).toBeDefined();
   return tool! as ExecutableTool<AgentSwarmToolInput>;
+}
+
+function agentSwarmToolInSwarmMode(ctx: TestAgentContext): ExecutableTool<AgentSwarmToolInput> {
+  ctx.get(IAgentSwarmService).enter('manual');
+  return agentSwarmTool(ctx);
 }
 
 function executeAgentTool(
@@ -3733,7 +3740,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(swarmServices(swarmService));
 
-    const result = await executeTool(agentSwarmTool(ctx), {
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -3820,7 +3827,7 @@ describe('AgentSwarm tool execution contract', () => {
       },
     );
 
-    await executeTool(agentSwarmTool(ctx), {
+    await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -3880,7 +3887,7 @@ describe('AgentSwarm tool execution contract', () => {
       },
     );
 
-    await executeTool(agentSwarmTool(ctx), {
+    await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -3937,7 +3944,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(swarmServices(swarmService));
 
-    const result = await executeTool(agentSwarmTool(ctx), {
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -4063,7 +4070,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(swarmServices(swarmService));
 
-    const result = await executeTool(agentSwarmTool(ctx), {
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -4110,7 +4117,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(swarmServices(swarmService));
 
-    const result = await executeTool(agentSwarmTool(ctx), {
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -4160,7 +4167,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(swarmServices(swarmService));
 
-    const result = await executeTool(agentSwarmTool(ctx), {
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -4216,7 +4223,7 @@ describe('AgentSwarm tool execution contract', () => {
     };
     ctx = createTestAgent(swarmServices(swarmService));
 
-    const result = await executeTool(agentSwarmTool(ctx), {
+    const result = await executeTool(agentSwarmToolInSwarmMode(ctx), {
       turnId: 0,
       toolCallId: 'call_swarm',
       args: {
@@ -4242,7 +4249,7 @@ describe('AgentSwarm tool execution contract', () => {
   it('declares broad accesses and does not expose permission rule argument matching', async () => {
     ctx = createTestAgent();
 
-    const execution = await agentSwarmTool(ctx).resolveExecution({
+    const execution = await agentSwarmToolInSwarmMode(ctx).resolveExecution({
       description: 'Review files',
       prompt_template: 'Review {{item}}',
       items: ['src/a.ts', 'src/b.ts'],
@@ -4263,7 +4270,7 @@ describe('AgentSwarm tool execution contract', () => {
   it('counts resumed and item-based subagents in the display name', async () => {
     ctx = createTestAgent();
 
-    const execution = await agentSwarmTool(ctx).resolveExecution({
+    const execution = await agentSwarmToolInSwarmMode(ctx).resolveExecution({
       description: 'Finish review',
       prompt_template: 'Review {{item}}',
       items: ['src/new.ts'],
@@ -4278,6 +4285,90 @@ describe('AgentSwarm tool execution contract', () => {
       agent_name: 'swarm (3 subagents)',
       prompt: 'Finish review',
     });
+  });
+
+  it('rejects calls while swarm mode is off without turning it on', async () => {
+    const runSwarm = vi.fn(async (): Promise<readonly SessionSwarmRunResult[]> => []);
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+
+    const result = await executeTool(agentSwarmTool(ctx), {
+      turnId: 0,
+      toolCallId: 'call_swarm',
+      args: {
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      },
+      signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Swarm mode is off, so AgentSwarm did not run');
+    expect(runSwarm).not.toHaveBeenCalled();
+    expect(ctx.get(IAgentSwarmService).isActive).toBe(false);
+  });
+
+  it('answers a model-started AgentSwarm call with an error while swarm mode is off', async () => {
+    const runSwarm = vi.fn(async (): Promise<readonly SessionSwarmRunResult[]> => []);
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+    const swarmModeUpdates: boolean[] = [];
+    const subscription = ctx.get(IEventBus).subscribe(AgentStatusUpdated, (event) => {
+      if (event.swarmMode !== undefined) swarmModeUpdates.push(event.swarmMode);
+    });
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will start a swarm.' }, agentSwarmCall());
+    ctx.mockNextResponse({ type: 'text', text: 'I will review the files myself.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Review the files' }] });
+    await ctx.untilTurnEnd();
+    subscription.dispose();
+
+    expect(runSwarm).not.toHaveBeenCalled();
+    expect(swarmModeUpdates).toEqual([]);
+    expect(ctx.get(IAgentSwarmService).isActive).toBe(false);
+    expect(JSON.stringify(ctx.get(IAgentContextMemoryService).get())).toContain(
+      'Swarm mode is off, so AgentSwarm did not run',
+    );
+  });
+
+  it('runs a model-started AgentSwarm call in a one-task swarm and turns swarm mode off after the turn', async () => {
+    const runSwarm = vi.fn(
+      async (args: SessionSwarmRunArgs): Promise<readonly SessionSwarmRunResult[]> =>
+        args.tasks.map((task, index) => ({
+          task,
+          agentId: `agent-explore-${String(index + 1)}`,
+          status: 'completed' as const,
+          result: 'ok',
+        })),
+    );
+    const swarmService: ISessionSwarmService = {
+      _serviceBrand: undefined,
+      getSwarmItem: async () => undefined,
+      run: runSwarm as ISessionSwarmService['run'],
+      cancel: () => {},
+    };
+    ctx = createTestAgent(swarmServices(swarmService));
+    const swarm = ctx.get(IAgentSwarmService);
+    swarm.enter('task');
+
+    ctx.mockNextResponse({ type: 'text', text: 'I will start a swarm.' }, agentSwarmCall());
+    ctx.mockNextResponse({ type: 'text', text: 'The swarm finished.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Review the files' }] });
+    await ctx.untilTurnEnd();
+
+    expect(runSwarm).toHaveBeenCalledTimes(1);
+    expect(swarm.isActive).toBe(false);
   });
 });
 
@@ -4913,6 +5004,20 @@ function agentCall(): ToolCall {
       prompt: 'Investigate deeply',
       description: 'Investigate deeply',
       subagent_type: 'coder',
+    }),
+  };
+}
+
+function agentSwarmCall(): ToolCall {
+  return {
+    type: 'function',
+    id: 'call_swarm',
+    name: 'AgentSwarm',
+    arguments: JSON.stringify({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+      subagent_type: 'explore',
     }),
   };
 }
