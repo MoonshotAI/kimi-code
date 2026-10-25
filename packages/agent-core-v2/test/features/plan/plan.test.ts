@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { dirname, join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

@@ -36,7 +36,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-core-v2';
 
 import { TEST_CLIENT_IDENTITY } from '../helpers/engine.js';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
 import { IModelService } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 
 import type { Klient } from '../../src/index.js';

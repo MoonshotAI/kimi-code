@@ -9,7 +9,7 @@ import { WarningIssued } from '#/agent/profile/profileOps';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import type { ContentPart } from '#human/llm/message';
 import type { Model } from '#/llm-adapter/model/catalog';

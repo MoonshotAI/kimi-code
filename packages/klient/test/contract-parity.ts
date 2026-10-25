@@ -19,7 +19,7 @@ import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/prof
 import type { PromptLaunchResult, PromptPayload, SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
-import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/features/plan/plan';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { SkillSummary } from '@moonshot-ai/agent-core-v2/features/skill/catalog/types';

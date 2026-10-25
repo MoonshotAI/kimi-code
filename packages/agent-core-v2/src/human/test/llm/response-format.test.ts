@@ -1,19 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createToolMessage,
   createUserMessage,
   type Message,
 } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { ResponseFormat } from '#/llm/response-format';
-import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
-import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
+import type { LlmModel } from '#/llm-requester/model';
+import type { ResponseFormat } from '#/llm-requester/response-format';
+import type { LlmClientContext, LlmRequestEvent } from '#/llm-requester/requester';
+import { createAnthropicRequester } from '#/llm-requester/factories';
+import { createGoogleGenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIResponsesRequester } from '#/llm-requester/factories';
 
 const model: LlmModel = {
   provider: 'test',

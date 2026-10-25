@@ -1,4 +1,4 @@
-import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/message';
+import type { ContentPart, ToolDescription as KosongTool } from '#human/message';
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

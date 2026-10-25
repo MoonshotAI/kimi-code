@@ -6,7 +6,7 @@ import {
 import type { Message } from '#/llm-adapter/contract/message';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal } from '#human/llm/usage';
+import { emptyUsage, inputTotal } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';

@@ -9,11 +9,11 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { type Message } from '#/llm-adapter/contract/message';
+import { type Message } from '#human/llm/message';
 import { type StreamedMessagePart, type ToolCall } from '#human/llm/message';
-import type { FinishReason } from '#human/llm/finish-reason';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
 import { fromLlmMessage } from '#/llm-adapter/contract/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {

@@ -5,7 +5,7 @@ import type {
   ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
 import { createMachineTools } from '#/agent/loop/machine/tools';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { ToolExecuteInput } from '#human/tool/executor';
 import type { ToolInfo } from '#/tool/toolContract';
 

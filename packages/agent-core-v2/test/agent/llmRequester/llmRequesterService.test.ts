@@ -24,9 +24,9 @@ import {
   type TurnInput,
   type TurnLlmEvent,
 } from '#human/agent/turn';
-import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
-import type { LlmModel } from '#human/llm/model';
-import type { LlmRequester } from '#human/llm/requester/requester';
+import { UNKNOWN_CAPABILITY } from '#human/llm-requester/capability';
+import type { LlmModel } from '#human/llm-requester/model';
+import type { LlmRequester } from '#human/llm-requester/requester';
 import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -48,10 +48,10 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
-import { type Message } from '#/llm-adapter/contract/message';
+import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
+import { type Message } from '#human/llm/message';
 import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
-import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IModelService } from '#/llm-adapter/model/model';

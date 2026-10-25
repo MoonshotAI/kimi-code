@@ -17,7 +17,7 @@ import {
 } from '#/xstate2';
 
 import { createUserMessage, type ToolCall, type UserMessage } from '#/llm/message';
-import type { LlmRequestConfig } from '#/llm/requester/requester';
+import type { LlmRequestConfig } from '#/llm-requester/requester';
 import type { ToolExecutor, ToolResult } from '#/tool/executor';
 import { createToolMachine, type ToolEvent, type ToolOutput } from '#/tool/machine';
 import type { ToolDefinition } from '#/tool/tool';

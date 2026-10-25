@@ -35,9 +35,12 @@ import {
   APIStatusError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
-import type { ToolDescription as Tool } from '#human/llm/message';
-import { inputTotal, type TokenUsage } from '#human/llm/usage';
+import {
+  createUserMessage,
+  type Message,
+  type ToolDescription as Tool,
+} from '#human/llm/message';
+import { inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';

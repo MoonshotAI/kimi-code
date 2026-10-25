@@ -1,4 +1,4 @@
-import { createToolMessage } from '#/llm-adapter/contract/message';
+import { createToolMessage } from '#human/llm/message';
 
 import type { ContextMessage } from './types';
 

@@ -61,8 +61,7 @@ import { bootstrap, logSeed, resolveLoggingConfig } from '@moonshot-ai/agent-cor
 import { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { renderLoadableToolsAnnouncement } from '@moonshot-ai/agent-core-v2/agent/toolSelect/dynamicTools';
 import { UNKNOWN_CAPABILITY } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/capability';
-import type { Message } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
-import type { ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { Message, ToolDescription as Tool } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { createStaticCredentialProvider } from '@moonshot-ai/agent-core-v2/human/credentials/credentials';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';

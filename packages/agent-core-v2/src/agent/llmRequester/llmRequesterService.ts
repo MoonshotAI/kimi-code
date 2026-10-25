@@ -27,11 +27,15 @@ import {
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
-import { type ThinkingEffort } from '#human/llm/thinking';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import { isToolCall, type StreamedMessagePart, type ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm/usage';
+import { type ThinkingEffort } from '#human/llm-requester/thinking';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import {
+  isToolCall,
+  type Message,
+  type StreamedMessagePart,
+  type ToolDescription as Tool,
+} from '#human/llm/message';
+import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import {
@@ -71,7 +75,7 @@ import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import {
   ToolCallIdNormalizer,
   type ToolCallIdResponseNormalizer,
-} from '#human/llm/toolCallIdNormalizer';
+} from '#human/llm-requester/toolCallIdNormalizer';
 import {
   LlmRequest,
   llmRequestTraceKey,

@@ -33,7 +33,7 @@ import type {
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import { inputTotal } from '#human/llm/usage';
+import { inputTotal } from '#human/llm-requester/usage';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';

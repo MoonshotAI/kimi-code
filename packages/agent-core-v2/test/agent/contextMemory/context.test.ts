@@ -1,5 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '#human/llm/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';

@@ -1,5 +1,5 @@
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';

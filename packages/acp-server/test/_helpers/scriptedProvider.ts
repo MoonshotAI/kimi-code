@@ -18,20 +18,11 @@
  * provider regardless of protocol.
  */
 
-import {
-  IProtocolAdapterRegistry,
-  type IProtocolAdapterRegistry as IProtocolAdapterRegistryType,
-  type Message,
-  type Model,
-  ProtocolAdapterRegistry,
-  type ProtocolAdapterConfig,
-  type StreamedMessagePart,
-  type TokenUsage,
-  type Tool,
-} from '@moonshot-ai/agent-core-v2';
-import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm/finish-reason';
+import { IProtocolAdapterRegistry, type IProtocolAdapterRegistry as IProtocolAdapterRegistryType, type Model, ProtocolAdapterRegistry, type ProtocolAdapterConfig, type TokenUsage, type Tool } from '@moonshot-ai/agent-core-v2';
+import { type Message, type StreamedMessagePart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import type { FinishReason } from '@moonshot-ai/agent-core-v2/human/llm-requester/finish-reason';
 import { fromLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
-import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm/requester/requester';
+import type { LlmRequester } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
 
 interface ScriptedResponse {
   readonly parts: readonly StreamedMessagePart[];

@@ -1,5 +1,5 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { Tool as LLMTool } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
+import type { Tool as LLMTool } from '#human/llm/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';

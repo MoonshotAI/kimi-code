@@ -67,7 +67,7 @@ import type {
   ToolCall,
   ToolDescription as Tool,
 } from '@moonshot-ai/agent-core-v2/human/llm/message';
-import type { LlmCredentialProvider } from '@moonshot-ai/agent-core-v2/human/llm/requester/requester';
+import type { LlmCredentialProvider } from '@moonshot-ai/agent-core-v2/human/llm-requester/requester';
 import type { Model } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
 import type {

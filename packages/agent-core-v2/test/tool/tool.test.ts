@@ -10,8 +10,8 @@ import { ILogService } from '#/_base/log/log';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { createHooks } from '#/hooks';
-import type { ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { ToolCall } from '#human/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

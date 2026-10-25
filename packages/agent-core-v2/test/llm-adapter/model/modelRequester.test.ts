@@ -5,15 +5,15 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
-import type { ProviderMediaContribution } from '#human/llm/media/upload';
-import type { LlmModel } from '#human/llm/model';
+import type { ProviderMediaContribution } from '#human/media/upload';
+import type { LlmModel } from '#human/llm-requester/model';
 import type {
   LlmRequestConfig,
   LlmRequestContent,
   LlmRequestControl,
   LlmRequestEvent,
   LlmRequester,
-} from '#human/llm/requester/requester';
+} from '#human/llm-requester/requester';
 import {
   APIEmptyResponseError,
   APIStatusError,
@@ -22,7 +22,7 @@ import {
   PROVIDER_AUTH_ERROR_CODE,
   isAbortError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestEvent } from '#/llm-adapter/model/model-requester';
 import { effectiveMaxCompletionTokens } from '#/llm-adapter/model/model-requester';

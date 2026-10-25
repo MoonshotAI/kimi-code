@@ -36,7 +36,7 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';

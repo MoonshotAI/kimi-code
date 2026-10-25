@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isUnknownCapability, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm/capability';
-import type { FinishInfo } from '#/llm/finish-reason';
+import { isUnknownCapability, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-requester/capability';
+import type { FinishInfo } from '#/llm-requester/finish-reason';
 import {
   createAssistantMessage,
   createToolMessage,
@@ -13,37 +13,31 @@ import {
   type ToolDescription,
   type VideoURLPart,
 } from '#/llm/message';
-import { createMemoryMediaUploadCache } from '#/llm/media/cache';
-import { createMediaRefResolver } from '#/llm/media/resolver';
-import { createMemoryMediaSource } from '#/llm/media/source';
-import type { LlmModel } from '#/llm/model';
+import { createMemoryMediaUploadCache } from '#/media/cache';
+import { createMediaRefResolver } from '#/media/resolver';
+import { createMemoryMediaSource } from '#/media/source';
+import type { LlmModel } from '#/llm-requester/model';
 import { createProvider } from '#/llm/provider/definition';
-import { KimiFiles, kimiFilesBaseUrl } from '#/llm-kimi/files';
-import { kimiMediaContribution } from '#/llm-kimi/media';
+import { KimiFiles, kimiFilesBaseUrl } from '#/media/kimi/files';
+import { kimiMediaContribution } from '#/media/kimi/media';
 import { kimiProvider } from '#/llm-kimi/provider';
-import {
-  KIMI_API_KEY_ENV,
-  KIMI_BASE_URL_ENV,
-  KIMI_DEFAULT_BASE_URL,
-  kimiAnthropicTrait,
-  kimiConnection,
-  kimiOpenAITrait,
-} from '#/llm-kimi/trait';
-import { classifyKimiQuotaError } from '#/llm-kimi/errors';
-import { anthropicProvider, googleGenAIConnection, openaiProvider } from '#/llm/provider/providers/standard';
-import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
-import type { TokenUsage } from '#/llm/usage';
+import { KIMI_API_KEY_ENV, KIMI_BASE_URL_ENV, kimiConnection } from '#/llm-requester/factories';
+import { KIMI_DEFAULT_BASE_URL } from '#/llm/builtin/provider/kimi/index';
+import { kimiAnthropicTrait, kimiOpenAITrait } from '#/llm-kimi/trait';
+import { classifyKimiQuotaError } from '#/llm/builtin/provider/kimi/errors';
+import { anthropicProvider, openaiProvider } from '#/provider-catalog/provider/providers/standard';
+import { googleGenAIConnection } from '#/llm-requester/factories';
+import type { LlmClientContext, LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
+import type { TokenUsage } from '#/llm-requester/usage';
 import {
   normalizeToolCallIdsForProvider,
   sanitizeToolCallId,
-} from '#/llm/requester/bases/tool-call-id';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import { createGoogleGenAIRequester } from '#/llm/requester/bases/google-genai/requester';
-import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
-import {
-  createOpenAIRequester,
-  openAIBase,
-} from '#/llm/requester/bases/openai/requester';
+} from '#/llm/builtin/protocol/tool-call-id';
+import { createAnthropicRequester } from '#/llm-requester/factories';
+import { createGoogleGenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIResponsesRequester } from '#/llm-requester/factories';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import { openAIBase } from '#/llm/requester/bases/openai/requester';
 
 const model: LlmModel = {
   provider: 'test',

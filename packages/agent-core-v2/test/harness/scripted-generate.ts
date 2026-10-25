@@ -1,5 +1,5 @@
-import { type FinishReason } from '#human/llm/finish-reason';
-import type { ThinkingRequestOptions } from '#human/llm/thinking';
+import { type FinishReason } from '#human/llm-requester/finish-reason';
+import type { ThinkingRequestOptions } from '#human/llm-requester/thinking';
 import {
   isContentPart,
   isToolCall,
@@ -12,11 +12,12 @@ import type {
   LlmRequestContent,
   LlmRequestControl,
   LlmRequester,
-} from '#human/llm/requester/requester';
-import { fromLlmMessage, type Message, type Tool } from '#/llm-adapter/contract/message';
+} from '#human/llm-requester/requester';
+import { fromLlmMessage } from '#/llm-adapter/contract/message';
+import { type Message, type Tool } from '#human/llm/message';
 import { isAbortError } from '#/llm-adapter/contract/errors';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
-import type { TokenUsage } from '#human/llm/usage';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { SamplingOptions } from '#/llm-adapter/model/model-requester';
 import { translateProviderError } from '#/llm-adapter/protocol/errors';
 

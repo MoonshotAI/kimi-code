@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { LlmModel } from '#/llm/model';
-import type { CatalogModelDefinition } from '#/llm/provider-catalog';
-import { createProviderCatalog } from '#/llm/provider-catalog';
+import type { LlmModel } from '#/llm-requester/model';
+import type { CatalogModelDefinition } from '#/provider-catalog/catalog';
+import { createProviderCatalog } from '#/provider-catalog/catalog';
 import type { Provider } from '#/llm/provider/definition';
 import type { LlmRequester } from '#/llm/requester/requester';
 

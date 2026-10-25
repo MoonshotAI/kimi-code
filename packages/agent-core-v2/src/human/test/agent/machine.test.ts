@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createActor, waitFor } from '#/xstate2';
 import { xstateInspectionCollector } from '#/xstateInspection';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -10,12 +10,12 @@ import {
   type AssistantMessage,
   type StreamedMessagePart,
   type ToolCall,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmEvent } from '#/llm/requester/actor';
-import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
-import type { LlmRetryOptions } from '#/llm/requester/retry';
-import { emptyUsage, type TokenUsage } from '#/llm/usage';
+} from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmEvent } from '#/llm-requester/actor';
+import type { LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
+import type { LlmRetryOptions } from '#/llm-requester/retry';
+import { emptyUsage, type TokenUsage } from '#/llm-requester/usage';
 import { connectPlugins } from '#/plugin';
 import { createTimingPlugin } from '#/timing/plugin';
 import { createAgentMachine, type AgentEmitted, type AgentMachineSelf, type PromptGateVerdict, type ScopeFactoryOutput } from '#/agent/machine';

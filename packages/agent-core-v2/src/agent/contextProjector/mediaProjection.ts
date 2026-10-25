@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import type { ContentPart } from '#human/llm/message';
 
 import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';

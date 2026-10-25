@@ -8,11 +8,11 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import {
   daemonFileRefFromPart,
-  type ContentPart,
   type ContextUndone,
   type CronFired,
   type GoalUpdated,
 } from '@moonshot-ai/agent-core-v2';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type {

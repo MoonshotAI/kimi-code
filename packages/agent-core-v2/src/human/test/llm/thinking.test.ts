@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createMessageAccumulator,
   createUserMessage,
   type Message,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
+} from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
 import type { TraitContext } from '#/llm/protocol/base';
 import {
   defaultThinkingEffortForModel,
@@ -15,11 +15,12 @@ import {
   resolveThinkingEffortForModel,
   resolveThinkingKeep,
   type ModelThinkingMetadata,
-} from '#/llm/thinking';
-import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
-import { classifyKimiQuotaError } from '#/llm-kimi/errors';
-import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
+} from '#/llm-requester/thinking';
+import { kimiConnection } from '#/llm-requester/factories';
+import { kimiOpenAITrait } from '#/llm-kimi/trait';
+import { classifyKimiQuotaError } from '#/llm/builtin/provider/kimi/errors';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import type { LlmClientContext, LlmRequestEvent } from '#/llm-requester/requester';
 
 const model: LlmModel = {
   provider: 'test',

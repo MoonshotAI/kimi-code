@@ -1,7 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
-import { thinkingMetadataOf } from '#human/llm/thinking';
+import { thinkingMetadataOf } from '#human/llm-requester/thinking';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {

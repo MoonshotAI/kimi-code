@@ -2,13 +2,13 @@ import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../contract/capability';
-import type { ModelThinkingMetadata } from '#human/llm/thinking';
-import type { ProviderMediaContribution } from '#human/llm/media/upload';
-import type { LlmModel } from '#human/llm/model';
+import type { ModelThinkingMetadata } from '#human/llm-requester/thinking';
+import type { ProviderMediaContribution } from '#human/media/upload';
+import type { LlmModel } from '#human/llm-requester/model';
 import type { ProtocolBase } from '#human/llm/protocol/base';
-import type { ProviderConnection } from '#human/llm/protocol/connection';
+import type { ProviderConnection } from '#human/llm-requester/connection';
 import type { ProtocolTraitFor } from '#human/llm/provider/definition';
-import type { LlmErrorClassifier } from '#human/llm/requester/requester';
+import type { LlmErrorClassifier } from '#human/llm-requester/requester';
 import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
   createGoogleGenAIBase,
@@ -17,7 +17,7 @@ import {
 import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
 import { openAIBase } from '#human/llm/requester/bases/openai/requester';
 import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
-import { KimiFiles, kimiFilesBaseUrl } from '#human/llm-kimi/files';
+import { KimiFiles, kimiFilesBaseUrl } from '#human/media/kimi/files';
 
 import type { Model } from '../model/catalog';
 import type { ResolvedLlmModel } from '../model/model-requester-impl';
@@ -196,7 +196,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   }
 }
 
-function toV2Capability(capability: import('#human/llm/capability').ModelCapability): ModelCapability {
+function toV2Capability(capability: import('#human/llm/request').ModelCapability): ModelCapability {
   return {
     image_in: capability.image_in,
     video_in: capability.video_in,

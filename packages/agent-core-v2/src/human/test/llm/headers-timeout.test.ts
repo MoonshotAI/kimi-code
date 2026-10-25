@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { createUserMessage, type Message } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
-import { LLM_HEADERS_TIMEOUT_ENV } from '#/llm/requester/timeout';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { createUserMessage, type Message } from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
+import { LLM_HEADERS_TIMEOUT_ENV } from '#/llm-requester/timeout';
+import { createAnthropicRequester } from '#/llm-requester/factories';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIResponsesRequester } from '#/llm-requester/factories';
 
 const model: LlmModel = {
   provider: 'test',

@@ -1,7 +1,7 @@
 import { createActor as createXStateActor } from 'xstate';
 import type { Actor, ActorOptions, AnyActorLogic } from 'xstate';
 
-import { isAbortError } from '#/llm/errors';
+import { isAbortError } from '#/llm-requester/errors';
 import { xstateInspectionCollector } from '#/xstateInspection';
 
 export * from 'xstate';

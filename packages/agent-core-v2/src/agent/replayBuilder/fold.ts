@@ -11,7 +11,7 @@ import type {
   GoalSnapshot,
   GoalStatus,
 } from '#/features/goal/types';
-import { createToolMessage } from '#/llm-adapter/contract/message';
+import { createToolMessage } from '#human/llm/message';
 import { estimateTokens, estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import {
   isNewerWireVersion,

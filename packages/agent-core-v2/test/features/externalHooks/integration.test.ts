@@ -13,7 +13,7 @@ import {
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,

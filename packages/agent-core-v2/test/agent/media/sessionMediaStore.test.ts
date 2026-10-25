@@ -13,13 +13,12 @@ import { SessionMediaStoreService } from '#/agent/media/sessionMediaStoreService
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { detectFileType } from '#/agent/media/file-type';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
-import { lowerMessage as lowerOpenAI } from '#human/llm/requester/bases/openai/lower';
-import { lowerMessage as lowerAnthropic } from '#human/llm/requester/bases/anthropic/lower';
-import { providerImagePolicy } from '#human/llm/media/image-formats';
-import type { ToolMessage } from '#human/llm/message';
+import { lowerMessage as lowerOpenAI } from '#human/llm/builtin/protocol/openai/lower';
+import { lowerMessage as lowerAnthropic } from '#human/llm/builtin/protocol/anthropic/lower';
+import { providerImagePolicy } from '#human/llm/protocol/kit/media';
+import type { Message, ToolMessage } from '#human/llm/message';
 import { degradeLeadingMediaParts } from '#/agent/contextProjector/mediaProjection';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
-import type { Message } from '#/llm-adapter/contract/message';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';

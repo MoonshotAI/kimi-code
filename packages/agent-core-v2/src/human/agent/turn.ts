@@ -1,8 +1,8 @@
 import { assign, fromPromise, raise, setup } from '#/xstate2';
 
-import { emptyResponseError } from '#/llm/empty-response';
-import type { LlmErrorMessage } from '#/llm/errors';
-import { NO_FINISH, type FinishInfo } from '#/llm/finish-reason';
+import { emptyResponseError } from '#/llm-requester/empty-response';
+import type { LlmErrorMessage } from '#/llm-requester/errors';
+import { NO_FINISH, type FinishInfo } from '#/llm-requester/finish-reason';
 import {
   createMessageAccumulator,
   createToolMessage,
@@ -15,15 +15,15 @@ import {
   type ToolMessage,
   type UserMessage,
 } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm/requester/actor';
+import type { LlmModel } from '#/llm-requester/model';
+import { createRequestActor, type LlmEvent, type MessageResolver } from '#/llm-requester/actor';
 import type {
   LlmRecovery,
   LlmRecoveryContext,
   LlmRecoveryProposal,
   LlmRecoveryRecord,
-} from '#/llm/requester/recovery';
-import type { LlmRequestConfig, LlmRequester } from '#/llm/requester/requester';
+} from '#/llm-requester/recovery';
+import type { LlmRequestConfig, LlmRequester } from '#/llm-requester/requester';
 import {
   readRetryAfterMs,
   resolveMaxAttempts,
@@ -31,9 +31,9 @@ import {
   retryErrorFields,
   shouldRetry,
   type LlmRetryOptions,
-} from '#/llm/requester/retry';
-import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
-import { emptyUsage, type TokenUsage } from '#/llm/usage';
+} from '#/llm-requester/retry';
+import { ToolCallIdNormalizer } from '#/llm-requester/toolCallIdNormalizer';
+import { emptyUsage, type TokenUsage } from '#/llm-requester/usage';
 import type { ToolResult } from '#/tool/executor';
 import type { ToolOutput } from '#/tool/machine';
 import { createAbortScope, withAbort, type AbortScope } from '#/utils/abort';

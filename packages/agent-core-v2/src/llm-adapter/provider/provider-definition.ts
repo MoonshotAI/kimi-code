@@ -1,16 +1,11 @@
 import { BugIndicatingError } from '#/_base/errors/errors';
-import type { ModelCapability as HumanModelCapability } from '#human/llm/capability';
-import type { ProtocolEndpoint, ProviderConnection } from '#human/llm/protocol/connection';
+import type { ModelCapability as HumanModelCapability } from '#human/llm-requester/capability';
+import type { ProtocolEndpoint, ProviderConnection } from '#human/llm-requester/connection';
 import type { ProtocolTraitFor } from '#human/llm/provider/definition';
-import type { LlmErrorClassifier } from '#human/llm/requester/requester';
-import {
-  kimiAnthropicTrait,
-  kimiConnection,
-  kimiOpenAITrait,
-  kimiResponsesTrait,
-  KIMI_DEFAULT_BASE_URL,
-} from '#human/llm-kimi/trait';
-import { classifyKimiQuotaError } from '#human/llm-kimi/errors';
+import type { LlmErrorClassifier } from '#human/llm-requester/requester';
+import { kimiAnthropicTrait, kimiConnection, kimiOpenAITrait, kimiResponsesTrait } from '#human/llm-kimi/trait';
+import { KIMI_DEFAULT_BASE_URL } from '#human/llm/builtin/provider/kimi/index';
+import { classifyKimiQuotaError } from '#human/llm/builtin/provider/kimi/errors';
 
 import type { Protocol } from '../protocol/protocol';
 import type { ModelSource } from './provider';

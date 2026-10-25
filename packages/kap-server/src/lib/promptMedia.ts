@@ -5,28 +5,8 @@ import { basename, extname, isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import {
-  buildDaemonFileUrl,
-  buildImageCompressionCaption,
-  buildUnsupportedImageNotice,
-  compressBase64ForModel,
-  compressImageForModel,
-  decodeBase64Prefix,
-  Error2,
-  fileNotFoundError,
-  isModelAcceptedImageMime,
-  MAX_IMAGE_DECODE_BYTES,
-  normalizeImageMime,
-  persistOriginalImage,
-  resolveEffectiveImageMime,
-  unsupportedImageMimeFromUrl,
-  type ContentPart,
-  type GetResult,
-  type IFileService,
-  type ISessionMediaStore,
-  type ITelemetryService,
-  type PromptFileAttachment,
-} from '@moonshot-ai/agent-core-v2';
+import { buildDaemonFileUrl, buildImageCompressionCaption, buildUnsupportedImageNotice, compressBase64ForModel, compressImageForModel, decodeBase64Prefix, Error2, fileNotFoundError, isModelAcceptedImageMime, MAX_IMAGE_DECODE_BYTES, normalizeImageMime, persistOriginalImage, resolveEffectiveImageMime, unsupportedImageMimeFromUrl, type GetResult, type IFileService, type ISessionMediaStore, type ITelemetryService, type PromptFileAttachment } from '@moonshot-ai/agent-core-v2';
+import { type ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { sniffMediaFromMagic } from '@moonshot-ai/agent-core-v2/agent/media/file-type';
 import {
   IMAGE_MIME_BY_SUFFIX,

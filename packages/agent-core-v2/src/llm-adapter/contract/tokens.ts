@@ -1,4 +1,4 @@
-import type { ContentPart, Message, Tool } from './message';
+import type { ContentPart, Message, Tool } from '#human/llm/message';
 
 const messageTokenEstimateCache = new WeakMap<Message, number>();
 

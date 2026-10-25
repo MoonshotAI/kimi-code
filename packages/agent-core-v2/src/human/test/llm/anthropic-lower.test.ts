@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { providerImagePolicy } from '#/llm/media/image-formats';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { providerImagePolicy } from '#/llm/protocol/kit/media';
 import type { Message } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import { lowerMessage } from '#/llm/requester/bases/anthropic/lower';
+import type { LlmModel } from '#/llm-requester/model';
+import { lowerMessage } from '#/llm/builtin/protocol/anthropic/lower';
 import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import type { LlmClientContext } from '#/llm/requester/requester';
+import type { LlmClientContext } from '#/llm-requester/requester';
 import { kimiAnthropicTrait } from '#/llm-kimi/trait';
 
 const routedModel: LlmModel = {

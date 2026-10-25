@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { StreamParseSink } from '#/llm/protocol/format';
 import { anthropicFormat } from '#/llm/requester/bases/anthropic/format';
 import { createOpenAIFormat } from '#/llm/requester/bases/openai/format';
-import type { TokenUsage } from '#/llm/usage';
+import type { TokenUsage } from '#/llm-requester/usage';
 
 const openAIFormat = createOpenAIFormat();
 

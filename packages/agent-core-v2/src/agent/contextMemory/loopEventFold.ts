@@ -1,9 +1,8 @@
 import { freeze, isDraft, original } from 'immer';
 
-import type { FinishReason } from '#human/llm/finish-reason';
-import { createToolMessage } from '#/llm-adapter/contract/message';
-import type { ContentPart, ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
+import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Message, ToolCall } from '#/llm/message';
+import type { Message, ToolCall } from '#/message';
 
-import { ToolCallIdNormalizer } from '#/llm/toolCallIdNormalizer';
+import { ToolCallIdNormalizer } from '#/llm-requester/toolCallIdNormalizer';
 
 function call(id: string, streamIndex?: number): ToolCall {
   return { type: 'function', id, name: 'Bash', arguments: '{}', _streamIndex: streamIndex };

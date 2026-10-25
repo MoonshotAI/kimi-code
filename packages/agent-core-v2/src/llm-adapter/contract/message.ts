@@ -5,7 +5,7 @@ import type {
   Role,
   ToolCall,
   ToolDescription,
-} from '#human/llm/message';
+} from '#human/message';
 
 export type {
   AudioURLPart,
@@ -18,7 +18,7 @@ export type {
   ToolCall,
   ToolCallPart,
   VideoURLPart,
-} from '#human/llm/message';
+} from '#human/message';
 
 export type Tool = ToolDescription;
 
@@ -29,7 +29,7 @@ export {
   isToolCall,
   isToolCallPart,
   mergeInPlace,
-} from '#human/llm/message';
+} from '#human/message';
 
 export interface Message {
   readonly role: Role;

@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { modelsDevProviderModels, resolveModelsDevImport } from '#/models-dev/models-dev';
-import type { Provider } from '#/llm/provider/definition';
+import type { Provider } from '#/provider-catalog/catalog';
 import {
   createMemoryProviderCatalogStore,
   createProviderCatalog,
   type CatalogModelDefinition,
   type ProviderCatalogRefreshFailed,
-} from '#/llm/provider-catalog';
+} from '#/provider-catalog/catalog';
 
 function byId(
   models: readonly CatalogModelDefinition[],

@@ -1,7 +1,7 @@
 import { getMaxListeners } from 'node:events';
 
 import { type ToolCall } from '#human/llm/message';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { IDisposable } from '#/_base/di/lifecycle';

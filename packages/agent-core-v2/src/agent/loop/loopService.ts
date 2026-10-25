@@ -23,10 +23,9 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { type FinishReason } from '#human/llm/finish-reason';
-import { mergeInPlace } from '#/llm-adapter/contract/message';
-import type { ContentPart, UserMessage } from '#human/llm/message';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { type FinishReason } from '#human/llm-requester/finish-reason';
+import { mergeInPlace, type ContentPart, type UserMessage } from '#human/llm/message';
+import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 

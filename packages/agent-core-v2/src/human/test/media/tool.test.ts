@@ -13,7 +13,7 @@ import { journalFromBranch } from '#/eventStore/journal';
 import { MemoryBackend } from '#/store/backend/memory';
 import { TreeStore } from '#/store/store';
 import { testScopeFactory } from '#/test/agent/scope-factory';
-import type { ModelCapability } from '#/llm/capability';
+import type { ModelCapability } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -22,12 +22,12 @@ import {
   type ToolCall,
   type VideoURLPart,
 } from '#/llm/message';
-import { createMemoryMediaUploadCache } from '#/llm/media/cache';
-import { createMediaRefResolver } from '#/llm/media/resolver';
-import { createMemoryMediaStore } from '#/llm/media/store';
-import type { LlmModel } from '#/llm/model';
+import { createMemoryMediaUploadCache } from '#/media/cache';
+import { createMediaRefResolver } from '#/media/resolver';
+import { createMemoryMediaStore } from '#/media/store';
+import type { LlmModel } from '#/llm-requester/model';
 import { createProvider } from '#/llm/provider/definition';
-import type { LlmRequester } from '#/llm/requester/requester';
+import type { LlmRequester } from '#/llm-requester/requester';
 import { openAIBase, prepareOpenAIRequest } from '#/llm/requester/bases/openai/requester';
 import { createReadMediaFileTool } from '#/media/tool';
 
