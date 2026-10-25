@@ -13,6 +13,7 @@ export const Methods = {
   CheckWorkspace: "checkWorkspace",
   GetInputHistory: "getInputHistory",
   AddInputHistory: "addInputHistory",
+  CopyText: "copyText",
 
   GetSlashCommands: "getSlashCommands",
   CheckLoginStatus: "checkLoginStatus",
@@ -151,6 +152,7 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
       return params === undefined;
 
     case Methods.AddInputHistory:
+    case Methods.CopyText:
       return hasString(params, "text");
     case Methods.SaveConfig:
       return isPlainObject(params)

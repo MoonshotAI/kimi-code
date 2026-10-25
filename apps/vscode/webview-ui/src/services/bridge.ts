@@ -41,11 +41,13 @@ class Bridge {
   private eventHandlers = new Map<string, Set<(data: unknown) => void>>();
   private requestId = 0;
   private webviewId: string;
+  private isVSCode: boolean;
 
   constructor() {
-    this.webviewId = document.body.getAttribute("data-webviewid") || `unknown_${Date.now()}`;
+    this.webviewId = document.body.dataset.webviewid || `unknown_${Date.now()}`;
+    this.isVSCode = typeof acquireVsCodeApi === "function";
 
-    if (typeof acquireVsCodeApi === "function") {
+    if (this.isVSCode) {
       this.vscode = acquireVsCodeApi();
     } else {
       console.warn("[Kimi Bridge] Running outside VS Code, using mock");
@@ -116,6 +118,11 @@ class Bridge {
 
   addInputHistory(text: string) {
     return this.call<{ ok: boolean }>(Methods.AddInputHistory, { text });
+  }
+
+  copyText(text: string) {
+    if (!this.isVSCode) return navigator.clipboard.writeText(text);
+    return this.call<{ ok: boolean }>(Methods.CopyText, { text }).then(() => undefined);
   }
 
   getSlashCommands() {
