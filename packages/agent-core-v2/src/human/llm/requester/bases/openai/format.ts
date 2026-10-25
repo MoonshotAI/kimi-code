@@ -220,6 +220,7 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
       let seenReasoningContent = false;
       const emittedThinkKeys = new Set<string>();
       let textPending = false;
+      let deferredEmptyKey: string | undefined;
 
       const notePending = (part: StreamedMessagePart): void => {
         if (part.type === 'text') {
@@ -320,8 +321,25 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
           return;
         }
         const emit = (part: StreamedMessagePart): void => {
+          const wasTextPending = textPending;
+          const defersEmpty =
+            part.type === 'think' && wasTextPending && isVacuousContentPart(part);
+          const flushesDeferred =
+            wasTextPending &&
+            !defersEmpty &&
+            part.type !== 'text' &&
+            !(part.type === 'tool_call_part' && part.index !== undefined);
+          const deferredKey = flushesDeferred ? deferredEmptyKey : undefined;
           notePending(part);
           sink.onDelta(part);
+          if (part.type === 'text') {
+            deferredEmptyKey = undefined;
+          } else if (defersEmpty) {
+            deferredEmptyKey = part.think.length === 0 ? part.reasoningKey : undefined;
+          } else if (deferredKey !== undefined) {
+            emittedThinkKeys.add(deferredKey);
+            deferredEmptyKey = undefined;
+          }
         };
         const reasoningValues = extractReasoningStrings(delta);
         for (const reasoning of reasoningValues) {
