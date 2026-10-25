@@ -40,6 +40,7 @@ import {
 } from './subagent';
 import { runAgentTurn } from './runAgentTurn';
 import {
+  PRIMARY_SUBAGENT_MODEL_CHOICE,
   resolveSubagentBinding,
   resolveSubagentThinking,
   wrapSubagentModelError,
@@ -118,13 +119,18 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
         details: { agentId: input.callerAgentId },
       });
     }
-    const binding = fork
-      ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
-      : resolveSubagentBinding(
-          this.configService,
-          { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
-          input.model,
-        );
+    const hasExplicitModelOverride =
+      input.model !== undefined &&
+      input.model !== PRIMARY_SUBAGENT_MODEL_CHOICE &&
+      input.model !== own.modelAlias;
+    const binding =
+      fork && !hasExplicitModelOverride
+        ? { model: own.modelAlias, thinking: own.thinkingLevel, modelSource: 'inherited' as const }
+        : resolveSubagentBinding(
+            this.configService,
+            { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
+            input.model,
+          );
     let model: Model;
     try {
       model = this.modelCatalog.get(binding.model);
@@ -150,7 +156,13 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
       let created: IAgentScopeHandle;
       try {
         if (plan.fork) {
+          const callerModel = caller.accessor.get(IAgentProfileService).data().modelAlias;
+          const forkBinding =
+            plan.model !== callerModel
+              ? { model: plan.model, thinking: plan.thinking }
+              : undefined;
           const forked = await this.agentLifecycle.fork(agentContextOf(caller), {
+            ...(forkBinding === undefined ? {} : { binding: forkBinding }),
             labels: opts.labels,
           });
           created = this.agentLifecycle.handleOf(forked.agentId)!;

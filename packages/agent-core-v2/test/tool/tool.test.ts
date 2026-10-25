@@ -39,7 +39,6 @@ import {
 } from '#/agent/tools/agent/agent';
 import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
-  FORK_WITH_MODEL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   FORK_WITH_TYPE_UNAVAILABLE,
 } from '#/session/subagent/spawn';
@@ -2010,20 +2009,77 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
-  it('rejects fork with a model override', async () => {
-    const lifecycle = createAgentLifecycleStub();
-    const context = createAgentToolContext(lifecycle, forkFlags());
+  it('accepts fork with a model override from the secondary model pool', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      forkFlags(),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: {
+              'provider/fast': 'Fast model',
+              'provider/smart': 'Smart writing model',
+            },
+          },
+        },
+      },
+    );
 
     const result = await executeAgentTool(context, {
-      prompt: 'Investigate',
-      description: 'Find cause',
+      prompt: 'Write the detailed explanation',
+      description: 'Write explanation',
       model: 'provider/smart',
       fork: true,
     });
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
-    expect(lifecycle.create).not.toHaveBeenCalled();
-    expect(lifecycle.run).not.toHaveBeenCalled();
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain('child result');
+    expect(lifecycle.fork).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'main' }), {
+      binding: { model: 'provider/smart', thinking: undefined },
+      labels: expect.objectContaining({ parentAgentId: 'main' }),
+    });
+  });
+
+  it('delivers foreground subagent output directly to the user and stops the turn when deliver_to_user is true', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: async () => ({ summary: 'detailed k3 explanation' }),
+    });
+    const context = createAgentToolContext(lifecycle, forkFlags());
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Explain architecture',
+      description: 'Explain architecture',
+      fork: true,
+      deliver_to_user: true,
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.stopTurn).toBe(true);
+    expect(result.output).toContain('detailed k3 explanation');
+  });
+
+  it('rejects deliver_to_user combined with run_in_background', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(lifecycle, forkFlags());
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Explain architecture',
+      description: 'Explain architecture',
+      run_in_background: true,
+      deliver_to_user: true,
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'Cannot combine deliver_to_user with run_in_background. Direct delivery to the user requires foreground execution.',
+    });
+    expect(lifecycle.fork).not.toHaveBeenCalled();
   });
 
   it('accepts fork with the primary model choice', async () => {

@@ -28,6 +28,7 @@ import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { AssistantDelta } from '#/agent/loop/turnEvents';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
@@ -82,6 +83,7 @@ import {
 import {
   BACKGROUND_AGENT_UNAVAILABLE,
   DEFAULT_PROFILE_NAME,
+  DELIVER_TO_USER_WITH_BACKGROUND_UNAVAILABLE,
   ISubagentTool,
   RESUME_WITH_TYPE_UNAVAILABLE,
   RESUMED_LABEL,
@@ -277,6 +279,10 @@ export class SubagentTool implements ISubagentTool {
       return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
     }
 
+    if (args.deliver_to_user === true && args.run_in_background === true) {
+      return { output: DELIVER_TO_USER_WITH_BACKGROUND_UNAVAILABLE, isError: true };
+    }
+
     if (args.fork === true) {
       if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
         return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
@@ -469,6 +475,10 @@ export class SubagentTool implements ISubagentTool {
         return { output: RESUME_WITH_TYPE_UNAVAILABLE, isError: true };
       }
 
+      if (args.deliver_to_user === true && runInBackground) {
+        return { output: DELIVER_TO_USER_WITH_BACKGROUND_UNAVAILABLE, isError: true };
+      }
+
       if (args.fork === true) {
         if (!this.flags.enabled(SUBAGENT_FORK_FLAG_ID)) {
           return { output: FORK_EXPERIMENTAL_UNAVAILABLE, isError: true };
@@ -570,7 +580,13 @@ export class SubagentTool implements ISubagentTool {
           output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground, true),
         };
       }
-      return await this.formatForegroundResult(taskId, handle, timeoutMs);
+      return await this.formatForegroundResult(
+        taskId,
+        handle,
+        timeoutMs,
+        args.deliver_to_user === true,
+        toolCallId,
+      );
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
     }
@@ -580,12 +596,43 @@ export class SubagentTool implements ISubagentTool {
     taskId: string,
     handle: SubagentHandle,
     timeoutMs: number,
+    deliverToUser = false,
+    toolCallId?: string,
   ): Promise<ExecutableToolResult> {
     const info = this.tasks.getTask(taskId);
     const stopCode = info?.kind === 'agent' ? info.stopCode : undefined;
     if (info?.status === 'completed') {
+      const output = await this.tasks.readOutput(taskId);
+      const shouldDeliver =
+        deliverToUser &&
+        stopCode !== REPEAT_BREAKER_STOP_REASON &&
+        output.trim().length > 0;
+      if (shouldDeliver) {
+        try {
+          const requester = this.agentLifecycle.handleOf(this.callerAgentId);
+          const loop = requester?.accessor.get(IAgentLoopService);
+          const dispatcher = requester?.accessor.get(IEventDispatcher);
+          if (loop?.hooks?.onDidFinishStep !== undefined && dispatcher !== undefined) {
+            const disposable = loop.hooks.onDidFinishStep.register(
+              `agent-deliver-${toolCallId ?? taskId}`,
+              async (stepCtx, next) => {
+                disposable.dispose();
+                void dispatcher.dispatch(
+                  new AssistantDelta({
+                    agentId: this.callerAgentId,
+                    turnId: stepCtx.turnId,
+                    delta: output,
+                  }),
+                );
+                await next();
+              },
+            );
+          }
+        } catch {}
+      }
       return {
-        output: formatForegroundAgentSuccess(handle, await this.tasks.readOutput(taskId), stopCode),
+        output: formatForegroundAgentSuccess(handle, output, stopCode),
+        ...(shouldDeliver ? { stopTurn: true } : {}),
       };
     }
     const timedOut = info?.status === 'timed_out';

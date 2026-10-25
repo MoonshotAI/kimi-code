@@ -10,7 +10,9 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { AssistantDelta } from '#/agent/loop/turnEvents';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -639,5 +641,41 @@ describe('subagent task reminders and fork request parity', () => {
     expect(probes[1]?.['system_prompt_match']).toBeUndefined();
     expect(probes[1]?.['parent_input_tokens']).toBeUndefined();
     expect(probes[1]?.['parent_request_gap_ms']).toBeUndefined();
+  });
+
+  it('delivers forked subagent output directly to the user and ends the parent turn without a follow-up parent LLM call', async () => {
+    createMainForkCtx();
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    profile.update({ activeToolNames: contributedToolNames() });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_fork_deliver',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'write detailed explanation',
+        prompt: 'explain the architecture in detail',
+        fork: true,
+        deliver_to_user: true,
+      }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
+
+    const mainDeltas: string[] = [];
+    ctx.get(IEventBus).subscribe(AssistantDelta, (event) => {
+      if (event.agentId === 'main') mainDeltas.push(event.delta);
+    });
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'explain this module' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const completion = await loop.promptHandle(id)!.completion;
+    expect(completion.state).toBe('completed');
+    expect(ctx.llmCalls).toHaveLength(2);
+    expect(mainDeltas).toContain(CHILD_FINAL_TEXT);
   });
 });
