@@ -28,7 +28,7 @@ export const EditInputSchema = z.object({
     .boolean()
     .optional()
     .describe(
-      'Set true only when intentionally deleting a multi-line span with an empty (or whitespace-only) new_string. Omit for normal edits.',
+      'Set true only when intentionally deleting 3 or more lines with an empty (or whitespace-only) new_string, including cumulative multi-line replace_all matches. Omit for normal edits.',
     ),
 });
 

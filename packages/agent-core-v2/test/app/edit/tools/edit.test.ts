@@ -174,7 +174,10 @@ describe('EditTool', () => {
         path: { type: 'string' },
         old_string: { type: 'string' },
         new_string: { type: 'string' },
-        allow_large_delete: { type: 'boolean' },
+        allow_large_delete: {
+          type: 'boolean',
+          description: expect.stringContaining('3 or more lines'),
+        },
       },
     });
     expect(
