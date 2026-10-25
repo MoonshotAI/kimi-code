@@ -20,6 +20,7 @@ import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemet
 import {
   ISessionIndex,
   ISessionIndexMirror,
+  isSafeSessionId,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
 import {
@@ -800,6 +801,41 @@ describe('FileSessionIndex (read model)', () => {
       before: 'b',
     });
     expect(rest.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('excludes healed cursors from their own after page', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 100 });
+    await seedSession('c', { createdAt: 3, updatedAt: 200 });
+    const store = build();
+    await store.prepare();
+    await queryStore.put(sessionCollection(1), 'b', {
+      id: 'b',
+      workspaceId,
+      title: 'b',
+      createdAt: 2,
+      updatedAt: 4,
+      archived: false,
+      cwd: '',
+    });
+
+    const page = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 5,
+      after: 'b',
+    });
+    expect(page.items.map((s) => s.id)).toEqual(['c']);
+    expect(page.items.find((s) => s.id === 'b')).toBeUndefined();
+  });
+
+  it('validates safe session ids', () => {
+    expect(isSafeSessionId('session-123')).toBe(true);
+    expect(isSafeSessionId('')).toBe(false);
+    expect(isSafeSessionId('.')).toBe(false);
+    expect(isSafeSessionId('..')).toBe(false);
+    expect(isSafeSessionId('a/b')).toBe(false);
+    expect(isSafeSessionId('a\\b')).toBe(false);
+    expect(isSafeSessionId('a\0b')).toBe(false);
   });
 
   it('rejects path traversal in cursor id and session id queries', async () => {

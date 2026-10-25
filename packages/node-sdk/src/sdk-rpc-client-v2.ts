@@ -143,6 +143,7 @@ import {
   drainQueryStoreDisposals,
   drainSessionIndexMirror,
   ensureKimiHome,
+  isSafeSessionId,
   ensureMainAgent,
   getOrRestoreAgent,
   reloadOnStale,
@@ -1384,6 +1385,12 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
   private async doCreateSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const workDir = normalizeRequiredWorkDir('createSession', input.workDir);
     if (input.id !== undefined) {
+      if (!isSafeSessionId(input.id)) {
+        throw new KimiError(
+          ErrorCodes.REQUEST_INVALID,
+          `Invalid session id "${input.id}"`,
+        );
+      }
       const existing =
         this.liveSession(input.id) ??
         (await this.engineAccessor.get(ISessionIndex).get(input.id));
@@ -1471,6 +1478,15 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
    * identical results.
    */
   override async forkSession(input: ForkSessionInput): Promise<SessionSummary> {
+    if (!isSafeSessionId(input.id)) {
+      throw SDKRpcClientV2.sessionNotFound(input.id);
+    }
+    if (input.forkId !== undefined && !isSafeSessionId(input.forkId)) {
+      throw new KimiError(
+        ErrorCodes.REQUEST_INVALID,
+        `Invalid session id "${input.forkId}"`,
+      );
+    }
     // The source session's reads (metadata, wire flush) stay atomic against
     // its close/reload through the per-session queue; an explicit target id
     // takes a second (sorted) queue so fork(A→X) is also atomic against

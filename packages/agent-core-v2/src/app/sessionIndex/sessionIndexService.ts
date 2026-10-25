@@ -31,6 +31,7 @@ import {
   ISessionIndex,
   ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
+  isSafeSessionId,
   type SessionCountQuery,
   type SessionIndexStatus,
   type SessionIndexState,
@@ -342,7 +343,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   async get(id: string): Promise<SessionSummary | undefined> {
-    if (!this.isSafeSessionId(id)) return undefined;
+    if (!isSafeSessionId(id)) return undefined;
     return this.withReadModel(
       (generation) => this.getFromReadModel(generation, id),
       () => this.getLegacy(id),
@@ -546,6 +547,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       .pending()
       .filter(
         (summary) =>
+          (position === undefined || summary.id !== position.id) &&
           (query.workspaceIds === undefined || query.workspaceIds.includes(summary.workspaceId)) &&
           (query.includeArchived === true || !summary.archived) &&
           summaryMatchesChildOf(summary, query.childOf) &&
@@ -578,7 +580,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   > {
     const id = query.before ?? query.after;
     if (id === undefined) return { filter: {}, bounds: {} };
-    if (!this.isSafeSessionId(id)) return undefined;
+    if (!isSafeSessionId(id)) return undefined;
     let u: number | undefined;
     const storedValue: unknown = await this.queryStore.get(sessionCollection(generation), id);
     const storedUpdatedAt =
@@ -654,7 +656,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
 
   private async listLegacy(query: SessionListQuery): Promise<Page<SessionSummary>> {
     if (query.sessionId !== undefined) {
-      if (!this.isSafeSessionId(query.sessionId)) return { items: [] };
+      if (!isSafeSessionId(query.sessionId)) return { items: [] };
       const summary = await this.getLegacy(query.sessionId);
       const items =
         summary !== undefined && (!summary.archived || query.includeArchived === true)
@@ -689,7 +691,7 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
   }
 
   private async getLegacy(id: string): Promise<SessionSummary | undefined> {
-    if (!this.isSafeSessionId(id)) return undefined;
+    if (!isSafeSessionId(id)) return undefined;
     const hinted = await this.workspaceHintFor(id);
     if (hinted !== undefined && this.isSafeBucketId(hinted)) {
       const summary = await readSessionSummary(this.docs, this.sessionsScope, hinted, id);
@@ -806,17 +808,6 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       if (rel.startsWith('..') || isAbsolute(rel) || rel !== id) return false;
     }
     return true;
-  }
-
-  private isSafeSessionId(id: string): boolean {
-    return (
-      Boolean(id) &&
-      id !== '.' &&
-      id !== '..' &&
-      !id.includes('/') &&
-      !id.includes('\\') &&
-      !id.includes('\0')
-    );
   }
 
   private readModelEnabled(): boolean {

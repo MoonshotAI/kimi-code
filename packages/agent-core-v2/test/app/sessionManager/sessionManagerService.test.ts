@@ -648,6 +648,22 @@ describe('SessionManager closeIfIdle', () => {
     expect(fake.manager.get('session-1')).toBeDefined();
   });
 
+  it('rejects unsafe custom IDs on create and fork before persistence', async () => {
+    const fake = setup();
+    await expect(fake.manager.create({ sessionId: 'evil/id', workDir: '/tmp' })).rejects.toThrow(
+      /Invalid session id/,
+    );
+    await expect(fake.manager.create({ sessionId: '..', workDir: '/tmp' })).rejects.toThrow(
+      /Invalid session id/,
+    );
+    await expect(
+      fake.manager.fork({ sourceSessionId: 'session-1', newSessionId: 'evil/id' }),
+    ).rejects.toThrow(/Invalid session id/);
+    await expect(
+      fake.manager.fork({ sourceSessionId: 'evil/source', newSessionId: 'session-2' }),
+    ).rejects.toThrow(/Invalid session id/);
+  });
+
   it('serializes a reclaim with a racing resume', async () => {
     const fake = setup();
     await create(fake);

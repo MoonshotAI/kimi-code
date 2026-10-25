@@ -70,3 +70,14 @@ export interface ISessionIndexMirror {
 
 export const ISessionIndexMirror: ServiceIdentifier<ISessionIndexMirror> =
   createDecorator<ISessionIndexMirror>('sessionIndexMirror');
+
+export function isSafeSessionId(id: string): boolean {
+  return (
+    Boolean(id) &&
+    id !== '.' &&
+    id !== '..' &&
+    !id.includes('/') &&
+    !id.includes('\\') &&
+    !id.includes('\0')
+  );
+}
