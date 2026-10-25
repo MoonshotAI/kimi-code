@@ -607,9 +607,25 @@ describe('FileSessionIndex (read model)', () => {
     await store.prepare();
     store.stopReconcileLoop();
 
-    const page = await store.listRecent({ workspaceIds: ['../../outside'] });
+    const page = await store.listRecent({ workspaceIds: ['../outside'] });
     expect(page.items).toEqual([]);
-    expect(await store.count({ workspaceIds: ['../../outside'] })).toBe(0);
+    expect(await store.count({ workspaceIds: ['../outside'] })).toBe(0);
+
+    const rawStore = build();
+    expect(await rawStore.count({ workspaceIds: ['../outside'] })).toBe(0);
+    expect((await rawStore.listRecent({ workspaceIds: ['../outside'] })).items).toEqual([]);
+  });
+
+  it('skips fallback when cursor is invalid or absent', async () => {
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+
+    const unsafePage = await store.listRecent({ workspaceIds: [workspaceId], before: '../../outside' });
+    expect(unsafePage.items).toEqual([]);
+
+    const missingPage = await store.listRecent({ workspaceIds: [workspaceId], before: 'non-existent' });
+    expect(missingPage.items).toEqual([]);
   });
 
   it('paginates exactly through same-millisecond ties', async () => {
@@ -785,15 +801,20 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('b', { createdAt: 2, updatedAt: 100 });
     const store = build();
     await store.prepare();
-    await queryStore.put(sessionCollection(1), 'b', {
-      id: 'b',
-      workspaceId,
-      title: 'b',
-      createdAt: 2,
-      updatedAt: 4,
-      archived: false,
-      cwd: '',
-    });
+    await queryStore.put(
+      sessionCollection(1),
+      'b',
+      {
+        id: 'b',
+        workspaceId,
+        title: 'b',
+        createdAt: 2,
+        updatedAt: 4,
+        archived: false,
+        cwd: '',
+      },
+      { columns: { [recencyColumn(1)]: 4 } },
+    );
 
     const rest = await store.listRecent({
       workspaceIds: [workspaceId],
@@ -809,15 +830,20 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('c', { createdAt: 3, updatedAt: 200 });
     const store = build();
     await store.prepare();
-    await queryStore.put(sessionCollection(1), 'b', {
-      id: 'b',
-      workspaceId,
-      title: 'b',
-      createdAt: 2,
-      updatedAt: 4,
-      archived: false,
-      cwd: '',
-    });
+    await queryStore.put(
+      sessionCollection(1),
+      'b',
+      {
+        id: 'b',
+        workspaceId,
+        title: 'b',
+        createdAt: 2,
+        updatedAt: 4,
+        archived: false,
+        cwd: '',
+      },
+      { columns: { [recencyColumn(1)]: 4 } },
+    );
 
     const page = await store.listRecent({
       workspaceIds: [workspaceId],

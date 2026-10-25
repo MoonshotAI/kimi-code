@@ -355,6 +355,12 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
       async (generation) => {
         const page = await this.listRecentFromReadModel(generation, query);
         if (page.items.length === 0 && query.workspaceIds !== undefined) {
+          const cursorId = query.before ?? query.after;
+          if (cursorId !== undefined) {
+            if (!isSafeSessionId(cursorId)) return page;
+            const cursor = await this.get(cursorId);
+            if (cursor === undefined) return page;
+          }
           const legacy = await this.listLegacy(query);
           if (legacy.items.length > 0) return legacy;
         }
@@ -558,10 +564,10 @@ export class FileSessionIndex extends Disposable implements ISessionIndex {
               : summary.updatedAt > position.u ||
                 (summary.updatedAt === position.u && summary.id > position.id))),
       );
-    if (pending.length === 0) return page;
     const merged = new Map<string, SessionSummary>();
     for (const summary of pending) merged.set(summary.id, summary);
     for (const summary of page.items) {
+      if (position !== undefined && summary.id === position.id) continue;
       if (!merged.has(summary.id)) merged.set(summary.id, summary);
     }
     const items = [...merged.values()].toSorted(canonicalOrder);
