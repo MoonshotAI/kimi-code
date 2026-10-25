@@ -1222,7 +1222,7 @@ describe('KimiTUI message flow', () => {
     expect(stripSgr(renderTranscript(driver))).not.toContain('skill card');
   });
 
-  it('pages Updates with Ctrl+N and arrow keys while keeping the editor focused', async () => {
+  it('focuses Updates with Ctrl+N, pages with Shift+arrows, and returns focus to the editor on Esc', async () => {
     const { driver } = await makeDriver(makeSession());
     const notifications = driver.sessionEventHandler.notifications;
     notifications.setEnabled(true);
@@ -1237,17 +1237,21 @@ describe('KimiTUI message flow', () => {
     }
     driver.state.editor.setText('unsent follow-up');
     const cursor = driver.state.editor.getCursor();
-    const setFocus = vi.spyOn(driver.state.ui, 'setFocus');
-    expect(driver.state.notifyPanel.render(100)[1]).toContain('Updates 3/3');
-    driver.state.editor.handleInput('\u000E');
-    expect(driver.state.notifyPanel.render(100)[1]).toContain('esc close');
-    driver.state.editor.handleInput('\u001B[A');
-    expect(driver.state.notifyPanel.render(100)[1]).toContain('Updates 2/3');
-    driver.state.editor.handleInput('\u001B[B');
-    expect(driver.state.notifyPanel.render(100)[1]).toContain('Updates 3/3');
-    driver.state.editor.handleInput('\u001B');
-    expect(driver.state.notifyPanel.render(100)[1]).toContain('ctrl+n page');
-    expect(setFocus).not.toHaveBeenCalled();
+    const { notifyPanel, editor } = driver.state;
+    const head = (): string => notifyPanel.render(100)[0]!;
+    expect(head()).toContain('main < 3/3 >');
+    editor.handleInput('\u000E');
+    expect(notifyPanel.focused).toBe(true);
+    expect(editor.focused).toBe(false);
+    expect(head()).toContain('esc back');
+    notifyPanel.handleInput('\u001B[1;2D');
+    expect(head()).toContain('main < 2/3 >');
+    notifyPanel.handleInput('\u001B[1;2C');
+    expect(head()).toContain('main < 3/3 >');
+    notifyPanel.handleInput('\u001B');
+    expect(editor.focused).toBe(true);
+    expect(notifyPanel.focused).toBe(false);
+    expect(head()).toContain('ctrl+n to browse');
     expect(driver.state.editor.getText()).toBe('unsent follow-up');
     expect(driver.state.editor.getCursor()).toEqual(cursor);
   });

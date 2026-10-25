@@ -18,7 +18,6 @@ function makeHost() {
     getTurnContext: vi.fn(() => ({ turnId: 1, step: 0 })),
     registerToolCall: vi.fn(),
     completeToolResult: vi.fn(),
-    setTodoList: vi.fn(),
   };
   const host = {
     state: {
@@ -32,7 +31,6 @@ function makeHost() {
       queuedMessageDispatchPending: false,
       theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
-      todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       ui: { requestRender: vi.fn() },
     },

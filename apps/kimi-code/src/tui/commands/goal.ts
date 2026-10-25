@@ -16,6 +16,7 @@ import {
   UpcomingGoalAddedMessageComponent,
 } from '../components/messages/goal-panel';
 import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
+import { DOCK_APPROVAL_ROWS } from '../constant/rendering';
 import {
   appendGoalQueueItem,
   moveGoalQueueItem,
@@ -25,6 +26,7 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
+import { isFocusingClick } from '../utils/terminal-focus';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
@@ -423,6 +425,8 @@ function showGoalStartPermissionPrompt(
         void startGoalWithPermission(host, parsed, choice, options);
       },
       onCancel: cancelStart,
+      layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_APPROVAL_ROWS },
+      isFocusingClick: () => isFocusingClick(host.state.terminalState),
     }),
   );
 }

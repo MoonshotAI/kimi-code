@@ -85,6 +85,7 @@ function makeHost(
     hasSession?: boolean;
     streaming?: boolean;
     permissionMode?: 'manual' | 'auto' | 'yolo';
+    fullscreen?: boolean;
   } = {},
 ) {
   const session = {
@@ -109,6 +110,7 @@ function makeHost(
         isCompacting: false,
       },
       editor: { getText: vi.fn(() => '') },
+      dockContainer: overrides.fullscreen === true ? {} : undefined,
       transcriptContainer,
       ui: { requestRender: vi.fn() },
       theme: { palette: getBuiltInPalette('dark') },
@@ -361,6 +363,17 @@ describe('handleGoalCommand', () => {
     const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
     expect(text).toContain('Always Ask mode is not suitable for unattended goal work');
     expect(text).toContain('Return to the input box with your goal command');
+  });
+
+  it('docks the local goal start prompt in fullscreen with only the selected description', async () => {
+    const { host: manualHost } = makeHost({ permissionMode: 'manual', fullscreen: true });
+
+    await handleGoalCommand(manualHost, 'Ship feature X');
+
+    const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
+    expect(text).toContain('Best if you want Kimi Code to keep working while you are away');
+    expect(text).not.toContain('Tools and plan changes are approved automatically');
+    expect(text).not.toContain('Keep approvals on. Kimi Code will ask before risky actions');
   });
 
   it('defaults to Auto when confirming a Manual-mode goal start', async () => {
