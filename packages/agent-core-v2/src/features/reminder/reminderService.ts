@@ -166,7 +166,7 @@ function appendResult(
 }
 
 async function inject(runtime: AgentActorContext<null>, isNewTurn: boolean, signal: AbortSignal): Promise<void> {
-  const entries = [...actorContext(runtime).entries].toSorted(
+  const entries = [...actorContext(runtime).entries].sort(
     (left, right) =>
       (REMINDER_VARIANT_PRIORITY.get(left.variant) ?? 0) -
       (REMINDER_VARIANT_PRIORITY.get(right.variant) ?? 0),
