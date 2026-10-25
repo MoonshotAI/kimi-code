@@ -6,6 +6,6 @@ Use `resume_agent_ids` to continue subagents that already exist from earlier wor
 
 Each of these is enforced — a violation is rejected before any subagent starts: provide at least 2 `items` unless you pass `resume_agent_ids`; whenever `items` are present, `prompt_template` is required and must contain `{{item}}`; and the filled-in prompts must be distinct (two items that expand to the same prompt are rejected).
 
-Use enough subagents to keep the work focused and parallel. AgentSwarm supports up to 128 subagents, and launches are queued automatically, so it is safe to split large tasks into many clear, independent items.
+Reach for AgentSwarm only when the user asked for a swarm or many parallel agents; then use enough subagents to keep the work focused and parallel. AgentSwarm supports up to 128 subagents, and launches are queued automatically, so it is safe to split large tasks into many clear, independent items.
 
 If `AgentSwarm` is called, that call must be the only tool call in the response.
