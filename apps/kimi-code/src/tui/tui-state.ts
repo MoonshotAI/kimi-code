@@ -83,7 +83,14 @@ export interface TUIState {
   /** A follow-up session page fetch is in flight. */
   sessionsLoadingMore: boolean;
   sessionsScope: 'cwd' | 'all';
-  activeDialog: 'session-picker' | 'help' | 'trust-prompt' | 'cache-hint' | 'model-switch-confirm' | null;
+  activeDialog:
+    | 'session-picker'
+    | 'help'
+    | 'trust-prompt'
+    | 'cache-hint'
+    | 'model-switch-confirm'
+    | 'goal-start'
+    | null;
   /**
    * True while an editor-replacement panel (help, trust prompt, goal queue
    * manager, …) is mounted in place of the editor. Delayed input restores
@@ -297,7 +304,11 @@ export function editorSlotComponent(
     : slotted;
 }
 
-/** An approval or question has replaced the editor and waits for the user. */
-export function isBlockingPromptPending(state: Pick<TUIState, 'livePane'>): boolean {
-  return state.livePane.pendingApproval !== null || state.livePane.pendingQuestion !== null;
+/** An approval, question, or local goal prompt has replaced the editor and waits for the user. */
+export function isBlockingPromptPending(state: Pick<TUIState, 'livePane' | 'activeDialog'>): boolean {
+  return (
+    state.livePane.pendingApproval !== null ||
+    state.livePane.pendingQuestion !== null ||
+    state.activeDialog === 'goal-start'
+  );
 }

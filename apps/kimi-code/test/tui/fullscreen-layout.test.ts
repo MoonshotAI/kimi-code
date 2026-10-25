@@ -4,6 +4,7 @@ import {
   VStack,
   ScrollView,
   type Component,
+  type Focusable,
   type TuiMouseEvent,
   type Terminal,
   TuiAltScreen,
@@ -17,6 +18,8 @@ import {
  */
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import { handleGoalCommand } from '#/tui/commands/goal';
+import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { MoonLoader } from '#/tui/components/chrome/moon-loader';
 import { AssistantMessageComponent } from '#/tui/components/messages/assistant-message';
@@ -27,13 +30,24 @@ import { ActivityPaneComponent } from '#/tui/components/panes/activity-pane';
 import { CHROME_GUTTER } from '#/tui/constant/rendering';
 import { createTUIState, KimiTUI, type KimiTUIOptions } from '#/tui/kimi-tui';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
 import { GoalStartPermissionPromptComponent } from '#/tui/components/dialogs/goal-start-permission-prompt';
 import { SettingsSelectorComponent } from '#/tui/components/dialogs/settings-selector';
 import { NotifyController } from '#/tui/controllers/notify';
-import { mountFooter, setEditorSlot } from '#/tui/tui-state';
+import {
+  editorSlotComponent,
+  isBlockingPromptPending,
+  mountFooter,
+  setEditorSlot,
+} from '#/tui/tui-state';
 import { currentTheme } from '#/tui/theme';
 import type { AppState, TranscriptEntry } from '#/tui/types';
 import { beginScreenTakeover, endScreenTakeover } from '#/tui/utils/screen-takeover';
+import {
+  installTerminalFocusTracking,
+  TERMINAL_FOCUS_IN,
+  TERMINAL_FOCUS_OUT,
+} from '#/tui/utils/terminal-focus';
 import { markTranscriptComponent } from '#/tui/utils/transcript-component-metadata';
 
 import { VirtualTerminal } from '../../../../packages/pi-tui/test/virtual-terminal';
@@ -1118,6 +1132,64 @@ describe('fullscreen layout', () => {
     state.ui.stop();
   });
 
+  it('treats the local goal prompt as blocking and restores Updates on cancel', async () => {
+    const { state, vt } = await mountFullscreen(24);
+    onTestFinished(() => state.ui.stop());
+    const notifications = new NotifyController(state);
+    notifications.setEnabled(true);
+    state.notifyPanel.upsert({
+      id: 'n1',
+      agentId: 'main',
+      time: 0,
+      title: 'Reading updates',
+      text: 'detailed update body',
+    });
+    state.notifyPanelContainer.addChild(state.notifyPanel);
+    expect(notifications.focusPanel()).toBe(true);
+    state.notifyPanel.setEnded(true);
+    state.ui.setFocus(state.editor);
+    state.ui.requestRender();
+    await vt.waitForRender();
+    expect(screenRows(vt).join('\n')).toContain('detailed update body');
+
+    const host = {
+      state,
+      session: {},
+      surveyController: { notifyDisplaced: () => {} },
+      modelMigration: { retry: () => {} },
+      showError: vi.fn(),
+      showStatus: vi.fn(),
+      showNotice: vi.fn(),
+      track: vi.fn(),
+      sendNormalUserInput: vi.fn(),
+      mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void) {
+        KimiTUI.prototype.mountEditorReplacement.call(host, panel, onDisplaced);
+      },
+      restoreEditor() {
+        KimiTUI.prototype.restoreEditor.call(host);
+      },
+      restoreInputText() {
+        KimiTUI.prototype.restoreEditor.call(host);
+      },
+    } as unknown as SlashCommandHost;
+    await handleGoalCommand(host, 'Ship feature X');
+    await vt.waitForRender();
+
+    let rows = screenRows(vt).join('\n');
+    expect(rows).toContain('Do not start');
+    expect(rows).toContain('ctrl+n to expand');
+    expect(rows).not.toContain('detailed update body');
+    expect(rows).not.toContain('test-model');
+    expect(isBlockingPromptPending(state)).toBe(true);
+
+    editorSlotComponent(state)?.handleInput?.('\u001B');
+    await vt.waitForRender();
+    rows = screenRows(vt).join('\n');
+    expect(isBlockingPromptPending(state)).toBe(false);
+    expect(rows).toContain('detailed update body');
+    expect(rows).toContain('test-model');
+  });
+
   it('keeps Settings usable with pointer selection, wheel paging, and focus loss at 24 rows', async () => {
     const { state, vt } = await mountFullscreen(24);
     vt.resize(80, 24);
@@ -1150,6 +1222,51 @@ describe('fullscreen layout', () => {
     expect(picker.focused).toBe(false);
 
     state.ui.stop();
+  });
+
+  it('does not let a terminal-refocus click change or submit a ChoicePicker', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(10_000);
+    const { state, vt } = await mountFullscreen(24);
+    const disposeFocusTracking = installTerminalFocusTracking(state);
+    onTestFinished(() => {
+      disposeFocusTracking();
+      state.ui.stop();
+      vi.useRealTimers();
+    });
+    const onSelect = vi.fn();
+    const picker = new ChoicePickerComponent({
+      title: 'Pick one',
+      options: [
+        { value: 'a', label: 'Alpha' },
+        { value: 'b', label: 'Beta' },
+      ],
+      currentValue: 'a',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+    const host = {
+      state,
+      surveyController: { notifyDisplaced: () => {} },
+    } as unknown as KimiTUI;
+    KimiTUI.prototype.mountEditorReplacement.call(host, picker);
+    await vt.waitForRender();
+
+    vi.setSystemTime(10_300);
+    vt.sendInput(TERMINAL_FOCUS_OUT);
+    vt.sendInput(TERMINAL_FOCUS_IN);
+    await vt.waitForRender();
+    const betaRow = screenRows(vt).findIndex((row) => row.includes('Beta'));
+    expect(betaRow).toBeGreaterThan(0);
+    vt.sendInput(`\u001B[<35;5;${String(betaRow + 1)}M`);
+    vt.sendInput(`\u001B[<0;5;${String(betaRow + 1)}M`);
+    vt.sendInput(`\u001B[<0;5;${String(betaRow + 1)}m`);
+    await vt.waitForRender();
+
+    expect(onSelect).not.toHaveBeenCalled();
+    const rows = screenRows(vt).join('\n');
+    expect(rows).toContain('❯ Alpha');
+    expect(rows).not.toContain('❯ Beta');
   });
 
   it('keeps Updates expanded when Ctrl+N is followed by an editor click', async () => {

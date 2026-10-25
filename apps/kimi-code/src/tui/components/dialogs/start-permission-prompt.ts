@@ -86,7 +86,7 @@ export class StartPermissionPromptComponent<
           lines.push(currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'));
         }
         lines.push('');
-        return lines;
+        return lines.map((line) => truncateToWidth(line, width));
       }
       case 'body': {
         const lines: string[] = [];
@@ -97,7 +97,7 @@ export class StartPermissionPromptComponent<
           }
           lines.push('');
         }
-        return lines;
+        return lines.map((line) => truncateToWidth(line, width));
       }
       case 'foot':
         return this.renderFoot(width);

@@ -83,6 +83,7 @@ import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
+import { ChoicePickerComponent } from './components/dialogs/choice-picker';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
@@ -4339,6 +4340,9 @@ export class KimiTUI {
     this.surveyController.notifyDisplaced();
     if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.state.editorReplacementMounted = true;
+    if (panel instanceof ChoicePickerComponent) {
+      panel.setTerminalFocusGuard(() => isFocusingClick(this.state.terminalState));
+    }
     setEditorSlot(this.state, panel);
     if (!this.state.notifyPanel.focused) this.state.ui.setFocus(panel);
     this.state.ui.requestRender();

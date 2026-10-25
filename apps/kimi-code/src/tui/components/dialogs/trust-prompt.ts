@@ -82,6 +82,7 @@ export class TrustPromptComponent implements Component, Focusable {
     if (event.type === 'move') {
       const index = this.optionRows.indexOf(event.y);
       if (index === -1) return undefined;
+      if (this.isFocusingClick()) return { handled: true };
       const changed = this.selectedIndex !== index;
       this.selectedIndex = index;
       return { handled: true, render: changed };
@@ -90,6 +91,7 @@ export class TrustPromptComponent implements Component, Focusable {
     const index = this.optionRows.indexOf(event.y);
     if (index === -1) return undefined;
     if (event.type === 'press') {
+      if (this.isFocusingClick()) return { handled: true };
       this.selectedIndex = index;
       return { handled: true, render: true };
     }

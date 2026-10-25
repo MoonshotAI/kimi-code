@@ -1,4 +1,4 @@
-import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -589,6 +589,40 @@ describe('ToolCallComponent', () => {
         expect(body).toBe(chalk.dim('  refreshSession() returns a new token.'));
       } finally {
         chalk.level = previousLevel;
+      }
+    });
+
+    it.each([false, true])('preserves Markdown link targets while dimming, streaming: %s', (streaming) => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      try {
+        const component = new ToolCallComponent(
+          streaming
+            ? {
+                id: 'call_notify_link_stream',
+                name: 'NotifyUser',
+                args: {},
+                streamingArguments: '{"message":"[logs](https://example.test)"}',
+              }
+            : {
+                id: 'call_notify_link',
+                name: 'NotifyUser',
+                args: { message: '[logs](https://example.test)' },
+              },
+          streaming
+            ? undefined
+            : {
+                tool_call_id: 'call_notify_link',
+                output: 'Update shown to the user.',
+                is_error: false,
+              },
+        );
+        component.setExpanded(true);
+
+        const output = component.render(100).join('\n');
+        expect(output).toContain(`${ESC}]8;;https://example.test${ESC}\\`);
+        expect(output).toContain(`${ESC}]8;;${ESC}\\`);
+      } finally {
+        resetCapabilitiesCache();
       }
     });
 

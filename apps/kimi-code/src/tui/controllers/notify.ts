@@ -85,8 +85,9 @@ export class NotifyController {
     this.pending.clear();
     if (!this.enabled && !this.mounted) return;
     const { notifyPanel, notifyPanelContainer } = this.state;
-    if (notifyPanel.isEmpty() && notifyPanelContainer.children.length === 0) return;
+    const needsRender = !notifyPanel.isEmpty() || notifyPanelContainer.children.length > 0;
     notifyPanel.clearUpdates();
+    if (!needsRender) return;
     notifyPanelContainer.clear();
     this.mounted = false;
     this.state.ui.requestRender();

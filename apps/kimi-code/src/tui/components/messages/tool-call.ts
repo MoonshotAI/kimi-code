@@ -700,6 +700,13 @@ class NotifyUserHeader extends TruncatedHeaderLine {
   }
 }
 
+function stripTerminalSequencesExceptLinks(text: string): string {
+  return text
+    .split(/(\u001B\]8;[^;]*;[^\u0007\u001B]*(?:\u0007|\u001B\\))/g)
+    .map((part) => (part.startsWith('\u001B]8;') ? part : stripTerminalSequences(part)))
+    .join('');
+}
+
 class ToolOutputMarkdown extends Markdown {
   private dimCache: { source: string[]; lines: string[] } | undefined;
 
@@ -713,7 +720,7 @@ class ToolOutputMarkdown extends Markdown {
     if (isRenderCacheEnabled() && this.dimCache?.source === source) return this.dimCache.lines;
     const lines = source.map((line) =>
       currentTheme.dim(
-        truncateToWidth(stripTerminalSequences(line).trimEnd(), Math.max(1, width), '…'),
+        truncateToWidth(stripTerminalSequencesExceptLinks(line).trimEnd(), Math.max(1, width), '…'),
       ),
     );
     if (isRenderCacheEnabled()) this.dimCache = { source, lines };

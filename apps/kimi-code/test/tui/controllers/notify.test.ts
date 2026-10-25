@@ -255,6 +255,18 @@ describe('NotifyController', () => {
     expect(h.notifyPanelContainer.children).toEqual([h.notifyPanel]);
   });
 
+  it('opens live updates after an empty previous turn', () => {
+    const h = makeHarness();
+    h.emit('turn.ended', { reason: 'completed' });
+    h.emit('turn.started', {}, 'main', 2);
+
+    h.send('first-update', 'first live update', 'main', 2);
+
+    expect(h.rendered()).toContain('first live update');
+    expect(h.rendered()).toContain('ctrl+n to browse');
+    expect(h.rendered()).not.toContain('ctrl+n to expand');
+  });
+
   it('isolates identical call ids by agent and labels channels by agent name', () => {
     const h = makeHarness();
     h.emit('subagent.spawned', {

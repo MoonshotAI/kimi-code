@@ -28,6 +28,7 @@ import {
 import { formatErrorMessage } from '../utils/event-payload';
 import { isFocusingClick } from '../utils/terminal-focus';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
+import { isBlockingPromptPending } from '../tui-state';
 import { canRestoreSubmittedInput } from './resolve';
 import type { SlashCommandHost } from './dispatch';
 
@@ -413,6 +414,7 @@ function showGoalStartPermissionPrompt(
     host.restoreInputText(commandText);
     host.showStatus('Goal not started.');
   };
+  syncGoalStartPrompt(host, true);
   host.mountEditorReplacement(
     new GoalStartPermissionPromptComponent({
       mode: host.state.appState.permissionMode === 'yolo' ? 'yolo' : 'manual',
@@ -428,7 +430,16 @@ function showGoalStartPermissionPrompt(
       layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_APPROVAL_ROWS },
       isFocusingClick: () => isFocusingClick(host.state.terminalState),
     }),
+    () => syncGoalStartPrompt(host, false),
   );
+}
+
+function syncGoalStartPrompt(host: GoalCommandHost, pending: boolean): void {
+  if (host.state.dockContainer === undefined) return;
+  if (pending) host.state.activeDialog = 'goal-start';
+  else if (host.state.activeDialog === 'goal-start') host.state.activeDialog = null;
+  host.state.notifyPanel.setPrompt(isBlockingPromptPending(host.state));
+  host.state.ui.requestRender();
 }
 
 async function startGoalWithPermission(
