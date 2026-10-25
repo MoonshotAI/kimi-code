@@ -1,5 +1,7 @@
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { Service } from '#/_base/di/service';
+import { toDisposable } from '#/_base/di/lifecycle';
+import { isError2 } from '#/_base/errors/errors';
 import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -9,9 +11,10 @@ import {
   type AppendLogTruncation,
   IAppendLogStore,
 } from '#/persistence/interface/appendLogStore';
-import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
+import { IFileSystemStorageService, isStorageError, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { SessionErrors } from '#/session/errors';
 
 import { IWireService, type WireRestoreChains } from './wire';
 import { WireError, WireErrors } from './errors';
@@ -85,12 +88,34 @@ export class WireService extends Service implements IWireService, IAgentJournal 
     super();
     this.wireScope = scopeContext.scope();
     this.agentId = scopeContext.agentId;
-    this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
-    this._register(
-      this.log.bindWriteGuard(this.wireScope, AGENT_WIRE_RECORD_KEY, () =>
-        this.sessionLocks.tryHold(this.sessionContext.sessionId),
-      ),
-    );
+    try {
+      this._register(
+        this.log.bindWriteGuard(this.wireScope, AGENT_WIRE_RECORD_KEY, () => {
+          try {
+            const lease = this.sessionLocks.lease(this.sessionContext.sessionId);
+            return toDisposable(() => {
+              lease.release();
+            });
+          } catch (error) {
+            if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
+            throw error;
+          }
+        }),
+      );
+      this._register(this.log.acquire(this.wireScope, AGENT_WIRE_RECORD_KEY));
+      this._register(
+        this.log.onDidRecover((write) => {
+          if (write.scope === this.wireScope && write.key === AGENT_WIRE_RECORD_KEY) {
+            this.logger.info('session wire persistence recovered after storage failure', {
+              scope: this.wireScope,
+            });
+          }
+        }),
+      );
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
   }
 
   async seal(): Promise<void> {
@@ -629,7 +654,15 @@ export class WireService extends Service implements IWireService, IAgentJournal 
 
   private appendRecordLow(record: WireRecord): void {
     this.log.append(this.wireScope, AGENT_WIRE_RECORD_KEY, record, {
-      onError: onUnexpectedError,
+      onError: (error) => {
+        onUnexpectedError(error);
+        if (isStorageError(error, StorageErrors.codes.STORAGE_DISK_FULL)) {
+          this.logger.error(
+            'session wire persistence degraded: no space left on device; new records stay buffered in memory and the store retries in the background — free disk space to resume durable writes',
+            { scope: this.wireScope },
+          );
+        }
+      },
     });
     this.lines += 1;
     if (isHumanRecordType(record.type)) {

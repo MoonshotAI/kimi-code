@@ -13,6 +13,8 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { ILogService } from '#/_base/log/log';
 import { Event2 } from '#/app/event/event2';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -105,6 +107,7 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string, logEn
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
   ix.stub(ILogService, captureLog(logEntries ?? []));
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   const log = ix.get(IAppendLogStore);
   registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
@@ -122,6 +125,7 @@ function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
   disposables.push(store);
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   return ix.get(IAppendLogStore);
 }

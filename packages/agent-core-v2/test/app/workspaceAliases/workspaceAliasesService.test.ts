@@ -14,6 +14,7 @@ import { ILogService } from '#/_base/log/log';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
@@ -99,7 +100,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(IAppendLogStore, new AppendLogStore(fileStorage, noopLog)),
+      stubPair(IAppendLogStore, new AppendLogStore(fileStorage, noopLog, new InMemorySessionLockService())),
       stubPair(ILogService, noopLog),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),

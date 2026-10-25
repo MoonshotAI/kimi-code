@@ -27,8 +27,10 @@ import {
   IAppendLogStore,
   IHostEnvironment,
   IHostProcessService,
+  ILogService,
   ISessionContext,
   ISessionIndexMirror,
+  ISessionManager,
   IWorkspaceInstanceManager,
   logSeed,
   resolveConfigPath,
@@ -190,6 +192,25 @@ export async function runAcpServerWithStream(
       // Detach the klient's event subscriptions first so disposal below cannot
       // deliver into a torn-down scope.
       await klient.close();
+      const sessionManager = core.accessor.get(ISessionManager);
+      await Promise.all(sessionManager.list().map((session) =>
+        sessionManager.withLifecycleSerialization(session.id, async () => {
+          const current = sessionManager.get(session.id);
+          if (current === undefined) return;
+          const agents = current.accessor.get(IAgentLifecycleService);
+          for (const agent of agents.list()) {
+            try {
+              await agents.remove(agent);
+            } catch (error) {
+              core.accessor.get(ILogService).warn('agent removal failed; continuing shutdown', {
+                sessionId: current.id,
+                agentId: agent.agentId,
+                error,
+              });
+            }
+          }
+        }),
+      ));
       // Flush the append-log write-behind before disposing, so a clean shutdown
       // never races a pending drain against teardown (and doesn't drop the last
       // persisted ops). Best-effort: a flush failure must not block disposal.
@@ -206,11 +227,8 @@ export async function runAcpServerWithStream(
       await core.accessor.get(ISessionIndexMirror).drain();
       await acpProviderRegistration.dispose();
       core.dispose();
-      // `core.dispose()` runs the mirror's and the query store's synchronous
-      // `dispose()`, whose drains/closes are asynchronous — await them so an
-      // embedding host that removes homeDir right after close() never races
-      // an in-flight shard close (ENOTEMPTY on teardown). The same window
-      // exists for the append-log retirement flushes released by disposal.
+      await core.instantiation.disposeAsync();
+      // Service disposal registers background storage work before it is drained.
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainQueryStoreDisposals();

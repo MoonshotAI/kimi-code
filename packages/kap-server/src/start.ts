@@ -6,6 +6,7 @@ import {
   drainLogCloses,
   ConfigWarning,
   CapabilityChanged,
+  IAgentLifecycleService,
   IAppendLogStore,
   IConfigService,
   IEventService,
@@ -345,6 +346,26 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     authFailureLimiter?.dispose();
     modelCatalogRefreshScheduler.dispose();
     await sessionIdleReaper.close();
+    const sessionManager = core.accessor.get(ISessionManager);
+    await Promise.all(
+      sessionManager.list().map((session) =>
+        sessionManager.withLifecycleSerialization(session.id, async () => {
+          const current = sessionManager.get(session.id);
+          if (current === undefined) return;
+          const agents = current.accessor.get(IAgentLifecycleService);
+          for (const agent of agents.list()) {
+            try {
+              await agents.remove(agent);
+            } catch (error) {
+              logger.warn(
+                { err: error, sessionId: session.id, agentId: agent.agentId },
+                'agent removal failed; continuing shutdown',
+              );
+            }
+          }
+        }),
+      ),
+    );
     try {
       await shutdownServerTelemetry(telemetry);
     } catch (error) {
@@ -359,6 +380,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       await core.accessor.get(IMcpOAuthService).shutdown();
       const appendLogStore = core.accessor.get(IAppendLogStore);
       core.dispose();
+      await core.instantiation.disposeAsync();
       await appendLogStore.drainRetirements();
       await drainSessionIndexMirror();
       await drainGlobalSearchDisposals();

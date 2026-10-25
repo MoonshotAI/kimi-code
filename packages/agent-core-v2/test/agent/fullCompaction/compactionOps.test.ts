@@ -11,6 +11,8 @@ import {
   FullCompactionCancel,
   FullCompactionComplete,
 } from '#/agent/fullCompaction/compactionOps';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -42,6 +44,7 @@ function buildHost(key: string): {
 } {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   registerTestAgentWire(ix, testWireScope(SCOPE, key), {

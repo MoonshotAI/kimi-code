@@ -9,9 +9,11 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { isError2 } from '#/_base/errors/errors';
 import { Emitter } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
 import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
+import { IFileSystemStorageService, StorageError, StorageErrors } from '#/persistence/interface/storage';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   type ISessionActivityView,
@@ -65,6 +67,7 @@ function activityStub(disposables: DisposableStore) {
 describe('SessionRunGateService', () => {
   let homeDir: string;
   let disposables: DisposableStore;
+  let storage: FileStorageService;
   let log: IAppendLogStore;
   let serviceA: SessionLockService;
   let serviceB: SessionLockService;
@@ -74,18 +77,22 @@ describe('SessionRunGateService', () => {
     homeDir = mkdtempSync(join(tmpdir(), 'session-run-gate-'));
     disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IFileSystemStorageService, new FileStorageService(homeDir));
-    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    log = ix.get(IAppendLogStore);
+    storage = new FileStorageService(homeDir);
+    ix.stub(IFileSystemStorageService, storage);
+    ix.stub(ILogService, noopLogger);
     serviceA = new SessionLockService(bootstrapStub(homeDir, 'client_a'), noopLogger);
     serviceB = new SessionLockService(bootstrapStub(homeDir, 'client_b'), noopLogger);
+    ix.stub(ISessionLockService, serviceA);
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    log = ix.get(IAppendLogStore);
     activity = activityStub(disposables);
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    disposables.dispose();
+    await log.drainRetirements();
     serviceA.dispose();
     serviceB.dispose();
-    disposables.dispose();
     rmSync(homeDir, { recursive: true, force: true });
   });
 
@@ -219,4 +226,93 @@ describe('SessionRunGateService', () => {
       vi.useRealTimers();
     }
   });
+
+  it.each([false, true])(
+    'checks for external writes before recovering a failed boundary stat after an idle lock handoff: %s',
+    async (writeExternally) => {
+      vi.useFakeTimers();
+      const originalSize = storage.size.bind(storage);
+      const originalAppend = storage.append.bind(storage);
+      const initial = { type: 'wire.test.initial' };
+      const deferredRecord = { type: 'wire.test.client_a' };
+      const externalRecord = { type: 'wire.test.client_b' };
+      const encode = (record: unknown): Uint8Array =>
+        new TextEncoder().encode(`${JSON.stringify(record)}\n`);
+      const failure = new StorageError(
+        StorageErrors.codes.STORAGE_IO_FAILED,
+        'transient boundary stat failure',
+      );
+      let unavailable = true;
+      const release = serviceA.release.bind(serviceA);
+      let markHandoff!: () => void;
+      const handedOff = new Promise<void>((resolve) => {
+        markHandoff = resolve;
+      });
+      let transferred = false;
+      const releaseSpy = vi.spyOn(serviceA, 'release').mockImplementation((sessionId) => {
+        release(sessionId);
+        if (sessionId === SID && !transferred && !serviceA.held(SID)) {
+          serviceB.hold(SID);
+          transferred = true;
+          markHandoff();
+        }
+      });
+      try {
+        await originalAppend(SCOPE, KEY, encode(initial));
+        await readAll();
+        const runGate = gate();
+        disposables.add(log.bindWriteGuard(SCOPE, KEY, () => serviceA.tryHold(SID)));
+        runGate.begin();
+        expect(serviceA.held(SID)).toBe(true);
+
+        storage.size = async (...args) => {
+          if (unavailable) throw failure;
+          return originalSize(...args);
+        };
+        let reportFailure!: (error: unknown) => void;
+        const reported = new Promise<unknown>((resolve) => {
+          reportFailure = resolve;
+        });
+        const recovered = vi.fn();
+        disposables.add(log.onDidRecover(recovered));
+        log.append(SCOPE, KEY, deferredRecord, { onError: reportFailure });
+        expect(await reported).toBe(failure);
+        activity.setBusy(false);
+        await vi.advanceTimersByTimeAsync(3_000);
+        await handedOff;
+        expect(serviceA.held(SID)).toBe(false);
+
+        expect(serviceB.held(SID)).toBe(true);
+        if (writeExternally) await originalAppend(SCOPE, KEY, encode(externalRecord));
+        serviceB.release(SID);
+        expect(log.externallyModified(SCOPE, KEY)).toBe(writeExternally);
+        unavailable = false;
+        await vi.advanceTimersByTimeAsync(60_000);
+        const recoveryFailure: unknown = await log.flush().then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+
+        if (writeExternally) {
+          expect.soft(recoveryFailure).toMatchObject({ code: StorageErrors.codes.STORAGE_CORRUPTED });
+          expect.soft(recovered).not.toHaveBeenCalled();
+          expect.soft(log.externallyModified(SCOPE, KEY)).toBe(true);
+          expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe(
+            `${JSON.stringify(initial)}\n${JSON.stringify(externalRecord)}\n`,
+          );
+        } else {
+          expect(recoveryFailure).toBeUndefined();
+          expect(recovered).toHaveBeenCalledOnce();
+          expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+          expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe(
+            `${JSON.stringify(initial)}\n${JSON.stringify(deferredRecord)}\n`,
+          );
+        }
+      } finally {
+        releaseSpy.mockRestore();
+        storage.size = originalSize;
+        vi.useRealTimers();
+      }
+    },
+  );
 });

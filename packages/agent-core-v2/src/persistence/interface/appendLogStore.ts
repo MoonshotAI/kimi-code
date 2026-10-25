@@ -45,6 +45,7 @@ export interface IAppendLogStore {
   readonly _serviceBrand: undefined;
 
   readonly onDidWrite: Event<AppendLogWrite>;
+  readonly onDidRecover: Event<AppendLogWrite>;
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void;
   read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R>;
@@ -55,7 +56,7 @@ export interface IAppendLogStore {
   acquire(scope: string, key: string): IDisposable;
   drainRetirements(): Promise<void>;
   externallyModified(scope: string, key: string): boolean;
-  bindWriteGuard(scope: string, key: string, guard: () => boolean): IDisposable;
+  bindWriteGuard(scope: string, key: string, guard: () => boolean | IDisposable): IDisposable;
 }
 
 export const IAppendLogStore: ServiceIdentifier<IAppendLogStore> =

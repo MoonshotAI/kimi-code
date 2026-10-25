@@ -29,6 +29,8 @@ import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifec
 import type { ToolCall } from '#human/llm/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { BlobStoreService } from '#/persistence/backends/node-fs/blobStoreService';
@@ -66,6 +68,7 @@ describe('AgentFileHistoryService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.stub(ISessionLockService, new InMemorySessionLockService());
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
     registerTestAgentWire(ix, testWireScope(SCOPE, KEY), {

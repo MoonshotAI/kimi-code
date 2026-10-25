@@ -12,6 +12,8 @@ import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTo
 import { AgentUserToolService } from '#/agent/userTool/userToolService';
 import { userToolKey } from '#/agent/userTool/userToolOps';
 import { interactions } from '#/human/interaction/facade';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -80,6 +82,7 @@ beforeEach(() => {
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+  ix.stub(ISessionLockService, new InMemorySessionLockService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IAgentStateService, new AgentStateService());
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
@@ -182,6 +185,7 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     const ixChild = disposables.add(new TestInstantiationService());
     ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixChild.stub(ISessionLockService, new InMemorySessionLockService());
     ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ixChild.set(IAgentStateService, new AgentStateService());
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
@@ -226,6 +230,7 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     const ixChild = disposables.add(new TestInstantiationService());
     ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixChild.stub(ISessionLockService, new InMemorySessionLockService());
     ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ixChild.set(IAgentStateService, new AgentStateService());
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
@@ -256,6 +261,7 @@ describe('AgentUserToolService (wire-backed)', () => {
   it('execute parks under a minted interaction id and keeps the provider toolCallId on the payload', async () => {
     const ixExec = disposables.add(new TestInstantiationService());
     ixExec.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ixExec.stub(ISessionLockService, new InMemorySessionLockService());
     ixExec.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ixExec.set(IAgentStateService, new AgentStateService());
     ixExec.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
@@ -330,6 +336,7 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix2.stub(ISessionLockService, new InMemorySessionLockService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
     ix2.set(IAgentStateService, new AgentStateService());
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));

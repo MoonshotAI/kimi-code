@@ -1,9 +1,11 @@
 import { createReadStream } from 'node:fs';
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { ulid } from 'ulid';
 
 const JOURNAL_VERSION = 1;
+const RETRY_BASE_DELAY_MS = 500;
+const RETRY_MAX_DELAY_MS = 30_000;
 
 export interface EventEnvelope {
   readonly type: string;
@@ -29,6 +31,12 @@ interface JournalEventLine {
   envelope: EventEnvelope;
 }
 
+interface JournalAppendBatch {
+  readonly bytes: Buffer;
+  readonly headerIncluded: boolean;
+  startOffset?: number;
+}
+
 export interface JournalEntry {
   seq: number;
   envelope: EventEnvelope;
@@ -45,6 +53,9 @@ export class SessionEventJournal {
   private _seq: number;
   private pendingLines: string[] = [];
   private flushPromise: Promise<void> | undefined;
+  private retryTimer: ReturnType<typeof setTimeout> | undefined;
+  private consecutiveFailures = 0;
+  private pendingBatch: JournalAppendBatch | undefined;
   private headerPending: boolean;
   private closed = false;
 
@@ -129,53 +140,120 @@ export class SessionEventJournal {
   }
 
   async flush(): Promise<void> {
-    while (this.flushPromise !== undefined || this.pendingLines.length > 0) {
-      if (this.flushPromise === undefined) {
-        this.flushPromise = this.flushOnce().finally(() => {
-          this.flushPromise = undefined;
-        });
+    if (this.retryTimer !== undefined) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = undefined;
+    }
+    for (;;) {
+      let inFlight = this.flushPromise;
+      if (inFlight === undefined) {
+        if (this.pendingBatch === undefined && this.pendingLines.length === 0) return;
+        this.scheduleFlush();
+        inFlight = this.flushPromise;
+        if (inFlight === undefined) return;
       }
-      await this.flushPromise;
+      await inFlight;
+      if (this.flushPromise !== undefined) continue;
+      if (this.pendingBatch === undefined && this.pendingLines.length === 0) return;
+      if (this.consecutiveFailures > 0) return;
     }
   }
 
   async close(): Promise<void> {
     this.closed = true;
+    await this.flushPromise;
     await this.flush();
   }
 
   private scheduleFlush(): void {
-    if (this.flushPromise !== undefined) return;
+    if (this.flushPromise !== undefined || this.retryTimer !== undefined) return;
     this.flushPromise = this.flushOnce().finally(() => {
       this.flushPromise = undefined;
-      if (this.pendingLines.length > 0) this.scheduleFlush();
+      if (this.pendingBatch === undefined && this.pendingLines.length === 0) return;
+      if (this.closed) return;
+      if (this.consecutiveFailures === 0) {
+        this.scheduleFlush();
+        return;
+      }
+      const delay = Math.min(
+        RETRY_BASE_DELAY_MS * 2 ** (this.consecutiveFailures - 1),
+        RETRY_MAX_DELAY_MS,
+      );
+      this.retryTimer = setTimeout(() => {
+        this.retryTimer = undefined;
+        this.scheduleFlush();
+      }, delay);
+      this.retryTimer.unref();
     });
   }
 
   private async flushOnce(): Promise<void> {
-    const lines: string[] = [];
-    if (this.headerPending) {
-      const header: JournalHeaderLine = {
-        kind: 'journal_header',
-        version: JOURNAL_VERSION,
-        epoch: this.epoch,
-        created_at: Date.now(),
+    let batch = this.pendingBatch;
+    if (batch === undefined) {
+      if (this.pendingLines.length === 0) return;
+      const lines: string[] = [];
+      if (this.headerPending) {
+        const header: JournalHeaderLine = {
+          kind: 'journal_header',
+          version: JOURNAL_VERSION,
+          epoch: this.epoch,
+          created_at: Date.now(),
+        };
+        lines.push(JSON.stringify(header));
+      }
+      lines.push(...this.pendingLines);
+      this.pendingLines = [];
+      batch = {
+        bytes: Buffer.from(lines.join('\n') + '\n', 'utf8'),
+        headerIncluded: this.headerPending,
       };
-      lines.push(JSON.stringify(header));
-      this.headerPending = false;
+      this.pendingBatch = batch;
     }
-    lines.push(...this.pendingLines);
-    this.pendingLines = [];
-    if (lines.length === 0) return;
     try {
       await mkdir(dirname(this.filePath), { recursive: true });
-      await appendFile(this.filePath, lines.join('\n') + '\n', 'utf8');
+      const committedBytes = await this.readCommittedBytes(batch);
+      if (committedBytes < batch.bytes.byteLength) {
+        try {
+          await appendFile(this.filePath, batch.bytes.subarray(committedBytes));
+        } catch (error) {
+          if ((await this.readCommittedBytes(batch)) !== batch.bytes.byteLength) throw error;
+        }
+      }
+      if (batch.headerIncluded) this.headerPending = false;
+      this.pendingBatch = undefined;
+      this.consecutiveFailures = 0;
     } catch (error) {
+      this.consecutiveFailures++;
       this.logger.warn(
         { filePath: this.filePath, err: String(error) },
-        'event journal write failed; events remain live-only this round',
+        'event journal write failed; events stay buffered and will be retried',
       );
     }
+  }
+
+  private async readCommittedBytes(batch: JournalAppendBatch): Promise<number> {
+    let size: number;
+    try {
+      size = (await stat(this.filePath)).size;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      size = 0;
+    }
+    batch.startOffset ??= size;
+    const committedBytes = size - batch.startOffset;
+    if (committedBytes < 0 || committedBytes > batch.bytes.byteLength) {
+      throw new Error('event journal size changed outside the pending append');
+    }
+    if (committedBytes > 0) {
+      const committed = await readRange(this.filePath, batch.startOffset, size - 1);
+      if (
+        committed.byteLength !== committedBytes ||
+        !batch.bytes.subarray(0, committedBytes).equals(committed)
+      ) {
+        throw new Error('event journal pending append prefix does not match');
+      }
+    }
+    return committedBytes;
   }
 }
 
@@ -207,6 +285,15 @@ function parseJournalLine(raw: string): JournalHeaderLine | JournalEventLine | u
     return value as JournalEventLine;
   }
   return undefined;
+}
+
+async function readRange(filePath: string, start: number, end: number): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  const stream = createReadStream(filePath, { start, end });
+  for await (const chunk of stream) {
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
 }
 
 async function* readLines(filePath: string): AsyncIterable<string> {
