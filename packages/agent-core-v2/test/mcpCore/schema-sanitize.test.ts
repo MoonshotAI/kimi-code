@@ -634,6 +634,112 @@ describe('sanitizeMcpSchema — conditional and negation schemas', () => {
     expect(val['type']).toBeUndefined();
     expect(val['anyOf']).toEqual([{ type: 'string' }]);
   });
+
+  it('keeps #/ distinct from # by resolving empty-string property on root', () => {
+    const schema = {
+      type: 'object',
+      '': {
+        type: 'string',
+        description: 'empty-key property',
+      },
+      properties: {
+        val: { $ref: '#/' },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const val = prop(result, 'val');
+    expect(val['type']).toBe('string');
+    expect(val['description']).toBe('empty-key property');
+  });
+
+  it('preserves target structural constraints on recursive refs', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        node: { $ref: '#/$defs/Node' },
+      },
+      $defs: {
+        Node: {
+          type: 'object',
+          required: ['value'],
+          properties: {
+            value: { type: 'string' },
+            next: { $ref: '#/$defs/Node' },
+          },
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const node = prop(result, 'node');
+    expect(node['type']).toBe('object');
+    expect(node['required']).toEqual(['value']);
+    const next = prop(node, 'next');
+    expect(next['type']).toBe('object');
+    expect(next['required']).toEqual(['value']);
+    expect(next['description']).toBe('Circular reference');
+  });
+
+  it('filters mixed enum values that contradict explicit string type', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        mode: {
+          type: 'string',
+          enum: ['auto', 1, true],
+        },
+      },
+    });
+    const mode = prop(result, 'mode');
+    expect(mode['type']).toBe('string');
+    expect(mode['enum']).toEqual(['auto']);
+  });
+
+  it('infers container types from unevaluatedProperties and unevaluatedItems', () => {
+    const result = sanitizeMcpSchema({
+      type: 'object',
+      properties: {
+        obj: {
+          unevaluatedProperties: false,
+        },
+        arr: {
+          unevaluatedItems: false,
+        },
+        arr2: {
+          additionalItems: false,
+        },
+      },
+    });
+    expect(prop(result, 'obj')['type']).toBe('object');
+    expect(prop(result, 'arr')['type']).toBe('array');
+    expect(prop(result, 'arr2')['type']).toBe('array');
+  });
+
+  it('preserves closed-object semantics when merging ref siblings with additionalProperties false', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        closed: {
+          $ref: '#/$defs/Target',
+          properties: { b: { type: 'string' } },
+          required: ['b'],
+        },
+      },
+      $defs: {
+        Target: {
+          type: 'object',
+          properties: { a: { type: 'number' } },
+          additionalProperties: false,
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const closed = prop(result, 'closed');
+    expect(closed['allOf']).toBeDefined();
+    expect(Array.isArray(closed['allOf'])).toBe(true);
+    const allOf = closed['allOf'] as Record<string, unknown>[];
+    expect(allOf).toHaveLength(2);
+    expect(allOf[0]?.['additionalProperties']).toBe(false);
+  });
 });
 
 

@@ -23,6 +23,7 @@ const OBJECT_KEYWORDS = [
   'dependentRequired',
   'dependentSchemas',
   'dependencies',
+  'unevaluatedProperties',
 ] as const;
 
 const ARRAY_KEYWORDS = [
@@ -32,6 +33,8 @@ const ARRAY_KEYWORDS = [
   'maxItems',
   'uniqueItems',
   'contains',
+  'unevaluatedItems',
+  'additionalItems',
 ] as const;
 
 const STRING_KEYWORDS = ['minLength', 'maxLength', 'pattern', 'format'] as const;
@@ -62,6 +65,13 @@ function jsonTypeOf(value: Json): string {
   if (Array.isArray(value)) return 'array';
   if (typeof value === 'object') return 'object';
   return 'string';
+}
+
+function matchesType(value: Json, type: string): boolean {
+  const actual = jsonTypeOf(value);
+  if (actual === type) return true;
+  if (type === 'number' && actual === 'integer') return true;
+  return false;
 }
 
 function conjoinBounds(
@@ -105,6 +115,13 @@ function jsonEquals(a: Json, b: Json): boolean {
 }
 
 function mergeRefSiblings(target: JsonRecord, rest: JsonRecord): JsonRecord {
+  if (
+    (target['additionalProperties'] === false && ('properties' in rest || 'patternProperties' in rest)) ||
+    (rest['additionalProperties'] === false && ('properties' in target || 'patternProperties' in target))
+  ) {
+    return { allOf: [target, rest] };
+  }
+
   const merged: JsonRecord = { ...target, ...rest };
 
   conjoinBounds(target, rest, merged, 'minLength', 'max');
@@ -174,10 +191,10 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
   const root = structuredClone(schema);
 
   function resolvePointer(pointer: string): Json {
-    const pathStr = pointer.replace(/^#\/?/, '');
-    if (pathStr === '') {
+    if (pointer === '#') {
       return root;
     }
+    const pathStr = pointer.startsWith('#/') ? pointer.slice(2) : pointer.replace(/^#/, '');
     const parts = pathStr.split('/').map(decodePointerSegment);
     let current: Json = root;
     for (const part of parts) {
@@ -215,6 +232,42 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
       const ref = record['$ref'];
       if (ref.startsWith('#')) {
         if (activeRefs.has(ref)) {
+          const targetRaw = resolvePointer(ref);
+          if (typeof targetRaw === 'boolean') return targetRaw;
+          if (typeof targetRaw === 'object' && targetRaw !== null && !Array.isArray(targetRaw)) {
+            const cutoff: JsonRecord = { description: 'Circular reference' };
+            for (const [k, v] of Object.entries(targetRaw as JsonRecord)) {
+              if (k !== '$ref' && k !== 'properties' && k !== 'items' && k !== 'prefixItems') {
+                cutoff[k] = structuredClone(v);
+              }
+            }
+            if (!('type' in cutoff)) {
+              cutoff['type'] = inferTypeFromStructure(targetRaw as JsonRecord);
+            }
+            if (
+              typeof (targetRaw as JsonRecord)['properties'] === 'object' &&
+              (targetRaw as JsonRecord)['properties'] !== null &&
+              !Array.isArray((targetRaw as JsonRecord)['properties'])
+            ) {
+              const targetProps = (targetRaw as JsonRecord)['properties'] as JsonRecord;
+              const cutoffProps: JsonRecord = {};
+              for (const [pKey, pVal] of Object.entries(targetProps)) {
+                if (
+                  typeof pVal === 'object' &&
+                  pVal !== null &&
+                  !Array.isArray(pVal) &&
+                  (pVal as JsonRecord)['$ref'] === ref
+                ) {
+                  continue;
+                }
+                cutoffProps[pKey] = structuredClone(pVal);
+              }
+              if (Object.keys(cutoffProps).length > 0) {
+                cutoff['properties'] = cutoffProps;
+              }
+            }
+            return cutoff;
+          }
           return { type: 'object', description: 'Circular reference' };
         }
         const nextActive = new Set(activeRefs);
@@ -398,6 +451,16 @@ function normalizeProperty(node: Json): void {
           }
         }
       }
+    }
+  }
+
+  if (typeof record['type'] === 'string' && Array.isArray(record['enum'])) {
+    const expectedType = record['type'];
+    const filtered = (record['enum'] as Json[]).filter((v) => matchesType(v, expectedType));
+    if (filtered.length > 0) {
+      record['enum'] = filtered;
+    } else {
+      delete record['enum'];
     }
   }
 
