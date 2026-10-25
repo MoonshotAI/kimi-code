@@ -740,6 +740,66 @@ describe('sanitizeMcpSchema — conditional and negation schemas', () => {
     expect(allOf).toHaveLength(2);
     expect(allOf[0]?.['additionalProperties']).toBe(false);
   });
+
+  it('keeps contradictory typed enum unsatisfiable with empty enum array', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        contradiction: {
+          type: 'string',
+          enum: [1, 2],
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const c = prop(result, 'contradiction');
+    expect(c['type']).toBe('string');
+    expect(c['enum']).toEqual([]);
+  });
+
+  it('replaces nested circular refs in recursive cutoffs to avoid dangling refs', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        root: { $ref: '#/$defs/Node' },
+      },
+      $defs: {
+        Node: {
+          type: 'object',
+          properties: {
+            child: {
+              anyOf: [{ $ref: '#/$defs/Node' }, { type: 'null' }],
+            },
+          },
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const root = prop(result, 'root');
+    expect(result['$defs']).toBeUndefined();
+    const child = prop(root, 'child');
+    expect(child['anyOf']).toBeDefined();
+    const anyOf = child['anyOf'] as Record<string, unknown>[];
+    expect(anyOf[0]?.['$ref']).toBeUndefined();
+    expect(anyOf[0]?.['type']).toBe('object');
+  });
+
+  it('preserves maxItems when positional tuple specifies additionalItems false', () => {
+    const schema = {
+      type: 'object',
+      properties: {
+        tuple: {
+          type: 'array',
+          items: [{ type: 'string' }, { type: 'number' }],
+          additionalItems: false,
+        },
+      },
+    };
+    const result = sanitizeMcpSchema(schema);
+    const tuple = prop(result, 'tuple');
+    expect(tuple['maxItems']).toBe(2);
+    expect(tuple['additionalItems']).toBeUndefined();
+  });
 });
 
 

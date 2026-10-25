@@ -67,6 +67,22 @@ function jsonTypeOf(value: Json): string {
   return 'string';
 }
 
+function stripOrReplaceRef(val: unknown, ref: string): unknown {
+  if (typeof val !== 'object' || val === null) return val;
+  if (Array.isArray(val)) {
+    return val.map((item) => stripOrReplaceRef(item, ref));
+  }
+  const rec = val as JsonRecord;
+  if (rec['$ref'] === ref) {
+    return { type: 'object', description: 'Circular reference' };
+  }
+  const result: JsonRecord = {};
+  for (const [k, v] of Object.entries(rec)) {
+    result[k] = stripOrReplaceRef(v, ref) as Json;
+  }
+  return result;
+}
+
 function matchesType(value: Json, type: string): boolean {
   const actual = jsonTypeOf(value);
   if (actual === type) return true;
@@ -260,7 +276,7 @@ function derefJsonSchema(schema: JsonRecord): JsonRecord {
                 ) {
                   continue;
                 }
-                cutoffProps[pKey] = structuredClone(pVal);
+                cutoffProps[pKey] = stripOrReplaceRef(structuredClone(pVal), ref) as Json;
               }
               if (Object.keys(cutoffProps).length > 0) {
                 cutoff['properties'] = cutoffProps;
@@ -457,11 +473,7 @@ function normalizeProperty(node: Json): void {
   if (typeof record['type'] === 'string' && Array.isArray(record['enum'])) {
     const expectedType = record['type'];
     const filtered = (record['enum'] as Json[]).filter((v) => matchesType(v, expectedType));
-    if (filtered.length > 0) {
-      record['enum'] = filtered;
-    } else {
-      delete record['enum'];
-    }
+    record['enum'] = filtered;
   }
 
   if (!('type' in record) && !COMBINATOR_KEYS.some((key) => key in record)) {
@@ -526,6 +538,13 @@ function recurseSchema(node: Json): void {
   const items = record['items'];
   if (Array.isArray(items)) {
     for (const value of items) normalizeProperty(value);
+    if (record['additionalItems'] === false) {
+      record['maxItems'] =
+        typeof record['maxItems'] === 'number'
+          ? Math.min(record['maxItems'], items.length)
+          : items.length;
+    }
+    delete record['additionalItems'];
     if (items.length === 0) {
       delete record['items'];
     } else if (items.length === 1) {
