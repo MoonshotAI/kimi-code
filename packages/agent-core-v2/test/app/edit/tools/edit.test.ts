@@ -174,6 +174,7 @@ describe('EditTool', () => {
         path: { type: 'string' },
         old_string: { type: 'string' },
         new_string: { type: 'string' },
+        allow_large_delete: { type: 'boolean' },
       },
     });
     expect(
@@ -181,6 +182,7 @@ describe('EditTool', () => {
         path: '/tmp/a.txt',
         old_string: 'old',
         new_string: 'new',
+        allow_large_delete: true,
       }).success,
     ).toBe(true);
     expect(
