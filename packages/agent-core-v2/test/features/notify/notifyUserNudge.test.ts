@@ -14,7 +14,6 @@ function userPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'do the thing' }],
-    toolCalls: [],
     origin: { kind: 'user' },
   };
 }
@@ -23,7 +22,6 @@ function nudgeInjection(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'nudge' }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'notify_user_nudge' },
   };
 }
@@ -32,7 +30,6 @@ function cronPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'cron fired' }],
-    toolCalls: [],
     origin: {
       kind: 'cron_job',
       jobId: 'j1',
@@ -48,7 +45,6 @@ function slashSkillPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: '/review' }],
-    toolCalls: [],
     origin: { kind: 'skill_activation', activationId: 'a1', skillName: 'review', trigger: 'user-slash' },
   };
 }
@@ -57,7 +53,6 @@ function modelSkillPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'skill content' }],
-    toolCalls: [],
     origin: { kind: 'skill_activation', activationId: 'a2', skillName: 'pdf', trigger: 'model-tool' },
   };
 }
@@ -66,7 +61,6 @@ function taskPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'task finished' }],
-    toolCalls: [],
     origin: { kind: 'task', taskId: 't1', status: 'completed', notificationId: 'n1' },
   };
 }
@@ -75,7 +69,6 @@ function retryPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [],
-    toolCalls: [],
     origin: { kind: 'retry' },
   };
 }
@@ -84,7 +77,6 @@ function subagentTriggerPrompt(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'resume the subagent' }],
-    toolCalls: [],
     origin: { kind: 'system_trigger', name: 'subagent' },
   };
 }
@@ -93,7 +85,6 @@ function stopHookContinuation(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: 'stop hook asks to continue' }],
-    toolCalls: [],
     origin: { kind: 'system_trigger', name: 'stop_hook' },
   };
 }

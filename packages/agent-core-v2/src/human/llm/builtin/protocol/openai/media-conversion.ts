@@ -1,12 +1,15 @@
 import type { ContentPart, Message, ThinkPart, ToolMessage, UserMessage } from '#/llm/message';
+import { mediaUrlOf } from '#/llm/protocol/kit/media';
+import { toolResultToPlainText } from '#/llm/protocol/patterns';
 import type { Pattern } from '#/llm/protocol/pattern';
+import type { ToolMessageConversion } from '#/llm/protocol/protocol';
 
 export const TOOL_RESULT_MEDIA_PROMPT = 'Attached media from tool result:';
 export const TOOL_RESULT_MEDIA_PLACEHOLDER = '(see attached media)';
 
 function isExtractableMedia(part: ContentPart): boolean {
   if (part.type === 'image_url') return true;
-  return part.type === 'video_url' && !part.videoUrl.url.startsWith('data:');
+  return part.type === 'video_url' && !mediaUrlOf(part).startsWith('data:');
 }
 
 export const extractToolMedia: Pattern<Message> = {
@@ -53,3 +56,10 @@ export const extractToolMedia: Pattern<Message> = {
     return { consumed: run.length, replacement: [...stripped, mediaUser] };
   },
 };
+
+export function openAIMediaConversionPatterns(
+  conversion: ToolMessageConversion | undefined,
+): readonly Pattern<Message>[] {
+  if (conversion === 'keep_parts') return [];
+  return [conversion === 'extract_text' ? toolResultToPlainText : extractToolMedia];
+}

@@ -1,44 +1,79 @@
-import type { ProviderConnection } from '#/llm/protocol/connection';
-import { createProvider } from '#/llm/provider/definition';
-import { anthropicBase } from '#/llm/requester/bases/anthropic/requester';
-import { googleGenAIBase } from '#/llm/requester/bases/google-genai/requester';
-import { openAIBase } from '#/llm/requester/bases/openai/requester';
-import { openAIResponsesBase } from '#/llm/requester/bases/openai-responses/requester';
+import {
+  anthropicRequester,
+  googleGenAIRequester,
+  googleVertexRequester,
+  openAIRequester,
+  openAIResponsesRequester,
+} from '#/llm/builtin/provider/index';
+import type { LlmRequester as CoreLlmRequester } from '#/llm/requester';
+import type { ProtocolName } from '#/llm-requester/requester';
+import { createLlmHeadersTimeoutFetch } from '#/llm-requester/timeout';
 
-const openAIConnection: ProviderConnection = {
-  endpoint: () => ({ apiKeyEnv: 'OPENAI_API_KEY', baseUrlEnv: 'OPENAI_BASE_URL' }),
-};
+import type { CatalogModelDefinition, CatalogProviderHandle } from '../../catalog';
 
-const anthropicConnection: ProviderConnection = {
-  endpoint: () => ({ apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrlEnv: 'ANTHROPIC_BASE_URL' }),
-};
+function withEnvironment(
+  base: CoreLlmRequester<'protocol'>,
+  apiKeyEnv: string,
+  baseUrlEnv: string,
+  fetchFn?: typeof fetch,
+): CoreLlmRequester<'protocol'> {
+  return base.with({
+    endpoint: {
+      baseUrl: process.env[baseUrlEnv],
+      credentials: {
+        resolve: () => {
+          const apiKey = process.env[apiKeyEnv];
+          return apiKey === undefined || apiKey.length === 0 ? undefined : { apiKey };
+        },
+      },
+      fetch: fetchFn,
+    },
+  });
+}
 
-export const googleGenAIConnection: ProviderConnection = {
-  endpoint: (ctx) =>
-    ctx?.model.vertexai === true
-      ? { apiKeyEnv: 'VERTEXAI_API_KEY', baseUrlEnv: 'GOOGLE_VERTEX_BASE_URL' }
-      : { apiKeyEnv: 'GOOGLE_API_KEY', baseUrlEnv: 'GOOGLE_GEMINI_BASE_URL' },
-};
-
-export const openaiProvider = createProvider({
+export const openaiProvider: CatalogProviderHandle = {
   id: 'openai',
-  protocols: {
-    openai: { base: openAIBase, connection: openAIConnection },
-    openai_responses: { base: openAIResponsesBase, connection: openAIConnection },
+  requester: (protocol?: ProtocolName) => {
+    const base =
+      protocol === undefined || protocol === 'openai'
+        ? openAIRequester
+        : protocol === 'openai_responses'
+          ? openAIResponsesRequester
+          : undefined;
+    return base === undefined
+      ? undefined
+      : withEnvironment(
+          base,
+          'OPENAI_API_KEY',
+          'OPENAI_BASE_URL',
+          createLlmHeadersTimeoutFetch(),
+        );
   },
-});
+  listModels: async () => [],
+};
 
-export const anthropicProvider = createProvider({
+export const anthropicProvider: CatalogProviderHandle = {
   id: 'anthropic',
-  protocols: {
-    anthropic: { base: anthropicBase, connection: anthropicConnection },
-  },
-});
+  requester: (protocol?: ProtocolName) =>
+    protocol === undefined || protocol === 'anthropic'
+      ? withEnvironment(
+          anthropicRequester,
+          'ANTHROPIC_API_KEY',
+          'ANTHROPIC_BASE_URL',
+          createLlmHeadersTimeoutFetch(),
+        )
+      : undefined,
+  listModels: async () => [],
+};
 
-export const googleProvider = createProvider({
+export const googleProvider: CatalogProviderHandle = {
   id: 'google',
-  protocols: {
-    'google-genai': { base: googleGenAIBase, connection: googleGenAIConnection },
+  requester: (protocol?: ProtocolName, model?: CatalogModelDefinition) => {
+    if (protocol !== undefined && protocol !== 'google-genai') return undefined;
+    return model?.vertexai === true
+      ? withEnvironment(googleVertexRequester, 'VERTEXAI_API_KEY', 'GOOGLE_VERTEX_BASE_URL')
+      : withEnvironment(googleGenAIRequester, 'GOOGLE_API_KEY', 'GOOGLE_GEMINI_BASE_URL');
   },
+  listModels: async () => [],
   media: { inlineVideo: true },
-});
+};

@@ -7,7 +7,12 @@ import type { LlmErrorMessage } from '#human/llm-requester/errors';
 import { emptyResponseError } from '#human/llm-requester/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm-requester/finish-reason';
 import type { ProviderMediaContribution, ImageUploadInput, VideoUploadInput } from '#human/media/upload';
-import { createMessageAccumulator, type ImageURLPart, type VideoURLPart } from '#human/llm/message';
+import {
+  createMessageAccumulator,
+  type ImageURLPart,
+  type ToolDescription as Tool,
+  type VideoURLPart,
+} from '#human/llm/message';
 import type { LlmModel } from '#human/llm-requester/model';
 import type { ProtocolName } from '#human/llm-requester/requester';
 import { applyCredential } from '#human/credentials/credentials';
@@ -29,8 +34,6 @@ import {
   traceIdFromHeadersRecord,
   VideoUploadUnsupportedError,
 } from '../contract/errors';
-import { fromLlmAssistantMessage, toLlmMessage } from '../contract/message';
-import { type Tool } from '#human/llm/message';
 import { mergeUsagePatch } from '#human/llm-requester/usage';
 
 import type { Model } from './catalog';
@@ -170,9 +173,10 @@ export class ModelRequesterImpl implements ModelRequester {
       maxCompletionTokens: params?.maxCompletionTokens,
       maxContextTokens: params?.maxContextTokens,
       extraParams: samplingExtraParams(resolved.protocol, params?.sampling),
+      stream: params?.stream,
     };
     const content: LlmRequestContent = {
-      messages: input.messages.map(toLlmMessage),
+      messages: input.messages,
       usedContextTokens: params?.usedContextTokens,
     };
 
@@ -268,7 +272,7 @@ export class ModelRequesterImpl implements ModelRequester {
     }
     queue.push({
       type: 'finish',
-      message: fromLlmAssistantMessage(accumulator.finish()),
+      message: accumulator.finish(),
       providerFinishReason: finish?.finishReason ?? undefined,
       rawFinishReason: finish?.rawFinishReason ?? undefined,
       id: messageId,

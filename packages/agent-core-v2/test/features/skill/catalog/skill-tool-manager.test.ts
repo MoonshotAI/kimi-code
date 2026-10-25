@@ -236,29 +236,31 @@ describe('ToolManager SkillTool wire behavior', () => {
     const skillSplice = persistence.records.find(
       (record) => recordContainsSkillLoaded(record, 'review'),
     );
-    expect(skillSplice).toMatchObject({
-      type: 'context.append_message',
-      message: expect.objectContaining({
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: [
-              'Skill tool loaded instructions for this request. Follow them.',
-              '',
-              '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
-              'body of review',
-              '</skill-loaded>',
-            ].join('\n'),
-          },
-        ],
-        origin: expect.objectContaining({
-          kind: 'skill_activation',
-          skillName: 'review',
-          trigger: 'model-tool',
-        }),
+    if (skillSplice === undefined || !isRecordWithMessage(skillSplice)) {
+      throw new Error('expected skill activation record');
+    }
+    expect(skillSplice.type).toBe('context.append_message');
+    expect(skillSplice.message).toMatchObject({
+      role: 'user',
+      toolCalls: [],
+      origin: expect.objectContaining({
+        kind: 'skill_activation',
+        skillName: 'review',
+        trigger: 'model-tool',
       }),
     });
+    expect(skillSplice.message.content).toEqual([
+      {
+        type: 'text',
+        text: [
+          'Skill tool loaded instructions for this request. Follow them.',
+          '',
+          '<skill-loaded name="review" trigger="model-tool" source="user" dir="/skills/review" args="">',
+          'body of review',
+          '</skill-loaded>',
+        ].join('\n'),
+      },
+    ]);
     expect(persistence.records.some((record) => record.type === 'skill.activate')).toBe(false);
     expect(context.get().at(-1)).toMatchObject({
       role: 'assistant',
@@ -316,7 +318,6 @@ describe('ToolManager SkillTool restore behavior', () => {
     const message = {
       role: 'user' as const,
       content: [{ type: 'text' as const, text: 'restored skill body' }],
-      toolCalls: [],
       origin,
     };
 

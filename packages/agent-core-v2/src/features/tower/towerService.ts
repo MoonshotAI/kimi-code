@@ -799,7 +799,6 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       message: {
         role: 'user',
         content: [{ type: 'text', text }],
-        toolCalls: [],
         origin: { kind: 'injection', variant: TOWER_INBOX_WAKE_VARIANT },
       },
       turnScoped: false,

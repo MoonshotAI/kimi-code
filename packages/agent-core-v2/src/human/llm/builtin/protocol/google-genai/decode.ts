@@ -1,60 +1,11 @@
-import { ApiError as RawGoogleGenAISDKApiError, type GenerateContentParameters } from '@google/genai';
+import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
-import { isAbortError, toLlmErrorMessage } from '#/llm/errors';
 import { toLlmStatusErrorMessage } from '#/llm/protocol/rules/status';
-import { type LlmRemoteErrorMessage } from '#/llm/response';
+import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
-import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
-import type {
-  Message,
-  StreamedMessagePart,
-  ThinkPart,
-  ToolCall,
-  ToolDescription,
-} from '#/llm/message';
-import { ThinkingConfigError, type ThinkingEffort } from '#/llm/thinking';
-import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
-import { applyPatterns } from '#/llm/protocol/rewrite';
-import type { ResponseFormat } from '#/llm/response-format';
+import type { StreamedMessagePart, ThinkPart, ToolCall } from '#/llm/message';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import type { TokenUsage } from '#/llm/response';
-
-import { buildToolNameById, lowerMessage } from './lower';
-import type { GoogleContent } from './contract';
-import { sortToolRunByCallOrder } from './patterns';
-
-export function defaultGoogleGenAITool(tool: ToolDescription): Record<string, unknown> {
-  return {
-    functionDeclarations: [
-      {
-        name: tool.name,
-        description: tool.description,
-        parametersJsonSchema: tool.parameters,
-      },
-    ],
-  };
-}
-
-export function lowerGoogleGenAIMessages(messages: readonly Message[]): GoogleContent[] {
-  const normalized = applyPatterns(messages, [sortToolRunByCallOrder]);
-  const toolNameById = buildToolNameById(normalized);
-  const lowered = normalized.flatMap((message) => lowerMessage(message, { toolNameById }));
-  return applyPatterns(lowered, [
-    mergeConsecutiveUsers({
-      isUser: (content) => content.role === 'user',
-      isToolResultOnly: (content) => content.parts[0]?.functionResponse !== undefined,
-      merge: (last, next) => {
-        const lastStartsWithFunctionResponse = last.parts[0]?.functionResponse !== undefined;
-        const nextHasFunctionResponse = next.parts.some(
-          (part) => part.functionResponse !== undefined,
-        );
-        if (lastStartsWithFunctionResponse && !nextHasFunctionResponse) {
-          return { ...next, parts: [...next.parts, ...last.parts] };
-        }
-        return { ...last, parts: [...last.parts, ...next.parts] };
-      },
-    }),
-  ]);
-}
 
 function extractChunkFinishReason(response: Record<string, unknown>): unknown {
   const candidates = response['candidates'] as unknown[] | undefined;
@@ -142,125 +93,39 @@ function extractChunkParts(response: Record<string, unknown>): StreamedMessagePa
   return parts;
 }
 
-export function encodeGoogleGenAIThinking(
-  model: string,
-  effort: ThinkingEffort,
-): Record<string, unknown> {
-  if (model.includes('gemini-3') || model.includes('gemini-4')) {
-    if (effort === 'off' && model.includes('gemini-4')) {
-      throw new ThinkingConfigError(
-        'thinking-cannot-disable',
-        `Model '${model}' always reasons and thinking cannot be turned off. Choose a concrete thinking effort (low, medium, high) instead of 'off'.`,
-      );
+export function replay(response: unknown): unknown[] {
+  return [response];
+}
+
+export function createDecoder(sink: DecodeSink): Decoder {
+  const push = (chunk: unknown): void => {
+    const response = chunk as Record<string, unknown>;
+    if (response === null || typeof response !== 'object') {
+      return;
     }
-    switch (effort) {
-      case 'off':
-        return { includeThoughts: false, thinkingLevel: 'MINIMAL' };
-      case 'low':
-        return { includeThoughts: true, thinkingLevel: 'LOW' };
-      case 'medium':
-        return { includeThoughts: true, thinkingLevel: 'MEDIUM' };
-      case 'high':
-      case 'xhigh':
-      case 'max':
-        return { includeThoughts: true, thinkingLevel: 'HIGH' };
-      default:
-        return { includeThoughts: true };
+    const rawFinish = extractChunkFinishReason(response);
+    const responseId = response['responseId'];
+    if (typeof responseId === 'string' && responseId.length > 0) {
+      sink.onMessageId(responseId);
     }
-  }
-  switch (effort) {
-    case 'off':
-      return { includeThoughts: false, thinkingBudget: 0 };
-    case 'low':
-      return { includeThoughts: true, thinkingBudget: 1024 };
-    case 'medium':
-      return { includeThoughts: true, thinkingBudget: 4096 };
-    case 'high':
-    case 'xhigh':
-    case 'max':
-      return { includeThoughts: true, thinkingBudget: 32_000 };
-    default:
-      return { includeThoughts: true };
-  }
-}
-
-export function encodeGoogleGenAIMaxOutputTokens(cap: number): Record<string, unknown> {
-  return { maxOutputTokens: cap };
-}
-
-export function applyGoogleGenAIResponseFormat(
-  kwargs: Record<string, unknown>,
-  format: ResponseFormat,
-): Record<string, unknown> {
-  const { responseSchema: _dropSchema, responseJsonSchema: _dropJsonSchema, ...rest } = kwargs;
-  return {
-    ...rest,
-    responseMimeType: 'application/json',
-    responseJsonSchema: format.type === 'json_schema' ? format.jsonSchema.schema : undefined,
+    const usage = parseUsage(response);
+    if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
+      sink.onUsage(usage);
+    }
+    for (const part of extractChunkParts(response)) {
+      sink.onDelta(part);
+      if (part.type === 'function') {
+        sink.onToolCallEnd();
+      }
+    }
+    if (rawFinish !== undefined && rawFinish !== null) {
+      sink.onFinish(normalizeFinishReason(rawFinish));
+    }
   };
+  return { push, end: () => {} };
 }
 
-export interface GoogleGenAIRequestParams {
-  readonly params: GenerateContentParameters;
-  readonly headers?: Record<string, string>;
-}
-
-export interface GoogleGenAIRequestParts {
-  readonly contents: readonly GoogleContent[];
-  readonly tools: readonly Record<string, unknown>[];
-  readonly kwargs: Readonly<Record<string, unknown>>;
-}
-
-export function assembleGoogleGenAIRequest(
-  input: FormatRequestInput,
-  parts: GoogleGenAIRequestParts,
-): Record<string, unknown> {
-  return {
-    model: input.model.model,
-    contents: parts.contents,
-    config: {
-      systemInstruction: input.systemPrompt ? input.systemPrompt : undefined,
-      tools: parts.tools.length === 0 ? undefined : parts.tools,
-      ...parts.kwargs,
-    },
-  };
-}
-
-export function encodeGoogleGenAIRequest(
-  params: Record<string, unknown>,
-): GoogleGenAIRequestParams {
-  return { params: params as unknown as GenerateContentParameters };
-}
-
-export function createGoogleGenAIFormat(): ProtocolFormat {
-  return {
-    createStreamParser() {
-      return (chunk, sink) => {
-        const response = chunk as Record<string, unknown>;
-        if (response === null || typeof response !== 'object') {
-          return;
-        }
-        const rawFinish = extractChunkFinishReason(response);
-        const responseId = response['responseId'];
-        if (typeof responseId === 'string' && responseId.length > 0) {
-          sink.onMessageId?.(responseId);
-        }
-        const usage = parseUsageMetadata(response);
-        if (usage !== undefined && rawFinish !== undefined && rawFinish !== null) {
-          sink.onUsage?.(usage);
-        }
-        if (rawFinish !== undefined && rawFinish !== null) {
-          sink.onFinish(normalizeFinishReason(rawFinish));
-        }
-        for (const part of extractChunkParts(response)) {
-          sink.onDelta(part);
-        }
-      };
-    },
-  };
-}
-
-function parseUsageMetadata(response: Record<string, unknown>): TokenUsage | undefined {
+function parseUsage(response: Record<string, unknown>): TokenUsage | undefined {
   const usageMetadata = response['usageMetadata'] as Record<string, unknown> | undefined;
   if (usageMetadata === undefined || usageMetadata === null) {
     return undefined;
@@ -289,17 +154,7 @@ function parseUsageMetadata(response: Record<string, unknown>): TokenUsage | und
 const NETWORK_RE = /network|connection|connect|disconnect|fetch failed/i;
 const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
-export function convertGoogleGenAIError(
-  error: unknown,
-  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
-): LlmRemoteErrorMessage {
-  if (isAbortError(error)) {
-    return toLlmErrorMessage(error);
-  }
-  const hooked = classifyErrorHook?.(error);
-  if (hooked !== undefined) {
-    return hooked;
-  }
+export function decodeError(error: unknown): LlmRemoteErrorMessage {
   if (error instanceof RawGoogleGenAISDKApiError) {
     return toLlmStatusErrorMessage({
       statusCode: error.status,

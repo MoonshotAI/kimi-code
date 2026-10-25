@@ -8,6 +8,8 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '#human/llm/message';
+import { toCoreMessage } from '#human/message';
+import { toLlmMessage, type Message as LegacyMessage } from '#/llm-adapter/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -1058,7 +1060,18 @@ describe('WireService tree projection', () => {
     expect(wire.nextSeq()).toBe(8);
 
     expect(await collect(wire.read())).toEqual([
-      ...onDisk.slice(0, 3),
+      ...onDisk.slice(0, 3).map((record) => {
+        if (record.type !== 'context.append_message') return record;
+        const message = record['message'] as LegacyMessage & { id?: string; origin?: unknown };
+        return {
+          ...record,
+          message: {
+            ...toCoreMessage(toLlmMessage(message)),
+            id: message.id,
+            origin: message.origin,
+          },
+        };
+      }),
       onDisk[5]!,
       onDisk[6]!,
     ]);

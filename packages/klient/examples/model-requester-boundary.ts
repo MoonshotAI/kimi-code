@@ -143,7 +143,7 @@ async function probeRealConfig(): Promise<void> {
 const PING_INPUT: ModelRequestInput = {
   systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
   tools: [],
-  messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
+  messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
 };
 
 const WEATHER_TOOL: Tool = {
@@ -163,7 +163,7 @@ const TOOL_HISTORY_INPUT: ModelRequestInput = {
   systemPrompt: PING_INPUT.systemPrompt,
   tools: [WEATHER_TOOL],
   messages: [
-    { role: 'user', content: [{ type: 'text', text: 'weather?' }], toolCalls: [] },
+    { role: 'user', content: [{ type: 'text', text: 'weather?' }] },
     {
       role: 'assistant',
       content: [],
@@ -180,7 +180,6 @@ const TOOL_HISTORY_INPUT: ModelRequestInput = {
       role: 'tool',
       toolCallId: 'call_1',
       content: [{ type: 'text', text: 'sunny' }],
-      toolCalls: [],
     },
   ],
 };

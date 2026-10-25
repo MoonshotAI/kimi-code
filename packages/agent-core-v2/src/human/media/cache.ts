@@ -1,4 +1,5 @@
 import type { VideoURLPart } from '#/llm/message';
+import { fromCorePart, toCorePart } from '#/message';
 import type { BlobBackend } from '#/store/backend/backend';
 import { sha256Hex } from '#/store/internal/blob';
 
@@ -33,7 +34,9 @@ export function createBlobMediaUploadCache(blobs: BlobBackend): MediaUploadCache
     },
     put: async (ref, providerKey, part) => {
       const refKey = await key(ref, providerKey);
-      await blobs.write(refKey, JSON.stringify(part.videoUrl)).catch(() => undefined);
+      const legacy = fromCorePart(part);
+      if (legacy.type !== 'video_url') return;
+      await blobs.write(refKey, JSON.stringify(legacy.videoUrl)).catch(() => undefined);
     },
   };
 }
@@ -42,10 +45,11 @@ function parseCachedPart(raw: string): VideoURLPart | undefined {
   try {
     const data = JSON.parse(raw) as { url?: unknown; id?: unknown };
     if (typeof data.url !== 'string' || data.url.length === 0) return undefined;
-    return {
+    const part = toCorePart({
       type: 'video_url',
       videoUrl: { url: data.url, id: typeof data.id === 'string' ? data.id : undefined },
-    };
+    });
+    return part.type === 'video_url' ? part : undefined;
   } catch {
     return undefined;
   }

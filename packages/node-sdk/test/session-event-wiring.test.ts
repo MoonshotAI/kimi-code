@@ -127,11 +127,18 @@ describe('SessionEventWiring status snapshot fold', () => {
       sub.bus.emit({ type: 'agent.status.updated', usage: USAGE });
       // Non-status events pass through untouched.
       sub.bus.emit({ type: 'assistant.delta', delta: 'Hi', time: 1_700_000_000_123 });
+      sub.bus.emit({
+        type: 'tool.result',
+        output: [
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+          { type: 'custom', source: { kind: 'inline' } },
+        ],
+      });
     } finally {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(2);
+    expect(events).toHaveLength(3);
     expect(events[0]).toMatchObject({
       type: 'agent.status.updated',
       sessionId: 's1',
@@ -148,6 +155,15 @@ describe('SessionEventWiring status snapshot fold', () => {
       time: 1_700_000_000_123,
     });
     expect(events[1]).not.toHaveProperty('model');
+    expect(events[2]).toMatchObject({
+      type: 'tool.result',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      output: [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+        { type: 'custom', source: { kind: 'inline' } },
+      ],
+    });
   });
 
   it('forwards prompt.completed so gate-blocked prompts can settle clients', () => {

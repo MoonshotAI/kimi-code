@@ -991,6 +991,11 @@ key = "${titleOAuthRef.key}"
       expect(limitedMain?.toolStore).toEqual(expectedLimited.toolStore);
       expect(JSON.stringify(limitedMain?.replay)).toContain('second imported turn');
       expect(JSON.stringify(limitedMain?.replay)).not.toContain('first imported turn');
+      expect(
+        limitedMain?.replay.flatMap((record) =>
+          record.type === 'message' ? [record.message] : [],
+        ),
+      ).toEqual([expect.objectContaining({ role: 'user', toolCalls: [] })]);
       expect(Object.keys(limited.agents)).toEqual([MAIN_AGENT_ID]);
 
       // A live re-resume serves the same fold off the live scope.
@@ -1003,6 +1008,14 @@ key = "${titleOAuthRef.key}"
       const expectedFull = await foldAgentWireReplay(wirePath);
       expect(full.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedFull.replay);
       expect(JSON.stringify(full.agents[MAIN_AGENT_ID]?.replay)).toContain('first imported turn');
+      expect(
+        full.agents[MAIN_AGENT_ID]?.replay.flatMap((record) =>
+          record.type === 'message' ? [record.message] : [],
+        ),
+      ).toEqual([
+        expect.objectContaining({ role: 'user', toolCalls: [] }),
+        expect.objectContaining({ role: 'user', toolCalls: [] }),
+      ]);
     } finally {
       await client.close();
     }
@@ -2056,41 +2069,161 @@ describe('foldAgentWireReplay', () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
     tempDirs.push(dir);
     const wirePath = join(dir, 'wire.jsonl');
+    const toolCalls = [
+      { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ls"}' },
+    ];
     const records = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1000 },
       {
         type: 'context.append_message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+          ],
+        },
         time: 1001,
       },
-      { type: 'permission.set_mode', mode: 'auto', time: 1002 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'running' },
+            { type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,BBB' } },
+          ],
+          toolCalls,
+        },
+        time: 1002,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'ok' },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/result.mp4' } },
+          ],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+        time: 1003,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'context summary' }],
+          origin: { kind: 'compaction_summary' },
+        },
+        time: 1004,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'goal fork cleared' }],
+          origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+        },
+        time: 1005,
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'legacy compaction' },
+            { type: 'image_url', imageUrl: { url: 'media://media_legacy' } },
+          ],
+        },
+        compactedCount: 1,
+        tokensAfter: 10,
+        keptUserMessageCount: 1,
+        time: 1006,
+      },
+      { type: 'permission.set_mode', mode: 'auto', time: 1007 },
       {
         type: 'tools.update_store',
         key: 'todo',
         value: [{ title: 'old', status: 'done' }],
-        time: 1003,
+        time: 1008,
       },
       {
         type: 'tools.update_store',
         key: 'todo',
         value: [{ title: 'new', status: 'pending' }],
-        time: 1004,
+        time: 1009,
       },
       // A v2-only op the v1 restore switch does not know: ignored.
-      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1005 },
+      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1010 },
     ];
     await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
-    const folded = await foldAgentWireReplay(wirePath);
-    expect(folded.replay).toEqual([
-      {
-        type: 'message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
-        time: 1001,
-      },
-      { type: 'permission_updated', mode: 'auto', time: 1002 },
-    ]);
-    // Last write wins per store key.
-    expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+    for (const turnLimit of [undefined, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, turnLimit);
+      expect(folded.replay).toEqual([
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello' },
+              { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+            ],
+            toolCalls: [],
+          },
+          time: 1001,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'running' },
+              { type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,BBB' } },
+            ],
+            toolCalls,
+          },
+          time: 1002,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'tool',
+            content: [
+              { type: 'text', text: 'ok' },
+              { type: 'video_url', videoUrl: { url: 'https://example.com/result.mp4' } },
+            ],
+            toolCallId: 'call_1',
+            toolCalls: [],
+          },
+          time: 1003,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'context summary' }],
+            toolCalls: [],
+            origin: { kind: 'compaction_summary' },
+          },
+          time: 1004,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'goal fork cleared' }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+          },
+          time: 1005,
+        },
+        { type: 'permission_updated', mode: 'auto', time: 1007 },
+      ]);
+      // Last write wins per store key.
+      expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+    }
   });
 
   it('degrades to an empty fold on a missing or corrupt journal', async () => {

@@ -1,43 +1,86 @@
-import { extractText, type ContentPart, type Message } from '#/llm/message';
-import type { ToolMessageConversion } from '#/llm/protocol/protocol';
+import type OpenAI from 'openai';
+import { shake } from 'radashi';
 
-import type { OpenAIContentPart, OpenAIWireMessage } from './contract';
-import { TOOL_RESULT_MEDIA_PLACEHOLDER } from './media-conversion';
+import { extractText, type ContentPart, type Message, type ToolDescription } from '#/llm/message';
+import type { LlmModelSpec, LlmSampling, ResponseFormat, ThinkingRequestOptions } from '#/llm/request';
+import { ThinkingConfigError } from '#/llm/protocol/errors';
+import { mediaFileIdOf, mediaUrlOf } from '#/llm/protocol/kit/media';
+import { withExtras } from '#/llm/protocol/kit/params';
+import type { NativeModule, PipelineSpec } from '#/llm/protocol/pipeline';
+import type { LlmModule, ToolMessageConversion } from '#/llm/protocol/protocol';
+import type { MediaSupport } from '#/llm/protocol/rules/media';
+
+import { sanitizeToolCallId } from '../tool-call-id';
+import type { OpenAIContentPart, OpenAIWireMessage, OpenAIWireToolCall } from './contract';
 import { DEFAULT_REASONING_KEY, REASONING_DETAILS_KEY } from './decode';
+import {
+  openAIModelLegality,
+  openAIThinkingHistoryPatterns,
+  resolveOpenAIReasoningKey,
+} from './legalize';
+import { openAIMediaConversionPatterns, TOOL_RESULT_MEDIA_PLACEHOLDER } from './media-conversion';
+import type { OpenAIOptions } from './index';
+
+export type NativePart = OpenAIContentPart;
+
+export type NativeToolCall = OpenAIWireToolCall;
+
+export type NativeMessage = OpenAIWireMessage & { [extension: string]: unknown };
+
+export type NativeTool = Readonly<Record<string, unknown>>;
+
+export type OpenAIParams = {
+  readonly prompt_cache_key?: string;
+  readonly reasoning_effort?: string;
+  readonly response_format?: Record<string, unknown>;
+  readonly max_tokens?: number;
+  readonly max_completion_tokens?: number;
+  readonly temperature?: number;
+  readonly top_p?: number;
+  readonly top_k?: number;
+  readonly stop?: readonly string[];
+  readonly seed?: number;
+  readonly presence_penalty?: number;
+  readonly frequency_penalty?: number;
+} & Readonly<Record<string, unknown>>;
+
+export interface Request {
+  readonly params: Omit<OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, 'stream'>;
+}
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
 
-function convertContentPart(part: ContentPart): OpenAIContentPart | null {
+function convertContentPart(part: ContentPart): NativePart | null {
   switch (part.type) {
     case 'text':
       return { type: 'text', text: part.text };
     case 'think':
       return null;
-    case 'image_url':
+    case 'image_url': {
+      const url = mediaUrlOf(part);
+      const id = mediaFileIdOf(part);
       return {
         type: 'image_url',
-        image_url:
-          part.imageUrl.id === undefined
-            ? { url: part.imageUrl.url }
-            : { url: part.imageUrl.url, id: part.imageUrl.id },
+        image_url: id === undefined ? { url } : { url, id },
       };
-    case 'audio_url':
+    }
+    case 'audio_url': {
+      const url = mediaUrlOf(part);
+      const id = mediaFileIdOf(part);
       return {
         type: 'audio_url',
-        audio_url:
-          part.audioUrl.id === undefined
-            ? { url: part.audioUrl.url }
-            : { url: part.audioUrl.url, id: part.audioUrl.id },
+        audio_url: id === undefined ? { url } : { url, id },
       };
-    case 'video_url':
+    }
+    case 'video_url': {
+      const url = mediaUrlOf(part);
+      const id = mediaFileIdOf(part);
       return {
         type: 'video_url',
-        video_url:
-          part.videoUrl.id === undefined
-            ? { url: part.videoUrl.url }
-            : { url: part.videoUrl.url, id: part.videoUrl.id },
+        video_url: id === undefined ? { url } : { url, id },
       };
+    }
   }
 }
 
@@ -49,7 +92,7 @@ function convertToolMessageMediaText(message: Message): string {
   }
   if (
     message.content.some(
-      (part) => part.type === 'video_url' && part.videoUrl.url.startsWith('data:'),
+      (part) => part.type === 'video_url' && mediaUrlOf(part).startsWith('data:'),
     )
   ) {
     lines.push(OMITTED_VIDEO_PLACEHOLDER);
@@ -66,7 +109,7 @@ export interface OpenAILowerContext {
   readonly toolMessageConversion: ToolMessageConversion | undefined;
 }
 
-export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenAIWireMessage[] {
+export function lowerMessage(message: Message, lower: OpenAILowerContext): NativeMessage[] {
   const { reasoningKey, preserveThinking } = lower;
   let reasoningContent = '';
   let hasReasoningPart = false;
@@ -81,7 +124,7 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
       nonThinkParts.push(part);
     }
   }
-  let content: string | OpenAIContentPart[] | undefined;
+  let content: string | NativePart[] | undefined;
   if (message.role === 'tool' && lower.toolMessageConversion !== 'keep_parts') {
     content = message.content.some((part) => part.type !== 'text' && part.type !== 'think')
       ? convertToolMessageMediaText(message)
@@ -93,10 +136,10 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
     } else if (nonThinkParts.length > 0) {
       content = nonThinkParts
         .map((part) => convertContentPart(part))
-        .filter((part): part is OpenAIContentPart => part !== null);
+        .filter((part): part is NativePart => part !== null);
     }
   }
-  let converted: OpenAIWireMessage;
+  let converted: NativeMessage;
   if (message.role === 'assistant') {
     converted = {
       role: 'assistant',
@@ -168,3 +211,217 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
   }
   return [converted];
 }
+
+type ThinkingResolution =
+  | { readonly ok: true; readonly encode: 'silent' }
+  | { readonly ok: true; readonly encode: 'effort'; readonly value: string }
+  | { readonly ok: false; readonly error: ThinkingConfigError };
+
+function effortList(efforts: readonly string[] | undefined): string | undefined {
+  return efforts !== undefined && efforts.length > 0 ? efforts.join(', ') : undefined;
+}
+
+function resolveThinkingEffort(
+  options: ThinkingRequestOptions,
+  model: LlmModelSpec,
+): ThinkingResolution {
+  const effort = options.effort;
+  const meta = model.thinking;
+  if (effort === 'on') {
+    return { ok: true, encode: 'silent' };
+  }
+  if (effort === 'off') {
+    if (meta?.offEffort !== undefined) {
+      return { ok: true, encode: 'effort', value: meta.offEffort };
+    }
+    if (meta?.alwaysThinking === true) {
+      const list = effortList(meta.supportEfforts);
+      return {
+        ok: false,
+        error: new ThinkingConfigError(
+          'thinking-cannot-disable',
+          list === undefined
+            ? `Model '${model.name}' always reasons and thinking cannot be turned off. Choose a concrete thinking effort instead of 'off'.`
+            : `Model '${model.name}' always reasons and thinking cannot be turned off. Choose a concrete thinking effort (${list}) instead of 'off'.`,
+        ),
+      };
+    }
+    if (meta?.supportEfforts !== undefined) {
+      return {
+        ok: false,
+        error: new ThinkingConfigError(
+          'off-needs-offeffort',
+          `Model '${model.name}' reasons by default but declares no off effort, so thinking cannot be turned off. Declare offEffort (for example 'none') for this model in the model catalog configuration.`,
+        ),
+      };
+    }
+    return { ok: true, encode: 'silent' };
+  }
+  if (meta === undefined && model.capability?.thinking === false) {
+    return {
+      ok: false,
+      error: new ThinkingConfigError(
+        'thinking-unsupported',
+        `Model '${model.name}' does not support thinking, but thinking effort '${effort}' was requested. Remove the thinking effort setting or choose a thinking-capable model.`,
+      ),
+    };
+  }
+  return { ok: true, encode: 'effort', value: effort };
+}
+
+export function resolveReasoningEffort(
+  thinking: ThinkingRequestOptions,
+  model: LlmModelSpec,
+): string | undefined {
+  const resolution = resolveThinkingEffort(thinking, model);
+  if (!resolution.ok) throw resolution.error;
+  return resolution.encode === 'effort' ? resolution.value : undefined;
+}
+
+type OpenAIModule = LlmModule<OpenAIOptions>;
+
+function replaysThinkHistory(module: OpenAIModule): boolean {
+  return module.content.messages.some((message) =>
+    message.content.some((part) => part.type === 'think'),
+  );
+}
+
+function encodeThinking(
+  thinking: ThinkingRequestOptions | undefined,
+  module: OpenAIModule,
+): Partial<OpenAIParams> | undefined {
+  const effort = thinking === undefined ? undefined : resolveReasoningEffort(thinking, module.model.spec);
+  if (effort !== undefined) return { reasoning_effort: effort };
+  return thinking?.effort !== 'off' && replaysThinkHistory(module)
+    ? { reasoning_effort: 'medium' }
+    : undefined;
+}
+
+function encodeResponseFormat(format: ResponseFormat): Record<string, unknown> {
+  if (format.type === 'json_object') {
+    return { type: 'json_object' };
+  }
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: format.jsonSchema.name,
+      schema: format.jsonSchema.schema,
+      strict: format.jsonSchema.strict,
+      description: format.jsonSchema.description,
+    },
+  };
+}
+
+const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
+
+function usesMaxCompletionTokens(model: string): boolean {
+  const normalized = model.toLowerCase();
+  return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
+}
+
+function encodeMaxTokens(cap: number, model: LlmModelSpec): Partial<OpenAIParams> {
+  const capped = Math.max(1, Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING));
+  return usesMaxCompletionTokens(model.name)
+    ? { max_completion_tokens: capped }
+    : { max_tokens: capped };
+}
+
+function defaultTool(tool: ToolDescription): Record<string, unknown> {
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+    },
+  };
+}
+
+function encodeSampling(sampling: LlmSampling): Partial<OpenAIParams> {
+  return shake({
+    temperature: sampling.temperature,
+    top_p: sampling.topP,
+    top_k: sampling.topK,
+    stop: sampling.stop,
+    seed: sampling.seed,
+    presence_penalty: sampling.presencePenalty,
+    frequency_penalty: sampling.frequencyPenalty,
+  });
+}
+
+function flatten(
+  native: NativeModule<NativeMessage, NativeTool, OpenAIParams>,
+  module: OpenAIModule,
+): Request {
+  const params = withExtras(
+    {
+      model: module.model.spec.name,
+      messages: native.system
+        ? [{ role: 'system', content: native.system }, ...native.messages]
+        : native.messages,
+      tools: native.tools.length === 0 ? undefined : native.tools,
+      ...native.params,
+    },
+    module.options?.extras,
+  );
+  return { params: params as unknown as Request['params'] };
+}
+
+export const openAIChatMedia: MediaSupport = {
+  kinds: {
+    image: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    audio: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+    video: { mimes: 'any', sources: ['url', 'inline', 'file'], inToolResult: 'native' },
+  },
+};
+
+export const openAIPipeline: PipelineSpec<
+  OpenAIOptions,
+  NativeMessage,
+  NativeTool,
+  OpenAIParams,
+  Request
+> = {
+  media: openAIChatMedia,
+  toolCallId: { normalize: (id) => sanitizeToolCallId(id, 64), maxLength: 64 },
+  patterns: (module) => openAIMediaConversionPatterns(module.options?.toolMessageConversion),
+  thinkingHistory: (module) =>
+    openAIThinkingHistoryPatterns(
+      module.content.messages,
+      module.options?.reasoningKey,
+      module.options?.detectedReasoningKey,
+    ),
+  legality: openAIModelLegality,
+  cacheKey: (key) => ({ prompt_cache_key: key }),
+  thinking: encodeThinking,
+  responseFormat: (params, format) => ({ ...params, response_format: encodeResponseFormat(format) }),
+  maxOutputTokens: encodeMaxTokens,
+  sampling: encodeSampling,
+  tool: defaultTool,
+  message: (message, module) => {
+    const converted = lowerMessage(message, {
+      reasoningKey: resolveOpenAIReasoningKey(
+        module.content.messages,
+        module.options?.reasoningKey,
+        module.options?.detectedReasoningKey,
+      ),
+      preserveThinking: false,
+      toolMessageConversion: module.options?.toolMessageConversion,
+    });
+    const [native] = converted;
+    if (
+      message.role === 'system' &&
+      message.content.length === 0 &&
+      message.tools !== undefined &&
+      message.tools.length > 0 &&
+      converted.length === 1 &&
+      native?.role === 'system' &&
+      native.content === '' &&
+      !('tools' in native)
+    ) {
+      return [];
+    }
+    return converted;
+  },
+  flatten,
+};

@@ -99,7 +99,7 @@ import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/lega
 import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
 import { interactionOutcome } from '../../protocol/interaction-wire';
 import { toWireQuestion } from '../../protocol/question-wire';
-import { projectPromptContentParts } from '../messages/messageProjection';
+import { projectPromptContentParts, projectToolResultOutput } from '../messages/messageProjection';
 
 export interface ProjectorInteraction {
   readonly id: string;
@@ -1035,11 +1035,12 @@ export class AgentTranscriptProjector {
     const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
     if (hit === undefined) return [];
     const isError = event.isError === true;
+    const output = projectToolResultOutput(event.output);
     const frame: ToolCallFrame = {
       ...hit.frame,
       state: isError ? 'error' : 'done',
-      output: event.output,
-      error: isError && typeof event.output === 'string' ? event.output : undefined,
+      output,
+      error: isError && typeof output === 'string' ? output : undefined,
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
     const ops: TranscriptOperation[] = [

@@ -5,9 +5,33 @@ import { basename, extname, isAbsolute, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { buildDaemonFileUrl, buildImageCompressionCaption, buildUnsupportedImageNotice, compressBase64ForModel, compressImageForModel, decodeBase64Prefix, Error2, fileNotFoundError, isModelAcceptedImageMime, MAX_IMAGE_DECODE_BYTES, normalizeImageMime, persistOriginalImage, resolveEffectiveImageMime, unsupportedImageMimeFromUrl, type GetResult, type IFileService, type ISessionMediaStore, type ITelemetryService, type PromptFileAttachment } from '@moonshot-ai/agent-core-v2';
-import { type ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+import {
+  buildDaemonFileUrl,
+  buildImageCompressionCaption,
+  buildUnsupportedImageNotice,
+  compressBase64ForModel,
+  compressImageForModel,
+  decodeBase64Prefix,
+  Error2,
+  fileNotFoundError,
+  isModelAcceptedImageMime,
+  MAX_IMAGE_DECODE_BYTES,
+  normalizeImageMime,
+  persistOriginalImage,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+  type GetResult,
+  type IFileService,
+  type ISessionMediaStore,
+  type ITelemetryService,
+  type PromptFileAttachment,
+} from '@moonshot-ai/agent-core-v2';
 import { sniffMediaFromMagic } from '@moonshot-ai/agent-core-v2/agent/media/file-type';
+import {
+  toCorePart,
+  type ContentPart as LegacyContentPart,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import {
   IMAGE_MIME_BY_SUFFIX,
   VIDEO_MIME_BY_SUFFIX,
@@ -94,7 +118,7 @@ export async function resolvePromptSessionMediaRefs(
 }
 
 export function contentToCoreParts(content: WireContent): ContentPart[] {
-  const parts: ContentPart[] = [];
+  const parts: LegacyContentPart[] = [];
   for (const part of content) {
     if (part.type === 'text') parts.push({ type: 'text', text: part.text });
     else if (part.type === 'image' && part.source.kind === 'url') parts.push({ type: 'image_url', imageUrl: { url: part.source.url, id: part.source.id, name: part.name } });
@@ -104,7 +128,7 @@ export function contentToCoreParts(content: WireContent): ContentPart[] {
     else if (part.type === 'video' && part.source.kind === 'base64') parts.push({ type: 'video_url', videoUrl: { url: `data:${part.source.media_type};base64,${part.source.data}`, name: part.name } });
     else if (part.type === 'video' && part.source.kind === 'session_media') parts.push({ type: 'video_url', videoUrl: { url: buildDaemonFileUrl(part.source.file_id), id: part.source.file_id, name: part.name } });
   }
-  return parts;
+  return parts.map(toCorePart);
 }
 
 export interface ResolvePromptMediaOptions {

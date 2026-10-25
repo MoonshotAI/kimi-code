@@ -10,17 +10,24 @@ import type { ResponseFormat } from '#/llm-requester/response-format';
 import type { ThinkingRequestOptions } from '#/llm-requester/thinking';
 import type { TokenUsage } from '#/llm-requester/usage';
 
+import type { LlmCredentialProvider } from '#/llm/request';
+import type { LlmRemoteErrorMessage as CoreLlmRemoteErrorMessage } from '#/llm/response';
+
 import type { AnthropicExtraParams } from '#/llm/builtin/protocol/anthropic/extra-params';
 import type { GoogleGenAIExtraParams } from '#/llm/builtin/protocol/google-genai/extra-params';
 import type { OpenAIExtraParams } from '#/llm/builtin/protocol/openai/extra-params';
 import type { OpenAIResponsesExtraParams } from '#/llm/builtin/protocol/openai-responses/extra-params';
+
+export type { LlmCredential, LlmCredentialProvider } from '#/llm/request';
+
+export type ProtocolName = 'openai' | 'openai_responses' | 'anthropic' | 'google-genai';
 
 export interface ToolCallIdPolicy {
   normalize: (id: string) => string;
   maxLength?: number;
 }
 
-export type LlmErrorClassifier = (error: unknown) => LlmRemoteErrorMessage | undefined;
+export type LlmErrorClassifier = (error: unknown) => CoreLlmRemoteErrorMessage | undefined;
 
 export type LlmRequestEvent =
   | { type: 'llm.sent' }
@@ -43,17 +50,6 @@ export interface ExtraParams {
 
 export type ToolMessageConversion = 'extract_text' | 'keep_parts';
 
-export interface LlmCredential {
-  readonly apiKey?: string;
-  readonly headers?: Record<string, string>;
-}
-
-export interface LlmCredentialProvider {
-  resolve(): Promise<LlmCredential | undefined> | LlmCredential | undefined;
-  canRecover?(error: unknown): boolean;
-  invalidate?(): void;
-}
-
 export interface LlmRequestConfig {
   readonly model: LlmModel;
   readonly credentialProvider?: LlmCredentialProvider;
@@ -66,6 +62,7 @@ export interface LlmRequestConfig {
   readonly maxContextTokens?: number;
   readonly extraParams?: ExtraParams;
   readonly toolMessageConversion?: ToolMessageConversion;
+  readonly stream?: boolean;
 }
 
 export interface LlmRequestContent {

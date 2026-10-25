@@ -16,7 +16,7 @@ import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEv
 import type { SessionActivityState } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
-import type { PromptLaunchResult, PromptPayload, SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type { PromptLaunchResult } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
 import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/message';
@@ -609,7 +609,7 @@ const _sessionActivityState: AssertWire<typeof sessionActivityStateSchema, Sessi
 // mirrors; facade-only payload shapes (cancel / setPermission / plan / task /
 // command) derive from the `AgentFacade` input types.
 type ActivateSkillPayload = Parameters<IAgentSkillService['activate']>[0];
-type PromptWithSkillsPayload = Parameters<IAgentSkillService['promptWithSkills']>[0];
+type PromptWithSkillsPayload = Parameters<AgentFacade['promptWithSkills']>[0];
 type PromptSkillActivation = PromptWithSkillsPayload['skills'][number];
 type AgentCommandInfo = ReturnType<IAgentCommandService['list']>[number];
 type RuntimeBinding = ReturnType<IAgentRuntimeBindingService['get']>;
@@ -618,6 +618,8 @@ type ShellCommandResult = Awaited<ReturnType<IAgentShellCommandService['run']>>;
 type SetModelResult = Awaited<ReturnType<IAgentProfileService['setModel']>>;
 type TokenUsage = NonNullable<UsageStatus['total']>;
 type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'video_url' }>;
+type PromptPayload = Parameters<AgentFacade['prompt']>[0];
+type SteerPayload = Parameters<AgentFacade['steer']>[0];
 
 type EmptyPayload = {};
 type CancelPayload = NonNullable<Parameters<AgentFacade['cancel']>[0]>;

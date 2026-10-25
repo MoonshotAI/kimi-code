@@ -18,13 +18,9 @@ export function parseMediaRefUrl(url: string): string | undefined {
 }
 
 export function mediaRefFromPart(part: ContentPart): MediaRef | undefined {
-  if (part.type === 'image_url') {
-    const ref = parseMediaRefUrl(part.imageUrl.url);
-    return ref === undefined ? undefined : { kind: 'image', ref };
-  }
-  if (part.type === 'video_url') {
-    const ref = parseMediaRefUrl(part.videoUrl.url);
-    return ref === undefined ? undefined : { kind: 'video', ref };
-  }
-  return undefined;
+  if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
+  const kind = part.type === 'image_url' ? 'image' : 'video';
+  const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+  const ref = parseMediaRefUrl(url);
+  return ref === undefined ? undefined : { kind, ref };
 }

@@ -8,8 +8,8 @@ import {
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextOps';
 import { createLoopEventFold } from '@moonshot-ai/agent-core-v2/agent/contextMemory/loopEventFold';
 import { renderToolResultForModel } from '@moonshot-ai/agent-core-v2/agent/contextMemory/toolResultRender';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type {
-  ContentPart,
   ContextMessage,
   PermissionMode,
   TokenUsage,
@@ -167,7 +167,7 @@ export function projectContext(
       };
     },
     appendOpenToolCall: (call) => {
-      if (openMessage === undefined) return;
+      if (openMessage === undefined || openMessage.message.role !== 'assistant') return;
       openMessage.message = {
         ...openMessage.message,
         toolCalls: [...openMessage.message.toolCalls, call],

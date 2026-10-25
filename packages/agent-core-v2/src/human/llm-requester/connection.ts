@@ -10,17 +10,21 @@ export interface ProtocolEndpoint {
   readonly defaultBaseUrl?: string;
 }
 
-export interface ProviderConnection {
-  endpoint?(ctx?: ConnectionContext): ProtocolEndpoint | undefined;
+export type ProtocolEndpointResolver = (
+  ctx?: ConnectionContext,
+) => ProtocolEndpoint | undefined;
 
-  defaultHeaders?(ctx: ConnectionContext): Record<string, string> | undefined;
-}
+export type ProtocolEndpointSource = ProtocolEndpoint | ProtocolEndpointResolver;
+
+export type DefaultHeadersResolver = (
+  ctx: ConnectionContext,
+) => Record<string, string> | undefined;
 
 export function resolveModelConnection(
   model: LlmModel,
-  connection: ProviderConnection | undefined,
+  endpoint: ProtocolEndpointSource | undefined,
 ): LlmModel {
-  const declaration = connection?.endpoint?.({ model });
+  const declaration = typeof endpoint === 'function' ? endpoint({ model }) : endpoint;
   if (declaration === undefined) {
     return model;
   }

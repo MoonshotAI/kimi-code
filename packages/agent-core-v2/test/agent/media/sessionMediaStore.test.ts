@@ -227,8 +227,8 @@ describe('SessionMediaStoreService', () => {
     }, 'mcp__example__image', { attachmentStore: store });
     const content = renderToolResultForModel(result);
     const messages: Message[] = [
-      { role: 'tool', toolCallId: 'image', content, toolCalls: [] },
-      { role: 'user', toolCalls: [], content: [
+      { role: 'tool', toolCallId: 'image', content },
+      { role: 'user', content: [
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3' } },
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3Mg==' } },
       ] },

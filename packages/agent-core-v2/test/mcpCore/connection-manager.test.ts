@@ -1406,7 +1406,10 @@ describe('McpConnectionManager', () => {
       expect(recovered?.status).toBe('connected');
       expect(recovered?.toolCount).toBe(1);
       expect(recovered?.nextRetryAt).toBeUndefined();
-      expect(cm.resolved('remote')).toBeDefined();
+      const client = cm.resolved('remote')?.client;
+      if (client === undefined) throw new Error('expected a reconnected client');
+      const result = await client.callTool('echo', { text: 'recovered' });
+      expect(result.content).toEqual([{ type: 'text', text: 'recovered' }]);
 
       const remoteStatuses = seen.filter((s) => s.name === 'remote').map((s) => s.status);
       expect(remoteStatuses.slice(0, 3)).toEqual(['pending', 'connected', 'failed']);

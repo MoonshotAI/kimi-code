@@ -1,6 +1,11 @@
 import type { Message, ToolMessage } from '#/llm/message';
+import type { ModelLegality } from '#/llm/protocol/rules/model';
 import type { Pattern } from '#/llm/protocol/pattern';
 import { SyntaxRequestFormatError } from '#/llm/protocol/errors';
+
+export const googleGenAIModelLegality: ModelLegality = {
+  sampling: ['temperature', 'topP', 'topK', 'stop', 'seed', 'presencePenalty', 'frequencyPenalty'],
+};
 
 export const sortToolRunByCallOrder: Pattern<Message> = {
   name: 'sortToolRunByCallOrder',

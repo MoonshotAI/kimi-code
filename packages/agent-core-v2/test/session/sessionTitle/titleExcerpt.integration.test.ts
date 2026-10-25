@@ -21,7 +21,6 @@ describe('title excerpts over the real context memory', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: '帮我部署这个服务' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     context.appendLoopEvent({ type: 'step.begin', uuid: 's1' });
@@ -71,7 +70,6 @@ describe('title excerpts over the real context memory', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: '刚发的问题' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -90,7 +88,6 @@ describe('title excerpts over the real context memory', () => {
         { type: 'text', text: 'User activated the skill "security". Follow the loaded skill instructions.' },
         { type: 'text', text: '检查这次改动的正确性' },
       ],
-      toolCalls: [],
       origin: {
         kind: 'user',
         skillActivations: [

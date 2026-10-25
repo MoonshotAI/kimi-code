@@ -30,6 +30,7 @@ import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
+import { fromCorePart } from '#human/message';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
@@ -204,7 +205,11 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       this.eventBus.subscribe(PromptQueued, (e) => {
         this.fireAndForget(
           'UserPromptQueued',
-          { promptId: e.promptId, prompt: e.content, queueLength: e.queueLength },
+          {
+            promptId: e.promptId,
+            prompt: e.content.map((part) => fromCorePart(part)),
+            queueLength: e.queueLength,
+          },
           e.content,
         );
       }),
@@ -250,7 +255,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
           this.context.append({
             role: 'user',
             content: [{ type: 'text', text: reason }],
-            toolCalls: [],
             origin: { kind: 'system_trigger', name: 'stop_hook' },
           });
           loop.notify();
@@ -347,7 +351,10 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       signal,
       cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer }),
+      inputData: this.withSessionFacts({
+        prompt: input.map((part) => fromCorePart(part)),
+        isSteer: ctx.isSteer,
+      }),
     });
     signal.throwIfAborted();
 

@@ -1238,7 +1238,6 @@ describe('AgentGoalService core workflow hooks', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'queued work' }],
-        toolCalls: [],
         origin: USER_PROMPT_ORIGIN,
       },
     });

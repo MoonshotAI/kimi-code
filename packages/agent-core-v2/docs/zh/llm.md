@@ -11,7 +11,7 @@ llm 是 human 层内独立的 LLM 请求库（`src/human/llm/`），负责一次
 5. **无状态核心 + turn 驱动编排**。核心 requester 是 protocol、endpoint、model、profile、content 和 policy 各维度的不可变组合。A adapter 固定 `maxAttemptsPerStep: 1` 且不配置 recoveries，因此重试、凭据刷新和媒体恢复仍由 turn 机器驱动。settle 累积流式 parts、判定空响应、记录计时，在每次实际发送时发出中性的 `llm.sent`，并合成 outcome。abort 仍以 kind 为 `abort` 的 `llm.failed.remote` 发出，原因保真。turn 持有面向用户的累积器，并在重试/恢复时重置。
 6. **不做静默回退**。配置严格按给定使用；不支持的 beta 特性、thinking 配置、媒体和空响应会明确失败，不会暗中切换行为。迁移不会顺带启用更严格的工具历史校验、清理或重排，main 的既有历史处理策略保持不变。
 7. **一切可变能力都是贡献点**。协议补丁、媒体上传/降级、usage、traceId 和恢复策略围绕核心接入。核心不引用 A requester、v2 DI、models-dev 或 catalog 状态。
-8. **数据即数据**。`LlmModelSpec`、`LlmRequest` 和 `MediaSource` 都是可序列化的核心契约。catalog 是相邻的 `provider -> models` 派生缓存，其 handle 用 endpoint 和 model 数据组合核心 requester。v2 历史与外部 wire 的消息形状保留在 `src/human/message.ts`；A 边界负责与核心 `MediaSource` 双向转换，并保留上传文件的 id。
+8. **数据即数据**。`LlmModelSpec` 和 `LlmRequest` 都是可序列化的核心契约。核心消息沿用既有 `imageUrl/audioUrl/videoUrl` 媒体 part；data URL、`kimi-file://` 会话引用和上传后的 `ms://` 文件 id 都保留在这些 part 中。catalog 是相邻的 `provider -> models` 派生缓存，其 handle 用 endpoint 和 model 数据组合核心 requester。v2 历史与外部 wire 的消息形状保留在 `src/human/message.ts`；codec 只处理 role 与 envelope，不再引入第二套媒体表示。
 9. **消息转换用编译器范式**。通用消息经有序、独立的 pattern 和最终 lowering 转成协议载荷；工具消息转换与媒体映射也是 pattern。main 的工具结果占位、reasoning details 和各供应商特有 wire 行为继续由既有测试约束。
 
 ## 架构
@@ -21,7 +21,7 @@ human/
 ├── message.ts                 v2 历史/外部 wire Message 模型与累积器
 │
 ├── llm/                       单次请求核心
-│   ├── message.ts             核心 Message 与 MediaSource 模型
+│   ├── message.ts             核心 Message 与既有媒体 part 模型
 │   ├── request.ts             model、endpoint、protocol、profile、content、policy 维度
 │   ├── response.ts            运行/流式事件、LlmOutcome、usage、计时与 notice
 │   ├── endpoint.ts            凭据感知的 endpoint 解析
@@ -48,7 +48,7 @@ human/
 └── media/                     媒体缓存、ref、resolver、store、上传、降级与 Kimi 上传
 ```
 
-请求生命周期：A requester 接收原生核心 `(config, content, control)`；klient、kap-server 与持久化边界先把 legacy 消息转换为带 `MediaSource` 的核心消息 → 解析 env/connection 并构造 headers 超时 fetch → 取核心 requester 预设，用 `.with()` 叠加 protocol options 与 endpoint → `generate` 以单 attempt 执行 `runLlmRequest` → 协议 legalize/pipeline 编码 → client 使用 `sendStream`，非流式则 `send` + replay → settle 产生 outcome 与流式事实 → adapter 透传既有 A 流式事件，并把 done/failed/aborted 映射为 A 终点事件。turn 与 `src/llm-adapter/` 继续负责凭据恢复、DI、模型服务、追踪和外部 wire 契约。
+请求生命周期：A requester 接收带既有媒体 part 的原生核心 `(config, content, control)`；宿主媒体 resolver 在协议编码前把 `kimi-file://` 会话引用转换为内联数据或供应商上传引用 → requester 解析 env/connection 并构造 headers 超时 fetch → 取核心 requester 预设，用 `.with()` 叠加 protocol options 与 endpoint → `generate` 以单 attempt 执行 `runLlmRequest` → 协议 legalize/pipeline 编码 → client 使用 `sendStream`，非流式则 `send` + replay → settle 产生 outcome 与流式事实 → adapter 透传既有 A 流式事件，并把 done/failed/aborted 映射为 A 终点事件。turn 与 `src/llm-adapter/` 继续负责凭据恢复、DI、模型服务、追踪和外部 wire 契约。
 
 ## 已否决方案（勿重新引入）
 

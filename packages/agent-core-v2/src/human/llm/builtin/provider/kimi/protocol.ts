@@ -1,29 +1,34 @@
-import type { LlmModel } from '#/llm/model';
-import type { ProtocolEndpoint, ProviderConnection } from '#/llm/protocol/connection';
-import type { ContentPart, ToolDescription } from '#/llm/message';
+import type { Message, ToolDescription, ContentPart } from '#/llm/message';
 import { providerImagePolicy } from '#/llm/protocol/kit/media';
-import { CONTEXT_MANAGEMENT_BETA } from '#/llm/builtin/protocol/anthropic/index';
-import type { AnthropicTrait } from '#/llm/requester/bases/anthropic/trait';
-import type { OpenAIRawUsage } from '#/llm/builtin/protocol/openai/index';
-import type { OpenAIWireMessage, OpenAIWireToolCall } from '#/llm/requester/bases/openai/contract';
-import type { OpenAITrait } from '#/llm/requester/bases/openai/trait';
-import type { OpenAIResponsesTrait } from '#/llm/requester/bases/openai-responses/trait';
+import { requestIdFromHeader } from '#/llm/protocol/kit/http';
+import type { Decoder } from '#/llm/protocol/protocol';
+import type { LlmModelSpec, ThinkingRequestOptions } from '#/llm/request';
+import type { LlmRemoteErrorMessage } from '#/llm/response';
+import {
+  anthropicProtocol,
+  CONTEXT_MANAGEMENT_BETA,
+  lowerMessage as lowerAnthropicMessage,
+} from '#/llm/builtin/protocol/anthropic/index';
+import {
+  lowerMessage as lowerOpenAIMessage,
+  openAIModelLegality,
+  openAIProtocol,
+  resolveOpenAIReasoningKey,
+  type OpenAINativeMessage,
+  type OpenAINativeToolCall,
+  type OpenAILowerContext,
+  type OpenAIRawChunk,
+  type OpenAIRawUsage,
+} from '#/llm/builtin/protocol/openai/index';
+import {
+  openAIResponsesModelLegality,
+  openAIResponsesProtocol,
+} from '#/llm/builtin/protocol/openai-responses/index';
 
+import { classifyKimiQuotaError } from './errors';
 import { normalizeKimiToolSchema } from './schema';
 
-export const KIMI_API_KEY_ENV = 'KIMI_API_KEY';
-export const KIMI_BASE_URL_ENV = 'KIMI_BASE_URL';
 export const KIMI_DEFAULT_BASE_URL = 'https://api.moonshot.ai/v1';
-
-const kimiEndpoint: ProtocolEndpoint = {
-  apiKeyEnv: KIMI_API_KEY_ENV,
-  baseUrlEnv: KIMI_BASE_URL_ENV,
-  defaultBaseUrl: KIMI_DEFAULT_BASE_URL,
-};
-
-export const kimiConnection: ProviderConnection = {
-  endpoint: () => kimiEndpoint,
-};
 
 export interface KimiThinkingConfig {
   type?: 'enabled' | 'disabled';
@@ -61,117 +66,135 @@ function convertKimiTool(tool: ToolDescription): Record<string, unknown> {
   };
 }
 
-const kimiAcceptedImageMimes = (): ReadonlySet<string> => providerImagePolicy('kimi').acceptedMimes;
-
-export function kimiUnsetCompletionTokens(input: {
-  readonly model: LlmModel;
-  readonly usedContextTokens?: number;
-}): number | undefined {
-  const window = input.model.maxContextSize;
-  if (window === undefined || window <= 0 || input.usedContextTokens === undefined) return undefined;
-  return Math.max(1, window - input.usedContextTokens);
+function fillKimiMaxOutputTokens(
+  model: LlmModelSpec,
+  usedTokens: number | undefined,
+): number | undefined {
+  const window = model.maxContextSize;
+  if (window === undefined || window <= 0 || usedTokens === undefined) return undefined;
+  return Math.max(1, window - usedTokens);
 }
 
-export const kimiResponsesTrait: OpenAIResponsesTrait = {
-  completionTokensWhenUnset: kimiUnsetCompletionTokens,
-};
+function kimiOpenAIThinkingParams(thinking: ThinkingRequestOptions): Record<string, unknown> {
+  const config: KimiThinkingConfig =
+    thinking.effort === 'off'
+      ? { type: 'disabled' }
+      : thinking.effort === 'on'
+        ? { type: 'enabled' }
+        : { type: 'enabled', effort: thinking.effort };
+  if (thinking.keep !== undefined) {
+    config.keep = thinking.keep;
+  }
+  return { thinking: config };
+}
 
-export const kimiOpenAITrait: OpenAITrait = {
-  strictThinkingValidation: true,
-
-  toolMessageConversion: 'keep_parts',
-
-  encodeCacheKey: (key) => ({ prompt_cache_key: key }),
-
-  thinking: (thinking) => {
-    const config: KimiThinkingConfig =
-      thinking.effort === 'off'
-        ? { type: 'disabled' }
-        : thinking.effort === 'on'
-          ? { type: 'enabled' }
-          : { type: 'enabled', effort: thinking.effort };
-    if (thinking.keep !== undefined) {
-      config.keep = thinking.keep;
+function applyKimiMessageExtras(
+  message: Message,
+  native: OpenAINativeMessage,
+): OpenAINativeMessage {
+  const record = native as Partial<OpenAINativeMessage> & Record<string, unknown>;
+  if (message.role === 'assistant' && message.toolCalls.length > 0) {
+    const nonThinkParts = message.content.filter((part) => part.type !== 'think');
+    if (isEffectivelyEmptyContent(nonThinkParts)) {
+      delete record['content'];
     }
-    return {
-      kwargs: { thinking: config },
-      preserveThinking: thinking.keep === 'all' && thinking.effort !== 'off' ? true : undefined,
-    };
-  },
-
-  encodeMaxCompletionTokens: (maxCompletionTokens) => ({
-    max_completion_tokens: maxCompletionTokens,
-  }),
-
-  completionTokensWhenUnset: kimiUnsetCompletionTokens,
-
-  buildParams: (params) => {
-    const { extra_body: extraBody, ...rest } = params;
-    if (extraBody === undefined || extraBody === null) {
-      return params;
-    }
-    return { ...rest, ...(extraBody as Record<string, unknown>) };
-  },
-
-  convertTool: (tool) => convertKimiTool(tool),
-
-  convertMessage: (message, converted) => {
-    const record = converted as Partial<OpenAIWireMessage> & Record<string, unknown>;
-    if (message.role === 'assistant' && message.toolCalls.length > 0) {
-      const nonThinkParts = message.content.filter((part) => part.type !== 'think');
-      if (isEffectivelyEmptyContent(nonThinkParts)) {
-        delete record['content'];
+  }
+  if (message.role === 'system' && message.tools !== undefined && message.tools.length > 0) {
+    record['tools'] = message.tools.map((tool) => convertKimiTool(tool));
+  }
+  const convertedToolCalls = record['tool_calls'];
+  if (message.role === 'assistant' && Array.isArray(convertedToolCalls)) {
+    message.toolCalls.forEach((toolCall, index) => {
+      if (toolCall.extras === undefined) {
+        return;
       }
-    }
+      const out: (OpenAINativeToolCall & { extras?: unknown }) | undefined =
+        convertedToolCalls[index];
+      if (out !== undefined) {
+        out.extras = toolCall.extras;
+      }
+    });
+  }
+  return native;
+}
 
-    if (message.role === 'system' && message.tools !== undefined && message.tools.length > 0) {
-      record['tools'] = message.tools.map((tool) => convertKimiTool(tool));
-    }
+function hoistKimiUsage(chunk: OpenAIRawChunk): OpenAIRawChunk {
+  if (chunk.usage !== null && chunk.usage !== undefined && typeof chunk.usage === 'object') {
+    return chunk;
+  }
+  const firstChoice = chunk.choices?.[0] as { usage?: OpenAIRawUsage | null } | undefined;
+  const choiceUsage = firstChoice?.usage;
+  if (choiceUsage === null || choiceUsage === undefined || typeof choiceUsage !== 'object') {
+    return chunk;
+  }
+  return { ...chunk, usage: choiceUsage };
+}
 
-    const convertedToolCalls = record['tool_calls'];
-    if (message.role === 'assistant' && Array.isArray(convertedToolCalls)) {
-      message.toolCalls.forEach((toolCall, index) => {
-        if (toolCall.extras === undefined) {
-          return;
-        }
-        const out: (OpenAIWireToolCall & { extras?: unknown }) | undefined =
-          convertedToolCalls[index];
-        if (out !== undefined) {
-          out.extras = toolCall.extras;
-        }
-      });
-    }
+const kimiImageMimes = providerImagePolicy('kimi').acceptedMimes;
 
-    return converted;
+function withKimiErrors(base: { readonly decodeError: (error: unknown) => LlmRemoteErrorMessage }) {
+  return (error: unknown) => classifyKimiQuotaError(error) ?? base.decodeError(error);
+}
+
+export const kimiOpenAIProtocol = openAIProtocol.with((base) => ({
+  requestId: requestIdFromHeader('x-trace-id'),
+  legality: {
+    ...openAIModelLegality,
+    fillMaxOutputTokens: fillKimiMaxOutputTokens,
   },
-
-  extractUsage: (chunk) => {
-    const topLevel = chunk.usage;
-    if (topLevel !== null && topLevel !== undefined && typeof topLevel === 'object') {
-      return topLevel;
-    }
-    const firstChoice = chunk.choices?.[0] as { usage?: OpenAIRawUsage | null } | undefined;
-    const choiceUsage = firstChoice?.usage;
-    if (choiceUsage !== null && choiceUsage !== undefined && typeof choiceUsage === 'object') {
-      return choiceUsage;
-    }
-    return undefined;
+  thinking: (thinking) => (thinking === undefined ? undefined : kimiOpenAIThinkingParams(thinking)),
+  maxOutputTokens: (cap) => ({ max_completion_tokens: cap }),
+  tool: convertKimiTool,
+  message: (message, module) => {
+    const ctx: OpenAILowerContext = {
+      reasoningKey: resolveOpenAIReasoningKey(
+        module.content.messages,
+        module.options?.reasoningKey,
+        module.options?.detectedReasoningKey,
+      ),
+      preserveThinking:
+        module.model.thinking?.keep === 'all' && module.model.thinking?.effort !== 'off',
+      toolMessageConversion: module.options?.toolMessageConversion ?? 'keep_parts',
+    };
+    return lowerOpenAIMessage(message, ctx).map((native) => applyKimiMessageExtras(message, native));
   },
-};
-
-export const kimiAnthropicTrait: AnthropicTrait = {
-  acceptedImageMimes: kimiAcceptedImageMimes,
-
-  thinking: (thinking) => {
-    if (thinking.effort === 'off') {
-      return { kwargs: { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] } };
-    }
+  decoder: (module, sink): Decoder<OpenAIRawChunk> => {
+    const inner = base.decoder(module, sink);
     return {
-      kwargs: {
-        thinking: { type: 'enabled' },
-        output_config: thinking.effort === 'on' ? undefined : { effort: thinking.effort },
-        betaFeatures: [CONTEXT_MANAGEMENT_BETA],
-      },
+      push: (chunk) => inner.push(hoistKimiUsage(chunk)),
+      end: () => inner.end(),
     };
   },
-};
+  flatten: (native, module) => {
+    const { extra_body: extraBody, ...extras } = module.options?.extras ?? {};
+    const options = { ...module.options, extras: { ...extras, ...extraBody } };
+    return base.flatten(native, { ...module, options });
+  },
+  decodeError: withKimiErrors(base),
+}));
+
+export const kimiAnthropicProtocol = anthropicProtocol.with((base) => ({
+  requestId: requestIdFromHeader('x-trace-id'),
+  thinking: (thinking) =>
+    thinking === undefined
+      ? undefined
+      : thinking.effort === 'off'
+        ? { thinking: { type: 'disabled' }, betaFeatures: [CONTEXT_MANAGEMENT_BETA] }
+        : {
+            thinking: { type: 'enabled' },
+            output_config: thinking.effort === 'on' ? undefined : { effort: thinking.effort },
+            betaFeatures: [CONTEXT_MANAGEMENT_BETA],
+          },
+  message: (message) => lowerAnthropicMessage(message, kimiImageMimes),
+  decodeError: withKimiErrors(base),
+}));
+
+export const kimiResponsesProtocol = openAIResponsesProtocol.with((base) => ({
+  requestId: requestIdFromHeader('x-trace-id'),
+  legality: {
+    ...openAIResponsesModelLegality,
+    fillMaxOutputTokens: fillKimiMaxOutputTokens,
+  },
+  decodeError: withKimiErrors(base),
+}));
+

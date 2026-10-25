@@ -4,7 +4,14 @@ import type { ResponseFormat } from '#human/llm-requester/response-format';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type { TokenUsage } from '#human/llm-requester/usage';
 
-import type { Message, StreamedMessagePart, Tool, ImageURLPart, VideoURLPart } from '#human/llm/message';
+import type {
+  AssistantMessage,
+  ImageURLPart,
+  Message,
+  StreamedMessagePart,
+  ToolDescription as Tool,
+  VideoURLPart,
+} from '#human/llm/message';
 
 import type { Model } from './catalog';
 
@@ -35,7 +42,7 @@ export type ModelRequestEvent =
   | { readonly type: 'usage'; readonly usage: TokenUsage; readonly model?: string }
   | {
       readonly type: 'finish';
-      readonly message: Message;
+      readonly message: AssistantMessage;
       readonly providerFinishReason?: FinishReason;
       readonly rawFinishReason?: string;
       readonly id?: string;
@@ -51,6 +58,7 @@ export interface ModelRequestParams {
   readonly maxCompletionTokens?: number;
   readonly usedContextTokens?: number;
   readonly maxContextTokens?: number;
+  readonly stream?: boolean;
   readonly onTraceId?: (traceId: string | null) => void;
 }
 

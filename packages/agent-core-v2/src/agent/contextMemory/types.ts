@@ -132,8 +132,10 @@ export interface ContextMessageTiming {
 export type ContextMessage = Message & {
   readonly id?: string;
   readonly providerMessageId?: string;
+  readonly name?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
+  readonly partial?: boolean;
   toolCallDisplays?: Record<string, ToolInputDisplay>;
   readonly note?: string;
   readonly usage?: TokenUsage;

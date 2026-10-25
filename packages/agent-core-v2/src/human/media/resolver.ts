@@ -1,6 +1,6 @@
 import type { ModelCapability } from '#/llm-requester/capability';
 import type { ContentPart, Message, VideoURLPart } from '#/llm/message';
-import type { Provider } from '#/provider-catalog/catalog';
+import type { CatalogProviderHandle as Provider } from '#/provider-catalog/catalog';
 import type { MessageResolveContext, MessageResolver } from '#/llm-requester/actor';
 
 import type { MediaUploadCache } from './cache';
@@ -24,10 +24,6 @@ function resolveMimeType(content: MediaContent, kind: MediaKind): string | undef
   if (content.filename === undefined) return undefined;
   const mimeType = mediaMimeForPath(content.filename);
   return mimeType !== undefined && mediaKindForMime(mimeType) === kind ? mimeType : undefined;
-}
-
-function dataUrl(bytes: Uint8Array, mimeType: string): string {
-  return `data:${mimeType};base64,${Buffer.from(bytes).toString('base64')}`;
 }
 
 function unavailableText(kind: 'image' | 'video'): ContentPart {
@@ -61,7 +57,9 @@ export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResol
     if (content === undefined || mimeType === undefined) return unavailableText('image');
     const part: ContentPart = {
       type: 'image_url',
-      imageUrl: { url: dataUrl(content.bytes, mimeType) },
+      imageUrl: {
+        url: `data:${mimeType};base64,${Buffer.from(content.bytes).toString('base64')}`,
+      },
     };
     imageMemo.set(ref, part);
     return part;
@@ -94,7 +92,12 @@ export function createMediaRefResolver(deps: MediaRefResolverDeps): MessageResol
       }
     }
     if (provider?.media?.inlineVideo === true) {
-      return { type: 'video_url', videoUrl: { url: dataUrl(content.bytes, mimeType) } };
+      return {
+        type: 'video_url',
+        videoUrl: {
+          url: `data:${mimeType};base64,${Buffer.from(content.bytes).toString('base64')}`,
+        },
+      };
     }
     return unavailableText('video');
   };

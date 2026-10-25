@@ -3,6 +3,7 @@ import type {
   ContentPart,
   Message as LlmMessage,
   Role,
+  StreamedMessagePart,
   ToolCall,
   ToolDescription,
 } from '#human/message';
@@ -29,6 +30,10 @@ export {
   isToolCall,
   isToolCallPart,
   mergeInPlace,
+  fromCoreMessage,
+  fromCorePart,
+  toCoreMessage,
+  toCorePart,
 } from '#human/message';
 
 export interface Message {

@@ -27,6 +27,7 @@ export interface FakeModelConfigOptions {
   readonly supportEfforts?: readonly string[];
   /** Declared default effort (`defaultEffort`) on FAKE_MODEL_ID. */
   readonly defaultEffort?: string;
+  readonly image?: boolean;
   /** Same three declarations, applied to FAKE_MODEL_ALT_ID instead. */
   readonly altThinking?: boolean;
   readonly altSupportEfforts?: readonly string[];
@@ -35,6 +36,14 @@ export interface FakeModelConfigOptions {
 
 const configToml = (options?: FakeModelConfigOptions): string => {
   const thinking = options?.thinking === true;
+  const capabilities = [
+    ...(thinking ? ['thinking'] : []),
+    ...(options?.image === true ? ['image_in'] : []),
+  ];
+  const capabilitiesToml =
+    capabilities.length === 0
+      ? ''
+      : `capabilities = [${capabilities.map((capability) => `"${capability}"`).join(', ')}]\n`;
   const efforts = options?.supportEfforts;
   const defaultEffort = options?.defaultEffort;
   const altThinking = options?.altThinking === true;
@@ -48,7 +57,7 @@ protocol = "openai"
 baseUrl = "http://localhost"
 apiKey = "test-token"
 maxContextSize = 8192
-${thinking ? 'capabilities = ["thinking"]\n' : ''}${efforts !== undefined ? `supportEfforts = [${efforts.map((e) => `"${e}"`).join(', ')}]\n` : ''}${defaultEffort !== undefined ? `defaultEffort = "${defaultEffort}"\n` : ''}[models.${FAKE_MODEL_ALT_ID}]
+${capabilitiesToml}${efforts !== undefined ? `supportEfforts = [${efforts.map((e) => `"${e}"`).join(', ')}]\n` : ''}${defaultEffort !== undefined ? `defaultEffort = "${defaultEffort}"\n` : ''}[models.${FAKE_MODEL_ALT_ID}]
 name = "fake-model-alt"
 protocol = "openai"
 baseUrl = "http://localhost"

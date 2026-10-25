@@ -11,7 +11,7 @@ llm is a standalone LLM request library inside the human layer (`src/human/llm/`
 5. **Stateless core + turn-driven orchestration**. A core requester is an immutable composition of protocol, endpoint, model, profile, content, and policy dimensions. The A adapter adds `maxAttemptsPerStep: 1` and no recoveries, so the turn machine remains responsible for retry and credential/media recovery. The settle stage accumulates streamed parts, judges empty responses, records timing, emits the neutral `llm.sent` fact at each actual send, and synthesizes the outcome. Abort remains an A `llm.failed.remote` event with kind `abort`; its reason is preserved. The turn owns the user-facing accumulator and resets it on retry/recovery.
 6. **No silent fallback**. Configuration is used exactly as given. Unsupported beta features, thinking settings, media, and empty responses fail explicitly rather than silently switching behavior. The existing main-line history policy is preserved: the core does not enable stricter tool-history verification, cleanup, or reordering as a side effect of the migration.
 7. **Every variable capability is a contribution point**. Protocol patches, media upload/degradation, usage, traceId, and recovery plug in around the core. The core does not import the A requester, v2 DI, models-dev, or provider-catalog state.
-8. **Data is data**. `LlmModelSpec`, `LlmRequest`, and `MediaSource` are serializable core contracts. The catalog is an adjacent derived `provider -> models` cache whose handles compose core requesters with endpoint and model data. The v2 history/wire message shape remains in `src/human/message.ts`; the A boundary converts it to and from core `MediaSource` without dropping uploaded file ids.
+8. **Data is data**. `LlmModelSpec` and `LlmRequest` are serializable core contracts. Core messages use the existing `imageUrl/audioUrl/videoUrl` media parts; data URLs, `kimi-file://` session references, and uploaded `ms://` file ids stay in those parts. The catalog is an adjacent derived `provider -> models` cache whose handles compose core requesters with endpoint and model data. The v2 history/wire message shape remains in `src/human/message.ts`; its codec preserves roles and envelopes without introducing a second media representation.
 9. **Message conversion uses a compiler paradigm**. Generic messages become protocol payloads through ordered, independent patterns followed by lowering. Tool-message conversion and media mapping are patterns too. Main-line tool-result placeholders, reasoning details, and provider-specific wire behavior remain covered by the existing tests.
 
 ## Architecture
@@ -21,7 +21,7 @@ human/
 ├── message.ts                 v2 history/wire Message model and accumulator
 │
 ├── llm/                       single-request core
-│   ├── message.ts             core Message and MediaSource model
+│   ├── message.ts             core Message and existing media part model
 │   ├── request.ts             model, endpoint, protocol, profile, content, and policy dimensions
 │   ├── response.ts            run/stream events, LlmOutcome, usage, timing, and notices
 │   ├── endpoint.ts            credential-aware endpoint resolution
@@ -48,7 +48,7 @@ human/
 └── media/                     media cache, refs, resolver, store, upload, degradation, and Kimi uploads
 ```
 
-Request lifecycle: the A requester receives native core `(config, content, control)`; klient, kap-server, and persistence boundaries first convert legacy messages into core `MediaSource` messages → it resolves env/connection values and builds the headers-timeout fetch → it takes a core requester preset and applies protocol options and endpoint data with `.with()` → `generate` evaluates `runLlmRequest` with one attempt → the protocol legalize/pipeline stages encode the request → the client uses `sendStream`, or `send` plus replay for non-streaming → settle produces the outcome and stream facts → the adapter forwards the existing A stream events and maps done/failed/aborted to the A terminal event. The turn and `src/llm-adapter/` continue to own credential recovery, DI, model services, tracing, and external wire contracts.
+Request lifecycle: the A requester receives native core `(config, content, control)` with existing media parts; the host media resolver converts `kimi-file://` session references into inline data or provider uploads before protocol encoding → the requester resolves env/connection values and builds the headers-timeout fetch → it takes a core requester preset and applies protocol options and endpoint data with `.with()` → `generate` evaluates `runLlmRequest` with one attempt → the protocol legalize/pipeline stages encode the request → the client uses `sendStream`, or `send` plus replay for non-streaming → settle produces the outcome and stream facts → the adapter forwards the existing A stream events and maps done/failed/aborted to the A terminal event. The turn and `src/llm-adapter/` continue to own credential recovery, DI, model services, tracing, and external wire contracts.
 
 ## Rejected Schemes (do not reintroduce)
 

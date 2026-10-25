@@ -4,7 +4,7 @@ import * as path from 'node:path';
 import type { ModelCapability } from '#/llm-requester/capability';
 import type { ContentPart } from '#/llm/message';
 import { mediaKindForPath, mediaMimeForPath } from '#/media/mime';
-import { buildMediaRefUrl } from '#/llm/media/ref';
+import { buildMediaRefUrl } from '#/media/ref';
 import type { MediaStore } from '#/media/store';
 import type { ToolResult } from '#/tool/executor';
 import { defineTool, type ToolDefinition } from '#/tool/tool';

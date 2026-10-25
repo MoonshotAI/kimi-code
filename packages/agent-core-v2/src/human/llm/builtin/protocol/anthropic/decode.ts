@@ -1,67 +1,57 @@
-import Anthropic, {
+import {
   APIConnectionError as RawAnthropicSDKConnectionError,
   APIConnectionTimeoutError as RawAnthropicSDKConnectionTimeoutError,
   APIError as RawAnthropicSDKAPIError,
 } from '@anthropic-ai/sdk';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
-import { isAbortError, toLlmErrorMessage } from '#/llm/errors';
 import { toLlmStatusErrorMessage, toLlmTransportErrorMessage } from '#/llm/protocol/rules/status';
-import { type LlmRemoteErrorMessage } from '#/llm/response';
+import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
-import type { FormatRequestInput, ProtocolFormat } from '#/llm/protocol/format';
-import type { ResponseFormat } from '#/llm/response-format';
-import { SyntaxRequestFormatError } from '#/llm/syntax-errors';
-import type { Message, ToolDescription } from '#/llm/message';
-import { mergeConsecutiveUsers } from '#/llm/protocol/patterns';
-import { applyPatterns } from '#/llm/protocol/rewrite';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import type { TokenUsage } from '#/llm/response';
 
-import { CONTEXT_MANAGEMENT_BETA } from './contract';
-import type {
-  AnthropicRawStreamEvent,
-  AnthropicRawUsage,
-  AnthropicWireMessage,
-} from './contract';
-import { lowerMessage, messageContent } from './lower';
-import { audioToPlaceholder, stripUnsignedThinking } from './patterns';
-import {
-  resolveDefaultMaxTokens,
-  shouldPreserveUnsignedThinking,
-} from './profile';
+export type RawUsage = {
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  cache_read_input_tokens?: number | null;
+  cache_creation_input_tokens?: number | null;
+};
 
-const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
+export type RawBlock = {
+  type: string;
+  text?: string;
+  thinking?: string;
+  signature?: string;
+  data?: string;
+  id?: string;
+  name?: string;
+  input?: unknown;
+};
 
-const CACHE_CONTROL = { type: 'ephemeral' as const };
+export type RawResponse = {
+  id?: string;
+  stop_reason?: string | null;
+  usage?: RawUsage;
+  content?: RawBlock[];
+};
 
-const CACHEABLE_TYPES = new Set([
-  'text',
-  'image',
-  'document',
-  'search_result',
-  'tool_use',
-  'tool_result',
-  'server_tool_use',
-  'web_search_tool_result',
-]);
-
-function injectCacheControlOnLastBlock(messages: AnthropicWireMessage[]): void {
-  const lastMessage = messages.at(-1);
-  if (lastMessage === undefined) return;
-  const content = messageContent(lastMessage);
-  const lastBlock = content.at(-1);
-  if (lastBlock === undefined) return;
-  if (CACHEABLE_TYPES.has(lastBlock.type)) {
-    lastBlock.cache_control = CACHE_CONTROL;
-  }
-}
-
-function isToolResultOnly(message: AnthropicWireMessage): boolean {
-  if (message.role !== 'user') return false;
-  const content = messageContent(message);
-  if (content.length === 0) return false;
-  return content.every((block) => block.type === 'tool_result');
-}
+export type RawChunk = {
+  type: string;
+  index?: number;
+  content_block?: RawBlock;
+  delta?: {
+    type?: string;
+    text?: string;
+    thinking?: string;
+    partial_json?: string;
+    signature?: string;
+    stop_reason?: string | null;
+    stop_sequence?: string | null;
+  };
+  message?: { id?: string; usage?: RawUsage };
+  usage?: RawUsage;
+};
 
 function normalizeStopReason(raw: string | null | undefined): FinishInfo {
   if (raw === null || raw === undefined) {
@@ -87,7 +77,7 @@ function normalizeStopReason(raw: string | null | undefined): FinishInfo {
   return { finishReason, rawFinishReason: raw };
 }
 
-function parseRawUsage(usage: AnthropicRawUsage | undefined): Partial<TokenUsage> | undefined {
+function parseUsage(usage: RawUsage | undefined): Partial<TokenUsage> | undefined {
   if (usage === undefined) {
     return undefined;
   }
@@ -107,249 +97,132 @@ function parseRawUsage(usage: AnthropicRawUsage | undefined): Partial<TokenUsage
   return patch;
 }
 
-export function applyAnthropicResponseFormat(
-  kwargs: Record<string, unknown>,
-  format: ResponseFormat,
-): Record<string, unknown> {
-  if (format.type === 'json_object') {
-    throw new SyntaxRequestFormatError(
-      'Anthropic requires a JSON schema for structured response output.',
-    );
+function replayBlockDeltas(block: RawBlock, index: number): RawChunk[] {
+  switch (block.type) {
+    case 'thinking':
+      return block.signature
+        ? [
+            {
+              type: 'content_block_delta',
+              index,
+              delta: { type: 'signature_delta', signature: block.signature },
+            },
+          ]
+        : [];
+    case 'tool_use':
+      return block.input === undefined
+        ? []
+        : [
+            {
+              type: 'content_block_delta',
+              index,
+              delta: { type: 'input_json_delta', partial_json: JSON.stringify(block.input) },
+            },
+          ];
+    default:
+      return [];
   }
-  const existing = kwargs['output_config'];
-  const outputConfig =
-    existing !== undefined && existing !== null
-      ? { ...(existing as Record<string, unknown>) }
-      : {};
-  outputConfig['format'] = { type: 'json_schema', schema: format.jsonSchema.schema };
-  return { ...kwargs, output_config: outputConfig };
 }
 
-export function applyAnthropicThinkingKeep(
-  kwargs: Record<string, unknown>,
-  keep: string,
-): Record<string, unknown> {
-  const betaFeatures = kwargs['betaFeatures'];
-  const existing = kwargs['context_management'] as
-    | { edits?: Array<{ type: string }> }
-    | undefined;
-  return {
-    ...kwargs,
-    betaFeatures: Array.isArray(betaFeatures)
-      ? betaFeatures.includes(CONTEXT_MANAGEMENT_BETA)
-        ? betaFeatures
-        : [...betaFeatures, CONTEXT_MANAGEMENT_BETA]
-      : [CONTEXT_MANAGEMENT_BETA],
-    context_management: {
-      edits: [
-        { type: CLEAR_THINKING_EDIT, keep },
-        ...(existing?.edits ?? []).filter((edit) => edit.type !== CLEAR_THINKING_EDIT),
-      ],
-    },
-  };
-}
-
-export function encodeAnthropicMaxTokens(cap: number): Record<string, unknown> {
-  return { max_tokens: cap };
-}
-
-export function defaultAnthropicTool(tool: ToolDescription): Record<string, unknown> {
-  return {
-    name: tool.name,
-    description: tool.description,
-    input_schema: tool.parameters,
-  };
-}
-
-export function defaultAnthropicMergeHistory(
-  messages: readonly AnthropicWireMessage[],
-): AnthropicWireMessage[] {
-  return applyPatterns(messages, [
-    mergeConsecutiveUsers({
-      isUser: (param) => param.role === 'user',
-      isToolResultOnly,
-      merge: (last, next) => ({
-        ...last,
-        content: [...messageContent(last), ...messageContent(next)],
-      }),
-    }),
+export function replay(response: RawResponse): RawChunk[] {
+  const blocks = (response.content ?? []).flatMap((block, index): RawChunk[] => [
+    { type: 'content_block_start', index, content_block: block },
+    ...replayBlockDeltas(block, index),
+    { type: 'content_block_stop', index },
   ]);
+  return [
+    { type: 'message_start', message: { id: response.id } },
+    ...blocks,
+    { type: 'message_delta', usage: response.usage, delta: { stop_reason: response.stop_reason } },
+  ];
 }
 
-export interface AnthropicLoweredMessage {
-  readonly source: Message;
-  readonly message: AnthropicWireMessage;
-}
-
-export function lowerAnthropicMessages(
-  input: FormatRequestInput,
-  acceptedMimes: ReadonlySet<string>,
-): AnthropicLoweredMessage[] {
-  const normalized = applyPatterns(input.messages, [
-    stripUnsignedThinking({ preserve: shouldPreserveUnsignedThinking(input.model.model) }),
-    audioToPlaceholder,
-  ]);
-  return normalized.flatMap((message) =>
-    lowerMessage(message, acceptedMimes).map((wire) => ({ source: message, message: wire })),
-  );
-}
-
-export interface AnthropicRequestParams {
-  readonly params: Anthropic.MessageCreateParamsStreaming;
-  readonly betas: readonly string[];
-  readonly useBetaApi: boolean;
-}
-
-export interface AnthropicFormatOptions {
-  readonly betaApi?: boolean;
-}
-
-export interface AnthropicRequestParts {
-  readonly messages: readonly AnthropicWireMessage[];
-  readonly tools: readonly Record<string, unknown>[];
-  readonly kwargs: Readonly<Record<string, unknown>>;
-  readonly betaApi: boolean;
-}
-
-export interface AnthropicRequestAssembly {
-  readonly params: Record<string, unknown>;
-  readonly betas: readonly string[];
-  readonly useBetaApi: boolean;
-}
-
-export function assembleAnthropicRequest(
-  input: FormatRequestInput,
-  parts: AnthropicRequestParts,
-): AnthropicRequestAssembly {
-  const messages = [...parts.messages];
-  injectCacheControlOnLastBlock(messages);
-  const tools = parts.tools.map((tool) => ({ ...tool }));
-  const lastTool = tools.at(-1);
-  if (lastTool !== undefined) {
-    lastTool['cache_control'] = CACHE_CONTROL;
-  }
-  const { betaFeatures, ...restKwargs } = parts.kwargs;
-  const betas = Array.isArray(betaFeatures) ? (betaFeatures as string[]) : [];
-  const useBetaApi =
-    parts.betaApi || input.model.betaApi === true || input.thinking?.keep !== undefined;
-  const params: Record<string, unknown> = {
-    model: input.model.model,
-    max_tokens: resolveDefaultMaxTokens(input.model.model),
-    metadata: input.cacheKey === undefined ? undefined : { user_id: input.cacheKey },
-    ...restKwargs,
-    system: input.systemPrompt
-      ? [{ type: 'text', text: input.systemPrompt, cache_control: CACHE_CONTROL }]
-      : undefined,
-    messages,
-    tools: tools.length === 0 ? undefined : tools,
-    betas: useBetaApi && betas.length > 0 ? betas : undefined,
-    stream: true,
+export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
+  const toolUseIndexes = new Set<number>();
+  const push = (chunk: RawChunk): void => {
+    if (chunk.type === 'content_block_stop') {
+      const index = chunk.index ?? 0;
+      if (toolUseIndexes.delete(index)) {
+        sink.onToolCallEnd(index);
+      }
+      return;
+    }
+    if (chunk.type === 'message_start') {
+      const messageId = chunk.message?.id;
+      if (typeof messageId === 'string' && messageId.length > 0) {
+        sink.onMessageId(messageId);
+      }
+      const usage = parseUsage(chunk.message?.usage);
+      if (usage !== undefined) {
+        const inputUsage = { ...usage };
+        delete inputUsage.output;
+        sink.onUsage(inputUsage);
+      }
+      return;
+    }
+    if (chunk.type === 'message_delta') {
+      const usage = parseUsage(chunk.usage);
+      if (usage !== undefined) {
+        sink.onUsage(usage);
+      }
+      const stopReason = chunk.delta?.stop_reason;
+      if (stopReason !== undefined && stopReason !== null) {
+        sink.onFinish(normalizeStopReason(stopReason));
+      }
+      return;
+    }
+    if (chunk.type === 'content_block_start' && chunk.content_block !== undefined) {
+      const block = chunk.content_block;
+      const index = chunk.index ?? 0;
+      if (block.type === 'tool_use') {
+        toolUseIndexes.add(index);
+        sink.onDelta({
+          type: 'function',
+          id: block.id ?? crypto.randomUUID(),
+          name: block.name ?? '',
+          arguments: '',
+          _streamIndex: index,
+        });
+        return;
+      }
+      if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
+        sink.onDelta({ type: 'think', think: block.thinking });
+        return;
+      }
+      if (block.type === 'redacted_thinking' && typeof block.data === 'string' && block.data) {
+        sink.onDelta({ type: 'think', think: '', encrypted: block.data });
+        return;
+      }
+      if (block.type === 'text' && typeof block.text === 'string' && block.text) {
+        sink.onDelta({ type: 'text', text: block.text });
+      }
+      return;
+    }
+    if (chunk.type === 'content_block_delta' && chunk.delta !== undefined) {
+      const delta = chunk.delta;
+      const index = chunk.index ?? 0;
+      if (delta.type === 'text_delta' && delta.text) {
+        sink.onDelta({ type: 'text', text: delta.text });
+        return;
+      }
+      if (delta.type === 'thinking_delta' && delta.thinking) {
+        sink.onDelta({ type: 'think', think: delta.thinking });
+        return;
+      }
+      if (delta.type === 'input_json_delta' && delta.partial_json) {
+        sink.onDelta({ type: 'tool_call_part', argumentsPart: delta.partial_json, index });
+        return;
+      }
+      if (delta.type === 'signature_delta' && delta.signature) {
+        sink.onDelta({ type: 'think', think: '', encrypted: delta.signature });
+      }
+      return;
+    }
   };
-  return { params, betas, useBetaApi };
+  return { push, end: () => {} };
 }
 
-export function encodeAnthropicRequest(
-  assembly: AnthropicRequestAssembly,
-): AnthropicRequestParams {
-  return {
-    params: assembly.params as unknown as Anthropic.MessageCreateParamsStreaming,
-    betas: assembly.betas,
-    useBetaApi: assembly.useBetaApi,
-  };
-}
-
-export function createAnthropicFormat(): ProtocolFormat<AnthropicRawStreamEvent> {
-  return {
-    createStreamParser() {
-      return (chunk, sink) => {
-        if (chunk.type === 'message_start') {
-          const messageId = chunk.message?.id;
-          if (typeof messageId === 'string' && messageId.length > 0) {
-            sink.onMessageId?.(messageId);
-          }
-          const usage = parseRawUsage(chunk.message?.usage);
-          if (usage !== undefined) {
-            const inputUsage = { ...usage };
-            delete inputUsage.output;
-            sink.onUsage?.(inputUsage);
-          }
-          return;
-        }
-        if (chunk.type === 'message_delta') {
-          const usage = parseRawUsage(chunk.usage);
-          if (usage !== undefined) {
-            sink.onUsage?.(usage);
-          }
-          const stopReason = chunk.delta?.stop_reason;
-          if (stopReason !== undefined && stopReason !== null) {
-            sink.onFinish(normalizeStopReason(stopReason));
-          }
-          return;
-        }
-        if (chunk.type === 'content_block_start' && chunk.content_block !== undefined) {
-          const block = chunk.content_block;
-          const index = chunk.index ?? 0;
-          if (block.type === 'tool_use') {
-            sink.onDelta({
-              type: 'function',
-              id: block.id ?? crypto.randomUUID(),
-              name: block.name ?? '',
-              arguments: '',
-              _streamIndex: index,
-            });
-            return;
-          }
-          if (block.type === 'thinking' && typeof block.thinking === 'string' && block.thinking) {
-            sink.onDelta({ type: 'think', think: block.thinking });
-            return;
-          }
-          if (block.type === 'redacted_thinking' && typeof block.data === 'string' && block.data) {
-            sink.onDelta({ type: 'think', think: '', encrypted: block.data });
-            return;
-          }
-          if (block.type === 'text' && typeof block.text === 'string' && block.text) {
-            sink.onDelta({ type: 'text', text: block.text });
-          }
-          return;
-        }
-        if (chunk.type === 'content_block_delta' && chunk.delta !== undefined) {
-          const delta = chunk.delta;
-          const index = chunk.index ?? 0;
-          if (delta.type === 'text_delta' && delta.text) {
-            sink.onDelta({ type: 'text', text: delta.text });
-            return;
-          }
-          if (delta.type === 'thinking_delta' && delta.thinking) {
-            sink.onDelta({ type: 'think', think: delta.thinking });
-            return;
-          }
-          if (delta.type === 'input_json_delta' && delta.partial_json) {
-            sink.onDelta({ type: 'tool_call_part', argumentsPart: delta.partial_json, index });
-            return;
-          }
-          if (delta.type === 'signature_delta' && delta.signature) {
-            sink.onDelta({ type: 'think', think: '', encrypted: delta.signature });
-          }
-          return;
-        }
-      };
-    },
-  };
-}
-
-export const anthropicFormat: ProtocolFormat<AnthropicRawStreamEvent> = createAnthropicFormat();
-
-export function convertAnthropicError(
-  error: unknown,
-  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
-): LlmRemoteErrorMessage {
-  if (isAbortError(error)) {
-    return toLlmErrorMessage(error);
-  }
-  const hooked = classifyErrorHook?.(error);
-  if (hooked !== undefined) {
-    return hooked;
-  }
+export function decodeError(error: unknown): LlmRemoteErrorMessage {
   if (error instanceof RawAnthropicSDKConnectionTimeoutError) {
     return { kind: 'timeout', message: error.message };
   }

@@ -1,10 +1,31 @@
-import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-requester/capability';
-import type { LlmErrorMessage } from '#/llm/errors';
+import { createUserMessage } from '#/llm/message';
+import type { LlmEndpoint } from '#/llm/request';
+import type { LlmRequester as CoreLlmRequester } from '#/llm/requester';
+import { isUnknownCapability, UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-requester/capability';
+import type { ProviderMediaContribution } from '#/media/upload';
 import type { LlmModel } from '#/llm-requester/model';
 import type { ProtocolName } from '#/llm-requester/requester';
-import type { Provider } from '#/llm/provider/definition';
-import type { LlmRequester } from '#/llm/requester/requester';
+import { thinkingMetadataOf } from '#/llm-requester/thinking';
 import { assign, createActor, emit, enqueueActions, fromPromise, setup, type Actor } from '#/xstate2';
+
+export type ProviderRequesterSource =
+  | CoreLlmRequester<'protocol'>
+  | Readonly<Record<string, CoreLlmRequester<'protocol'>>>
+  | ((protocol?: ProtocolName, model?: CatalogModelDefinition) => CoreLlmRequester<'protocol'> | undefined);
+
+export type CatalogModelSeed = Omit<CatalogModelDefinition, 'capability'> & {
+  readonly capability?: ModelCapability;
+};
+
+export interface CatalogProviderHandle {
+  readonly id: string;
+  readonly requester?: ProviderRequesterSource;
+  readonly endpoint?: LlmEndpoint;
+  readonly listModels?: (signal: AbortSignal) => Promise<readonly CatalogModelSeed[]>;
+  readonly media?: ProviderMediaContribution;
+}
+
+type Provider = CatalogProviderHandle;
 
 export interface CatalogOAuthRef {
   readonly storage: 'file' | 'keyring';
@@ -58,7 +79,7 @@ export interface CatalogProviderInfo {
 
 export interface CatalogProviderEntry {
   readonly info?: CatalogProviderInfo;
-  readonly discovered: Readonly<Record<string, LlmModel>>;
+  readonly discovered: Readonly<Record<string, CatalogModelSeed>>;
   readonly override: Readonly<Record<string, CatalogModelDefinition>>;
   readonly pingErrors?: Readonly<Record<string, string>>;
 }
@@ -126,7 +147,7 @@ interface ProviderCatalogContext {
 
 interface PullResult {
   readonly providerId: string;
-  readonly models?: readonly LlmModel[];
+  readonly models?: readonly CatalogModelSeed[];
   readonly error?: unknown;
 }
 
@@ -231,39 +252,86 @@ function enqueuePing(
   return [...queue, request];
 }
 
+function isCoreRequester(
+  value: ProviderRequesterSource,
+): value is CoreLlmRequester<'protocol'> {
+  return typeof value === 'object' && value !== null && 'with' in value && typeof value.with === 'function';
+}
+
+function baseRequesterOf(
+  provider: Provider,
+  model: CatalogModelDefinition,
+): CoreLlmRequester<'protocol'> | undefined {
+  const source = provider.requester;
+  if (source === undefined) return undefined;
+  if (typeof source === 'function') return source(model.protocol, model);
+  if (isCoreRequester(source)) return source;
+  if (model.protocol !== undefined) return source[model.protocol];
+  return Object.values(source)[0];
+}
+
+function protocolOptionsOf(model: CatalogModelDefinition): Record<string, unknown> | undefined {
+  switch (model.protocol) {
+    case 'openai':
+      return { reasoningKey: model.reasoningKey };
+    case 'anthropic':
+      return { betaApi: model.betaApi };
+    case 'google-genai':
+      return { vertexai: model.vertexai };
+    default:
+      return undefined;
+  }
+}
+
 async function runPingProbe(
   provider: Provider,
   model: CatalogModelDefinition,
 ): Promise<string | undefined> {
-  let requester: LlmRequester;
   try {
-    requester = provider.createRequester(model.protocol);
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-  let failure: LlmErrorMessage | undefined;
-  try {
-    await requester.generate(
+    const base = baseRequesterOf(provider, model);
+    if (base === undefined) return `No requester configured for ${provider.id}/${model.model}`;
+    const requester = base.with({
+      protocol: { options: protocolOptionsOf(model) },
+      endpoint: provider.endpoint,
+    });
+    const outcome = await requester.generate(
       {
-        model,
-        systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
-        tools: [],
-        maxCompletionTokens: 512,
-      },
-      { messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] },
-      {
-        signal: new AbortController().signal,
-        onEvent: (event) => {
-          if (event.type === 'llm.failed.syntax' || event.type === 'llm.failed.remote') {
-            failure = event.error;
-          }
+        endpoint: {
+          baseUrl: model.baseUrl,
+          headers: model.defaultHeaders,
+          credentials:
+            model.apiKey === undefined
+              ? undefined
+              : { resolve: () => ({ apiKey: model.apiKey }) },
         },
+        model: {
+          spec: {
+            provider: model.provider,
+            name: model.model,
+            capability: isUnknownCapability(model.capability) ? undefined : model.capability,
+            thinking: thinkingMetadataOf(model),
+            maxContextSize: model.maxContextSize,
+            maxInputSize: model.maxInputSize,
+          },
+          maxOutputTokens: 512,
+        },
+        profile: {
+          systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
+          tools: [],
+        },
+        content: { messages: [createUserMessage('ping')] },
+        policy: { recoveries: [], retry: { maxAttemptsPerStep: 1 } },
       },
+      { signal: new AbortController().signal },
     );
+    if (outcome.type === 'failed') return outcome.error.message;
+    if (outcome.type === 'aborted') {
+      return outcome.reason instanceof Error ? outcome.reason.message : 'The operation was aborted.';
+    }
+    return undefined;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }
-  return failure?.message;
 }
 
 export function createProviderCatalogMachine() {
@@ -275,11 +343,14 @@ export function createProviderCatalogMachine() {
       input: {} as CatalogSnapshot | undefined,
     },
     actors: {
-      pullBatch: fromPromise<PullResult[], readonly Provider[]>(async ({ input: providers }) =>
+      pullBatch: fromPromise<PullResult[], readonly Provider[]>(async ({ input: providers, signal }) =>
         Promise.all(
           providers.map(async (provider): Promise<PullResult> => {
             try {
-              return { providerId: provider.id, models: await provider.listModels() };
+              return {
+                providerId: provider.id,
+                models: await (provider.listModels?.(signal) ?? []),
+              };
             } catch (error) {
               return { providerId: provider.id, error };
             }
@@ -622,8 +693,8 @@ function applyModelOverrides(
 }
 
 function mergeModel(
-  record: CatalogModelDefinition,
-  discovered: LlmModel | undefined,
+  record: CatalogModelSeed,
+  discovered: CatalogModelSeed | undefined,
 ): CatalogModelDefinition {
   const merged: CatalogModelDefinition = {
     provider: record.provider,

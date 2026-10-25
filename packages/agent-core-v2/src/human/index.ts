@@ -1,4 +1,4 @@
-export * from './llm/message';
+export * from './message';
 export * from './llm-requester/model';
 export * from './llm-requester/capability';
 export * from './models-dev/models-dev';
@@ -9,49 +9,52 @@ export * from './llm-requester/response-format';
 export * from './llm-requester/finish-reason';
 export * from './llm-requester/usage';
 export * from './plugin';
-export * from './llm/protocol/format';
-export * from './llm/protocol/base';
-export * from './llm/protocol/connection';
-export * from './llm/protocol/thinking';
+export {
+  defineProtocol,
+  type DecodeSink,
+  type Decoder,
+  type DefinedProtocol,
+  type LlmModule,
+  type Protocol,
+  type ProtocolDefinition,
+  type ProtocolPatch,
+  type ProtocolReply,
+} from './llm/protocol/protocol';
 export * from './llm/protocol/pattern';
 export * from './llm/protocol/patterns';
 export * from './media';
 export * from './llm-requester/requester';
+export * from './llm-requester/run';
+export * from './llm-requester/factories';
 export * from './llm-requester/empty-response';
 export * from './llm-requester/actor';
 export * from './llm-requester/recovery';
 export * from './llm-requester/retry';
 export * from './llm/builtin/protocol/openai/contract';
 export * from './llm/builtin/protocol/openai/capability';
-export * from './llm/requester/bases/openai/trait';
 export * from './llm/builtin/protocol/openai/extra-params';
-export * from './llm/requester/bases/openai/requester';
+export { openAIProtocol } from './llm/builtin/protocol/openai/index';
 export * from './llm/builtin/protocol/openai-responses/contract';
 export * from './llm/builtin/protocol/openai-responses/capability';
-export * from './llm/requester/bases/openai-responses/trait';
 export * from './llm/builtin/protocol/openai-responses/extra-params';
-export * from './llm/requester/bases/openai-responses/requester';
+export { openAIResponsesProtocol } from './llm/builtin/protocol/openai-responses/index';
 export * from './llm/builtin/protocol/google-genai/contract';
 export * from './llm/builtin/protocol/google-genai/capability';
-export * from './llm/requester/bases/google-genai/trait';
 export * from './llm/builtin/protocol/google-genai/extra-params';
-export * from './llm/requester/bases/google-genai/requester';
+export { googleGenAIProtocol } from './llm/builtin/protocol/google-genai/index';
 export * from './llm/builtin/protocol/anthropic/contract';
 export * from './llm/builtin/protocol/anthropic/capability';
-export * from './llm/requester/bases/anthropic/trait';
 export * from './llm/builtin/protocol/anthropic/extra-params';
-export * from './llm/requester/bases/anthropic/profile';
-export * from './llm/requester/bases/anthropic/requester';
+export * from './llm/builtin/protocol/anthropic/legalize';
+export { anthropicProtocol } from './llm/builtin/protocol/anthropic/index';
 export * from './llm/builtin/protocol/tool-call-id';
 export * from './llm/builtin/protocol/tool-result-text';
-export * from './llm/provider/definition';
 export * from './provider-catalog/catalog';
-export * from './llm-kimi/provider';
+export * from './llm/builtin/provider/kimi/index';
 export * from './llm/builtin/provider/kimi/errors';
 export * from './media/kimi/files';
 export * from './media/kimi/media';
 export * from './llm/builtin/provider/kimi/schema';
-export * from './llm-kimi/trait';
 export * from './provider-catalog/provider/providers/standard';
 export * from './credentials';
 export * from './tool/executor';
@@ -93,5 +96,3 @@ export * from './todo/plugin';
 export * from './tool-select/state';
 export * from './tool-select/tool';
 export * from './tool-select/plugin';
-export * from './tool-select/resolver';
-export * from './store';

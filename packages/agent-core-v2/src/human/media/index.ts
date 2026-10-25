@@ -1,6 +1,6 @@
 export * from './cache';
 export * from './degrade';
-export * from './image-formats';
+export { DEFAULT_INLINE_IMAGE_BYTE_BUDGET, providerImagePolicy, type ProviderImagePolicy } from '#/llm/protocol/kit/media';
 export * from './mime';
 export * from './ref';
 export * from './resolver';

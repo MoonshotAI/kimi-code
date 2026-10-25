@@ -1,6 +1,6 @@
 import type { AssistantMeta, HistoryMessage } from '#/agent/turn';
 import type { FinishReason } from '#/llm-requester/finish-reason';
-import type { ContentPart } from '#/message';
+import { toCorePart, type ContentPart } from '#/message';
 import { emptyUsage } from '#/llm-requester/usage';
 
 import type { V2AssistantExtra, V2ContextMessage, V2PromptOrigin } from './fold';
@@ -97,7 +97,7 @@ export async function convertV2Message(
   extra: V2AssistantExtra | undefined,
   resolveBlob: V2BlobResolver,
 ): Promise<HistoryMessage | null> {
-  const content = await resolveContent(message.content ?? [], resolveBlob);
+  const content = (await resolveContent(message.content ?? [], resolveBlob)).map(toCorePart);
   switch (message.role) {
     case 'system':
       return { message: { role: 'system', content }, meta: {} };

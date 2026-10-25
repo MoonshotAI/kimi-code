@@ -1172,7 +1172,7 @@ describe('AgentMcpService', () => {
       { type: 'text', text: '<mcp_tool_result name="mcp__s__snap">' },
       {
         type: 'image_url',
-        imageUrl: { url: 'data:image/png;base64,' + 'x'.repeat(100_000) },
+        imageUrl: { url: `data:image/png;base64,${'x'.repeat(100_000)}` },
       },
       { type: 'text', text: '</mcp_tool_result>' },
     ]);

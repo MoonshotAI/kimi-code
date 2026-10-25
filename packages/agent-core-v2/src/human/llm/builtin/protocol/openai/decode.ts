@@ -1,4 +1,4 @@
-import OpenAI, {
+import {
   APIConnectionError as RawOpenAISDKConnectionError,
   APIConnectionTimeoutError as RawOpenAISDKConnectionTimeoutError,
   APIError as RawOpenAISDKAPIError,
@@ -7,85 +7,142 @@ import OpenAI, {
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
-import { sanitizeStatusErrorMessage, toLlmStatusErrorMessage, toLlmTransportErrorMessage } from '#/llm/protocol/rules/status';
-import { type LlmRemoteErrorMessage } from '#/llm/response';
+import {
+  sanitizeStatusErrorMessage,
+  toLlmStatusErrorMessage,
+  toLlmTransportErrorMessage,
+} from '#/llm/protocol/rules/status';
+import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
-import type {
-  FormatRequestInput,
-  ProtocolFormat,
-  StreamParser,
-  StreamParserOptions,
-} from '#/llm/protocol/format';
-import { type Message, type StreamedMessagePart, type ToolDescription } from '#/llm/message';
-import { toolResultToPlainText } from '#/llm/protocol/patterns';
-import { applyPatterns } from '#/llm/protocol/rewrite';
-import type { ToolMessageConversion } from '#/llm/requester/requester';
-import type { ResponseFormat } from '#/llm/response-format';
+import type { StreamedMessagePart, ThinkPart } from '#/llm/message';
+import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import type { TokenUsage } from '#/llm/response';
 
-import type {
-  OpenAIRawChunk,
-  OpenAIRawStreamToolCallDelta,
-  OpenAIRawUsage,
-  OpenAIWireMessage,
-} from './contract';
-import { lowerMessage } from './lower';
-import { extractToolMedia } from './patterns';
-import {
-  convertReasoningDetails,
-  extractReasoningDetails,
-  extractReasoningStrings,
-} from './reasoning-key';
+export type RawUsage = {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  cached_tokens?: number;
+  prompt_tokens_details?: { cached_tokens?: number } | null;
+};
 
-export function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown> {
-  if (format.type === 'json_object') {
-    return { type: 'json_object' };
+export type RawStreamToolCallDelta = {
+  index?: number | string;
+  id?: string;
+  function?: { name?: string; arguments?: string } | null;
+};
+
+export type RawChunk = {
+  id?: string;
+  choices?: {
+    delta?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+      tool_calls?: RawStreamToolCallDelta[];
+    };
+    finish_reason?: string | null;
+  }[];
+  usage?: RawUsage | null;
+};
+
+type RawToolCall = {
+  id?: string;
+  type?: string;
+  function?: { name?: string; arguments?: string } | null;
+};
+
+export type RawResponse = {
+  id?: string;
+  choices?: {
+    message?: {
+      content?: string | null;
+      reasoning_content?: string | null;
+      tool_calls?: RawToolCall[];
+    } | null;
+    finish_reason?: string | null;
+  }[];
+  usage?: RawUsage | null;
+};
+
+export const KNOWN_REASONING_KEYS: readonly string[] = [
+  'reasoning_content',
+  'reasoning_details',
+  'reasoning',
+];
+
+export const DEFAULT_REASONING_KEY = KNOWN_REASONING_KEYS[0]!;
+
+export const REASONING_DETAILS_KEY = 'reasoning_details';
+
+export function extractReasoningStrings(source: unknown): { key: string; value: string }[] {
+  if (typeof source !== 'object' || source === null) return [];
+  const record = source as Record<string, unknown>;
+  const found: { key: string; value: string }[] = [];
+  for (const key of KNOWN_REASONING_KEYS) {
+    const value = record[key];
+    if (typeof value === 'string') found.push({ key, value });
   }
-  return {
-    type: 'json_schema',
-    json_schema: {
-      name: format.jsonSchema.name,
-      schema: format.jsonSchema.schema,
-      strict: format.jsonSchema.strict,
-      description: format.jsonSchema.description,
-    },
-  };
+  return found;
 }
 
-export function encodeOpenAICacheKey(cacheKey: string): Record<string, unknown> {
-  return { prompt_cache_key: cacheKey };
+export interface ReasoningDetailsElement {
+  readonly type?: string;
+  readonly index: number;
+  readonly summary?: string;
+  readonly encrypted?: string;
 }
 
-export function encodeOpenAIThinkHistoryKwargs(): Record<string, unknown> {
-  return { reasoning_effort: 'medium' };
+function toReasoningDetailsElement(
+  value: unknown,
+  position: number,
+): ReasoningDetailsElement | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const record = value as Record<string, unknown>;
+  const type = typeof record['type'] === 'string' ? record['type'] : undefined;
+  if (type !== undefined && type !== 'summary' && type !== 'encrypted') return undefined;
+  const index = typeof record['index'] === 'number' ? record['index'] : position;
+  const summary = typeof record['summary'] === 'string' ? record['summary'] : undefined;
+  const encrypted = typeof record['encrypted'] === 'string' ? record['encrypted'] : undefined;
+  return { type, index, summary, encrypted };
 }
 
-const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
-
-function usesMaxCompletionTokens(model: string): boolean {
-  const normalized = model.toLowerCase();
-  return /^o\d(?:$|[-.])/.test(normalized) || /^gpt-5(?:$|[-.])/.test(normalized);
+export function extractReasoningDetails(source: unknown): ReasoningDetailsElement[] | undefined {
+  if (typeof source !== 'object' || source === null) return undefined;
+  const value = (source as Record<string, unknown>)[REASONING_DETAILS_KEY];
+  if (!Array.isArray(value)) return undefined;
+  const elements: ReasoningDetailsElement[] = [];
+  for (const [position, item] of value.entries()) {
+    const element = toReasoningDetailsElement(item, position);
+    if (element !== undefined) elements.push(element);
+  }
+  return elements;
 }
 
-export function encodeOpenAIMaxCompletionTokens(
-  model: string,
-  cap: number,
-): Record<string, unknown> {
-  const capped = Math.max(1, Math.min(cap, CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING));
-  return usesMaxCompletionTokens(model)
-    ? { max_completion_tokens: capped }
-    : { max_tokens: capped };
-}
-
-export function defaultOpenAITool(tool: ToolDescription): Record<string, unknown> {
-  return {
-    type: 'function',
-    function: {
-      name: tool.name,
-      description: tool.description,
-      parameters: tool.parameters,
-    },
-  };
+export function convertReasoningDetails(
+  elements: readonly ReasoningDetailsElement[],
+  hiddenSummary = false,
+): StreamedMessagePart[] {
+  const parts: StreamedMessagePart[] = [];
+  for (const element of elements) {
+    if (element.type !== 'encrypted' && element.summary !== undefined && element.summary.length > 0) {
+      parts.push({
+        type: 'think',
+        think: element.summary,
+        detailsIndex: element.index,
+        hidden: hiddenSummary ? true : undefined,
+        reasoningKey: REASONING_DETAILS_KEY,
+      } satisfies ThinkPart);
+    }
+    if (element.type !== 'summary' && element.encrypted !== undefined && element.encrypted.length > 0) {
+      parts.push({
+        type: 'think',
+        think: '',
+        encrypted: element.encrypted,
+        detailsIndex: element.index,
+        reasoningKey: REASONING_DETAILS_KEY,
+      } satisfies ThinkPart);
+    }
+  }
+  return parts;
 }
 
 interface BufferedStreamToolCall {
@@ -116,7 +173,7 @@ function normalizeFinishReason(raw: string | null | undefined): FinishInfo {
   return { finishReason, rawFinishReason: raw };
 }
 
-export function parseOpenAIUsage(usage: OpenAIRawUsage | null | undefined): TokenUsage | undefined {
+export function parseUsage(usage: RawUsage | null | undefined): TokenUsage | undefined {
   if (usage === null || usage === undefined) {
     return undefined;
   }
@@ -131,169 +188,130 @@ export function parseOpenAIUsage(usage: OpenAIRawUsage | null | undefined): Toke
   };
 }
 
-export interface OpenAIRequestParams {
-  readonly params: OpenAI.Chat.ChatCompletionCreateParamsStreaming;
-  readonly headers?: Record<string, string>;
-}
-
-export interface OpenAILowerOptions {
-  readonly reasoningKey: string;
-  readonly preserveThinking: boolean;
-  readonly toolMessageConversion: ToolMessageConversion | undefined;
-}
-
-export interface OpenAILoweredMessage {
-  readonly source: Message;
-  readonly message: OpenAIWireMessage;
-}
-
-export function lowerOpenAIMessages(
-  input: FormatRequestInput,
-  options: OpenAILowerOptions,
-): OpenAILoweredMessage[] {
-  const conversion = options.toolMessageConversion;
-  const mediaPattern =
-    conversion === 'extract_text'
-      ? toolResultToPlainText
-      : conversion === 'keep_parts'
-        ? undefined
-        : extractToolMedia;
-  const normalized =
-    mediaPattern === undefined ? input.messages : applyPatterns(input.messages, [mediaPattern]);
-  return normalized.flatMap((message) =>
-    lowerMessage(message, {
-      reasoningKey: options.reasoningKey,
-      preserveThinking: options.preserveThinking,
-      toolMessageConversion: conversion,
-    }).map((wire) => ({ source: message, message: wire })),
-  );
-}
-
-export interface OpenAIRequestParts {
-  readonly messages: readonly OpenAIWireMessage[];
-  readonly tools: readonly Record<string, unknown>[];
-  readonly kwargs: Readonly<Record<string, unknown>>;
-}
-
-export function assembleOpenAIRequest(
-  input: FormatRequestInput,
-  parts: OpenAIRequestParts,
-): Record<string, unknown> {
-  return {
-    model: input.model.model,
-    messages: parts.messages,
-    tools: parts.tools.length === 0 ? undefined : parts.tools,
-    stream: true,
-    stream_options: { include_usage: true },
-    ...parts.kwargs,
-  };
-}
-
-export function encodeOpenAIRequest(params: Record<string, unknown>): OpenAIRequestParams {
-  return { params: params as unknown as OpenAI.Chat.ChatCompletionCreateParamsStreaming };
-}
-
-export interface OpenAIStreamParserOptions extends StreamParserOptions<OpenAIRawChunk> {
-  readonly reasoningKey?: string;
-}
-
-export interface OpenAIProtocolFormat extends ProtocolFormat<OpenAIRawChunk> {
-  createStreamParser(options?: OpenAIStreamParserOptions): StreamParser<OpenAIRawChunk>;
-}
-
-export function createOpenAIFormat(): OpenAIProtocolFormat {
-  return {
-    createStreamParser(options?: OpenAIStreamParserOptions) {
-      const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
-      let seenReasoningContent = false;
-
-      function convertStreamToolCall(
-        toolCall: OpenAIRawStreamToolCallDelta,
-      ): StreamedMessagePart[] {
-        if (toolCall.function === undefined || toolCall.function === null) {
-          return [];
-        }
-        const streamIndex = toolCall.index;
-        const functionName = toolCall.function.name;
-        const functionArguments = toolCall.function.arguments;
-        const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
-        const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
-
-        if (streamIndex === undefined) {
-          if (hasConcreteName) {
-            return [
-              {
-                type: 'function',
-                id: toolCall.id ?? crypto.randomUUID(),
-                name: functionName,
-                arguments: functionArguments ?? null,
+export function replay(response: RawResponse): RawChunk[] {
+  const { choices, ...envelope } = response;
+  return [
+    {
+      ...envelope,
+      choices: choices?.map(({ message, ...choice }) => ({
+        ...choice,
+        delta:
+          message === undefined || message === null
+            ? {}
+            : {
+                ...message,
+                tool_calls: message.tool_calls?.flatMap((toolCall, index) =>
+                  toolCall.type !== undefined && toolCall.type !== 'function'
+                    ? []
+                    : [{ index, id: toolCall.id, function: toolCall.function }],
+                ),
               },
-            ];
-          }
-          if (hasArguments) {
-            return [{ type: 'tool_call_part', argumentsPart: functionArguments }];
-          }
-          return [];
-        }
+      })),
+    },
+  ];
+}
 
-        const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
-        if (toolCall.id !== undefined) {
-          buffered.id = toolCall.id;
-        }
-        if (!buffered.emitted) {
-          if (!hasConcreteName) {
-            if (hasArguments) {
-              buffered.arguments += functionArguments;
-            }
-            bufferedToolCalls.set(streamIndex, buffered);
-            return [];
-          }
-          buffered.emitted = true;
-          const initialArguments =
-            buffered.arguments.length > 0
-              ? buffered.arguments + (functionArguments ?? '')
-              : (functionArguments ?? null);
-          buffered.arguments = '';
-          bufferedToolCalls.set(streamIndex, buffered);
-          return [
-            {
-              type: 'function',
-              id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
-              name: functionName,
-              arguments: initialArguments,
-              _streamIndex: streamIndex,
-            },
-          ];
-        }
-        if (!hasArguments) {
-          return [];
-        }
-        return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
+export function createDecoder(
+  sink: DecodeSink,
+  reasoningKey?: string,
+  onReasoningKey?: (reasoningKey: string) => void,
+): Decoder<RawChunk> {
+  const bufferedToolCalls = new Map<number | string, BufferedStreamToolCall>();
+  const seenIndexes = new Set<number | string>();
+  let lastActiveIndex: number | string | undefined;
+  let seenReasoningContent = false;
+
+  const closeActiveToolCall = (): void => {
+    if (lastActiveIndex === undefined) return;
+    if (bufferedToolCalls.get(lastActiveIndex)?.emitted === true) {
+      sink.onToolCallEnd(lastActiveIndex);
+    }
+    lastActiveIndex = undefined;
+  };
+
+  function convertStreamToolCall(
+    toolCall: RawStreamToolCallDelta,
+  ): StreamedMessagePart[] {
+    if (toolCall.function === undefined || toolCall.function === null) {
+      return [];
+    }
+    const streamIndex = toolCall.index;
+    const functionName = toolCall.function.name;
+    const functionArguments = toolCall.function.arguments;
+    const hasConcreteName = typeof functionName === 'string' && functionName.length > 0;
+    const hasArguments = typeof functionArguments === 'string' && functionArguments.length > 0;
+
+    if (streamIndex === undefined) {
+      if (hasConcreteName) {
+        return [
+          {
+            type: 'function',
+            id: toolCall.id ?? crypto.randomUUID(),
+            name: functionName,
+            arguments: functionArguments ?? null,
+          },
+        ];
       }
+      if (hasArguments) {
+        return [{ type: 'tool_call_part', argumentsPart: functionArguments }];
+      }
+      return [];
+    }
 
-      return (chunk, sink) => {
-        if (typeof chunk.id === 'string' && chunk.id.length > 0) {
-          sink.onMessageId?.(chunk.id);
+    const buffered = bufferedToolCalls.get(streamIndex) ?? { arguments: '', emitted: false };
+    if (toolCall.id !== undefined) {
+      buffered.id = toolCall.id;
+    }
+    if (!buffered.emitted) {
+      if (!hasConcreteName) {
+        if (hasArguments) {
+          buffered.arguments += functionArguments;
         }
-        const defaultUsage = parseOpenAIUsage(chunk.usage);
-        const usage =
-          options?.resolveUsage === undefined
-            ? defaultUsage
-            : options.resolveUsage(chunk, defaultUsage);
-        if (usage !== undefined) {
-          sink.onUsage?.(usage);
-        }
-        const choice = chunk.choices?.[0];
-        if (choice?.finish_reason !== undefined && choice.finish_reason !== null) {
-          sink.onFinish(normalizeFinishReason(choice.finish_reason));
-        }
-        const delta = choice?.delta;
-        if (!delta) {
-          return;
-        }
+        bufferedToolCalls.set(streamIndex, buffered);
+        return [];
+      }
+      buffered.emitted = true;
+      const initialArguments =
+        buffered.arguments.length > 0
+          ? buffered.arguments + (functionArguments ?? '')
+          : (functionArguments ?? null);
+      buffered.arguments = '';
+      bufferedToolCalls.set(streamIndex, buffered);
+      return [
+        {
+          type: 'function',
+          id: buffered.id ?? toolCall.id ?? crypto.randomUUID(),
+          name: functionName,
+          arguments: initialArguments,
+          _streamIndex: streamIndex,
+        },
+      ];
+    }
+    if (!hasArguments) {
+      return [];
+    }
+    return [{ type: 'tool_call_part', argumentsPart: functionArguments, index: streamIndex }];
+  }
+
+  return {
+    push(chunk) {
+      if (typeof chunk.id === 'string' && chunk.id.length > 0) {
+        sink.onMessageId(chunk.id);
+      }
+      const usage = parseUsage(chunk.usage);
+      if (usage !== undefined) {
+        sink.onUsage(usage);
+      }
+      const delta = chunk.choices?.[0]?.delta;
+      if (delta) {
         const reasoningDetails =
-          options?.reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
-        for (const reasoning of extractReasoningStrings(delta)) {
+          reasoningKey === undefined ? extractReasoningDetails(delta) : undefined;
+        const reasoningStrings = extractReasoningStrings(delta);
+        const detected = reasoningStrings[0];
+        if (reasoningKey === undefined && detected !== undefined) {
+          onReasoningKey?.(detected.key);
+        }
+        for (const reasoning of reasoningStrings) {
           if (reasoning.key === 'reasoning_content') {
             seenReasoningContent = true;
           }
@@ -312,12 +330,28 @@ export function createOpenAIFormat(): OpenAIProtocolFormat {
           sink.onDelta({ type: 'text', text: delta.content });
         }
         for (const toolCall of delta.tool_calls ?? []) {
+          const streamIndex = toolCall.index;
+          if (
+            streamIndex !== undefined &&
+            streamIndex !== lastActiveIndex &&
+            !seenIndexes.has(streamIndex)
+          ) {
+            closeActiveToolCall();
+            seenIndexes.add(streamIndex);
+            lastActiveIndex = streamIndex;
+          }
           for (const part of convertStreamToolCall(toolCall)) {
             sink.onDelta(part);
           }
         }
-      };
+      }
+      const finishReason = chunk.choices?.[0]?.finish_reason;
+      if (finishReason !== undefined && finishReason !== null) {
+        closeActiveToolCall();
+        sink.onFinish(normalizeFinishReason(finishReason));
+      }
     },
+    end: closeActiveToolCall,
   };
 }
 
@@ -336,17 +370,7 @@ function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
   return error.message.toLowerCase().includes('insufficient_quota');
 }
 
-export function convertOpenAIError(
-  error: unknown,
-  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
-): LlmRemoteErrorMessage {
-  if (isAbortError(error)) {
-    return toLlmErrorMessage(error);
-  }
-  const hooked = classifyErrorHook?.(error);
-  if (hooked !== undefined) {
-    return hooked;
-  }
+export function decodeError(error: unknown): LlmRemoteErrorMessage {
   if (error instanceof RawOpenAISDKConnectionTimeoutError) {
     return { kind: 'timeout', message: error.message };
   }
@@ -389,4 +413,18 @@ export function convertOpenAIError(
     return toLlmTransportErrorMessage(error.message);
   }
   return { kind: 'unknown', message: String(error) };
+}
+
+export function convertOpenAIError(
+  error: unknown,
+  classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+): LlmRemoteErrorMessage {
+  if (isAbortError(error)) {
+    return toLlmErrorMessage(error);
+  }
+  const hooked = classifyErrorHook?.(error);
+  if (hooked !== undefined) {
+    return hooked;
+  }
+  return decodeError(error);
 }

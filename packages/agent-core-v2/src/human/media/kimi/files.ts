@@ -49,10 +49,7 @@ export class KimiFiles {
     const uploaded = await this._upload(input, 'video', options);
     return {
       type: 'video_url',
-      videoUrl: {
-        url: `ms://${uploaded.id}`,
-        id: uploaded.id,
-      },
+      videoUrl: { url: `ms://${uploaded.id}`, id: uploaded.id },
     };
   }
 
@@ -66,10 +63,7 @@ export class KimiFiles {
     const uploaded = await this._upload(input, 'image', options);
     return {
       type: 'image_url',
-      imageUrl: {
-        url: `ms://${uploaded.id}`,
-        id: uploaded.id,
-      },
+      imageUrl: { url: `ms://${uploaded.id}`, id: uploaded.id },
     };
   }
 

@@ -755,74 +755,23 @@ export interface AgentStateSnapshot {
       };
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'audio_url';
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      audioUrl: {
+        url: string;
+        id?: string;
       };
     } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'video_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     })[];
     readonly tools?: /* ToolDescription — packages/agent-core-v2/src/human/llm/message.ts */ {
@@ -1025,74 +974,23 @@ export interface AgentStateSnapshot {
       };
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'audio_url';
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      audioUrl: {
+        url: string;
+        id?: string;
       };
     } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'video_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     })[];
   } & {
@@ -1289,74 +1187,23 @@ export interface AgentStateSnapshot {
       };
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'audio_url';
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      audioUrl: {
+        url: string;
+        id?: string;
       };
     } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'video_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     })[];
     toolCalls: /* ToolCall — packages/agent-core-v2/src/human/llm/message.ts */ {
@@ -1562,74 +1409,23 @@ export interface AgentStateSnapshot {
       };
     } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'image_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      imageUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'audio_url';
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      audioUrl: {
+        url: string;
+        id?: string;
       };
     } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
       type: 'video_url';
-      name?: string;
-      source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind: 'store';
-        readonly ref: string;
-      } | {
-        readonly kind: 'url';
-        readonly url: string;
-      } | {
-        readonly kind: 'inline';
-        readonly mimeType: string;
-        readonly data: string;
-      } | {
-        readonly kind: 'file';
-        readonly id: string;
-        readonly mimeType: string;
-      };
-      omitted?: 'degraded' | 'stripped' | 'budget';
-      contentType?: string;
-      meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-        readonly kind?: string;
-        [key: string]: unknown;
+      videoUrl: {
+        url: string;
+        id?: string;
+        name?: string;
       };
     })[];
     readonly toolCallId: string;
@@ -1943,74 +1739,23 @@ export interface AgentStateSnapshot {
     };
   } | /* ImageURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'image_url';
-    name?: string;
-    source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-      readonly kind: 'store';
-      readonly ref: string;
-    } | {
-      readonly kind: 'url';
-      readonly url: string;
-    } | {
-      readonly kind: 'inline';
-      readonly mimeType: string;
-      readonly data: string;
-    } | {
-      readonly kind: 'file';
-      readonly id: string;
-      readonly mimeType: string;
-    };
-    omitted?: 'degraded' | 'stripped' | 'budget';
-    contentType?: string;
-    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-      readonly kind?: string;
-      [key: string]: unknown;
+    imageUrl: {
+      url: string;
+      id?: string;
+      name?: string;
     };
   } | /* AudioURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'audio_url';
-    source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-      readonly kind: 'store';
-      readonly ref: string;
-    } | {
-      readonly kind: 'url';
-      readonly url: string;
-    } | {
-      readonly kind: 'inline';
-      readonly mimeType: string;
-      readonly data: string;
-    } | {
-      readonly kind: 'file';
-      readonly id: string;
-      readonly mimeType: string;
-    };
-    omitted?: 'degraded' | 'stripped' | 'budget';
-    contentType?: string;
-    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-      readonly kind?: string;
-      [key: string]: unknown;
+    audioUrl: {
+      url: string;
+      id?: string;
     };
   } | /* VideoURLPart — packages/agent-core-v2/src/human/llm/message.ts */ {
     type: 'video_url';
-    name?: string;
-    source: /* MediaSource — packages/agent-core-v2/src/human/llm/message.ts */ {
-      readonly kind: 'store';
-      readonly ref: string;
-    } | {
-      readonly kind: 'url';
-      readonly url: string;
-    } | {
-      readonly kind: 'inline';
-      readonly mimeType: string;
-      readonly data: string;
-    } | {
-      readonly kind: 'file';
-      readonly id: string;
-      readonly mimeType: string;
-    };
-    omitted?: 'degraded' | 'stripped' | 'budget';
-    contentType?: string;
-    meta?: /* ContentPartMeta — packages/agent-core-v2/src/human/llm/message.ts */ {
-      readonly kind?: string;
-      [key: string]: unknown;
+    videoUrl: {
+      url: string;
+      id?: string;
+      name?: string;
     };
   }>;
   // src/agent/media/mediaToolsRegistrar.ts
@@ -2209,7 +1954,7 @@ export interface AgentStateSnapshot {
     readonly name: string;
     readonly description: string;
     readonly parameters: Record<string, unknown>;
-    readonly disclosure?: 'inline' | 'deferred';
+    readonly disclosure?: 'deferred' | 'inline';
   }>;
   // src/features/externalHooks/agent/agentExternalHooksService.ts
   'externalHooks.stopHookContinuationUsed': boolean;

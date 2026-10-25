@@ -1377,7 +1377,6 @@ describe('AgentLifecycleService', () => {
     svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'persisted side question' }],
-      toolCalls: [],
     });
     await svc.remove(svc.get(child.agentId)!);
     expect(svc.handleOf(child.agentId)).toBeUndefined();
@@ -1496,7 +1495,7 @@ describe('AgentLifecycleService', () => {
       arguments: '{}',
     };
     const history: ContextMessage[] = [
-      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }] },
       { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
     sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);

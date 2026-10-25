@@ -70,7 +70,6 @@ describe('estimateTokensForMessage(s)', () => {
     const message: Message = {
       role: 'user',
       content: [{ type: 'text', text: 'hello world' }],
-      toolCalls: [],
     };
     const first = estimateTokensForMessage(message);
     message.content.push({ type: 'text', text: 'mutated after the fact' });
