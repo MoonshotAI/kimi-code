@@ -187,12 +187,12 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   const alias = args.trim();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
-  // The pool reserves `primary` as the symbolic "caller's own model" choice —
-  // a user alias with that name can never be the subagent default.
+  // The pool reserves `primary` for Tower spawn's symbolic "tower's own model"
+  // choice — a user alias with that name can never be the subagent default.
   delete models[PRIMARY_SUBAGENT_MODEL_CHOICE];
   if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     host.showError(
-      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool (it always binds the caller's own model) — rename the [models] alias to use it here.`,
+      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool (Tower spawn uses it for the tower's own model) — rename the [models] alias to use it here.`,
     );
     return;
   }

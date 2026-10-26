@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Stop letting the main agent run Agent and AgentSwarm subagents on its own model through an implicit `primary` choice when a subagent model pool is configured; add the main model's alias to `[secondary_model.models]` to offer it again.
+Stop offering Agent and AgentSwarm subagents an implicit `primary` choice that ran them on your current model and thinking level, and hide the model choice entirely when `[secondary_model]` names only one model; list two or more aliases in `[secondary_model.models]` to choose again, noting a listed main model uses `default_effort` and does not follow `/model` switches.
