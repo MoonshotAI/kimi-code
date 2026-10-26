@@ -216,7 +216,7 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 - `default_model`：配置 `models` 表时必填，且必须是其中的 key。
 - `models`：value 中英文均可；空字符串表示只列出别名、不给提示。
 - `default_effort` 是节级设置：无论派生绑定到池中哪个条目都生效。想按条目区分档位时不要设置它，改用下文的模型「变体」。
-- `primary` 是保留字（[Tower](../guides/tower.md) 用它表示自己的模型），不能作为池中 key。
+- `primary` 是保留字，不能作为池中 key。
 
 池别名引用的是 `[models]` 表的当前内容：如果之后删除供应商、登出账号，或其刷新后的模型列表不再包含某个别名，会话启动时会报出指明失效别名的配置错误，修正或移除对应条目即可恢复。系统不会自动改写 `[secondary_model]` 节。
 

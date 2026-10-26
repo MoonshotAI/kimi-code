@@ -216,7 +216,7 @@ Constraints between the fields:
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
 - `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias ([Tower](../guides/tower.md) uses it for its own model) and cannot be a pool key.
+- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 

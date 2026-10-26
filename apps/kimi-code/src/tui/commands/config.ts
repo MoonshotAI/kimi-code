@@ -192,7 +192,7 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   delete models[PRIMARY_SUBAGENT_MODEL_CHOICE];
   if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     host.showError(
-      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool (Tower spawn uses it for the tower's own model) — rename the [models] alias to use it here.`,
+      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool — rename the [models] alias to use it here.`,
     );
     return;
   }

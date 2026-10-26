@@ -63,7 +63,7 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
 });
 
 export const SECONDARY_MODEL_FORCE_REMOVED_MESSAGE =
-  "[secondary_model] 'force' is no longer supported and is ignored: a lone default_model already pins every Agent and AgentSwarm subagent to that model, and a [secondary_model.models] table only offers its own entries; Tower reviewers default to the tower's own model. Remove the key; run /update-config to fix it.";
+  "[secondary_model] 'force' is no longer supported and is ignored: a lone default_model already pins every Agent and AgentSwarm subagent to that model, and a [secondary_model.models] table only offers its own entries. Remove the key; run /update-config to fix it.";
 
 const REMOVED_SECONDARY_MODEL_TUNING_KEYS = [
   'max_context_size',
@@ -136,7 +136,7 @@ export function exposesSubagentModelChoice(config: IConfigService): boolean {
 export const SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE =
   '[secondary_model].default_model is required when [secondary_model.models] is configured';
 
-export const SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE = `[secondary_model.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved: Tower spawn uses it to bind the tower's own model. Rename the pool entry.`;
+export const SECONDARY_MODEL_PRIMARY_MODEL_RESERVED_MESSAGE = `[secondary_model.models] key "${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved. Rename the pool entry.`;
 
 export function assertValidSubagentModelPool(
   pool: SubagentModelPool,
