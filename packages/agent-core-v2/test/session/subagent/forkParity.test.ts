@@ -876,4 +876,66 @@ describe('subagent task reminders and fork request parity', () => {
     expect(childProfile.data().modelAlias).toBe('writer-model');
     expect(childProfile.data().thinkingLevel).toBe('medium');
   });
+
+  it('aggregates concurrent deliver_to_user calls in the same step into a single delivery step', async () => {
+    createMainForkCtx();
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    profile.update({ activeToolNames: contributedToolNames() });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+
+    ctx.mockNextResponse(
+      {
+        type: 'function',
+        id: 'call_fork_1',
+        name: 'Agent',
+        arguments: JSON.stringify({
+          description: 'first writer',
+          prompt: 'write section one',
+          fork: true,
+          deliver_to_user: true,
+        }),
+      },
+      {
+        type: 'function',
+        id: 'call_fork_2',
+        name: 'Agent',
+        arguments: JSON.stringify({
+          description: 'second writer',
+          prompt: 'write section two',
+          fork: true,
+          deliver_to_user: true,
+        }),
+      },
+    );
+    ctx.mockNextResponse({ type: 'text', text: 'SECTION_ONE_TEXT' });
+    ctx.mockNextResponse({ type: 'text', text: 'SECTION_TWO_TEXT' });
+
+    const mainDeltas: string[] = [];
+    ctx.get(IEventBus).subscribe(AssistantDelta, (event) => {
+      if (event.agentId === 'main') mainDeltas.push(event.delta);
+    });
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'write two sections' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const completion = await loop.promptHandle(id)!.completion;
+    expect(completion.state).toBe('completed');
+    expect(mainDeltas).toEqual(['SECTION_ONE_TEXT\n\nSECTION_TWO_TEXT']);
+
+    const mainRecords = store.recordsFor(
+      'sessions/test-workspace/test-session/agents/main',
+      AGENT_WIRE_RECORD_KEY,
+    );
+    expect(foldWireRecords(mainRecords).replay.at(-1)).toMatchObject({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'SECTION_ONE_TEXT\n\nSECTION_TWO_TEXT' }],
+        toolCalls: [],
+      },
+    });
+  });
 });

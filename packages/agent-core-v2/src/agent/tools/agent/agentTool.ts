@@ -110,9 +110,21 @@ function isToolNamePattern(name: string): boolean {
   return isMcpToolName(name) && MCP_GLOB_MAGIC.test(name);
 }
 
+interface PendingDirectDeliveryEntry {
+  readonly output: string;
+  readonly signal?: AbortSignal;
+  readonly onAbort: () => void;
+}
+
+interface PendingDirectDeliveryBatch {
+  readonly entries: PendingDirectDeliveryEntry[];
+  dispose: () => void;
+}
+
 export class SubagentTool implements ISubagentTool {
   declare readonly _serviceBrand: undefined;
   readonly name: string = 'Agent';
+  private readonly pendingDirectDeliveries = new Map<number, PendingDirectDeliveryBatch>();
 
   get parameters(): Record<string, unknown> {
     const parameters = exposesSubagentModelChoice(this.config)
@@ -632,78 +644,105 @@ export class SubagentTool implements ISubagentTool {
           loop?.hooks?.onDidFinishStep !== undefined &&
           (dispatcher !== undefined || contextMemory !== undefined)
         ) {
-          let cleanup = (): void => {};
-          const onAbort = (): void => {
-            cleanup();
-          };
-          const disposable = loop.hooks.onDidFinishStep.register(
-            `agent-deliver-${toolCallId ?? taskId}`,
-            async (stepCtx, next) => {
-              cleanup();
-              if (
-                !stepCtx.signal.aborted &&
-                !signal?.aborted &&
-                (turnId === undefined || stepCtx.turnId === turnId)
-              ) {
-                const deliveryStep = stepCtx.step + 1;
-                const deliveryStepId = randomUUID();
-                contextMemory?.appendLoopEvent({
-                  type: 'step.begin',
-                  uuid: deliveryStepId,
-                  turnId: String(stepCtx.turnId),
-                  step: deliveryStep,
-                });
-                contextMemory?.appendLoopEvent({
-                  type: 'content.part',
-                  uuid: randomUUID(),
-                  turnId: String(stepCtx.turnId),
-                  step: deliveryStep,
-                  stepUuid: deliveryStepId,
-                  part: { type: 'text', text: output },
-                });
-                contextMemory?.appendLoopEvent({
-                  type: 'step.end',
-                  uuid: deliveryStepId,
-                  turnId: String(stepCtx.turnId),
-                  step: deliveryStep,
-                  finishReason: 'completed',
-                });
-                void dispatcher?.dispatch(
-                  new TurnStepStarted({
-                    agentId: this.callerAgentId,
-                    turnId: stepCtx.turnId,
+          const turnKey = turnId ?? -1;
+          let batch = this.pendingDirectDeliveries.get(turnKey);
+          if (batch === undefined) {
+            const newBatch: PendingDirectDeliveryBatch = {
+              entries: [],
+              dispose: () => {},
+            };
+            this.pendingDirectDeliveries.set(turnKey, newBatch);
+            const disposable = loop.hooks.onDidFinishStep.register(
+              `agent-deliver-${String(turnKey)}-${toolCallId ?? taskId}`,
+              async (stepCtx, next) => {
+                newBatch.dispose();
+                const activeOutputs = newBatch.entries
+                  .filter((item) => !item.signal?.aborted)
+                  .map((item) => item.output);
+                if (
+                  !stepCtx.signal.aborted &&
+                  activeOutputs.length > 0 &&
+                  (turnId === undefined || stepCtx.turnId === turnId)
+                ) {
+                  const deliveredText = activeOutputs.join('\n\n');
+                  const deliveryStep = stepCtx.step + 1;
+                  const deliveryStepId = randomUUID();
+                  contextMemory?.appendLoopEvent({
+                    type: 'step.begin',
+                    uuid: deliveryStepId,
+                    turnId: String(stepCtx.turnId),
                     step: deliveryStep,
-                    stepId: deliveryStepId,
-                  }),
-                );
-                void dispatcher?.dispatch(
-                  new AssistantDelta({
-                    agentId: this.callerAgentId,
-                    turnId: stepCtx.turnId,
-                    delta: output,
-                  }),
-                );
-                void dispatcher?.dispatch(
-                  new TurnStepCompleted({
-                    agentId: this.callerAgentId,
-                    turnId: stepCtx.turnId,
+                  });
+                  contextMemory?.appendLoopEvent({
+                    type: 'content.part',
+                    uuid: randomUUID(),
+                    turnId: String(stepCtx.turnId),
                     step: deliveryStep,
-                    stepId: deliveryStepId,
+                    stepUuid: deliveryStepId,
+                    part: { type: 'text', text: deliveredText },
+                  });
+                  contextMemory?.appendLoopEvent({
+                    type: 'step.end',
+                    uuid: deliveryStepId,
+                    turnId: String(stepCtx.turnId),
+                    step: deliveryStep,
                     finishReason: 'completed',
-                  }),
-                );
+                  });
+                  void dispatcher?.dispatch(
+                    new TurnStepStarted({
+                      agentId: this.callerAgentId,
+                      turnId: stepCtx.turnId,
+                      step: deliveryStep,
+                      stepId: deliveryStepId,
+                    }),
+                  );
+                  void dispatcher?.dispatch(
+                    new AssistantDelta({
+                      agentId: this.callerAgentId,
+                      turnId: stepCtx.turnId,
+                      delta: deliveredText,
+                    }),
+                  );
+                  void dispatcher?.dispatch(
+                    new TurnStepCompleted({
+                      agentId: this.callerAgentId,
+                      turnId: stepCtx.turnId,
+                      step: deliveryStep,
+                      stepId: deliveryStepId,
+                      finishReason: 'completed',
+                    }),
+                  );
+                }
+                await next();
+              },
+            );
+            newBatch.dispose = (): void => {
+              this.pendingDirectDeliveries.delete(turnKey);
+              for (const item of newBatch.entries) {
+                item.signal?.removeEventListener('abort', item.onAbort);
               }
-              await next();
+              disposable.dispose();
+            };
+            batch = newBatch;
+          }
+          const currentBatch = batch;
+          const entry: PendingDirectDeliveryEntry = {
+            output,
+            signal,
+            onAbort: (): void => {
+              signal?.removeEventListener('abort', entry.onAbort);
+              const idx = currentBatch.entries.indexOf(entry);
+              if (idx !== -1) currentBatch.entries.splice(idx, 1);
+              if (currentBatch.entries.length === 0) {
+                currentBatch.dispose();
+              }
             },
-          );
-          cleanup = (): void => {
-            signal?.removeEventListener('abort', onAbort);
-            disposable.dispose();
           };
+          currentBatch.entries.push(entry);
           if (signal?.aborted) {
-            cleanup();
+            entry.onAbort();
           } else {
-            signal?.addEventListener('abort', onAbort, { once: true });
+            signal?.addEventListener('abort', entry.onAbort, { once: true });
           }
         }
       }
