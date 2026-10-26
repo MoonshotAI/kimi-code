@@ -60,6 +60,29 @@ class InputOverlay extends Container {
 	}
 }
 
+/** A settings submenu that routes keys to its nested list, like the coding agent's theme submenu. */
+class SubmenuHost extends Container {
+	readonly list = new SelectList(
+		[
+			{ value: "first", label: "First" },
+			{ value: "second", label: "Second" },
+		],
+		5,
+		selectTheme,
+	);
+
+	constructor(done: (value?: string) => void) {
+		super();
+		this.list.onSelect = (item) => done(item.value);
+		this.list.onCancel = () => done();
+		this.addChild(this.list);
+	}
+
+	handleInput(data: string): void {
+		this.list.handleInput(data);
+	}
+}
+
 describe("mouse-aware components", () => {
 	it("positions a single-line input cursor on press", () => {
 		const input = new Input();
@@ -223,6 +246,72 @@ describe("mouse-aware components", () => {
 
 		assert.strictEqual(overlay.input.getValue(), "hi!");
 		assert.strictEqual(tui.getFocusedComponent(), overlay);
+		tui.stop();
+	});
+
+	it("does not move the editor caret with the refocusing gesture", async (context) => {
+		context.mock.timers.enable({ apis: ["Date"] });
+		context.mock.timers.setTime(1_000);
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { refocusMouseGuardMs: 300 });
+		const editor = new Editor(tui, editorTheme);
+		editor.setText("hello");
+		tui.addChild(editor);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		terminal.sendInput("\x1b[<0;3;2M");
+		terminal.sendInput("\x1b[<0;3;2m");
+		terminal.sendInput("X");
+		assert.strictEqual(editor.getText(), "helloX");
+
+		context.mock.timers.setTime(1_300);
+		terminal.sendInput("\x1b[<0;3;2M");
+		terminal.sendInput("\x1b[<0;3;2m");
+		terminal.sendInput("Y");
+		assert.strictEqual(editor.getText(), "heYlloX");
+		tui.stop();
+	});
+
+	it("keeps a settings list focused when a click in its submenu closes the submenu", async () => {
+		const terminal = new VirtualTerminal(30, 6);
+		const tui = new TuiAltScreen(terminal);
+		const changes: Array<{ id: string; value: string }> = [];
+		const list = new SettingsList(
+			[
+				{ id: "theme", label: "Theme", currentValue: "first", submenu: (_value, done) => new SubmenuHost(done) },
+				{ id: "other", label: "Other", currentValue: "off", values: ["off", "on"] },
+			],
+			5,
+			settingsTheme,
+			(id, value) => changes.push({ id, value }),
+			() => {},
+		);
+		tui.addChild(list);
+		tui.setFocus(list);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\r");
+		await terminal.waitForRender();
+		// Press and release on the submenu's second row selects it and closes the submenu.
+		terminal.sendInput("\x1b[<0;3;2M");
+		terminal.sendInput("\x1b[<0;3;2m");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(changes, [{ id: "theme", value: "second" }]);
+		assert.strictEqual(tui.getFocusedComponent(), list);
+
+		// Keys reach the visible list again instead of the closed submenu.
+		terminal.sendInput("\x1b[B");
+		terminal.sendInput("\r");
+		await terminal.waitForRender();
+		assert.deepStrictEqual(changes, [
+			{ id: "theme", value: "second" },
+			{ id: "other", value: "on" },
+		]);
 		tui.stop();
 	});
 

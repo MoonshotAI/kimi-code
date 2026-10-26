@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import type { AddressInfo, Socket } from 'node:net';
 
 export interface CallbackResult {
   readonly code: string;
@@ -61,8 +61,14 @@ export async function startCallbackServer(): Promise<CallbackServer> {
     void closeServer();
   };
 
+  const unusedSockets = new Set<Socket>();
   const server: Server = createServer((req, res) => {
+    unusedSockets.delete(req.socket);
     handle(req, res);
+  });
+  server.on('connection', (socket) => {
+    unusedSockets.add(socket);
+    socket.once('close', () => unusedSockets.delete(socket));
   });
 
   function handle(req: IncomingMessage, res: ServerResponse): void {
@@ -81,6 +87,7 @@ export async function startCallbackServer(): Promise<CallbackServer> {
       res.writeHead(404).end();
       return;
     }
+    res.setHeader('connection', 'close');
     const errorParam = url.searchParams.get('error');
     if (errorParam !== null) {
       const description = url.searchParams.get('error_description') ?? '';
@@ -123,6 +130,7 @@ export async function startCallbackServer(): Promise<CallbackServer> {
       server.close(() => {
         resolve();
       });
+      for (const socket of unusedSockets) socket.destroy();
     });
     return closeServerPromise;
   };

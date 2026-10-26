@@ -59,6 +59,8 @@ describe('Event public types', () => {
   it('exposes approval and question reverse-RPC requests', () => {
     expectTypeOf<ApprovalRequest['turnId']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ApprovalRequest['toolName']>().toEqualTypeOf<string>();
+    expectTypeOf<ApprovalRequest['agentId']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<QuestionRequest['agentId']>().toEqualTypeOf<string | undefined>();
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 

@@ -188,6 +188,8 @@ describe('WorkspaceDirsService (registry source)', () => {
 
     const result = await dirs.addDir({ path: dirB, persist: true });
     expect(result.persisted).toBe(true);
+    expect(result.projectRoot).toBe(dirA);
+    expect(result.configPath).toBe(join(dirA, '.kimi-code', 'local.toml'));
     expect(result.additionalDirs).toEqual([dirB]);
 
     const entry = await workspaces.get(project.id);
@@ -217,6 +219,8 @@ describe('WorkspaceDirsService (registry source)', () => {
     const result = await dirs.addDir({ path: dirB, persist: false });
 
     expect(result.persisted).toBe(false);
+    expect(result.projectRoot).toBe(dirA);
+    expect(result.configPath).toBe(join(dirA, '.kimi-code', 'local.toml'));
     expect(result.additionalDirs).toEqual([dirB]);
     expect((await workspaces.get(project.id))?.additionalDirs).toEqual([]);
   });

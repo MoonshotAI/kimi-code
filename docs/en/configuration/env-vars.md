@@ -96,6 +96,7 @@ This group of variables redirects OAuth authentication and managed service endpo
 | `KIMI_CODE_OAUTH_HOST` | OAuth auth host; highest priority | Falls back to `KIMI_OAUTH_HOST` when unset |
 | `KIMI_OAUTH_HOST` | OAuth auth host; fallback for `KIMI_CODE_OAUTH_HOST` | Falls back to `https://auth.kimi.com` when unset |
 | `KIMI_CODE_BASE_URL` | Managed API base URL used after OAuth login | `https://api.kimi.com/coding/v1` |
+| `KIMI_CODE_REGION_MARKER` | Install-channel marker and logged-out local region inference | Enabled; set `off` to disable both and use the `mainland-cn` default |
 
 ::: warning
 `KIMI_CODE_BASE_URL` (OAuth-managed service, targeting `kimi.com`) and `KIMI_BASE_URL` (direct API key connection, targeting `moonshot.ai`) are two distinct variables. Use each one in its appropriate context.
@@ -142,7 +143,7 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_PASSWORD` | Parallel auth credential for `kimi web`, recommended when binding beyond loopback (see [Security notes](../guides/web.md#security-notes)) | Any non-empty string; when unset, only the token is valid |
 | `KIMI_CODE_SESSION_IDLE_RECLAIM_MS` | How long (ms) a `kimi web` session may stay idle before it is unloaded from memory; the session resumes transparently on next access (default `1800000`; `0` = never unload) | Non-negative integer; invalid values fail fast |
 | `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` | Keep background tasks when the session closes; higher priority than `config.toml` (default: stop them on exit) | Truthy: `1`/`true`/`yes`/`on`; falsy: `0`/`false`/`no`/`off` |
-| `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | Cap on concurrently running background tasks; higher priority than `[background] max_running_tasks` (unset = no cap) | Positive integer; invalid values are ignored |
+| `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` | Cap on concurrently running background tasks and Tower workers/reviewers; overrides `[task]` and legacy `[background]` `max_running_tasks`; Tower defaults to 256 when no value is configured | Positive integer; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S` | Default timeout (seconds) for background `Bash` tasks, also used to re-arm foreground commands moved to the background; higher priority than `[task] bash_task_timeout_s` (`0` = no timeout) | Non-negative integer; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE` | What `kimi -p` does while background tasks are still pending after the main turn; higher priority than `[task] print_background_mode` | `exit`, `drain`, or `steer`; invalid values are ignored |
 | `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S` | Wall-clock ceiling (seconds) for the print-mode drain/steer wait; higher priority than `[task] print_wait_ceiling_s` | Positive integer; invalid values are ignored |

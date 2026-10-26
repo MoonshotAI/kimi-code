@@ -2,11 +2,11 @@ import { chmod, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 
-import { IModelCatalog, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
+import { IModelCatalog, ISessionManager, IWorkspaceInstanceManager } from '@moonshot-ai/agent-core-v2';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { FakeRuntime } from '@moonshot-ai/agent-core-v2/runtime/fakeRuntime';
 import { ErrorCode } from '../src/protocol/error-codes';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -137,12 +137,14 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.size).toBe(11);
   });
 
-  it('fs:read uses the selected non-local runtime and mapped workspace root', async () => {
+  it('fs routes retain the workspace through non-local reads and download streams', async () => {
     await writeFile(join(work!, 'selected.txt'), 'local');
     const remote = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-remote-'));
     await writeFile(join(remote, 'selected.txt'), 'remote');
+    const remoteFs = new HostFileSystem();
     const id = await createSession();
-    const provider = await server!.core.accessor.get(IWorkspaceInstanceManager).addProvider({
+    const manager = server!.core.accessor.get(IWorkspaceInstanceManager);
+    const provider = await manager.addProvider({
       id: 'remote-test-provider',
       imports: { root: [], imports: [], local: [] },
       attach: async (context, host) => {
@@ -154,7 +156,7 @@ describe('server-v2 /api/v1 fs routes', () => {
               mapWorkspaceRoots: () => ({ workDir: remote, additionalDirs: [] }),
             },
           ),
-          { fs: new HostFileSystem() },
+          { fs: remoteFs },
         );
         const registration = host.registerRuntime(runtime);
         return { dispose: () => registration.remove() };
@@ -169,6 +171,43 @@ describe('server-v2 /api/v1 fs routes', () => {
       );
       expect(body.code).toBe(0);
       expect(body.data.content).toBe('remote');
+      const workspace = manager.list().find((instance) => instance.root === work);
+      expect(workspace).toBeDefined();
+      let unblock!: () => void;
+      const readGate = new Promise<void>((resolve) => { unblock = resolve; });
+      let markStarted!: () => void;
+      const readStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+      let blocked = false;
+      const readBytes = remoteFs.readBytes.bind(remoteFs);
+      const readSpy = vi.spyOn(remoteFs, 'readBytes').mockImplementation(async (path, length, offset) => {
+        if (blocked) {
+          blocked = false;
+          markStarted();
+          await readGate;
+        }
+        return readBytes(path, length, offset);
+      });
+      blocked = true;
+      const downloadPromise = fetch(`${base}/api/v1/sessions/${id}/fs/selected.txt:download?runtime_id=remote-test`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      try {
+        await readStarted;
+        await server!.core.accessor.get(ISessionManager).archive(id);
+        expect(manager.get(workspace!.id)).toBe(workspace);
+        unblock();
+        const response = await downloadPromise;
+        expect(response.status).toBe(200);
+        expect(await response.text()).toBe('remote');
+        await vi.waitFor(() => {
+          expect(manager.get(workspace!.id)).toBeUndefined();
+        });
+      } finally {
+        unblock();
+        const response = await downloadPromise.catch(() => undefined);
+        if (response?.body) await response.body.cancel().catch(() => undefined);
+        readSpy.mockRestore();
+      }
     } finally {
       await provider.dispose();
       await rm(remote, { recursive: true, force: true });

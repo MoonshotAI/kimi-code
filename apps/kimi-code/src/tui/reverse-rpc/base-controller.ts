@@ -12,6 +12,7 @@
 export interface ReverseRpcUIHooks<TPayload> {
   showPanel(payload: TPayload): void;
   hidePanel(): void;
+  dismissPanel?(): void;
 }
 
 interface Pending<TPayload, TResponse> {
@@ -56,11 +57,12 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
   }
 
   /** Cancels all pending requests during shutdown or session switches. */
-  cancelAll(reason: string): void {
+  cancelAll(reason: string, hidePanel = true): void {
     const all = [...(this.current === null ? [] : [this.current]), ...this.queue];
     this.current = null;
     this.queue = [];
-    this.uiHooks?.hidePanel();
+    if (hidePanel) this.uiHooks?.hidePanel();
+    else this.uiHooks?.dismissPanel?.();
     for (const entry of all) {
       entry.resolve(this.createCancelResponse(reason));
     }

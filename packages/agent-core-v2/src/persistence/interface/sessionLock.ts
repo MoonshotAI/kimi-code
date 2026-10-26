@@ -12,6 +12,7 @@ export interface SessionLockHolder {
   readonly hostname: string;
   readonly startedAt: number;
   readonly clientIdentity: string;
+  readonly clientDisplayName?: string;
 }
 
 export interface SessionLockLease {
@@ -40,11 +41,12 @@ export const ISessionLockService: ServiceIdentifier<ISessionLockService> =
   createDecorator<ISessionLockService>('sessionLockService');
 
 export function sessionOccupiedError(sessionId: string, holder?: SessionLockHolder): Error2 {
-  return new Error2(
-    SessionErrors.codes.SESSION_OCCUPIED,
-    'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.',
-    { details: { sessionId, holder } },
-  );
+  const message = holder?.clientDisplayName
+    ? `This session is in use by another ${holder.clientDisplayName} instance. Stop the session in that instance or exit it, then try again.`
+    : 'This session is in use by another Kimi Code process. Stop the session in that process or exit it, then try again.';
+  return new Error2(SessionErrors.codes.SESSION_OCCUPIED, message, {
+    details: { sessionId, holder },
+  });
 }
 
 interface HeldState {

@@ -9,6 +9,8 @@ export interface WorkspaceAddDirInput {
 }
 
 export interface WorkspaceAdditionalDirsResult {
+  readonly projectRoot: string;
+  readonly configPath: string;
   readonly additionalDirs: readonly string[];
   readonly persisted: boolean;
 }

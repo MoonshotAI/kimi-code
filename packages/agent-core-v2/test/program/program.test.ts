@@ -106,7 +106,7 @@ describe('Program', () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(program.sessionControllerGeneration).toBe('one');
     expect(program.status).toBe('ready');
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 
@@ -124,7 +124,7 @@ describe('Program', () => {
     await Promise.resolve();
     expect(program.status).toBe('ready');
     expect(program.snapshot().ready).toBe(true);
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 
@@ -136,7 +136,7 @@ describe('Program', () => {
     await program.ready;
     await Promise.resolve();
     expect(program.status).toBe('degraded');
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 
@@ -153,7 +153,7 @@ describe('Program', () => {
     controller.dispose();
     await replacement;
     expect(first.disposed).toBe(true);
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 
@@ -207,7 +207,7 @@ describe('Program', () => {
       runtimes: [{ runtimeId: 'local', generation: 'one', status: 'ready' }],
     });
 
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 
@@ -227,7 +227,7 @@ describe('Program', () => {
     await Promise.resolve();
     expect(program.sessionControllerGeneration).toBe('two');
     expect(program.status).toBe('ready');
-    program.dispose();
+    await program.dispose();
     expect(order).toEqual(['behavior:one', 'behavior:two']);
     await registry.dispose();
   });

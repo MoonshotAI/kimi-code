@@ -167,7 +167,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `server_version` | string | 服务版本 |
-| `capabilities` | object | 能力集——`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`、`terminal`，均恒为 `true` |
+| `capabilities` | object | 能力集——`websocket`、`file_upload`、`fs_query`、`mcp`、`tasks`，均恒为 `true` |
 | `server_id` | string | 本服务实例的唯一 id |
 | `started_at` | string | 启动时间，ISO 8601 格式 |
 | `open_in_apps` | array | 可作为 `open-in` 目标的宿主应用（`finder` / `cursor` / `vscode` / `iterm` / `terminal`）；目前恒为空 |
@@ -269,7 +269,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `GET /api/v1/oauth/region`
 
-解析该客户端所属的 Kimi 区域。结果在本地推导，不经网络探测：优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 home 目录中的区域标记文件；默认为 `mainland-cn`。
+解析该客户端所属的 Kimi 区域，结果在本地推导，不经网络探测。优先取环境变量或配置固定的 OAuth host，其次是已配置的 OAuth key，再次是 `<home>/region` 中的安装渠道标记。
+
+客户端未登录且上述输入都无法决定区域时，会根据设备时区和语言环境进行推断。成功结果缓存到 `<home>/region.json`，登录状态变化时失效；原始时区和语言环境值不会上传。信号缺失或冲突时，本次进程回退到 `mainland-cn`，但不持久化该结果，下次启动会重新判断。设置 `KIMI_CODE_REGION_MARKER=off` 可同时禁用安装渠道标记和本地推断。
 
 成功时 `data` 为 `{ region }`，`region` 为 `mainland-cn` / `global` 之一。
 
@@ -1560,77 +1562,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40001`：缺少动作后缀或动作未知
 - `40419`：没有该 id 的已安装插件
-
-### 终端
-
-PTY 终端接口；仅在 loopback 绑定时挂载（非 loopback 绑定会跳过它们，除非传入 `--allow-remote-terminals`）。终端的输入、输出与尺寸调整经 WebSocket 的 `terminal_*` 帧传输——REST 侧只管理终端生命周期。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/terminals` | 列出终端 |
-| `POST /api/v1/sessions/{session_id}/terminals` | 创建终端 |
-| `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}` | 读取终端 |
-| `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close` | 关闭终端 |
-
-#### `GET /api/v1/sessions/{session_id}/terminals`
-
-列出会话的终端。会话处于冷态时，读取列表会恢复该会话。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-
-成功时 `data` 为 `{ items }`，每项是一个终端对象 `{ id, session_id, cwd, shell, cols, rows, status, created_at, exited_at?, exit_code? }`：`status` 为 `running` / `exited`；已退出的终端携带 `exited_at` 与 `exit_code`（进程未报告退出码时为 `null`，例如因信号终止）。回滚缓冲不属于该对象——输出经 WebSocket 回放与流式推送。
-
-- `40401`：会话不存在
-
-#### `POST /api/v1/sessions/{session_id}/terminals`
-
-为会话创建一个 PTY 终端。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `runtime_id` | body | string | 生成终端进程的运行时。默认 `local` |
-| `cwd` | body | string | 工作目录，相对于会话工作区（传绝对路径会校验失败）。默认工作区根目录 |
-| `shell` | body | string | Shell 可执行文件。默认该运行时的 shell |
-| `cols` | body | integer | 终端宽度，正数。默认 `80` |
-| `rows` | body | integer | 终端高度，正数。默认 `24` |
-
-成功时 `data` 为上文 `GET /api/v1/sessions/{session_id}/terminals` 说明的终端对象。
-
-- `40001`：校验失败（`details` 逐字段说明）
-- `40401`：会话不存在
-- `41304`：`cwd` 解析后越出会话工作区
-
-#### `GET /api/v1/sessions/{session_id}/terminals/{terminal_id}`
-
-读取单个终端。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `terminal_id` | path | string | **必填。** 终端 id |
-
-成功时 `data` 为上文 `GET /api/v1/sessions/{session_id}/terminals` 说明的终端对象。
-
-- `40401`：会话不存在
-- `40414`：没有该 id 的终端
-
-#### `POST /api/v1/sessions/{session_id}/terminals/{terminal_id}:close`
-
-关闭终端并结束其进程。该端点经 `POST /api/v1/sessions/{session_id}/terminals/{tail}` 分发，`close` 是唯一动作——只给 id 或动作未知时返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `terminal_id` | path | string | **必填。** 终端 id |
-
-成功时 `data` 为 `{ closed: true }`。
-
-- `40001`：缺少动作后缀或动作未知
-- `40401`：会话不存在
-- `40414`：没有该 id 的终端
 
 ### 工作区
 

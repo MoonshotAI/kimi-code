@@ -13,7 +13,6 @@ export class FakeRuntime implements Runtime {
   readonly fs = undefined;
   readonly process = undefined;
   readonly watch = undefined;
-  readonly terminal = undefined;
   private currentStatus: RuntimeStatus;
   private readonly statusEmitter = new Emitter<RuntimeStatus>();
   readonly onDidChangeStatus = this.statusEmitter.event;

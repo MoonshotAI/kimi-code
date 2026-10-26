@@ -53,10 +53,17 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+const CLIENT_DISPLAY_NAMES: Record<string, string> = {
+  kimi_code_cli: 'Kimi Code CLI',
+  kimi_code_desktop: 'Kimi Code Desktop',
+  kimi_code_vscode: 'Kimi Code for VS Code',
+};
+
 export class SessionLockService extends SessionLockHolds {
   private readonly lockDir: string;
   private readonly hostname: string;
   private readonly clientIdentity: string;
+  private readonly clientDisplayName: string | undefined;
   private readonly disabled: boolean;
   private lockDirReady = false;
   private exitListener: (() => void) | undefined;
@@ -69,6 +76,10 @@ export class SessionLockService extends SessionLockHolds {
     this.lockDir = join(bootstrap.homeDir, 'locks', 'sessions');
     this.hostname = os.hostname();
     this.clientIdentity = bootstrap.clientIdentity.platform || bootstrap.clientIdentity.productName;
+    this.clientDisplayName =
+      this.clientIdentity === 'kimi_code_cli' && bootstrap.clientIdentity.userAgentSuffix === 'web'
+        ? 'Kimi Code Web'
+        : CLIENT_DISPLAY_NAMES[this.clientIdentity];
     this.disabled = parseBooleanEnv(bootstrap.getEnv(SESSION_LOCK_ENV)) === false;
   }
 
@@ -190,6 +201,8 @@ export class SessionLockService extends SessionLockHolds {
         typeof parsed.clientIdentity === 'string'
           ? parsed.clientIdentity
           : UNREADABLE_HOLDER.clientIdentity,
+      clientDisplayName:
+        typeof parsed.clientDisplayName === 'string' ? parsed.clientDisplayName : undefined,
     };
   }
 
@@ -208,6 +221,7 @@ export class SessionLockService extends SessionLockHolds {
       hostname: this.hostname,
       startedAt: Date.now(),
       clientIdentity: this.clientIdentity,
+      clientDisplayName: this.clientDisplayName,
     } satisfies SessionLockHolder);
   }
 

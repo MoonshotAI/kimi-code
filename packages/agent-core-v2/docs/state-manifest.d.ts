@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 7 keys · Session: 9 keys · Agent: 74 keys)
+// Index (App: 0 keys · Workspace: 7 keys · Session: 9 keys · Agent: 73 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -69,8 +69,7 @@
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastTurnRequest                    src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaDegradedTurns                 src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaStrippedTurns                 src/agent/llmRequester/llmRequesterService.ts
+//     llmRequester.mediaRecovery                      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
 //     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
@@ -997,10 +996,15 @@ export interface AgentStateSnapshot {
     readonly startedAt: number;
     readonly finishedAt: number;
   } | undefined;
-  'llmRequester.mediaDegradedTurns': Set<number>;
-  'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand": undefined;
-  }>;
+  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly media: 'degraded' | {
+      readonly strip: /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
+        readonly "__@mediaStripSnapshotBrand": undefined;
+      };
+    };
+  } | undefined;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
       readonly modelAlias: string;

@@ -155,7 +155,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'auto',
     aliases: [],
-    description: 'Never Ask mode: never interrupts you; everything runs and is decided automatically.',
+    description: 'Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review.',
     priority: 99,
     availability: 'always',
   },
@@ -415,6 +415,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Export current session as a debug ZIP archive',
     priority: 40,
+  },
+  {
+    name: 'import-sessions',
+    aliases: [],
+    description: 'Import recent Claude Code and Codex sessions',
+    priority: 40,
+    availability: 'idle-only',
   },
   {
     name: 'copy',

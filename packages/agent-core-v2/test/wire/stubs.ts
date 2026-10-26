@@ -34,6 +34,7 @@ interface TestAgentWireDependencies {
   readonly storage?: IFileSystemStorageService;
   readonly logger?: ILogService;
   readonly telemetry?: ITelemetryService;
+  readonly agentId?: string;
 }
 
 const noopLog: IAppendLogStore = {
@@ -90,8 +91,8 @@ function stubSessionContext(): ISessionContext {
   });
 }
 
-export function stubAgentScopeContext(scope: string): AgentScopeContext {
-  return makeAgentScopeContext({ agentId: 'test-agent', agentScope: scope, generation: 0 });
+export function stubAgentScopeContext(scope: string, agentId = 'test-agent'): AgentScopeContext {
+  return makeAgentScopeContext({ agentId, agentScope: scope, generation: 0 });
 }
 
 export function registerTestAgentWire(
@@ -99,7 +100,7 @@ export function registerTestAgentWire(
   scope: string,
   dependencies: TestAgentWireDependencies = {},
 ): AgentWire {
-  const agentScope = stubAgentScopeContext(scope);
+  const agentScope = stubAgentScopeContext(scope, dependencies.agentId);
   ix.stub(IAgentScopeContext, agentScope);
   ix.set(IAppendLogStore, dependencies.log ?? noopLog);
   ix.set(IAgentBlobService, dependencies.blob ?? noopBlob);
@@ -132,8 +133,9 @@ export function registerTestAgentWire(
 export function registerTestAgentWireServices(
   registration: ServiceRegistration,
   scope = 'wire/test-agent',
+  agentId?: string,
 ): void {
-  registration.defineInstance(IAgentScopeContext, stubAgentScopeContext(scope));
+  registration.defineInstance(IAgentScopeContext, stubAgentScopeContext(scope, agentId));
   registration.defineInstance(IAppendLogStore, noopLog);
   registration.defineInstance(IAgentBlobService, noopBlob);
   registration.defineInstance(IEventBus, noopEventBus);

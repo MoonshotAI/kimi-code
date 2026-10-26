@@ -26,7 +26,12 @@ export async function workspaceSnapshot(
   core: Scope,
   workspaceId: string,
 ): Promise<WorkspaceInstanceSnapshot> {
-  return (await core.accessor.get(IWorkspaceInstanceManager).getOrCreate({ workspaceId })).snapshot();
+  const lease = await core.accessor.get(IWorkspaceInstanceManager).acquire({ workspaceId });
+  try {
+    return lease.instance.snapshot();
+  } finally {
+    lease.dispose();
+  }
 }
 
 export function sessionWorkspaceAssociation(

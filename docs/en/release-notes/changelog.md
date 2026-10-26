@@ -6,6 +6,42 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.3.3 (2026-10-26)
+
+### Polish
+
+- Show a high-usage warning when you turn on swarm mode with `/swarm`.
+- Update model switch confirmation prompts.
+- Merge the two repeated permission-mode notice lines in the swarm and goal start confirmation prompts into one sentence each.
+
+### Bug Fixes
+
+- Stop showing a failed swarm for `AgentSwarm` calls rejected before any subagent starts, such as while swarm mode is off; after such a rejection, the agent points you to `/swarm` if you asked for a swarm.
+- web: Improved interactions and fixed known bugs.
+
+## 2.3.2 (2026-10-25)
+
+### Bug Fixes
+
+- Handle tasks directly by default instead of proactively launching subagents; request delegation explicitly in your message, AGENTS.md, a skill, or an enabled multi-agent mode.
+- Agent swarms now start only when you turn on swarm mode: the agent can no longer launch `AgentSwarm` by itself, so swarms are no longer available in `kimi -p` or ACP clients such as Zed.
+
+## 2.3.1 (2026-10-23)
+
+### Features
+
+- Offer to take over a session that is still in use after a retry, so sessions left locked by an exited process can be used again, and add a `KIMI_CODE_SESSION_LOCK=0` switch that turns off the session lock.
+
+### Polish
+
+- Show the holding client's name in session-in-use errors.
+
+### Bug Fixes
+
+- Fix sessions occasionally remaining occupied after an application crash on macOS and Linux.
+- Fix workspace trust failures when Git Bash is unavailable on Windows.
+- web: Improved interactions and fixed known bugs.
+
 ## 2.3.0 (2026-10-21)
 
 ### Features

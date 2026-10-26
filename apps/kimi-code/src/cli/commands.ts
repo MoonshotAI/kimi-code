@@ -1,5 +1,6 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/index';
+import { registerImportSessionsCommand } from '#/session-import/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
@@ -54,7 +55,7 @@ export function createProgram(
     .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
     .option('-y, --yolo', 'Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask.', false)
-    .option('--auto', 'Start in Never Ask mode: never interrupts you; everything runs and is decided automatically.', false)
+    .option('--auto', 'Start in Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review.', false)
     .addOption(
       new Option(
         '-m, --model <model>',
@@ -132,6 +133,7 @@ export function createProgram(
   registerInstallDesktopCommand(program);
   registerAppCommand(program);
   registerMigrateCommand(program, onMigrate);
+  registerImportSessionsCommand(program);
   program
     .command('upgrade')
     .alias('update')

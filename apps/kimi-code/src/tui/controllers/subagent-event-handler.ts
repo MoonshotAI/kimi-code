@@ -80,6 +80,13 @@ export class SubAgentEventHandler {
     const childAgentId = event.agentId;
     if (childAgentId === MAIN_AGENT_ID) return false;
     if (this.host.btwPanelController.routeEvent(event)) return true;
+    if (
+      event.type === 'agent.status.updated' ||
+      event.type === 'tool.call.started' ||
+      event.type === 'tool.result'
+    ) {
+      this.host.programStatus?.touchSubagent(childAgentId);
+    }
 
     // Tee every child-agent event into the activity store before the routing
     // below swallows events whose parent card is gone (Ctrl+B) or never
@@ -161,21 +168,29 @@ export class SubAgentEventHandler {
   handleLifecycleEvent(event: SubagentLifecycleEvent): void {
     switch (event.type) {
       case 'subagent.spawned':
+        this.host.programStatus?.startSubagent({
+          agentId: event.subagentId,
+          title: event.description ?? event.subagentName,
+          taskId: event.taskId,
+        });
         this.handleSubagentSpawned(event);
         return;
       case 'subagent.started':
-        this.handleSubagentStarted(event);
-        return;
       case 'subagent.suspended':
-        this.handleSubagentSuspended(event);
+        this.host.programStatus?.touchSubagent(event.subagentId);
+        if (event.type === 'subagent.started') this.handleSubagentStarted(event);
+        else this.handleSubagentSuspended(event);
         return;
       case 'subagent.completed':
+        this.host.programStatus?.completeSubagent(event.subagentId);
         this.handleSubagentCompleted(event);
         return;
       case 'subagent.failed':
+        this.host.programStatus?.failSubagent(event.subagentId, event.error);
         this.handleSubagentFailed(event);
         return;
       case 'subagent.cancelled':
+        this.host.programStatus?.cancelSubagent(event.subagentId);
         this.handleSubagentCancelled(event);
         return;
     }

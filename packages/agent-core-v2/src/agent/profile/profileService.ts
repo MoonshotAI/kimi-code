@@ -69,6 +69,7 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { EXIT_PLAN_MODE_TOOL_NAME } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import {
   renderAgentProfilePrompt,
@@ -915,6 +916,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         this.notify.enabled &&
         this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
       todoListActive: this.isToolActiveForProfile(profile, TODO_LIST_TOOL_NAME),
+      planModeAvailable: this.isToolActiveForProfile(profile, EXIT_PLAN_MODE_TOOL_NAME),
     };
   }
 

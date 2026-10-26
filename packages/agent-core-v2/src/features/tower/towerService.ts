@@ -51,7 +51,9 @@ import {
   checkoutNewLocalBranch,
   commitPaths,
   listBaseDirtyEntries,
+  mapWithConcurrency,
   resolveTowerRepoRoot,
+  TOWER_GIT_CONCURRENCY,
   TowerProtocolError,
 } from './protocol/index';
 import {
@@ -70,6 +72,7 @@ import {
 } from './tower';
 import { isTowerFeatureAssembled } from './towerFeature';
 import { TowerInboxSent, TowerModeEnter, TowerModeExit, towerKey, towerOwnerKey } from './towerOps';
+import { newTowerStore } from './tools/support';
 
 export const TOWER_MODE_TOOLS: readonly string[] = ['TowerInit', ...TOWER_TOOL_NAMES];
 const TOWER_FLAG_VETO_TOOLS: ReadonlySet<string> = new Set([...TOWER_MODE_TOOLS, 'TowerComplete']);
@@ -310,7 +313,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         if (typeof resume !== 'string') return;
         const resumeId = resume.trim();
         if (resumeId.length === 0) return;
-        const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+        const store = newTowerStore(this.sessionCtx);
         const resolved = await store.load().then(
           (state) => {
             const entry = store.resolveAgent(state, resumeId);
@@ -355,7 +358,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
         const toolName = event.toolCall.name;
         if (toolName !== 'Write' && toolName !== 'Edit') return;
 
-        const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+        const store = newTowerStore(this.sessionCtx);
         const entry = await store
           .load()
           .then(
@@ -457,7 +460,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   private async prepareUserBase(base: string): Promise<void> {
     const repoRoot = resolveTowerRepoRoot(this.sessionCtx.cwd);
-    const store = new TowerStore(repoRoot);
+    const store = newTowerStore(this.sessionCtx);
     await store.ensureRepository(base);
     if (await store.isInitialized()) {
       const state = await store.load();
@@ -540,7 +543,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private async adoptTowerRoster(): Promise<void> {
-    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const store = newTowerStore(this.sessionCtx);
     try {
       await store.adopt(this.sessionCtx.sessionId);
     } catch (error) {
@@ -551,7 +554,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private async releaseTowerOwnership(): Promise<void> {
-    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const store = newTowerStore(this.sessionCtx);
     await store.release(this.sessionCtx.sessionId).then(
       () => undefined,
       (error: unknown) => {
@@ -611,7 +614,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
   }
 
   private async resolveTowerOwner(): Promise<string | undefined> {
-    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const store = newTowerStore(this.sessionCtx);
     const storeOwner = await store.load().then(
       (state) => state.sessionId,
       () => undefined,
@@ -633,7 +636,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
     if (info.agentId === undefined) return;
     if (info.status === 'completed') return;
     if (!this.isActive) return;
-    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const store = newTowerStore(this.sessionCtx);
     const foreignOwner = await this.resolveForeignStoreOwner(store);
     if (foreignOwner !== undefined) {
       this.log.info('tower: skipping roster agent death mark — tower store is owned by another session', {
@@ -662,7 +665,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   private async clearTowerAgentDeath(agentId: string): Promise<void> {
     if (!this.isActive) return;
-    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const store = newTowerStore(this.sessionCtx);
     const foreignOwner = await this.resolveForeignStoreOwner(store);
     if (foreignOwner !== undefined) {
       this.log.info('tower: skipping roster agent death clear — tower store is owned by another session', {
@@ -843,7 +846,7 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
 
   private async renderInboxWakeDigests(items: readonly InboxWakeItem[]): Promise<string[]> {
     const missionIds = [...new Set(items.flatMap((item) => item.missionId ?? []))];
-    const store = new TowerStore(resolveTowerRepoRoot(this.sessionCtx.cwd));
+    const store = newTowerStore(this.sessionCtx);
     const state = await store.load().then(
       (loaded) => loaded,
       () => undefined,
@@ -862,27 +865,26 @@ export class AgentTowerService extends Disposable implements IAgentTowerService 
       }
     } else {
       const activeAgentIds = this.activeAgentIds();
-      for (const missionId of missionIds.slice(0, WAKE_DIGEST_LIMIT)) {
-        const mission = state.missions.find((candidate) => candidate.id === missionId);
-        if (mission === undefined) {
-          lines.push(`- ${missionId}: gate=mission-missing`);
-          continue;
-        }
-        if (mission.status === 'merged' || mission.status === 'abandoned') {
-          lines.push(`- ${missionId}: gate=${mission.status}`);
-          continue;
-        }
-        try {
-          const gate = await store.missionGate(state, mission, { activeAgentIds });
-          lines.push(
-            gate.ready
+      const digestLines = await mapWithConcurrency(
+        missionIds.slice(0, WAKE_DIGEST_LIMIT),
+        TOWER_GIT_CONCURRENCY,
+        async (missionId): Promise<string> => {
+          const mission = state.missions.find((candidate) => candidate.id === missionId);
+          if (mission === undefined) return `- ${missionId}: gate=mission-missing`;
+          if (mission.status === 'merged' || mission.status === 'abandoned') {
+            return `- ${missionId}: gate=${mission.status}`;
+          }
+          try {
+            const gate = await store.missionGate(state, mission, { activeAgentIds });
+            return gate.ready
               ? `- ${missionId}: gate=READY reasons=none${gate.reviewBinding === undefined ? '' : ` binding=${gate.reviewBinding}`}`
-              : `- ${missionId}: gate=BLOCKED reasons=${gate.blocks.map((block) => block.reason).join(',')}`,
-          );
-        } catch {
-          lines.push(`- ${missionId}: gate=unavailable`);
-        }
-      }
+              : `- ${missionId}: gate=BLOCKED reasons=${gate.blocks.map((block) => block.reason).join(',')}`;
+          } catch {
+            return `- ${missionId}: gate=unavailable`;
+          }
+        },
+      );
+      lines.push(...digestLines);
     }
     if (missionIds.length > WAKE_DIGEST_LIMIT) {
       lines.push(`- digest-omitted=${String(missionIds.length - WAKE_DIGEST_LIMIT)}`);

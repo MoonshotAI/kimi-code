@@ -130,6 +130,9 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
 
   private async applyAddDir(input: WorkspaceAddDirInput): Promise<WorkspaceAdditionalDirsResult> {
     const persist = input.persist ?? true;
+    const onDisk = await this.localConfig.readAdditionalDirs(this.workspace.cwd);
+    this.projectRoot = onDisk.projectRoot;
+    this.configPath = onDisk.configPath;
 
     if (persist) {
       const resolved = await this.localConfig.resolveAdditionalDirs(this.workspace.cwd, [
@@ -151,12 +154,14 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
         });
         await this.reloadFromRegistry();
       }
-      return { additionalDirs: this.additionalDirs, persisted: true };
+      return {
+        projectRoot: onDisk.projectRoot,
+        configPath: onDisk.configPath,
+        additionalDirs: this.additionalDirs,
+        persisted: true,
+      };
     }
 
-    const onDisk = await this.localConfig.readAdditionalDirs(this.workspace.cwd);
-    this.projectRoot = onDisk.projectRoot;
-    this.configPath = onDisk.configPath;
     const resolved = await this.localConfig.resolveAdditionalDirs(this.workspace.cwd, [
       input.path,
     ]);
@@ -164,7 +169,12 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     if (changed) {
       this.onDidChangeEmitter.fire();
     }
-    return { additionalDirs: this.additionalDirs, persisted: false };
+    return {
+      projectRoot: onDisk.projectRoot,
+      configPath: onDisk.configPath,
+      additionalDirs: this.additionalDirs,
+      persisted: false,
+    };
   }
 
   private async reloadFromDisk(): Promise<void> {
