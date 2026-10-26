@@ -8733,6 +8733,11 @@ capabilities = ["image_in", "video_in"]
     });
     let transcript = stripSgr(renderTranscript(driver));
     expect(countOccurrences(transcript, 'Swarm activated')).toBe(1);
+    const usageNotice = transcript.indexOf(
+      'High usage: Swarm is built for large parallel jobs and can use many times the tokens',
+    );
+    expect(usageNotice).toBeGreaterThan(transcript.indexOf('Swarm activated'));
+    expect(transcript).toContain("run /swarm off when you're done.");
     expect(transcript).not.toContain('Swarm ended');
 
     driver.sessionEventHandler.handleEvent(
