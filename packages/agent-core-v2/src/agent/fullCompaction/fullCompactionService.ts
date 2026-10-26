@@ -23,6 +23,7 @@ import {
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { stripDynamicToolSchemas } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { renderTodoList } from '#/features/todo/todoItem';
@@ -657,7 +658,10 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         compactionMaxOutputSize,
       );
       droppedCount += historyForModel.length - preShrunkHistory.length;
-      historyForModel = preShrunkHistory;
+      historyForModel =
+        preShrunkHistory.length < historyForModel.length
+          ? stripDynamicToolSchemas(preShrunkHistory)
+          : preShrunkHistory;
       while (true) {
         const messagesToCompact = historyForModel;
         const messages: Message[] = [...messagesToCompact, createUserMessage(instruction)];
@@ -706,8 +710,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               throw error;
             }
             const before = messagesToCompact.length;
+            const shrinkSource = stripDynamicToolSchemas(messagesToCompact);
             historyForModel = shrinkCompactionHistoryAfterOverflow(
-              messagesToCompact,
+              shrinkSource.length === 0 ? messagesToCompact : shrinkSource,
               overflowShrinkCount,
               (message) => this.tokenCounting.estimateMessage(message),
             );

@@ -20,9 +20,17 @@ export function stripDynamicToolContext(
   if (!history.some((m) => isDynamicToolSchemaMessage(m) || isLoadableToolsAnnouncement(m))) {
     return history;
   }
+  return stripDynamicToolSchemas(history).filter((message) => !isLoadableToolsAnnouncement(message));
+}
+
+export function stripDynamicToolSchemas(
+  history: readonly ContextMessage[],
+): readonly ContextMessage[] {
+  if (!history.some((m) => isDynamicToolSchemaMessage(m))) {
+    return history;
+  }
   const out: ContextMessage[] = [];
   for (const message of history) {
-    if (isLoadableToolsAnnouncement(message)) continue;
     if (isDynamicToolSchemaMessage(message)) {
       const { tools: _tools, ...rest } = message;
       void _tools;

@@ -2477,6 +2477,176 @@ describe('FullCompaction', () => {
     expect(messageText(call.history.at(-1))).toBe(renderCompactionInstruction({}));
   });
 
+  it('strips dynamic schemas from the compaction request when the history exceeds the window budget', async () => {
+    vi.stubEnv(MASTER_ENV, '1');
+    const ctx = testAgent(
+      agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
+      {
+        initialConfig: {
+          providers: {},
+          loopControl: { reservedContextSize: 0 },
+        },
+      },
+    );
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 40_000,
+        dynamically_loaded_tools: true,
+      },
+    });
+    const parameters = {
+      type: 'object',
+      properties: {
+        payload: {
+          type: 'string',
+          description: 'x'.repeat(40_000),
+        },
+      },
+    };
+    const registration = ctx
+      .get(IAgentToolRegistryService)
+      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp', disclosure: 'deferred' });
+    try {
+      ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(48_000)}`, 20);
+      ctx.appendExchange(2, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, 40);
+      ctx.appendExchange(3, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, 80);
+      ctx.context.append({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: wrapSystemReminder(renderLoadableToolsAnnouncement([LARGE_MCP_TOOL], [])),
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: LOADABLE_TOOLS_VARIANT },
+      });
+      ctx.context.append({
+        role: 'system',
+        content: [],
+        toolCalls: [],
+        tools: [
+          {
+            name: LARGE_MCP_TOOL,
+            description: `${LARGE_MCP_TOOL} desc`,
+            parameters,
+          },
+        ],
+        origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+      });
+
+      const completed = ctx.once('compaction.completed');
+      ctx.mockNextResponse({ type: 'text', text: 'Budgeted summary.' });
+      await ctx.rpc.beginCompaction({});
+      await completed;
+
+      expect(ctx.llmCalls).toHaveLength(1);
+      const call = ctx.llmCalls[0]!;
+      expect(
+        call.history.some(
+          (message) => message.role === 'system' && (message.tools?.length ?? 0) > 0,
+        ),
+      ).toBe(false);
+      const texts = call.history.map(messageText);
+      expect(texts.some((text) => text.includes('old user one'))).toBe(false);
+      expect(texts.some((text) => text.includes('recent user three'))).toBe(true);
+      expect(texts.some((text) => text.includes('<tools_added>'))).toBe(true);
+      expect(messageText(call.history.at(-1))).toBe(renderCompactionInstruction({}));
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('strips dynamic schemas from the compaction retry when the provider reports overflow', async () => {
+    vi.stubEnv(MASTER_ENV, '1');
+    let attempts = 0;
+    const histories: Message[][] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      histories.push([...history]);
+      if (attempts === 1) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-schema-overflow');
+      }
+      return textResult('Recovered schema summary.');
+    });
+    const ctx = testAgent(
+      agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
+      {
+        generate,
+        initialConfig: {
+          providers: {},
+          loopControl: { reservedContextSize: 0 },
+        },
+      },
+    );
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        dynamically_loaded_tools: true,
+      },
+      tools: [LARGE_MCP_TOOL],
+    });
+    const parameters = {
+      type: 'object',
+      properties: {
+        payload: {
+          type: 'string',
+          description: 'x'.repeat(40_000),
+        },
+      },
+    };
+    const registration = ctx
+      .get(IAgentToolRegistryService)
+      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp', disclosure: 'deferred' });
+    try {
+      ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(1000)}`, 20);
+      ctx.appendExchange(2, 'recent user two', `recent assistant two ${'x'.repeat(1000)}`, 20);
+      ctx.context.append({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: wrapSystemReminder(renderLoadableToolsAnnouncement([LARGE_MCP_TOOL], [])),
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: LOADABLE_TOOLS_VARIANT },
+      });
+      ctx.context.append({
+        role: 'system',
+        content: [],
+        toolCalls: [],
+        tools: [
+          {
+            name: LARGE_MCP_TOOL,
+            description: `${LARGE_MCP_TOOL} desc`,
+            parameters,
+          },
+        ],
+        origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+      });
+
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await completed;
+
+      expect(histories).toHaveLength(2);
+      const hasSchema = (history: readonly Message[]) =>
+        history.some((message) => message.role === 'system' && (message.tools?.length ?? 0) > 0);
+      expect(hasSchema(histories[0]!)).toBe(true);
+      expect(hasSchema(histories[1]!)).toBe(false);
+      const retryTexts = histories[1]!.map(messageText);
+      expect(retryTexts.some((text) => text.includes('<tools_added>'))).toBe(true);
+      expect(retryTexts.some((text) => text.includes('recent assistant two'))).toBe(true);
+      expect(messageText(histories[1]!.at(-1))).toBe(renderCompactionInstruction({}));
+    } finally {
+      registration.dispose();
+    }
+  });
+
   it('triggers auto compaction when pending tokens cross the reserved threshold', async () => {
     const ctx = testAgent({
       initialConfig: {
