@@ -981,10 +981,11 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('archives a session via :archive and reclaims the workspace and its baseline MCP process', async () => {
+  it('archives a session, force-kills a SIGTERM-ignoring baseline MCP, and reacquires the workspace', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
     const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
     const spawned: IHostProcess[] = [];
+    let disposeReplacement: (() => void) | undefined;
     const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
     const spawn = hostProcesses.spawn.bind(hostProcesses);
     const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
@@ -997,7 +998,15 @@ describe('server-v2 /api/v1/sessions', () => {
       await mkdir(join(cwd, '.kimi-code'), { recursive: true });
       await writeFile(
         join(cwd, '.kimi-code', 'mcp.json'),
-        JSON.stringify({ mcpServers: { fixture: { command: process.execPath, args: [fixture] } } }),
+        JSON.stringify({
+          mcpServers: {
+            fixture: {
+              command: process.execPath,
+              args: [fixture],
+              env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' },
+            },
+          },
+        }),
       );
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
       const id = created.body.data.id;
@@ -1012,6 +1021,7 @@ describe('server-v2 /api/v1/sessions', () => {
       });
       expect(spawned).toHaveLength(1);
       const child = spawned[0]!;
+      const killSpy = vi.spyOn(child, 'kill');
       expect(child.exitCode).toBeNull();
       let disposeSubscription: (() => void) | undefined;
       const closed = new Promise<void>((resolve) => {
@@ -1027,22 +1037,55 @@ describe('server-v2 /api/v1/sessions', () => {
       expect(archived.body.code).toBe(0);
       expect(archived.body.data).toEqual({ archived: true });
       expect(manager.get(workspaceId)).toBeUndefined();
+      const replacementLeasePromise = manager.acquire({ workspaceId });
       await closed;
       disposeSubscription?.();
       expect(connections.list()).toEqual([]);
       expect(child.exitCode).not.toBeNull();
+      if (process.platform !== 'win32') expect(killSpy).toHaveBeenCalledWith('SIGKILL');
 
       const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
       expect(got.body.code).toBe(0);
       expect(got.body.data.archived).toBe(true);
+
+      const replacementLease = await replacementLeasePromise;
+      disposeReplacement = () => {
+        replacementLease.dispose();
+      };
+      const replacement = replacementLease.instance;
+      expect(replacement).not.toBe(workspace);
+      await replacement.program.mcp.ready;
+      const replacementConnections = replacement.program.mcp.connectionManager();
+      await vi.waitFor(() => {
+        expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
+      });
+      expect(spawned).toHaveLength(2);
+      const replacementChild = spawned[1]!;
+      expect(replacementChild.exitCode).toBeNull();
+      let disposeReplacementSubscription: (() => void) | undefined;
+      const replacementClosed = new Promise<void>((resolve) => {
+        const subscription = manager.onDidChange((change) => {
+          if (change.workspaceId !== workspaceId || change.instance !== undefined) return;
+          subscription.dispose();
+          resolve();
+        });
+        disposeReplacementSubscription = () => {
+          subscription.dispose();
+        };
+      });
+      replacementLease.dispose();
+      await replacementClosed;
+      disposeReplacementSubscription?.();
+      expect(replacementChild.exitCode).not.toBeNull();
     } finally {
+      disposeReplacement?.();
       spawnSpy.mockRestore();
       for (const child of spawned) {
-        if (child.exitCode === null) await child.kill();
+        if (child.exitCode === null) await child.kill('SIGKILL');
       }
       await rm(cwd, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 
   it('archives a cold session after a failed resume when the workspace root is gone', async () => {
     const cwd = join(home as string, 'gone-ws');
