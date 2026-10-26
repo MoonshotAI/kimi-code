@@ -9,6 +9,7 @@ import { reduceContextTranscript } from '@moonshot-ai/agent-core-v2';
 import { groupMessagesIntoSnapshot } from '@moonshot-ai/transcript';
 
 import { migrateOneSession, type MigrateOneResult } from '../src/sessions/migrate-one.js';
+import { importedSessionDir, writeImportedSession } from '../src/imported-session.js';
 import { computeWorkdirBucket } from '../src/sessions/workdir-bucket.js';
 import { listSessionsV2, readSessionSummaryV2 } from './v2-session-scan.js';
 
@@ -144,8 +145,62 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((id): id is number => typeof id === 'number');
     // Turns without assistant content (e.g. an unanswered user message) get no
     // turn.ended; the rest carry sequential ids within the imported range.
-    expect(endedTurnIds).toEqual([...endedTurnIds].sort((a, b) => a - b));
+    expect(endedTurnIds).toEqual([...endedTurnIds].toSorted((a, b) => a - b));
     expect(new Set(endedTurnIds).size).toBe(endedTurnIds.length);
     expect(Math.max(...endedTurnIds)).toBeLessThan(promptCount);
+  });
+});
+
+describe('imported external session is discoverable by agent-core-v2', () => {
+  const messages = [
+    { role: 'user', content: [{ type: 'text', text: 'Fix the login flow' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Running the tests.\n\n[external_agent_tool_call: Bash]\ncommand: npm test\n[/external_agent_tool_call]' }] },
+    { role: 'user', content: [{ type: 'text', text: 'Add a regression test' }] },
+    { role: 'assistant', content: [{ type: 'text', text: 'Added.' }] },
+    { role: 'user', content: [{ type: 'text', text: '<EXTERNAL SESSION IMPORTED>\nThe conversation above was imported.' }] },
+  ] as const;
+  const write = () => writeImportedSession({
+    targetHome,
+    sessionId: 'ses_example-source',
+    workDir: WORK_DIR,
+    title: 'Fix the login flow',
+    lastPrompt: 'Add a regression test',
+    updatedAtMs: 1_700_000_000_000,
+    messages,
+    custom: { imported_from: 'claude-code', imported_source_id: 'example-source' },
+  });
+
+  it('lists the session with its title, original time and import metadata', async () => {
+    const sessionDir = await write();
+
+    expect(sessionDir).toBe(importedSessionDir(targetHome, WORK_DIR, 'ses_example-source'));
+    expect(await readSessionSummaryV2(targetHome, 'ses_example-source')).toMatchObject({
+      title: 'Fix the login flow',
+      cwd: WORK_DIR,
+      lastPrompt: 'Add a regression test',
+      createdAt: 1_700_000_000_000,
+      updatedAt: 1_700_000_000_000,
+      archived: false,
+      custom: { imported_from: 'claude-code', imported_source_id: 'example-source' },
+    });
+    expect(await readFile(join(targetHome, 'session_index.jsonl'), 'utf-8')).toContain('"sessionId":"ses_example-source"');
+  });
+
+  it('replays the messages unchanged with one restored turn per prompt', async () => {
+    const sessionDir = await write();
+
+    const wire = await readFile(join(sessionDir, 'agents', 'main', 'wire.jsonl'), 'utf-8');
+    const records = wire
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string; [key: string]: unknown });
+    const transcript = reduceContextTranscript(records);
+    expect([...transcript.entries]).toEqual(messages.map((message) => ({ ...message, toolCalls: [] })));
+    const promptCount = records.filter((r) => r.type === 'turn.prompt').length;
+    const groupedTurns = groupMessagesIntoSnapshot([...transcript.entries]).items.filter(
+      (item) => item.kind === 'turn',
+    ).length;
+    expect(promptCount).toBe(3);
+    expect(groupedTurns).toBe(promptCount);
   });
 });

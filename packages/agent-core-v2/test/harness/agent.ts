@@ -168,7 +168,6 @@ import {
   ISessionUsageService,
   ISessionWorkspaceContext,
   IWorkspaceStateService,
-  AgentLLMRequesterService,
   LifecycleScope,
   AgentMcpService,
   AgentPermissionGate,
@@ -236,6 +235,7 @@ import { stubAgentIdentity } from '../app/agentIdentity/stubs';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
+import { guardPromptCachePrefix, PromptCacheGuardedLLMRequesterService } from './prompt-cache-guard';
 import { createScriptedGenerate } from './scripted-generate';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
@@ -1180,7 +1180,7 @@ export class AgentTestContext {
           reg.defineInstance(
             IProtocolAdapterRegistry,
             createGenerateBackedGateway(
-              options.generate ?? this.scriptedGenerate.requester,
+              guardPromptCachePrefix(options.generate ?? this.scriptedGenerate.requester),
             ),
           );
           reg.defineInstance(
@@ -1382,7 +1382,7 @@ export class AgentTestContext {
             reg.defineDescriptor(IAgentProfileService, new SyncDescriptor(AgentProfileService));
             reg.defineDescriptor(
               IAgentLLMRequesterService,
-              new SyncDescriptor(AgentLLMRequesterService),
+              new SyncDescriptor(PromptCacheGuardedLLMRequesterService),
             );
             reg.defineDescriptor(
               IAgentExternalHooksService,

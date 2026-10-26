@@ -2,7 +2,7 @@ import type { Event, ResumedSessionState } from '@moonshot-ai/kimi-code-sdk';
 
 import type { NotifyEntry } from '#/tui/components/chrome/notify-panel';
 import { MAIN_AGENT_ID } from '#/tui/constant/kimi-tui';
-import type { TUIState } from '#/tui/tui-state';
+import { editorSlotComponent, type TUIState } from '#/tui/tui-state';
 import { argsRecord } from '#/tui/utils/event-payload';
 import { notifyResultState } from '#/tui/utils/notify-result';
 import { isTerminalBackgroundTask } from '#/tui/utils/message-replay';
@@ -52,13 +52,22 @@ export class NotifyController {
   private readonly agentNames = new Map<string, string>();
 
   constructor(
-    private readonly state: Pick<TUIState, 'notifyPanel' | 'notifyPanelContainer' | 'ui'>,
+    private readonly state: Pick<
+      TUIState,
+      'notifyPanel' | 'notifyPanelContainer' | 'ui' | 'editor' | 'editorContainer' | 'editorSlot'
+    >,
   ) {}
 
   setEnabled(enabled: boolean): void {
     if (this.enabled === enabled) return;
     this.reset();
     this.enabled = enabled;
+    // Keyboard or mouse may focus the panel from now on; either way it hands focus back here.
+    if (enabled) {
+      this.state.notifyPanel.onReturnFocus = (key) => {
+        this.returnFocus(key);
+      };
+    }
   }
 
   reset(): void {
@@ -76,32 +85,41 @@ export class NotifyController {
     this.pending.clear();
     if (!this.enabled && !this.mounted) return;
     const { notifyPanel, notifyPanelContainer } = this.state;
-    if (notifyPanel.isEmpty() && notifyPanelContainer.children.length === 0) return;
-    notifyPanel.clear();
+    const needsRender = !notifyPanel.isEmpty() || notifyPanelContainer.children.length > 0;
+    notifyPanel.clearUpdates();
+    if (!needsRender) return;
     notifyPanelContainer.clear();
     this.mounted = false;
     this.state.ui.requestRender();
   }
 
-  toggleFocus(): boolean {
-    if (!this.enabled) return false;
-    const panel = this.state.notifyPanel;
-    const changed = panel.isFocused() ? panel.blur() : panel.focus();
-    if (!changed) return false;
-    this.state.ui.requestRender();
+  /** Ctrl+N from the input area: give the panel keyboard focus; false when there is nothing to read. */
+  focusPanel(): boolean {
+    const { notifyPanel, ui } = this.state;
+    if (!this.enabled || !notifyPanel.canFocus()) return false;
+    ui.setFocus(notifyPanel);
+    ui.requestRender();
     return true;
   }
 
-  handlePanelKey(key: 'left' | 'right' | 'up' | 'down' | 'escape'): boolean {
-    if (!this.enabled || !this.state.notifyPanel.isFocused()) return false;
-    const panel = this.state.notifyPanel;
-    if (key === 'escape') panel.blur();
-    else if (key === 'left') panel.prevChannel();
-    else if (key === 'right') panel.nextChannel();
-    else if (key === 'up') panel.prevPage();
-    else panel.nextPage();
+  /**
+   * Back to whatever stands in the input area now, which may have changed
+   * while the panel had focus. A key the panel does not own goes on to the
+   * editor; an approval or question never takes it as an answer.
+   */
+  private returnFocus(key: string | undefined): void {
+    const { editor, ui } = this.state;
+    const inputArea = editorSlotComponent(this.state) ?? editor;
+    if (key !== undefined && inputArea !== editor) return;
+    ui.setFocus(inputArea);
+    if (key !== undefined) editor.handleInput(key);
+    ui.requestRender();
+  }
+
+  /** An approval or question replaces the editor; a short screen folds the panel meanwhile. */
+  setPrompt(pending: boolean): void {
+    this.state.notifyPanel.setPrompt(pending);
     this.state.ui.requestRender();
-    return true;
   }
 
   handleEvent(event: Event): void {

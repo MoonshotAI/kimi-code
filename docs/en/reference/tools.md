@@ -101,7 +101,7 @@ Collaboration tools handle inter-Agent coordination, user interaction, and Skill
 
 **`NotifyUser`** lets the main agent and subagents post progress updates without ending the turn. Each update has an optional `title` — one short line that is shown on its own wherever space is tight — and a `message` with the details in light Markdown. An update appears only after a successful tool result confirms it was displayed; failed, interrupted, or suppressed calls are not shown, and the transcript keeps whether each call displayed an update. Important findings still belong in the final reply or the subagent's handoff.
 
-In the TUI, updates appear in the `Updates` panel above the input box, with one tab per source: the main agent first, then each subagent that posts an update, labeled with its agent type. Press `Ctrl-N` to focus the panel, `←`/`→` to switch tabs, `↑`/`↓` to page through a tab's updates, and `Esc` to leave. Until you focus it, the panel follows the newest update. When the turn ends, the panel folds into a one-line summary that shows the current update's title; the next main-agent turn clears it. New sessions, `/clear`, and reopening a session start with an empty panel.
+In the TUI, updates appear in the `Updates` panel above the input box, grouped by agent. Press `Ctrl-N` (or click the panel in fullscreen mode) to browse them. The panel folds when the turn ends and resets for the next main-agent turn.
 
 In the desktop app and the web UI (`kimi web`), each update appears in the conversation as a progress row showing its title; click it to read the message.
 
