@@ -7,6 +7,7 @@ import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
+import { codePointBoundaryStart } from '#/_base/text/code-points';
 import { defineState } from '#/state/state';
 import {
   abortable,
@@ -608,7 +609,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async readOutput(taskId: string, tail?: number): Promise<string> {
     const output = (await this.getOutputSnapshot(taskId, Number.MAX_SAFE_INTEGER)).preview;
     if (tail === undefined) return output;
-    return output.slice(-Math.max(0, Math.trunc(tail)));
+    const tailChars = Math.max(0, Math.trunc(tail));
+    if (tailChars === 0) return output;
+    return output.slice(codePointBoundaryStart(output, Math.max(0, output.length - tailChars)));
   }
 
   async suppressTerminalNotification(taskId: string): Promise<void> {

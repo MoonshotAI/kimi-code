@@ -6,6 +6,13 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.3.2（2026-10-25）
+
+### 修复
+
+- 默认直接处理任务，不再主动启动子 Agent；如需委派，请在消息、AGENTS.md、技能中明确提出，或开启多 Agent 模式。
+- swarm 现仅在你开启 swarm 模式时启动：Agent 无法再自行启动 `AgentSwarm`，因此 `kimi -p` 和 Zed 等 ACP 客户端中不再提供 swarm。
+
 ## 2.3.1（2026-10-23）
 
 ### 新功能

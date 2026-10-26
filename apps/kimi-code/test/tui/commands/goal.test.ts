@@ -1,4 +1,5 @@
 import { ErrorCodes, KimiError } from '@moonshot-ai/kimi-code-sdk';
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -85,6 +86,7 @@ function makeHost(
     hasSession?: boolean;
     streaming?: boolean;
     permissionMode?: 'manual' | 'auto' | 'yolo';
+    fullscreen?: boolean;
   } = {},
 ) {
   const session = {
@@ -109,6 +111,10 @@ function makeHost(
         isCompacting: false,
       },
       editor: { getText: vi.fn(() => '') },
+      dockContainer: overrides.fullscreen === true ? {} : undefined,
+      activeDialog: null,
+      livePane: { pendingApproval: null, pendingQuestion: null },
+      notifyPanel: { setPrompt: vi.fn() },
       transcriptContainer,
       ui: { requestRender: vi.fn() },
       theme: { palette: getBuiltInPalette('dark') },
@@ -361,6 +367,29 @@ describe('handleGoalCommand', () => {
     const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
     expect(text).toContain('Always Ask mode is not suitable for unattended goal work');
     expect(text).toContain('Return to the input box with your goal command');
+  });
+
+  it('docks the local goal start prompt in fullscreen with only the selected description', async () => {
+    const { host: manualHost } = makeHost({ permissionMode: 'manual', fullscreen: true });
+
+    await handleGoalCommand(manualHost, 'Ship feature X');
+
+    const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
+    expect(text).toContain('Best if you want Kimi Code to keep working while you are away');
+    expect(text).not.toContain('Tools and plan changes are approved automatically');
+    expect(text).not.toContain('Keep approvals on. Kimi Code will ask before risky actions');
+  });
+
+  it('keeps the goal permission notice within narrow terminal widths', async () => {
+    const { host: manualHost } = makeHost({ permissionMode: 'manual' });
+    await handleGoalCommand(manualHost, 'Ship feature X');
+    const picker = mountedPicker(manualHost);
+
+    for (const width of [1, 2, 4, 10, 20]) {
+      for (const row of picker.render(width)) {
+        expect(visibleWidth(row)).toBeLessThanOrEqual(width);
+      }
+    }
   });
 
   it('defaults to Auto when confirming a Manual-mode goal start', async () => {

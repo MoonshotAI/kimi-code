@@ -1,5 +1,13 @@
 # @moonshot-ai/kimi-code
 
+## 2.3.2
+
+### Patch Changes
+
+- [#4386](https://github.com/MoonshotAI/kimi-code/pull/4386) [`fd2e2c7`](https://github.com/MoonshotAI/kimi-code/commit/fd2e2c7e2a3672dda91365d66b2ba74a1630521e) Thanks [@RealKai42](https://github.com/RealKai42)! - Handle tasks directly by default instead of proactively launching subagents; request delegation explicitly in your message, AGENTS.md, a skill, or an enabled multi-agent mode.
+
+- [#4384](https://github.com/MoonshotAI/kimi-code/pull/4384) [`c9a4836`](https://github.com/MoonshotAI/kimi-code/commit/c9a48369843fdee1b494b9d49b1f4b3aeee73497) Thanks [@RealKai42](https://github.com/RealKai42)! - Agent swarms now start only when you turn on swarm mode: the agent can no longer launch `AgentSwarm` by itself, so swarms are no longer available in `kimi -p` or ACP clients such as Zed.
+
 ## 2.3.1
 
 ### Patch Changes
