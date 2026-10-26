@@ -362,7 +362,11 @@ export class Program {
       const local = this.environments.inspect(this.binding);
       const context: IWorkspaceContext = { ...this.context, cwd };
       const state = own(new WorkspaceStateService(this.dependencies.appState));
-      const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, hostFs);
+      const localConfig = new FileProjectLocalConfigService(
+        this.dependencies.bootstrap,
+        hostFs,
+        lease.environment.host?.homeDir ?? '',
+      );
       const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state));
       const git = new WorkspaceGitService(context, {
         current: new GitService(this.environments, hostFs, environmentId),

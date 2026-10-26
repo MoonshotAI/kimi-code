@@ -321,6 +321,8 @@ interface LocalityFixture {
   readonly localRoot: string;
   readonly remoteRoot: string;
   readonly remoteAltRoot: string;
+  readonly homeDir: string;
+  readonly remoteHomeDir: string;
   readonly replaceLocal: (generation: string) => Promise<void>;
   readonly cleanup: () => Promise<void>;
 }
@@ -529,6 +531,8 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
     localRoot,
     remoteRoot,
     remoteAltRoot,
+    homeDir,
+    remoteHomeDir,
     replaceLocal: async (generation: string) => {
       await localRegistration.remove();
       registry.register(Object.assign(
@@ -643,6 +647,23 @@ describe('Program local generation and remote workdirs', () => {
       expect(instructions.agentsMd).toContain('user instructions');
       expect(instructions.agentsMd).not.toContain('local project instructions');
       expect(instructions.agentsMdPaths).toContain(join(fixture.remoteRoot, 'AGENTS.md'));
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('expands a remote additional dir against the target home', async () => {
+    const fixture = await localityFixture({ remoteCwd: undefined });
+    try {
+      await mkdir(join(fixture.remoteHomeDir, 'shared'), { recursive: true });
+      await mkdir(join(fixture.homeDir, 'shared'), { recursive: true });
+      await writeFile(
+        join(fixture.remoteRoot, '.kimi-code', 'local.toml'),
+        '[workspace]\nadditional_dir = ["~/shared"]\n',
+      );
+      const remote = fixture.workdir(fixture.remoteRoot);
+      await awaitWorkdir(remote);
+      expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteHomeDir, 'shared')]);
     } finally {
       await fixture.cleanup();
     }
