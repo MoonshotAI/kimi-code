@@ -1114,6 +1114,92 @@ describe('TowerStatusTool', () => {
       gate.mockRestore();
     }
   });
+
+  it('limits detail lists to the newest entries without changing the summary', async () => {
+    await initViaTool();
+    const store = new TowerStore(repo);
+    const missions = await store.plan(
+      Array.from({ length: 22 }, (_, index) => ({
+        title: `Mission ${String(index + 1)}`,
+        scope: [`src/m${String(index + 1)}/**`],
+      })),
+    );
+    for (const [index, mission] of missions.entries()) {
+      const kind = index % 2 === 0 ? 'worker' : 'reviewer';
+      const suffix = String(index + 1).padStart(2, '0');
+      await store.registerAgent({
+        name: `${kind}-${suffix}`,
+        kind,
+        agentId: `agent-${suffix}`,
+        missionId: kind === 'worker' ? mission.id : undefined,
+        branch: kind === 'worker' ? mission.branch : undefined,
+        worktree: kind === 'worker' ? mission.worktree : undefined,
+        reviewTarget: kind === 'reviewer' ? mission.branch : undefined,
+        reviewMissionId: kind === 'reviewer' ? mission.id : undefined,
+        spawnedAt: new Date(Date.UTC(2026, 0, 1, 0, 0, index)).toISOString(),
+      });
+    }
+
+    const result = await run(ix.get(ITowerStatusTool), {});
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('Showing 20 of 22 mission(s), newest first.');
+    expect(result.output).toContain('Status totals: 22 planned.');
+    expect(result.output).toContain(
+      'Showing 20 of 22 agent(s) (11 workers, 11 reviewers), newest spawned first.',
+    );
+    expect(result.output).toContain('Showing 20 of 22 open mission(s), newest first.');
+    expect(result.output).toContain('Showing 20 of 22 planned mission(s), newest first.');
+    expect(result.output).toContain('2 earlier missions omitted');
+    expect(result.output).toContain('2 earlier roster entries omitted');
+    expect(result.output).toContain('2 earlier review gate entries omitted');
+    expect(result.output).toContain('2 earlier awaiting-spawn missions omitted');
+    if (typeof result.output !== 'string') throw new Error('expected text status output');
+    const output = result.output;
+    const lines = output.split('\n');
+    const missionRows = lines.filter((line) => line.startsWith('| M'));
+    const rosterRows = lines.filter(
+      (line) => line.startsWith('- worker-') || line.startsWith('- reviewer-'),
+    );
+    const gateRows = lines.filter((line) => line.startsWith('- feat/mission-'));
+    const awaitingRows = lines.filter((line) => line.startsWith('- M'));
+    expect(missionRows).toHaveLength(20);
+    expect(missionRows[0]).toContain('| M22 |');
+    expect(missionRows[19]).toContain('| M3 |');
+    expect(rosterRows).toHaveLength(20);
+    expect(rosterRows[0]).toContain('- reviewer-22 (reviewer)');
+    expect(rosterRows[19]).toContain('- worker-03 (worker)');
+    expect(gateRows).toHaveLength(20);
+    expect(gateRows[0]).toContain('(M22):');
+    expect(gateRows[19]).toContain('(M3):');
+    expect(awaitingRows).toHaveLength(20);
+    expect(awaitingRows[0]).toContain('- M22 ');
+    expect(awaitingRows[19]).toContain('- M3 ');
+
+    const expanded = await run(ix.get(ITowerStatusTool), { limit: 22 });
+    if (typeof expanded.output !== 'string') throw new Error('expected text status output');
+    const expandedOutput = expanded.output;
+    const expandedLines = expandedOutput.split('\n');
+    expect(expandedLines.filter((line) => line.startsWith('| M'))).toHaveLength(22);
+    expect(
+      expandedLines.filter(
+        (line) => line.startsWith('- worker-') || line.startsWith('- reviewer-'),
+      ),
+    ).toHaveLength(22);
+    expect(expandedLines.filter((line) => line.startsWith('- feat/mission-'))).toHaveLength(22);
+    expect(expandedLines.filter((line) => line.startsWith('- M'))).toHaveLength(22);
+    expect(expandedOutput).toContain('| M1 |');
+    expect(expandedOutput).toContain('- worker-01 (worker)');
+    expect(expandedOutput).not.toContain('earlier missions omitted');
+    expect(expandedOutput).not.toContain('earlier roster entries omitted');
+
+    const summary = await readStatusSummary();
+    expect(
+      summary.split('\n').filter((line) => /^  M\d+ Mission \d+ — planned · owner /.test(line)),
+    ).toHaveLength(22);
+    expect(summary).toContain('worker-01 (worker)');
+    expect(summary).not.toContain('Showing 20 of 22');
+  });
 });
 
 describe('readTowerStatusSummary', () => {
