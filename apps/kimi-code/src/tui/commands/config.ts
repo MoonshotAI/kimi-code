@@ -30,8 +30,11 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import {
   matchModelSwitchRule,
+  needsModelSwitchConfirmConfigRefresh,
   peekModelSwitchConfirmConfig,
+  refreshModelSwitchConfirmConfig,
   resolveModelSwitchHint,
+  resolveModelSwitchWarning,
   type ModelSwitchAction,
   type ModelSwitchRule,
 } from '#/utils/model-switch-confirm-config';
@@ -174,14 +177,14 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
   const alias = args.trim();
   await refreshModelsForPicker(host);
   if (alias.length === 0) {
-    showModelPicker(host);
+    await showModelPicker(host);
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
     host.showError(`Unknown model alias: ${alias}`);
     return;
   }
-  showModelPicker(host, alias);
+  await showModelPicker(host, alias);
 }
 
 export async function handleSecondaryModelCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -369,7 +372,12 @@ function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias>
   );
 }
 
-export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
+export async function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): Promise<void> {
+  if (needsModelSwitchConfirmConfigRefresh()) {
+    try {
+      await refreshModelSwitchConfirmConfig({ accessToken: await host.harness.auth.getCachedAccessToken() });
+    } catch {}
+  }
   const models = pickerModelsForHost(host);
   const entries = Object.entries(models);
   if (entries.length === 0) {
@@ -402,11 +410,9 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
 }
 
 /**
- * Cloud-gated confirmation for a model switch with conversation history: when
- * the `model_switch_confirm` client config enables the feature and the
- * (current, target) upstream model ids match a rule exactly, the user picks
- * how the switch happens before any state changes. Cancel is a no-op by
- * construction — nothing was applied yet.
+ * Cloud-gated confirmation for a model switch. The first matching client
+ * config rule supplies the content; actual conversation history chooses the
+ * new-session or old-session actions. Cancel is a no-op by construction.
  */
 export function confirmThenPerformModelSwitch(
   host: SlashCommandHost,
@@ -425,6 +431,7 @@ export function confirmThenPerformModelSwitch(
     availableModels[host.state.appState.model],
   );
   const toModel = modelDisplayName(alias, availableModels[alias]);
+  const sessionType = hasConversationHistory(host) ? 'old' : 'new';
   const dismiss = (): void => {
     // Only close while this dialog still owns the editor replacement: an
     // approval/question panel mounted over it must never be wiped out by the
@@ -438,17 +445,12 @@ export function confirmThenPerformModelSwitch(
     new ModelSwitchConfirmDialogComponent({
       fromModel,
       toModel,
+      sessionType,
       hint: resolveModelSwitchHint(rule),
+      warning: sessionType === 'old' ? resolveModelSwitchWarning(rule) : undefined,
       onSelect: (action) => {
         if (settled) return;
         settled = true;
-        if (action === 'new') {
-          // Keep the dialog (and its input lock) mounted until the new session
-          // is ready — restoring the editor mid-flight would let a prompt race
-          // the swap, same as the session-picker swap.
-          void runModelSwitchAction(host, action, alias, thinking, persist).finally(dismiss);
-          return;
-        }
         dismiss();
         void runModelSwitchAction(host, action, alias, thinking, persist);
       },
@@ -469,11 +471,15 @@ export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): M
   // it with an error, so the dialog must not precede that rejection.
   if (alias === prevAlias) return undefined;
   if (host.state.appState.streamingPhase !== 'idle') return undefined;
-  if (!hasConversationHistory(host)) return undefined;
   const fromModelId = host.state.appState.availableModels[prevAlias]?.model;
   const toModelId = host.state.appState.availableModels[alias]?.model;
   if (fromModelId === undefined || toModelId === undefined) return undefined;
-  return matchModelSwitchRule(peekModelSwitchConfirmConfig(), fromModelId, toModelId);
+  return matchModelSwitchRule(
+    peekModelSwitchConfirmConfig(),
+    fromModelId,
+    toModelId,
+    hasConversationHistory(host) ? 'old' : 'new',
+  );
 }
 
 /**
@@ -540,17 +546,6 @@ async function runModelSwitchAction(
     case 'continue':
       await performModelSwitch(host, alias, thinking, persist);
       return;
-    case 'new': {
-      // createNewSession reports failures (replay active, creation/setup
-      // errors) and returns normally — only switch when the session id
-      // actually changed, otherwise the switch would land on the session the
-      // user chose to leave untouched.
-      const prevSessionId = host.state.appState.sessionId;
-      await host.createNewSession();
-      if (host.state.appState.sessionId === prevSessionId) return;
-      await performModelSwitch(host, alias, thinking, persist);
-      return;
-    }
     case 'compact': {
       // Compact with the current model first, then switch: the new model
       // starts from the compacted context.
@@ -1040,7 +1035,7 @@ export function showSettingsSelector(host: SlashCommandHost): void {
 function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelection): void {
   host.restoreEditor();
   switch (value) {
-    case 'model': showModelPicker(host); return;
+    case 'model': void showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;

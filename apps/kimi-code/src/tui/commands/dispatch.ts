@@ -143,10 +143,10 @@ export interface SlashCommandHost {
   /**
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,
-   * context cap). No-op semantics on a live session path: only /reload calls
-   * it while still session-less.
+   * context cap). Only call it while session-less; `includeModel: false`
+   * refreshes the other defaults without changing the pending model choice.
    */
-  hydrateLazyConfigDefaults(): Promise<void>;
+  hydrateLazyConfigDefaults(includeModel?: boolean): Promise<void>;
 
   // Session
   requireSession(): Session;

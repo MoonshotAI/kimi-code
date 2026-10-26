@@ -27,6 +27,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
 import { CacheHintDialogComponent } from '#/tui/components/dialogs/cache-hint-dialog';
 import * as cacheHintConfig from '#/utils/cache-hint-config';
+import { clientConfigs } from '#/utils/client-configs';
+import {
+  peekModelSwitchConfirmConfig,
+  refreshModelSwitchConfirmConfig,
+  resetModelSwitchConfirmConfigCache,
+} from '#/utils/model-switch-confirm-config';
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
@@ -47,6 +53,7 @@ import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
 import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
+import { ModelSwitchConfirmDialogComponent } from '#/tui/components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '#/tui/components/dialogs/permission-selector';
 import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
@@ -132,6 +139,25 @@ function stripSgr(text: string): string {
   return text
     .replaceAll(/\u001B\[[0-9;]*m/g, '')
     .replaceAll(new RegExp(`${ESC}\\]8;;[^${BEL}]*${BEL}`, 'g'), '');
+}
+
+async function stubModelSwitchConfirmRule(sessionType: 'old' | 'new'): Promise<() => void> {
+  const fetchMock = vi.spyOn(clientConfigs, 'fetch').mockResolvedValue({
+    enable: true,
+    rules: [
+      {
+        from: '*',
+        to: 'k3.1-pro-highspeed',
+        session_type: sessionType,
+        hint: { en: sessionType === 'old' ? 'Old session hint' : 'Highspeed cost note' },
+        warning: sessionType === 'old' ? { en: 'Highspeed warning' } : undefined,
+      },
+    ],
+  });
+  await refreshModelSwitchConfirmConfig();
+  return () => {
+    fetchMock.mockRestore();
+  };
 }
 
 interface MessageDriver {
@@ -536,6 +562,7 @@ async function makeExportedSessionZip(content = 'session zip'): Promise<string> 
 
 afterEach(async () => {
   resetCapabilitiesCache();
+  resetModelSwitchConfirmConfigCache();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
@@ -10687,6 +10714,122 @@ capabilities = ["image_in", "video_in"]
     expect(setConfig).not.toHaveBeenCalled();
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinkingEffort).toBe('on');
+  });
+
+  it('confirms a Highspeed switch in a new session through /model', async () => {
+    const restoreConfig = await stubModelSwitchConfirmRule('new');
+    try {
+      const session = makeSession();
+      const { driver, harness } = await makeDriver(session, {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              provider: 'managed:kimi-code',
+              model: 'kimi-k2',
+              maxContextSize: 100,
+              displayName: 'Kimi K2',
+              capabilities: ['thinking'],
+            },
+            turbo: {
+              provider: 'managed:kimi-code',
+              model: 'k3.1-pro-highspeed',
+              maxContextSize: 100,
+              displayName: 'K3.1 Pro Highspeed',
+              capabilities: ['thinking'],
+            },
+          },
+          defaultModel: 'k2',
+          thinking: { enabled: false },
+        })),
+      });
+      Object.assign(harness.auth, { getCachedAccessToken: vi.fn(async () => 'test-token') });
+      await vi.waitFor(() => {
+        expect(peekModelSwitchConfirmConfig()).toBeDefined();
+      });
+      resetModelSwitchConfirmConfigCache();
+
+      driver.handleUserInput('/model turbo');
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+      });
+      (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput(`${ESC}s`);
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ModelSwitchConfirmDialogComponent);
+      });
+      const dialog = driver.state.editorContainer.children[0] as ModelSwitchConfirmDialogComponent;
+      const rendered = stripSgr(dialog.render(120).join('\n'));
+      expect(rendered).toContain('Highspeed cost note');
+      expect(rendered).toContain('Confirm switch');
+      expect(rendered).not.toContain('Highspeed warning');
+      expect(rendered).not.toContain('Compact and continue');
+
+      dialog.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(session.setModel).toHaveBeenCalledWith('turbo');
+      });
+      expect(session.compact).not.toHaveBeenCalled();
+    } finally {
+      restoreConfig();
+    }
+  });
+
+  it('shows one old-session confirmation with hint and warning through /model', async () => {
+    const restoreConfig = await stubModelSwitchConfirmRule('old');
+    try {
+      const session = makeSession();
+      const resumeState = session.getResumeState();
+      resumeState.agents.main.userTurnCount = 1;
+      session.getResumeState.mockReturnValue(resumeState);
+      const { driver } = await makeDriver(session, {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: {
+              provider: 'managed:kimi-code',
+              model: 'kimi-k2',
+              maxContextSize: 100,
+              displayName: 'Kimi K2',
+              capabilities: ['thinking'],
+            },
+            turbo: {
+              provider: 'managed:kimi-code',
+              model: 'k3.1-pro-highspeed',
+              maxContextSize: 100,
+              displayName: 'K3.1 Pro Highspeed',
+              capabilities: ['thinking'],
+            },
+          },
+          defaultModel: 'k2',
+          thinking: { enabled: false },
+        })),
+      });
+
+      driver.handleUserInput('/model turbo');
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+      });
+      (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput(`${ESC}s`);
+
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ModelSwitchConfirmDialogComponent);
+      });
+      const dialog = driver.state.editorContainer.children[0] as ModelSwitchConfirmDialogComponent;
+      const rendered = stripSgr(dialog.render(120).join('\n'));
+      expect(rendered).toContain('Old session hint');
+      expect(rendered).toContain('Highspeed warning');
+      expect(rendered).toContain('Compact and continue');
+      expect(rendered).toContain('Continue as-is');
+      expect(rendered).not.toContain('Start a new session');
+
+      dialog.handleInput('\u001B[B');
+      dialog.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(session.setModel).toHaveBeenCalledWith('turbo');
+      });
+      expect(session.compact).not.toHaveBeenCalled();
+    } finally {
+      restoreConfig();
+    }
   });
 
   it('uses the effective effort returned after a model-switch fallback', async () => {
