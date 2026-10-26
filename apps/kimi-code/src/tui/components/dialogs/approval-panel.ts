@@ -371,13 +371,6 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     return this.focused && this.isTerminalFocused() ? lines : lines.map((line) => currentTheme.fade(line));
   }
 
-  /**
-   * Hovering a choice highlights it and previews its description without
-   * selecting it; a click picks it like its number key. A click on a faded
-   * panel only takes the keyboard back. Clicks right after the panel
-   * appeared are ignored, and a click while typing feedback only moves the
-   * selection.
-   */
   protected override handlePartMouse(
     part: DockPart,
     event: TuiMouseEvent,

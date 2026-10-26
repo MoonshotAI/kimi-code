@@ -154,10 +154,6 @@ export class StartPermissionPromptComponent<
     return lines.map((line) => truncateToWidth(line, width));
   }
 
-  /**
-   * Hovering an option highlights it and previews its description without
-   * selecting it; a click picks it, except right after the prompt appeared.
-   */
   protected override handlePartMouse(
     part: DockPart,
     event: TuiMouseEvent,
