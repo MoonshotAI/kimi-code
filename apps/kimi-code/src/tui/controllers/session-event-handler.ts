@@ -49,7 +49,6 @@ import {
   argsRecord,
   formatErrorPayload,
   formatErrorMessage,
-  isTodoItemShape,
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
@@ -398,10 +397,6 @@ export class SessionEventHandler {
     if (event.reason === 'blocked') {
       this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
     }
-    const todos = this.host.state.todoPanel.getTodos();
-    if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
-      this.host.streamingUI.setTodoList([]);
-    }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.host.recordSessionActivity();
@@ -722,17 +717,6 @@ export class SessionEventHandler {
       resultData,
       event.isError === true,
     );
-    if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
-      const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
-      if (Array.isArray(rawTodos)) {
-        const sanitized = rawTodos
-          .filter((todo): todo is { title: string; status: 'pending' | 'in_progress' | 'done' } =>
-            isTodoItemShape(todo),
-          )
-          .map((t) => ({ title: t.title, status: t.status }));
-        streamingUI.setTodoList(sanitized);
-      }
-    }
     this.host.patchLivePane({ mode: 'waiting' });
   }
 

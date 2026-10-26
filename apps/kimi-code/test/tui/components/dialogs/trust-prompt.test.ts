@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import type { TuiMouseEvent } from '@moonshot-ai/pi-tui';
 import type { WorkspaceTrustInfo } from '@moonshot-ai/kimi-code-sdk';
 import { TrustPromptComponent } from '#/tui/components/dialogs/trust-prompt';
 
@@ -16,6 +17,22 @@ function info(overrides: Partial<WorkspaceTrustInfo> = {}): WorkspaceTrustInfo {
 function render(prompt: TrustPromptComponent, width = 80): string[] {
   return prompt.render(width).map((line) => line.replaceAll(/\u001B\[[0-9;]*m/g, ''));
 }
+function mouse(type: 'move' | 'press' | 'release' | 'click', y: number): TuiMouseEvent {
+  return {
+    type,
+    button: type === 'move' ? 'none' : 'left',
+    x: 4,
+    y,
+    screenX: 4,
+    screenY: y,
+    width: 80,
+    height: 24,
+    shift: false,
+    alt: false,
+    ctrl: false,
+  };
+}
+
 const workDir = '/tmp/example-project';
 function mixedInfo(): WorkspaceTrustInfo {
   return info({
@@ -176,6 +193,25 @@ describe('TrustPromptComponent', () => {
     prompt.handleInput('\r');
     expect(onSelect).toHaveBeenCalledWith('trust');
   });
+  it('moves selection with the pointer and activates the same choice on click', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const onSelect = vi.fn();
+    const prompt = new TrustPromptComponent({ workDir, info: info(), onSelect });
+    prompt.focused = true;
+    const row = render(prompt).findIndex((line) => line.includes('Exit'));
+
+    expect(prompt.handleMouse(mouse('move', row))).toEqual({ handled: true, render: true });
+    expect(render(prompt)[row]).toContain('❯ Exit');
+    expect(onSelect).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(300);
+    for (const type of ['press', 'release', 'click'] as const) prompt.handleMouse(mouse(type, row));
+    expect(onSelect).toHaveBeenCalledWith('distrust');
+  });
+
   it('preserves default trust, selection, and escape behavior', () => {
     for (const { keys, expected } of [
       { keys: ['\r'], expected: 'trust' },

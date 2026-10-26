@@ -67,10 +67,9 @@ export interface EditorKeyboardHost {
   updateGoalLengthWarning(text: string | undefined): void;
   updateQueueDisplay(): void;
   toggleToolOutputExpansion(): void;
-  toggleTodoPanelExpansion(): void;
-  /** Returns true when the Updates panel grabbed or released focus. */
-  toggleNotifyPanelFocus(): boolean;
-  handleNotifyPanelKey(key: 'left' | 'right' | 'up' | 'down' | 'escape'): boolean;
+  openTasksBrowser(): void;
+  /** Returns true when the Updates panel took keyboard focus. */
+  focusNotifyPanel(): boolean;
   detachCurrentForegroundTask(): void;
   cancelRunningShellCommand(): void;
   hideSessionPicker(): void;
@@ -304,24 +303,12 @@ export class EditorKeyboardController {
       host.toggleToolOutputExpansion();
     };
 
-    editor.onToggleTodoExpand = (): boolean => {
-      if (!host.state.todoPanel.hasOverflow()) return false;
-      // Disarm a pending double-press exit confirmation so expanding the
-      // todo list in between two Ctrl-C presses does not accidentally exit.
-      this.clearPendingExit();
-      host.track('shortcut_todo_expand');
-      host.toggleTodoPanelExpansion();
-      return true;
-    };
-
     editor.onPageNotify = (): boolean => {
-      if (!host.toggleNotifyPanelFocus()) return false;
+      if (!host.focusNotifyPanel()) return false;
       this.clearPendingExit();
       host.track('shortcut_notify_page');
       return true;
     };
-
-    editor.onNotifyPanelKey = (key) => host.handleNotifyPanelKey(key);
 
     editor.onCtrlS = () => {
       if (
