@@ -282,13 +282,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
     await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    const workdir = environment === undefined ? undefined : await this.openWorkdir(opts.sessionId, environment);
-    const dirs = workdir?.dirs ?? this.workspaceDirs;
+    const workdir = environment === undefined
+      ? this.localWorkdir()
+      : await this.openWorkdir(opts.sessionId, environment);
+    const dirs = workdir.dirs;
     try {
       await dirs.ready;
       await dirs.mergeAdditionalDirs(environment?.cwd ?? opts.workDir, opts.additionalDirs ?? []);
     } catch (error) {
-      workdir?.dispose();
+      workdir.dispose();
       throw error;
     }
     const ctx: ISessionContext = {
@@ -318,16 +320,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
               workspaceKey: workspaceId,
-              contextKey: workdir === undefined ? undefined : opts.sessionId,
+              contextKey: environment === undefined ? undefined : opts.sessionId,
             }),
-            [ISessionSkillCatalogData, (workdir?.skills ?? this.workspaceSkillCatalog).sessionData()],
-            [ISessionInstructionsProvider, (workdir?.instructions ?? this.workspaceInstructions).sessionProvider()],
+            [ISessionSkillCatalogData, workdir.skills.sessionData()],
+            [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],
             [ISessionMcpHandle, this.workspaceMcp.sessionHandle()],
             [ISessionWorkspaceInfo, dirs.sessionInfo()],
             [ISessionWorkdir, {
               _serviceBrand: undefined,
               environmentId: environment?.environmentId ?? LOCAL_ENVIRONMENT_ID,
-              fs: workdir?.fs ?? this.workspaceFs,
+              fs: workdir.fs,
             }],
             ...sessionEphemeralMcpServersSeed(opts.mcpServers ?? {}),
           ],
@@ -336,9 +338,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
               () => telemetryBinding.dispose(),
               'telemetry:session-context',
             );
-            if (workdir !== undefined) {
-              container.anchorKernelEntry(() => { workdir.dispose(); }, 'sessionLifecycle:workdir');
-            }
+            container.anchorKernelEntry(() => { workdir.dispose(); }, 'sessionLifecycle:workdir');
             this._onWillCreateSession.fire({
               sessionId: opts.sessionId,
               onDidCreateScope: scopeCreated.event,
@@ -356,7 +356,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scopeCreated.fire(handle);
     } catch (error) {
       telemetryBinding.dispose();
-      workdir?.dispose();
+      workdir.dispose();
       throw error;
     } finally {
       scopeCreated.dispose();
@@ -366,7 +366,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await handle.accessor.get(ISessionNotify).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
       await Promise.all([
-        (workdir?.agentProfiles ?? this.workspaceAgentProfileLoader).ready,
+        workdir.agentProfiles.ready,
         this.extraAgentProfileLoader.ready,
         this.explicitAgentProfileLoader.ready,
         this.userAgentProfileLoader.ready,
@@ -379,6 +379,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     this.sessions.set(opts.sessionId, handle);
     return handle;
+  }
+
+  private localWorkdir(): ProgramWorkdir {
+    return {
+      dirs: this.workspaceDirs,
+      fs: this.workspaceFs,
+      instructions: this.workspaceInstructions,
+      skills: this.workspaceSkillCatalog,
+      agentProfiles: this.workspaceAgentProfileLoader,
+      dispose() {},
+    };
   }
 
   private async openWorkdir(sessionId: string, environment: EnvironmentBinding & { readonly cwd: string }): Promise<ProgramWorkdir> {

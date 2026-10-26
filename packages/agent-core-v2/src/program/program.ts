@@ -1,4 +1,6 @@
+import type { LiveRef } from '#/_base/di/instantiation';
 import { Emitter, Event } from '#/_base/event';
+import type { IGitService } from '#/app/git/git';
 import { GitService } from '#/app/git/gitService';
 import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import type { EnvironmentBinding } from '#/environment/environment';
@@ -34,14 +36,16 @@ import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileL
 import { UserAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoaderService';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import { WorkspaceAgentProfileLoaderService } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoaderService';
-import { ExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
-import { ExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
-import { PluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
+import { ExplicitFileSkillSource, type IExplicitFileSkillSource } from '#/features/skill/workspace/explicitFileSkillSource';
+import { ExtraFileSkillSource, type IExtraFileSkillSource } from '#/features/skill/workspace/extraFileSkillSource';
+import { PluginSkillSource, type IPluginSkillSource } from '#/features/skill/workspace/pluginSkillSource';
 import { WorkspaceRootSkillSource } from '#/features/skill/workspace/rootFileSkillSource';
 import { EnvironmentSkillDiscovery } from '#/features/skill/workspace/environmentSkillDiscovery';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import { WorkspaceSkillCatalogService } from '#/features/skill/workspace/workspaceSkillCatalogService';
 import type { IEnvironmentService } from '#/app/environment/environment';
+import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { ProgramDependencies } from './programDependencies';
 
@@ -118,6 +122,33 @@ export interface ProgramWorkdir {
   readonly skills: IWorkspaceSkillCatalog;
   readonly agentProfiles: IWorkspaceAgentProfileLoader;
   dispose(): void;
+}
+
+interface ProgramViewInput {
+  readonly context: IWorkspaceContext;
+  readonly hostFs: IHostFileSystem;
+  readonly environmentId: string;
+  readonly homeDir?: string;
+  readonly git: LiveRef<IGitService>;
+  readonly instructionsHost: HostEnvironmentInfo;
+  readonly personalFs?: IHostFileSystem;
+  readonly watch: boolean;
+  readonly userAgentProfiles: IUserAgentProfileLoader;
+  readonly contextKey?: string;
+  readonly explicitSkills: IExplicitFileSkillSource;
+  readonly extraSkills: IExtraFileSkillSource;
+  readonly pluginSkills: IPluginSkillSource;
+}
+
+interface ProgramView {
+  readonly state: IWorkspaceStateService;
+  readonly localConfig: FileProjectLocalConfigService;
+  readonly dirs: IWorkspaceDirs;
+  readonly git: IWorkspaceGitService;
+  readonly fs: IWorkspaceFsService;
+  readonly instructions: IWorkspaceInstructionsService;
+  readonly skills: IWorkspaceSkillCatalog;
+  readonly agentProfiles: IWorkspaceAgentProfileLoader;
 }
 
 const PROGRAM_CAPABILITIES = ['fs', 'process'] as const;
@@ -292,40 +323,43 @@ export class Program {
     };
     try {
       const hostFs = environment.fs!;
-      const state = own(new WorkspaceStateService(this.dependencies.appState));
-      const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, hostFs);
-      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state));
-      const git = new WorkspaceGitService(this.context, this.dependencies.git);
-      const fs = new WorkspaceFsService(this.context, dirs, hostFs, this.environments, this.dependencies.telemetry, git);
-      const instructions = own(new WorkspaceInstructionsService(this.context, hostFs, environment.host!, this.dependencies.bootstrap, this.dependencies.log, state));
-      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, state));
-      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore));
-      const mcp = own(new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
+      const skillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, hostFs);
+      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, hostFs);
+      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs));
+      const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
       const userAgentProfiles = own(new UserAgentProfileLoaderService(this.dependencies.bootstrap, hostFs, this.dependencies.log, this.dependencies.builtinAgentProfiles, this.context, this.dependencies.agentProfiles));
       const pluginAgentProfiles = own(new PluginAgentProfileLoaderService(this.dependencies.plugins, hostFs, this.dependencies.log, userAgentProfiles, this.context, this.dependencies.agentProfiles));
       const explicitAgentProfiles = own(new ExplicitAgentProfileLoaderService(this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
       const extraAgentProfiles = own(new ExtraAgentProfileLoaderService(this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(this.context, hostFs, this.dependencies.log, userAgentProfiles, this.dependencies.agentProfiles));
-      const skillDiscovery = new EnvironmentSkillDiscovery(this.dependencies.log, hostFs);
-      const explicitSkills = new ExplicitFileSkillSource(skillDiscovery, this.context, this.dependencies.bootstrap, hostFs);
-      const extraSkills = own(new ExtraFileSkillSource(skillDiscovery, this.dependencies.config, this.context, this.dependencies.bootstrap, hostFs));
-      const workspaceSkills = own(new WorkspaceRootSkillSource(skillDiscovery, this.context, this.dependencies.config, this.dependencies.bootstrap, hostFs));
-      const pluginSkills = new PluginSkillSource(skillDiscovery, this.dependencies.plugins);
-      const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, explicitSkills, extraSkills, workspaceSkills, pluginSkills, state));
-      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, localConfig, trust, skills, agentProfiles, this.dependencies.agentProfiles, instructions, this.dependencies.log);
+      const view = this.buildView(own, {
+        context: this.context,
+        hostFs,
+        environmentId: LOCAL_ENVIRONMENT_ID,
+        git: this.dependencies.git,
+        instructionsHost: environment.host!,
+        watch: true,
+        userAgentProfiles,
+        explicitSkills,
+        extraSkills,
+        pluginSkills,
+      });
+      const trust = own(new WorkspaceTrustService(this.context, this.dependencies.trustStore, view.state));
+      const mcpConfig = own(new WorkspaceMcpConfigService(this.context, this.dependencies.bootstrap, this.dependencies.plugins, this.dependencies.log, this.dependencies.config, hostFs, trust, this.dependencies.configStore));
+      const mcp = own(new WorkspaceMcpService(this.context, this.environments, mcpConfig, this.dependencies.oauth, this.dependencies.log, this.dependencies.telemetry, this.dependencies.identity, this.dependencies.sessionManager));
+      const trustDisclosure = new WorkspaceTrustDisclosureService(this.context, hostFs, this.dependencies.bootstrap, this.dependencies.config, view.localConfig, trust, view.skills, view.agentProfiles, this.dependencies.agentProfiles, view.instructions, this.dependencies.log);
       return {
         id: environment.identity.generation,
-        state,
-        dirs,
-        fs,
-        git,
-        instructions,
+        state: view.state,
+        dirs: view.dirs,
+        fs: view.fs,
+        git: view.git,
+        instructions: view.instructions,
         mcpConfig,
         mcp,
         trust,
         trustDisclosure,
-        skills,
-        agentProfiles,
+        skills: view.skills,
+        agentProfiles: view.agentProfiles,
         userAgentProfiles,
         pluginAgentProfiles,
         explicitAgentProfiles,
@@ -360,30 +394,54 @@ export class Program {
     try {
       const hostFs = lease.environment.fs!;
       const local = this.environments.inspect(this.binding);
-      const context: IWorkspaceContext = { ...this.context, cwd };
-      const state = own(new WorkspaceStateService(this.dependencies.appState));
-      const localConfig = new FileProjectLocalConfigService(
-        this.dependencies.bootstrap,
+      const view = this.buildView(own, {
+        context: { ...this.context, cwd },
         hostFs,
-        lease.environment.host?.homeDir ?? '',
-      );
-      const dirs = own(new WorkspaceDirsService(context, localConfig, this.dependencies.log, state));
-      const git = new WorkspaceGitService(context, {
-        current: new GitService(this.environments, hostFs, environmentId),
-        onDidChange: Event.None as Event<void>,
+        environmentId,
+        homeDir: lease.environment.host?.homeDir ?? '',
+        git: {
+          current: new GitService(this.environments, hostFs, environmentId),
+          onDidChange: Event.None as Event<void>,
+        },
+        instructionsHost: local.host!,
+        personalFs: local.fs,
+        watch: false,
+        userAgentProfiles: generation.userAgentProfiles,
+        contextKey,
+        explicitSkills: generation.explicitSkills,
+        extraSkills: generation.extraSkills,
+        pluginSkills: generation.pluginSkills,
       });
-      const fs = new WorkspaceFsService(context, dirs, hostFs, this.environments, this.dependencies.telemetry, git, environmentId);
-      const instructions = own(new WorkspaceInstructionsService(context, hostFs, local.host!, this.dependencies.bootstrap, this.dependencies.log, state, local.fs, false));
-      const agentProfiles = own(new WorkspaceAgentProfileLoaderService(context, hostFs, this.dependencies.log, generation.userAgentProfiles, this.dependencies.agentProfiles, contextKey, false));
-      const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, hostFs), context, this.dependencies.config, this.dependencies.bootstrap, hostFs, false));
-      const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, generation.explicitSkills, generation.extraSkills, workspaceSkills, generation.pluginSkills, state));
-      return { dirs, fs, instructions, skills, agentProfiles, dispose };
+      return {
+        dirs: view.dirs,
+        fs: view.fs,
+        instructions: view.instructions,
+        skills: view.skills,
+        agentProfiles: view.agentProfiles,
+        dispose,
+      };
     } catch (error) {
       dispose();
       throw error;
     } finally {
       lease.dispose();
     }
+  }
+
+  private buildView(
+    own: <T extends { dispose(): void | Promise<void> }>(value: T) => T,
+    input: ProgramViewInput,
+  ): ProgramView {
+    const state = own(new WorkspaceStateService(this.dependencies.appState));
+    const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, input.hostFs, input.homeDir);
+    const dirs = own(new WorkspaceDirsService(input.context, localConfig, this.dependencies.log, state));
+    const git = new WorkspaceGitService(input.context, input.git);
+    const fs = new WorkspaceFsService(input.context, dirs, input.hostFs, this.environments, this.dependencies.telemetry, git, input.environmentId);
+    const instructions = own(new WorkspaceInstructionsService(input.context, input.hostFs, input.instructionsHost, this.dependencies.bootstrap, this.dependencies.log, state, input.personalFs, input.watch));
+    const agentProfiles = own(new WorkspaceAgentProfileLoaderService(input.context, input.hostFs, this.dependencies.log, input.userAgentProfiles, this.dependencies.agentProfiles, input.contextKey, input.watch));
+    const workspaceSkills = own(new WorkspaceRootSkillSource(new EnvironmentSkillDiscovery(this.dependencies.log, input.hostFs), input.context, this.dependencies.config, this.dependencies.bootstrap, input.hostFs, input.watch));
+    const skills = own(new WorkspaceSkillCatalogService(this.dependencies.builtinSkills, this.dependencies.userSkills, input.explicitSkills, input.extraSkills, workspaceSkills, input.pluginSkills, state));
+    return { state, localConfig, dirs, git, fs, instructions, skills, agentProfiles };
   }
 
   private observeReadiness(generation: ProgramGeneration): void {
