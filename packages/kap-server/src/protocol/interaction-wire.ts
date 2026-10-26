@@ -1,10 +1,14 @@
 import {
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_TURN_ID,
+  isInteractionCancellation,
   MAIN_AGENT_ID,
   type ApprovalRequest,
+  type ApprovalResponse,
   type Interaction,
 } from '@moonshot-ai/agent-core-v2';
+
+import type { InteractionOutcome } from './interaction';
 
 const APPROVAL_EXPIRY_MS = 24 * 60 * 60 * 1000;
 
@@ -43,4 +47,11 @@ export function toWireApproval(interaction: Interaction, sessionId: string): {
     created_at: new Date(interaction.createdAt).toISOString(),
     expires_at: approvalExpiresAt(interaction),
   };
+}
+
+export function interactionOutcome(kind: 'approval' | 'question', response: unknown): InteractionOutcome {
+  if (isInteractionCancellation(response)) return 'cancelled';
+  if (kind === 'question') return response === null ? 'dismissed' : 'answered';
+  const decision = (response as Partial<ApprovalResponse> | null | undefined)?.decision;
+  return decision === 'approved' || decision === 'rejected' ? decision : 'cancelled';
 }

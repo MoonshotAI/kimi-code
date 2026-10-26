@@ -8,7 +8,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
 import {
   daemonFileRefFromPart,
-  isInteractionCancellation,
   type ContentPart,
   type ContextUndone,
   type CronFired,
@@ -98,6 +97,7 @@ import {
 
 import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
 import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
+import { interactionOutcome } from '../../protocol/interaction-wire';
 import { toWireQuestion } from '../../protocol/question-wire';
 import { projectPromptContentParts } from '../messages/messageProjection';
 
@@ -1704,7 +1704,7 @@ export class AgentTranscriptProjector {
     const record = this.interactions.get(id);
     if (record === undefined) return [];
     this.interactions.delete(id);
-    const state = mapInteractionEndState(record.interactionKind, response);
+    const state = interactionOutcome(record.interactionKind, response);
     const ops: TranscriptOperation[] = [
       { op: 'interaction.upsert', interaction: { ...record, state, response } },
     ];
@@ -1794,18 +1794,6 @@ function mapTaskKind(kind: string): TranscriptTask['kind'] {
   }
 }
 
-function mapInteractionEndState(
-  kind: 'approval' | 'question',
-  response: unknown,
-): TranscriptInteraction['state'] {
-  if (isInteractionCancellation(response)) return 'cancelled';
-  if (kind === 'question') return response === null ? 'dismissed' : 'answered';
-  const decision = (response as { decision?: unknown } | null | undefined)?.decision;
-  if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {
-    return decision;
-  }
-  return 'cancelled';
-}
 
 const TODO_LIST_TOOL_NAME = 'TodoList';
 const TODO_ENTITY_ID = 'todo';

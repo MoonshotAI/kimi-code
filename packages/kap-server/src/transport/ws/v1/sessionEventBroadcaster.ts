@@ -29,7 +29,6 @@ import {
   getLiveSessionById,
   resumeSessionById,
   interactions,
-  isInteractionCancellation,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
 import type {
@@ -65,7 +64,11 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
-import { approvalExpiresAt, interactionAgentId } from '../../../protocol/interaction-wire';
+import {
+  approvalExpiresAt,
+  interactionAgentId,
+  interactionOutcome,
+} from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
@@ -1475,13 +1478,6 @@ function interactionMessage(
     request: { questions: toWireQuestion(interaction, sessionId).questions },
     response: outcome === 'answered' ? questionResponseOf(resolution?.response) : undefined,
   };
-}
-
-function interactionOutcome(kind: 'approval' | 'question', response: unknown): InteractionOutcome {
-  if (isInteractionCancellation(response)) return 'cancelled';
-  if (kind === 'question') return response === null ? 'dismissed' : 'answered';
-  const decision = (response as Partial<ApprovalResponse> | null | undefined)?.decision;
-  return decision === 'approved' || decision === 'rejected' ? decision : 'cancelled';
 }
 
 function interactionToolCallId(interaction: Interaction): string | undefined {
