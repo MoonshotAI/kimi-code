@@ -344,6 +344,7 @@ describe('runUpdatePreflight', () => {
   it('skips when non-interactive', async () => {
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValueOnce(null);
     const { options } = captureOutput();
     await expect(
       runUpdatePreflight('0.4.0', { ...options, isTTY: false }),

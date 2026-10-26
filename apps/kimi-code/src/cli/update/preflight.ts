@@ -908,6 +908,10 @@ export async function runUpdatePreflight(
     let plan = decision.plan;
     if (plan.kind === 'none') return 'continue';
 
+    if (!isInteractive) {
+      refreshInBackground(check);
+      return 'continue';
+    }
     const source = sourceHint ?? await detectInstallSource().catch(() => 'unsupported' as const);
     const promptAction = decideUpdateAction(plan, isInteractive, source, platform);
     if (promptAction === 'none') {
