@@ -4,6 +4,7 @@ import {
   createProxyDispatcher,
   installGlobalProxyDispatcher,
   isProxyConfigured,
+  isProxyConfiguredForUrl,
   makeNoProxyMatcher,
   proxyEnvForChild,
   reconcileChildNoProxy,
@@ -20,6 +21,14 @@ describe('proxy utilities', () => {
     expect(isProxyConfigured({ HTTP_PROXY: '   ' })).toBe(false);
     expect(isProxyConfigured({ ALL_PROXY: 'socks5://127.0.0.1:1080' })).toBe(true);
     expect(isProxyConfigured({ ALL_PROXY: 'http://proxy:8080' })).toBe(true);
+  });
+
+  it('decides proxy coverage from the URL scheme and NO_PROXY', () => {
+    expect(isProxyConfiguredForUrl({ HTTPS_PROXY: 'http://p:3128' }, 'http://example.com')).toBe(false);
+    expect(isProxyConfiguredForUrl({ HTTPS_PROXY: 'http://p:3128' }, 'https://example.com')).toBe(true);
+    expect(isProxyConfiguredForUrl({ HTTPS_PROXY: 'http://p:3128', NO_PROXY: 'example.com' }, 'https://example.com')).toBe(false);
+    expect(isProxyConfiguredForUrl({ ALL_PROXY: 'socks5://127.0.0.1:1080' }, 'http://example.com')).toBe(true);
+    expect(isProxyConfiguredForUrl({ ALL_PROXY: 'socks5://127.0.0.1:1080', HTTPS_PROXY: 'http://p:3128' }, 'http://example.com')).toBe(false);
   });
 
   it('resolves NO_PROXY with loopback protection and wildcard passthrough', () => {

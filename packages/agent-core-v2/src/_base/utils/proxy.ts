@@ -85,6 +85,18 @@ export function isProxyConfigured(env: Env): boolean {
   return hasHttpProxy(env) || resolveSocksProxy(env) !== undefined;
 }
 
+export function isProxyConfiguredForUrl(env: Env, input: string): boolean {
+  const url = new URL(input);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+  const port = url.port !== '' ? url.port : url.protocol === 'https:' ? '443' : '80';
+  if (makeNoProxyMatcher(resolveNoProxy(env))(url.hostname, port)) return false;
+  if (hasHttpProxy(env)) {
+    const { httpProxy, httpsProxy } = resolveHttpProxyUrls(env);
+    return url.protocol === 'http:' ? httpProxy !== undefined : httpsProxy !== undefined;
+  }
+  return resolveSocksProxy(env) !== undefined;
+}
+
 export function resolveNoProxy(env: Env): string {
   const raw = [env['no_proxy'], env['NO_PROXY']].find((value) => (value?.trim() ?? '').length > 0) ?? '';
   const hosts = raw

@@ -2,7 +2,7 @@ import { lookup as callbackLookup, type LookupAddress, type LookupOptions } from
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 
-import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '@moonshot-ai/agent-core-v2/_base/utils/proxy';
+import { isProxyConfiguredForUrl } from '@moonshot-ai/agent-core-v2/_base/utils/proxy';
 import { Agent, type Dispatcher } from 'undici';
 
 const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -152,11 +152,9 @@ function isBlockedAddress(address: string): boolean {
   return BLOCKED_ADDRESSES.check(normalized, 'ipv6');
 }
 
-function pinnedDispatcherFor(target: RemoteImageTarget, dispatchers: Dispatcher[]): Dispatcher | undefined {
+function pinnedDispatcherFor(target: RemoteImageTarget & { readonly url: string }, dispatchers: Dispatcher[]): Dispatcher | undefined {
   if (target.addresses === undefined) return undefined;
-  if (isProxyConfigured(process.env) && !makeNoProxyMatcher(resolveNoProxy(process.env))(target.host, target.port)) {
-    return undefined;
-  }
+  if (isProxyConfiguredForUrl(process.env, target.url)) return undefined;
   const dispatcher = new Agent({
     connect: { lookup: pinnedLookup(target.host, target.addresses) },
   });

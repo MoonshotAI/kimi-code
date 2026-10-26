@@ -59,6 +59,22 @@ describe('remote image network boundaries', () => {
     expect(dispatchers[1]).not.toBeUndefined();
   });
 
+  it('retains DNS pinning when the proxy does not cover the URL scheme', async () => {
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example.test');
+    const dispatchers: unknown[] = [];
+    const options = {
+      lookupImpl: async () => [{ address: '192.168.1.10', family: 4 as const }],
+      fetchImpl: successfulFetch(dispatchers),
+    };
+
+    await fetchRemoteImage('http://images.example.test/pic.png', options);
+    await fetchRemoteImage('https://images.example.test/pic.png', options);
+
+    expect(dispatchers).toHaveLength(2);
+    expect(dispatchers[0]).not.toBeUndefined();
+    expect(dispatchers[1]).toBeUndefined();
+  });
+
   it('rejects mixed DNS results before making a request', async () => {
     const fetchImpl = vi.fn();
     await expect(
