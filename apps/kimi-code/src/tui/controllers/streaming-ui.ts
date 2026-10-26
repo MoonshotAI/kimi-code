@@ -193,6 +193,18 @@ export class StreamingUIController {
     }
   }
 
+  /** Drops a tool call together with its card, as if it had never rendered. */
+  discardToolCall(toolCallId: string): void {
+    const component = this._pendingToolComponents.get(toolCallId);
+    this._pendingToolComponents.delete(toolCallId);
+    this._activeToolCalls.delete(toolCallId);
+    if (component === undefined) return;
+    const children = this.host.state.transcriptContainer.children;
+    const index = children.indexOf(component);
+    if (index >= 0) children.splice(index, 1);
+    this.host.state.ui.requestRender();
+  }
+
   /**
    * Push the actual terminal status of a background agent task into the
    * matching `Agent` tool call component so its snapshot phase no longer
