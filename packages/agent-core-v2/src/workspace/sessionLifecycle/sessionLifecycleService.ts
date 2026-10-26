@@ -31,6 +31,7 @@ import { CHILD_SESSION_KIND,
   ISessionIndex,
   ISessionIndexMirror,
   PARENT_SESSION_ID_KEY,
+  isSafeSessionId,
 } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import type { SessionEndedEvent } from '#/app/telemetry/events';
@@ -209,6 +210,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
+    if (opts.sessionId !== undefined && !isSafeSessionId(opts.sessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${opts.sessionId}"`);
+    }
     const sessionId = opts.sessionId ?? createSessionId();
     await this.workspaceSkillCatalog
       .reloadSources(SESSION_CREATE_RELOAD_SKILL_SOURCES)
@@ -523,6 +527,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   async fork(opts: ForkSessionOptions): Promise<SessionMeta> {
     const sourceId = opts.sourceSessionId;
+    if (!isSafeSessionId(sourceId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${sourceId}"`);
+    }
+    if (opts.newSessionId !== undefined && !isSafeSessionId(opts.newSessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${opts.newSessionId}"`);
+    }
 
     const sourceHandle = this.sessions.get(sourceId);
     const indexSummary = await this.index.get(sourceId);

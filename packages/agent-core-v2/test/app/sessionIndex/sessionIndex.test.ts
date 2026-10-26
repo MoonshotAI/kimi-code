@@ -20,6 +20,7 @@ import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemet
 import {
   ISessionIndex,
   ISessionIndexMirror,
+  isSafeSessionId,
   type SessionSummary,
 } from '#/app/sessionIndex/sessionIndex';
 import {
@@ -583,6 +584,50 @@ describe('FileSessionIndex (read model)', () => {
     expect(fileStorage.listCalls).toBe(0);
   });
 
+  it('coalesces a workspace-scoped miss onto the authoritative directory', async () => {
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+    await seedSession('legacy', { workDir: WORK_DIR, createdAt: 1, updatedAt: 2 });
+
+    const page = await store.listRecent({ workspaceIds: [workspaceId] });
+    expect(page.items.map((s) => s.id)).toEqual(['legacy']);
+    expect(page.items[0]).toMatchObject({ cwd: WORK_DIR });
+  });
+
+  it('does not scan outside the storage root when workspaceIds contains path traversal', async () => {
+    const outsideMetaDir = join(homeDir, 'outside', 'evil', 'session-meta');
+    await fsp.mkdir(outsideMetaDir, { recursive: true });
+    await fsp.writeFile(
+      join(outsideMetaDir, 'state.json'),
+      JSON.stringify({ workDir: '/tmp', createdAt: 1, updatedAt: 2 }),
+    );
+
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+
+    const page = await store.listRecent({ workspaceIds: ['../outside'] });
+    expect(page.items).toEqual([]);
+    expect(await store.count({ workspaceIds: ['../outside'] })).toBe(0);
+
+    const rawStore = build();
+    expect(await rawStore.count({ workspaceIds: ['../outside'] })).toBe(0);
+    expect((await rawStore.listRecent({ workspaceIds: ['../outside'] })).items).toEqual([]);
+  });
+
+  it('skips fallback when cursor is invalid or absent', async () => {
+    const store = build();
+    await store.prepare();
+    store.stopReconcileLoop();
+
+    const unsafePage = await store.listRecent({ workspaceIds: [workspaceId], before: '../../outside' });
+    expect(unsafePage.items).toEqual([]);
+
+    const missingPage = await store.listRecent({ workspaceIds: [workspaceId], before: 'non-existent' });
+    expect(missingPage.items).toEqual([]);
+  });
+
   it('paginates exactly through same-millisecond ties', async () => {
     const specs: [string, number][] = [
       ['a', 100],
@@ -749,6 +794,98 @@ describe('FileSessionIndex (read model)', () => {
 
     const unknown = await store.listRecent({ workspaceIds: [workspaceId], before: 'missing' });
     expect(unknown.items).toEqual([]);
+  });
+
+  it('resolves a cursor even when the cached row has a malformed cwd', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 100 });
+    const store = build();
+    await store.prepare();
+    await queryStore.put(
+      sessionCollection(1),
+      'b',
+      {
+        id: 'b',
+        workspaceId,
+        title: 'b',
+        createdAt: 2,
+        updatedAt: 4,
+        archived: false,
+        cwd: '',
+      },
+      { columns: { [recencyColumn(1)]: 4 } },
+    );
+
+    const rest = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 5,
+      before: 'b',
+    });
+    expect(rest.items.map((s) => s.id)).toEqual(['a']);
+  });
+
+  it('excludes healed cursors from their own after page', async () => {
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { createdAt: 2, updatedAt: 100 });
+    await seedSession('c', { createdAt: 3, updatedAt: 200 });
+    const store = build();
+    await store.prepare();
+    await queryStore.put(
+      sessionCollection(1),
+      'b',
+      {
+        id: 'b',
+        workspaceId,
+        title: 'b',
+        createdAt: 2,
+        updatedAt: 4,
+        archived: false,
+        cwd: '',
+      },
+      { columns: { [recencyColumn(1)]: 4 } },
+    );
+
+    const page = await store.listRecent({
+      workspaceIds: [workspaceId],
+      limit: 5,
+      after: 'b',
+    });
+    expect(page.items.map((s) => s.id)).toEqual(['c']);
+    expect(page.items.find((s) => s.id === 'b')).toBeUndefined();
+  });
+
+  it('validates safe session ids', () => {
+    expect(isSafeSessionId('session-123')).toBe(true);
+    expect(isSafeSessionId('')).toBe(false);
+    expect(isSafeSessionId('.')).toBe(false);
+    expect(isSafeSessionId('..')).toBe(false);
+    expect(isSafeSessionId('a/b')).toBe(false);
+    expect(isSafeSessionId('a\\b')).toBe(false);
+    expect(isSafeSessionId('a\0b')).toBe(false);
+  });
+
+  it('rejects path traversal in cursor id and session id queries', async () => {
+    const outsideMetaDir = join(homeDir, 'outside', 'evil', 'session-meta');
+    await fsp.mkdir(outsideMetaDir, { recursive: true });
+    await fsp.writeFile(
+      join(outsideMetaDir, 'state.json'),
+      JSON.stringify({ workDir: '/tmp', createdAt: 1, updatedAt: 2 }),
+    );
+
+    const store = build();
+    await store.prepare();
+
+    expect(await store.get('../../outside/evil')).toBeUndefined();
+    const pageBefore = await store.listRecent({
+      workspaceIds: [workspaceId],
+      before: '../../outside/evil',
+    });
+    expect(pageBefore.items).toEqual([]);
+    const pageAfter = await store.listRecent({
+      workspaceIds: [workspaceId],
+      after: '../../outside/evil',
+    });
+    expect(pageAfter.items).toEqual([]);
   });
 
   it('remove evicts a queued mirror entry so a deleted session stays unlisted', async () => {

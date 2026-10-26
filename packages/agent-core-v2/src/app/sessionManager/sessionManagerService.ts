@@ -4,7 +4,7 @@ import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
-import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { ISessionIndex, isSafeSessionId, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAgentCronService } from '#/features/cron/cronService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
@@ -73,6 +73,9 @@ export class SessionManager implements ISessionManager {
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
+    if (options.sessionId !== undefined && !isSafeSessionId(options.sessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${options.sessionId}"`);
+    }
     const create = async () => {
       const entry = await this.controllerForWorkspace(
         options.workspaceId === undefined
@@ -260,6 +263,12 @@ export class SessionManager implements ISessionManager {
   }
 
   async fork(options: ForkSessionOptions): Promise<SessionMeta> {
+    if (!isSafeSessionId(options.sourceSessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${options.sourceSessionId}"`);
+    }
+    if (options.newSessionId !== undefined && !isSafeSessionId(options.newSessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${options.newSessionId}"`);
+    }
     return this.serializeLifecycleForKeys(
       this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
       async () => {
@@ -276,6 +285,12 @@ export class SessionManager implements ISessionManager {
   }
 
   async createChild(options: CreateChildSessionOptions): Promise<SessionMeta> {
+    if (!isSafeSessionId(options.sourceSessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${options.sourceSessionId}"`);
+    }
+    if (options.newSessionId !== undefined && !isSafeSessionId(options.newSessionId)) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, `Invalid session id "${options.newSessionId}"`);
+    }
     return this.serializeLifecycleForKeys(
       this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
       async () => {
