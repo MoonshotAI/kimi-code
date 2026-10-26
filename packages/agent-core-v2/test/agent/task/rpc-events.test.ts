@@ -11,8 +11,11 @@ import {
   type AgentTaskInfo,
   IAgentTaskService,
 } from '#/agent/task/task';
+import { TaskOutputTool } from '#/agent/tools/task/task-output/taskOutputTool';
 import { TaskStopTool } from '#/agent/tools/task/task-stop/taskStopTool';
 import {
+  NO_PARTIAL_OUTPUT,
+  PARTIAL_OUTPUT_NOTICE,
   SubagentTask,
   type SubagentHandle,
 } from '#/agent/tools/agent/subagent-task';
@@ -91,12 +94,14 @@ function agentTask(
     readonly subagentType?: string;
     readonly abortController?: AbortController;
     readonly timeoutMs?: number;
+    readonly partialOutput?: () => string;
   } = {},
 ): SubagentTask {
   const handle: SubagentHandle = {
     agentId: options.agentId ?? 'agent-child',
     profileName: options.subagentType ?? 'coder',
     completion,
+    partialOutput: options.partialOutput,
   };
   const task = new SubagentTask(
     handle,
@@ -300,6 +305,29 @@ function registerProcess(
   description: string,
 ): string {
   return manager.registerTask(new ProcessTask(proc, command, description));
+}
+
+const STOPPED_AGENT_FINDING = '已定位 src/parser.ts:42 的循环条件，尚未执行验证。';
+
+function registerStoppableAgent(
+  manager: IAgentTaskService,
+  partialOutput: () => string,
+  onAbort: (signal: AbortSignal) => Promise<{ result: string }> = (signal) =>
+    Promise.reject(signal.reason),
+): string {
+  const abortController = new AbortController();
+  const completion = new Promise<{ result: string }>((resolve, reject) => {
+    abortController.signal.addEventListener(
+      'abort',
+      () => {
+        onAbort(abortController.signal).then(resolve, reject);
+      },
+      { once: true },
+    );
+  });
+  return manager.registerTask(
+    agentTask(completion, 'trace parser loop', { abortController, partialOutput }),
+  );
 }
 
 describe('AgentTaskService — event emission', () => {
@@ -731,6 +759,98 @@ describe('AgentTaskService — notification delivery', () => {
 
       expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
       expect(readerFixture.ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
+    } finally {
+      if (readerFixture !== undefined) {
+        await readerFixture.ctx.dispose();
+      }
+      await cleanupSessionDir(sessionDir, writerFixture);
+    }
+  });
+
+  it('TaskStopTool hands back a stopped agent task partial output once without notifying', async () => {
+    const { agent, ctx, manager } = createAgentTaskService();
+    const taskId = registerStoppableAgent(manager, () => STOPPED_AGENT_FINDING);
+    const tool = new TaskStopTool(manager);
+
+    const output = outputString(
+      await executeTool(tool, toolContext('task_stop_agent', { task_id: taskId })),
+    );
+    const again = outputString(
+      await executeTool(tool, toolContext('task_stop_agent_again', { task_id: taskId })),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(output).toContain('status: killed');
+    expect(output).toContain('reason: Stopped by TaskStop');
+    expect(output).toContain('agent_id: agent-child');
+    expect(output).toMatch(/^output_path: \S+$/m);
+    expect(output).toContain(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
+    expect(output).toContain('resume_hint: To continue this subagent from where it stopped, call Agent(resume="agent-child"');
+    expect(again).toContain('status: killed');
+    expect(again).not.toContain(STOPPED_AGENT_FINDING);
+    const snapshot = await manager.getOutputSnapshot(taskId, 64 * 1024);
+    expect(snapshot.preview).toBe(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
+    expect(notifiedCount(ctx)).toBe(0);
+    expect(agent.context.appendUserMessage).not.toHaveBeenCalled();
+    expect(ctx.get(IAgentLoopService).snapshot().hasPendingRequests).toBe(false);
+  });
+
+  it('TaskStopTool says when a stopped agent task wrote no text', async () => {
+    const { manager } = createAgentTaskService();
+    const taskId = registerStoppableAgent(manager, () => '   ');
+
+    const output = outputString(
+      await executeTool(new TaskStopTool(manager), toolContext('task_stop_empty', { task_id: taskId })),
+    );
+
+    expect(output).toContain('status: killed');
+    expect(output).toContain(NO_PARTIAL_OUTPUT);
+    expect(output).not.toContain(PARTIAL_OUTPUT_NOTICE);
+    expect((await manager.getOutputSnapshot(taskId, 1024)).outputSizeBytes).toBe(0);
+  });
+
+  it('TaskStopTool keeps the full result when the agent completes before the stop lands', async () => {
+    const { manager } = createAgentTaskService();
+    const taskId = registerStoppableAgent(
+      manager,
+      () => STOPPED_AGENT_FINDING,
+      () => Promise.resolve({ result: 'Final report: the loop never advances.' }),
+    );
+
+    const output = outputString(
+      await executeTool(new TaskStopTool(manager), toolContext('task_stop_race', { task_id: taskId })),
+    );
+
+    expect(output).toContain('status: completed');
+    expect(output).toContain('Final report: the loop never advances.');
+    expect(output).not.toContain(PARTIAL_OUTPUT_NOTICE);
+    expect(output).not.toContain(STOPPED_AGENT_FINDING);
+  });
+
+  it('keeps a stopped agent task partial output readable after reload', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-agent-partial-'));
+    let writerFixture: TaskServiceFixture | undefined;
+    let readerFixture: TaskServiceFixture | undefined;
+    try {
+      writerFixture = createAgentTaskService({ sessionDir });
+      const taskId = registerStoppableAgent(writerFixture.manager, () => STOPPED_AGENT_FINDING);
+      await executeTool(
+        new TaskStopTool(writerFixture.manager),
+        toolContext('task_stop_reload', { task_id: taskId }),
+      );
+
+      readerFixture = createAgentTaskService({ sessionDir });
+      await readerFixture.manager.loadFromDisk();
+      const output = outputString(
+        await executeTool(
+          new TaskOutputTool(readerFixture.manager),
+          toolContext('task_output_reload', { task_id: taskId }),
+        ),
+      );
+
+      expect(output).toContain('status: killed');
+      expect(output).toContain('full_output_available: true');
+      expect(output).toContain(`${PARTIAL_OUTPUT_NOTICE}\n\n${STOPPED_AGENT_FINDING}`);
     } finally {
       if (readerFixture !== undefined) {
         await readerFixture.ctx.dispose();
