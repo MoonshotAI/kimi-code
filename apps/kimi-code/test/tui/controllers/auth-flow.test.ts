@@ -42,6 +42,7 @@ function makeHost(
         models: { k2: { provider: 'managed:kimi-code', model: 'kimi-k2', maxContextSize: 200_000 } },
         providers: {},
       })),
+      auth: { getCachedAccessToken: vi.fn(async () => 'test-token') },
     },
     options: { startup: {} },
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(appState, patch)),
@@ -54,6 +55,7 @@ function makeHost(
     syncRuntimeState: vi.fn(async () => {}),
     appendStartupNotice: vi.fn(),
     hydrateLazyConfigDefaults: vi.fn(async () => {}),
+    waitForSessionAssembly: vi.fn(async () => {}),
     sessionEventHandler: { startSubscription: vi.fn() },
     fetchSessions: vi.fn(async () => {}),
     updateTerminalTitle: vi.fn(),
@@ -218,6 +220,26 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
     expect(result).toBe('gated');
     expect(session!.setModel).not.toHaveBeenCalled();
     expect(mountEditorReplacement).toHaveBeenCalledTimes(1);
+  });
+
+  it('hydrates non-model defaults and uses the target effort after a session-less confirmation', async () => {
+    const { host, appState, mountEditorReplacement } = await makeGateHost({
+      withSession: false,
+      sessionType: 'new',
+    });
+
+    const result = await new AuthFlowController(host).refreshConfigAfterLogin();
+
+    expect(result).toBe('gated');
+    expect(host.hydrateLazyConfigDefaults).toHaveBeenCalledWith(false);
+    expect(appState.model).toBe('old-model');
+    const dialog = mountEditorReplacement.mock.calls[0]?.[0] as unknown as {
+      opts: { onSelect: (action: string) => void };
+    };
+    dialog.opts.onSelect('continue');
+    await vi.waitFor(() => {
+      expect(appState).toMatchObject({ model: 'k2', thinkingEffort: 'high', lazySessionThinking: 'high' });
+    });
   });
 
   it('forwards the caller picked effort to the gated dialog', async () => {
