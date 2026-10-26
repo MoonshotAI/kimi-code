@@ -761,10 +761,12 @@ describe('`kimi web` option threading', () => {
 });
 
 describe('`kimi web` foreground shutdown', () => {
-  it('passes no fresh budget to host telemetry after engine shutdown expires', async () => {
+  it('preserves server errors while sharing the telemetry deadline', async () => {
     vi.resetModules();
     const startServer = vi.fn();
-    const shutdownTelemetry = vi.fn(async () => {});
+    const shutdownTelemetry = vi.fn(async () => {
+      throw new Error('host telemetry unavailable');
+    });
     const logger = { info: vi.fn(), error: vi.fn() };
     vi.doMock('@moonshot-ai/kap-server', async () => {
       const actual = await vi.importActual<typeof import('@moonshot-ai/kap-server')>(
@@ -832,6 +834,12 @@ describe('`kimi web` foreground shutdown', () => {
       expect(logger.error).toHaveBeenCalledWith(
         expect.objectContaining({
           err: expect.objectContaining({ message: 'engine telemetry unavailable' }),
+        }),
+        'server shutdown error',
+      );
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          err: expect.objectContaining({ message: 'host telemetry unavailable' }),
         }),
         'telemetry shutdown error',
       );

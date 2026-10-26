@@ -362,11 +362,16 @@ async function runServerInProcess(
         );
       },
     );
-    await telemetryDeadline.run(async () =>
-      running?.close({
+    try {
+      await running?.close({
         telemetryDeadlineMs: telemetryDeadline.expiresAtMs,
-      }),
-    );
+      });
+    } catch (error) {
+      running?.logger.error(
+        { err: error instanceof Error ? error : new Error(String(error)) },
+        'server shutdown error',
+      );
+    }
     await telemetryDeadline.run((remainingMs) =>
       shutdownTelemetry({ timeoutMs: remainingMs }),
     );
