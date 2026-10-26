@@ -13,10 +13,7 @@ import type { RawData, WebSocket } from 'ws';
 
 import type { CredentialValidator } from '../../../services/auth/credentials';
 import type { IConnectionRegistry } from '../connectionRegistry';
-import {
-  type EventEnvelope,
-  type JournalLogger,
-} from './sessionEventJournal';
+import { type JournalLogger } from './sessionEventJournal';
 import {
   buildAck,
   buildPing,
@@ -26,6 +23,7 @@ import {
 import {
   type AgentFilter,
   type BroadcastDelivery,
+  type BroadcastFrame,
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
@@ -139,9 +137,9 @@ export class WsConnectionV1 implements BroadcastTarget {
     return Array.from(this.subscriptions.keys()).toSorted();
   }
 
-  send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
-    if (delivery === 'immediate') this.sendImmediateFrame(envelope);
-    else this.sendSubscribedFrame(envelope);
+  send(frame: BroadcastFrame, delivery: BroadcastDelivery = 'subscription'): void {
+    if (delivery === 'immediate') this.sendImmediateFrame(frame);
+    else this.sendSubscribedFrame(frame);
   }
 
   private onMessage(data: RawData): void {

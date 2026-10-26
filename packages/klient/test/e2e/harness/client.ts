@@ -23,13 +23,12 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { ApprovalResponse } from '@moonshot-ai/kap-server/protocol/approval';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
-import type { QuestionResponse } from '@moonshot-ai/kap-server/protocol/question';
 import type {
-  ApprovalResolveResult,
-  ListPendingApprovalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-approval';
+  InteractionRespondRequest,
+  InteractionRespondResult,
+} from '@moonshot-ai/kap-server/protocol/interaction';
+import type { ListPendingApprovalsResponse } from '@moonshot-ai/kap-server/protocol/rest-approval';
 import type {
   ListModelsResponse,
   ListProvidersResponse,
@@ -43,10 +42,7 @@ import type {
   PromptSubmitResult,
   PromptThinking,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
-import type {
-  ListPendingQuestionsResponse,
-  QuestionResolveResult,
-} from '@moonshot-ai/kap-server/protocol/rest-question';
+import type { ListPendingQuestionsResponse } from '@moonshot-ai/kap-server/protocol/rest-question';
 import type {
   CompactSessionRequest,
   CompactSessionResponse,
@@ -295,31 +291,18 @@ export class DaemonClient {
   abortSession(sid: string): Promise<SessionAbortResponse> {
     return this.http.abortSession(sid);
   }
-  resolveApproval(
+  respondInteraction(
     sid: string,
-    aid: string,
-    body: ApprovalResponse,
-  ): Promise<ApprovalResolveResult> {
-    return this.http.resolveApproval(sid, aid, body);
+    interactionId: string,
+    body: InteractionRespondRequest,
+  ): Promise<InteractionRespondResult> {
+    return this.http.respondInteraction(sid, interactionId, body);
   }
   listPendingApprovals(sid: string): Promise<ListPendingApprovalsResponse> {
     return this.http.listPendingApprovals(sid);
   }
-  resolveQuestion(
-    sid: string,
-    qid: string,
-    body: QuestionResponse,
-  ): Promise<QuestionResolveResult> {
-    return this.http.resolveQuestion(sid, qid, body);
-  }
   listPendingQuestions(sid: string): Promise<ListPendingQuestionsResponse> {
     return this.http.listPendingQuestions(sid);
-  }
-  dismissQuestion(
-    sid: string,
-    qid: string,
-  ): Promise<{ dismissed: true; dismissed_at: string }> {
-    return this.http.dismissQuestion(sid, qid);
   }
 
   // ── WS lifecycle ────────────────────────────────────────────────────────

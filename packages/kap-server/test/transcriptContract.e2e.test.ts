@@ -438,9 +438,9 @@ describe('transcript contract e2e', () => {
     expect((approval.request as any)?.toolName).toBe('Bash');
     expect(mid.meta.agent).toBeDefined();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approval.interactionId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.interactionId)}`, {
       method: 'POST',
-      body: { decision: 'approved' },
+      body: { kind: 'approval', decision: 'approved' },
     });
     await idle(server!, base, sid);
 
@@ -501,9 +501,9 @@ describe('transcript contract e2e', () => {
     expect(mid.interactions.some((x: any) => x.interactionId === approvalId && x.state === 'pending')).toBe(true);
     expect(await planService.status()).not.toBeNull();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approvalId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approvalId)}`, {
       method: 'POST',
-      body: response,
+      body: { kind: 'approval', ...response },
     });
     await idleOrDump(server!, base, sid);
 

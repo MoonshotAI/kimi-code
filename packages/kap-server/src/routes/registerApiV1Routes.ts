@@ -21,6 +21,7 @@ import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
+import { registerInteractionsRoutes } from './interactions';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
@@ -168,6 +169,10 @@ export async function registerApiV1Routes(
       );
       registerQuestionsRoutes(
         apiV1 as unknown as Parameters<typeof registerQuestionsRoutes>[0],
+        core,
+      );
+      registerInteractionsRoutes(
+        apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
         core,
       );
       registerPromptsRoutes(

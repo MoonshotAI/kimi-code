@@ -8,6 +8,8 @@ import type {
   IDisposable,
   Interaction,
   ISessionScopeHandle,
+  QuestionResponse,
+  QuestionResult,
   Scope,
   SessionActivityState,
   Workspace,
@@ -62,7 +64,8 @@ import {
   type TranscriptStore,
 } from '@moonshot-ai/transcript';
 
-import { interactionAgentId } from '../../../routes/approvals';
+import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
+import { approvalExpiresAt, interactionAgentId } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
@@ -100,8 +103,10 @@ export interface SessionSnapshotState {
 
 export type BroadcastDelivery = 'subscription' | 'immediate';
 
+export type BroadcastFrame = EventEnvelope | InteractionEventMessage;
+
 export interface BroadcastTarget {
-  send(envelope: EventEnvelope, delivery?: BroadcastDelivery): void;
+  send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
 }
 
 export type AgentFilter = ReadonlySet<string> | undefined;
@@ -1142,15 +1147,8 @@ export class SessionEventBroadcaster {
     const state = this.sessions.get(sessionId);
     if (state === undefined || state.detached === true) return;
     for (const interaction of pendingInteractionsOf(sessionId)) {
-      const event = interactionEvent(interaction, sessionId);
-      if (event === undefined) continue;
-      target.send(
-        this.buildEnvelope(state.journal.seq, sessionId, event, {
-          epoch: state.journal.epoch,
-          volatile: true,
-        }),
-        'immediate',
-      );
+      const message = interactionMessage(interaction, sessionId);
+      if (message !== undefined) target.send(message, 'immediate');
     }
   }
 
@@ -1167,7 +1165,7 @@ export class SessionEventBroadcaster {
           for (const i of pendingInteractionsOf(sessionId)) {
             if (state.knownInteractions.has(i.id)) continue;
             state.knownInteractions.set(i.id, i);
-            this.enqueueInteraction(state, interactionEvent(i, sessionId));
+            this.enqueueInteraction(state, interactionMessage(i, sessionId));
           }
         }),
       ),
@@ -1176,17 +1174,22 @@ export class SessionEventBroadcaster {
           const known = state.knownInteractions.get(id);
           if (known === undefined) return;
           state.knownInteractions.delete(id);
-          this.enqueueInteraction(state, interactionEvent(known, sessionId, { response }));
+          this.enqueueInteraction(state, interactionMessage(known, sessionId, { response }));
         }),
       ),
     );
   }
 
-  private enqueueInteraction(state: SessionState, event: Event | undefined): void {
-    if (event === undefined) return;
-    state.queue = state.queue
-      .then(() => this.dispatch(state, event, true))
-      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
+  private enqueueInteraction(state: SessionState, message: InteractionEventMessage | undefined): void {
+    if (message === undefined) return;
+    state.queue = state.queue.then(() => {
+      for (const target of state.targets.keys()) {
+        try {
+          target.send(message);
+        } catch {
+        }
+      }
+    });
   }
 
   private enqueueDurable(state: SessionState, event: Event): void {
@@ -1423,8 +1426,6 @@ function suppressedByTranscript(
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
-type InteractionOutcome = 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed';
-
 function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
   return interactions.findAll({
     resolved: false,
@@ -1432,31 +1433,48 @@ function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
   });
 }
 
-function interactionEvent(
+function interactionMessage(
   interaction: Interaction,
   sessionId: string,
   resolution?: { readonly response: unknown },
-): Event | undefined {
+): InteractionEventMessage | undefined {
   const kind = interaction.kind;
   if (kind !== 'approval' && kind !== 'question') return undefined;
+  const now = new Date().toISOString();
   const outcome =
     resolution === undefined ? undefined : interactionOutcome(kind, resolution.response);
-  return {
-    type: 'interaction',
+  const common = {
+    type: 'interaction' as const,
+    session_id: sessionId,
     agent_id: interactionAgentId(interaction),
+    event_created_at: now,
     interaction_id: interaction.id,
-    kind,
-    status: outcome === undefined ? 'pending' : 'ended',
+    status: outcome === undefined ? ('pending' as const) : ('ended' as const),
     outcome,
-    ended_at: outcome === undefined ? undefined : new Date().toISOString(),
+    ended_at: outcome === undefined ? undefined : now,
     tool_call_id: interactionToolCallId(interaction),
-    request:
-      kind === 'approval'
-        ? approvalRequestOf(interaction)
-        : { questions: toWireQuestion(interaction, sessionId).questions },
-    response:
-      outcome === undefined ? undefined : interactionResponse(kind, outcome, resolution?.response),
-  } as unknown as Event;
+  };
+  if (kind === 'approval') {
+    const request = interaction.payload as ApprovalRequest;
+    return {
+      ...common,
+      kind,
+      request: {
+        tool_name: request.toolName,
+        action: request.action,
+        tool_input_display: request.display,
+        expires_at: approvalExpiresAt(interaction),
+      },
+      response:
+        outcome === undefined ? undefined : approvalResponseOf(outcome, resolution?.response),
+    };
+  }
+  return {
+    ...common,
+    kind,
+    request: { questions: toWireQuestion(interaction, sessionId).questions },
+    response: outcome === 'answered' ? questionResponseOf(resolution?.response) : undefined,
+  };
 }
 
 function interactionOutcome(kind: 'approval' | 'question', response: unknown): InteractionOutcome {
@@ -1474,32 +1492,29 @@ function interactionToolCallId(interaction: Interaction): string | undefined {
   return typeof fromPayload === 'string' ? fromPayload : undefined;
 }
 
-function approvalRequestOf(interaction: Interaction): Record<string, unknown> {
-  const request = interaction.payload as ApprovalRequest;
+function approvalResponseOf(
+  outcome: InteractionOutcome,
+  response: unknown,
+): Extract<InteractionEventMessage, { kind: 'approval' }>['response'] {
+  const r = (response ?? {}) as Partial<ApprovalResponse>;
   return {
-    tool_name: request.toolName,
-    action: request.action,
-    tool_input_display: request.display,
+    decision: outcome === 'approved' || outcome === 'rejected' ? outcome : 'cancelled',
+    scope: r.scope,
+    feedback: r.feedback,
+    selected_label: r.selectedLabel,
   };
 }
 
-function interactionResponse(
-  kind: 'approval' | 'question',
-  outcome: InteractionOutcome,
+function questionResponseOf(
   response: unknown,
-): Record<string, unknown> | undefined {
-  if (kind === 'approval') {
-    const r = (response ?? {}) as Partial<ApprovalResponse>;
-    return {
-      decision: outcome,
-      scope: r.scope,
-      feedback: r.feedback,
-      selected_label: r.selectedLabel,
-    };
-  }
-  if (outcome !== 'answered') return undefined;
-  const r = response as { answers?: unknown; method?: unknown };
-  return { answers: r.answers ?? response, method: r.method };
+): Extract<InteractionEventMessage, { kind: 'question' }>['response'] {
+  const result = response as Exclude<QuestionResult, null>;
+  if (isQuestionResponse(result)) return { answers: { ...result.answers }, method: result.method };
+  return { answers: { ...result } };
+}
+
+function isQuestionResponse(result: Exclude<QuestionResult, null>): result is QuestionResponse {
+  return typeof result.answers === 'object';
 }
 
 function sessionMetaUpdatedPayload(

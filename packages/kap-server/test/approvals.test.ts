@@ -36,9 +36,9 @@ interface ListWire {
   items: ApprovalWire[];
 }
 
-interface ResolveWire {
-  resolved: true;
-  resolved_at: string;
+interface RespondWire {
+  outcome: string;
+  ended_at: string;
 }
 
 describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
@@ -139,16 +139,17 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     expect(Number.isNaN(Date.parse(item.expires_at))).toBe(false);
   });
 
-  it('resolves a pending approval', async () => {
+  it('responds to a pending approval through the interactions route', async () => {
     const sid = await createSession();
     const aid = enqueueApproval(sid, 'tc-2');
 
-    const { body } = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+    const { body } = await postJson<RespondWire>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'approval',
       decision: 'approved',
     });
     expect(body.code).toBe(0);
-    expect(body.data.resolved).toBe(true);
-    expect(Number.isNaN(Date.parse(body.data.resolved_at))).toBe(false);
+    expect(body.data.outcome).toBe('approved');
+    expect(Number.isNaN(Date.parse(body.data.ended_at))).toBe(false);
 
     const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
     expect(listed.body.data.items).toHaveLength(0);
@@ -157,20 +158,35 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
   it('returns 40902 on a duplicate resolve (recently-resolved window)', async () => {
     const sid = await createSession();
     const aid = enqueueApproval(sid, 'tc-3');
-    await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+    await postJson<RespondWire>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'approval',
       decision: 'approved',
     });
 
-    const dup = await postJson<{ resolved: false }>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+    const dup = await postJson<null>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'approval',
       decision: 'approved',
     });
     expect(dup.body.code).toBe(40902);
-    expect(dup.body.data).toEqual({ resolved: false });
   });
 
-  it('returns 40404 for an unknown approval id', async () => {
+  it('returns 40001 when the body kind does not match the interaction', async () => {
     const sid = await createSession();
-    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/approvals/nope`, {
+    const aid = enqueueApproval(sid, 'tc-kind');
+    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+      kind: 'question',
+      dismissed: true,
+    });
+    expect(body.code).toBe(40001);
+
+    const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/approvals?status=pending`);
+    expect(listed.body.data.items).toHaveLength(1);
+  });
+
+  it('returns 40404 for an unknown interaction id', async () => {
+    const sid = await createSession();
+    const { body } = await postJson<null>(`/api/v1/sessions/${sid}/interactions/nope`, {
+      kind: 'approval',
       decision: 'rejected',
     });
     expect(body.code).toBe(40404);
@@ -187,7 +203,8 @@ describe('server-v2 /api/v1/sessions/{sid}/approvals', () => {
     expect(body.data.items.every((i) => i.tool_call_id === 'Bash_0')).toBe(true);
 
     for (const aid of [first, second]) {
-      const resolved = await postJson<ResolveWire>(`/api/v1/sessions/${sid}/approvals/${aid}`, {
+      const resolved = await postJson<RespondWire>(`/api/v1/sessions/${sid}/interactions/${aid}`, {
+        kind: 'approval',
         decision: 'approved',
       });
       expect(resolved.body.code).toBe(0);

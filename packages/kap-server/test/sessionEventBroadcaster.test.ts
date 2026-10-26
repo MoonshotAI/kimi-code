@@ -44,6 +44,10 @@ import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loo
 import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  interactionEventMessageSchema,
+  type InteractionEventMessage,
+} from '../src/protocol/interaction';
 import { sessionEventMessageSchema } from '../src/protocol/ws-control';
 import {
   type BroadcastDelivery,
@@ -488,25 +492,28 @@ function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEve
   return { type, ...extra } as unknown as AgentEvent;
 }
 
-function interactionFrames(envelopes: readonly EventEnvelope[]): EventEnvelope[] {
-  return envelopes.filter((e) => e.type === 'interaction');
-}
-
 function collectingTarget(): {
   target: BroadcastTarget;
   envelopes: EventEnvelope[];
+  interactionMessages: InteractionEventMessage[];
   deliveries: BroadcastDelivery[];
 } {
   const envelopes: EventEnvelope[] = [];
+  const interactionMessages: InteractionEventMessage[] = [];
   const deliveries: BroadcastDelivery[] = [];
   return {
     target: {
-      send: (envelope, delivery = 'subscription') => {
-        envelopes.push(envelope);
+      send: (frame, delivery = 'subscription') => {
+        if (frame.type === 'interaction' && !('payload' in frame)) {
+          interactionMessages.push(frame);
+        } else {
+          envelopes.push(frame as EventEnvelope);
+        }
         deliveries.push(delivery);
       },
     },
     envelopes,
+    interactionMessages,
     deliveries,
   };
 }
@@ -2139,7 +2146,7 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
+    const { target, interactionMessages } = collectingTarget();
     await bc.subscribe('s1', target);
 
     interactions.enqueue({
@@ -2154,11 +2161,15 @@ describe('SessionEventBroadcaster', () => {
     interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
     await bc.getCursor('s1');
 
-    const frames = interactionFrames(envelopes);
-    expect(frames.every((e) => e.volatile === true && e.session_id === 's1')).toBe(true);
-    expect(frames.map((e) => e.payload)).toMatchObject([
+    for (const message of interactionMessages) {
+      expect(interactionEventMessageSchema.parse(message)).toEqual(
+        JSON.parse(JSON.stringify(message)),
+      );
+    }
+    expect(interactionMessages).toMatchObject([
       {
         type: 'interaction',
+        session_id: 's1',
         agent_id: 'main',
         interaction_id: 'q1',
         kind: 'question',
@@ -2184,7 +2195,8 @@ describe('SessionEventBroadcaster', () => {
         response: { answers: { q_0: 'opt_0_0' }, method: 'enter' },
       },
     ]);
-    expect((frames[1]!.payload as { ended_at?: unknown }).ended_at).toBeTypeOf('string');
+    expect(interactionMessages[0]!.event_created_at).toBeTypeOf('string');
+    expect(interactionMessages[1]!.ended_at).toBe(interactionMessages[1]!.event_created_at);
 
     const replay = await bc.getBufferedSince('s1', { seq: 0 });
     expect(replay.events.map((e) => e.envelope.type)).not.toContain('interaction');
@@ -2194,7 +2206,7 @@ describe('SessionEventBroadcaster', () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
+    const { target, interactionMessages } = collectingTarget();
     await bc.subscribe('s1', target);
 
     const question = { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] };
@@ -2204,21 +2216,19 @@ describe('SessionEventBroadcaster', () => {
     interactions.respond('q2', { cancelled: true, reason: 'turn_ended' });
     await bc.getCursor('s1');
 
-    const ended = interactionFrames(envelopes)
-      .map((e) => e.payload as Record<string, unknown>)
-      .filter((p) => p['status'] === 'ended');
+    const ended = interactionMessages.filter((m) => m.status === 'ended');
     expect(ended).toMatchObject([
       { interaction_id: 'q1', outcome: 'dismissed' },
       { interaction_id: 'q2', outcome: 'cancelled' },
     ]);
-    expect(ended.map((p) => p['response'])).toEqual([undefined, undefined]);
+    expect(ended.map((m) => m.response)).toEqual([undefined, undefined]);
   });
 
   it('carries the approval decision, including cancellation, on ended approvals', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
+    const { target, interactionMessages } = collectingTarget();
     await bc.subscribe('s1', target);
 
     const request = {
@@ -2233,7 +2243,7 @@ describe('SessionEventBroadcaster', () => {
     interactions.respond('a2', { cancelled: true, reason: 'agent_closed' });
     await bc.getCursor('s1');
 
-    expect(interactionFrames(envelopes).map((e) => e.payload)).toMatchObject([
+    expect(interactionMessages).toMatchObject([
       {
         interaction_id: 'a1',
         kind: 'approval',
@@ -2243,6 +2253,7 @@ describe('SessionEventBroadcaster', () => {
           tool_name: 'Bash',
           action: 'run',
           tool_input_display: { kind: 'command', command: 'ls' },
+          expires_at: expect.any(String),
         },
       },
       {
@@ -2266,7 +2277,7 @@ describe('SessionEventBroadcaster', () => {
     lc.addAgent('main');
     lc.addAgent('agent-0');
     sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
+    const { target, interactionMessages } = collectingTarget();
     await bc.subscribe('s1', target, new Set(['main']), { 'agent-0': 'delta' });
 
     interactions.enqueue({
@@ -2278,7 +2289,7 @@ describe('SessionEventBroadcaster', () => {
     interactions.respond('a-sub', { decision: 'rejected' });
     await bc.getCursor('s1');
 
-    expect(interactionFrames(envelopes).map((e) => e.payload)).toMatchObject([
+    expect(interactionMessages).toMatchObject([
       { agent_id: 'agent-0', interaction_id: 'a-sub', status: 'pending' },
       { agent_id: 'agent-0', interaction_id: 'a-sub', status: 'ended', outcome: 'rejected' },
     ]);
@@ -2330,28 +2341,27 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', asking.target);
     await bc.subscribe('s1', other.target);
     await bc.getCursor('s1');
-    expect(interactionFrames(asking.envelopes)).toHaveLength(0);
+    expect(asking.interactionMessages).toHaveLength(0);
 
     bc.sendPendingInteractions('s1', asking.target);
-    expect(interactionFrames(asking.envelopes).map((e) => e.payload)).toMatchObject([
+    expect(asking.interactionMessages).toMatchObject([
       { interaction_id: 'q0', status: 'pending' },
     ]);
     expect(asking.deliveries.at(-1)).toBe('immediate');
-    expect(asking.envelopes.at(-1)!.volatile).toBe(true);
-    expect(interactionFrames(other.envelopes)).toHaveLength(0);
+    expect(other.interactionMessages).toHaveLength(0);
 
     interactions.respond('q0', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
     for (const view of [asking, other]) {
-      expect(interactionFrames(view.envelopes).at(-1)!.payload).toMatchObject({
+      expect(view.interactionMessages.at(-1)).toMatchObject({
         interaction_id: 'q0',
         status: 'ended',
       });
     }
 
-    const before = asking.envelopes.length;
+    const before = asking.interactionMessages.length;
     bc.sendPendingInteractions('s1', asking.target);
-    expect(asking.envelopes).toHaveLength(before);
+    expect(asking.interactionMessages).toHaveLength(before);
   });
 
   it('fans out the legacy background.task.* alias alongside native task.* for v1 clients', async () => {

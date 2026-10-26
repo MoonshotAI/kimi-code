@@ -1,7 +1,7 @@
 /**
  * REST client for the pending-interactions endpoints:
- * `GET/POST {baseUrl}/api/v1/sessions/{sessionId}/approvals[/...]` and
- * `.../questions[/...]`.
+ * `GET {baseUrl}/api/v1/sessions/{sessionId}/approvals` and `.../questions`
+ * list them; `POST .../interactions/{id}` answers either kind.
  *
  * These are the only remaining surfaces for listing and answering a session's
  * pending approvals/questions: the engine's interaction kernel is a
@@ -72,7 +72,6 @@ async function call<T>(
   method: 'GET' | 'POST',
   path: string,
   body?: unknown,
-  expectedCodes: readonly number[] = [0],
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const token = opts.token?.trim();
@@ -90,7 +89,7 @@ async function call<T>(
     },
   );
   const envelope = (await res.json()) as { code: number; msg: string; data: unknown };
-  if (!expectedCodes.includes(envelope.code)) {
+  if (envelope.code !== 0) {
     throw new Error(`interactions call failed (${envelope.code}): ${envelope.msg}`);
   }
   return envelope.data as T;
@@ -123,7 +122,10 @@ export function decideApproval(
   approvalId: string,
   decision: 'approved' | 'rejected',
 ): Promise<unknown> {
-  return call(opts, 'POST', `/approvals/${encodeURIComponent(approvalId)}`, { decision });
+  return call(opts, 'POST', `/interactions/${encodeURIComponent(approvalId)}`, {
+    kind: 'approval',
+    decision,
+  });
 }
 
 export function answerQuestion(
@@ -132,17 +134,19 @@ export function answerQuestion(
   answers: Readonly<Record<string, QuestionAnswerWire>>,
   method?: 'enter' | 'space' | 'number_key' | 'click',
 ): Promise<unknown> {
-  return call(opts, 'POST', `/questions/${encodeURIComponent(questionId)}`, { answers, method });
+  return call(opts, 'POST', `/interactions/${encodeURIComponent(questionId)}`, {
+    kind: 'question',
+    answers,
+    method,
+  });
 }
 
 export function dismissQuestion(
   opts: InteractionsApiOptions,
   questionId: string,
 ): Promise<unknown> {
-  // The dismiss endpoint reports success as a QUESTION_DISMISSED (40909)
-  // envelope (see kap-server's question dismiss action), not code 0.
-  return call(opts, 'POST', `/questions/${encodeURIComponent(questionId)}:dismiss`, undefined, [
-    0,
-    40909,
-  ]);
+  return call(opts, 'POST', `/interactions/${encodeURIComponent(questionId)}`, {
+    kind: 'question',
+    dismissed: true,
+  });
 }

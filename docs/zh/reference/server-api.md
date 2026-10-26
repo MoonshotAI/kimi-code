@@ -40,7 +40,7 @@
 ```
 
 - `code`：业务结果，`0` 表示成功；错误码分段见下文。
-- `data`：成功时的业务数据。注意部分「错误」信封也携带非空 `data`——例如重复解决审批返回 `40902` 且 `data.resolved` 为 `false`——客户端应先判 `code` 再看 `data`。
+- `data`：成功时的业务数据。部分错误信封也携带非空 `data`，客户端应先判 `code` 再看 `data`。
 - `request_id`：本次请求的 ULID；客户端可用 `X-Request-Id` 请求头指定，非法值会被服务端重新生成。
 
 HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
@@ -65,7 +65,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管 |
 | `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型未解析 |
 | `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
-| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 审批已解决、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
+| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 交互已结束、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
 | `410xx` | 资源已过期 | `41001` 审批超时、`41002` 提问超时、`41003` 临时文件过期 |
 | `413xx` | 体积或边界超限 | `41302` 读取文件超 10 MB、`41304` 路径越出会话目录 |
 | `429xx` | 限流 | `42901` 鉴权失败封禁、`42902` 文件监听数超限 |
@@ -1190,15 +1190,13 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)）。
+审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。列表端点用于读取，回应两类交互共用一个端点；WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)）。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/approvals` | 列出待处理的审批请求（必须 `status=pending`） |
-| `POST /api/v1/sessions/{session_id}/approvals/{approval_id}` | 答复审批 |
 | `GET /api/v1/sessions/{session_id}/questions` | 列出待处理的提问（必须 `status=pending`） |
-| `POST /api/v1/sessions/{session_id}/questions/{question_id}` | 回答提问 |
-| `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss` | 忽略提问 |
+| `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | 回应审批或提问 |
 
 #### `GET /api/v1/sessions/{session_id}/approvals`
 
@@ -1214,26 +1212,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40001`：`status` 缺失或不是 `pending`
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/approvals/{approval_id}`
-
-答复一个待处理的审批请求，让等待中的工具调用继续执行（或不执行）。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `approval_id` | path | string | **必填。** 审批请求 id |
-| `decision` | body | string | **必填。** `approved` / `rejected` / `cancelled` |
-| `scope` | body | string | 配合 `approved` 使用，`session`（唯一取值）还会让该审批规则在会话的剩余时间内被记住 |
-| `feedback` | body | string | 回传给 Agent 的自由文本反馈 |
-| `selected_label` | body | string | 当请求提供了带标签的选项时（例如计划审阅），所选选项的标签 |
-
-成功时，`data` 为 `{ resolved: true, resolved_at }`。
-
-- `40001`：校验失败
-- `40401`：会话不存在
-- `40404`：没有该 id 的待处理审批
-- `40902`：审批已被答复；`data` 携带 `{ resolved: false }`
-
 #### `GET /api/v1/sessions/{session_id}/questions`
 
 列出会话待处理的提问。
@@ -1248,17 +1226,33 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40001`：`status` 缺失或不是 `pending`
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/questions/{question_id}`
+#### `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`
 
-回答一个待处理的提问。两个提问端点通过同一条路由 `POST /api/v1/sessions/{session_id}/questions/{tail}` 分发：单独的提问 id 表示回答问题，`{question_id}:dismiss` 尾部表示忽略问题，其他情况返回 `40001`。
+回应一个待处理的审批或提问。请求体的 `kind` 必须与交互的类型一致；subagent 发起的交互由服务端交回发起它的 agent，因此不需要 `agent_id`。客户端应在收到 `status: "ended"` 的 `interaction` 事件时关闭卡片，而不是依据本接口的响应，这样所有打开该会话的客户端会一起关闭。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `question_id` | path | string | **必填。** 提问 id |
-| `answers` | body | object | **必填。** 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
-| `method` | body | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
-| `note` | body | string | 附在回答上的自由文本备注 |
+| `interaction_id` | path | string | **必填。** 即 `approval_id` / `question_id`，也是事件中的 `interaction_id` |
+| `kind` | body | string | **必填。** `approval` / `question` |
+
+`kind: "approval"` 时：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `decision` | string | **必填。** `approved` / `rejected` / `cancelled` |
+| `scope` | string | 与 `approved` 同用时，`session`（唯一取值）会在本会话剩余时间内记住该审批规则 |
+| `feedback` | string | 交还给 agent 的自由文本反馈 |
+| `selected_label` | string | 当请求提供带标签的选项时（例如计划审阅），所选选项的标签 |
+
+`kind: "question"` 时，`answers` 与 `dismissed` 必须且只能传一个：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `answers` | object | 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
+| `dismissed` | `true` | 不回答，直接关闭提问 |
+| `method` | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
+| `note` | string | 附在回答上的自由文本备注 |
 
 每个答案是按 `kind` 区分的对象：
 
@@ -1270,27 +1264,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `multi_with_other` | `option_ids`、`other_text` | 选项加自由文本 |
 | `skipped` | — | 跳过了该条目 |
 
-成功时，`data` 为 `{ resolved: true, resolved_at }`。
+成功时，`data` 为 `{ outcome, ended_at }`，审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed`。
 
-- `40001`：校验失败（`details` 列出每个字段）
+- `40001`：校验失败（`details` 列出每个字段），或 `kind` 与交互类型不一致
 - `40401`：会话不存在
-- `40405`：没有该 id 的待处理提问
-- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
-
-#### `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss`
-
-忽略一个待处理的提问，不作回答。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `question_id` | path | string | **必填。** 提问 id |
-
-成功时信封的 `code` 是 `40909`（`question dismissed`）而不是 `0`，`data` 为 `{ dismissed: true, dismissed_at }`——客户端必须特殊处理该端点的成功码。
-
-- `40401`：会话不存在
-- `40405`：没有该 id 的待处理提问
-- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
+- `40404`：会话中没有该 id 的交互
+- `40902`：交互已结束——已被其他客户端回应，或因所在轮次结束、agent 关闭而取消
 
 ### 后台任务
 
@@ -2401,7 +2380,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
 
-会话内所有 agent（含 subagent）的审批与提问都以易失的 `interaction` 事件到达：`{ agent_id, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`，其中审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。由于它不回放，服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互。客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。
+会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `seq`、`timestamp` 和 `payload` 包装——且从不写入日志、不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，提问的为 `{ questions }`。服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
 
 ### 断线恢复
 
