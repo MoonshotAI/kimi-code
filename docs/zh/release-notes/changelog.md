@@ -62,11 +62,11 @@ outline: 2
 
 - 用户技能卡片改为高亮提示词展示，并支持按 Ctrl-S 发送技能提示词。
 - Tower 模式：Agent 运行中发送消息会中止当前 turn，并作为独立 turn 执行。
-- 退出时运行 shutdown hooks 期间显示「Shutting down」状态提示，此时按 Ctrl+C 可立即强制退出，无需等待 hook 超时。
+- 退出时运行 shutdown hooks 期间显示“Shutting down”状态提示，此时按 Ctrl+C 可立即强制退出，无需等待 hook 超时。
 
 ### 修复
 
-- 修复 UserPromptSubmit hook 注入文本时对话错位、回复丢失与渲染乱序的问题；不含「message」字段的 hook JSON 输出不再加入对话。
+- 修复 UserPromptSubmit hook 注入文本时对话错位、回复丢失与渲染乱序的问题；不含“message”字段的 hook JSON 输出不再加入对话。
 - 移除 MCP stdio 服务器配置中从未实现的 `executor = "kaos"` 选项；仍在使用该选项的配置会在加载时校验失败。
 - 修复 fork 出的会话会重复触发源会话 cron 任务的问题。
 - 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
@@ -268,7 +268,7 @@ outline: 2
 - 修复在一个会话中切换权限模式会改动所有会话的问题，权限模式现按会话独立生效。
 - 修复登录相关问题
 - 修复点击输入框占位提示后，输入法或键盘首个字符被吞的问题
-- 修复新会话中附件上传完成后仍显示"上传中"的问题
+- 修复新会话中附件上传完成后仍显示“上传中”的问题
 - 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
 
 ## 0.39.0（2026-08-27）
@@ -278,7 +278,7 @@ outline: 2
 - 新增实验性远程控制功能：可远程访问本地的 web 会话，设置 `KIMI_CODE_EXPERIMENTAL_REMOTE_CONTROL=1` 后运行 `kimi rc`、`kimi web --remote-control` 或 `/remote-control` 启动。
 - 新增实验性 tower 多 Agent 编排模式：设置 `KIMI_CODE_EXPERIMENTAL_TOWER=1` 后运行 `/tower on` 和 `/tower <objective>` 启动。
 - subagent 与 swarm 工具新增可选 `fork` 参数，子 Agent 以调用方当前对话历史的快照启动；设置 `KIMI_CODE_EXPERIMENTAL_SUBAGENT_FORK=1` 或在 `config.toml` 的 `[experimental]` 下写 `subagent_fork = true` 启用。
-- web: 运行卡片新增 "转到后台" 按钮，可把正在前台运行的 Bash 命令或子 Agent 转为后台运行。
+- web: 运行卡片新增 “转到后台” 按钮，可把正在前台运行的 Bash 命令或子 Agent 转为后台运行。
 - web: 移动端会话列表新增平铺/按工作区分组的切换标签。
 - 内置插件市场新增 Tencent CloudBase 插件，通过 `/plugins` 安装。
 - 新增 `[swarm] timeout_ms` 配置项（或环境变量 `KIMI_CODE_SWARM_TIMEOUT_MS`）。

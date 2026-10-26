@@ -44,7 +44,7 @@ macOS 下从 IDE GUI 启动的子进程通常**不会**继承终端 shell 的 `P
 
 JetBrains 系列 IDE（IntelliJ IDEA、PyCharm、WebStorm 等）通过 AI 聊天插件支持 ACP。
 
-如果没有 JetBrains AI 订阅，可以在注册表中启用 `llm.enable.mock.response`，便于在仅使用 ACP 的场景里访问 AI 聊天面板。连按两次 Shift 搜索 "Registry / 注册表" 即可打开。
+如果没有 JetBrains AI 订阅，可以在注册表中启用 `llm.enable.mock.response`，便于在仅使用 ACP 的场景里访问 AI 聊天面板。连按两次 Shift 搜索 “Registry / 注册表” 即可打开。
 
 在 AI 聊天面板的菜单中点击 "Configure ACP agents"，添加以下配置：
 

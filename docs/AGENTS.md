@@ -1,6 +1,6 @@
 # Documentation Agent Guide
 
-This repository uses VitePress for the documentation site. Most user-facing pages under `docs/en/` and `docs/zh/` are fully written; New or updated content should keep both locales in sync.
+This repository uses VitePress for the documentation site. Most user-facing pages under `docs/en/` and `docs/zh/` are fully written.
 
 ## Structure
 
@@ -18,14 +18,32 @@ This repository uses VitePress for the documentation site. Most user-facing page
 - **Changelog page**: The English version (`docs/en/release-notes/changelog.md`) is the source of truth; the Chinese changelog should be translated from it. The changelog is currently generated manually by a skill that syncs from the CLI package's `CHANGELOG.md` after each release.
 - **All other pages**: `docs/en/` and `docs/zh/` are mirrored pairs with the same paths, headings, and section structure. Edit whichever locale you are working in, and update the other locale in the same change.
 
-Keep both locales in sync before release. Machine-assisted translation is fine; review the locale you changed and its mirror for accuracy, terminology, and broken links.
+Keep both locales in sync before release. Machine-assisted translation is fine; review the locale you changed and its mirror for accuracy, terminology, and broken links. If the two locales fall out of sync, say so in the PR description — never silently drop or rewrite one side.
+
+Additional sourcing rules:
+
+- **Document only what the current released version does.** Released opt-in experiments are in scope when the docs state their default and how to enable them; code that is unreleased or internal-only must not appear in user docs. When release status is unclear, document the current released version.
+- **One fact, one authoritative home.** When a mechanism is fully defined on one page, other pages state only what it is and how it relates to the current task, then link to the exact section. Never expand the same fact in two places.
 
 ## Authoring workflow
 
 - Each page should keep the section ordering established by surrounding pages. Changelog is the exception because it is generated from release history.
-- For other pages: edit either locale, then update its mirror in the same change.
 
-Before rewriting a page, always: (1) understand why the original is structured the way it is, (2) identify what the reader genuinely needs to know, (3) sketch the section structure, then (4) fill in the content. Skip step 1–3 and you will lose content while rearranging format.
+Before rewriting a page, always: (1) understand why the original is structured the way it is — what question each block answers and whether facts, dependencies, or ordering are tangled together, (2) review necessity — what the reader genuinely needs to know, meaning what they could not act, decide, or troubleshoot without, (3) sketch the section structure, then (4) fill in the content. Skip steps 1–3 and you will lose content while rearranging format.
+
+## Page responsibilities
+
+Decide the page's job before writing or restructuring it; the job decides what the page keeps, what it leaves out, and which format it uses.
+
+| Page type | Primary job |
+| --- | --- |
+| Overview | Capability summary and entry points |
+| Guide | Complete one task on the shortest path |
+| Reference | The single complete definition of commands, parameters, return values, and limits |
+| Configuration | Fields, precedence, overrides, and when they take effect |
+| FAQ / error reference | Problem, cause, and fix |
+
+Keep out-of-scope facts on the page that owns them and link there.
 
 ## Readers
 
@@ -56,9 +74,8 @@ Both groups share the same behavior: they arrive with a specific goal, scan head
 - Do not change H1 titles or nav/sidebar labels.
 - English H2+ headings use sentence case (only the first word capitalized unless it is a proper noun). Treat "Wire", "Plan mode", "Thinking mode", and the permission mode names "Always Ask", "Ask When Needed", and "Never Ask" as proper nouns; do not treat "agent" as a proper noun.
 - Chinese H2+ headings keep English words in sentence case; preserve proper nouns listed in the term table below.
-- Use `API key` in English and `API 密钥` in Chinese; keep `JSON`, `JSONL`, `OAuth`, `macOS`, `Node.js`, `npm`, `pnpm`, and `TypeScript` as-is.
-- Use straight double quotes with spaces for quoted content: `"被引内容"` (not curly quotes). Add a space before and after the quoted text when adjacent to CJK characters. Use corner brackets `「」` for special terms (e.g., `「工具」`, `「会话」`).
-- Prefer "终端" over "命令行" in Chinese when both are applicable (e.g., "运行在终端中", "终端界面", "终端操作").
+- Use curly double quotes `“”` for quoted content in Chinese body text (not straight quotes). Reserve corner brackets `「」` for genuinely special terms and use them sparingly — if they appear more than a few times on one page, reconsider.
+- Use “终端” for the runtime environment or interface (“终端界面”, “终端操作”); use “命令行” for the CLI product form and for command-line options.
 - Use "工具调用" / "tool call", not "工具使用" / "tool use".
 - Use inline code for tool names (e.g., `Read`, `Grep`, `Bash`).
 
@@ -105,6 +122,8 @@ Term mapping (Chinese <-> English, and proper noun handling):
 | Prompt Flow | Prompt Flow | yes | yes |
 | Diff | diff | yes | no |
 
+Chinese UI wording — prefer natural Chinese over transliterated UI nouns: write 桌面端 (not Desktop), 命令行 (not CLI; the full product name stays Kimi Code CLI), and 输入框 (not composer).
+
 ### Kimi platform rules
 
 Two distinct platforms exist and must never be mixed:
@@ -112,13 +131,14 @@ Two distinct platforms exist and must never be mixed:
 | | Kimi Code platform | Kimi Open Platform |
 |---|---|---|
 | Audience | Individual developers, subscription-based | Enterprise / product integration, pay-per-token |
-| OpenAI-compatible base URL | `https://api.kimi.com/coding/v1` | `https://api.moonshot.cn/v1` |
-| Anthropic-compatible base URL | `https://api.kimi.com/coding/` | Not supported |
-| API key entry | [Kimi Code console](https://www.kimi.com/code/console) | [platform.kimi.com](https://platform.kimi.com) |
+| OpenAI-compatible base URL | `https://api.kimi.com/coding/v1` (mainland China), `https://api.kimi.ai/coding/v1` (global) | `https://api.moonshot.cn/v1` (mainland China), `https://api.moonshot.ai/v1` (global) |
+| Anthropic-compatible base URL | `https://api.kimi.com/coding/` (mainland China), `https://api.kimi.ai/coding/` (global) | Not supported |
+| API key entry | [Kimi Code console](https://www.kimi.com/code/console) (mainland China), [Kimi Code console](https://www.kimi.ai/code/console) (global) | [platform.kimi.com](https://platform.kimi.com) (mainland China), [platform.kimi.ai](https://platform.kimi.ai) (global) |
 
 Rules:
-- When documenting Kimi Code CLI or VS Code: always use `api.kimi.com/coding/…`. Never write `api.moonshot.cn` in this context.
-- When documenting Open Platform integration: use `api.moonshot.cn/v1`.
+- For Kimi Code managed/OAuth examples in CLI or VS Code docs, use `api.kimi.com/coding/…` (mainland China) or `api.kimi.ai/coding/…` (global). Never use Open Platform hosts for those managed accounts.
+- When documenting Open Platform providers or third-party integrations, including direct API-key providers used from CLI or VS Code, use `api.moonshot.cn/v1` (mainland China) or `api.moonshot.ai/v1` (global). The Open Platform has no Anthropic-compatible endpoint.
+- Base URL tables always list both the mainland China and global addresses in both locales. Config examples give one concrete value matching the page's language: Chinese pages use the mainland China address, English pages use the global address.
 - Distinguish context explicitly: "in Kimi Code CLI / VS Code" vs "in third-party tools / your own product".
 - Product full names: **Kimi Code CLI** and **Kimi Code for VS Code**. Do not abbreviate to "Kimi CLI".
 
@@ -148,10 +168,8 @@ Rules:
 
 ## Writing style
 
-- **Natural narrative**: Organize content like writing an article, guiding readers smoothly through the material.
-- **Avoid fragmentation**: Don't turn every point into a subheading; use paragraph transitions instead. This applies to narrative content — explanations, motivations, and sequential reasoning that flow as connected prose.
-- **Global perspective**: "Getting Started" introduces core concepts only; detailed usage belongs in later pages.
-- **Progressive depth**: Guides → Customization → Configuration → Reference, information deepens gradually.
+- **Natural narrative, no fragmentation**: Organize content like an article; don't turn every point into a subheading — use paragraph transitions for narrative content (explanations, motivations, and sequential reasoning that flow as connected prose).
+- **Progressive depth**: "Getting Started" introduces core concepts only; information deepens gradually across Guides → Customization → Configuration → Reference.
 - **No nav tip blocks**: VitePress provides automatic prev/next navigation; don't add `::: tip 接下来` blocks at page end. A `## Next steps` section is appropriate when there are closely related follow-on pages — see [Page structure](#page-structure).
 - **One idea per paragraph**: Each paragraph makes one point. 3–4 sentences is the target; split when a paragraph exceeds 5 sentences.
 - **Map before detail**: Every page and every major section should open with one "map" sentence — what this section covers and how it relates to what came before — before expanding into details. Readers should know where they are before they dive in.
@@ -160,10 +178,16 @@ Rules:
   >
   > ✓ Map then detail: "Provider credentials follow a separate resolution path from ordinary runtime parameters — the CLI reads only from `config.toml` and never falls back to shell environment variables. The priority order is:…"
 
-- **Parallel content needs formatting**: This is the counterpart to "avoid fragmentation" — the distinction is what kind of content you have. Multiple items of the same kind (file descriptions, config field explanations, caveats) written as separate paragraphs with no visual distinction force readers to parse shape instead of meaning. Fix:
-  - Each item is "name + one sentence": use an unordered list: `- **Name**: description`
-  - Multiple dimensions (name + type + description): use a table
-  - Each item is longer than two sentences: use a `###` subheading
+- **Parallel content needs formatting**: This is the counterpart to "avoid fragmentation" — the distinction is what kind of content you have. Multiple items of the same kind (file descriptions, config field explanations, caveats) written as separate paragraphs with no visual distinction force readers to parse shape instead of meaning. Fix: "name + one sentence" items → unordered list `- **Name**: description`; multiple dimensions (name + type + description) → table; items longer than two sentences → `###` subheading.
+- **Sections follow a discernible sequence**: order sections by the reader's task flow or by a classification of one concept. The next section should answer the question the previous one naturally raises; do not park loosely related features in the same section.
+
+### Chinese prose rules
+
+- **Write Chinese body text in Chinese.** Do not mix English words into sentences; keep product full names (Kimi Code CLI) and term-table entries as-is, and render UI nouns as natural Chinese rather than transliterating them (see the wording table in [Wording conventions](#wording-conventions)).
+- **Drop filler that adds no fact.** Banned patterns: 值得注意的是 / 首先、其次、最后 / 总而言之、综上所述 / 你会发现 / 进行安装、轻松搞定 / 强大、灵活、高效、无缝. State the fact directly; use an ordered list for a real sequence; replace praise with verifiable behavior, numbers, or limits.
+- **Delete colloquial 了 in rules and statements of fact.** Write 取消、新增、修改, not 取消了、新增了、改了.
+- **Avoid explanatory em-dashes (——).** Rewrite as a period, colon, or list instead.
+- **Parentheses carry facts, not filler.** Drop circular glosses (`glob（glob 过滤）`) and enumerative examples in parentheses; keep defaults, permission numbers, path rules, and version ranges. Not every detail needs to be shown to the reader: omit details that do not help them act, decide, or troubleshoot instead of tucking them into parentheses.
 
 ### Example: good vs bad
 
@@ -182,16 +206,9 @@ Outline prompt:
 
 ### System requirements
 
-- Node.js 24.15.0+
-- Recommend pnpm
-
 ### Install
 
-...
-
 ### Upgrade
-
-...
 ```
 
 **Good** (natural narrative):
@@ -216,7 +233,7 @@ Upgrade to the latest version:
 
 ## Format decisions
 
-Choose the format that matches the content's structure, not the one that looks most thorough.
+**Most suitable format** — use formatting deliberately: choose the format that best matches the content's structure and the reader's task (sentence, list, table, subheading, or `<details>`), not the one that looks most thorough. Use formatting when it improves scanning, lookup, or comparison.
 
 **Ordered list** — steps that must happen in sequence (installation, configuration, migration). Do not nest sub-lists inside steps.
 
@@ -225,6 +242,12 @@ Choose the format that matches the content's structure, not the one that looks m
 **Table** — reference content with multiple dimensions to compare or look up (config fields with name + type + required + description; keyboard shortcuts; platform comparison). Avoid tables when cell content would need to wrap to be readable.
 
 **Prose** — explanations, motivations, caveats, anything that flows naturally as connected sentences. Do not convert prose into bullets just to add visual structure.
+
+**Cards** — at least three entries of the same shape where the reader is choosing a direction. Not for steps, full explanations, or parameter reference. Follow existing page implementations for cards, icons, and other components; do not invent one-off styles.
+
+**`<details>` boundaries** — fold only low-frequency material that must be kept: edge behavior, full default sets, implementation background, supplementary examples. Never fold commands the user must run, prerequisites, permission or security boundaries, failure consequences, or what to run after a change.
+
+**Reference pages need a navigation layer** — a page covering many commands, tools, or APIs opens with a quick-reference table covering every entry, each row linking to a detail section with a stable anchor below. The table provides navigation and minimal usage; the detail sections own the facts. When adding a detail section, add its row to the table.
 
 ## Cross-references
 
@@ -238,7 +261,6 @@ Readers never read just one page. A complete understanding is usually spread acr
 **Do not write:**
 - "See related documentation" — which one? Readers skip this.
 - Link only in a "Next steps" list at the bottom — readers who hit a blocker mid-page won't scroll to the end to find the link.
-- First mention without a link, linked on second or third mention — the first mention is when the reader most wants to click.
 
 **Inline links vs "Next steps":** Inline links serve readers who need supplemental information mid-page. A closing "Next steps" section serves readers who finished the page and want natural follow-on reading. Both have a place; neither replaces the other.
 
@@ -269,10 +291,12 @@ Body…
 
 ## Content completeness
 
-**Default position: keep everything.** When editing a page, every block of original content needs an explicit destination — either retained or consciously removed with a stated reason.
+**Default position: keep everything.** When editing a page, every block of original content needs an explicit destination — either retained or consciously removed with a stated reason. Reference pages default to keeping everything: parameters, defaults, limits, error behavior, and complete examples are all lookup facts. Guide pages may drop or move content, with a stated reason.
 
 **Valid reasons to omit content:**
-- Too low-level / pure implementation detail that users never need to act on
+- Pure implementation detail that users cannot change (keep failure facts and workarounds)
+- Field listings already shown in full by another page or a product-generated schema — supplement with defaults, constraints, and quotas instead of repeating them
+- Content already fully expressed by a table on the same page
 - Already covered more completely on another page that is linked from here
 - Content is ambiguous or suspected outdated — flag it rather than silently dropping it
 
@@ -296,9 +320,13 @@ Run through this before marking any doc change ready for review.
 | Banner before first `##` but also before opening content | Move to after opening sentences / blockquote / diagram |
 | Steps written as unordered list | Change to ordered list |
 | Multi-dimension comparison written as prose | Convert to table |
+| Table cells that take more than a glance to read | Restructure as a list or subheadings — tables are for lookup, and cells should stay short enough to scan at a glance |
 | Technical term used without explanation on first occurrence | Add plain-English gloss in parentheses |
 | Cross-reference written as "see …" with no link | Add inline link; prefer anchor to section, not just page top |
 | Concept depends on earlier definition but no back-link | Add `[term](#anchor)` |
+| Anchor link checked only against the Markdown source | Verify the fragment in the built page (`docs/.vitepress/dist`), not just that the page returns 200 |
+| Template literal (`${...}`, `{{...}}`, `<item>`) missing or empty in the rendered page | Inspect the built HTML — Vue/VitePress may treat `<...>` as HTML or a template; an empty `<code>` in the output is a failure |
+| Layout checked only at desktop width | Check the changed page at ~1440px and ~390px: tables, inline code, long headings, callouts, and `<details>` blocks |
 | Changed zh without changing en (or vice versa) | Update both locales |
 | Code block has no language tag | Add language (e.g., `sh`, `toml`, `json`); exception: natural-language prompt examples may omit the tag |
 
@@ -311,7 +339,6 @@ Before shipping, verify these values match the rest of the docs:
 - **Model ID**: use `kimi-for-coding`, not a versioned model name
 - **Login command**: `/login`, not `/setup`
 - **Product full name**: **Kimi Code CLI** or **Kimi Code for VS Code** — never "Kimi CLI"
-- **Platform URLs**: `api.kimi.com/coding/…` for Kimi Code platform; `api.moonshot.cn/v1` for Open Platform — never mix the two
 
 ## Build and preview
 
