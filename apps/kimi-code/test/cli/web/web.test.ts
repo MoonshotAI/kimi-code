@@ -856,6 +856,82 @@ describe('`kimi web` foreground shutdown', () => {
       vi.resetModules();
     }
   });
+
+  it('shares the telemetry deadline when startup cleanup runs after onReady fails', async () => {
+    vi.resetModules();
+    const startServer = vi.fn();
+    const shutdownTelemetry = vi.fn(async () => {});
+    const logger = { info: vi.fn(), error: vi.fn() };
+    vi.doMock('@moonshot-ai/kap-server', async () => {
+      const actual = await vi.importActual<typeof import('@moonshot-ai/kap-server')>(
+        '@moonshot-ai/kap-server',
+      );
+      return {
+        ...actual,
+        createServerLogger: vi.fn(() => logger),
+        startServer,
+      };
+    });
+    vi.doMock('@moonshot-ai/kimi-telemetry', async () => {
+      const actual = await vi.importActual<typeof import('@moonshot-ai/kimi-telemetry')>(
+        '@moonshot-ai/kimi-telemetry',
+      );
+      return { ...actual, shutdownTelemetry, track: vi.fn() };
+    });
+    vi.doMock('#/cli/telemetry', () => ({ initializeServerTelemetry: vi.fn() }));
+
+    let nowMs = 10_000;
+    const serverClose = vi.fn(async () => {
+      nowMs = 13_001;
+    });
+    startServer.mockResolvedValue({
+      host: '127.0.0.1',
+      port: 58_627,
+      close: serverClose,
+    });
+
+    const previousListeners = new Set(process.listeners('SIGINT'));
+    const previousTermListeners = new Set(process.listeners('SIGTERM'));
+    const now = vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+    try {
+      const { startServerForeground } = await import('#/cli/sub/web/run');
+      const startupError = new Error('startup failed');
+      await expect(
+        startServerForeground(
+          {
+            host: '127.0.0.1',
+            port: 0,
+            logLevel: 'silent',
+            debugEndpoints: false,
+            insecureNoTls: true,
+            allowRemoteShutdown: false,
+            dangerousBypassAuth: false,
+            allowedHosts: [],
+          },
+          {
+            onReady: () => {
+              throw startupError;
+            },
+          },
+        ),
+      ).rejects.toBe(startupError);
+
+      expect(serverClose).toHaveBeenCalledWith({ telemetryDeadlineMs: 13_000 });
+      expect(shutdownTelemetry).toHaveBeenCalledWith({ timeoutMs: 0 });
+    } finally {
+      for (const listener of process.listeners('SIGINT')) {
+        if (!previousListeners.has(listener)) process.removeListener('SIGINT', listener);
+      }
+      for (const listener of process.listeners('SIGTERM')) {
+        if (!previousTermListeners.has(listener)) process.removeListener('SIGTERM', listener);
+      }
+      now.mockRestore();
+      vi.doUnmock('@moonshot-ai/kap-server');
+      vi.doUnmock('@moonshot-ai/kimi-telemetry');
+      vi.doUnmock('#/cli/telemetry');
+      vi.resetModules();
+    }
+  });
 });
 
 describe('shared parsers stay strict', () => {
