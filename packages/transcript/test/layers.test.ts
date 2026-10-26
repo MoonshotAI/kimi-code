@@ -2032,6 +2032,19 @@ describe('foldWireRecordFacts (cold facts)', () => {
           response: { cancelled: true, reason: 'turn_ended' },
           time: 6000,
         },
+        {
+          type: 'interaction.request',
+          id: 'q-3',
+          kind: 'question',
+          request: { questions: [] },
+          time: 7000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'q-3',
+          response: { cancelled: true },
+          time: 8000,
+        },
       ],
       base,
     );
@@ -2059,6 +2072,14 @@ describe('foldWireRecordFacts (cold facts)', () => {
         state: 'cancelled',
         request: { questions: [] },
         response: { cancelled: true, reason: 'turn_ended' },
+      },
+      {
+        interactionId: 'q-3',
+        interactionKind: 'question',
+        toolCallId: undefined,
+        state: 'answered',
+        request: { questions: [] },
+        response: { cancelled: true },
       },
     ]);
   });

@@ -2084,6 +2084,22 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.getInteraction('q1')).toMatchObject({ state: 'cancelled' });
   });
 
+  it('keeps an answer keyed by a question named cancelled as answered', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'q2',
+        kind: 'question',
+        payload: { questions: [{ question: 'cancelled', options: [] }] },
+        createdAt: 1000,
+      }),
+    );
+    tx.apply(projector.mapInteractionResolved('q2', { cancelled: true }));
+    expect(tx.getInteraction('q2')).toMatchObject({ state: 'answered' });
+  });
+
   it('projects question requests onto the wire shape with stable question/option ids', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');

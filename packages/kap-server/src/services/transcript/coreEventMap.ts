@@ -6,7 +6,14 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import {
+  daemonFileRefFromPart,
+  isInteractionCancellation,
+  type ContentPart,
+  type ContextUndone,
+  type CronFired,
+  type GoalUpdated,
+} from '@moonshot-ai/agent-core-v2';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type {
@@ -1791,9 +1798,7 @@ function mapInteractionEndState(
   kind: 'approval' | 'question',
   response: unknown,
 ): TranscriptInteraction['state'] {
-  if ((response as { cancelled?: unknown } | null | undefined)?.cancelled === true) {
-    return 'cancelled';
-  }
+  if (isInteractionCancellation(response)) return 'cancelled';
   if (kind === 'question') return response === null ? 'dismissed' : 'answered';
   const decision = (response as { decision?: unknown } | null | undefined)?.decision;
   if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {
