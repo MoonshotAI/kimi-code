@@ -1,8 +1,11 @@
 import {
   ErrorCodes,
+  effectiveModelAlias,
   PRIMARY_SUBAGENT_MODEL_CHOICE,
   SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
+  type KimiConfig,
+  type KimiConfigPatch,
   type ModelAlias,
   type PermissionMode,
   type Session,
@@ -16,7 +19,7 @@ import {
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
 import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
-import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { effortLabel, modelDisplayName, segmentsFor, thinkingAvailability } from '../components/dialogs/model-selector';
 import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
@@ -212,7 +215,7 @@ export async function handleSecondaryModelCommand(host: SlashCommandHost, args: 
   // The v2 engine honors a lone legacy `model` key as the fallback pool
   // default — reflect it as the picker's current value.
   const current = secondary?.defaultModel ?? secondary?.model ?? '';
-  showSecondaryModelPicker(host, models, current, alias.length > 0 ? alias : undefined);
+  showSecondaryModelPicker(host, models, current, secondary, alias.length > 0 ? alias : undefined);
 }
 
 export async function handleEffortCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -572,6 +575,7 @@ function showSecondaryModelPicker(
   host: SlashCommandHost,
   models: Record<string, ModelAlias>,
   currentValue: string,
+  secondary: KimiConfig['secondaryModel'],
   selectedValue?: string,
 ): void {
   host.mountEditorReplacement(
@@ -580,13 +584,68 @@ function showSecondaryModelPicker(
       currentValue,
       selectedValue,
       currentThinkingEffort: 'off',
-      // Subagent pool bindings carry no explicit thinking level, so the picker
-      // hides the Thinking footer instead of offering a no-op choice.
       thinkingControl: false,
       title: ' Select a secondary model (subagents)',
       onSelect: ({ alias }) => {
         host.restoreEditor();
-        void performSecondaryModelSave(host, alias);
+        showSecondaryModelEffortPicker(host, models, alias, secondary);
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
+function secondaryModelEfforts(
+  models: Record<string, ModelAlias>,
+  alias: string,
+  secondary: KimiConfig['secondaryModel'],
+): string[] {
+  const aliases = new Set([...Object.keys(secondary?.models ?? {}), alias]);
+  const selected = models[alias];
+  if (selected === undefined) return [];
+  const pool = [...aliases].map((candidate) => {
+    const model = models[candidate];
+    return model === undefined ? undefined : effectiveModelAlias(model);
+  });
+  const segments = new Set(segmentsFor(effectiveModelAlias(selected)));
+  for (const model of pool) {
+    for (const effort of model?.supportEfforts ?? []) segments.add(effort);
+  }
+  const current = secondary?.defaultEffort?.trim().toLowerCase();
+  if (current !== undefined && current.length > 0) segments.add(current);
+  return [...segments].filter((effort) =>
+    pool.every((model) => {
+      if (model === undefined) return false;
+      const availability = thinkingAvailability(model);
+      if (effort === 'off') return availability !== 'always-on';
+      if (availability === 'unsupported') return false;
+      const supported = model.supportEfforts ?? [];
+      return effort === 'on' || supported.length === 0 || supported.includes(effort);
+    }),
+  );
+}
+
+function showSecondaryModelEffortPicker(
+  host: SlashCommandHost,
+  models: Record<string, ModelAlias>,
+  alias: string,
+  secondary: KimiConfig['secondaryModel'],
+): void {
+  const efforts = ['default', ...secondaryModelEfforts(models, alias, secondary)];
+  host.mountEditorReplacement(
+    new EffortSelectorComponent({
+      title: 'Select subagent thinking effort',
+      efforts,
+      currentValue: secondary?.defaultEffort?.trim().toLowerCase() ?? 'default',
+      warning:
+        efforts.length === 1
+          ? 'No thinking level is supported by every model in the subagent pool. Default removes the override and keeps each model\'s settings.'
+          : 'An explicit level applies to the entire subagent model pool and overrides each model\'s default. Default removes that override.',
+      onSelect: (effort) => {
+        host.restoreEditor();
+        void performSecondaryModelSave(host, alias, effort);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -596,7 +655,7 @@ function showSecondaryModelPicker(
 }
 
 /**
- * Persists `[secondary_model] default_model`. When a
+ * Persists the secondary model and pool effort together. When a
  * `[secondary_model.models]` pool exists and does not list the alias yet, the
  * alias is added with an empty description — the engine requires the default
  * to be a pool key. Without a pool the default alone forms an implicit
@@ -604,14 +663,32 @@ function showSecondaryModelPicker(
  * engine resolves the pool per spawn, so the next subagent dispatch picks the
  * new value up on its own.
  */
-async function performSecondaryModelSave(host: SlashCommandHost, alias: string): Promise<void> {
+async function performSecondaryModelSave(
+  host: SlashCommandHost,
+  alias: string,
+  effort: ThinkingEffort,
+): Promise<void> {
   const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
   try {
     const config = await host.harness.getConfig({ reload: true });
     const existing = config.secondaryModel?.models;
-    const patch: { defaultModel: string; models?: Record<string, string> } = {
+    const models = Object.fromEntries(
+      Object.entries(config.models ?? host.state.appState.availableModels).map(([key, model]) => [
+        key,
+        effectiveModelAlias(model, config.providers[model.provider]?.type ?? model.protocol),
+      ]),
+    );
+    if (models[alias] === undefined) {
+      throw new Error(`Model "${alias}" is no longer configured. Reopen /secondary-model to choose again.`);
+    }
+    if (effort !== 'default' && !secondaryModelEfforts(models, alias, config.secondaryModel).includes(effort)) {
+      throw new Error(`Thinking effort "${effort}" is no longer supported by every model in the subagent pool. Reopen /secondary-model to choose again.`);
+    }
+    const patch: NonNullable<KimiConfigPatch['secondaryModel']> = {
       defaultModel: alias,
     };
+    if (effort !== 'default') patch.defaultEffort = effort;
+    else if (config.secondaryModel?.defaultEffort !== undefined) patch.defaultEffort = null;
     if (existing !== undefined) {
       patch.models = { ...existing, [alias]: existing[alias] ?? '' };
     }
@@ -621,7 +698,7 @@ async function performSecondaryModelSave(host: SlashCommandHost, alias: string):
     return;
   }
   host.showStatus(
-    `Secondary model set to ${displayName}. Newly spawned subagents will use it by default.`,
+    `Secondary model set to ${displayName}. Subagent thinking effort: ${effort === 'default' ? 'per-model defaults' : `${effortLabel(effort)} (entire pool)`}. Applies to newly spawned subagents.`,
     'success',
   );
 }

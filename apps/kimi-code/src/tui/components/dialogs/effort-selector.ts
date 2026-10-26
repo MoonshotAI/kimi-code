@@ -95,7 +95,9 @@ export class EffortSelectorComponent extends Container implements Focusable {
         ? currentTheme.boldFg('primary', `[ ${label} ]`)
         : currentTheme.fg('text', `  ${label}  `);
     });
-    lines.push(`  ${segments.join('  ')}`);
+    for (const line of wrapTextWithAnsi(segments.join('  '), Math.max(1, width - 2))) {
+      lines.push(`  ${line}`);
+    }
 
     lines.push('');
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));

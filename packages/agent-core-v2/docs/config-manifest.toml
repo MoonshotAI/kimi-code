@@ -365,6 +365,7 @@ merge_all_available_skills = true
 # secondaryModel (config.toml: secondary_model)
 #   owner: src/session/subagent/configSection.ts
 #   scope: core
+#   hooks: custom merge
 # ##########################################################################
 
 [secondary_model]
