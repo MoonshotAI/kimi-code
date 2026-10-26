@@ -52,6 +52,14 @@ describe('createSecurityHeadersHook', () => {
     expect(effectiveScriptSrc).not.toContain('data:');
   });
 
+  it('allows WebAssembly compilation without allowing JavaScript eval', async () => {
+    const { headers, reply } = captureHeaders();
+    await createSecurityHeadersHook({ tls: false })({} as never, reply as never, 'payload');
+    const directives = parseCsp(headers.get('content-security-policy') ?? '');
+    expect(directives.get('script-src')).toEqual(["'self'", "'wasm-unsafe-eval'"]);
+    expect(directives.get('script-src')).not.toContain("'unsafe-eval'");
+  });
+
   it('emits HSTS only when TLS is terminated at the server', async () => {
     const plain = captureHeaders();
     await createSecurityHeadersHook({ tls: false })({} as never, plain.reply as never, '');
