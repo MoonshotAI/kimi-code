@@ -6,6 +6,9 @@ import { afterEach } from 'vitest';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import { agentContextOfScope, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type {
   AgentLLMRequestOverrides,
   AgentLLMRequestPartHandler,
@@ -21,6 +24,13 @@ import {
 } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { ContentPart, Message } from '#/llm-adapter/contract/message';
+import {
+  estimateTokens,
+  estimateTokensForMessage,
+  estimateTokensForMessages,
+  estimateTokensForTools,
+} from '#/llm-adapter/contract/tokens';
+import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import type {
   LlmCredentialProvider,
   LlmRequestConfig,
@@ -35,6 +45,10 @@ interface RequestScope {
   readonly source: AgentLLMRequestSource | undefined;
   readonly contextRevision: number;
   readonly mediaDegraded: boolean;
+  readonly context: readonly Message[];
+  readonly contextTokens: number;
+  readonly contextWindow: number;
+  readonly toolInputs: string;
   attempts: number;
 }
 
@@ -42,6 +56,7 @@ interface RecordedRequest {
   readonly contextRevision: number;
   readonly model: string;
   readonly profile: Readonly<Record<(typeof PROFILE_FIELDS)[number], unknown>>;
+  readonly toolInputs: string;
   readonly call: GenerateCall;
 }
 
@@ -68,13 +83,23 @@ const MEDIA_PATH_KIND = {
   video_url: 'video',
 } as const;
 
+const PREFIX_SHARING_OPERATIONS = new Set(['full_compaction']);
+const INDEPENDENT_OPERATIONS = new Set(['direct_test']);
+const CONTEXT_OVERFLOW_ERRORS = new Set(['APIContextOverflowError', 'APIRequestTooLargeError']);
+
 const requestScope = new AsyncLocalStorage<RequestScope>();
 const lastTurnRequests = new WeakMap<object, RecordedRequest>();
+const compactionRevisions = new WeakMap<object, number>();
+const overflowedAgents = new WeakSet<object>();
 const violations: string[] = [];
 let comparisons = 0;
 
 export function promptCacheComparisons(): number {
   return comparisons;
+}
+
+export function takePromptCacheViolations(): string[] {
+  return violations.splice(0);
 }
 
 export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequesterService {
@@ -86,6 +111,10 @@ export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequester
     @IInstantiationService instantiation: IInstantiationService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
+    @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.inner = instantiation.createInstance(AgentLLMRequesterService);
   }
@@ -121,11 +150,20 @@ export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequester
   ): AgentLLMRequestTask {
     const contextRevision = this.context.prefixRevision();
     const recovery = this.states.get(llmRequesterMediaRecoveryKey);
+    const profile = this.profile.data();
     const scope: RequestScope = {
       agent: this,
       source: overrides?.source,
       contextRevision,
       mediaDegraded: recovery?.media === 'degraded' && recovery.contextRevision === contextRevision,
+      context: this.context.get(),
+      contextTokens: this.tokenCounting.get(agentContextOfScope(this.scopeContext)).size,
+      contextWindow:
+        profile.modelCapabilities.max_input_tokens ?? profile.modelCapabilities.max_context_tokens,
+      toolInputs: JSON.stringify([
+        this.toolRegistry.list().map((tool) => tool.name).toSorted(),
+        profile.activeToolNames ?? null,
+      ]),
       attempts: 0,
     };
     return requestScope.run(scope, () => this.inner.start(overrides, onPart, signal));
@@ -141,11 +179,17 @@ export function guardPromptCachePrefix(requester: LlmRequester): LlmRequester {
         contextRevision: scope.contextRevision,
         model: modelIdentity(config),
         profile: Object.fromEntries(PROFILE_FIELDS.map((field) => [field, config[field]])) as RecordedRequest['profile'],
+        toolInputs: scope.toolInputs,
         call: generateCallOf(config, content),
       };
       scope.attempts += 1;
-      checkPrefixExtension(scope, request);
-      await requester.generate(config, content, control);
+      checkPrefixExtension(scope, request, config);
+      try {
+        await requester.generate(config, content, control);
+      } catch (error) {
+        if (isContextOverflow(error)) overflowedAgents.add(scope.agent);
+        throw error;
+      }
       if (scope.source?.type === 'turn') lastTurnRequests.set(scope.agent, request);
     },
   };
@@ -156,18 +200,69 @@ afterEach(() => {
   if (found.length > 0) throw new Error(found.join('\n\n'));
 });
 
-function checkPrefixExtension(scope: RequestScope, request: RecordedRequest): void {
+function checkPrefixExtension(
+  scope: RequestScope,
+  request: RecordedRequest,
+  config: LlmRequestConfig,
+): void {
   const kind = checkedRequestKind(scope.source);
   if (kind === undefined) return;
+  const droppedCount = kind === 'full compaction' ? compactionDroppedCount(scope) : 0;
+  const firstCompactionRequest = kind === 'full compaction' && isFirstCompactionRequest(scope);
+  if (droppedCount > 0 && firstCompactionRequest) {
+    recordUnnecessaryDrop(scope, request, config, droppedCount);
+  }
   const previous = lastTurnRequests.get(scope.agent);
-  if (previous === undefined) return;
-  if (previous.contextRevision !== request.contextRevision || previous.model !== request.model) return;
+  if (previous === undefined || previous.model !== request.model) return;
   comparisons += 1;
   const label = scope.attempts === 1 ? kind : `${kind} retry`;
   recordPrefixBreak(label, findStableBreak(previous, request));
-  if (scope.attempts === 1) {
-    recordPrefixBreak(label, findHistoryBreak(previous, request, scope.mediaDegraded));
+  if (scope.attempts > 1 || droppedCount > 0 || previous.contextRevision !== request.contextRevision) {
+    return;
   }
+  recordPrefixBreak(label, findHistoryBreak(previous, request, scope.mediaDegraded));
+}
+
+function compactionDroppedCount(scope: RequestScope): number {
+  return Number(scope.source?.logFields?.['droppedCount'] ?? 0);
+}
+
+function isFirstCompactionRequest(scope: RequestScope): boolean {
+  if (scope.attempts !== 1) return false;
+  const first = compactionRevisions.get(scope.agent) !== scope.contextRevision;
+  compactionRevisions.set(scope.agent, scope.contextRevision);
+  return first;
+}
+
+function recordUnnecessaryDrop(
+  scope: RequestScope,
+  request: RecordedRequest,
+  config: LlmRequestConfig,
+  droppedCount: number,
+): void {
+  if (scope.contextWindow <= 0 || overflowedAgents.has(scope.agent)) return;
+  const instruction = request.call.history.at(-1);
+  const estimatedFullRequest =
+    estimateTokens(request.call.systemPrompt) +
+    estimateTokensForTools(request.call.tools) +
+    estimateTokensForMessages(scope.context);
+  const fullRequest =
+    Math.max(estimatedFullRequest, scope.contextTokens) +
+    (instruction === undefined ? 0 : estimateTokensForMessage(instruction));
+  const outputReserve = Math.min(
+    config.maxCompletionTokens ?? Number.POSITIVE_INFINITY,
+    Math.floor(scope.contextWindow / 8),
+  );
+  if (fullRequest + outputReserve > scope.contextWindow) return;
+  violations.push(
+    `full compaction request dropped ${String(droppedCount)} history messages although the full history fits the context window (${String(fullRequest)} request tokens + ${String(outputReserve)} output reserve <= ${String(scope.contextWindow)}), breaking the prompt-cache prefix`,
+  );
+}
+
+function isContextOverflow(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (CONTEXT_OVERFLOW_ERRORS.has(error.name)) return true;
+  return (error as { readonly statusCode?: unknown }).statusCode === 413;
 }
 
 function recordPrefixBreak(kind: string, prefixBreak: unknown): void {
@@ -178,9 +273,16 @@ function recordPrefixBreak(kind: string, prefixBreak: unknown): void {
 }
 
 function checkedRequestKind(source: AgentLLMRequestSource | undefined): string | undefined {
-  if (source?.type === 'turn') return source.step === 1 ? 'next turn' : 'next step';
-  if (source?.requestKind !== 'full_compaction') return undefined;
-  return source.logFields?.['droppedCount'] === 0 ? 'full compaction' : undefined;
+  if (source === undefined) return undefined;
+  if (source.type === 'turn') return source.step === 1 ? 'next turn' : 'next step';
+  const requestKind = source.requestKind ?? 'operation';
+  if (PREFIX_SHARING_OPERATIONS.has(requestKind)) return requestKind.replaceAll('_', ' ');
+  if (!INDEPENDENT_OPERATIONS.has(requestKind)) {
+    violations.push(
+      `operation request kind "${requestKind}" has no declared prompt-cache intent: add it to PREFIX_SHARING_OPERATIONS when it reuses the agent's turn prefix, or to INDEPENDENT_OPERATIONS when it never does`,
+    );
+  }
+  return undefined;
 }
 
 function findStableBreak(previous: RecordedRequest, next: RecordedRequest): unknown {
@@ -190,10 +292,12 @@ function findStableBreak(previous: RecordedRequest, next: RecordedRequest): unkn
   if (profileField !== undefined) {
     return { at: profileField, previous: previous.profile[profileField], next: next.profile[profileField] };
   }
+  const toolsMayChange =
+    previous.toolInputs !== next.toolInputs && !sameToolNames(previous.call, next.call);
   return findGenerateCallPrefixBreak(
     {
       systemPrompt: previous.call.systemPrompt,
-      tools: sameToolNames(previous.call, next.call) ? previous.call.tools : next.call.tools,
+      tools: toolsMayChange ? next.call.tools : previous.call.tools,
       history: next.call.history,
     },
     next.call,

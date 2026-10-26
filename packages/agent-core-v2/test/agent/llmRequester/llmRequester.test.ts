@@ -1,9 +1,10 @@
 import {
   APIConnectionError,
+  APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
+import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
 import { emptyUsage, inputTotal } from '#human/llm/usage';
@@ -13,20 +14,27 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import {
   IAgentLLMRequesterService,
   type AgentLLMRequestFinish,
+  type AgentLLMRequestOverrides,
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IWireService } from '#/wire/wire';
 import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
   createTestAgent,
   findGenerateCallPrefixBreak,
+  InMemoryWireRecordPersistence,
   llmGenerateServices,
   logServices,
   requesterFromGenerateFn,
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
-import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
+import {
+  promptCacheComparisons,
+  takePromptCacheViolations,
+} from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -759,6 +767,200 @@ describe('LLMRequester service migration coverage', () => {
     );
   });
 
+});
+
+describe('prompt-cache guard', () => {
+  const GUARD_PROVIDER = {
+    type: 'kimi',
+    apiKey: 'test-key',
+    baseUrl: 'https://api.example/v1',
+    model: 'kimi-code',
+  } as const;
+  let ctx: TestAgentContext;
+  let llmRequester: IAgentLLMRequesterService;
+
+  function configureWindow(maxContextTokens: number): void {
+    ctx.configure({
+      provider: GUARD_PROVIDER,
+      modelCapabilities: {
+        image_in: true,
+        video_in: true,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: maxContextTokens,
+      },
+    });
+  }
+
+  beforeEach(() => {
+    ctx = createTestAgent();
+    configureWindow(256_000);
+    llmRequester = ctx.get(IAgentLLMRequesterService);
+    ctx.context.append(
+      userMessage('first question'),
+      { role: 'assistant', content: [{ type: 'text', text: 'first answer' }], toolCalls: [] },
+      userMessage('second question'),
+    );
+  });
+
+  afterEach(async () => {
+    await ctx.dispose();
+  });
+
+  async function turnRequest(
+    turnId: number,
+    step: number,
+    overrides: Omit<AgentLLMRequestOverrides, 'source'> = {},
+  ): Promise<void> {
+    ctx.mockNextResponse({ type: 'text', text: `answer ${String(turnId)}.${String(step)}` });
+    await llmRequester.request({ ...overrides, source: { type: 'turn', turnId, step } });
+  }
+
+  async function compactionRequest(
+    droppedCount: number,
+    history: readonly Message[],
+  ): Promise<void> {
+    ctx.mockNextResponse({ type: 'text', text: 'Guard summary.' });
+    await llmRequester.request({
+      messages: [...history, createUserMessage('Summarize the conversation.')],
+      maxOutputSize: 128 * 1024,
+      source: { type: 'operation', requestKind: 'full_compaction', logFields: { droppedCount } },
+    });
+  }
+
+  it('flags a turn request that rewrites history the previous turn request already sent', async () => {
+    await turnRequest(1, 1);
+    await turnRequest(1, 2, { messages: [userMessage('rewritten question')] });
+
+    expect(takePromptCacheViolations()).toEqual([
+      expect.stringMatching(/^next step request does not extend[\s\S]*"at": "history"/),
+    ]);
+  });
+
+  it('flags a system prompt change across a context rewrite', async () => {
+    await turnRequest(1, 1);
+    ctx.context.clear();
+    ctx.context.append(userMessage('after the rewrite'));
+    await turnRequest(2, 1, { systemPrompt: 'a different system prompt' });
+
+    expect(takePromptCacheViolations()).toEqual([
+      expect.stringMatching(/^next turn request does not extend[\s\S]*"at": "systemPrompt"/),
+    ]);
+  });
+
+  it('lets a context rewrite change the history behind a stable system prompt and tools', async () => {
+    await turnRequest(1, 1);
+    ctx.context.clear();
+    ctx.context.append(userMessage('after the rewrite'));
+    await turnRequest(2, 1);
+
+    expect(takePromptCacheViolations()).toEqual([]);
+  });
+
+  it('flags a tool table change that no tool registration explains', async () => {
+    await turnRequest(1, 1);
+    await turnRequest(1, 2, { tools: [] });
+
+    expect(takePromptCacheViolations()).toEqual([
+      expect.stringMatching(/^next step request does not extend[\s\S]*"at": "tools"/),
+    ]);
+  });
+
+  it('lets a tool registration change the tool table', async () => {
+    await turnRequest(1, 1);
+    ctx.get(IAgentToolRegistryService).register(
+      {
+        name: 'mcp__srv__late',
+        description: 'A tool registered mid-session.',
+        parameters: { type: 'object', properties: {} },
+        resolveExecution: () => ({
+          approvalRule: 'mcp__srv__late',
+          execute: async () => ({ output: 'late' }),
+        }),
+      },
+      { source: 'mcp' },
+    );
+    await turnRequest(1, 2);
+
+    expect(ctx.llmCalls.at(-1)!.tools.map((tool) => tool.name)).toContain('mcp__srv__late');
+    expect(takePromptCacheViolations()).toEqual([]);
+  });
+
+  it('flags a compaction request that drops history the context window still fits', async () => {
+    await compactionRequest(1, ctx.context.get().slice(1));
+
+    expect(takePromptCacheViolations()).toEqual([
+      expect.stringMatching(/^full compaction request dropped 1 history messages although the full history fits/),
+    ]);
+  });
+
+  it('lets a compaction request drop history the context window cannot fit', async () => {
+    configureWindow(64_000);
+    ctx.context.append(userMessage(`oversized ${'x'.repeat(320_000)}`));
+    await compactionRequest(2, ctx.context.get().slice(2));
+
+    expect(takePromptCacheViolations()).toEqual([]);
+  });
+
+  it('lets a compaction request drop history after the provider rejected the context', async () => {
+    ctx.mockNextProviderResponse({
+      error: new APIContextOverflowError(400, 'context length exceeded'),
+    });
+    await expect(
+      llmRequester.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
+    ).rejects.toThrow();
+    await compactionRequest(1, ctx.context.get().slice(1));
+
+    expect(takePromptCacheViolations()).toEqual([]);
+  });
+
+  it('lets a compaction retry drop history after the first compaction request', async () => {
+    await compactionRequest(0, ctx.context.get());
+    await compactionRequest(1, ctx.context.get().slice(1));
+
+    expect(takePromptCacheViolations()).toEqual([]);
+  });
+
+  it('flags an operation request kind without a declared prompt-cache intent', async () => {
+    ctx.mockNextResponse({ type: 'text', text: 'undeclared' });
+    await llmRequester.request({ source: { type: 'operation', requestKind: 'undeclared_operation' } });
+
+    expect(takePromptCacheViolations()).toEqual([
+      expect.stringContaining('"undeclared_operation" has no declared prompt-cache intent'),
+    ]);
+  });
+});
+
+describe('prompt-cache prefix across resume', () => {
+  it('starts the first request after a resume as a prefix extension of the last request before it', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    const live = createTestAgent({ persistence });
+    try {
+      for (const text of ['first question', 'second question']) {
+        live.mockNextResponse({ type: 'text', text: `answer to ${text}` });
+        await live.rpc.prompt({ input: [{ type: 'text', text }] });
+        await live.untilTurnEnd();
+      }
+      await live.get(IWireService).flush();
+    } finally {
+      await live.dispose();
+    }
+    const lastLiveCall = live.llmCalls.at(-1)!;
+
+    const resumed = createTestAgent({ persistence, autoConfigure: false });
+    try {
+      await resumed.restorePersisted();
+      resumed.mockNextResponse({ type: 'text', text: 'answer to third question' });
+      await resumed.rpc.prompt({ input: [{ type: 'text', text: 'third question' }] });
+      await resumed.untilTurnEnd();
+
+      expect(lastLiveCall.history).toHaveLength(3);
+      expect(findGenerateCallPrefixBreak(lastLiveCall, resumed.llmCalls.at(-1)!)).toBeUndefined();
+    } finally {
+      await resumed.dispose();
+    }
+  });
 });
 
 type ProtocolEvent = Extract<
