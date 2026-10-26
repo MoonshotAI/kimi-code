@@ -1,4 +1,9 @@
-import { APIConnectionError, APIStatusError } from '#/llm-adapter/contract/errors';
+import {
+  APIConnectionError,
+  APIRequestTooLargeError,
+  APIStatusError,
+} from '#/llm-adapter/contract/errors';
+import type { Message } from '#/llm-adapter/contract/message';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
 import { emptyUsage, inputTotal } from '#human/llm/usage';
@@ -14,6 +19,7 @@ import type { ILogger as Logger, LogPayload } from '#/_base/log/log';
 import {
   configServices,
   createTestAgent,
+  findGenerateCallPrefixBreak,
   llmGenerateServices,
   logServices,
   requesterFromGenerateFn,
@@ -687,6 +693,67 @@ describe('LLMRequester service migration coverage', () => {
 
       expect(capturedCacheKey).toBe('test-session');
     });
+  });
+
+  describe('media recovery across turns', () => {
+    function countMedia(history: readonly Message[]): number {
+      return history
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url' || part.type === 'video_url').length;
+    }
+
+    it.each([
+      {
+        recovery: 'media-degraded',
+        error: new APIRequestTooLargeError(413, 'Request Entity Too Large'),
+        keptMedia: 2,
+      },
+      {
+        recovery: 'media-stripped',
+        error: new APIStatusError(400, 'unsupported image format: image/avif is not supported'),
+        keptMedia: 0,
+      },
+    ])(
+      'starts the next turn as a prefix extension of the $recovery request the previous turn settled on',
+      async ({ error, keptMedia }) => {
+        const ctx = createTestAgent();
+        try {
+          ctx.configure({
+            provider: {
+              type: 'kimi',
+              apiKey: 'test-key',
+              baseUrl: 'https://api.example/v1',
+              model: 'kimi-code',
+            },
+            modelCapabilities: {
+              image_in: true,
+              video_in: true,
+              audio_in: false,
+              thinking: true,
+              tool_use: true,
+              max_context_tokens: 256_000,
+            },
+          });
+          ctx.appendRichToolExchange();
+          ctx.appendRichToolExchange();
+          ctx.mockNextProviderResponse({ error });
+          ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'describe the media' }] });
+          await ctx.untilTurnEnd();
+          ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
+          await ctx.rpc.prompt({ input: [{ type: 'text', text: 'and now?' }] });
+          await ctx.untilTurnEnd();
+
+          const [rejected, settled, nextTurn] = ctx.llmCalls;
+          expect(countMedia(rejected!.history)).toBeGreaterThan(2);
+          expect(countMedia(settled!.history)).toBe(keptMedia);
+          expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
+          expect(ctx.llmCalls).toHaveLength(3);
+        } finally {
+          await ctx.dispose();
+        }
+      },
+    );
   });
 
 });
