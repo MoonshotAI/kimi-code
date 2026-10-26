@@ -292,6 +292,7 @@ export class SessionEventHandler {
     switch (event.type) {
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
+      case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
@@ -385,6 +386,15 @@ export class SessionEventHandler {
         stale: event.origin.stale,
       },
     });
+  }
+
+  private handlePromptCompleted(
+    event: Extract<Event, { type: 'prompt.completed' }>,
+    sendQueued: (item: QueuedMessage) => void,
+  ): void {
+    if (event.reason !== 'blocked') return;
+    this.host.programStatus?.failRequest('Turn blocked by a prompt hook');
+    this.host.streamingUI.finalizeTurn(sendQueued);
   }
 
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {

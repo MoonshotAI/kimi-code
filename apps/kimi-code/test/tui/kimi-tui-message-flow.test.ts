@@ -4464,6 +4464,34 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).not.toContain('Old skill request cancelled');
   });
 
+  it('settles a prompt-hook block as an OSC error when no turn starts', async () => {
+    const { driver } = await makeDriver();
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    driver.handleUserInput('block root');
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'prompt.completed',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        promptId: 'prompt-blocked',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason: 'blocked',
+      } as Event,
+      () => {},
+    );
+
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+    expect(rootStatus()).toMatchObject({
+      state: 'error',
+      message: 'Turn blocked by a prompt hook',
+    });
+  });
+
   it('keeps a goal continuation active while a queued skill rejection settles', async () => {
     let rejectSkill!: (error: unknown) => void;
     const held = new Promise<void>((_resolve, reject) => { rejectSkill = reject; });
