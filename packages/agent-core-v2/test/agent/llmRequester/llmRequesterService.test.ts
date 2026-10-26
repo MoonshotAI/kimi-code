@@ -901,6 +901,72 @@ describe('AgentLLMRequesterService media recovery prefix parity', () => {
   });
 
   it.each([
+    { rejection: 'image-format', added: [imageMessage(REJECTED_FORMAT_URL, 'new-rejected')] },
+    { rejection: '413', added: degradedTurn },
+  ])('recovers newly added media rejected with $rejection after a strip', async ({ added }) => {
+    for (const source of [
+      { type: 'turn', turnId: 2, step: 1 },
+      { type: 'operation', turnId: 1, requestKind: 'full_compaction' },
+      { type: 'operation', turnId: undefined, requestKind: 'full_compaction' },
+    ] as const) {
+      const inputs: ModelRequestInput[] = [];
+      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+      const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
+
+      await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
+      expect(inputs).toHaveLength(2);
+
+      await service.request({ messages: [rejected, ...added], source });
+
+      expect(inputs).toHaveLength(4);
+      expect(inputs[2]!.messages[0]).toEqual(inputs[1]!.messages[0]);
+      expect(
+        inputs[2]!.messages.flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url'),
+      ).toEqual(added.flatMap((message) => message.content));
+      expect(
+        inputs[3]!.messages.flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url'),
+      ).toEqual([]);
+
+      await service.request({
+        messages: [rejected, ...added, textMessage('next turn')],
+        source: { type: 'turn', turnId: 3, step: 1 },
+      });
+
+      expect(inputs).toHaveLength(source.type === 'turn' ? 5 : 6);
+      expect(
+        inputs[4]!.messages.flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url'),
+      ).toEqual(source.type === 'turn' ? [] : added.flatMap((message) => message.content));
+      expectPrefixExtension(inputs[3]!, inputs.at(-1)!);
+    }
+  });
+
+  it.each([
+    { rejection: 'image-format', error: IMAGE_FORMAT_400 },
+    { rejection: '413', error: BODY_TOO_LARGE_413 },
+  ])('bounds $rejection recovery after inheriting a strip snapshot', async ({ error }) => {
+    for (const hasNewMedia of [false, true]) {
+      const inputs: ModelRequestInput[] = [];
+      const requester = mediaRejectingRequester(inputs);
+      const { service } = createService(requester, undefined);
+      const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
+      await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
+
+      requester.request = createRequester({ value: 0 }, error, [error], inputs).request;
+      const messages = hasNewMedia
+        ? [rejected, imageMessage('data:image/png;base64,FRESH', 'fresh')]
+        : [rejected];
+      await expect(
+        service.request({ messages, source: { type: 'turn', turnId: 2, step: 1 } }),
+      ).rejects.toBe(error);
+
+      expect(inputs).toHaveLength(hasNewMedia ? 4 : 3);
+    }
+  });
+
+  it.each([
     { change: 'the history prefix is rewritten', bump: 'revision' },
     { change: 'the model changes', bump: 'model' },
   ] as const)('retries full media on the next turn after $change', async ({ bump }) => {

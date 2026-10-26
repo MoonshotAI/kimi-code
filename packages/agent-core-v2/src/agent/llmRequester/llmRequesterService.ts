@@ -347,7 +347,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const recoveredMedia = this.recoveredMedia(request);
     let policy: ProjectionPolicy | undefined =
       recoveredMedia === undefined ? undefined : { media: recoveredMedia };
+    let mediaStrippedThisRequest = false;
     const captureMediaStripPolicy = (): { readonly strip: MediaStripSnapshot } => {
+      mediaStrippedThisRequest = true;
       const media = { strip: this.projector.captureMediaStripSnapshot(shaped) };
       this.markMediaRecovery(request, media);
       return media;
@@ -514,11 +516,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       try {
         return await run(policy);
       } catch (error) {
+        const canStripMedia =
+          !mediaStrippedThisRequest &&
+          (typeof policy?.media !== 'object' || (previousMediaCount ?? 0) > 0);
         const nextPolicy = this.nextProjectionPolicyForError(
           error,
           policy,
           request,
           signal,
+          canStripMedia,
           captureMediaStripPolicy,
         );
         if (nextPolicy !== undefined) {
@@ -561,6 +567,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     policy: ProjectionPolicy | undefined,
     request: ResolvedLLMRequest,
     signal: AbortSignal | undefined,
+    canStripMedia: boolean,
     captureMediaStripPolicy: () => { readonly strip: MediaStripSnapshot },
   ): ProjectionPolicy | undefined {
     if (signal?.aborted === true) return undefined;
@@ -568,10 +575,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const media = policy?.media;
     let projection: LlmRequestProjectionFallbackEvent['projection'];
     let nextPolicy: ProjectionPolicy;
-    if (
-      raw instanceof APIRequestTooLargeError &&
-      (media === undefined || media === 'degraded')
-    ) {
+    if (raw instanceof APIRequestTooLargeError && canStripMedia) {
       signal?.throwIfAborted();
       if (media === undefined) {
         this.log.warn('provider rejected request as too large; resending with degraded media', {
@@ -583,7 +587,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         nextPolicy = { ...policy, media: 'degraded' };
       } else {
         this.log.warn(
-          'provider rejected degraded-media request as too large; resending with rejected media stripped',
+          'provider rejected request as too large; resending with rejected media stripped',
           {
             model: request.model.name,
             ...request.logFields,
@@ -592,7 +596,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         projection = 'media-stripped';
         nextPolicy = { ...policy, media: captureMediaStripPolicy() };
       }
-    } else if (typeof media !== 'object' && isImageFormatError(raw)) {
+    } else if (canStripMedia && isImageFormatError(raw)) {
       signal?.throwIfAborted();
       this.log.warn(
         'provider rejected an image in the request; resending with rejected media stripped',
