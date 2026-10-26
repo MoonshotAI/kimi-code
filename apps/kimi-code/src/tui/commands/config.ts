@@ -605,18 +605,24 @@ function secondaryModelEfforts(
   const aliases = new Set([...Object.keys(secondary?.models ?? {}), alias]);
   const selected = models[alias];
   if (selected === undefined) return [];
-  const segments = [...segmentsFor(effectiveModelAlias(selected))];
-  if (secondary?.defaultEffort?.trim().toLowerCase() === 'on' && !segments.includes('on')) {
-    segments.unshift('on');
+  const pool = [...aliases].map((candidate) => {
+    const model = models[candidate];
+    return model === undefined ? undefined : effectiveModelAlias(model);
+  });
+  const segments = new Set(segmentsFor(effectiveModelAlias(selected)));
+  for (const model of pool) {
+    for (const effort of model?.supportEfforts ?? []) segments.add(effort);
   }
-  return segments.filter((effort) =>
-    [...aliases].every((candidate) => {
-      const model = models[candidate];
+  const current = secondary?.defaultEffort?.trim().toLowerCase();
+  if (current !== undefined && current.length > 0) segments.add(current);
+  return [...segments].filter((effort) =>
+    pool.every((model) => {
       if (model === undefined) return false;
-      const effective = effectiveModelAlias(model);
-      return effort === 'on'
-        ? thinkingAvailability(effective) !== 'unsupported'
-        : segmentsFor(effective).includes(effort);
+      const availability = thinkingAvailability(model);
+      if (effort === 'off') return availability !== 'always-on';
+      if (availability === 'unsupported') return false;
+      const supported = model.supportEfforts ?? [];
+      return effort === 'on' || supported.length === 0 || supported.includes(effort);
     }),
   );
 }

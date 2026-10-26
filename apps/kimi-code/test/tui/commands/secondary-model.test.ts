@@ -295,6 +295,88 @@ describe('handleSecondaryModelCommand', () => {
     });
   });
 
+  it('preserves a valid pool effort when the selected custom model has no effort list', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      const custom: ModelAlias = { ...model('custom'), capabilities: ['thinking'] };
+      const secondaryModel = {
+        defaultModel: 'custom',
+        defaultEffort: 'xhigh',
+        models: { custom: 'custom thinking model', reasoner: 'declared efforts' },
+      };
+      await harness.setConfig({
+        models: {
+          reasoner: { supportEfforts: ['low', 'high', 'xhigh'] },
+          custom,
+        },
+        secondaryModel,
+      });
+      host.state.appState.availableModels = (await harness.getConfig()).models ?? {};
+      await handleSecondaryModelCommand(host, '');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      expect(effortPicker.render(100).join('\n')).toContain('[ Xhigh ]');
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual(secondaryModel);
+    });
+  });
+
+  it.each([
+    { label: 'omitted', supportEfforts: undefined },
+    { label: 'empty', supportEfforts: [] },
+  ])('offers pool efforts when the selected model effort list is $label', async ({ supportEfforts }) => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      await harness.setConfig({
+        models: { custom: { ...model('custom'), capabilities: ['thinking'], supportEfforts } },
+        secondaryModel: { models: { reasoner: 'declared efforts', custom: 'custom thinking model' } },
+      });
+      host.state.appState.availableModels = (await harness.getConfig()).models ?? {};
+      await handleSecondaryModelCommand(host, 'custom');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      for (let i = 0; i < 4; i++) effortPicker.handleInput(RIGHT);
+      expect(effortPicker.render(100).join('\n')).toContain('[ Max ]');
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'custom',
+        defaultEffort: 'max',
+        models: { reasoner: 'declared efforts', custom: 'custom thinking model' },
+      });
+    });
+  });
+
+  it('preserves an existing effort when the only model overrides its effort list to empty', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      await harness.setConfig({
+        models: { reasoner: { overrides: { supportEfforts: [] } } },
+        secondaryModel: { defaultEffort: 'xhigh' },
+      });
+      host.state.appState.availableModels = (await harness.getConfig()).models ?? {};
+      await handleSecondaryModelCommand(host, '');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      expect(effortPicker.render(100).join('\n')).toContain('[ Xhigh ]');
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'reasoner', defaultEffort: 'xhigh',
+      });
+    });
+  });
+
   it('saves an effort inferred from the selected model provider', async () => {
     await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
       const claude = { ...model('claude-latest') };
