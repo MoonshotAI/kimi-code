@@ -37,8 +37,6 @@ function makeHost(options?: {
     availableModels: {
       k2: model('k2'),
       cheap: model('cheap'),
-      // The v1 derived entry must never be selectable.
-      '__secondary__': model('cheap'),
       // The pool's reserved symbolic choice must never be selectable either.
       'primary': model('primary'),
     } as Record<string, ModelAlias>,
@@ -176,15 +174,6 @@ describe('handleSecondaryModelCommand', () => {
     await handleSecondaryModelCommand(host, 'nope');
 
     expect(host.showError).toHaveBeenCalledWith('Unknown model alias: nope');
-    expect(host.mountEditorReplacement).not.toHaveBeenCalled();
-  });
-
-  it('rejects the synthesized derived alias as an argument', async () => {
-    const { host } = makeHost();
-
-    await handleSecondaryModelCommand(host, '__secondary__');
-
-    expect(host.showError).toHaveBeenCalledWith('Unknown model alias: __secondary__');
     expect(host.mountEditorReplacement).not.toHaveBeenCalled();
   });
 

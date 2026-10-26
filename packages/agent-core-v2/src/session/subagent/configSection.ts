@@ -33,16 +33,7 @@ export const SecondaryModelConfigSchema = z.object({
   defaultModel: z.string().min(1).optional(),
   models: z.record(z.string(), z.string()).optional(),
   model: z.string().min(1).optional(),
-  maxContextSize: z.number().int().min(1).optional(),
-  maxInputSize: z.number().int().min(1).optional(),
-  maxOutputSize: z.number().int().min(1).optional(),
-  capabilities: z.array(z.string()).optional(),
-  displayName: z.string().optional(),
-  reasoningKey: z.string().optional(),
-  adaptiveThinking: z.boolean().optional(),
-  supportEfforts: z.array(z.string()).optional(),
   defaultEffort: z.string().optional(),
-  offEffort: z.string().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;
@@ -74,19 +65,39 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
 export const SECONDARY_MODEL_FORCE_REMOVED_MESSAGE =
   "[secondary_model] 'force' is no longer supported and is ignored: a lone default_model already pins every subagent to that model, and a [secondary_model.models] table only offers its own entries. Remove the key; run /update-config to fix it.";
 
-function collectRemovedForceKey(rawSection: unknown): ConfigDiagnostic[] {
-  if (!isPlainObject(rawSection) || rawSection['force'] === undefined) return [];
-  return [
-    {
-      domain: SECONDARY_MODEL_SECTION,
-      severity: 'warning',
-      message: SECONDARY_MODEL_FORCE_REMOVED_MESSAGE,
-    },
-  ];
+const REMOVED_SECONDARY_MODEL_TUNING_KEYS = [
+  'max_context_size',
+  'max_input_size',
+  'max_output_size',
+  'capabilities',
+  'display_name',
+  'reasoning_key',
+  'adaptive_thinking',
+  'support_efforts',
+  'off_effort',
+] as const;
+
+export function secondaryModelRemovedKeysMessage(keys: readonly string[]): string {
+  return `[secondary_model] ${keys.join(', ')} ${keys.length === 1 ? 'is' : 'are'} ignored: subagents bind the [models] entry as configured. Set model tuning on the [models.<alias>] entry instead and remove ${keys.length === 1 ? 'this key' : 'these keys'} from [secondary_model].`;
+}
+
+function collectRemovedSecondaryModelKeys(rawSection: unknown): ConfigDiagnostic[] {
+  if (!isPlainObject(rawSection)) return [];
+  const messages: string[] = [];
+  if (rawSection['force'] !== undefined) messages.push(SECONDARY_MODEL_FORCE_REMOVED_MESSAGE);
+  const tuningKeys = REMOVED_SECONDARY_MODEL_TUNING_KEYS.filter(
+    (key) => rawSection[key] !== undefined,
+  );
+  if (tuningKeys.length > 0) messages.push(secondaryModelRemovedKeysMessage(tuningKeys));
+  return messages.map((message) => ({
+    domain: SECONDARY_MODEL_SECTION,
+    severity: 'warning',
+    message,
+  }));
 }
 
 registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
-  collectDiagnostics: collectRemovedForceKey,
+  collectDiagnostics: collectRemovedSecondaryModelKeys,
 });
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {

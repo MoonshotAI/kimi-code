@@ -88,6 +88,7 @@ import {
   resolveSubagentTimeoutMs,
   SECONDARY_MODEL_FORCE_REMOVED_MESSAGE,
   SECONDARY_MODEL_SECTION,
+  secondaryModelRemovedKeysMessage,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SecondaryModelConfig,
@@ -2051,7 +2052,7 @@ describe('subagent config section', () => {
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
-    return { config, disposables };
+    return { config, disposables, storage };
   }
 
   it('defaults to two hours and honours the env override', async () => {
@@ -2238,26 +2239,26 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('round-trips legacy recipe patch fields the pool resolution ignores', async () => {
-    const { config, disposables } = await createConfig(
+  it('ignores legacy recipe patch fields with a warning and keeps them on disk', async () => {
+    const { config, disposables, storage } = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\ncapabilities = ["image_in"]\n',
     );
 
     expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       model: 'provider/fast',
       defaultEffort: 'low',
-      maxOutputSize: 8192,
     });
-    expect(resolveSubagentModelPool(config)).toEqual({
-      defaultModel: 'provider/fast',
-      models: { 'provider/fast': '' },
+    expect(config.diagnostics()).toContainEqual({
+      domain: SECONDARY_MODEL_SECTION,
+      severity: 'warning',
+      message: secondaryModelRemovedKeysMessage(['max_output_size', 'capabilities']),
     });
 
     await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
-    const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
-    expect(after?.defaultEffort).toBe('low');
-    expect(after?.maxOutputSize).toBe(8192);
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)?.defaultEffort).toBe('low');
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_output_size = 8192');
 
     disposables.dispose();
   });
