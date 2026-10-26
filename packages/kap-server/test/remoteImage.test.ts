@@ -16,9 +16,9 @@ function successfulFetch(dispatchers: unknown[]): typeof fetch {
 
 describe('remote image network boundaries', () => {
   beforeEach(() => {
-    vi.stubEnv('HTTP_PROXY', '');
-    vi.stubEnv('HTTPS_PROXY', '');
-    vi.stubEnv('NO_PROXY', '');
+    for (const key of ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY']) {
+      vi.stubEnv(key, '');
+    }
   });
 
   afterEach(() => {

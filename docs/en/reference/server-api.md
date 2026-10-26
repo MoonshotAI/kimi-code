@@ -636,6 +636,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
+| `POST /api/v1/sessions/{session_id}/media` | Create session media from a user-approved remote image URL |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
 
 #### The session object
@@ -963,6 +964,26 @@ Assembles an atomic snapshot for rebuilding a client after a resync: the session
 On success, `data` is `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`: `session` is [the session object](#the-session-object), `messages` is the newest 100 messages as `{ items, has_more }`, `in_flight_turn` is the partially streamed turn (`null` when idle, with `current_prompt_id` when known), `subagents` lists live subagent tasks, and `pending_approvals` / `pending_questions` carry the unanswered interactions.
 
 - `40401`: session not found
+
+#### `POST /api/v1/sessions/{session_id}/media`
+
+Creates a session-canonical media file from a remote HTTP(S) image. Call this endpoint only after the user explicitly approves loading the image; do not automatically fetch arbitrary URLs emitted in session content.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **Required.** Session id |
+| `url` | body | string | **Required.** Remote image URL, at most 4096 characters; embedded credentials are rejected |
+
+The server follows at most 3 redirects and enforces a 10-second total budget across DNS, redirects, and body reading. Responses are limited to 10 MiB and identified by their bytes as PNG, JPEG, GIF, WebP, or AVIF; `Content-Type` is not trusted, and HTML, SVG, and other formats are rejected. RFC1918 addresses are allowed, while loopback, link-local, multicast, and common cloud metadata targets are blocked and revalidated on every redirect. The upstream request does not forward `Cookie` or `Authorization` headers.
+
+On success, `data` is the stored file metadata `{ id, name, media_type, size, created_at }`. The id is deterministic for the same URL and image bytes, so repeated loads reuse a media record while changed content creates a new one. Download it through `GET /api/v1/sessions/{session_id}/media/{file_id}`.
+
+Business errors use HTTP 200 with the standard error envelope:
+
+- `40001`: invalid or disallowed URL, resolution failure, or unsupported image content
+- `40401`: session not found
+- `41301`: image exceeds 10 MiB
+- `50001`: upstream request, redirect, or timeout failure
 
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 

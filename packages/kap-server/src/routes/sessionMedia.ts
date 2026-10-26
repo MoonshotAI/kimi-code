@@ -82,9 +82,7 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
       const r = reply as unknown as SessionMediaReply;
       const session = await resumeSessionById(core.accessor, req.params.session_id);
       if (session === undefined) {
-        return r
-          .code(404)
-          .send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, 'session not found', req.id)) as unknown as void;
+        return r.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, 'session not found', req.id)) as unknown as void;
       }
       try {
         const image = await fetchRemoteImage(req.body.url);
@@ -113,12 +111,12 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
       } catch (error) {
         if (error instanceof RemoteImageError) {
           if (error.kind === 'invalid') {
-            return r.code(400).send(errEnvelope(ErrorCode.VALIDATION_FAILED, error.message, req.id)) as unknown as void;
+            return r.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error.message, req.id)) as unknown as void;
           }
           if (error.kind === 'too_large') {
-            return r.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, error.message, req.id)) as unknown as void;
+            return r.send(errEnvelope(ErrorCode.FILE_TOO_LARGE, error.message, req.id)) as unknown as void;
           }
-          return r.code(502).send(errEnvelope(ErrorCode.INTERNAL_ERROR, error.message, req.id)) as unknown as void;
+          return r.send(errEnvelope(ErrorCode.INTERNAL_ERROR, error.message, req.id)) as unknown as void;
         }
         throw error;
       }

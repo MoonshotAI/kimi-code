@@ -150,19 +150,19 @@ describe('server-v2 session remote images', () => {
     const html = await post<{ code: number }>(`/api/v1/sessions/${sessionId}/media`, {
       url: `${imageOrigin}/html.png`,
     });
-    expect(html.status).toBe(400);
+    expect(html.status).toBe(200);
     expect(html.body.code).toBe(40001);
 
     const large = await post<{ code: number }>(`/api/v1/sessions/${sessionId}/media`, {
       url: `${imageOrigin}/large.png`,
     });
-    expect(large.status).toBe(413);
+    expect(large.status).toBe(200);
     expect(large.body.code).toBe(41301);
 
     const streamed = await post<{ code: number }>(`/api/v1/sessions/${sessionId}/media`, {
       url: `${imageOrigin}/stream-large.png`,
     });
-    expect(streamed.status).toBe(413);
+    expect(streamed.status).toBe(200);
     expect(streamed.body.code).toBe(41301);
 
     for (const target of [
@@ -172,26 +172,26 @@ describe('server-v2 session remote images', () => {
       `${imageOrigin}/redirect-blocked`,
     ]) {
       const blocked = await post<{ code: number }>(`/api/v1/sessions/${sessionId}/media`, { url: target });
-      expect(blocked.status).toBe(400);
+      expect(blocked.status).toBe(200);
       expect(blocked.body.code).toBe(40001);
     }
 
     const invalid = await post<{ code: number }>(`/api/v1/sessions/${sessionId}/media`, {
       url: 'data:image/png;base64,AA',
     });
-    expect(invalid.status).toBe(400);
+    expect(invalid.status).toBe(200);
     expect(invalid.body.code).toBe(40001);
 
     const redirects = await post<{ code: number }>(`/api/v1/sessions/${sessionId}/media`, {
       url: `${imageOrigin}/redirect-loop`,
     });
-    expect(redirects.status).toBe(502);
+    expect(redirects.status).toBe(200);
     expect(redirects.body.code).toBe(50001);
 
     const missing = await post<{ code: number }>('/api/v1/sessions/session_missing/media', {
       url: `${imageOrigin}/image.png`,
     });
-    expect(missing.status).toBe(404);
+    expect(missing.status).toBe(200);
     expect(missing.body.code).toBe(40401);
   });
 });
