@@ -38,6 +38,10 @@ export const crashAfterConnectFixture = new URL(
   './fixtures/crash-after-connect-stdio-server.mjs',
   import.meta.url,
 ).pathname;
+export const sharedAgentStdioFixture = new URL(
+  './fixtures/shared-agent-stdio-server.mjs',
+  import.meta.url,
+).pathname;
 export const stderrThenExitFixture = new URL(
   './fixtures/stderr-then-exit-stdio-server.mjs',
   import.meta.url,
