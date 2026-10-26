@@ -3,7 +3,8 @@
  * `kimi web` / `kimi server run` host wiring added in `cli/telemetry.ts`.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resetKimiRegionCache } from '#/utils/region';
 
 const mocks = vi.hoisted(() => ({
   initializeTelemetry: vi.fn(),
@@ -55,12 +56,19 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
 
 describe('initializeServerTelemetry', () => {
   beforeEach(() => {
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
+    resetKimiRegionCache();
     mocks.initializeTelemetry.mockClear();
     mocks.loadRuntimeConfigSafe.mockClear();
     mocks.loadRuntimeConfigSafe.mockReturnValue({
       config: { defaultModel: 'kimi-k2', telemetry: true },
       fileError: undefined,
     });
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    resetKimiRegionCache();
   });
 
   it('configures the sink with ui_mode="web" and the CLI product identity', async () => {

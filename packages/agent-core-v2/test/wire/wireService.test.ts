@@ -72,7 +72,7 @@ function wireOverLog(
   dependencies: { blob?: IAgentBlobService; storage?: IFileSystemStorageService; telemetry?: ITelemetryService } = {},
 ): IWireService {
   const stubIx = disposables.add(new TestInstantiationService());
-  return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, ...dependencies });
+  return registerTestAgentWire(stubIx, testWireScope(SCOPE, key), { log: stubLog, logger: noopLogger, ...dependencies });
 }
 
 describe('WireService seal', () => {

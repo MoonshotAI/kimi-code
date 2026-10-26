@@ -467,4 +467,59 @@ describe('loop-event fold parity', () => {
 
     expect(folded).toEqual(baseline);
   });
+
+  it('matches immutable output while reusing the state array in mutable mode', () => {
+    const user: ContextMessage = { role: 'user', content: [{ type: 'text', text: 'go' }], toolCalls: [] };
+    let actual = foldAppendMessage([], user, true);
+    let expected = foldAppendMessage([], user);
+    const restored = actual;
+    const events: LoopRecordedEvent[] = [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'first' } },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'Bash', args: {} },
+      { type: 'tool.result', toolCallId: 'c1', result: { output: 'done' } },
+      { type: 'step.end', uuid: 's1' },
+      { type: 'step.begin', uuid: 's2' },
+      { type: 'step.begin', uuid: 's3' },
+      { type: 'content.part', stepUuid: 's3', part: { type: 'text', text: 'last' } },
+      { type: 'step.end', uuid: 's3' },
+    ];
+    for (const event of events) {
+      actual = foldLoopEvent(actual, event, true);
+      expected = foldLoopEvent(expected, event);
+      expect(actual).toBe(restored);
+      expect(actual).toEqual(expected);
+    }
+  });
+
+  it('preserves deferred messages when mutable replay switches to live folding', () => {
+    const events: LoopRecordedEvent[] = [
+      { type: 'step.begin', uuid: 's1' },
+      { type: 'tool.call', stepUuid: 's1', toolCallId: 'c1', name: 'Bash', args: {} },
+    ];
+    let actual: readonly ContextMessage[] = [];
+    let expected: readonly ContextMessage[] = [];
+    for (const event of events) {
+      actual = foldLoopEvent(actual, event, true);
+      expected = foldLoopEvent(expected, event);
+    }
+    const deferred: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: 'deferred' }],
+      toolCalls: [],
+    };
+    actual = foldAppendMessage(actual, deferred, true);
+    expected = foldAppendMessage(expected, deferred);
+    expect(actual).toEqual(expected);
+
+    for (const event of [
+      { type: 'tool.result', toolCallId: 'c1', result: { output: 'done' } },
+      { type: 'step.end', uuid: 's1' },
+    ] as const) {
+      actual = foldLoopEvent(actual, event, false);
+      expected = foldLoopEvent(expected, event);
+      expect(actual).toEqual(expected);
+    }
+    expect(actual.map((message) => message.role)).toEqual(['assistant', 'tool', 'user']);
+  });
 });

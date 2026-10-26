@@ -205,7 +205,7 @@ function createHarness(
         acquire: (): RuntimeLease => ({
           runtime: {
             identity: { workspaceId: 'workspace-1', runtimeId: 'local', generation: 'test' },
-            capabilities: new Set(['fs', 'process', 'terminal']),
+            capabilities: new Set(['fs', 'process']),
             environment: hostEnvironment,
             path: {
               separator: options.pathClass === 'win32' ? '\\' : '/',
@@ -337,48 +337,14 @@ async function writeAgentsMd(dir: string, content = 'instructions'): Promise<str
 }
 
 describe('agentsMdReminder instructions change announcements', () => {
-  it('appends a path-announcement reminder when an injected AGENTS.md changes on disk', async () => {
-    const h = createHarness();
-    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
-    h.reminder.seedInjected([rootAgentsMd], workDir);
-
-    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'modified', kind: 'file' }]);
-
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.origin).toEqual({ kind: 'injection', variant: 'agents_md_change' });
-    expect(h.reminders[0]?.content).toContain(rootAgentsMd);
-    expect(h.reminders[0]?.content).toContain('stale');
-  });
-
-  it('marks deleted AGENTS.md files in the announcement', async () => {
-    const h = createHarness();
-    const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
-    h.reminder.seedInjected([rootAgentsMd], workDir);
-
-    h.instructionsChange.fire([{ path: rootAgentsMd, action: 'deleted', kind: 'file' }]);
-
-    expect(h.reminders).toHaveLength(1);
-    expect(h.reminders[0]?.content).toContain(`${rootAgentsMd} (deleted)`);
-  });
-
-  it('stays silent when the agent has not been seeded yet', async () => {
-    const h = createHarness();
-
-    h.instructionsChange.fire([
-      { path: join(workDir, 'AGENTS.md'), action: 'modified', kind: 'file' },
-    ]);
-
-    expect(h.reminders).toHaveLength(0);
-  });
-
-  it('reminds an announced created path on the next access to its directory', async () => {
+  it('does not announce a created path, but reminds on the next access to its directory', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([], workDir);
 
     h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
 
-    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders).toHaveLength(0);
     expect(agentsMdMessages(h)).toHaveLength(0);
 
     await fire(h, didCtx('Read', { path: join(workDir, 'index.ts') }));
@@ -640,13 +606,13 @@ describe('agentsMdReminder re-injection after context loss', () => {
     expect(messageText(messages[1]!)).not.toContain(agentsMdA);
   });
 
-  it('re-reminds a created-and-announced path on the next access after compaction', async () => {
+  it('re-reminds a created path on the next access after compaction', async () => {
     const h = createHarness();
     const rootAgentsMd = await writeAgentsMd(workDir, 'root instructions');
     h.reminder.seedInjected([], workDir);
 
     h.instructionsChange.fire([{ path: rootAgentsMd, action: 'created', kind: 'file' }]);
-    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders).toHaveLength(0);
 
     compact(h);
 

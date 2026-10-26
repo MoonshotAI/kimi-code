@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 73 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -51,6 +51,7 @@
 //     agentsMdReminder.cwd                            src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.known                          src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
+//     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
 //     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
@@ -716,6 +717,18 @@ export interface AgentStateSnapshot {
   'agentsMdReminder.cwd': string | undefined;
   'agentsMdReminder.known': Set<string>;
   'agentsMdReminder.seeded': boolean;
+  // src/agent/changeNotifier/changeNotifierOps.ts
+  // replayable · durable · undoable — folds: ContextClear, ContextApplyCompaction, ChangeNotifierSnapshotEvent
+  'changeNotifier.snapshot': /* ChangeNotifierSnapshotState — packages/agent-core-v2/src/agent/changeNotifier/changeNotifierOps.ts */ {
+    readonly agentsMdHash?: string;
+    readonly agentsMdFiles?: Readonly<Record<string, string>>;
+    readonly skillsHash?: string;
+    readonly subagentNames?: readonly string[];
+    readonly modelPool?: /* SubagentModelPoolSnapshot — packages/agent-core-v2/src/agent/changeNotifier/changeNotifier.ts */ {
+      readonly defaultModel?: string;
+      readonly models: Readonly<Record<string, string>>;
+    };
+  };
   // src/agent/contextMemory/contextOps.ts
   // replayable · durable · undoable — folds: ContextAppendMessage, ContextAppendLoopEvent, ContextClear, ContextApplyCompaction
   'contextMemory': (/* ContextMessage — packages/agent-core-v2/src/agent/contextMemory/types.ts */ /* Message — packages/agent-core-v2/src/llm-adapter/contract/message.ts */ {

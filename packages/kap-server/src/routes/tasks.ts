@@ -1,7 +1,6 @@
 import {
   IAgentTaskService,
-  ISessionIndex,
-  getLiveSessionById,
+  resumeSessionById,
   type AgentTaskInfo,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -78,7 +77,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const all = (resolved.tasks?.list(false) ?? []).map((info) =>
+      const all = resolved.tasks.list(false).map((info) =>
         toWireTask(session_id, info),
       );
       const query = req.query as { status?: TaskStatus };
@@ -112,7 +111,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const found = resolved.tasks?.getTask(task_id);
+      const found = resolved.tasks.getTask(task_id);
       if (found === undefined) {
         reply.send(taskNotFound(session_id, task_id, req.id));
         return;
@@ -120,7 +119,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
 
       const query = req.query as { with_output?: boolean; output_bytes?: number };
       let output: { preview: string; bytes: number } | undefined;
-      if (query.with_output === true && resolved.tasks !== undefined) {
+      if (query.with_output === true) {
         const tailBytes = query.output_bytes ?? DEFAULT_TASK_OUTPUT_PREVIEW_BYTES;
         try {
           const preview = await resolved.tasks.readOutput(task_id, tailBytes);
@@ -186,7 +185,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const found = resolved.tasks?.getTask(task_id);
+      const found = resolved.tasks.getTask(task_id);
       if (found === undefined) {
         reply.send(taskNotFound(session_id, task_id, req.id));
         return;
@@ -199,14 +198,14 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
           return;
         }
 
-        await resolved.tasks?.stopByUser(task_id);
+        await resolved.tasks.stopByUser(task_id);
         requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
         reply.send(okEnvelope({ cancelled: true as const }, req.id));
         return;
       }
 
       const detached = found.status === 'running' && found.detached === false;
-      const info = resolved.tasks?.detach(task_id) ?? found;
+      const info = resolved.tasks.detach(task_id) ?? found;
       if (detached) {
         requestLog(req)?.info({ session_id, task_id }, 'task detached');
       }
@@ -218,14 +217,11 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
 
 type ResolvedTasks =
   | { readonly kind: 'not_found' }
-  | { readonly kind: 'resolved'; readonly tasks: IAgentTaskService | undefined };
+  | { readonly kind: 'resolved'; readonly tasks: IAgentTaskService };
 
 async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTasks> {
-  const summary = await core.accessor.get(ISessionIndex).get(sid);
-  if (summary === undefined) return { kind: 'not_found' };
-
-  const session = getLiveSessionById(core.accessor, sid);
-  if (session === undefined) return { kind: 'resolved', tasks: undefined };
+  const session = await resumeSessionById(core.accessor, sid);
+  if (session === undefined) return { kind: 'not_found' };
   const agent = await ensureMainAgent(session);
   const tasks = agent.accessor.get(IAgentTaskService);
   return { kind: 'resolved', tasks };
