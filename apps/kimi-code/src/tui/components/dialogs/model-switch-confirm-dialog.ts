@@ -17,7 +17,6 @@ import { SearchableList } from '#/tui/utils/searchable-list';
 import type { ModelSwitchAction } from '#/utils/model-switch-confirm-config';
 
 const MODEL_TITLE = 'Switch model?';
-const EFFORT_TITLE = 'Switch effort?';
 
 interface ModelSwitchOption {
   readonly value: ModelSwitchAction;
@@ -96,11 +95,17 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
 
   override render(width: number): string[] {
     const view = this.list.view();
-    const modelSuffix = `${this.opts.fromModel} → ${this.opts.toModel}`;
+    const title =
+      this.opts.kind === 'effort'
+        ? `Switch effort from ${this.opts.fromModel} to ${this.opts.toModel}?`
+        : MODEL_TITLE;
+    const titleSuffix =
+      this.opts.kind === 'effort'
+        ? ''
+        : currentTheme.fg('textMuted', `  ${this.opts.fromModel} → ${this.opts.toModel}`);
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ` ${this.opts.kind === 'effort' ? EFFORT_TITLE : MODEL_TITLE}`) +
-        currentTheme.fg('textMuted', `  ${modelSuffix}`),
+      currentTheme.boldFg('primary', ` ${title}`) + titleSuffix,
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'),
       '',
     ];

@@ -281,7 +281,7 @@ describe('confirmThenPerformModelSwitch', () => {
     confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
 
     const dialog = mountedDialog(mountEditorReplacement);
-    expect(dialog.opts).toMatchObject({ sessionType: 'new', hint: 'Switch hint', warning: undefined });
+    expect(dialog.opts).toMatchObject({ sessionType: 'new', hint: 'Switch hint', warning: 'Switch warning' });
     dialog.opts.onSelect('continue');
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('new-alias');
@@ -362,7 +362,7 @@ describe('confirmThenPerformModelSwitch', () => {
     expect(session.compact).not.toHaveBeenCalled();
   });
 
-  it('uses hint without warning for a new-session effort switch and keeps effort on cancel', async () => {
+  it('shows hint and warning for a new-session effort switch and keeps effort on cancel', async () => {
     const { host, session, mountEditorReplacement } = makeSwitchHost('managed:kimi-code');
     host.state.transcriptEntries = [];
     await enableEffortConfig('new');
@@ -370,7 +370,12 @@ describe('confirmThenPerformModelSwitch', () => {
     confirmThenPerformModelSwitch(host, 'old-alias', 'high', 'session');
 
     const dialog = mountedDialog(mountEditorReplacement);
-    expect(dialog.opts).toMatchObject({ kind: 'effort', sessionType: 'new', warning: undefined });
+    expect(dialog.opts).toMatchObject({
+      kind: 'effort',
+      sessionType: 'new',
+      hint: 'Effort hint',
+      warning: 'Effort warning',
+    });
     dialog.opts.onCancel();
     expect(session.setThinking).not.toHaveBeenCalled();
   });

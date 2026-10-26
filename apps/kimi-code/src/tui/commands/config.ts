@@ -504,7 +504,7 @@ export function confirmThenPerformModelSwitch(
       sessionType,
       kind: effortOnly ? 'effort' : 'model',
       hint: resolveModelSwitchHint(rule),
-      warning: sessionType === 'old' ? resolveModelSwitchWarning(rule) : undefined,
+      warning: resolveModelSwitchWarning(rule),
       onSelect: (action) => {
         if (settled) return;
         settled = true;
