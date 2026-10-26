@@ -353,21 +353,31 @@ async function runServerInProcess(
         'foreground shutdown hook error',
       );
     }
+    await closeServerUnderSharedDeadline(running);
+    process.exit(0);
+  }
+
+  // Close the server and flush host telemetry under one shared shutdown budget:
+  // the engine telemetry (owned by `close`) and the host client split a single
+  // absolute deadline, so a stalled pipeline can never push total shutdown past
+  // CLI_SHUTDOWN_TIMEOUT_MS. A server-close failure stays a distinct error
+  // boundary from telemetry and never blocks the host flush.
+  async function closeServerUnderSharedDeadline(server: RoutedServer | undefined): Promise<void> {
     const telemetryDeadline = createTelemetryShutdownDeadline(
       CLI_SHUTDOWN_TIMEOUT_MS,
       (error) => {
-        running?.logger.error(
+        server?.logger.error(
           { err: error instanceof Error ? error : new Error(String(error)) },
           'telemetry shutdown error',
         );
       },
     );
     try {
-      await running?.close({
+      await server?.close({
         telemetryDeadlineMs: telemetryDeadline.expiresAtMs,
       });
     } catch (error) {
-      running?.logger.error(
+      server?.logger.error(
         { err: error instanceof Error ? error : new Error(String(error)) },
         'server shutdown error',
       );
@@ -375,7 +385,6 @@ async function runServerInProcess(
     await telemetryDeadline.run((remainingMs) =>
       shutdownTelemetry({ timeoutMs: remainingMs }),
     );
-    process.exit(0);
   }
 
   // kap-server (the DI × Scope engine server) is the only server flavor. Its
@@ -444,8 +453,7 @@ async function runServerInProcess(
     try {
       await hooks.onShutdown?.('startup_failed');
     } finally {
-      await running.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
+      await closeServerUnderSharedDeadline(running);
     }
     throw error;
   }
