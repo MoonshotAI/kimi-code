@@ -13,7 +13,7 @@ function makeSwarmHandler() {
   const dockChild = { render: vi.fn(() => ['dock line']) };
   const host = {
     state: {
-      appState: { availableModels: {} },
+      appState: { availableModels: {}, swarmMode: true },
       ui: {
         requestRender,
         terminal: { rows: 40, columns: 120 },

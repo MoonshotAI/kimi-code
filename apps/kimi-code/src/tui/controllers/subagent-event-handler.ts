@@ -8,6 +8,7 @@ import {
   AgentSwarmProgressComponent,
   agentSwarmDescriptionFromArgs,
   agentSwarmGridHeightForTerminalRows,
+  isAgentSwarmRejection,
 } from '../components/messages/agent-swarm-progress';
 import { modelDisplayName } from '../components/dialogs/model-selector';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
@@ -213,6 +214,7 @@ export class SubAgentEventHandler {
     toolCallId: string,
     args: Record<string, unknown>,
   ): void {
+    if (!this.showsAgentSwarmProgress(toolCallId)) return;
     const progress = this.ensureAgentSwarmProgress(toolCallId, args);
     progress.markInputComplete();
     this.requestRender();
@@ -223,6 +225,7 @@ export class SubAgentEventHandler {
     args: Record<string, unknown>,
     options: { readonly streamingArguments?: string | undefined },
   ): void {
+    if (!this.showsAgentSwarmProgress(toolCallId)) return;
     this.ensureAgentSwarmProgress(toolCallId, args, options);
     this.requestRender();
   }
@@ -235,7 +238,9 @@ export class SubAgentEventHandler {
     const progress = this.agentSwarmProgress.get(toolCallId);
     if (progress === undefined) return;
 
-    if (isError && isUserCancelledSubagentError(resultData.output)) {
+    if (isError && !progress.hasSubagents() && isAgentSwarmRejection(resultData.output)) {
+      this.removeAgentSwarmProgress(toolCallId, progress);
+    } else if (isError && isUserCancelledSubagentError(resultData.output)) {
       if (progress.isRequestStreaming()) {
         this.removeAgentSwarmProgress(toolCallId, progress);
       } else {
@@ -514,6 +519,7 @@ export class SubAgentEventHandler {
     // in-run update/fallback path.
     const modelDisplay = this.spawnedModelDisplay(event);
     const effortDisplay = this.subagentEffortDisplay(event.thinkingEffort);
+    this.ensureStartedAgentSwarmProgress(event.parentToolCallId);
     if (this.updateAgentSwarmProgress(event.parentToolCallId, (progress) => {
       progress.registerSubagent({
         agentId: event.subagentId,
@@ -676,6 +682,24 @@ export class SubAgentEventHandler {
     update(progress);
     this.requestRender();
     return true;
+  }
+
+  /**
+   * While swarm mode is off the core rejects AgentSwarm before any subagent
+   * starts, so a new call gets no panel; a panel already on screen keeps
+   * following its call.
+   */
+  private showsAgentSwarmProgress(toolCallId: string): boolean {
+    return this.host.state.appState.swarmMode || this.agentSwarmProgress.has(toolCallId);
+  }
+
+  /** A swarm that spawns subagents always gets a panel, even when its call
+   *  streamed while swarm mode still showed as off. */
+  private ensureStartedAgentSwarmProgress(parentToolCallId: string): void {
+    if (this.agentSwarmProgress.has(parentToolCallId)) return;
+    const toolCall = this.host.streamingUI.getActiveToolCall(parentToolCallId);
+    if (toolCall?.name !== 'AgentSwarm') return;
+    this.ensureAgentSwarmProgress(parentToolCallId, toolCall.args).markInputComplete();
   }
 
   private ensureAgentSwarmProgress(

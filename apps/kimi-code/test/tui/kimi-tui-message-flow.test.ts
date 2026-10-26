@@ -429,6 +429,18 @@ function renderTranscript(driver: MessageDriver): string {
   return driver.state.transcriptContainer.render(120).join('\n');
 }
 
+function turnSwarmModeOn(driver: MessageDriver): void {
+  driver.sessionEventHandler.handleEvent(
+    {
+      type: 'agent.status.updated',
+      agentId: 'main',
+      sessionId: 'ses-1',
+      swarmMode: true,
+    } as Event,
+    vi.fn(),
+  );
+}
+
 async function confirmUndoSelection(driver: MessageDriver): Promise<void> {
   await vi.waitFor(() => {
     expect(driver.state.editorContainer.children[0]).toBeInstanceOf(UndoSelectorComponent);
@@ -3285,6 +3297,7 @@ command = "vim"
 
   it('removes AgentSwarm progress from undone turns', async () => {
     const { driver, session } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
 
     driver.handleUserInput('launch swarm');
@@ -9003,6 +9016,7 @@ capabilities = ["image_in", "video_in"]
 
   it('renders AgentSwarm progress in the transcript instead of the tool-card body', async () => {
     const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
 
     driver.sessionEventHandler.handleEvent(
@@ -9160,6 +9174,7 @@ capabilities = ["image_in", "video_in"]
 
   it('marks only core user-cancellation subagent failures as cancelled', async () => {
     const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
 
     driver.sessionEventHandler.handleEvent(
@@ -9358,6 +9373,7 @@ capabilities = ["image_in", "video_in"]
 
   it('shows the spawned model in the swarm panel header at spawn', async () => {
     const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
 
     driver.sessionEventHandler.handleEvent(
@@ -9423,6 +9439,7 @@ capabilities = ["image_in", "video_in"]
 
   it('does not let later transcript entries reduce the AgentSwarm grid height', async () => {
     const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
     const terminalColumns = 80;
     setTerminalColumns(driver, terminalColumns);
@@ -9495,6 +9512,7 @@ capabilities = ["image_in", "video_in"]
 
   it('shows AgentSwarm as completed when only some subagents fail', async () => {
     const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
 
     driver.sessionEventHandler.handleEvent(
@@ -9542,6 +9560,7 @@ capabilities = ["image_in", "video_in"]
 
   it('renders AgentSwarm progress while tool args are still streaming', async () => {
     const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
     const sendQueued = vi.fn();
 
     driver.sessionEventHandler.handleEvent(
@@ -9622,6 +9641,151 @@ capabilities = ["image_in", "video_in"]
     expect(transcript).toContain('002 Queued…');
     expect(transcript).not.toContain('001 [');
     expect(transcript).not.toContain('002 [');
+  });
+
+  it('does not render an AgentSwarm call that is rejected while swarm mode is off', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        argumentsPart: '{"description":"Review changed files","items":["src/a.ts","src/b',
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Agent Swarm');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        output: 'Swarm mode is off, so AgentSwarm did not run and no subagents were started.',
+        isError: true,
+      } as Event,
+      sendQueued,
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('Agent Swarm');
+    expect(transcript).not.toContain('Review changed files');
+    expect(transcript).not.toContain('Failed.');
+    expect(transcript).not.toContain('Swarm mode is off');
+    expect(
+      driver.state.transcriptContainer.children.some(
+        (child) => child instanceof AgentSwarmProgressComponent,
+      ),
+    ).toBe(false);
+  });
+
+  it('removes the swarm panel when AgentSwarm is rejected before any subagent starts', async () => {
+    const { driver } = await makeDriver();
+    turnSwarmModeOn(driver);
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).toContain('Agent Swarm');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.result',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        output: 'AgentSwarm requires at least 2 items unless resume_agent_ids is provided.',
+        isError: true,
+      } as Event,
+      sendQueued,
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).not.toContain('Agent Swarm');
+    expect(transcript).not.toContain('Failed.');
+    expect(transcript).not.toContain('requires at least 2 items');
+  });
+
+  it('shows a swarm whose subagents start while swarm mode still shows as off', async () => {
+    const { driver } = await makeDriver();
+    const sendQueued = vi.fn();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'tool.call.started',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        turnId: 1,
+        toolCallId: 'call_swarm',
+        name: 'AgentSwarm',
+        args: {
+          description: 'Review changed files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        },
+      } as Event,
+      sendQueued,
+    );
+    expect(stripSgr(renderTranscript(driver))).not.toContain('Agent Swarm');
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'subagent.spawned',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        parentToolCallId: 'call_swarm',
+        subagentId: 'agent-1',
+        subagentName: 'coder',
+        description: 'Review changed files #1 (coder)',
+        swarmIndex: 1,
+        runInBackground: false,
+      } as Event,
+      sendQueued,
+    );
+
+    const transcript = stripSgr(renderTranscript(driver));
+    expect(transcript).toContain('Agent Swarm');
+    expect(transcript).toContain('Review changed files');
+    expect(transcript).toContain('001 Queued…');
+    expect(transcript).toContain('002 Queued…');
   });
 
   it('shows plan review reject on the plan card without an approval notice', async () => {
