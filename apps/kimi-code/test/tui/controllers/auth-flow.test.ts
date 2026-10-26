@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, afterEach } from 'vitest';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 import {
   AuthFlowController,
@@ -71,6 +71,21 @@ function makeHost(
   };
   return { host, appState, session };
 }
+
+beforeEach(() => {
+  resetModelSwitchConfirmConfigCache();
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      new Response(JSON.stringify({ name: 'model_switch_confirm', config: { enable: false, rules: [] } })),
+    ),
+  );
+});
+
+afterEach(() => {
+  resetModelSwitchConfirmConfigCache();
+  vi.unstubAllGlobals();
+});
 
 describe('login-required startup', () => {
   it('marks the application as blocked until authentication is resolved', () => {
@@ -155,24 +170,31 @@ describe('refreshConfigAfterLogin', () => {
 });
 
 describe('refreshConfigAfterLogin with a matching cloud rule', () => {
-  afterEach(() => {
-    resetModelSwitchConfirmConfigCache();
-  });
-
-  async function makeGateHost() {
-    const { host, session, appState } = makeHost({ withSession: true, defaultModel: 'k2' });
+  async function makeGateHost(
+    options: { withSession?: boolean; sessionType?: 'old' | 'new' | 'all' } = {},
+  ) {
+    const withSession = options.withSession ?? true;
+    const sessionType = options.sessionType ?? 'old';
+    const { host, session, appState } = makeHost({ withSession, defaultModel: 'k2' });
     (appState as Record<string, unknown>)['streamingPhase'] = 'idle';
     host.harness.getConfig = vi.fn(async () => ({
       defaultModel: 'k2',
       models: {
         'old-model': { provider: 'managed:kimi-code', model: 'upstream-old', maxContextSize: 200_000 },
-        k2: { provider: 'managed:kimi-code', model: 'upstream-new', maxContextSize: 200_000 },
+        k2: {
+          provider: 'managed:kimi-code',
+          model: 'upstream-new',
+          maxContextSize: 200_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+          defaultEffort: 'high',
+        },
       },
       providers: {},
     }));
-    (host as unknown as { state: Record<string, unknown> }).state['transcriptEntries'] = [
-      { kind: 'user', bullet: 'hi' },
-    ];
+    (host as unknown as { state: Record<string, unknown> }).state['transcriptEntries'] = withSession
+      ? [{ kind: 'user', bullet: 'hi' }]
+      : [];
     const mountEditorReplacement = vi.fn();
     (host as unknown as Record<string, unknown>)['mountEditorReplacement'] = mountEditorReplacement;
     (host as unknown as Record<string, unknown>)['restoreEditor'] = vi.fn();
@@ -180,20 +202,26 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
     (host as unknown as Record<string, unknown>)['showError'] = vi.fn();
     (host as unknown as Record<string, unknown>)['showNotice'] = vi.fn();
     (host as unknown as Record<string, unknown>)['track'] = vi.fn();
+    (host as unknown as Record<string, unknown>)['authFlow'] = new AuthFlowController(host);
     await refreshModelSwitchConfirmConfig({
-      fetchImpl: vi.fn(
-        async () =>
-          new Response(
-            JSON.stringify({
-              name: 'model_switch_confirm',
-              config: {
-                enable: true,
-                rules: [{ from: 'upstream-old', to: 'upstream-new' }],
-              },
-            }),
-          ),
+      fetchImpl: vi.fn(async () =>
+        new Response(JSON.stringify({ name: 'model_switch_confirm', config: { enable: false, rules: [] } })),
       ) as unknown as typeof fetch,
     });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            name: 'model_switch_confirm',
+            config: {
+              enable: true,
+              rules: [{ from: 'upstream-old', to: 'upstream-new', session_type: sessionType }],
+            },
+          }),
+        ),
+      ),
+    );
     return { host, session, appState, mountEditorReplacement };
   }
 
