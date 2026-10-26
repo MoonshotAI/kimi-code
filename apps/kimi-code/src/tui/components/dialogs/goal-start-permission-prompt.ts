@@ -7,7 +7,7 @@ import {
 export type GoalStartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
 
 export interface GoalStartPermissionPromptOptions
-  extends Pick<StartPermissionPromptOptions, 'layout' | 'isFocusingClick'> {
+  extends Pick<StartPermissionPromptOptions, 'layout'> {
   readonly mode: 'manual' | 'yolo';
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
@@ -91,7 +91,6 @@ export class GoalStartPermissionPromptComponent extends StartPermissionPromptCom
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,
       layout: opts.layout,
-      isFocusingClick: opts.isFocusingClick,
     });
   }
 }

@@ -38,7 +38,6 @@ import {
 import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { isSessionOccupiedError } from '../utils/session-lock-errors';
-import { isFocusingClick } from '../utils/terminal-focus';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
   effectiveModelForHost,
@@ -695,7 +694,6 @@ export function showPermissionPicker(host: SlashCommandHost, initialMode?: Permi
       onCancel: () => {
         host.restoreEditor();
       },
-      isFocusingClick: () => isFocusingClick(host.state.terminalState),
     }),
   );
 }
@@ -1035,7 +1033,6 @@ export function showSettingsSelector(host: SlashCommandHost): void {
       onCancel: () => {
         host.restoreEditor();
       },
-      isFocusingClick: () => isFocusingClick(host.state.terminalState),
     }),
   );
 }

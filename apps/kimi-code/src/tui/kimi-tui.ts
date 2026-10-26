@@ -83,7 +83,6 @@ import {
   ApprovalPreviewViewer,
   type ApprovalPreviewBlock,
 } from './components/dialogs/approval-preview';
-import { ChoicePickerComponent } from './components/dialogs/choice-picker';
 import { CompactionComponent } from './components/dialogs/compaction';
 import { HelpPanelComponent } from './components/dialogs/help-panel';
 import { QuestionDialogComponent } from './components/dialogs/question-dialog';
@@ -202,7 +201,7 @@ import { formatStepRetryDetail, formatStepRetryLabel } from './utils/step-retry'
 import { formatBashOutputForDisplay } from './utils/shell-output';
 import { lazyModelSelection } from './utils/model-switch';
 import { combineStartupNotice, isOAuthLoginRequiredError } from './utils/startup';
-import { installTerminalFocusTracking, isFocusingClick } from './utils/terminal-focus';
+import { installTerminalFocusTracking } from './utils/terminal-focus';
 import { notifyTerminalOnce } from './utils/terminal-notification';
 import { installTerminalThemeTracking } from './utils/terminal-theme';
 import { detectTmuxKeyboardWarning } from './utils/tmux-keyboard';
@@ -4340,9 +4339,6 @@ export class KimiTUI {
     this.surveyController.notifyDisplaced();
     if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.state.editorReplacementMounted = true;
-    if (panel instanceof ChoicePickerComponent) {
-      panel.setTerminalFocusGuard(() => isFocusingClick(this.state.terminalState));
-    }
     setEditorSlot(this.state, panel);
     if (!this.state.notifyPanel.focused) this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
@@ -4455,7 +4451,6 @@ export class KimiTUI {
           info,
           getAvailableRows: () =>
             this.state.terminal.rows - (this.state.ui instanceof TuiAltScreen ? 1 : 0),
-          isFocusingClick: () => isFocusingClick(this.state.terminalState),
           onSelect: (c) => {
             resolve(c);
           },
@@ -4726,7 +4721,6 @@ export class KimiTUI {
       {
         layout:
           this.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_APPROVAL_ROWS },
-        isFocusingClick: () => isFocusingClick(this.state.terminalState),
         isTerminalFocused: () => this.state.terminalState.focused,
         onFocusUpdates: () => this.focusNotifyPanel(),
       },

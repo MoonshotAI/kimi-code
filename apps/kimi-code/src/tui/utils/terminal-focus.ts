@@ -15,17 +15,9 @@ export {
   TERMINAL_FOCUS_OUT,
 } from '#/tui/constant/terminal';
 
-/** Whether a click lands too soon after `since` (a prompt appearing, the window regaining focus) to be deliberate. */
+/** Whether a click lands too soon after a prompt appeared to be deliberate. */
 export function isSettlingClick(since: number, now = Date.now()): boolean {
   return now - since < CLICK_GUARD_MS;
-}
-
-/** Whether a click is most likely the one that focused the terminal window. */
-export function isFocusingClick(
-  state: Pick<TerminalState, 'focusedAt'>,
-  now = Date.now(),
-): boolean {
-  return isSettlingClick(state.focusedAt, now);
 }
 
 export function installTerminalFocusTracking(state: TUIState): () => void {
@@ -50,13 +42,11 @@ export function installTerminalFocusTracking(state: TUIState): () => void {
 }
 
 export function handleTerminalFocusInput(
-  state: Pick<TerminalState, 'focused' | 'focusedAt'>,
+  state: Pick<TerminalState, 'focused'>,
   data: string,
-  now = Date.now(),
 ): { consume: true } | undefined {
   if (data === TERMINAL_FOCUS_IN) {
     state.focused = true;
-    state.focusedAt = now;
     return { consume: true };
   }
   if (data === TERMINAL_FOCUS_OUT) {

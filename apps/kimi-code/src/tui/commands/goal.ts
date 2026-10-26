@@ -26,7 +26,6 @@ import {
   type GoalQueueSnapshot,
 } from '../goal-queue-store';
 import { formatErrorMessage } from '../utils/event-payload';
-import { isFocusingClick } from '../utils/terminal-focus';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { isBlockingPromptPending } from '../tui-state';
 import { canRestoreSubmittedInput } from './resolve';
@@ -428,7 +427,6 @@ function showGoalStartPermissionPrompt(
       },
       onCancel: cancelStart,
       layout: host.state.dockContainer === undefined ? undefined : { maxBodyRows: DOCK_APPROVAL_ROWS },
-      isFocusingClick: () => isFocusingClick(host.state.terminalState),
     }),
     () => syncGoalStartPrompt(host, false),
   );

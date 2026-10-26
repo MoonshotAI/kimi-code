@@ -1021,6 +1021,84 @@ describe("TuiAltScreen", () => {
 		tui.stop();
 	});
 
+	it("ignores the mouse gesture that refocuses the terminal and accepts the next deliberate click", async (context) => {
+		context.mock.timers.enable({ apis: ["Date"] });
+		context.mock.timers.setTime(1_000);
+		const terminal = new VirtualTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { refocusMouseGuardMs: 300 });
+		let clicks = 0;
+		tui.addChild(
+			new MouseRegion(new Text("clickable", 0, 0), (event) => {
+				if (event.type !== "click") return undefined;
+				clicks += 1;
+				return { handled: true };
+			}),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		assert.strictEqual(clicks, 0);
+
+		context.mock.timers.setTime(1_300);
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		assert.strictEqual(clicks, 1);
+		tui.stop();
+	});
+
+	it("keeps refocusing clicks enabled when the guard is not configured", async () => {
+		const terminal = new VirtualTerminal(20, 2);
+		const tui = new TuiAltScreen(terminal);
+		let clicks = 0;
+		tui.addChild(
+			new MouseRegion(new Text("clickable", 0, 0), (event) => {
+				if (event.type !== "click") return undefined;
+				clicks += 1;
+				return { handled: true };
+			}),
+		);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		assert.strictEqual(clicks, 1);
+		tui.stop();
+	});
+
+	it("does not open an OSC 8 hyperlink with the refocusing gesture", async (context) => {
+		context.mock.timers.enable({ apis: ["Date"] });
+		context.mock.timers.setTime(1_000);
+		const terminal = new VirtualTerminal(20, 3);
+		const openedUrls: string[] = [];
+		const tui = new TuiAltScreen(terminal, undefined, undefined, {
+			refocusMouseGuardMs: 300,
+			openUrl: (url) => openedUrls.push(url),
+		});
+		const url = "https://example.test";
+		tui.addChild(new Text(hyperlink("link", url), 0, 0));
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		assert.deepStrictEqual(openedUrls, []);
+
+		context.mock.timers.setTime(1_300);
+		terminal.sendInput("\x1b[<0;2;1M");
+		terminal.sendInput("\x1b[<0;2;1m");
+		assert.deepStrictEqual(openedUrls, [url]);
+		tui.stop();
+	});
+
 	it("scrolls the transcript by one line with custom bindings", async () => {
 		const originalKeybindings = getKeybindings();
 		const terminal = new VirtualTerminal(20, 10);

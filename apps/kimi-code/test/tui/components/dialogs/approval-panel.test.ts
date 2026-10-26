@@ -569,7 +569,6 @@ describe('ApprovalPanelComponent', () => {
 
     function dockedDialog(
       pending: PendingApproval,
-      isFocusingClick = () => false,
     ): { dialog: ApprovalPanelComponent; responses: Array<{ response: string }> } {
       const responses: Array<{ response: string }> = [];
       const dialog = mount(new ApprovalPanelComponent(
@@ -577,7 +576,7 @@ describe('ApprovalPanelComponent', () => {
         (response) => responses.push(response),
         undefined,
         undefined,
-        { layout: { maxBodyRows: 6 }, isFocusingClick },
+        { layout: { maxBodyRows: 6 } },
       ));
       return { dialog, responses };
     }
@@ -719,10 +718,9 @@ describe('ApprovalPanelComponent', () => {
       expect(dialog.render(60).join('\n')).not.toContain('\u001B[4m');
     });
 
-    it('submits a deliberate click, ignoring clicks right after it appeared or the window was focused', () => {
+    it('submits a deliberate click while ignoring clicks right after the panel appeared', () => {
       const advance = useClock();
-      let focusing = false;
-      const { dialog, responses } = dockedDialog(goalPending(), () => focusing);
+      const { dialog, responses } = dockedDialog(goalPending());
       const row = footRow(dialog, 'Do not start');
 
       advance(299);
@@ -730,11 +728,6 @@ describe('ApprovalPanelComponent', () => {
       expect(responses).toEqual([]);
 
       advance(1);
-      focusing = true;
-      click(dialog, row);
-      expect(responses).toEqual([]);
-
-      focusing = false;
       click(dialog, row);
       expect(responses).toEqual([{ response: 'cancelled', feedback: undefined, selected_label: undefined }]);
     });

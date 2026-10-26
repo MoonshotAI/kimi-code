@@ -8,28 +8,19 @@ import {
   TERMINAL_FOCUS_OUT,
   handleTerminalFocusInput,
   installTerminalFocusTracking,
-  isFocusingClick,
 } from '#/tui/utils/terminal-focus';
 
 describe('terminal focus tracking', () => {
   it('updates focus state from terminal focus reporting sequences', () => {
-    const state = { focused: true, focusedAt: 0 };
+    const state = { focused: true };
 
-    expect(handleTerminalFocusInput(state, TERMINAL_FOCUS_OUT, 1_000)).toEqual({ consume: true });
+    expect(handleTerminalFocusInput(state, TERMINAL_FOCUS_OUT)).toEqual({ consume: true });
     expect(state.focused).toBe(false);
 
-    expect(handleTerminalFocusInput(state, TERMINAL_FOCUS_IN, 2_000)).toEqual({ consume: true });
-    expect(state).toEqual({ focused: true, focusedAt: 2_000 });
+    expect(handleTerminalFocusInput(state, TERMINAL_FOCUS_IN)).toEqual({ consume: true });
+    expect(state).toEqual({ focused: true });
 
     expect(handleTerminalFocusInput(state, 'x')).toBeUndefined();
-  });
-
-  it('treats a click within 300 ms of regaining focus as the focusing click', () => {
-    const state = { focused: true, focusedAt: 0 };
-    handleTerminalFocusInput(state, TERMINAL_FOCUS_IN, 10_000);
-
-    expect(isFocusingClick(state, 10_299)).toBe(true);
-    expect(isFocusingClick(state, 10_300)).toBe(false);
   });
 
   it('enables focus reporting and removes the listener on dispose', () => {

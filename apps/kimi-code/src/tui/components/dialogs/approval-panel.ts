@@ -221,8 +221,6 @@ function headerFor(toolName: string): string {
 export interface ApprovalPanelOptions {
   /** Dock the panel (fullscreen): the request body scrolls past this many rows. */
   readonly layout?: DockLayout;
-  /** True while a click is most likely the one that focused the terminal window. */
-  readonly isFocusingClick?: () => boolean;
   /** Whether the terminal window has focus; the panel fades while it does not. */
   readonly isTerminalFocused?: () => boolean;
   /** `Ctrl+N`: hand the keyboard to the Updates panel; false when it has nothing to show. */
@@ -240,7 +238,6 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
   private readonly onOpenPreview:
     | ((block: DiffDisplayBlock | FileContentDisplayBlock) => void)
     | undefined;
-  private readonly isFocusingClick: () => boolean;
   private readonly isTerminalFocused: () => boolean;
   private readonly onFocusUpdates: (() => boolean) | undefined;
   /** A click this soon after the panel appeared was aimed at what was there before. */
@@ -262,7 +259,6 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     this.onResponse = onResponse;
     this.onToggleToolOutput = onToggleToolOutput;
     this.onOpenPreview = onOpenPreview;
-    this.isFocusingClick = options.isFocusingClick ?? (() => false);
     this.isTerminalFocused = options.isTerminalFocused ?? (() => true);
     this.onFocusUpdates = options.onFocusUpdates;
     this.feedbackInput.onSubmit = (value) => {
@@ -379,8 +375,8 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
    * Hovering a choice highlights it and previews its description without
    * selecting it; a click picks it like its number key. A click on a faded
    * panel only takes the keyboard back. Clicks right after the panel
-   * appeared or the terminal window regained focus are ignored, and a click
-   * while typing feedback only moves the selection.
+   * appeared are ignored, and a click while typing feedback only moves the
+   * selection.
    */
   protected override handlePartMouse(
     part: DockPart,
@@ -396,7 +392,7 @@ export class ApprovalPanelComponent extends DockSection implements Focusable {
     if (event.button !== 'left') return undefined;
     if (event.type === 'click' && !this.focused) return { handled: true, focus: true };
     if (index === -1) return undefined;
-    if (event.type === 'click' && !isSettlingClick(this.shownAt) && !this.isFocusingClick()) {
+    if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
       this.clickChoice(index);
     }
     return { handled: true };

@@ -192,3 +192,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** Fullscreen hosts can register synchronous `addLayoutEffect` callbacks after layout and search reveal, before terminal output. An effect's `requestRender` coalesces into another complete layout pass without invalidating component caches; only the settled frame is written. Search keeps its selected occurrence while effect-driven layout shifts rendered rows; selections retain their content when effects only add or remove leading empty rows. Effects must converge within ten passes or rendering throws. With no effects registered, the existing rendering path is preserved.
 
 **Why not in the app:** The settled scroll state and the opportunity to repeat layout before terminal output belong to the alternate-screen render path. Hosts cannot reach this point through component composition alone.
+
+### refocus-mouse-guard — keep
+
+**Decision:** An optional `refocusMouseGuardMs` suppresses mouse-button gestures immediately after a terminal focus-in report, before they can activate controls, move a caret, start a selection, or open a link. The default is zero, focus reports still reach host listeners, and wheel handling is unchanged.
+
+**Why not in the app:** The alternate-screen renderer consumes mouse input before later host listeners and owns the component, selection, and OSC 8 activation paths. The app cannot guard all of them through component composition.

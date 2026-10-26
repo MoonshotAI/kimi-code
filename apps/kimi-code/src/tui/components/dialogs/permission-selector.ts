@@ -31,7 +31,6 @@ export interface PermissionSelectorOptions {
   readonly initialValue?: PermissionMode;
   readonly onSelect: (mode: PermissionMode) => void;
   readonly onCancel: () => void;
-  readonly isFocusingClick?: () => boolean;
 }
 
 export class PermissionSelectorComponent extends ChoicePickerComponent {
@@ -45,7 +44,6 @@ export class PermissionSelectorComponent extends ChoicePickerComponent {
         if (isPermissionModeChoice(value)) opts.onSelect(value);
       },
       onCancel: opts.onCancel,
-      isFocusingClick: opts.isFocusingClick,
     });
   }
 }

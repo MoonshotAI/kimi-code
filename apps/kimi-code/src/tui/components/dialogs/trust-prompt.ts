@@ -21,7 +21,6 @@ export interface TrustPromptOptions {
   readonly workDir: string;
   readonly info: WorkspaceTrustInfo;
   readonly getAvailableRows?: () => number;
-  readonly isFocusingClick?: () => boolean;
   readonly onSelect: (choice: TrustPromptChoice) => void;
 }
 
@@ -38,11 +37,8 @@ export class TrustPromptComponent implements Component, Focusable {
   private canConfirm = true;
   private optionRows: readonly number[] = [];
   private readonly shownAt = Date.now();
-  private readonly isFocusingClick: () => boolean;
 
-  constructor(private readonly opts: TrustPromptOptions) {
-    this.isFocusingClick = opts.isFocusingClick ?? (() => false);
-  }
+  constructor(private readonly opts: TrustPromptOptions) {}
 
   invalidate(): void {}
 
@@ -82,7 +78,6 @@ export class TrustPromptComponent implements Component, Focusable {
     if (event.type === 'move') {
       const index = this.optionRows.indexOf(event.y);
       if (index === -1) return undefined;
-      if (this.isFocusingClick()) return { handled: true };
       const changed = this.selectedIndex !== index;
       this.selectedIndex = index;
       return { handled: true, render: changed };
@@ -91,16 +86,10 @@ export class TrustPromptComponent implements Component, Focusable {
     const index = this.optionRows.indexOf(event.y);
     if (index === -1) return undefined;
     if (event.type === 'press') {
-      if (this.isFocusingClick()) return { handled: true };
       this.selectedIndex = index;
       return { handled: true, render: true };
     }
-    if (
-      event.type === 'click' &&
-      this.canConfirm &&
-      !isSettlingClick(this.shownAt) &&
-      !this.isFocusingClick()
-    ) {
+    if (event.type === 'click' && this.canConfirm && !isSettlingClick(this.shownAt)) {
       this.selectedIndex = index;
       this.opts.onSelect(OPTIONS[index]!.value);
     }

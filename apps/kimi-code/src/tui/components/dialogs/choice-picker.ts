@@ -62,7 +62,6 @@ export interface ChoicePickerOptions {
    * onSelect — used to apply the choice to the current session only. */
   readonly onSessionOnlySelect?: (value: string) => void;
   readonly onCancel: () => void;
-  readonly isFocusingClick?: () => boolean;
 }
 
 interface ChoiceRegion {
@@ -99,12 +98,10 @@ export class ChoicePickerComponent implements Component, Focusable {
   private readonly opts: ChoicePickerOptions;
   private readonly list: SearchableList<ChoiceOption>;
   private readonly shownAt = Date.now();
-  private isFocusingClick: () => boolean;
   private choiceRegions: readonly ChoiceRegion[] = [];
 
   constructor(opts: ChoicePickerOptions) {
     this.opts = opts;
-    this.isFocusingClick = opts.isFocusingClick ?? (() => false);
     const initialIdx = opts.options.findIndex(
       (o) => o.value === (opts.initialValue ?? opts.currentValue),
     );
@@ -115,10 +112,6 @@ export class ChoicePickerComponent implements Component, Focusable {
       initialIndex: Math.max(initialIdx, 0),
       searchable: opts.searchable === true,
     });
-  }
-
-  setTerminalFocusGuard(isFocusingClick: () => boolean): void {
-    this.isFocusingClick = isFocusingClick;
   }
 
   invalidate(): void {}
@@ -175,17 +168,15 @@ export class ChoicePickerComponent implements Component, Focusable {
     if (event.type === 'move') {
       const index = this.choiceIndexAt(event.y);
       if (index === undefined) return undefined;
-      if (this.isFocusingClick()) return { handled: true };
       return { handled: true, render: this.selectIndex(index) };
     }
     if (event.button !== 'left') return undefined;
     const index = this.choiceIndexAt(event.y);
     if (index === undefined) return undefined;
     if (event.type === 'press') {
-      if (this.isFocusingClick()) return { handled: true };
       return { handled: true, render: this.selectIndex(index) };
     }
-    if (event.type === 'click' && !isSettlingClick(this.shownAt) && !this.isFocusingClick()) {
+    if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
       this.selectIndex(index);
       const chosen = this.list.view().items[index];
       if (chosen !== undefined) this.opts.onSelect(chosen.value);

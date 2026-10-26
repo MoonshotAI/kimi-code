@@ -212,32 +212,6 @@ describe('TrustPromptComponent', () => {
     expect(onSelect).toHaveBeenCalledWith('distrust');
   });
 
-  it('does not change the selection while a click is refocusing the terminal', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    onTestFinished(() => {
-      vi.useRealTimers();
-    });
-    const onSelect = vi.fn();
-    const prompt = new TrustPromptComponent({
-      workDir,
-      info: info(),
-      isFocusingClick: () => true,
-      onSelect,
-    });
-    prompt.focused = true;
-    const exitRow = render(prompt).findIndex((line) => line.includes('Exit'));
-    vi.advanceTimersByTime(300);
-
-    for (const type of ['move', 'press', 'click'] as const) {
-      prompt.handleMouse(mouse(type, exitRow));
-    }
-
-    expect(onSelect).not.toHaveBeenCalled();
-    expect(render(prompt)[exitRow]).not.toContain('❯ Exit');
-    prompt.handleInput('\r');
-    expect(onSelect).toHaveBeenCalledWith('trust');
-  });
-
   it('preserves default trust, selection, and escape behavior', () => {
     for (const { keys, expected } of [
       { keys: ['\r'], expected: 'trust' },

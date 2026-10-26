@@ -32,7 +32,6 @@ export interface StartPermissionPromptOptions<
   readonly onSelect: (choice: TChoice) => void;
   readonly onCancel: () => void;
   readonly layout?: DockLayout;
-  readonly isFocusingClick?: () => boolean;
 }
 
 export class StartPermissionPromptComponent<
@@ -43,13 +42,11 @@ export class StartPermissionPromptComponent<
   private choiceRows: readonly number[] = [];
   /** Option under the pointer: highlighted and previewed, but not selected. */
   private hoverIndex: number | undefined;
-  private readonly isFocusingClick: () => boolean;
   /** A click this soon after the prompt appeared was aimed at what was there before. */
   private readonly shownAt = Date.now();
 
   constructor(private readonly opts: StartPermissionPromptOptions<TChoice>) {
     super(opts.layout);
-    this.isFocusingClick = opts.isFocusingClick ?? (() => false);
   }
 
   handleInput(data: string): void {
@@ -159,8 +156,7 @@ export class StartPermissionPromptComponent<
 
   /**
    * Hovering an option highlights it and previews its description without
-   * selecting it; a click picks it, except right after the prompt appeared
-   * or the terminal window regained focus.
+   * selecting it; a click picks it, except right after the prompt appeared.
    */
   protected override handlePartMouse(
     part: DockPart,
@@ -175,7 +171,7 @@ export class StartPermissionPromptComponent<
       return { handled: true, render: true };
     }
     if (index === -1 || event.button !== 'left') return undefined;
-    if (event.type === 'click' && !isSettlingClick(this.shownAt) && !this.isFocusingClick()) {
+    if (event.type === 'click' && !isSettlingClick(this.shownAt)) {
       this.opts.onSelect(this.opts.options[index]!.value);
     }
     return { handled: true };
