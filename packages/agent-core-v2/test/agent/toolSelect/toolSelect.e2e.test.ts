@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createControlledPromise } from '@antfu/utils';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentConversationUndoService } from '#/agent/undo/undo';
@@ -12,9 +13,12 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
+import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import '#/agent/tools/select-tools/selectToolsTool';
 
-import { createTestAgent, type TestAgentContext } from '../../harness';
+import { createTestAgent, sessionService, type TestAgentContext } from '../../harness';
 
 const MCP_ALPHA = 'mcp__srv__alpha';
 const DASHBOARD_TOOL = 'dashboard_create';
@@ -89,10 +93,22 @@ describe('progressive tool disclosure end-to-end', () => {
   let ctx: TestAgentContext;
   let alpha: StubMcpTool;
   let registration: { dispose(): void } | undefined;
+  let mcpReady: Promise<void>;
+  let onMcpWait: () => void;
 
   beforeEach(async () => {
     vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
-    ctx = createTestAgent();
+    mcpReady = Promise.resolve();
+    onMcpWait = () => {};
+    ctx = createTestAgent(sessionService(ISessionMcpHandle, {
+      _serviceBrand: undefined,
+      get ready() {
+        onMcpWait();
+        return mcpReady;
+      },
+      connectionManager: new McpConnectionManager(),
+      isBaselineServer: () => true,
+    }));
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
     ctx.get(IAgentToolSelectSchemasService);
@@ -110,6 +126,40 @@ describe('progressive tool disclosure end-to-end', () => {
     registration?.dispose();
     vi.unstubAllEnvs();
     await ctx.dispose();
+  });
+
+  it('announces MCP tools discovered during startup in the first model request', async () => {
+    registration?.dispose();
+    const ready = createControlledPromise<void>();
+    const waiting = createControlledPromise<void>();
+    mcpReady = ready;
+    onMcpWait = waiting.resolve;
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
+    await waiting;
+    expect(ctx.llmCalls).toHaveLength(0);
+    registration = ctx.get(IAgentToolRegistryService)
+      .register(alpha, { source: 'mcp', disclosure: 'deferred' });
+    ready.resolve();
+    await ctx.untilTurnEnd();
+
+    const firstWire = ctx.llmCalls[0]!;
+    expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
+    expect(historyText(firstWire.history)).toContain(MCP_ALPHA);
+  });
+
+  it('can cancel the first turn while MCP discovery is still pending', async () => {
+    const waiting = createControlledPromise<void>();
+    mcpReady = new Promise(() => {});
+    onMcpWait = waiting.resolve;
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
+    await waiting;
+    expect(ctx.get(IAgentLoopService).cancel()).toBe(true);
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(0);
   });
 
   it('announces the manifest, loads by name, keeps the top-level table byte-stable, and dispatches on the next step', async () => {

@@ -4,10 +4,12 @@ import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { BindAgentInput } from '#/agent/profile/profile';
+import type { AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 export interface AgentScopeCreatedEvent {
   readonly context: AgentContext;
   readonly handle: IAgentScopeHandle;
+  readonly meta?: AgentMeta;
 }
 
 export const MAIN_AGENT_ID = 'main';

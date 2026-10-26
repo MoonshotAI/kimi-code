@@ -16,13 +16,13 @@ export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',
     label: 'Switch to Ask When Needed and start',
     description:
-      'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+      'Tools are approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'manual',
@@ -42,13 +42,13 @@ export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',
     label: 'Keep Ask When Needed and start',
     description:
-      'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+      'Tools stay approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'cancel',
@@ -72,7 +72,7 @@ const MANUAL_NOTICE_LINES = [
 ] as const;
 
 const YOLO_NOTICE_LINES = [
-  'Ask When Needed mode approves tools and plan changes automatically.',
+  'Ask When Needed mode approves tools automatically.',
   'Ask When Needed mode can still stop for questions.',
   'Switch to Never Ask if you want questions skipped during goal work.',
 ] as const;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.3
+
+### Patch Changes
+
+- [#4186](https://github.com/MoonshotAI/kimi-code/pull/4186) [`0341173`](https://github.com/MoonshotAI/kimi-code/commit/034117338c382efb8a7f8d13b4020e1c407fa692) Thanks [@gaoyuan1223m](https://github.com/gaoyuan1223m)! - Add Back navigation to the VS Code question prompt so users can return to earlier questions without losing answers.
+
+- Updated dependencies [[`c1459a6`](https://github.com/MoonshotAI/kimi-code/commit/c1459a61845056832b85a0a220ee11a2bc5132f8), [`9f0693b`](https://github.com/MoonshotAI/kimi-code/commit/9f0693becb63a329cbf764325688448e76f40922)]:
+  - @moonshot-ai/kimi-code-sdk@0.21.1
+  - @moonshot-ai/kimi-code-oauth@0.5.0
+
 ## 0.8.2
 
 ### Patch Changes

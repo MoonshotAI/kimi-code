@@ -80,6 +80,13 @@ describe('HostProcessService', () => {
     const code = await proc.wait();
     expect(code).not.toBe(0);
   });
+
+  it('terminates a process that outlives its timeout', async () => {
+    const svc = ix.get(IHostProcessService);
+    const proc = await svc.spawn('node', ['-e', 'setTimeout(() => {}, 30000)'], { timeout: 200 });
+    const code = await proc.wait();
+    expect(code).not.toBe(0);
+  });
 });
 
 describe('HostProcessService on Windows', () => {

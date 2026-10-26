@@ -21,4 +21,12 @@ describe('builtin agent profiles', () => {
     const agent = profile('agent');
     expect(agent.subagents).toEqual(['coder', 'explore', 'plan']);
   });
+
+  it('keeps plan mode entry out of every builtin profile and plan review on the default one', () => {
+    for (const builtin of getAgentProfileContributions()) {
+      expect(builtin.tools ?? []).not.toContain('EnterPlanMode');
+    }
+    expect(profile('agent').tools).toContain('ExitPlanMode');
+    expect(profile('coder').tools).not.toContain('ExitPlanMode');
+  });
 });

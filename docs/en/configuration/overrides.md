@@ -61,7 +61,7 @@ Options passed at startup have the highest priority and apply only to the curren
 | `-S, --session [id]` | Resume a specific session; enters interactive selection when no id is given |
 | `-c, --continue` | Resume the last session for the current working directory |
 | `-y, --yolo` | Ask When Needed mode: routine edits and commands run automatically; the agent may still ask questions |
-| `--auto` | Never Ask mode: never interrupts you; the agent will not ask questions |
+| `--auto` | Never Ask mode: the agent will not ask questions; only plans in Plan mode wait for your review |
 | `--plan` | Start in Plan mode |
 | `-m, --model <model>` | Use a specific model alias for this session |
 | `-p, --prompt <prompt>` | Run in non-interactive mode: execute a single prompt and exit |

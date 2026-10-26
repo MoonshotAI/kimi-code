@@ -23,6 +23,8 @@ export type SlashCommandIntent =
       readonly command: BuiltinSlashCommand;
       readonly name: BuiltinSlashCommandName;
       readonly args: string;
+      /** Queue instead of executing now (/compact while streaming). */
+      readonly enqueue?: boolean;
     }
   | {
       readonly kind: 'skill';
@@ -71,10 +73,21 @@ export function resolveSlashCommandInput(options: ResolveSlashCommandInput): Sla
       busyReason !== undefined &&
       resolveSlashCommandAvailability(command, parsed.args) === 'idle-only'
     ) {
+      // A live compaction also sets streamingPhase, and busyReason reports
+      // 'streaming' first — compacting must stay blocked, not enqueue.
+      if (command.name === 'compact' && busyReason === 'streaming' && !options.isCompacting) {
+        return {
+          kind: 'builtin',
+          command,
+          name: command.name,
+          args: parsed.args,
+          enqueue: true,
+        };
+      }
       return {
         kind: 'blocked',
         commandName: parsed.name,
-        reason: busyReason,
+        reason: command.name === 'compact' && options.isCompacting ? 'compacting' : busyReason,
       };
     }
     return {

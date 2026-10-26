@@ -15,6 +15,7 @@
 | `/login` | — | 选择账号或平台并登录：Kimi Code 走 OAuth 验证码流程，Kimi Platform 通过 API 密钥登录 | 否 |
 | `/logout` | — | 清除当前所选账号的凭据 | 否 |
 | `/provider` | — | 打开交互式供应商管理器，查看、添加和删除已配置的供应商。详见[平台与模型 — `/provider` 与供应商管理](../configuration/providers.md#provider-—-交互式供应商管理) | 是 |
+| `/provider refresh [providerId]` | — | 运行时重新拉取供应商的模型列表：不带参数时刷新全部供应商，带参数时只刷新指定供应商。输出会按供应商汇报新增和下架的模型 | 是 |
 | `/model` | — | 切换当前会话使用的 LLM 模型 | 是 |
 | `/secondary-model` | `/subagent-model` | 选择 subagent 的默认模型（写入 `[secondary_model] default_model`，详见[subagent 模型池](../configuration/config-files.md#subagent-模型池)） | 是 |
 | `/settings` | `/config` | 打开 TUI 内的设置面板 | 是 |
@@ -32,8 +33,10 @@
 | `/tasks` | `/task` | 浏览后台任务列表 | 是 |
 | `/fork` | — | 基于当前会话 fork 一份新会话，保留完整对话历史；fork 后仍停留在当前会话 | 否 |
 | `/title [<text>]` | `/rename` | 不带参数时显示当前会话标题；带参数时设置为新标题（最长 200 字符） | 是 |
-| `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息 | 否 |
+| `/compact [<instruction>]` | — | 压缩当前对话上下文，释放 token 占用；可附带自定义指令，提示模型压缩时保留哪些信息；Agent 运行期间使用会加入消息队列，轮到它时自动执行；等待期间若上下文已被自动压缩，该次排队会被跳过 | 是 |
 | `/undo [<count>]` | — | 从当前上下文撤销最近的提示词。不带数量时打开选择器；带数量时撤销对应条数。最后一次上下文压缩之前的提示词不能撤销。撤销会一并回滚这些提示词产生的 todo 列表和计划模式状态（不回滚代码改动） | 否 |
+| `/reload` | — | 重新加载当前会话并应用最新的 `config.toml` 设置（供应商、模型等）和 `tui.toml` 界面偏好，无需重启 CLI；同时会把 AGENTS.md、Skill、subagent 及模型的外部变更告知 Agent | 否 |
+| `/reload-tui` | — | 仅重新加载 `tui.toml` 界面偏好（主题、编辑器、通知等），不重建会话 | 是 |
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
@@ -47,7 +50,7 @@
 | 命令 | 别名 | 说明 | 随时可用 |
 | --- | --- | --- | --- |
 | `/yolo` | `/yes` | 打开权限模式列表并预选 "Ask When Needed"，按 `Enter` 确认开启。该模式下常规修改和命令自动完成；高危操作、提问和计划仍会问你 | 是 |
-| `/auto` | — | 打开权限模式列表并预选 "Never Ask"，按 `Enter` 确认开启。该模式下完全不打断，所有操作和判断自动完成 | 是 |
+| `/auto` | — | 打开权限模式列表并预选 "Never Ask"，按 `Enter` 确认开启。该模式下所有操作和判断自动完成，只有 Plan 模式下的计划会等你审阅 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
 | `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |

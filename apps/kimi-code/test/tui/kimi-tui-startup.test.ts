@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -134,6 +134,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setStaleReloadHandler: vi.fn(),
     setModel: vi.fn(async () => {}),
     setThinking: vi.fn(async () => {}),
     setPermission: vi.fn(async () => {}),
@@ -214,6 +215,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
     })),
+    onConfigSectionChanged: vi.fn(() => vi.fn()),
     createSession: vi.fn(async () => session),
     resumeSession: vi.fn(async () => session),
     listSessions: vi.fn(async () => []),
@@ -326,6 +328,117 @@ describe('KimiTUI startup', () => {
 
     const transcript = driver.state.transcriptContainer.render(160).join('\n');
     expect(transcript).toContain('No session yet — one will be created on your first message.');
+  });
+
+  it('reports the legacy survey setting migration and applies the migrated value', async () => {
+    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-tui-survey-home-'));
+    const previousHome = process.env['KIMI_CODE_HOME'];
+    process.env['KIMI_CODE_HOME'] = homeDir;
+    try {
+      writeFileSync(join(homeDir, 'tui.toml'), 'disable_feedback_survey = true\n');
+      const setConfig = vi.fn(async () => ({}));
+      const harness = makeHarness(makeSession(), {
+        getConfig: vi.fn(async () => ({
+          models: {
+            k2: { model: 'moonshot-v1', maxContextSize: 100 },
+          },
+        })),
+        setConfig,
+      });
+      const driver = makeDriver(harness, {
+        ...makeStartupInput({}, { disableFeedbackSurvey: true }),
+      });
+
+      await expect(driver.init()).resolves.toBe(false);
+      await (
+        driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+      ).finishStartup(false);
+
+      await vi.waitFor(() => {
+        expect(harness.track).toHaveBeenCalledWith('survey_setting_migration', {
+          legacy: true,
+          configured: 'absent',
+          action: 'written',
+        });
+      });
+      expect(setConfig).toHaveBeenCalledWith({ disableFeedbackSurvey: true });
+      expect(driver.state.appState.disableFeedbackSurvey).toBe(true);
+      expect(readFileSync(join(homeDir, 'tui.toml'), 'utf-8')).not.toContain(
+        'disable_feedback_survey',
+      );
+    } finally {
+      if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+      else process.env['KIMI_CODE_HOME'] = previousHome;
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    { legacy: true, configured: false, action: 'kept_existing', reportedConfigured: false },
+    { legacy: false, configured: undefined, action: 'dropped_default', reportedConfigured: 'absent' },
+  ])(
+    'reports $action for the legacy survey setting migration',
+    async ({ legacy, configured, action, reportedConfigured }) => {
+      const homeDir = mkdtempSync(join(tmpdir(), 'kimi-tui-survey-home-'));
+      const previousHome = process.env['KIMI_CODE_HOME'];
+      process.env['KIMI_CODE_HOME'] = homeDir;
+      try {
+        writeFileSync(join(homeDir, 'tui.toml'), `disable_feedback_survey = ${String(legacy)}\n`);
+        const setConfig = vi.fn(async () => ({}));
+        const harness = makeHarness(makeSession(), {
+          getConfig: vi.fn(async () => ({
+            models: {
+              k2: { model: 'moonshot-v1', maxContextSize: 100 },
+            },
+            disableFeedbackSurvey: configured,
+          })),
+          setConfig,
+        });
+        const driver = makeDriver(harness, {
+          ...makeStartupInput({}, { disableFeedbackSurvey: legacy }),
+        });
+
+        await expect(driver.init()).resolves.toBe(false);
+        await (
+          driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+        ).finishStartup(false);
+
+        await vi.waitFor(() => {
+          expect(harness.track).toHaveBeenCalledWith('survey_setting_migration', {
+            legacy,
+            configured: reportedConfigured,
+            action,
+          });
+        });
+        expect(setConfig).not.toHaveBeenCalled();
+        expect(readFileSync(join(homeDir, 'tui.toml'), 'utf-8')).not.toContain(
+          'disable_feedback_survey',
+        );
+      } finally {
+        if (previousHome === undefined) delete process.env['KIMI_CODE_HOME'];
+        else process.env['KIMI_CODE_HOME'] = previousHome;
+        rmSync(homeDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('does not report the survey setting migration without a legacy key', async () => {
+    const harness = makeHarness(makeSession());
+    const driver = makeDriver(harness, { ...makeStartupInput() });
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (
+      driver as unknown as { finishStartup(shouldReplayHistory: boolean): Promise<void> }
+    ).finishStartup(false);
+
+    await vi.waitFor(() => {
+      expect(harness.getConfig).toHaveBeenCalled();
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(harness.track).not.toHaveBeenCalledWith(
+      'survey_setting_migration',
+      expect.anything(),
+    );
   });
 
   it('shows config defaults in appState before the lazy session exists (v2)', async () => {

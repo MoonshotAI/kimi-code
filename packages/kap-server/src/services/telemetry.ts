@@ -22,9 +22,13 @@ export interface ServerTelemetry {
   readonly registration?: IDisposable;
 }
 
-function isTelemetryDisabledByEnv(core: Scope): boolean {
-  const value = core.accessor.get(IBootstrapService).getEnv(TELEMETRY_DISABLE_ENV);
+export function isEnvFlagEnabled(value: string | undefined): boolean {
   return value !== undefined && TELEMETRY_DISABLE_ENV_VALUES.has(value.trim().toLowerCase());
+}
+
+export function isServerTelemetryDisabled(core: Scope): boolean {
+  if (core.accessor.get(IConfigService).get('telemetry') === false) return true;
+  return isEnvFlagEnabled(core.accessor.get(IBootstrapService).getEnv(TELEMETRY_DISABLE_ENV));
 }
 
 export async function initializeServerTelemetry(
@@ -34,8 +38,7 @@ export async function initializeServerTelemetry(
   const service = core.accessor.get(ITelemetryService);
   const config = core.accessor.get(IConfigService);
   await config.ready;
-  const enabled = config.get('telemetry') !== false;
-  if (!enabled || isTelemetryDisabledByEnv(core)) return {};
+  if (isServerTelemetryDisabled(core)) return {};
 
   const auth = core.accessor.get(IOAuthToolkit);
   const appender = createCloudAppender(core.accessor, {

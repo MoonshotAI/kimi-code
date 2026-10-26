@@ -62,7 +62,7 @@ keep = "all"
 max_attempts_per_step = 10
 reserved_context_size = 50000
 
-[background]
+[task]
 max_running_tasks = 4
 keep_alive_on_exit = false
 
@@ -97,18 +97,19 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | Default model alias; must be defined in `models` |
 | `default_permission_mode` | `string` | `manual` | Default permission mode for new sessions: `manual`, `yolo`, or `auto`. See [the three permission modes](../guides/interaction.md#the-three-permission-modes) |
-| `default_plan_mode` | `boolean` | `false` | Whether new sessions start in [Plan mode](../guides/interaction.md#plan-mode) by default |
+| `default_plan_mode` | `boolean` | `false` | Whether new sessions start in [Plan mode](../guides/interaction.md#plan-mode) by default. Not applied in non-interactive mode (`kimi -p`) |
 | `merge_all_available_skills` | `boolean` | `true` | Whether to merge Agent Skills from all available directories |
 | `extra_skill_dirs` | `array<string>` | — | Extra skill search directories, layered on top of the default directories |
 | `extra_agent_dirs` | `array<string>` | — | Extra custom agent search directories, layered on top of the default directories |
 | `builtin_product_skills` | `boolean` | `true` | Whether the built-in skills that document Kimi Code itself are offered to the model |
 | `telemetry` | `boolean` | `true` | Whether anonymous telemetry is enabled; disabled only when explicitly set to `false` |
 | `auto_session_title` | `boolean` | `true` | Whether clients may automatically generate session titles; disabled only when explicitly set to `false` |
+| `disable_feedback_survey` | `boolean` | `false` | Turn off the occasional session rating prompt in the CLI and the desktop app |
 | [`providers`](#providers) | `table` | `{}` | API provider table |
 | [`models`](#models) | `table` | — | Model alias table |
 | [`thinking`](#thinking) | `table` | — | Default parameters for Thinking mode |
 | [`loop_control`](#loop_control) | `table` | — | Agent loop control parameters |
-| [`background`](#background) | `table` | — | Background task runtime parameters |
+| [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
@@ -344,13 +345,15 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 
 `strategy` can be overridden by the `KIMI_TOKEN_COUNTING_STRATEGY` environment variable, which takes higher priority than `config.toml`.
 
-## `background`
+<a id="background"></a>
 
-`background` controls the concurrency behavior of background tasks (launched via the `Bash` tool or the `Agent` tool's `run_in_background=true` parameter).
+## `task`
+
+`task` controls the concurrency behavior of background tasks (launched via the `Bash` tool or the `Agent` tool's `run_in_background=true` parameter). The legacy `background` section accepts the same fields. When both sections are present, a field set in `task` overrides the corresponding `background` value; fields omitted from `task` continue to use the legacy values.
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently |
+| `max_running_tasks` | `integer` | — | Maximum number of background tasks running concurrently; also caps Tower workers and reviewers (default Tower cap: 256) |
 | `keep_alive_on_exit` | `boolean` | `false` | Whether to keep still-running background tasks when the session closes; in print mode only a fallback when `print_background_mode` is unset (`true` = `drain`) |
 | `kill_grace_period_ms` | `integer` | `5000` | Grace period in milliseconds after a task is asked to terminate; still-running tasks are force-stopped when it elapses |
 | `bash_auto_background_on_timeout` | `boolean` | `true` | Move a foreground `Bash` command to a background task on timeout instead of killing it; set to `false` to kill timed-out foreground commands instead |
@@ -359,7 +362,9 @@ Retries only apply to transient failures: connection errors, timeouts, HTTP 429 
 | `print_wait_ceiling_s` | `integer` | `2147483` | Wall-clock ceiling (seconds) for the print-mode wait/steer loop; no effect outside print mode or with `"exit"` |
 | `print_max_turns` | `integer` | `100000` | Maximum number of new turns triggered by background-task completions in `"steer"` mode; keeps the steering loop bounded |
 
-`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than `config.toml`.
+For Tower, `max_running_tasks` limits workers and reviewers together. If neither configuration section nor `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS` sets a value, Tower uses a default combined limit of 256.
+
+`keep_alive_on_exit` can be overridden by the `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` environment variable, `max_running_tasks` by `KIMI_CODE_BACKGROUND_MAX_RUNNING_TASKS`, `bash_task_timeout_s` by `KIMI_CODE_BACKGROUND_BASH_TASK_TIMEOUT_S`, and `print_background_mode`, `print_wait_ceiling_s`, and `print_max_turns` by `KIMI_CODE_BACKGROUND_PRINT_BACKGROUND_MODE`, `KIMI_CODE_BACKGROUND_PRINT_WAIT_CEILING_S`, and `KIMI_CODE_BACKGROUND_PRINT_MAX_TURNS`; all take higher priority than either configuration section.
 
 In print mode (`kimi -p "<prompt>"`), Kimi Code stays alive after the main agent's turn as long as background tasks are still pending: each completion is fed back to the main agent as a synthetic user message, steering it into a new turn (`print_background_mode = "steer"` by default), and the run exits once a turn ends with nothing pending. The loop is bounded by `print_wait_ceiling_s` and `print_max_turns`, both effectively unbounded by default. Background work is never killed by a wall-clock cap in print mode either: background `Bash` tasks default to no timeout (`bash_task_timeout_s = 0`), and subagents run without a timeout (`[subagent] timeout_ms` and `[swarm] timeout_ms` both default to `0` unless explicitly set), so only the model itself stops a task. Set `print_background_mode` to `"drain"` to wait for tasks without feeding results back, or `"exit"` to end the run as soon as the main agent finishes.
 
@@ -429,7 +434,7 @@ Name matching follows the same rules as the same-named fields in an agent file: 
 
 ```toml
 [tools]
-disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
+disabled = ["WebSearch", "FetchURL", "mcp__github__*"]
 ```
 
 ::: warning Note
@@ -522,7 +527,7 @@ api_key = "sk-xxx"
 
 `permission` sets permission rules that are automatically loaded when a session starts, controlling whether the Agent needs user confirmation before calling a tool. Rules are written as a `[[permission.rules]]` array of tables, matched in order; the first matching rule takes effect.
 
-You can also set `dangerous_command_guard = false` under `[permission]` to turn off the built-in dangerous-command policy entirely (no dangerous-command confirmation in Always Ask and Ask When Needed mode; the policy is never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting and restores the behavior before the policy was introduced. Use this switch only for environments that already gate commands outside the agent.
+You can also set `dangerous_command_guard = false` under `[permission]` to turn off every built-in guard confirmation policy entirely: dangerous commands, access to sensitive files such as `.env` or `id_rsa`, and access to git control paths no longer ask for confirmation in Always Ask and Ask When Needed mode (these policies are never active in Never Ask mode); the default is `true`. An environment variable `KIMI_CODE_DANGEROUS_COMMAND_GUARD=false` overrides the file setting. With all built-in guards off, only `ask` rules you configured yourself can still prompt in Ask When Needed mode; in Always Ask mode, tools that are not auto-approved continue to prompt as before. The hard block that stops `Read`/`Write`/`Edit` from touching secret files stays in effect. Use this switch only for environments that already gate commands outside the agent.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -566,7 +571,6 @@ Alongside `config.toml`, the CLI keeps terminal-UI and client preferences in a c
 | `render_latex` | `boolean` | `true` | Render LaTeX math expressions in Markdown messages as Unicode text; `false` keeps the raw source |
 | `disable_paste_burst` | `boolean` | `false` | Disable the non-bracketed paste-burst fallback that keeps rapid multi-line pastes from submitting line by line |
 | `cache_expiry_hint` | `boolean` | `true` | On resume or when submitting after a long idle stretch, warn that the context cache may have expired and offer to compact or start a new session (v2 engine only) |
-| `disable_feedback_survey` | `boolean` | `false` | Disable the occasional session rating prompt above the input box |
 | `auto_session_title` | `boolean` | `true` | Let the TUI automatically generate a session title after the first completed turn; `false` opts out the TUI only, without affecting the global `auto_session_title` gate in `config.toml` |
 | `[editor].command` | `string` | `""` | External editor command for composing long input; empty falls back to `$VISUAL` / `$EDITOR` |
 | `[notifications].enabled` | `boolean` | `true` | Whether desktop notifications are sent |
@@ -589,7 +593,6 @@ tui_mode = "regular" # "regular" | "fullscreen" ("fullscreen" is experimental)
 render_latex = true # false keeps LaTeX math in messages as raw source
 disable_paste_burst = false # true disables non-bracketed paste-burst fallback
 cache_expiry_hint = true # false disables the "cache expired" dialog on resume / idle submit
-disable_feedback_survey = false # true hides the occasional session rating prompt
 auto_session_title = true # false stops the TUI from auto-generating a session title after the first turn
 
 [editor]

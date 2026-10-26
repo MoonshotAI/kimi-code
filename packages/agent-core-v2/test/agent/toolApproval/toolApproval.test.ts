@@ -21,6 +21,7 @@ import {
   PermissionApprovalRequested,
   PermissionApprovalResolved,
 } from '#/agent/toolApproval/toolApprovalService';
+import { IBootstrapService, type HostArgs } from '#/app/bootstrap/bootstrap';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { Event2 } from '#/app/event/event2';
@@ -91,6 +92,7 @@ describe('AgentToolApprovalService', () => {
   let records: TelemetryRecord[];
   let recorded: PermissionApprovalResultRecord[];
   let eventBus: IEventBus;
+  let hostArgs: HostArgs;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -98,8 +100,14 @@ describe('AgentToolApprovalService', () => {
     mode = 'manual';
     records = [];
     recorded = [];
+    hostArgs = { requestHeaders: {} };
     ix = createServices(disposables, {
       additionalServices: (reg) => {
+        reg.definePartialInstance(IBootstrapService, {
+          get args() {
+            return hostArgs;
+          },
+        });
         reg.defineInstance(
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'main', agentScope: 'main' }),
@@ -584,6 +592,52 @@ describe('AgentToolApprovalService', () => {
       expect(events.resolved).not.toHaveBeenCalled();
       expect(records).toEqual([]);
       expect(recorded).toEqual([]);
+    });
+
+    it('denies at once without asking anyone when the host is non-interactive', async () => {
+      hostArgs = { ...hostArgs, nonInteractive: true };
+      const events = subscribeApprovalEvents();
+      const broker = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+
+      await expect(svc.requestToolApproval(makeContext('Bash'), ask(), 'fallback-ask')).resolves.toEqual({
+        veto: {
+          output: 'Tool "Bash" needs approval, but nobody can approve it in a non-interactive run.',
+          isError: true,
+        },
+      });
+      expect(broker).not.toHaveBeenCalled();
+      expect(events.requested).not.toHaveBeenCalled();
+      expect(
+        interactions.findAll({
+          kind: 'approval',
+          resolved: false,
+          tags: { [INTERACTION_TAG_SESSION_ID]: 'test-session' },
+        }),
+      ).toEqual([]);
+      expect(records).toEqual([]);
+      expect(recorded).toEqual([]);
+    });
+
+    it('uses the non-interactive resolution of the caller and keeps subagent guidance', async () => {
+      hostArgs = { ...hostArgs, nonInteractive: true };
+      useSubagentScope();
+      const broker = useBroker(async () => ({ decision: 'approved' }));
+      const svc = make();
+
+      await expect(
+        svc.requestToolApproval(
+          makeContext('ExitPlanMode'),
+          ask({
+            resolveApproval: () => ({ kind: 'result', result: { output: 'approved' } }),
+            resolveNonInteractive: () => ({ kind: 'deny', message: 'review unavailable' }),
+          }),
+          'exit-plan-mode-review-ask',
+        ),
+      ).resolves.toEqual({
+        veto: { output: `review unavailable ${RETRY_GUIDANCE}`, isError: true },
+      });
+      expect(broker).not.toHaveBeenCalled();
     });
 
     it('merges the request trace id into approval result telemetry', async () => {

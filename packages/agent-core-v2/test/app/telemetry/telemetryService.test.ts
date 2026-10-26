@@ -8,7 +8,11 @@ import {
 } from '#/_base/errors/unexpectedError';
 import type { TelemetryProperties } from '#/app/telemetry/context';
 import type { TurnStartedEvent as TurnStartedTelemetryEvent } from '#/app/telemetry/events';
-import { type ITelemetryAppender, ITelemetryService } from '#/app/telemetry/telemetry';
+import {
+  type ITelemetryAppender,
+  ITelemetryService,
+  noopTelemetryService,
+} from '#/app/telemetry/telemetry';
 import {
   type ITelemetryScopeBindingHost,
   TelemetryService,
@@ -519,6 +523,78 @@ describe('TelemetryService (layered ambient)', () => {
       mode: 'agent',
       provider_type: 'old-provider',
     });
+  });
+});
+
+describe('TelemetryService.track (generic)', () => {
+  it('dispatches a neutral event with composed context and properties', () => {
+    const appender = new CapturingAppender();
+    const svc = serviceWithAppenders(appender);
+    svc.setContext({ session_id: 's1', agent_id: 'a1' });
+    svc.track('generic_probe', { probe: 'alpha' });
+    expect(appender.records[0]).toEqual({
+      event: 'generic_probe',
+      context: { session_id: 's1', agent_id: 'a1' },
+      properties: { sessionId: 's1', agent_id: 'a1', probe: 'alpha' },
+    });
+  });
+
+  it('composes the layered fragments through a scope binding', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    root.setContext({ model: 'app-model' });
+    const session = root.createScopeBinding({ session_id: 's1' });
+    session.telemetry.track('generic_probe', { probe: 'beta' });
+    expect(appender.records[0]).toEqual({
+      event: 'generic_probe',
+      context: { model: 'app-model', session_id: 's1' },
+      properties: { sessionId: 's1', model: 'app-model', probe: 'beta' },
+    });
+  });
+
+  it('falls back to the parent chain after the binding is disposed', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    root.setContext({ model: 'app-model' });
+    const session = root.createScopeBinding({ session_id: 's1' });
+    session.dispose();
+    session.telemetry.track('generic_probe', { probe: 'gamma' });
+    expect(appender.records[0]?.properties).toEqual({
+      model: 'app-model',
+      probe: 'gamma',
+    });
+  });
+
+  it('is dropped while the root is disabled', () => {
+    const appender = new CapturingAppender();
+    const svc = serviceWithAppenders(appender);
+    svc.setEnabled(false);
+    svc.track('generic_probe', { probe: 'delta' });
+    expect(appender.records).toHaveLength(0);
+    svc.setEnabled(true);
+    svc.track('generic_probe', { probe: 'delta' });
+    expect(appender.records).toHaveLength(1);
+  });
+
+  it('keeps the frozen session context in a snapshot after the binding is disposed', () => {
+    const appender = new CapturingAppender();
+    const root = serviceWithAppenders(appender);
+    const session = root.createScopeBinding({ session_id: 's1' });
+    const snapshot = session.telemetry.withContext({ mode: 'plan' });
+    session.dispose();
+    root.setContext({ model: 'late-model' });
+    snapshot.track('generic_probe', { probe: 'epsilon' });
+    expect(appender.records[0]).toEqual({
+      event: 'generic_probe',
+      context: { session_id: 's1', mode: 'plan' },
+      properties: { sessionId: 's1', mode: 'plan', probe: 'epsilon' },
+    });
+  });
+
+  it('noop service accepts a generic event without throwing', () => {
+    expect(() => {
+      noopTelemetryService.track('generic_probe', { probe: 'zeta' });
+    }).not.toThrow();
   });
 });
 

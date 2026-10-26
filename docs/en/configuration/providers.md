@@ -40,6 +40,8 @@ Two paths when adding:
 
   On startup, the TUI prompts when the current model has a valid upgrade target, including after choosing a session to resume. The explanation is rendered as Markdown. The prompt waits until the editor is empty and no turn or dialog is active; if an approval or question interrupts it, it returns when the editor is idle again. Confirm with `Enter`; `Space` does not accept a migration. Accepting switches the model and keeps the current effort when the previous model supports thinking and the target supports that effort, otherwise the target's default effort is used; keeping the current model records the choice so that migration is not shown again. When the startup refresh finds that the registry dropped the default model, the TUI shows a warning and, if the current session uses that model, switches it to the replacement with the same effort rule, without asking.
 
+  Besides the automatic startup refresh, you can trigger the same refresh manually at runtime: `/provider refresh` re-fetches the model list of every provider, and `/provider refresh <providerId>` limits the refresh to a single provider. The command reports added and removed models per provider; a removed alias stops resolving for agents bound to it on their next turn, so removals are highlighted in the output.
+
   These fields are a Kimi registry extension, not part of the models.dev schema:
 
   ```json

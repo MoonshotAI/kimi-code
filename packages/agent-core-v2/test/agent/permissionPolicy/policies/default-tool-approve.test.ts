@@ -63,7 +63,6 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ],
     ['AskUserQuestion', { questions: [] }],
     ['Skill', { name: 'test-skill' }],
-    ['EnterPlanMode', {}],
     ['ExitPlanMode', {}],
     ['CreateGoal', { title: 'ship it' }],
     ['GetGoal', {}],

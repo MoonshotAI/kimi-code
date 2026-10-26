@@ -21,13 +21,6 @@ export { DaemonClient } from './client.js';
 export type {
   DaemonClientOptions,
   SubmitAndWaitOptions,
-  TerminalAttachOptions,
-  TerminalAttachResult,
-  TerminalCloseResult,
-  TerminalControlOptions,
-  TerminalDetachResult,
-  TerminalInputResult,
-  TerminalResizeResult,
 } from './client.js';
 
 export { HttpClient } from './http.js';

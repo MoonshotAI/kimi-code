@@ -22,6 +22,7 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentPermissionModeService,
+  IAgentPlanService,
   IAgentProfileService,
   IAgentTaskService,
   IAuthSummaryService,
@@ -33,6 +34,7 @@ import {
   IOAuthToolkit,
   ISessionIndex,
   ISessionManager,
+  ISessionRunGate,
   ITelemetryService,
   IWorkspaceInstanceManager,
   PRINT_MAX_TURNS_DEFAULT,
@@ -41,6 +43,9 @@ import {
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
+  reloadOnStale,
+  ErrorCodes,
+  isError2,
   resumeSessionById,
   logSeed,
   parseAgentFileText,
@@ -50,6 +55,7 @@ import {
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
   setClampedTimeout,
+  type Error2,
   type Event2,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -77,6 +83,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 import type { GoalUpdated } from '@moonshot-ai/agent-core-v2/features/goal/goalOps';
 import type { TurnEnded } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type {
   AssistantDelta,
   ThinkingDelta,
@@ -96,7 +103,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
-import { currentKimiProfile } from '#/utils/region';
+import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
 
 import {
   formatGoalSummaryText,
@@ -263,6 +270,7 @@ export async function runV2Print(
       );
       // No `first_launch` on the v1 client: the v2 side already tracks it via
       // `telemetryService.track2` below, so tracking here would double-send.
+      const regionResolution = currentKimiRegionResolution();
       initializeTelemetry({
         homeDir,
         deviceId,
@@ -270,6 +278,9 @@ export async function runV2Print(
         version,
         uiMode: PROMPT_UI_MODE,
         model: opts.model ?? defaultModel,
+        region: regionResolution.region,
+        regionSource: regionResolution.source,
+        resolveRegion: () => currentKimiRegionResolution(),
         endpoint: () => currentKimiProfile().telemetryEndpoint,
         getAccessToken: async () =>
           (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,
@@ -286,8 +297,13 @@ export async function runV2Print(
       // Best-effort: a broken mcp.json or trust store must not fail the run.
     }
 
-    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
-    restorePermission = resolved.restorePermission;
+    let resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+    const { previousPermissionMode } = resolved;
+    if (previousPermissionMode !== undefined) {
+      restorePermission = async () => {
+        resolved.agent.accessor.get(IAgentPermissionModeService).setMode(previousPermissionMode);
+      };
+    }
     quiesceAgents = async () => {
       releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
     };
@@ -302,27 +318,45 @@ export async function runV2Print(
     }
 
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
-    if (goalCreate !== undefined) {
-      await runNativeGoal(
-        app,
-        resolved.session,
-        resolved.agent,
-        goalCreate,
-        resolved.goalModel,
-        outputFormat,
-        stdout,
-        stderr,
+    const runTurnOnce = async (): Promise<void> => {
+      if (goalCreate !== undefined) {
+        await ensureNativeGoal(resolved.agent, goalCreate, resolved.goalModel);
+        await runNativeGoalTurn(
+          app,
+          resolved.session,
+          resolved.agent,
+          goalCreate.objective,
+          outputFormat,
+          stdout,
+          stderr,
+        );
+      } else {
+        await runNativeTurn(app, resolved.session, resolved.agent, opts.prompt!, outputFormat, stdout, stderr);
+      }
+    };
+    try {
+      await reloadOnStale(
+        app.accessor,
+        resolved.session.id,
+        async () => {
+          resolved.session.accessor.get(ISessionRunGate).begin();
+          await runTurnOnce();
+        },
+        {
+          onReloaded: async (session) => {
+            stderr.write(`Session "${session.id}" was updated by another client; reloaded it.\n`);
+            const agentContext = await ensureMainAgent(session);
+            const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+            if (opts.model !== undefined) await agent.accessor.get(IAgentProfileService).setModel(opts.model);
+            agent.accessor.get(IAgentPermissionModeService).setMode('auto');
+            resolved = { ...resolved, session, agent };
+          },
+        },
       );
-    } else {
-      await runNativeTurn(
-        app,
-        resolved.session,
-        resolved.agent,
-        opts.prompt!,
-        outputFormat,
-        stdout,
-        stderr,
-      );
+    } catch (error) {
+      if (!isError2(error) || error.code !== ErrorCodes.SESSION_OCCUPIED) throw error;
+      reportSessionOccupied(error, outputFormat, stdout, stderr);
+      return;
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
@@ -337,7 +371,7 @@ export async function runV2Print(
 interface ResolvedNativeSession {
   readonly session: ISessionScopeHandle;
   readonly agent: IAgentScopeHandle;
-  readonly restorePermission: () => Promise<void>;
+  readonly previousPermissionMode?: PermissionMode;
   readonly telemetryModel: string | undefined;
   readonly goalModel: string | undefined;
 }
@@ -404,17 +438,22 @@ async function resolveNativeSession(
     return session;
   };
 
-  const forceAuto = (
-    agent: IAgentScopeHandle,
-  ): { readonly restorePermission: () => Promise<void> } => {
+  // Plan mode waits for the user to review the plan, and nobody can review it
+  // in print mode: a resumed session still in Plan mode keeps running in Plan
+  // mode, and its plan stays unapproved until the user reviews it.
+  const notePlanMode = async (agent: IAgentScopeHandle, sessionId: string): Promise<void> => {
+    if ((await agent.accessor.get(IAgentPlanService).status()) === null) return;
+    stderr.write(
+      `Session "${sessionId}" is in Plan mode, and its plan cannot be approved in print mode; ` +
+        `review it with \`kimi -r ${sessionId}\`.\n`,
+    );
+  };
+
+  const forceAuto = (agent: IAgentScopeHandle): PermissionMode => {
     const permissionMode = agent.accessor.get(IAgentPermissionModeService);
     const previous = permissionMode.mode;
     permissionMode.setMode('auto');
-    return {
-      restorePermission: async () => {
-        permissionMode.setMode(previous);
-      },
-    };
+    return previous;
   };
 
   if (opts.session !== undefined) {
@@ -432,14 +471,15 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agentContext = await ensureMainAgent(session);
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+    await notePlanMode(agent, opts.session);
     const profile = agent.accessor.get(IAgentProfileService);
     await applyModelOverride(profile, opts.model);
     const currentModel = profile.getModel();
-    const { restorePermission } = forceAuto(agent);
+    const previousPermissionMode = forceAuto(agent);
     return {
       session,
       agent,
-      restorePermission,
+      previousPermissionMode,
       telemetryModel: configuredModel(opts.model, currentModel, defaultModel),
       goalModel: configuredModel(opts.model, currentModel),
     };
@@ -452,14 +492,15 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agentContext = await ensureMainAgent(session);
       const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+      await notePlanMode(agent, previous.id);
       const profile = agent.accessor.get(IAgentProfileService);
       await applyModelOverride(profile, opts.model);
       const currentModel = profile.getModel();
-      const { restorePermission } = forceAuto(agent);
+      const previousPermissionMode = forceAuto(agent);
       return {
         session,
         agent,
-        restorePermission,
+        previousPermissionMode,
         telemetryModel: configuredModel(opts.model, currentModel, defaultModel),
         goalModel: configuredModel(opts.model, currentModel),
       };
@@ -478,11 +519,17 @@ async function resolveNativeSession(
   });
   const agentContext = await ensureMainAgent(session);
   const agent = session.accessor.get(IAgentLifecycleService).handleOf(agentContext.agentId)!;
+  // `default_plan_mode` opens new sessions in Plan mode, but nobody can review
+  // a plan in print mode, so the setting is skipped for this run.
+  const plan = agent.accessor.get(IAgentPlanService);
+  if ((await plan.status()) !== null) {
+    plan.cancel();
+    stderr.write('default_plan_mode is not applied in print mode, because Plan mode waits for your review.\n');
+  }
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,
     agent,
-    restorePermission: async () => {},
     telemetryModel: model,
     goalModel: model,
   };
@@ -637,22 +684,50 @@ async function runNativeTurn(
   }
 }
 
-async function runNativeGoal(
-  app: Scope,
-  session: ISessionScopeHandle,
-  agent: IAgentScopeHandle,
-  goal: HeadlessGoalCreate,
-  model: string | undefined,
+const PRINT_EXIT_SESSION_OCCUPIED = 4;
+
+function reportSessionOccupied(
+  error: Error2,
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
   stderr: PromptOutput,
+): void {
+  const message = error.message;
+  if (outputFormat === 'stream-json') {
+    stdout.write(
+      `${JSON.stringify({ type: 'error', code: error.code, message, details: error.details })}\n`,
+    );
+  } else {
+    stderr.write(`${message}\n`);
+  }
+  process.exitCode = PRINT_EXIT_SESSION_OCCUPIED;
+}
+
+async function ensureNativeGoal(
+  agent: IAgentScopeHandle,
+  goal: HeadlessGoalCreate,
+  model: string | undefined,
 ): Promise<void> {
   requireConfiguredModel(model);
   const goalService = agent.accessor.get(IAgentGoalService);
+  const existing = goalService.getGoal().goal;
+  if (existing?.status === 'active' && existing.objective === goal.objective) return;
   await goalService.createGoal({
     objective: goal.objective,
     replace: goal.replace,
   });
+}
+
+async function runNativeGoalTurn(
+  app: Scope,
+  session: ISessionScopeHandle,
+  agent: IAgentScopeHandle,
+  objective: string,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): Promise<void> {
+  const goalService = agent.accessor.get(IAgentGoalService);
   let completedSnapshot: { readonly status: string } | null = null;
   const subscription = agent.accessor.get(IEventBus).subscribe((event: Event2<any>) => {
     if (event.type === 'goal.updated') {
@@ -662,18 +737,24 @@ async function runNativeGoal(
       }
     }
   });
+  let turnError: unknown;
   try {
-    await runNativeTurn(app, session, agent, goal.objective, outputFormat, stdout, stderr);
+    await runNativeTurn(app, session, agent, objective, outputFormat, stdout, stderr);
+  } catch (error) {
+    turnError = error;
+    throw error;
   } finally {
     subscription.dispose();
-    const snapshot = completedSnapshot ?? goalService.getGoal().goal;
-    if (outputFormat === 'stream-json') {
-      stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
-    } else {
-      stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
-    }
-    if (snapshot !== null && snapshot.status !== 'complete') {
-      process.exitCode = goalExitCode(snapshot.status);
+    if (!isError2(turnError) || turnError.code !== ErrorCodes.SESSION_STALE) {
+      const snapshot = completedSnapshot ?? goalService.getGoal().goal;
+      if (outputFormat === 'stream-json') {
+        stdout.write(`${JSON.stringify(goalSummaryJson(snapshot))}\n`);
+      } else {
+        stderr.write(`${formatGoalSummaryText(snapshot)}\n`);
+      }
+      if (snapshot !== null && snapshot.status !== 'complete') {
+        process.exitCode = goalExitCode(snapshot.status);
+      }
     }
   }
 }

@@ -1,4 +1,5 @@
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
@@ -28,28 +29,50 @@ interface LogState {
   flushPromise: Promise<void> | undefined;
   flushScheduled: boolean;
   storageFailure: { readonly error: unknown } | undefined;
+  failureWarned: boolean;
+  stuckWatch: NodeJS.Timeout | undefined;
   cutoverEpoch: number;
   refCount: number;
   retired: boolean;
   ready: Promise<void>;
   retirement: Promise<void> | undefined;
+  knownLength: number | undefined;
+  inFlightBytes: number;
+  rewriteInFlight: number | undefined;
+  guardWarned: boolean;
   onError?: (error: unknown) => void;
 }
+
+const STUCK_FLUSH_CHECK_MS = 5_000;
+const STUCK_FLUSH_WARN_MS = 30_000;
+const STUCK_FLUSH_REPEAT_MS = 10 * 60_000;
 
 export class AppendLogStore extends Disposable implements IAppendLogStore {
   declare readonly _serviceBrand: undefined;
 
   private readonly logs = new Map<string, LogState>();
+  private readonly writeGuards = new Map<string, () => boolean>();
   private readonly writeEmitter = this._register(new Emitter<AppendLogWrite>());
   readonly onDidWrite: Event<AppendLogWrite> = this.writeEmitter.event;
 
-  constructor(@IFileSystemStorageService private readonly storage: IFileSystemStorageService) {
+  constructor(
+    @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @ILogService private readonly logger: ILogService,
+  ) {
     super();
   }
 
   append<R>(scope: string, key: string, record: R, options?: AppendLogOptions): void {
     const state = this.state(scope, key);
     state.pending.push(record);
+    if (state.storageFailure !== undefined && !state.failureWarned) {
+      state.failureWarned = true;
+      this.logger.warn('append accepted while a storage failure is latched; the record may never reach disk', {
+        scope,
+        key,
+        pending: state.pending.length,
+      });
+    }
     if (options?.onError !== undefined && state.onError === undefined) {
       state.onError = options.onError;
     }
@@ -58,38 +81,47 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
 
   async *read<R>(scope: string, key: string, options?: AppendLogReadOptions): AsyncIterable<R> {
     await this.flushLog(scope, key);
-    const onTruncate = options?.onTruncate;
-    const textDecoder = new TextDecoder();
-    let pending = '';
-    let lineNumber = 0;
-    for await (const chunk of this.storage.readStream(scope, key)) {
-      pending += textDecoder.decode(chunk, { stream: true });
-      let newlineIndex = pending.indexOf('\n');
-      while (newlineIndex !== -1) {
-        const raw = pending.slice(0, newlineIndex);
-        pending = pending.slice(newlineIndex + 1);
-        lineNumber++;
-        let record: R | undefined;
-        try {
-          record = this.parseLine<R>(raw, scope, key, lineNumber, false);
-        } catch (error) {
-          if (onTruncate === undefined) throw error;
-          onTruncate({ lineNumber, reason: 'corrupted', cause: error });
-          return;
+    const state = this.state(scope, key);
+    const lengthAtStart = this.diskLength(scope, key);
+    try {
+      const onTruncate = options?.onTruncate;
+      const textDecoder = new TextDecoder();
+      let pending = '';
+      let lineNumber = 0;
+      for await (const chunk of this.storage.readStream(scope, key)) {
+        pending += textDecoder.decode(chunk, { stream: true });
+        let newlineIndex = pending.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const raw = pending.slice(0, newlineIndex);
+          pending = pending.slice(newlineIndex + 1);
+          lineNumber++;
+          let record: R | undefined;
+          try {
+            record = this.parseLine<R>(raw, scope, key, lineNumber, false);
+          } catch (error) {
+            if (onTruncate === undefined) throw error;
+            onTruncate({ lineNumber, reason: 'corrupted', cause: error });
+            return;
+          }
+          if (record !== undefined) yield record;
+          newlineIndex = pending.indexOf('\n');
         }
-        if (record !== undefined) yield record;
-        newlineIndex = pending.indexOf('\n');
       }
-    }
-    pending += textDecoder.decode();
-    if (pending.length > 0) {
-      lineNumber++;
-      const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
-      if (record !== undefined) {
-        yield record;
-      } else if (onTruncate !== undefined) {
-        const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
-        if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
+      pending += textDecoder.decode();
+      if (pending.length > 0) {
+        lineNumber++;
+        const record = this.parseLine<R>(pending, scope, key, lineNumber, true);
+        if (record !== undefined) {
+          yield record;
+        } else if (onTruncate !== undefined) {
+          const line = pending.endsWith('\r') ? pending.slice(0, -1) : pending;
+          if (line.length > 0) onTruncate({ lineNumber, reason: 'truncated' });
+        }
+      }
+    } finally {
+      const disk = this.diskLength(scope, key);
+      if (disk !== undefined) {
+        state.knownLength = lengthAtStart === disk ? disk : (lengthAtStart ?? 0);
       }
     }
   }
@@ -127,10 +159,14 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     );
     const rewrite = priorSettled.then(async () => {
       try {
+        state.rewriteInFlight = encoded.length;
         await this.storage.write(scope, key, encoded, { atomic: true });
+        state.rewriteInFlight = undefined;
         state.storageFailure = undefined;
+        state.knownLength = encoded.length;
         return true;
       } catch (error) {
+        state.rewriteInFlight = undefined;
         if (options?.onError !== undefined) {
           options.onError(error);
           return false;
@@ -169,6 +205,45 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     });
   }
 
+  externallyModified(scope: string, key: string): boolean {
+    const state = this.logs.get(logId(scope, key));
+    const known = state?.knownLength;
+    if (known === undefined) return false;
+    const disk = this.diskLength(scope, key);
+    if (disk === undefined) return false;
+    if (state?.rewriteInFlight !== undefined && disk === state.rewriteInFlight) return false;
+    return disk < known || disk > known + (state?.inFlightBytes ?? 0);
+  }
+
+  bindWriteGuard(scope: string, key: string, guard: () => boolean): IDisposable {
+    const id = logId(scope, key);
+    this.writeGuards.set(id, guard);
+    return toDisposable(() => {
+      if (this.writeGuards.get(id) === guard) this.writeGuards.delete(id);
+    });
+  }
+
+  private writeAllowed(scope: string, key: string, state: LogState): boolean {
+    const guard = this.writeGuards.get(logId(scope, key));
+    if (guard === undefined || guard()) {
+      state.guardWarned = false;
+      return true;
+    }
+    if (!state.guardWarned) {
+      state.guardWarned = true;
+      console.warn(`[append-log] ${scope}/${key}: write guard declined; keeping writes in memory`);
+    }
+    return false;
+  }
+
+  private diskLength(scope: string, key: string): number | undefined {
+    try {
+      return this.storage.sizeSync(scope, key) ?? 0;
+    } catch {
+      return undefined;
+    }
+  }
+
   private state(scope: string, key: string): LogState {
     const id = logId(scope, key);
     let state = this.logs.get(id);
@@ -179,11 +254,17 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         flushPromise: undefined,
         flushScheduled: false,
         storageFailure: undefined,
+        failureWarned: false,
+        stuckWatch: undefined,
         cutoverEpoch: 0,
         refCount: 0,
         retired: false,
         ready,
         retirement: undefined,
+        knownLength: undefined,
+        inFlightBytes: 0,
+        rewriteInFlight: undefined,
+        guardWarned: false,
       };
       this.logs.set(id, state);
     }
@@ -224,6 +305,11 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
   private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {
     try {
       await this.flushState(scope, key, state);
+      if (state.pending.length > 0) {
+        console.warn(
+          `[append-log] ${scope}/${key}: dropping ${state.pending.length} unflushed record(s) on close; write guard declined`,
+        );
+      }
     } finally {
       const id = logId(scope, key);
       if (this.logs.get(id) === state) this.logs.delete(id);
@@ -240,7 +326,34 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     let owned!: Promise<void>;
     owned = this.finishOwnedFlush(scope, key, state, operation, wroteBox, () => owned);
     state.flushPromise = owned;
+    this.watchStuckFlush(scope, key, state, owned);
     return owned;
+  }
+
+  private watchStuckFlush(scope: string, key: string, state: LogState, owned: Promise<void>): void {
+    if (state.stuckWatch !== undefined) clearInterval(state.stuckWatch);
+    const startedAt = Date.now();
+    let lastWarnAt = 0;
+    state.stuckWatch = setInterval(() => {
+      if (state.flushPromise !== owned) {
+        if (state.stuckWatch !== undefined) {
+          clearInterval(state.stuckWatch);
+          state.stuckWatch = undefined;
+        }
+        return;
+      }
+      const stuckMs = Date.now() - startedAt;
+      if (stuckMs < STUCK_FLUSH_WARN_MS) return;
+      if (Date.now() - lastWarnAt < STUCK_FLUSH_REPEAT_MS) return;
+      lastWarnAt = Date.now();
+      this.logger.warn('append log flush is stuck; records are accumulating in memory', {
+        scope,
+        key,
+        pending: state.pending.length,
+        stuckMs,
+      });
+    }, STUCK_FLUSH_CHECK_MS);
+    state.stuckWatch.unref();
   }
 
   private async finishOwnedFlush(
@@ -257,6 +370,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       const owned = owner();
       if (state.flushPromise === owned) {
         while (state.flushPromise === owned && state.pending.length > 0) {
+          if (!this.writeAllowed(scope, key, state)) break;
           await this.drain(scope, key, state, wroteBox);
         }
       }
@@ -266,6 +380,10 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
       const owned = owner();
       if (state.flushPromise === owned) {
         state.flushPromise = undefined;
+        if (state.stuckWatch !== undefined) {
+          clearInterval(state.stuckWatch);
+          state.stuckWatch = undefined;
+        }
       }
     }
     if (wroteBox.value) this.writeEmitter.fire({ scope, key });
@@ -281,16 +399,25 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     const cutoverEpoch = state.cutoverEpoch;
     await state.ready;
     if (state.cutoverEpoch !== cutoverEpoch) return false;
+    if (state.pending.length > 0 && !this.writeAllowed(scope, key, state)) return false;
     let wrote = false;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
+      const encoded = encodeBatch(batch);
       try {
-        await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
+        state.inFlightBytes = encoded.length;
+        await this.storage.append(scope, key, encoded, { durable: true });
+        state.inFlightBytes = 0;
         wrote = true;
+        if (state.knownLength !== undefined) state.knownLength += encoded.length;
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
-        const failure = (state.storageFailure ??= { error });
-        throw failure.error;
+        state.inFlightBytes = 0;
+        if (state.storageFailure === undefined) {
+          state.storageFailure = { error };
+          state.failureWarned = false;
+        }
+        throw state.storageFailure.error;
       }
       if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);

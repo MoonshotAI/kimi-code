@@ -151,6 +151,21 @@ describe('server-v2 boot', () => {
     expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
   });
 
+  it('rejects invalid idle reclaim config before registering an instance', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-idle-reclaim-'));
+    await expect(
+      startServer({
+        hostIdentity: TEST_HOST_IDENTITY,
+        host: '127.0.0.1',
+        port: 0,
+        homeDir: home,
+        logLevel: 'silent',
+        env: { KIMI_CODE_SESSION_IDLE_RECLAIM_MS: 'nope' },
+      }),
+    ).rejects.toThrow(/KIMI_CODE_SESSION_IDLE_RECLAIM_MS.*non-negative integer/);
+    expect(await listLiveServerInstances(home)).toEqual([]);
+  });
+
   it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
     server = await startServer({

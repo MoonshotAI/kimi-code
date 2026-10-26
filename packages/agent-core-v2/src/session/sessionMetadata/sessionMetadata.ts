@@ -44,6 +44,7 @@ export interface ISessionMetadata {
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
   read(): Promise<SessionMeta>;
   update(patch: SessionMetaPatch, opts?: { readonly touchUpdatedAt?: boolean }): Promise<void>;
+  applyPromptMetadata(lastPrompt: string, title: string): Promise<boolean>;
   setTitle(title: string): Promise<void>;
   setGeneratedTitleIfUncustomized(
     title: string,

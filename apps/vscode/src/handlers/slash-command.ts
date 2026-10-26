@@ -129,7 +129,7 @@ async function toggleLegacyPermission(
     return;
   }
   emit(flags.afk
-    ? "Auto mode enabled. Questions will be auto-dismissed and tool calls auto-approved."
+    ? "Auto mode enabled. Questions will be auto-dismissed and tool calls auto-approved; plans in plan mode still wait for your review."
     : flags.yolo
       ? "Auto mode disabled. You are back at the keyboard. Yolo is still on."
       : "Auto mode disabled. You are back at the keyboard.");

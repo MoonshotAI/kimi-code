@@ -67,14 +67,11 @@
 
 | 工具 | 默认审批 | 说明 |
 | --- | --- | --- |
-| `EnterPlanMode` | 自动放行 | 进入 Plan 模式 |
 | `ExitPlanMode` | 自动放行（需用户确认计划） | 退出 Plan 模式并提交计划 |
 
-Plan 模式是一种受约束的工作状态：进入后 `Write` 与 `Edit` 只允许写入当前的计划文件，`TaskStop` 被完全拦截。其余工具（包括 `Bash`）仍按当前权限规则处理。
+Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Tab` 或 `/plan`），Agent 没有进入它的工具。打开后 `Write` 与 `Edit` 只允许写入当前的计划文件，`TaskStop` 被完全拦截。其余工具（包括 `Bash`）仍按当前权限规则处理。
 
-**`EnterPlanMode`** 不接受任何参数，进入成功后返回工作流指引及计划文件路径。
-
-**`ExitPlanMode`** 读取当前计划文件内容，将计划呈现给用户审批后退出 Plan 模式。可选参数 `options` 允许 Agent 提供 1–3 个备选方案（每项含 `label` 与 `description`，`label` 最长 80 字符），供用户在审批时选择；`label` 不能重复，也不能使用 `Approve`、`Reject`、`Reject and Exit`、`Revise` 等保留词。
+**`ExitPlanMode`** 读取当前计划文件内容，在任何权限模式下都将计划呈现给用户审批，之后退出 Plan 模式。可选参数 `options` 允许 Agent 提供 1–3 个备选方案（每项含 `label` 与 `description`，`label` 最长 80 字符），供用户在审批时选择；`label` 不能重复，也不能使用 `Approve`、`Reject`、`Reject and Exit`、`Revise` 等保留词。
 
 ## 状态管理
 

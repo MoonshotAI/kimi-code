@@ -49,8 +49,11 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { EventDispatcherService } from '#/state/eventDispatcherService';
 import { ITaskService } from '#/app/task/task';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
+
 
 import { stubLog } from '../../_base/log/stubs';
 import { stubAgentWire } from '../../wire/stubs';
@@ -867,6 +870,8 @@ describe('AgentTaskService', () => {
     ix.stub(IAgentBlobService, noopBlob);
     registerAgentEventBus(ix, disposables);
     ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const sessionLocks = new InMemorySessionLockService();
+    ix.stub(ISessionLockService, sessionLocks);
     ix.set(IWireService, new SyncDescriptor(WireService));
     ix.set(IAgentStateService, new AgentStateService());
     ix.set(IEventDispatcher, new SyncDescriptor(EventDispatcherService));

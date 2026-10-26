@@ -24,6 +24,7 @@ function buildSpawnOptions(options: HostProcessOptions): SpawnOptions {
     stdio: options.mergeStderr ? ['pipe', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe'],
     detached,
     windowsHide: options.windowsHide ?? true,
+    timeout: options.timeout,
   };
 
   if (options.shell !== undefined) {

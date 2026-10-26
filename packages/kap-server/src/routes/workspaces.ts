@@ -5,6 +5,7 @@ import {
   IWorkspaceService,
   IWorkspaceSessions,
   IWorkspaceTrust,
+  IWorkspaceTrustStore,
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
@@ -367,10 +368,7 @@ async function resolveTrust(
     );
     return undefined;
   }
-  const workspace = await core
-    .accessor.get(IWorkspaceInstanceManager)
-    .getOrCreate({ workspaceId, root: ws.root });
-  return workspace.program.trust;
+  return core.accessor.get(IWorkspaceTrustStore).forRoot(ws.root);
 }
 
 export async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {

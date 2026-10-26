@@ -18,6 +18,7 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { AgentEvent2 } from '#/app/event/event2';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -76,6 +77,7 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     @ISessionContext private readonly session: ISessionContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {
     super();
   }
@@ -111,6 +113,16 @@ export class AgentToolApprovalService extends Service implements IAgentToolAppro
     origin: string,
   ): Promise<BeforeExecuteDecision | undefined> {
     const name = context.toolCall.name;
+    if (this.bootstrap.args.nonInteractive === true) {
+      return this.resolvePermissionResolution(
+        result.resolveNonInteractive?.() ?? {
+          kind: 'deny',
+          message: `Tool "${name}" needs approval, but nobody can approve it in a non-interactive run.`,
+        },
+        context,
+        origin,
+      );
+    }
     const action = context.execution.description ?? `Approve ${name}`;
     const display =
       context.execution.display ??

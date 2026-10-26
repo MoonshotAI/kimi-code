@@ -33,6 +33,7 @@ import { CHILD_SESSION_KIND,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
+import type { SessionEndedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { bindTelemetryScope } from '#/app/telemetry/telemetryService';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
@@ -41,6 +42,7 @@ import {
   type AppendLogTruncation,
   IAppendLogStore,
 } from '#/persistence/interface/appendLogStore';
+import { ISessionLockService } from '#/persistence/interface/sessionLock';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import {
@@ -111,7 +113,9 @@ import {
   type ResumeSessionOptions,
   type SessionArchivedEvent,
   type SessionClosedEvent,
+  type SessionCloseReason,
   type SessionCreatedEvent,
+  type SessionCreateSource,
   type SessionForkedEvent,
   type SessionWillCloseEvent,
   type SessionWillCreateEvent,
@@ -166,6 +170,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionIndex private readonly index: ISessionIndex,
     @ISessionIndexMirror private readonly indexMirror: ISessionIndexMirror,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
     @ILogService private readonly log: ILogService,
@@ -261,6 +266,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       session_id: opts.sessionId,
     });
     let handle: ISessionScopeHandle;
+    const scopeCreated = new Emitter<ISessionScopeHandle>();
     try {
       handle = createScopedChildHandle(
         this.instantiation,
@@ -287,6 +293,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             );
             this._onWillCreateSession.fire({
               sessionId: opts.sessionId,
+              onDidCreateScope: scopeCreated.event,
               readSeed: (id) => container.invokeFunction((accessor) => accessor.get(id)),
               contributeSeed: (id, value) => {
                 container.provide(id, value);
@@ -298,9 +305,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           },
         },
       ) as ISessionScopeHandle;
+      scopeCreated.fire(handle);
     } catch (error) {
       telemetryBinding.dispose();
       throw error;
+    } finally {
+      scopeCreated.dispose();
     }
     try {
       await handle.accessor.get(ISessionMetadata).ready;
@@ -335,7 +345,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this._onDidCreateSession.fireAsync(event, NO_ABORT);
     event.handle.accessor.get(ITelemetryService).track2('session_started', {
-      resumed: event.source === 'resume',
+      resumed: event.source !== 'startup',
       experimental_flags: this.flags.exposedIds().toSorted().join(','),
     });
   }
@@ -345,13 +355,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return this.sessions.get(sessionId);
   }
 
-  resume(sessionId: string, opts?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
+  resume(
+    sessionId: string,
+    opts?: ResumeSessionOptions,
+    source: Extract<SessionCreateSource, 'resume' | 'reclaimed'> = 'resume',
+  ): Promise<ISessionScopeHandle | undefined> {
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
     this.resumeFailures.delete(sessionId);
-    const promise = this.doResume(sessionId, opts)
+    const promise = this.doResume(sessionId, source, opts)
       .catch((error: unknown) => {
         this.telemetry
           .withContext({ session_id: sessionId })
@@ -374,6 +388,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async doResume(
     sessionId: string,
+    source: SessionCreateSource,
     opts?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
     const live = this.sessions.get(sessionId);
@@ -394,7 +409,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (agents.get(MAIN_AGENT_ID) === undefined) {
         await agents.create({ agentId: MAIN_AGENT_ID });
       }
-      await this.announceCreated({ sessionId, handle, source: 'resume' });
+      await this.announceCreated({ sessionId, handle, source });
     } catch (error) {
       this.sessions.delete(sessionId);
       void handle.dispose();
@@ -411,10 +426,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return ready;
   }
 
-  async close(sessionId: string): Promise<void> {
+  async close(sessionId: string, reason: Exclude<SessionCloseReason, 'archive'> = 'exit'): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+    await this.announceWillClose({ sessionId, handle, reason });
     this.sessions.delete(sessionId);
     await this.drainAgents(handle);
     await this.appendLogStore.drainRetirements();
@@ -423,29 +438,35 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.dispose();
     await drainLogCloses();
     this._onDidCloseSession.fire({ sessionId });
-    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'exit' });
+    const ended: SessionEndedEvent = { reason };
+    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', ended);
   }
 
   async archive(sessionId: string): Promise<void> {
     const handle = this.sessions.get(sessionId);
     if (handle === undefined) return;
-    const meta = handle.accessor.get(ISessionMetadata);
-    await meta.setArchived(true);
-    await this.drainAgents(handle);
-    await this.appendLogStore.drainRetirements();
-    this.event.publish(
-      new SessionArchived({
-        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
-      }),
-    );
-    await this.announceWillClose({ sessionId, handle, reason: 'archive' });
-    this.sessions.delete(sessionId);
-    await drainSessionMetadataWrites();
-    await this.indexMirror.drain();
-    void handle.dispose();
-    await drainLogCloses();
-    this._onDidArchiveSession.fire({ sessionId });
-    this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
+    const lease = this.sessionLocks.lease(sessionId);
+    try {
+      const meta = handle.accessor.get(ISessionMetadata);
+      await meta.setArchived(true);
+      await this.drainAgents(handle);
+      await this.appendLogStore.drainRetirements();
+      this.event.publish(
+        new SessionArchived({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+      await this.announceWillClose({ sessionId, handle, reason: 'archive' });
+      this.sessions.delete(sessionId);
+      await drainSessionMetadataWrites();
+      await this.indexMirror.drain();
+      void handle.dispose();
+      await drainLogCloses();
+      this._onDidArchiveSession.fire({ sessionId });
+      this.telemetry.withContext({ session_id: sessionId }).track2('session_ended', { reason: 'archive' });
+    } finally {
+      lease.release();
+    }
   }
 
   async restore(
@@ -469,19 +490,24 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (handle === undefined && !persistedHere) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
     }
-    if (handle !== undefined) {
-      await this.close(sessionId);
+    const lease = this.sessionLocks.lease(sessionId);
+    try {
+      if (handle !== undefined) {
+        await this.close(sessionId);
+      }
+      await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
+      await this.index.remove(sessionId);
+      await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
+      this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
+      await this.appendLogStore.flush();
+      this.event.publish(
+        new SessionDeleted({
+          payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
+        }),
+      );
+    } finally {
+      lease.release();
     }
-    await this.hostFs.remove(sessionDirOf(this.bootstrap.homeDir, this.handlerScope, sessionId));
-    await this.index.remove(sessionId);
-    await dropFileHistorySession({ docs: this.docs, workspaceId: this.workspaceId, sessionId });
-    this.appendLogStore.append('', 'session_index.jsonl', { sessionId, deleted: true });
-    await this.appendLogStore.flush();
-    this.event.publish(
-      new SessionDeleted({
-        payload: { sessionId, workspaceId: this.workspaceContext.workspaceId },
-      }),
-    );
   }
 
   private async announceWillClose(event: SessionWillCloseEvent): Promise<void> {
@@ -527,6 +553,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetId: string | undefined;
     let targetSessionDir: string | undefined;
     const quiescenceHolds: IDisposable[] = [];
+    const sourceLease = this.sessionLocks.lease(sourceId);
     try {
       if (sourceHandle !== undefined) {
         const sourceAgents = sourceHandle.accessor.get(IAgentLifecycleService);
@@ -682,6 +709,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw error;
     } finally {
       for (const hold of quiescenceHolds) hold.dispose();
+      sourceLease.release();
     }
   }
 

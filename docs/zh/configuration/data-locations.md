@@ -42,6 +42,8 @@ $KIMI_CODE_HOME  （默认 ~/.kimi-code）
 │       └── <key>-<suffix>.json
 ├── sessions/               # 会话数据（详见下文）
 │   └── <workDirKey>/<sessionId>/
+├── locks/
+│   └── sessions/           # 客户端写会话期间持有的跨进程占用锁
 ├── bin/
 │   ├── rg                  # Grep 使用的托管 ripgrep 二进制（Windows 为 rg.exe）
 │   └── fd                  # 文件引用使用的托管 fd 二进制（Windows 为 fd.exe）

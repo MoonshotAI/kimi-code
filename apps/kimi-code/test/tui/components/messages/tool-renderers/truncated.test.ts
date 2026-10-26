@@ -61,6 +61,33 @@ describe('TruncatedOutputComponent', () => {
     expect(out).not.toContain('more lines, ctrl+o');
   });
 
+  it('shows a single overflow line instead of swapping it for a same-height hint', () => {
+    const component = new TruncatedOutputComponent('a\nb\nc\nd', {
+      expanded: false,
+      isError: false,
+      maxLines: 3,
+    });
+
+    const lines = strip(component.render(80).join('\n')).split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toContain('d');
+    expect(lines.some((line) => line.includes('more lines'))).toBe(false);
+    expect(component.wasTruncated()).toBe(false);
+  });
+
+  it('collapses once folding saves at least one row', () => {
+    const component = new TruncatedOutputComponent('a\nb\nc\nd\ne', {
+      expanded: false,
+      isError: false,
+      maxLines: 3,
+    });
+
+    const lines = strip(component.render(80).join('\n')).split('\n');
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe('  … (2 more lines, ctrl+o to expand)');
+    expect(component.wasTruncated()).toBe(true);
+  });
+
   it('keeps the truncation footer within the requested render width', () => {
     const output = Array.from({ length: 20 }, (_, i) => `line ${String(i)}`).join('\n');
     const component = new TruncatedOutputComponent(output, {

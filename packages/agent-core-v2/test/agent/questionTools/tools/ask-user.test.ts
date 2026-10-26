@@ -8,6 +8,7 @@ import {
   type AskUserQuestionInput,
 } from '#/agent/tools/ask-user-question/ask-user-question';
 import { AskUserQuestionTool } from '#/agent/tools/ask-user-question/askUserQuestionTool';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -56,6 +57,7 @@ function input(
 function makeTool(
   options: {
     readonly activeTaskTools?: ReadonlySet<string>;
+    readonly nonInteractive?: boolean;
     readonly request?: (
       req: QuestionRequest,
       requestOptions?: { readonly agentId?: string; readonly detached?: boolean },
@@ -101,6 +103,9 @@ function makeTool(
       reg.definePartialInstance(IAgentScopeContext, { agentId: 'main' });
       reg.definePartialInstance(IAgentToolPolicyService, {
         isToolActive: (name: string) => activeTaskTools.has(name),
+      });
+      reg.definePartialInstance(IBootstrapService, {
+        args: { requestHeaders: {}, nonInteractive: options.nonInteractive },
       });
       reg.define(IAskUserQuestionTool, AskUserQuestionTool);
     },
@@ -463,6 +468,25 @@ describe('AskUserQuestionTool', () => {
       answers: {},
       note: 'User dismissed the question without answering.',
     });
+  });
+
+  it('answers at once without asking anyone when the host is non-interactive', async () => {
+    const { tool, request, registerTask } = makeTool({ nonInteractive: true });
+
+    for (const background of [false, true]) {
+      const result = await executeTool(tool, {
+        turnId: 0,
+        toolCallId: `call_non_interactive_${String(background)}`,
+        args: { ...input(), background },
+        signal,
+      });
+      expect(result).toMatchObject({
+        isError: true,
+        output: 'Nobody can answer questions in a non-interactive run.',
+      });
+    }
+    expect(request).not.toHaveBeenCalled();
+    expect(registerTask).not.toHaveBeenCalled();
   });
 
   describe('background mode', () => {

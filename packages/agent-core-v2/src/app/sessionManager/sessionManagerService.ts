@@ -3,9 +3,13 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { Error2, ErrorCodes } from '#/errors';
+import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { IAgentCronService } from '#/features/cron/cronService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { ISessionActivityView } from '#/session/sessionActivity/sessionActivity';
 import {
   type CreateChildSessionOptions,
   type ForkSessionOptions,
@@ -39,6 +43,7 @@ export class SessionManager implements ISessionManager {
   private readonly owners = new Map<string, SessionLifecycleService>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
+  private readonly reclaimed = new Set<string>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
@@ -60,6 +65,7 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
+    @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
@@ -78,7 +84,11 @@ export class SessionManager implements ISessionManager {
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
     const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(sessionId, options),
+      (await this.controllerForSession(sessionId))?.resume(
+        sessionId,
+        options,
+        this.reclaimed.has(sessionId) ? 'reclaimed' : 'resume',
+      ),
     ).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
@@ -123,7 +133,7 @@ export class SessionManager implements ISessionManager {
   }
 
   private lifecycleKeys(...ids: (string | undefined)[]): string[] {
-    return [...new Set(ids.filter((id): id is string => id !== undefined))].sort();
+    return [...new Set(ids.filter((id): id is string => id !== undefined))].toSorted();
   }
 
   withLifecycleSerialization<T>(
@@ -146,8 +156,43 @@ export class SessionManager implements ISessionManager {
     await this.serializeLifecycle(sessionId, async () => this.owners.get(sessionId)?.close(sessionId));
   }
 
+  async closeIfIdle(sessionId: string, idleTimeoutMs: number): Promise<boolean> {
+    return this.serializeLifecycle(sessionId, async () => {
+      const handle = this.sessions.get(sessionId);
+      const owner = this.owners.get(sessionId);
+      if (handle === undefined || owner === undefined) return false;
+      if (Date.now() - handle.accessor.get(ISessionActivityView).lastActiveAt() < idleTimeoutMs) return false;
+      let lease: SessionLockLease;
+      try {
+        lease = this.sessionLocks.lease(sessionId);
+      } catch (error) {
+        if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
+        throw error;
+      }
+      try {
+        if (await this.retained(handle)) return false;
+        await owner.close(sessionId, 'reclaim');
+        this.reclaimed.add(sessionId);
+        return true;
+      } finally {
+        lease.release();
+      }
+    });
+  }
+
+  private async retained(handle: ISessionScopeHandle): Promise<boolean> {
+    const agents = handle.accessor.get(IAgentLifecycleService);
+    const hasCron = agents
+      .list()
+      .some((agent) => (agents.handleOf(agent.agentId)?.accessor.get(IAgentCronService).list().length ?? 0) > 0);
+    if (hasCron) return true;
+    const activity = handle.accessor.get(ISessionActivityView).state();
+    return activity.busy || activity.pendingInteraction !== 'none';
+  }
+
   private async archiveInner(sessionId: string): Promise<void> {
     await (await this.controllerForSession(sessionId))?.archive(sessionId);
+    this.reclaimed.delete(sessionId);
   }
 
   async archive(sessionId: string): Promise<void> {
@@ -186,6 +231,7 @@ export class SessionManager implements ISessionManager {
       const failed = settled.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;
       await controller.delete(sessionId);
+      this.reclaimed.delete(sessionId);
     });
   }
 
@@ -222,7 +268,7 @@ export class SessionManager implements ISessionManager {
   }
 
   dispose(): void {
-    for (const { controller, subscriptions } of [...this.controllerEntries].reverse()) {
+    for (const { controller, subscriptions } of [...this.controllerEntries].toReversed()) {
       subscriptions.dispose();
       controller.dispose();
     }
@@ -230,6 +276,7 @@ export class SessionManager implements ISessionManager {
     this.controllers.clear();
     this.sessions.clear();
     this.owners.clear();
+    this.reclaimed.clear();
     this.willCreateEmitter.dispose();
     this.didCreateEmitter.dispose();
     this.willCloseEmitter.dispose();
@@ -251,6 +298,7 @@ export class SessionManager implements ISessionManager {
     subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
     subscriptions.add(controller.onDidCreateSession((event) => {
       entry.sessionCount += 1;
+      this.reclaimed.delete(event.sessionId);
       this.sessions.set(event.sessionId, event.handle);
       this.owners.set(event.sessionId, controller);
       this.didCreateEmitter.fire(event);

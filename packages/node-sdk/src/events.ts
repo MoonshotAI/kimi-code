@@ -100,3 +100,9 @@ export type MaybePromise<T> = T | Promise<T>;
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;
 
 export type QuestionHandler = (request: QuestionRequest) => MaybePromise<QuestionResult>;
+
+/**
+ * Called after a call was rejected because another client updated the
+ * session, the session was reloaded from disk, and before the call is retried.
+ */
+export type StaleReloadHandler = () => Promise<void>;

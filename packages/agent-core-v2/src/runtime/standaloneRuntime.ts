@@ -4,7 +4,6 @@ import { LifecycleScope } from '#/app/scopes';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IHostTerminalService } from '#/os/interface/terminal';
 
 import { LocalRuntime } from './localRuntime';
 import type { Runtime } from './runtime';
@@ -24,11 +23,10 @@ export class StandaloneRuntimeFactory implements IStandaloneRuntimeFactory {
     @IHostEnvironment private readonly environment: IHostEnvironment,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostProcessService private readonly process: IHostProcessService,
-    @IHostTerminalService private readonly terminal: IHostTerminalService,
   ) {}
 
   createLocalRuntime(workspaceId: string): Runtime {
-    return new LocalRuntime(workspaceId, this.environment, this.fs, this.process, this.terminal);
+    return new LocalRuntime(workspaceId, this.environment, this.fs, this.process);
   }
 }
 

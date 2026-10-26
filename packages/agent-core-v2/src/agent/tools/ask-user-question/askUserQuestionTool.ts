@@ -7,6 +7,7 @@ import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
@@ -48,6 +49,8 @@ const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answerin
 const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
 
+const QUESTION_NON_INTERACTIVE_MESSAGE = 'Nobody can answer questions in a non-interactive run.';
+
 const BACKGROUND_DESCRIPTION =
   '- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.';
 
@@ -67,6 +70,7 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   get description(): string {
@@ -92,6 +96,10 @@ export class AskUserQuestionTool implements IAskUserQuestionTool {
     args: AskUserQuestionInput,
     { toolCallId, signal, turnId, trace }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
+    if (this.bootstrap.args.nonInteractive === true) {
+      return { isError: true, output: QUESTION_NON_INTERACTIVE_MESSAGE };
+    }
+
     if (args.background === true && !this.allowBackground()) {
       return { isError: true, output: BACKGROUND_UNAVAILABLE_MESSAGE };
     }

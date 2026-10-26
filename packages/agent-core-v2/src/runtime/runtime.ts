@@ -2,10 +2,9 @@ import type { Event } from '#/_base/event';
 import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
-import type { IHostTerminalService } from '#/os/interface/terminal';
 
 export type RuntimeStatus = 'connecting' | 'ready' | 'degraded' | 'disconnected' | 'draining' | 'disposed';
-export type RuntimeCapability = 'fs' | 'process' | 'terminal';
+export type RuntimeCapability = 'fs' | 'process';
 
 export interface RuntimeBinding {
   readonly workspaceId: string;
@@ -44,7 +43,6 @@ export interface Runtime {
   readonly workspace: RuntimeWorkspaceMapper;
   readonly fs?: IHostFileSystem;
   readonly process?: IHostProcessService;
-  readonly terminal?: IHostTerminalService;
   readonly status: RuntimeStatus;
   readonly onDidChangeStatus: Event<RuntimeStatus>;
   dispose(): void | Promise<void>;

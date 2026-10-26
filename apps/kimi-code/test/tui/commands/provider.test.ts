@@ -1,17 +1,20 @@
 /**
- * Scenario: /provider post-add default-model selection.
+ * Scenario: /provider post-add default-model selection, and the
+ * `/provider refresh [providerId]` subcommand.
  * Responsibilities: the picked effort is gated for persistence by the model's
  * effective default, and a session-only pick is still applied to the runtime
- * after the config refresh (which only reactivates from persisted values).
- * Wiring: real setDefaultModel with the harness/authFlow boundaries stubbed by
- * a small host rig.
+ * after the config refresh (which only reactivates from persisted values);
+ * refresh scopes to one provider when given, reports added/removed/failed,
+ * and routes a retired default into the model-migration flow.
+ * Wiring: real setDefaultModel / handleProviderCommand with the
+ * harness/authFlow boundaries stubbed by a small host rig.
  * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/provider.test.ts
  */
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias, RefreshProviderModelsResponse } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SlashCommandHost } from '#/tui/commands';
-import { setDefaultModel } from '#/tui/commands/provider';
+import { handleProviderCommand, setDefaultModel } from '#/tui/commands/provider';
 
 function makeHost(
   options: {
@@ -151,5 +154,140 @@ describe('setDefaultModel', () => {
     expect(
       host.waitForSessionAssembly.mock.invocationCallOrder[0]!,
     ).toBeLessThan(host.harness.setConfig.mock.invocationCallOrder[0]!);
+  });
+
+  it('skips the follow-up activation and forwards the picked effort when the gate owns the switch', async () => {
+    const { host } = makeHost();
+    host.authFlow.refreshConfigAfterLogin = vi.fn(async () => 'gated' as const);
+
+    await setDefaultModel(host, 'opus', 'xhigh');
+
+    expect(host.authFlow.refreshConfigAfterLogin).toHaveBeenCalledWith('xhigh');
+    expect(host.authFlow.activateModelAfterLogin).not.toHaveBeenCalled();
+    expect(host.track).not.toHaveBeenCalled();
+  });
+});
+
+function makeRefreshHost(result: RefreshProviderModelsResponse | Error) {
+  const spinner = { stop: vi.fn() };
+  const host = {
+    showProgressSpinner: vi.fn(() => spinner),
+    showStatus: vi.fn(),
+    showError: vi.fn(),
+    authFlow: {
+      refreshProviderModels: vi.fn(async () => {
+        if (result instanceof Error) throw result;
+        return result;
+      }),
+    },
+    modelMigration: { retire: vi.fn(async () => {}) },
+  } as unknown as SlashCommandHost & {
+    showProgressSpinner: ReturnType<typeof vi.fn>;
+    showStatus: ReturnType<typeof vi.fn>;
+    showError: ReturnType<typeof vi.fn>;
+    authFlow: { refreshProviderModels: ReturnType<typeof vi.fn> };
+    modelMigration: { retire: ReturnType<typeof vi.fn> };
+  };
+  return { host, spinner };
+}
+
+describe('handleProviderCommand refresh', () => {
+  it('refreshes every provider and reports added, removed, and failed', async () => {
+    const retired = { from: 'kimi/old', to: 'kimi/new', from_display_name: 'Old Model' };
+    const { host, spinner } = makeRefreshHost({
+      changed: [{ provider_id: 'kimi', provider_name: 'Kimi Code', added: 2, removed: 1 }],
+      unchanged: ['other'],
+      failed: [{ provider: 'broken', reason: 'HTTP 500' }],
+      retired_default: retired,
+    });
+
+    await handleProviderCommand(host, 'refresh');
+
+    expect(host.authFlow.refreshProviderModels).toHaveBeenCalledWith(undefined);
+    expect(spinner.stop).toHaveBeenCalledWith({ ok: true, label: 'Refresh finished.' });
+    expect(host.showStatus).toHaveBeenCalledWith('Kimi Code: +2 / -1 models.', 'warning');
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'Skipped refreshing broken: HTTP 500',
+      'warning',
+    );
+    expect(host.modelMigration.retire).toHaveBeenCalledWith(retired);
+  });
+
+  it('scopes the refresh to one provider when a providerId is given', async () => {
+    const { host } = makeRefreshHost({ changed: [], unchanged: ['custom'], failed: [] });
+
+    await handleProviderCommand(host, 'refresh custom');
+
+    expect(host.authFlow.refreshProviderModels).toHaveBeenCalledWith({
+      providerId: 'custom',
+    });
+  });
+
+  it('reports a plain status when nothing was removed', async () => {
+    const { host } = makeRefreshHost({
+      changed: [{ provider_id: 'kimi', provider_name: 'Kimi Code', added: 1, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+
+    await handleProviderCommand(host, 'refresh');
+
+    expect(host.showStatus).toHaveBeenCalledWith('Kimi Code: +1 model.', undefined);
+    expect(host.modelMigration.retire).not.toHaveBeenCalled();
+  });
+
+  it('reports when every provider is already up to date', async () => {
+    const { host } = makeRefreshHost({ changed: [], unchanged: ['a', 'b'], failed: [] });
+
+    await handleProviderCommand(host, 'refresh');
+
+    expect(host.showStatus).toHaveBeenCalledWith(
+      'No model changes (2 providers up to date).',
+    );
+  });
+
+  it('surfaces a thrown refresh without routing a retirement', async () => {
+    const { host, spinner } = makeRefreshHost(new Error('provider missing does not exist'));
+
+    await handleProviderCommand(host, 'refresh missing');
+
+    expect(spinner.stop).toHaveBeenCalledWith({ ok: false, label: 'Refresh failed.' });
+    expect(host.showError).toHaveBeenCalledWith(
+      'Failed to refresh models: provider missing does not exist',
+    );
+    expect(host.modelMigration.retire).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown subcommands with a usage line instead of refreshing', async () => {
+    const { host, spinner } = makeRefreshHost({ changed: [], unchanged: [], failed: [] });
+
+    await handleProviderCommand(host, 'refres');
+
+    expect(host.showError).toHaveBeenCalledWith('Usage: /provider [refresh [providerId]]');
+    expect(host.showProgressSpinner).not.toHaveBeenCalled();
+    expect(host.authFlow.refreshProviderModels).not.toHaveBeenCalled();
+    expect(spinner.stop).not.toHaveBeenCalled();
+  });
+
+  it('reports metadata-only updates without the model counters', async () => {
+    const { host } = makeRefreshHost({
+      changed: [{ provider_id: 'custom', provider_name: 'Custom Registry', added: 0, removed: 0 }],
+      unchanged: [],
+      failed: [],
+    });
+
+    await handleProviderCommand(host, 'refresh');
+
+    expect(host.showStatus).toHaveBeenCalledWith('Custom Registry: model metadata updated.');
+  });
+
+  it('rejects surplus arguments after the provider id instead of refreshing', async () => {
+    const { host, spinner } = makeRefreshHost({ changed: [], unchanged: [], failed: [] });
+
+    await handleProviderCommand(host, 'refresh custom unexpected');
+
+    expect(host.showError).toHaveBeenCalledWith('Usage: /provider [refresh [providerId]]');
+    expect(host.authFlow.refreshProviderModels).not.toHaveBeenCalled();
+    expect(spinner.stop).not.toHaveBeenCalled();
   });
 });

@@ -3160,6 +3160,53 @@ describe('AgentTranscriptProjector', () => {
     }
   });
 
+  it('readColdSnapshot realigns turn ordinals to wire ids and marks the wedged turn', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-wedged-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const userTurn = (turnId: number, promptId: string, text: string, time: number) => [
+        { type: 'turn.prompt', turnId, promptId, origin: { kind: 'user' }, time },
+        { type: 'agent.turn.started', turnId, time: time + 1 },
+        { type: 'context.append_message', message: { id: promptId, role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } }, time },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: `answer ${turnId}` }], toolCalls: [] }, time: time + 2 },
+      ];
+      const foldedNotification = (turnId: number, taskId: string, time: number) => [
+        { type: 'turn.prompt', turnId, promptId: `n${turnId}`, origin: { kind: 'task_notification', taskId }, time },
+        { type: 'context.append_message', message: { id: `n${turnId}`, role: 'user', content: [{ type: 'text', text: `<notification>done ${turnId}</notification>` }], toolCalls: [], origin: { kind: 'task_notification', taskId } }, time },
+      ];
+      const records = [
+        ...userTurn(3, 'u3', 'before the gap', 1000),
+        { type: 'turn.ended', turnId: 3, reason: 'completed', time: 1100 },
+        ...foldedNotification(4, 'bg-4', 2000),
+        ...foldedNotification(5, 'bg-5', 2100),
+        ...userTurn(6, 'u6', 'wedged prompt', 3000),
+        ...userTurn(7, 'u7', 'after restart', 4000),
+        { type: 'turn.ended', turnId: 7, reason: 'completed', time: 4100 },
+      ];
+      await writeFile(
+        join(wireDir, 'wire.jsonl'),
+        records.map((record) => JSON.stringify(record)).join('\n') + '\n',
+      );
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = (snapshot?.items ?? []).filter((item) => item.kind === 'turn');
+      expect(turns.map((turn) => [turn.turnId, turn.ordinal, turn.state])).toEqual([
+        ['t3', 3, 'completed'],
+        ['t6', 6, 'failed'],
+        ['t7', 7, 'completed'],
+      ]);
+      const wedged = turns[1];
+      if (wedged?.kind !== 'turn') throw new Error('expected turn');
+      expect(wedged.wedged).toBe(true);
+      expect(wedged.prompt).toBe('wedged prompt');
+      expect(wedged.startedAt).toBe(new Date(3001).toISOString());
+      expect(wedged.endedAt).toBeUndefined();
+      expect(wedged.steps[0]?.stepId).toBe('t6.1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it('readColdSnapshot opens a task-origin turn only when the wire has the turn.prompt boundary', async () => {
     const home = await mkdtemp(join(tmpdir(), 'transcript-cold-taskturn-'));
     try {

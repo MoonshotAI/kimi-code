@@ -68,19 +68,19 @@ Agent 调用会产生副作用的工具（修改文件、执行命令等）时�
 
 **"Ask When Needed"**（必要时询问，原 YOLO）用 `/yolo` 开启，自动批准普通工具调用，适合已知安全的批处理任务。敏感操作仍会询问——例如访问 `.env`、SSH 私钥等敏感文件、执行 `shutdown`、`rm -rf` 这类危险命令，或退出 Plan 模式——Agent 也仍可能向你提问。
 
-**"Never Ask"**（完全自动，原 Auto）用 `/auto` 开启，是完全无人值守模式：所有工具审批自动处理，包括敏感文件和计划退出，且 Agent 不会向你提问，完全由它自己做决定。内置的危险命令拦截会在 "Always Ask" 和 "Ask When Needed" 模式下要求你确认 `shutdown`、`reboot`、`rm -rf` 这类命令；在 "Never Ask" 模式下这些命令直接执行，不再拦截。
+**"Never Ask"**（完全自动，原 Auto）用 `/auto` 开启，是完全无人值守模式：所有工具审批自动处理，包括敏感文件，且 Agent 不会向你提问，完全由它自己做决定。唯一的例外是 Plan 模式：计划仍会等你审阅后才执行。内置的危险命令拦截会在 "Always Ask" 和 "Ask When Needed" 模式下要求你确认 `shutdown`、`reboot`、`rm -rf` 这类命令；在 "Never Ask" 模式下这些命令直接执行，不再拦截。
 
 
 ## 模式切换
 
 ### Plan 模式
 
-Plan 模式下，Agent 先输出行动计划，等待你确认后才动手修改文件，适合复杂或高风险任务。
+Plan 模式下，Agent 先输出行动计划，等待你确认后才动手修改文件，适合复杂或高风险任务。Plan 模式只能由你打开，Agent 不会自己进入，即使你在对话里要求它进入。
 
 - 切换：`Shift-Tab` 或 `/plan`
 - 清除当前计划：`/plan clear`（仅空闲时）
 
-Agent 输出方案后会等待你审批——可批准执行、拒绝、或要求修改。退出 Plan 模式需要你确认，即使开启了 "Ask When Needed" 模式也不例外。"Never Ask" 模式例外：计划退出会自动批准，并在记录中标记为 "Auto-approved"。
+Agent 输出方案后会等待你审批——可批准执行、拒绝、或要求修改。在任何权限模式下，包括 "Never Ask"，退出 Plan 模式都需要你确认。
 
 ### Shell 模式
 

@@ -21,7 +21,8 @@ import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
 import { extractHookMessages } from '../internal/userPrompt';
 import { ISessionExternalHooksService } from './sessionExternalHooks';
 
-type SessionStartHookSource = Exclude<SessionCreateSource, 'fork'>;
+type SessionStartHookSource = Exclude<SessionCreateSource, 'fork' | 'reclaimed'>;
+type SessionEndHookReason = Exclude<SessionCloseReason, 'reclaim'>;
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
@@ -67,7 +68,7 @@ export class SessionExternalHooksService
       this._register(
         onDidCreate((event) => {
           if (event.sessionId !== this.context.sessionId) return;
-          if (event.source !== 'fork') {
+          if (event.source !== 'fork' && event.source !== 'reclaimed') {
             event.waitUntil(this.triggerSessionStart(event.source));
           }
         }),
@@ -77,7 +78,7 @@ export class SessionExternalHooksService
     if (onWillClose !== undefined) {
       this._register(
         onWillClose((event) => {
-          if (event.sessionId !== this.context.sessionId) return;
+          if (event.sessionId !== this.context.sessionId || event.reason === 'reclaim') return;
           event.waitUntil(this.triggerSessionEnd(event.reason));
         }),
       );
@@ -136,7 +137,7 @@ export class SessionExternalHooksService
     }
   }
 
-  private async triggerSessionEnd(reason: SessionCloseReason): Promise<void> {
+  private async triggerSessionEnd(reason: SessionEndHookReason): Promise<void> {
     await this.runner.trigger('SessionEnd', {
       matcherValue: reason,
       cwd: this.context.cwd,

@@ -124,6 +124,15 @@ describe('server-v2 /api/v1/config', () => {
     expect(cfg.auto_session_title).toBeUndefined();
   });
 
+  it('POST { disable_feedback_survey: true } persists and GET echoes it', async () => {
+    await boot();
+    const cfg = await patchConfig({ disable_feedback_survey: true });
+    expect(cfg.disable_feedback_survey).toBe(true);
+
+    const after = await getConfig();
+    expect(after.disable_feedback_survey).toBe(true);
+  });
+
   it('POST { secondary_model } persists the subagent model pool and GET echoes it', async () => {
     await boot();
     const cfg = await patchConfig({

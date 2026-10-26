@@ -8,7 +8,6 @@ import { Error2, ErrorCodes } from '#/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
-import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { PlanModeInjection } from '#/features/plan/injection/planModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -23,6 +22,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IBlobStore } from '#/persistence/interface/blobStore';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
@@ -58,7 +58,6 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
     @IAgentToolApprovalService private readonly toolApproval: IAgentToolApprovalService,
-    @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly agentState: IAgentStateService,
   ) {
@@ -95,7 +94,7 @@ export class AgentPlanService extends Service implements IAgentPlanService {
     const plan = await this.status();
 
     if (toolName === 'ExitPlanMode') {
-      if (plan !== null && this.modeService.mode !== 'auto') {
+      if (plan !== null) {
         event.waitUntil(() => this.review.requestApproval(event));
       }
       return;
@@ -158,6 +157,12 @@ export class AgentPlanService extends Service implements IAgentPlanService {
   }
 
   async enter(id = this.createPlanId(), createFile = false): Promise<void> {
+    if (this.agentCtx.agentId !== MAIN_AGENT_ID) {
+      throw new Error2(
+        ErrorCodes.SESSION_PLAN_MODE_INVALID,
+        'Plan mode is only available to the main agent',
+      );
+    }
     if (this.isActive) {
       throw new Error2(ErrorCodes.SESSION_PLAN_MODE_INVALID, 'Already in plan mode');
     }

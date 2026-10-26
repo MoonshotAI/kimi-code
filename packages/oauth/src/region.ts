@@ -157,7 +157,7 @@ function regionForOAuthHost(oauthHost: string): KimiRegion | undefined {
   return undefined;
 }
 
-function readRegionMarker(homeDir: string): KimiRegion | undefined {
+export function readKimiRegionMarker(homeDir: string): KimiRegion | undefined {
   let raw: string;
   try {
     raw = readFileSync(join(homeDir, KIMI_REGION_MARKER_FILENAME), 'utf-8');
@@ -176,27 +176,74 @@ function defaultHomeDir(env: NodeJS.ProcessEnv): string {
   return join(homedir(), '.kimi-code');
 }
 
-export function resolveKimiRegion(options: ResolveKimiRegionOptions = {}): KimiRegion {
-  const env = options.env ?? process.env;
-  // An env host that matches a profile pins the region. An unknown env host
-  // means a custom/internal environment: the per-endpoint env overrides keep
-  // doing their job regardless of region, so skip straight to the default
-  // instead of letting a stale config/marker point CDN links somewhere odd.
+export type KimiRegionSource =
+  | 'env'
+  | 'login'
+  | 'marker'
+  | 'local-signals'
+  | 'fallback'
+  | 'default';
+
+export interface KimiRegionResolution {
+  readonly region: KimiRegion;
+  readonly source: KimiRegionSource;
+}
+
+export interface ResolveKimiRegionParts {
+  /** Defaults to `process.env`. */
+  readonly env?: NodeJS.ProcessEnv;
+  /** The `oauthHost` persisted in config.toml's oauth ref, if any. */
+  readonly configuredOAuthHost?: string;
+  /** The credential key persisted in config.toml's oauth ref, if any. */
+  readonly configuredOAuthKey?: string;
+  /** The install-channel marker value already read from `<home>/region`. */
+  readonly marker?: KimiRegion;
+}
+
+/**
+ * The env → login → marker → default resolution prefix as a pure function:
+ * every input arrives as a value, so callers that read files themselves
+ * (the stat-gated resolver) share exactly this chain with the I/O wrapper
+ * {@link resolveKimiRegionDetailed}.
+ */
+export function resolveKimiRegionFromParts(
+  parts: ResolveKimiRegionParts,
+): KimiRegionResolution {
+  const env = parts.env ?? process.env;
   const envHost = env['KIMI_CODE_OAUTH_HOST'] ?? env['KIMI_OAUTH_HOST'];
   if (envHost !== undefined && envHost.length > 0) {
-    return regionForOAuthHost(envHost) ?? 'mainland-cn';
+    return { region: regionForOAuthHost(envHost) ?? 'mainland-cn', source: 'env' };
   }
-  const configured = options.configuredOAuthHost;
+  const configured = parts.configuredOAuthHost;
   if (configured !== undefined && configured.length > 0) {
     const configuredRegion = regionForOAuthHost(configured);
-    if (configuredRegion !== undefined) return configuredRegion;
+    if (configuredRegion !== undefined) return { region: configuredRegion, source: 'login' };
   }
-  if (options.configuredOAuthKey === KIMI_CODE_OAUTH_KEY) return 'mainland-cn';
-  if (options.readMarker !== false) {
-    const markerRegion = readRegionMarker(options.homeDir ?? defaultHomeDir(env));
-    if (markerRegion !== undefined) return markerRegion;
+  if (parts.configuredOAuthKey === KIMI_CODE_OAUTH_KEY) {
+    return { region: 'mainland-cn', source: 'login' };
   }
-  return 'mainland-cn';
+  if (parts.marker !== undefined) return { region: parts.marker, source: 'marker' };
+  return { region: 'mainland-cn', source: 'default' };
+}
+
+export function resolveKimiRegionDetailed(
+  options: ResolveKimiRegionOptions = {},
+): KimiRegionResolution {
+  const env = options.env ?? process.env;
+  const marker =
+    options.readMarker === false
+      ? undefined
+      : readKimiRegionMarker(options.homeDir ?? defaultHomeDir(env));
+  return resolveKimiRegionFromParts({
+    env,
+    configuredOAuthHost: options.configuredOAuthHost,
+    configuredOAuthKey: options.configuredOAuthKey,
+    marker,
+  });
+}
+
+export function resolveKimiRegion(options: ResolveKimiRegionOptions = {}): KimiRegion {
+  return resolveKimiRegionDetailed(options).region;
 }
 
 export interface KimiRemoteControlAuth {

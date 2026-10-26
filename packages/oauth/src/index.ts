@@ -50,15 +50,35 @@ export {
   kimiRegionLoginHosts,
   kimiRegionProfile,
   kimiRegionSchema,
+  readKimiRegionMarker,
   resolveKimiRegion,
+  resolveKimiRegionDetailed,
+  resolveKimiRegionFromParts,
   resolveKimiRemoteControlAuth,
 } from './region';
 export type {
   KimiRegion,
   KimiRegionProfile,
+  KimiRegionResolution,
+  KimiRegionSource,
   KimiRemoteControlAuth,
   ResolveKimiRegionOptions,
+  ResolveKimiRegionParts,
 } from './region';
+
+export { createKimiRegionResolver, decideKimiRegion } from './region-resolver';
+export type {
+  CreateKimiRegionResolverOptions,
+  KimiRegionAuthRead,
+  KimiRegionAuthSnapshot,
+  KimiRegionCacheAction,
+  KimiRegionDecideInput,
+  KimiRegionDecision,
+  KimiRegionResolver,
+} from './region-resolver';
+
+export { collectLocalRegionSignals, detectKimiRegionFromLocalSignals } from './region-local';
+export type { LocalRegionDetection, LocalRegionSignals } from './region-local';
 
 export {
   applyManagedApiKeyProviderModels,

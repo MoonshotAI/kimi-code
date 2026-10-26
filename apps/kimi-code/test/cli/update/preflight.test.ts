@@ -23,7 +23,7 @@ import {
   type UpdateManifest,
 } from '#/cli/update/types';
 import type { TuiConfig } from '#/tui/config';
-import { refreshKimiRegion } from '#/utils/region';
+import { resetKimiRegionCache } from '#/utils/region';
 
 const mocks = vi.hoisted(() => ({
   readUpdateCache: vi.fn(),
@@ -241,7 +241,7 @@ describe('runUpdatePreflight', () => {
     // Pin the region to cn so address assertions don't follow the dev
     // machine's own login/marker state; global tests override below.
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
-    refreshKimiRegion();
+    resetKimiRegionCache();
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
     mocks.writeUpdateInstallState.mockResolvedValue(undefined);
     mocks.loadTuiConfig.mockResolvedValue(tuiConfig());
@@ -254,7 +254,7 @@ describe('runUpdatePreflight', () => {
     mocks.resolveCommandPath.mockImplementation((cmd: string) => cmd);
   });
 
-  afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); refreshKimiRegion(); });
+  afterEach(() => { vi.clearAllMocks(); vi.unstubAllEnvs(); resetKimiRegionCache(); });
 
   it('skips all update work when KIMI_CODE_NO_AUTO_UPDATE is set', async () => {
     vi.stubEnv('KIMI_CODE_NO_AUTO_UPDATE', '1');
@@ -553,7 +553,7 @@ describe('runUpdatePreflight', () => {
 
   it('global region: derives install commands and site links from the .ai profile', async () => {
     vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.ai');
-    refreshKimiRegion();
+    resetKimiRegionCache();
     mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
     const originalPlatform = process.platform;
@@ -572,7 +572,7 @@ describe('runUpdatePreflight', () => {
       expect(mocks.spawn).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform });
-      refreshKimiRegion();
+      resetKimiRegionCache();
     }
   });
 

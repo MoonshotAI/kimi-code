@@ -13,7 +13,6 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
 import type { ApprovalResponse } from '@moonshot-ai/kap-server/protocol/approval';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
@@ -45,11 +44,6 @@ import type {
   UndoSessionRequest,
   UndoSessionResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
-import type {
-  CloseTerminalResponse,
-  CreateTerminalRequest,
-  ListTerminalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-terminal';
 import type {
   Session,
   SessionChildCreate,
@@ -283,42 +277,6 @@ export class HttpClient {
       'POST',
       `/sessions/${encodeURIComponent(sid)}/children`,
       body,
-    );
-  }
-
-  // ── Terminals ──────────────────────────────────────────────────────────
-  listTerminals(sid: string): Promise<ListTerminalsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/terminals`,
-      undefined,
-    );
-  }
-  createTerminal(
-    sid: string,
-    body: CreateTerminalRequest = {},
-  ): Promise<Terminal> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/terminals`,
-      body,
-    );
-  }
-  getTerminal(sid: string, terminalId: string): Promise<Terminal> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/terminals/${encodeURIComponent(terminalId)}`,
-      undefined,
-    );
-  }
-  closeTerminal(
-    sid: string,
-    terminalId: string,
-  ): Promise<CloseTerminalResponse> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/terminals/${encodeURIComponent(terminalId)}:close`,
-      {},
     );
   }
 

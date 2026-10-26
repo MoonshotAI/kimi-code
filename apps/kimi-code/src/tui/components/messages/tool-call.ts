@@ -43,11 +43,11 @@ import { countNonEmptyLines, pickChip } from './tool-renderers/chip';
 import { buildGoalToolHeader, parseGoalToolOutput } from './tool-renderers/goal';
 import { searchNoticeOnly } from './tool-renderers/grep-output';
 import { parseReadMediaOutput } from './tool-renderers/media';
-import { computeWriteStats } from './tool-renderers/chip';
 import { nonEmptyLines, outcomeLine, outcomeRows } from './tool-renderers/outcome';
-import { TruncatedOutputComponent } from './tool-renderers/truncated';
+import { TruncatedOutputComponent, trimTrailingEmptyLines } from './tool-renderers/truncated';
 import { isSpilledToolOutput } from './tool-renderers/types';
 import { isGenericToolResult, pickResultRenderer } from './tool-renderers/registry';
+import { sanitizeShellOutput } from '#/tui/utils/shell-output';
 import { buildWaitForHeader, parseWaitForOutput } from './tool-renderers/wait-for';
 
 const MAX_ARG_LENGTH = 60;
@@ -860,7 +860,16 @@ export class ToolCallComponent extends Container {
     if (result === undefined) return nonEmptyLines(this.liveOutput).length > 1;
     if (result.output.length === 0) return false;
     if (result.output.trimStart().startsWith('<system-reminder>')) return false;
-    if (result.is_error === true) return nonEmptyLines(result.output).length > RESULT_PREVIEW_LINES;
+    // Mirror the error preview's fold threshold: the hint row replaces the
+    // hidden rows, so a single hidden row leaves nothing for ctrl+o to gain.
+    // Count rows the way the preview does — internal blanks included, only
+    // trailing empties dropped (nonEmptyLines would skip interior blanks);
+    // Bash's preview renders sanitized output, so control-only rows (e.g. a
+    // trailing reset) must not count either.
+    if (result.is_error === true) {
+      const output = name === 'Bash' ? sanitizeShellOutput(result.output) : result.output;
+      return trimTrailingEmptyLines(output.split('\n')).length > RESULT_PREVIEW_LINES + 1;
+    }
     switch (name) {
       case 'ReadMediaFile':
         // A media envelope renders its body only when expanded; anything else
@@ -959,8 +968,15 @@ export class ToolCallComponent extends Container {
         });
         return capped.length !== full.length || capped.at(-1) !== full.at(-1);
       }
-      case 'Write':
-        return computeWriteStats(args).lines > COMMAND_PREVIEW_LINES;
+      case 'Write': {
+        // Mirror buildCallPreview's cap exactly: highlightLines keeps a
+        // trailing empty entry for a final newline (computeWriteStats strips
+        // it), and the hint row replaces the hidden rows, so a single hidden
+        // row would leave nothing for ctrl+o to gain.
+        const content = str(args['content']);
+        const filePath = str(args['file_path'] ?? args['path']);
+        return highlightLines(content, langFromPath(filePath)).length > COMMAND_PREVIEW_LINES + 1;
+      }
       default:
         return false;
     }
@@ -2325,8 +2341,10 @@ export class ToolCallComponent extends Container {
       // Cap as soon as args finalize, not just when result lands. Otherwise the
       // brief render tick between finalized args and result draws the full file,
       // and the snap back to the collapsed cap triggers pi-tui's full-redraw
-      // path which wipes the terminal scrollback (pre-TUI history).
-      const writeShouldCap = !this.expanded;
+      // path which wipes the terminal scrollback (pre-TUI history). The cap
+      // swaps the hidden rows for a one-line hint, so capping a single row
+      // would render at the same height as the full preview.
+      const writeShouldCap = !this.expanded && allLines.length > COMMAND_PREVIEW_LINES + 1;
       const shown = writeShouldCap ? allLines.slice(0, COMMAND_PREVIEW_LINES) : allLines;
       const remaining = allLines.length - shown.length;
       for (const [i, line] of shown.entries()) {

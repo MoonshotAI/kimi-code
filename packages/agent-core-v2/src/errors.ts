@@ -27,7 +27,6 @@ import { SessionErrors } from '#/session/errors';
 import { SkillErrors } from '#/features/skill/catalog/errors';
 import { StateErrors } from '#/state/errors';
 import { StorageErrors } from '#/persistence/interface/storage';
-import { TerminalErrors } from '#/os/interface/terminalErrors';
 import { UsageErrors } from '#/agent/usage/errors';
 import { WebErrors } from '#/app/web/errors';
 import { WireErrors } from '#/wire/errors';
@@ -63,7 +62,6 @@ export { SessionExportErrors } from '#/app/sessionExport/errors';
 export { SessionErrors } from '#/session/errors';
 export { SkillErrors } from '#/features/skill/catalog/errors';
 export { StorageErrors } from '#/persistence/interface/storage';
-export { TerminalErrors } from '#/os/interface/terminalErrors';
 export { UsageErrors } from '#/agent/usage/errors';
 export { WebErrors } from '#/app/web/errors';
 export { WireErrors } from '#/wire/errors';
@@ -98,7 +96,6 @@ export const ErrorCodes = {
   ...SessionErrors.codes,
   ...SkillErrors.codes,
   ...StorageErrors.codes,
-  ...TerminalErrors.codes,
   ...UsageErrors.codes,
   ...WebErrors.codes,
   ...WireErrors.codes,
@@ -121,6 +118,8 @@ export type KimiErrorCode =
   | 'session.state_not_found'
   | 'session.state_invalid'
   | 'session.fork_active_turn'
+  | 'session.occupied'
+  | 'session.stale'
   | 'session.undo_unavailable'
   | 'session.export_not_found'
   | 'session.export_missing_version'
@@ -198,7 +197,6 @@ export type KimiErrorCode =
   | 'session.busy'
   | 'shell.git_bash_not_found'
   | 'workspace.not_found'
-  | 'terminal.not_found'
   | 'file.not_found'
   | 'file.too_large'
   | 'fs.path_not_found'

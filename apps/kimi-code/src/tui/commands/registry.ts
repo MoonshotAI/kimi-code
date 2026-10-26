@@ -155,7 +155,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'auto',
     aliases: [],
-    description: 'Never Ask mode: never interrupts you; everything runs and is decided automatically.',
+    description: 'Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review.',
     priority: 99,
     availability: 'always',
   },

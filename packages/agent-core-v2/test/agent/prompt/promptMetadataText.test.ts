@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { promptMetadataTextFromContentParts } from '#/agent/prompt/promptMetadataText';
 import {
   applyPromptMetadataUpdate,
+  isUntitled,
   type PromptMetadataUpdateTarget,
 } from '#/session/sessionMetadata/promptMetadata';
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
@@ -93,6 +94,14 @@ describe('applyPromptMetadataUpdate', () => {
         update: (patch: SessionMetaPatch) => {
           meta = { ...meta, ...patch };
           return Promise.resolve();
+        },
+        applyPromptMetadata: (lastPrompt: string, title: string) => {
+          const applyTitle = meta.titleKind !== 'custom' && isUntitled(meta.title);
+          const patch: SessionMetaPatch = applyTitle
+            ? { lastPrompt, title, titleKind: 'replaceable' }
+            : { lastPrompt };
+          meta = { ...meta, ...patch };
+          return Promise.resolve(applyTitle);
         },
       } as unknown as ISessionMetadata,
       eventService: { publish: () => undefined } as unknown as IEventService,

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolveKimiRegionDetailed } from '@moonshot-ai/kimi-code-oauth';
 
 import {
   resetUnexpectedErrorHandler,
@@ -48,12 +49,19 @@ function baseOptions(
   overrides: Partial<CloudAppenderOptions> & { homeDir?: string; bootstrapEnv?: NodeJS.ProcessEnv } = {},
 ): CloudAppenderOptions {
   const { homeDir: dir = '', storage, bootstrapEnv, ...rest } = overrides;
+  const env = { ...process.env, ...bootstrapEnv };
   return {
     storage: storage ?? new FileStorageService(dir),
     bootstrap: {
       ...stubBootstrap(dir === '' ? undefined : dir, bootstrapEnv),
       clientIdentity: { ...stubClientIdentity, version: '1.0.0' },
     },
+    resolveRegion: () =>
+      resolveKimiRegionDetailed({
+        env,
+        homeDir: dir === '' ? undefined : dir,
+        readMarker: env['KIMI_CODE_REGION_MARKER'] !== 'off',
+      }),
     deviceId: 'dev',
     appName: 'test-app',
     sleep: async () => {},
@@ -116,6 +124,8 @@ describe('CloudAppender', () => {
     expect(event?.['context_app_name']).toBe('test-app');
     expect(event?.['context_client_version']).toBe('1.0.0');
     expect(event?.['context_version']).toBe('1.0.0');
+    expect(event?.['context_region']).toBe('mainland-cn');
+    expect(event?.['context_region_source']).toBe('default');
     expect(typeof event?.['context_core_version']).toBe('string');
     expect(typeof event?.['event_id']).toBe('string');
     expect(typeof event?.['timestamp']).toBe('number');
@@ -387,7 +397,7 @@ describe('CloudAppender', () => {
     expect(seenAuths).toEqual(['Bearer tok', undefined]);
   });
 
-  it('retryDiskEvents resends saved events and removes the file on success', async () => {
+  it('retries disk events and requeues the whole batch when the disk write fails', async () => {
     let shouldFail = true;
     const appender = new CloudAppender(
       baseOptions({
@@ -407,6 +417,38 @@ describe('CloudAppender', () => {
     expect(
       readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
     ).toHaveLength(0);
+
+    const storage = new FileStorageService(homeDir);
+    const write = storage.write.bind(storage);
+    let failWrite = true;
+    storage.write = async (scope, key, data) => {
+      if (failWrite) throw new Error('disk full');
+      return write(scope, key, data);
+    };
+    const requests: CapturedRequest[] = [];
+    const requeued = new CloudAppender(
+      baseOptions({
+        homeDir,
+        storage,
+        retryBackoffsMs: [],
+        fetchImpl: makeFetch((req) => {
+          requests.push(req);
+          return failWrite ? statusResponse(500) : okResponse();
+        }),
+      }),
+    );
+    requeued.track({ event: 'first', context: {}, properties: {} });
+    requeued.track({ event: 'second', context: {}, properties: {} });
+    await expect(requeued.flush()).rejects.toThrow('disk full');
+    expect(requests).toHaveLength(1);
+
+    failWrite = false;
+    await requeued.flush();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]?.body.events.map((event) => event['event'])).toEqual([
+      'kfc_first',
+      'kfc_second',
+    ]);
   });
 
   it('drops null values from the outbound payload', async () => {

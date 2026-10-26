@@ -25,6 +25,7 @@ import {
   resolveRemoteControlRelayOrigin,
   rewriteRemoteControlResponse,
   startRemoteControl,
+  type HttpTunnelLimits,
   type RemoteControlHandle,
 } from '../src/remote-control';
 import { RemoteControlDeviceClient } from '../src/device-client';
@@ -310,253 +311,84 @@ describe('Remote Control tunnel', () => {
     expect(relay.requests.length).toBeGreaterThanOrEqual(4);
   }, 6000);
 
-  it('registers, forwards HTTP and WS with local auth, then reconnects the pair', async () => {
-    const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-'));
-    cleanups.push(() => rmSync(homeDir, { recursive: true, force: true }));
-    await new FileTokenStorage(join(homeDir, 'credentials')).save(
-      resolveKimiTokenStorageName({ providerName: KIMI_CODE_PROVIDER_NAME }),
-      TOKEN,
-    );
+  it('registers, forwards HTTP with local auth, and rewrites the response', async () => {
+    const scenario = await startTunnelScenario();
 
-    let localHttpRequest: IncomingMessage | undefined;
-    let localHttpBodyBytes = 0;
-    const uploadBodyBytes = new Map<string, number>();
-    let localWsRequest: IncomingMessage | undefined;
-    const localWsServer = new WebSocketServer({ noServer: true });
-    const assetJs = `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`;
-    const assetPng = Buffer.alloc(4096, 7);
-    const assetSvg = `<svg xmlns="http://www.w3.org/2000/svg">${'<rect width="100" height="100"/>'.repeat(100)}</svg>`;
-    const assetText = 'chunk of text\n'.repeat(160);
-    const bigPng = Buffer.alloc(11 * 1024 * 1024 + 123, 0x64);
-    const alignedResponseBytes = 15 * 1024 * 1024;
-    let alignedBodyBytes = alignedResponseBytes;
-    for (;;) {
-      const headBytes =
-        `HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nDate: Mon, 01 Jan 2024 00:00:00 GMT\r\nContent-Length: ${alignedBodyBytes}\r\n\r\n`
-          .length;
-      const next = alignedResponseBytes - headBytes;
-      if (next === alignedBodyBytes) break;
-      alignedBodyBytes = next;
-    }
-    const alignedPng = Buffer.alloc(alignedBodyBytes, 0x65);
-    const hangRequests: IncomingMessage[] = [];
-    let hangClosedCount = 0;
-    const localServer = createServer((request, response) => {
-      localHttpRequest = request;
-      if (request.url === '/assets/index.js') {
-        response.writeHead(200, { 'Content-Type': 'text/javascript', ETag: '"v1"' });
-        response.end(assetJs);
-        return;
-      }
-      if (request.url === '/assets/logo.png') {
-        response.writeHead(200, { 'Content-Type': 'image/png' });
-        response.end(assetPng);
-        return;
-      }
-      if (request.url === '/assets/logo.svg') {
-        response.writeHead(200, {
-          'Content-Type': 'image/svg+xml',
-          'Cache-Control': 'public, max-age=31536000, immutable',
-        });
-        response.end(assetSvg);
-        return;
-      }
-      if (request.url === '/assets/partial.txt' && request.headers.range !== undefined) {
-        response.writeHead(206, {
-          'Content-Type': 'text/plain',
-          'Content-Range': 'bytes 0-2047/4096',
-        });
-        response.end(assetText);
-        return;
-      }
-      if (request.url === '/assets/big.png') {
-        response.writeHead(200, {
-          'Content-Type': 'image/png',
-          Date: 'Mon, 01 Jan 2024 00:00:00 GMT',
-        });
-        response.end(bigPng);
-        return;
-      }
-      if (request.url === '/assets/aligned.png') {
-        response.writeHead(200, {
-          'Content-Type': 'image/png',
-          'Content-Length': String(alignedPng.length),
-          Date: 'Mon, 01 Jan 2024 00:00:00 GMT',
-        });
-        response.end(alignedPng);
-        return;
-      }
-      if (request.url === '/hang' || request.url === '/hang-upload') {
-        hangRequests.push(request);
-        request.on('data', () => {});
-        request.once('close', () => {
-          hangClosedCount += 1;
-        });
-        return;
-      }
-      let bodyBytes = 0;
-      request.on('data', (chunk: Buffer) => {
-        bodyBytes += chunk.length;
-      });
-      request.on('end', () => {
-        localHttpBodyBytes = bodyBytes;
-        uploadBodyBytes.set(request.url ?? '', bodyBytes);
-        response.writeHead(200, {
-          'Content-Type': 'text/html',
-          'Cache-Control': 'public, max-age=31536000, immutable',
-          Connection: 'X-Remove',
-          'X-Remove': 'gone',
-        });
-        response.end('<html><head></head><script src="/boot.js"></script></html>');
-      });
-    });
-    localServer.on('upgrade', (request, socket, head) => {
-      localWsRequest = request;
-      localWsServer.handleUpgrade(request, socket, head, (ws) => localWsServer.emit('connection', ws, request));
-    });
-    const localPort = await listen(localServer);
-    cleanups.push(() => closeServer(localServer));
-
-    const managementServer = new WebSocketServer({ noServer: true });
-    const httpTunnelServer = new WebSocketServer({ noServer: true });
-    const streamServer = new WebSocketServer({ noServer: true });
-    const relayServer = createServer();
-    const managementConnections: WebSocket[] = [];
-    const httpConnections: WebSocket[] = [];
-    const streamConnections: WebSocket[] = [];
-    const registrations: unknown[] = [];
-    const managementMessages: unknown[] = [];
-    const streamMessages: string[] = [];
-    const httpCapabilities: Array<string | null> = [];
-    let localWs: WebSocket | undefined;
-
-    managementServer.on('connection', (ws) => {
-      managementConnections.push(ws);
-      ws.on('message', (data) => {
-        const message = JSON.parse(rawDataText(data)) as { type: string };
-        managementMessages.push(message);
-        if (message.type === 'register') {
-          registrations.push(message);
-          ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
-        }
-      });
-    });
-    httpTunnelServer.on('connection', (ws) => httpConnections.push(ws));
-    streamServer.on('connection', (ws) => {
-      streamConnections.push(ws);
-      ws.on('message', (data) => streamMessages.push(rawDataText(data)));
-    });
-    localWsServer.on('connection', (ws) => {
-      localWs = ws;
-      ws.send('server-hello-frame');
-    });
-    relayServer.on('upgrade', (request, socket, head) => {
-      const upgradeUrl = new URL(request.url!, 'http://relay.test');
-      if (upgradeUrl.pathname.endsWith('/v1/remote/http')) {
-        httpCapabilities.push(upgradeUrl.searchParams.get('capabilities'));
-      }
-      const pathname = upgradeUrl.pathname;
-      const target = pathname.endsWith('/v1/remote/create')
-        ? managementServer
-        : pathname.endsWith('/v1/remote/http')
-          ? httpTunnelServer
-          : streamServer;
-      target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request));
-    });
-    const relayPort = await listen(relayServer);
-    cleanups.push(() => closeServer(relayServer));
-
-    let handle: RemoteControlHandle | undefined;
-    cleanups.push(async () => handle?.close());
-    let currentToken = 'local-server-token';
-    handle = await startRemoteControl({
-      homeDir,
-      localOrigin: `http://127.0.0.1:${localPort}`,
-      localServerToken: () => currentToken,
-      clientVersion: CLIENT_VERSION,
-      urlSource: 'kimi_code_cli',
-      relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
-      stderr: { write: () => true },
-    });
-
-    expect(registrations).toHaveLength(1);
-    expect(httpCapabilities).toEqual(['request_chunk,response_chunk,abort']);
+    expect(scenario.registrations).toHaveLength(1);
+    expect(scenario.httpCapabilities).toEqual(['request_chunk,response_chunk,abort']);
     expect(
-      (registrations[0] as { payload?: Record<string, unknown> }).payload,
+      (scenario.registrations[0] as { payload?: Record<string, unknown> }).payload,
     ).not.toHaveProperty('capabilities');
-    expect(handle.url).toContain('/coding-relay/devices/');
-    expect(handle.url).toContain('?rc=1&from=kimi_code_cli');
+    expect(scenario.handle.url).toContain('/coding-relay/devices/');
+    expect(scenario.handle.url).toContain('?rc=1&from=kimi_code_cli');
 
-    const rawRequest = Buffer.from(
-      'GET / HTTP/1.1\r\nHost: relay.test\r\nAuthorization: Bearer relay-token\r\nCookie: sid=1\r\nOrigin: https://relay.test\r\nAccept-Encoding: gzip\r\nConnection: X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\n\r\n',
-    );
+    const rawRequest = probeRawRequest();
     const splitAt = Math.floor(rawRequest.length / 2);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-1',
-        type: 'request',
-        is_last: false,
-        body_base64: rawRequest.subarray(0, splitAt).toString('base64'),
-      }),
-    );
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-1', rawRequest.subarray(0, splitAt), false));
     await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(localHttpRequest).toBeUndefined();
-    const responsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-1',
-        type: 'request',
-        is_last: true,
-        body_base64: rawRequest.subarray(splitAt).toString('base64'),
-      }),
-    );
+    expect(scenario.state.localHttpRequest).toBeUndefined();
+    const responsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-1', rawRequest.subarray(splitAt), true));
     const responseMessage = await responsePromise;
-    const response = Buffer.from(responseMessage['body_base64'] as string, 'base64').toString();
+    const response = frameBody(responseMessage).toString();
     expect(response).toContain('HTTP/1.1 200 OK');
-    expect(localHttpRequest?.headers.authorization).toBe('Bearer local-server-token');
-    expect(localHttpRequest?.headers.cookie).toBeUndefined();
-    expect(localHttpRequest?.headers.origin).toBeUndefined();
-    expect(localHttpRequest?.headers['x-hop']).toBeUndefined();
-    expect(localHttpRequest?.headers['x-keep']).toBe('yes');
+    expect(scenario.state.localHttpRequest?.headers.authorization).toBe('Bearer local-server-token');
+    expect(scenario.state.localHttpRequest?.headers.cookie).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers.origin).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers['x-hop']).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers['x-keep']).toBe('yes');
     expect(response).not.toContain('X-Remove');
     expect(response).not.toContain('immutable');
     expect(response).not.toContain('Content-Encoding');
     expect(response).not.toContain('Vary');
-    expect(localHttpRequest?.headers['accept-encoding']).toBeUndefined();
+    expect(scenario.state.localHttpRequest?.headers['accept-encoding']).toBeUndefined();
     expect(response).toContain('Cache-Control: no-cache');
-    expect(response).toContain(`/coding-relay/devices/${handle.deviceId}/boot.js`);
+    expect(response).toContain(`/coding-relay/devices/${scenario.handle.deviceId}/boot.js`);
+  });
+
+  it('re-reads the local server token on every forwarded request', async () => {
+    let currentToken = 'local-server-token';
+    const scenario = await startTunnelScenario({ localServerToken: () => currentToken });
+    const rawRequest = probeRawRequest();
+
+    const firstResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-1', rawRequest, true));
+    await firstResponsePromise;
+    await waitFor(
+      () => scenario.state.localHttpRequest?.headers.authorization === 'Bearer local-server-token',
+    );
+    expect(scenario.state.localHttpRequest?.headers.authorization).toBe(
+      'Bearer local-server-token',
+    );
 
     currentToken = 'rotated-server-token';
-    const rotatedResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-2',
-        type: 'request',
-        is_last: true,
-        body_base64: rawRequest.toString('base64'),
-      }),
-    );
+    const rotatedResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-2', rawRequest, true));
     await rotatedResponsePromise;
-    await waitFor(() => localHttpRequest?.headers.authorization === 'Bearer rotated-server-token');
+    await waitFor(
+      () => scenario.state.localHttpRequest?.headers.authorization === 'Bearer rotated-server-token',
+    );
+    expect(scenario.state.localHttpRequest?.headers.authorization).toBe(
+      'Bearer rotated-server-token',
+    );
+  });
 
-    const gzipResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-3',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\n\r\n',
-        ).toString('base64'),
-      }),
+  it('compresses textual responses, honors rewritten ETags, and passes binaries through', async () => {
+    const scenario = await startTunnelScenario();
+    const send = (requestId: string, raw: string): Promise<Record<string, unknown>> => {
+      const responsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+      scenario.httpConnections[0]!.send(tunnelRequestFrame(requestId, Buffer.from(raw), true));
+      return responsePromise;
+    };
+    const head = (body: Buffer): string =>
+      body.subarray(0, body.indexOf('\r\n\r\n')).toString('latin1');
+    const body = (full: Buffer): Buffer => full.subarray(full.indexOf('\r\n\r\n') + 4);
+
+    const gzipResponse = frameBody(
+      await send('request-3', 'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\n\r\n'),
     );
-    const gzipResponse = Buffer.from(
-      (await gzipResponsePromise)['body_base64'] as string,
-      'base64',
-    );
-    const gzipSeparator = gzipResponse.indexOf('\r\n\r\n');
-    const gzipHead = gzipResponse.subarray(0, gzipSeparator).toString('latin1');
-    const gzipBody = gzipResponse.subarray(gzipSeparator + 4);
+    const gzipHead = head(gzipResponse);
+    const gzipBody = body(gzipResponse);
     expect(gzipHead).toContain('HTTP/1.1 200 OK');
     expect(gzipHead).toContain('Content-Encoding: gzip');
     expect(gzipHead).toContain('Vary: Accept-Encoding');
@@ -565,202 +397,121 @@ describe('Remote Control tunnel', () => {
     expect(rewrittenETag).toBeDefined();
     expect(gzipHead).toContain(`Content-Length: ${gzipBody.length}`);
     expect(gunzipSync(gzipBody).toString()).toBe(
-      assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
+      scenario.assets.js.replaceAll('"/assets/', `"/coding-relay/devices/${scenario.handle.deviceId}/assets/`),
     );
 
-    const revalidateResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-3b',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          `GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\nIf-None-Match: ${rewrittenETag!.replace('ETag: ', '')}\r\n\r\n`,
-        ).toString('base64'),
-      }),
+    const revalidateResponse = frameBody(
+      await send(
+        'request-3b',
+        `GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: br, gzip\r\nIf-None-Match: ${rewrittenETag!.replace('ETag: ', '')}\r\n\r\n`,
+      ),
     );
-    const revalidateResponse = Buffer.from(
-      (await revalidateResponsePromise)['body_base64'] as string,
-      'base64',
-    );
-    const revalidateHead = revalidateResponse
-      .subarray(0, revalidateResponse.indexOf('\r\n\r\n'))
-      .toString('latin1');
+    const revalidateHead = head(revalidateResponse);
     expect(revalidateHead).toContain('HTTP/1.1 304 Not Modified');
     expect(revalidateHead).toContain('Cache-Control: no-cache');
     expect(revalidateHead).toContain(rewrittenETag!);
     expect(revalidateHead).not.toContain('Content-Encoding');
     expect(revalidateHead).not.toContain('Content-Length');
 
-    const binaryResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-4',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          'GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n',
-        ).toString('base64'),
-      }),
+    const binaryResponse = frameBody(
+      await send('request-4', 'GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n'),
     );
-    const binaryResponse = Buffer.from(
-      (await binaryResponsePromise)['body_base64'] as string,
-      'base64',
-    );
-    const binarySeparator = binaryResponse.indexOf('\r\n\r\n');
-    expect(binaryResponse.subarray(0, binarySeparator).toString('latin1')).not.toContain(
-      'Content-Encoding',
-    );
-    expect(binaryResponse.subarray(binarySeparator + 4).equals(assetPng)).toBe(true);
+    expect(head(binaryResponse)).not.toContain('Content-Encoding');
+    expect(body(binaryResponse).equals(scenario.assets.png)).toBe(true);
 
-    const excludedResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-5',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip;q=0, *;q=1\r\n\r\n',
-        ).toString('base64'),
-      }),
+    const excludedResponse = frameBody(
+      await send('request-5', 'GET /assets/index.js HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip;q=0, *;q=1\r\n\r\n'),
     );
-    const excludedResponse = Buffer.from(
-      (await excludedResponsePromise)['body_base64'] as string,
-      'base64',
-    );
-    const excludedSeparator = excludedResponse.indexOf('\r\n\r\n');
-    const excludedHead = excludedResponse.subarray(0, excludedSeparator).toString('latin1');
+    const excludedHead = head(excludedResponse);
     expect(excludedHead).not.toContain('Content-Encoding');
     expect(excludedHead).toContain('Vary: Accept-Encoding');
     expect(excludedHead).toContain(rewrittenETag!);
     expect(excludedHead).not.toContain('ETag: "v1"');
-    expect(excludedResponse.subarray(excludedSeparator + 4).toString()).toBe(
-      assetJs.replaceAll('"/assets/', `"/coding-relay/devices/${handle.deviceId}/assets/`),
+    expect(body(excludedResponse).toString()).toBe(
+      scenario.assets.js.replaceAll('"/assets/', `"/coding-relay/devices/${scenario.handle.deviceId}/assets/`),
     );
 
-    const svgResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-6',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          'GET /assets/logo.svg HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n',
-        ).toString('base64'),
-      }),
+    const svgResponse = frameBody(
+      await send('request-6', 'GET /assets/logo.svg HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\n\r\n'),
     );
-    const svgResponse = Buffer.from((await svgResponsePromise)['body_base64'] as string, 'base64');
-    const svgSeparator = svgResponse.indexOf('\r\n\r\n');
-    const svgHead = svgResponse.subarray(0, svgSeparator).toString('latin1');
+    const svgHead = head(svgResponse);
     expect(svgHead).toContain('Content-Encoding: gzip');
     expect(svgHead).toContain('Vary: Accept-Encoding');
     expect(svgHead).toContain('immutable');
-    expect(gunzipSync(svgResponse.subarray(svgSeparator + 4)).toString()).toBe(assetSvg);
+    expect(gunzipSync(body(svgResponse)).toString()).toBe(scenario.assets.svg);
 
-    const rangeResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-7',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from(
-          'GET /assets/partial.txt HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\nRange: bytes=0-2047\r\n\r\n',
-        ).toString('base64'),
-      }),
+    const rangeResponse = frameBody(
+      await send('request-7', 'GET /assets/partial.txt HTTP/1.1\r\nHost: relay.test\r\nAccept-Encoding: gzip\r\nRange: bytes=0-2047\r\n\r\n'),
     );
-    const rangeResponse = Buffer.from(
-      (await rangeResponsePromise)['body_base64'] as string,
-      'base64',
-    );
-    const rangeSeparator = rangeResponse.indexOf('\r\n\r\n');
-    const rangeHead = rangeResponse.subarray(0, rangeSeparator).toString('latin1');
+    const rangeHead = head(rangeResponse);
     expect(rangeHead).toContain('206');
     expect(rangeHead).toContain('Content-Range: bytes 0-2047/4096');
     expect(rangeHead).not.toContain('Content-Encoding');
-    expect(rangeResponse.subarray(rangeSeparator + 4).toString()).toBe(assetText);
+    expect(body(rangeResponse).toString()).toBe(scenario.assets.text);
+  });
 
-    const largeBody = Buffer.alloc(4 * 1024 * 1024 + 512 * 1024, 0x61);
+  it('reassembles chunked upload bodies through the tunnel', async () => {
+    const scenario = await startTunnelScenario();
+
+    const largeBody = Buffer.alloc(64 * 1024, 0x61);
     const largeRequest = Buffer.concat([
       Buffer.from(`POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${largeBody.length}\r\n\r\n`),
       largeBody,
     ]);
-    const largeResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-8',
-        type: 'request',
-        is_last: true,
-        body_base64: largeRequest.toString('base64'),
-      }),
-    );
+    const largeResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-8', largeRequest, true));
     const largeResponseMessage = await largeResponsePromise;
-    const largeResponse = Buffer.from(largeResponseMessage['body_base64'] as string, 'base64').toString();
-    expect(largeResponse).toContain('HTTP/1.1 200 OK');
-    expect(localHttpBodyBytes).toBe(largeBody.length);
+    expect(frameBody(largeResponseMessage).toString()).toContain('HTTP/1.1 200 OK');
+    expect(scenario.state.localHttpBodyBytes).toBe(largeBody.length);
     expect(largeResponseMessage['type']).toBe('response');
     expect(largeResponseMessage['is_last']).toBe(true);
 
-    const uploadBody = Buffer.alloc(11 * 1024 * 1024, 0x63);
+    const uploadBody = Buffer.alloc(11 * 1024, 0x63);
     const uploadRequest = Buffer.concat([
       Buffer.from(`POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${uploadBody.length}\r\n\r\n`),
       uploadBody,
     ]);
-    const uploadResponsePromise = nextJsonMessage(httpConnections[0]!);
-    const uploadFrame = (offset: number, isLast: boolean): string =>
-      JSON.stringify({
-        request_id: 'request-9',
-        type: 'request',
-        is_last: isLast,
-        body_base64: uploadRequest.subarray(offset, offset + 5 * 1024 * 1024).toString('base64'),
-      });
-    httpConnections[0]!.send(uploadFrame(0, false));
-    httpConnections[0]!.send(uploadFrame(5 * 1024 * 1024, false));
-    httpConnections[0]!.send(uploadFrame(10 * 1024 * 1024, true));
-    const uploadResponse = Buffer.from(
-      (await uploadResponsePromise)['body_base64'] as string,
-      'base64',
-    ).toString();
+    const uploadResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-9', uploadRequest.subarray(0, 5 * 1024), false));
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-9', uploadRequest.subarray(5 * 1024, 10 * 1024), false));
+    scenario.httpConnections[0]!.send(tunnelRequestFrame('request-9', uploadRequest.subarray(10 * 1024), true));
+    const uploadResponse = frameBody(await uploadResponsePromise).toString();
     expect(uploadResponse).toContain('HTTP/1.1 200 OK');
-    expect(localHttpBodyBytes).toBe(uploadBody.length);
+    expect(scenario.state.localHttpBodyBytes).toBe(uploadBody.length);
+  });
 
-    const chunkedFramesPromise = collectJsonMessages(httpConnections[0]!, 3);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-10',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
-    );
+  it('chunks large responses and interleaves concurrent transfers', async () => {
+    const scenario = await startTunnelScenario({
+      limits: { maxSingleFrameResponseBytes: 32 * 1024, responseChunkBytes: 16 * 1024 },
+    });
+    const send = (requestId: string, path: string): void => {
+      scenario.httpConnections[0]!.send(
+        tunnelRequestFrame(requestId, Buffer.from(`GET ${path} HTTP/1.1\r\nHost: relay.test\r\n\r\n`), true),
+      );
+    };
+
+    const chunkedFramesPromise = collectJsonMessages(scenario.httpConnections[0]!, 3);
+    send('request-10', '/assets/big.png');
     const chunkedFrames = await chunkedFramesPromise;
     expect(chunkedFrames.map((frame) => [frame['type'], frame['is_last']])).toEqual([
       ['response_chunk', false],
       ['response_chunk', false],
       ['response_chunk', true],
     ]);
-    const chunkedParts = chunkedFrames.map((frame) =>
-      Buffer.from(frame['body_base64'] as string, 'base64'),
-    );
-    expect(chunkedParts[0]!.length).toBe(5 * 1024 * 1024);
-    expect(chunkedParts[1]!.length).toBe(5 * 1024 * 1024);
+    const chunkedParts = chunkedFrames.map(frameBody);
+    expect(chunkedParts[0]!.length).toBe(16 * 1024);
+    expect(chunkedParts[1]!.length).toBe(16 * 1024);
     const reassembled = Buffer.concat(chunkedParts);
     const reassembledSeparator = reassembled.indexOf('\r\n\r\n');
     expect(reassembledSeparator).toBeGreaterThan(0);
-    expect(reassembledSeparator).toBeLessThan(5 * 1024 * 1024);
+    expect(reassembledSeparator).toBeLessThan(16 * 1024);
     expect(reassembled.subarray(0, reassembledSeparator).toString('latin1')).toContain(
       'HTTP/1.1 200 OK',
     );
-    expect(reassembled.subarray(reassembledSeparator + 4).equals(bigPng)).toBe(true);
+    expect(reassembled.subarray(reassembledSeparator + 4).equals(scenario.assets.big)).toBe(true);
 
-    const alignedFramesPromise = collectJsonMessages(httpConnections[0]!, 4);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-11',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/aligned.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
-    );
+    const alignedFramesPromise = collectJsonMessages(scenario.httpConnections[0]!, 4);
+    send('request-11', '/assets/aligned.png');
     const alignedFrames = await alignedFramesPromise;
     expect(alignedFrames.map((frame) => [frame['type'], frame['is_last']])).toEqual([
       ['response_chunk', false],
@@ -768,64 +519,34 @@ describe('Remote Control tunnel', () => {
       ['response_chunk', false],
       ['response_chunk', true],
     ]);
-    const alignedParts = alignedFrames.map((frame) =>
-      Buffer.from(frame['body_base64'] as string, 'base64'),
-    );
-    expect(alignedParts.map((part) => part.length)).toEqual([
-      5 * 1024 * 1024,
-      5 * 1024 * 1024,
-      5 * 1024 * 1024,
-      0,
-    ]);
+    const alignedParts = alignedFrames.map(frameBody);
+    expect(alignedParts.map((part) => part.length)).toEqual([16 * 1024, 16 * 1024, 16 * 1024, 0]);
     const alignedReassembled = Buffer.concat(alignedParts);
-    expect(alignedReassembled.length).toBe(alignedResponseBytes);
+    expect(alignedReassembled.length).toBe(scenario.assets.alignedResponseBytes);
     expect(
       alignedReassembled
         .subarray(alignedReassembled.indexOf('\r\n\r\n') + 4)
-        .equals(alignedPng),
+        .equals(scenario.assets.aligned),
     ).toBe(true);
 
-    const concurrentFramesPromise = collectJsonMessages(httpConnections[0]!, 4);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-12',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
-    );
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-13',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
-    );
+    const concurrentFramesPromise = collectJsonMessages(scenario.httpConnections[0]!, 4);
+    send('request-12', '/assets/big.png');
+    send('request-13', '/assets/logo.png');
     const concurrentFrames = await concurrentFramesPromise;
     const concurrentBig = concurrentFrames.filter((frame) => frame['request_id'] === 'request-12');
     const concurrentSmall = concurrentFrames.filter((frame) => frame['request_id'] === 'request-13');
     expect(concurrentBig.map((frame) => frame['is_last'])).toEqual([false, false, true]);
     expect(concurrentSmall).toHaveLength(1);
     expect(concurrentSmall[0]!['type']).toBe('response');
-    const concurrentReassembled = Buffer.concat(
-      concurrentBig.map((frame) => Buffer.from(frame['body_base64'] as string, 'base64')),
-    );
+    const concurrentReassembled = Buffer.concat(concurrentBig.map(frameBody));
     expect(
       concurrentReassembled
         .subarray(concurrentReassembled.indexOf('\r\n\r\n') + 4)
-        .equals(bigPng),
+        .equals(scenario.assets.big),
     ).toBe(true);
+  });
 
-    const abortFrame = (requestId: string): string =>
-      JSON.stringify({
-        request_id: requestId,
-        type: 'abort',
-        is_last: true,
-        body_base64: '',
-        reason: 'browser_closed',
-      });
-    const MiB = 1024 * 1024;
+  it('orders frames, enforces retain limits, and aborts inside HttpTunnel', async () => {
     const tunnelFrames: string[] = [];
     const tunnelCallbacks: Array<(error?: Error | null) => void> = [];
     let tunnelTerminated = false;
@@ -854,35 +575,30 @@ describe('Remote Control tunnel', () => {
           localCalls.set(request.path, { signal, retain, respond });
         }),
       { write: () => true },
+      {
+        maxRequestBytes: 4096,
+        maxRetainedBytes: 8192,
+        maxSingleFrameResponseBytes: 64,
+        responseChunkBytes: 32,
+      },
     );
     const tunnelRequest = (requestId: string, raw: string, isLast = true): void =>
-      tunnel.handleMessage(
-        Buffer.from(
-          JSON.stringify({
-            request_id: requestId,
-            type: 'request',
-            is_last: isLast,
-            body_base64: Buffer.from(raw).toString('base64'),
-          }),
-        ),
-      );
+      tunnel.handleMessage(Buffer.from(tunnelRequestFrame(requestId, Buffer.from(raw), isLast)));
     const tunnelSent = (): string[] =>
       tunnelFrames.map((frame) => {
         const parsed = JSON.parse(frame) as Record<string, unknown>;
         return `${String(parsed['request_id'])}:${String(parsed['is_last'])}`;
       });
     const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
     tunnelRequest('a', 'GET /a HTTP/1.1\r\n\r\n');
     tunnelRequest('b', 'GET /b HTTP/1.1\r\n\r\n');
-    localCalls.get('/a')!.respond([Buffer.alloc(3 * MiB, 1), Buffer.alloc(7 * MiB + 1, 2)]);
+    localCalls.get('/a')!.respond([Buffer.alloc(40, 1), Buffer.alloc(40, 2)]);
     await flush();
     expect(tunnelSent()).toEqual(['a:false']);
     expect(
-      Buffer.from(
-        (JSON.parse(tunnelFrames[0]!) as { body_base64: string }).body_base64,
-        'base64',
-      ).equals(Buffer.concat([Buffer.alloc(3 * MiB, 1), Buffer.alloc(2 * MiB, 2)])),
-    ).toBe(true);
+      (JSON.parse(tunnelFrames[0]!) as { body_base64: string }).body_base64,
+    ).toBe(Buffer.alloc(32, 1).toString('base64'));
     localCalls.get('/b')!.respond([Buffer.from('b')]);
     await flush();
     tunnelCallbacks.shift()!(null);
@@ -891,15 +607,17 @@ describe('Remote Control tunnel', () => {
     tunnelCallbacks.shift()!(null);
     await flush();
     expect(tunnelSent()).toEqual(['a:false', 'b:true', 'a:false']);
-    tunnel.handleMessage(Buffer.from(abortFrame('a')));
+    tunnel.handleMessage(Buffer.from(tunnelAbortFrame('a')));
     tunnelCallbacks.shift()!(null);
     await flush();
     expect(tunnelSent()).toHaveLength(3);
+
     tunnelRequest('c', 'GET /c HTTP/1.1\r\n\r\n');
     tunnelRequest('d', 'GET /d HTTP/1.1\r\n\r\n');
-    expect(localCalls.get('/c')!.retain(208 * MiB - 4096)).toBe(true);
+    expect(localCalls.get('/c')!.retain(5000)).toBe(true);
     expect(localCalls.get('/d')!.retain(4096)).toBe(false);
-    for (let index = 0; index < 4; index += 1) tunnelRequest('e', '', false);
+    tunnelRequest('e', '', false);
+    tunnelRequest('e', '', false);
     await flush();
     expect(tunnelSent()).toEqual(['a:false', 'b:true', 'a:false', 'e:true']);
     expect(
@@ -909,9 +627,9 @@ describe('Remote Control tunnel', () => {
       ).toString(),
     ).toContain('HTTP/1.1 400');
     tunnelCallbacks.shift()!(null);
-    tunnel.handleMessage(Buffer.from(abortFrame('c')));
+    tunnel.handleMessage(Buffer.from(tunnelAbortFrame('c')));
     expect(localCalls.get('/c')!.signal.aborted).toBe(true);
-    expect(localCalls.get('/d')!.retain(100 * MiB)).toBe(true);
+    expect(localCalls.get('/d')!.retain(6000)).toBe(true);
     tunnelRequest('f', 'GET /f HTTP/1.1\r\n\r\n');
     localCalls.get('/d')!.respond([Buffer.from('d')]);
     await flush();
@@ -923,140 +641,154 @@ describe('Remote Control tunnel', () => {
     localCalls.get('/f')!.respond([Buffer.from('f')]);
     await flush();
     expect(tunnelSent()).toEqual(['a:false', 'b:true', 'a:false', 'e:true', 'd:true']);
+  });
 
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-14',
-        type: 'request',
-        is_last: false,
-        body_base64: Buffer.from(
-          'POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: 20\r\n\r\n0123456789',
-        ).toString('base64'),
+  it('rejects invalid tunnel limits at construction', () => {
+    const socket = { readyState: 1 } as unknown as WebSocket;
+    const forwardLocal = (): Promise<Buffer[]> => new Promise(() => {});
+    const stderr = { write: (): boolean => true };
+    const limits = {
+      maxRequestBytes: 4096,
+      maxRetainedBytes: 8192,
+      maxSingleFrameResponseBytes: 64,
+      responseChunkBytes: 32,
+    };
+    expect(() => new HttpTunnel(socket, forwardLocal, stderr, { ...limits, responseChunkBytes: 0 })).toThrow(
+      /responseChunkBytes/,
+    );
+    expect(
+      () => new HttpTunnel(socket, forwardLocal, stderr, { ...limits, responseChunkBytes: Number.MIN_VALUE }),
+    ).toThrow(/responseChunkBytes/);
+    expect(
+      () => new HttpTunnel(socket, forwardLocal, stderr, { ...limits, responseChunkBytes: 1.5 }),
+    ).toThrow(/responseChunkBytes/);
+    expect(() => new HttpTunnel(socket, forwardLocal, stderr, { ...limits, maxRequestBytes: Number.NaN })).toThrow(
+      /maxRequestBytes/,
+    );
+    expect(() => new HttpTunnel(socket, forwardLocal, stderr, { ...limits, maxRetainedBytes: -1 })).toThrow(
+      /maxRetainedBytes/,
+    );
+    expect(
+      () =>
+        new HttpTunnel(socket, forwardLocal, stderr, {
+          ...limits,
+          maxSingleFrameResponseBytes: Number.POSITIVE_INFINITY,
+        }),
+    ).toThrow(/maxSingleFrameResponseBytes/);
+    expect(() => new HttpTunnel(socket, forwardLocal, stderr, limits)).not.toThrow();
+  });
+
+  it('rejects invalid tunnel limits before acquiring the instance lock', async () => {
+    const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+    await expect(
+      startRemoteControl({
+        homeDir,
+        localOrigin: 'http://127.0.0.1:1',
+        localServerToken: 'local-server-token',
+        clientVersion: CLIENT_VERSION,
+        urlSource: 'kimi_code_cli',
+        relayOrigin: 'http://127.0.0.1:1/coding-relay',
+        stderr: { write: () => true },
+        httpTunnelLimits: { responseChunkBytes: 0 },
       }),
+    ).rejects.toThrow(/responseChunkBytes/);
+    expect(existsSync(remoteControlLockPath(homeDir))).toBe(false);
+  });
+
+  it('aborts in-flight requests without breaking the tunnel', async () => {
+    const scenario = await startTunnelScenario();
+
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame(
+        'request-14',
+        Buffer.from('POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: 20\r\n\r\n0123456789'),
+        false,
+      ),
     );
     await new Promise((resolve) => setTimeout(resolve, 50));
-    httpConnections[0]!.send(abortFrame('request-14'));
-    httpConnections[0]!.send(abortFrame('request-14'));
-    httpConnections[0]!.send(abortFrame('request-unknown'));
-    const postAbortPromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-15',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
+    scenario.httpConnections[0]!.send(tunnelAbortFrame('request-14'));
+    scenario.httpConnections[0]!.send(tunnelAbortFrame('request-14'));
+    scenario.httpConnections[0]!.send(tunnelAbortFrame('request-unknown'));
+    const postAbortPromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame('request-15', Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n'), true),
     );
     expect((await postAbortPromise)['request_id']).toBe('request-15');
 
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-16',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /hang HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame('request-16', Buffer.from('GET /hang HTTP/1.1\r\nHost: relay.test\r\n\r\n'), true),
     );
-    await waitFor(() => hangRequests.length === 1);
-    httpConnections[0]!.send(abortFrame('request-16'));
-    await waitFor(() => hangClosedCount === 1);
-    const forwardAbortPromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-17',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
+    await waitFor(() => scenario.hangRequests.length === 1);
+    scenario.httpConnections[0]!.send(tunnelAbortFrame('request-16'));
+    await waitFor(() => scenario.state.hangClosedCount === 1);
+    const forwardAbortPromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame('request-17', Buffer.from('GET /assets/logo.png HTTP/1.1\r\nHost: relay.test\r\n\r\n'), true),
     );
     expect((await forwardAbortPromise)['request_id']).toBe('request-17');
+  });
 
-    const budgetBody = Buffer.alloc(100 * 1024 * 1024, 0x68);
-    const budgetRawRequest = Buffer.concat([
-      Buffer.from(
-        `POST /hang-upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${budgetBody.length}\r\n\r\n`,
-      ),
-      budgetBody,
-    ]);
-    const budgetChunk = 50 * 1024 * 1024;
-    const budgetFrame = (requestId: string, offset: number): string =>
-      JSON.stringify({
-        request_id: requestId,
-        type: 'request',
-        is_last: offset + budgetChunk >= budgetRawRequest.length,
-        body_base64: budgetRawRequest.subarray(offset, offset + budgetChunk).toString('base64'),
-      });
-    for (let offset = 0; offset < budgetRawRequest.length; offset += budgetChunk) {
-      httpConnections[0]!.send(budgetFrame('request-18a', offset));
-      httpConnections[0]!.send(budgetFrame('request-18b', offset));
-    }
-    await waitFor(() => hangRequests.length === 3, 15000);
-    const overflowBody = Buffer.alloc(9 * 1024 * 1024, 0x69);
-    const overflowRaw = Buffer.concat([
-      Buffer.from(
-        `POST /upload HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${overflowBody.length}\r\n\r\n`,
-      ),
-      overflowBody,
-    ]);
-    const overflowResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-18c',
-        type: 'request',
-        is_last: true,
-        body_base64: overflowRaw.toString('base64'),
-      }),
-    );
-    const overflowResponse = Buffer.from(
-      (await overflowResponsePromise)['body_base64'] as string,
-      'base64',
-    ).toString();
+  it('enforces the byte budget across transfers and recovers after aborts', async () => {
+    const scenario = await startTunnelScenario({
+      limits: { maxRequestBytes: 256 * 1024, maxRetainedBytes: 640 * 1024 },
+      bigBytes: 300 * 1024,
+    });
+    const post = (requestId: string, path: string, body: Buffer): void => {
+      scenario.httpConnections[0]!.send(
+        tunnelRequestFrame(
+          requestId,
+          Buffer.concat([
+            Buffer.from(`POST ${path} HTTP/1.1\r\nHost: relay.test\r\nContent-Length: ${body.length}\r\n\r\n`),
+            body,
+          ]),
+          true,
+        ),
+      );
+    };
+
+    post('request-18a', '/hang-upload', Buffer.alloc(250 * 1024, 0x68));
+    post('request-18b', '/hang-upload', Buffer.alloc(250 * 1024, 0x68));
+    await waitFor(() => scenario.hangRequests.length === 2);
+
+    const overLimitPromise = nextJsonMessage(scenario.httpConnections[0]!);
+    post('request-18f', '/upload', Buffer.alloc(300 * 1024, 0x6a));
+    expect(
+      frameBody(await overLimitPromise).toString(),
+    ).toContain('HTTP/1.1 400');
+
+    const overflowResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    post('request-18c', '/upload', Buffer.alloc(200 * 1024, 0x69));
+    const overflowResponse = frameBody(await overflowResponsePromise).toString();
     expect(overflowResponse).toContain('HTTP/1.1 400');
-    const deniedDownloadPromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-18d',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
+
+    const deniedDownloadPromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame('request-18d', Buffer.from('GET /assets/big.png HTTP/1.1\r\nHost: relay.test\r\n\r\n'), true),
     );
     const deniedDownloadMessage = await deniedDownloadPromise;
     expect(deniedDownloadMessage['request_id']).toBe('request-18d');
-    expect(
-      Buffer.from(deniedDownloadMessage['body_base64'] as string, 'base64').toString(),
-    ).toContain('HTTP/1.1 503');
-    const headResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-18e',
-        type: 'request',
-        is_last: true,
-        body_base64: Buffer.from('HEAD /assets/aligned.png HTTP/1.1\r\nHost: relay.test\r\n\r\n').toString('base64'),
-      }),
-    );
-    expect(
-      Buffer.from((await headResponsePromise)['body_base64'] as string, 'base64').toString(),
-    ).toContain('HTTP/1.1 200 OK');
-    const retryResponsePromise = nextJsonMessage(httpConnections[0]!);
-    httpConnections[0]!.send(abortFrame('request-18a'));
-    httpConnections[0]!.send(abortFrame('request-18b'));
-    httpConnections[0]!.send(
-      JSON.stringify({
-        request_id: 'request-19',
-        type: 'request',
-        is_last: true,
-        body_base64: overflowRaw.toString('base64'),
-      }),
-    );
-    const retryResponse = Buffer.from(
-      (await retryResponsePromise)['body_base64'] as string,
-      'base64',
-    ).toString();
-    expect(retryResponse).toContain('HTTP/1.1 200 OK');
-    expect(uploadBodyBytes.get('/upload')).toBe(overflowBody.length);
+    expect(frameBody(deniedDownloadMessage).toString()).toContain('HTTP/1.1 503');
 
-    managementConnections[0]!.send(
+    const headResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    scenario.httpConnections[0]!.send(
+      tunnelRequestFrame('request-18e', Buffer.from('HEAD /assets/aligned.png HTTP/1.1\r\nHost: relay.test\r\n\r\n'), true),
+    );
+    expect(frameBody(await headResponsePromise).toString()).toContain('HTTP/1.1 200 OK');
+
+    scenario.httpConnections[0]!.send(tunnelAbortFrame('request-18a'));
+    scenario.httpConnections[0]!.send(tunnelAbortFrame('request-18b'));
+    const retryBody = Buffer.alloc(200 * 1024, 0x69);
+    const retryResponsePromise = nextJsonMessage(scenario.httpConnections[0]!);
+    post('request-19', '/upload', retryBody);
+    const retryResponse = frameBody(await retryResponsePromise).toString();
+    expect(retryResponse).toContain('HTTP/1.1 200 OK');
+    expect(scenario.uploadBodyBytes.get('/upload')).toBe(retryBody.length);
+  });
+
+  it('forwards WebSocket streams with local auth and drains bursts before close', async () => {
+    const scenario = await startTunnelScenario();
+
+    scenario.managementConnections[0]!.send(
       JSON.stringify({
         type: 'open_ws',
         payload: {
@@ -1066,64 +798,58 @@ describe('Remote Control tunnel', () => {
         },
       }),
     );
-    await waitFor(() => streamConnections.length === 1 && localWs !== undefined);
-    expect(localWsRequest?.headers['sec-websocket-protocol']).toBe(
-      'kimi-code.bearer.rotated-server-token',
+    await waitFor(() => scenario.streamConnections.length === 1 && scenario.state.localWs !== undefined);
+    expect(scenario.state.localWsRequest?.headers['sec-websocket-protocol']).toBe(
+      'kimi-code.bearer.local-server-token',
     );
-    expect(localWsRequest?.headers.authorization).toBeUndefined();
-    expect(localWsRequest?.headers.cookie).toBeUndefined();
-    expect(localWsRequest?.headers.origin).toBeUndefined();
-    expect(localWsRequest?.headers['x-keep']).toBe('yes');
+    expect(scenario.state.localWsRequest?.headers.authorization).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers.cookie).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers.origin).toBeUndefined();
+    expect(scenario.state.localWsRequest?.headers['x-keep']).toBe('yes');
     await waitFor(() =>
-      managementMessages.some(
+      scenario.managementMessages.some(
         (value) =>
           (value as { type?: string }).type === 'open_ws_result' &&
           (value as { payload?: { success?: boolean } }).payload?.success === true,
       ),
     );
 
-    await waitFor(() => streamMessages.includes('server-hello-frame'));
-    const localMessage = nextTextMessage(localWs!);
-    streamConnections[0]!.send('from-relay');
+    await waitFor(() => scenario.streamMessages.includes('server-hello-frame'));
+    const localMessage = nextTextMessage(scenario.state.localWs!);
+    scenario.streamConnections[0]!.send('from-relay');
     await expect(localMessage).resolves.toBe('from-relay');
-    const relayMessage = nextTextMessage(streamConnections[0]!);
-    localWs!.send('from-local');
+    const relayMessage = nextTextMessage(scenario.streamConnections[0]!);
+    scenario.state.localWs!.send('from-local');
     await expect(relayMessage).resolves.toBe('from-local');
 
     const burstFrames = ['burst-1', 'burst-2', 'burst-3'];
     const receivedBurst: string[] = [];
-    localWs!.on('message', (data) => {
+    scenario.state.localWs!.on('message', (data) => {
       receivedBurst.push(rawDataText(data));
     });
-    for (const frame of burstFrames) streamConnections[0]!.send(frame);
-    streamConnections[0]!.close();
-    await waitFor(() => localWs?.readyState === 3);
+    for (const frame of burstFrames) scenario.streamConnections[0]!.send(frame);
+    scenario.streamConnections[0]!.close();
+    await waitFor(() => scenario.state.localWs?.readyState === 3);
     expect(receivedBurst).toEqual(burstFrames);
+  });
 
-    httpConnections[0]!.terminate();
-    await waitFor(() => registrations.length === 2 && httpConnections.length === 2, 4000);
-    expect(httpCapabilities).toEqual([
+  it('reconnects the tunnel pair after the relay drops it', async () => {
+    const scenario = await startTunnelScenario();
+
+    scenario.httpConnections[0]!.terminate();
+    await waitFor(() => scenario.registrations.length === 2 && scenario.httpConnections.length === 2, 4000);
+    expect(scenario.httpCapabilities).toEqual([
       'request_chunk,response_chunk,abort',
       'request_chunk,response_chunk,abort',
     ]);
-    const reconnectResponsePromise = nextJsonMessage(httpConnections[1]!);
-    httpConnections[1]!.send(
-      JSON.stringify({
-        request_id: 'request-20',
-        type: 'request',
-        is_last: true,
-        body_base64: rawRequest.toString('base64'),
-      }),
-    );
-    const reconnectResponse = Buffer.from(
-      (await reconnectResponsePromise)['body_base64'] as string,
-      'base64',
-    ).toString();
+    const reconnectResponsePromise = nextJsonMessage(scenario.httpConnections[1]!);
+    scenario.httpConnections[1]!.send(tunnelRequestFrame('request-20', probeRawRequest(), true));
+    const reconnectResponse = frameBody(await reconnectResponsePromise).toString();
     expect(reconnectResponse).toContain('HTTP/1.1 200 OK');
 
-    await handle.close();
+    await scenario.handle.close();
     await waitFor(() =>
-      managementMessages.some(
+      scenario.managementMessages.some(
         (value) =>
           (value as { type?: string; payload?: { reason?: string } }).type === 'disconnect' &&
           (value as { payload?: { reason?: string } }).payload?.reason === 'local_server_stopped',
@@ -2083,6 +1809,261 @@ describe('Remote Control manager', () => {
     expect(manager.status().error).toBeTruthy();
   });
 });
+
+function probeRawRequest(): Buffer {
+  return Buffer.from(
+    'GET / HTTP/1.1\r\nHost: relay.test\r\nAuthorization: Bearer relay-token\r\nCookie: sid=1\r\nOrigin: https://relay.test\r\nAccept-Encoding: gzip\r\nConnection: X-Hop\r\nX-Hop: remove\r\nX-Keep: yes\r\n\r\n',
+  );
+}
+
+function tunnelRequestFrame(requestId: string, body: Buffer, isLast: boolean): string {
+  return JSON.stringify({
+    request_id: requestId,
+    type: 'request',
+    is_last: isLast,
+    body_base64: body.toString('base64'),
+  });
+}
+
+function tunnelAbortFrame(requestId: string): string {
+  return JSON.stringify({
+    request_id: requestId,
+    type: 'abort',
+    is_last: true,
+    body_base64: '',
+    reason: 'browser_closed',
+  });
+}
+
+function frameBody(message: Record<string, unknown>): Buffer {
+  return Buffer.from(message['body_base64'] as string, 'base64');
+}
+
+interface TunnelScenarioState {
+  localHttpRequest: IncomingMessage | undefined;
+  localHttpBodyBytes: number;
+  localWsRequest: IncomingMessage | undefined;
+  localWs: WebSocket | undefined;
+  hangClosedCount: number;
+}
+
+interface TunnelScenario {
+  handle: RemoteControlHandle;
+  registrations: unknown[];
+  httpCapabilities: Array<string | null>;
+  managementConnections: WebSocket[];
+  managementMessages: unknown[];
+  httpConnections: WebSocket[];
+  streamConnections: WebSocket[];
+  streamMessages: string[];
+  uploadBodyBytes: Map<string, number>;
+  hangRequests: IncomingMessage[];
+  assets: {
+    js: string;
+    png: Buffer;
+    svg: string;
+    text: string;
+    big: Buffer;
+    aligned: Buffer;
+    alignedResponseBytes: number;
+  };
+  state: TunnelScenarioState;
+}
+
+async function startTunnelScenario(
+  options: {
+    limits?: Partial<HttpTunnelLimits>;
+    localServerToken?: string | (() => string);
+    bigBytes?: number;
+    alignedResponseBytes?: number;
+  } = {},
+): Promise<TunnelScenario> {
+  const homeDir = await createRemoteControlHome(TOKEN.refreshToken);
+
+  const state: TunnelScenarioState = {
+    localHttpRequest: undefined,
+    localHttpBodyBytes: 0,
+    localWsRequest: undefined,
+    localWs: undefined,
+    hangClosedCount: 0,
+  };
+  const uploadBodyBytes = new Map<string, number>();
+  const localWsServer = new WebSocketServer({ noServer: true });
+  const alignedResponseBytes = options.alignedResponseBytes ?? 48 * 1024;
+  const assets: TunnelScenario['assets'] = {
+    js: `const boot = "/assets/boot.js";\n${'const chunk = "/assets/chunk.js";\n'.repeat(120)}`,
+    png: Buffer.alloc(4096, 7),
+    svg: `<svg xmlns="http://www.w3.org/2000/svg">${'<rect width="100" height="100"/>'.repeat(100)}</svg>`,
+    text: 'chunk of text\n'.repeat(160),
+    big: Buffer.alloc(options.bigBytes ?? 40 * 1024, 0x64),
+    aligned: Buffer.alloc(0),
+    alignedResponseBytes,
+  };
+  let alignedBodyBytes = alignedResponseBytes;
+  for (;;) {
+    const headBytes =
+      `HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nDate: Mon, 01 Jan 2024 00:00:00 GMT\r\nContent-Length: ${alignedBodyBytes}\r\n\r\n`
+        .length;
+    const next = alignedResponseBytes - headBytes;
+    if (next === alignedBodyBytes) break;
+    alignedBodyBytes = next;
+  }
+  assets.aligned = Buffer.alloc(alignedBodyBytes, 0x65);
+  const hangRequests: IncomingMessage[] = [];
+  const localServer = createServer((request, response) => {
+    state.localHttpRequest = request;
+    if (request.url === '/assets/index.js') {
+      response.writeHead(200, { 'Content-Type': 'text/javascript', ETag: '"v1"' });
+      response.end(assets.js);
+      return;
+    }
+    if (request.url === '/assets/logo.png') {
+      response.writeHead(200, { 'Content-Type': 'image/png' });
+      response.end(assets.png);
+      return;
+    }
+    if (request.url === '/assets/logo.svg') {
+      response.writeHead(200, {
+        'Content-Type': 'image/svg+xml',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+      });
+      response.end(assets.svg);
+      return;
+    }
+    if (request.url === '/assets/partial.txt' && request.headers.range !== undefined) {
+      response.writeHead(206, {
+        'Content-Type': 'text/plain',
+        'Content-Range': 'bytes 0-2047/4096',
+      });
+      response.end(assets.text);
+      return;
+    }
+    if (request.url === '/assets/big.png') {
+      response.writeHead(200, {
+        'Content-Type': 'image/png',
+        Date: 'Mon, 01 Jan 2024 00:00:00 GMT',
+      });
+      response.end(assets.big);
+      return;
+    }
+    if (request.url === '/assets/aligned.png') {
+      response.writeHead(200, {
+        'Content-Type': 'image/png',
+        'Content-Length': String(assets.aligned.length),
+        Date: 'Mon, 01 Jan 2024 00:00:00 GMT',
+      });
+      response.end(assets.aligned);
+      return;
+    }
+    if (request.url === '/hang' || request.url === '/hang-upload') {
+      hangRequests.push(request);
+      request.on('data', () => {});
+      request.once('close', () => {
+        state.hangClosedCount += 1;
+      });
+      return;
+    }
+    let bodyBytes = 0;
+    request.on('data', (chunk: Buffer) => {
+      bodyBytes += chunk.length;
+    });
+    request.on('end', () => {
+      state.localHttpBodyBytes = bodyBytes;
+      uploadBodyBytes.set(request.url ?? '', bodyBytes);
+      response.writeHead(200, {
+        'Content-Type': 'text/html',
+        'Cache-Control': 'public, max-age=31536000, immutable',
+        Connection: 'X-Remove',
+        'X-Remove': 'gone',
+      });
+      response.end('<html><head></head><script src="/boot.js"></script></html>');
+    });
+  });
+  localServer.on('upgrade', (request, socket, head) => {
+    state.localWsRequest = request;
+    localWsServer.handleUpgrade(request, socket, head, (ws) =>
+      localWsServer.emit('connection', ws, request),
+    );
+  });
+  const localPort = await listen(localServer);
+  cleanups.push(() => closeServer(localServer));
+
+  const managementServer = new WebSocketServer({ noServer: true });
+  const httpTunnelServer = new WebSocketServer({ noServer: true });
+  const streamServer = new WebSocketServer({ noServer: true });
+  const relayServer = createServer();
+  const managementConnections: WebSocket[] = [];
+  const httpConnections: WebSocket[] = [];
+  const streamConnections: WebSocket[] = [];
+  const registrations: unknown[] = [];
+  const managementMessages: unknown[] = [];
+  const streamMessages: string[] = [];
+  const httpCapabilities: Array<string | null> = [];
+
+  managementServer.on('connection', (ws) => {
+    managementConnections.push(ws);
+    ws.on('message', (data) => {
+      const message = JSON.parse(rawDataText(data)) as { type: string };
+      managementMessages.push(message);
+      if (message.type === 'register') {
+        registrations.push(message);
+        ws.send(JSON.stringify({ type: 'register_ack', payload: { success: true } }));
+      }
+    });
+  });
+  httpTunnelServer.on('connection', (ws) => httpConnections.push(ws));
+  streamServer.on('connection', (ws) => {
+    streamConnections.push(ws);
+    ws.on('message', (data) => streamMessages.push(rawDataText(data)));
+  });
+  localWsServer.on('connection', (ws) => {
+    state.localWs = ws;
+    ws.send('server-hello-frame');
+  });
+  relayServer.on('upgrade', (request, socket, head) => {
+    const upgradeUrl = new URL(request.url!, 'http://relay.test');
+    if (upgradeUrl.pathname.endsWith('/v1/remote/http')) {
+      httpCapabilities.push(upgradeUrl.searchParams.get('capabilities'));
+    }
+    const pathname = upgradeUrl.pathname;
+    const target = pathname.endsWith('/v1/remote/create')
+      ? managementServer
+      : pathname.endsWith('/v1/remote/http')
+        ? httpTunnelServer
+        : streamServer;
+    target.handleUpgrade(request, socket, head, (ws) => target.emit('connection', ws, request));
+  });
+  const relayPort = await listen(relayServer);
+  cleanups.push(() => closeServer(relayServer));
+
+  let handle: RemoteControlHandle | undefined;
+  cleanups.push(async () => handle?.close());
+  handle = await startRemoteControl({
+    homeDir,
+    localOrigin: `http://127.0.0.1:${localPort}`,
+    localServerToken: options.localServerToken ?? 'local-server-token',
+    clientVersion: CLIENT_VERSION,
+    urlSource: 'kimi_code_cli',
+    relayOrigin: `http://127.0.0.1:${relayPort}/coding-relay`,
+    stderr: { write: () => true },
+    httpTunnelLimits: options.limits,
+  });
+
+  return {
+    handle,
+    registrations,
+    httpCapabilities,
+    managementConnections,
+    managementMessages,
+    httpConnections,
+    streamConnections,
+    streamMessages,
+    uploadBodyBytes,
+    hangRequests,
+    assets,
+    state,
+  };
+}
 
 async function createRemoteControlHome(refreshToken: string): Promise<string> {
   const homeDir = mkdtempSync(join(tmpdir(), 'kimi-rc-auth-'));

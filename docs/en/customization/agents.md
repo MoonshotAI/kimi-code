@@ -14,7 +14,7 @@ Kimi Code CLI includes three built-in sub-agents, ready to use out of the box, e
 
 Beyond the three types, three conventions govern how sub-agents work: tool boundaries, delegation depth, and completion timing.
 
-A `coder` sub-agent shares most of the main Agent's tool set: it can run shell commands in the background, maintain todo lists, enter Plan mode, and invoke Agent Skills. The three built-in sub-agents cannot dispatch further sub-agents.
+A `coder` sub-agent shares most of the main Agent's tool set: it can run shell commands in the background, maintain todo lists, and invoke Agent Skills. The three built-in sub-agents cannot dispatch further sub-agents.
 
 By default a custom agent inherits the built-in delegation allowlist (`coder`, `explore`, `plan`), whose members cannot dispatch further either, so delegation chains always terminate and unbounded recursive spawning is impossible without an explicit opt-in. A custom agent can opt into deeper chains by declaring an explicit [`subagents`](#agent-file-format) allowlist.
 

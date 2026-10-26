@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -3269,9 +3270,23 @@ describe('AgentTowerService', () => {
       expect(text).toContain('TowerInbox');
     });
 
-    it('includes message references and computes each related mission gate once', async () => {
+    it('includes message references and computes each related mission gate once in parallel', async () => {
       const repo = await mkdtemp(join(tmpdir(), 'tower-wake-digest-'));
-      const gate = vi.spyOn(TowerStore.prototype, 'missionGate');
+      const original = TowerStore.prototype.missionGate;
+      let active = 0;
+      let maximum = 0;
+      const gate = vi.spyOn(TowerStore.prototype, 'missionGate').mockImplementation(
+        async function (this: TowerStore, state, mission, runtime) {
+          active += 1;
+          maximum = Math.max(maximum, active);
+          try {
+            await delay(5);
+            return await original.call(this, state, mission, runtime);
+          } finally {
+            active -= 1;
+          }
+        },
+      );
       try {
         await initGitRepo(repo);
         await writeFile(join(repo, 'README.md'), '# fixture\n');
@@ -3332,6 +3347,8 @@ describe('AgentTowerService', () => {
         expect(gate.mock.calls.filter(([, mission]) => mission.id === 'M1')).toHaveLength(1);
         expect(gate.mock.calls.filter(([, mission]) => mission.id === 'M2')).toHaveLength(1);
         expect(gate.mock.calls[0]?.[2]?.activeAgentIds).toEqual(new Set());
+        expect(maximum).toBe(2);
+        expect(text.indexOf('M1: gate=')).toBeLessThan(text.indexOf('M2: gate='));
       } finally {
         gate.mockRestore();
         await rm(repo, { recursive: true, force: true });

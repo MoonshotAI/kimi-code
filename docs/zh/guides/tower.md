@@ -103,15 +103,22 @@ kimi-code 重启后，如果改由另一个会话接管当前项目，原会话�
 
 Tower 与 Goal、Plan 和 swarm 模式互斥。进入 Tower 会退出 Plan 或 swarm，并暂停正在运行的 goal；启用 goal、Plan 或 swarm 也会退出 Tower。Tower 的状态会保留在磁盘上，之后可以用 `/tower on` 返回。
 
-worker 和 reviewer 的模型选择规则不同。未配置 `[secondary_model]` 时，二者都使用 Tower 当前的主模型。配置后，新派生的 worker 使用 `default_model`，**reviewer 仍使用主模型**；但如果 `[secondary_model].force = true`，reviewer 也会改用 `default_model`。`TowerSpawn` 目前不支持为某个 mission 或某次派发单独选择模型。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
+worker 和 reviewer 的默认模型选择规则不同。未配置 `[secondary_model]` 时，二者都使用 Tower 当前的主模型。配置后，新派生的 worker 使用 `default_model`，**reviewer 仍使用主模型**；但如果 `[secondary_model].force = true`，reviewer 也会改用 `default_model`。因此，池默认值是 worker 的默认值，而不是 reviewer 的默认值。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
 
-如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。未设置 `force = true` 时，reviewer 将保持 primary model（主模型），以保留独立审查的预算。
+你也可以通过普通消息为某次新派生明确指定模型。例如，假设 `smart/slow` 已在池内配置：
+
+- "让 worker agent-docs 使用 smart/slow。"
+- "让审查 feat/build-gemm 的 reviewer 使用 primary。"
+
+可选值仅限 `primary`（Tower 当前的主模型）和 `[secondary_model.models]` 中配置的别名；只存在于 `[models]` 而不在池内的别名不能被接受。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。`[secondary_model].force = true` 时，强制模型仍是配置级硬约束，Tower 会拒绝包括 `primary` 在内的所有显式选择，而不是静默覆盖它。
+
+如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。未设置 `force = true` 时，reviewer 默认保持 primary model（主模型），以保留独立审查的预算。
 
 ## 安全边界与资源开销
 
 worktree 只能隔离写入，不能当作安全沙箱。worker 可以读取仓库内容，并以你的权限运行工具；在 Never Ask 模式下，worker 和 reviewer 不会逐项向你请求审批。Tower worker 没有 `Agent` 工具，不能再派发 subagent。不过，mission 范围和合并检查只是流程约束，不是安全边界。
 
-worker 和 reviewer 都有独立的模型上下文，也会分别消耗 token。Tower 的规划、消息路由、故障恢复和合并轮次还会产生额外消耗。Agent 越多，配额、CPU 和磁盘压力越大。Tower 会限制同时派发的 Agent 数量；`/tower status` 可以查看当前预算和运行数量，而且不会启动模型轮次。建议先拆少量相互独立的 mission，完成后及时清理 worktree，释放磁盘空间。
+worker 和 reviewer 都有独立的模型上下文，也会分别消耗 token。Tower 的规划、消息路由、故障恢复和合并轮次还会产生额外消耗。Agent 越多，配额、CPU 和磁盘压力越大。[`max_running_tasks`](../configuration/config-files.md#task) 限制同时运行的 Tower worker 和 reviewer 数量。未配置时，worker 和 reviewer 合计最多运行 256 个。`/tower status` 会显示当前数值预算和运行数量，而且不会启动模型轮次。建议先拆少量相互独立的 mission，完成后及时清理 worktree，释放磁盘空间。
 
 ## 下一步
 

@@ -310,7 +310,7 @@ export function registerOAuthRoutes(
       tags: ['auth'],
     },
     async (req, reply) => {
-      const region = core.accessor.get(IOAuthService).getRegion();
+      const region = await core.accessor.get(IOAuthService).getRegionAsync();
       reply.send(okEnvelope({ region }, req.id));
     },
   );

@@ -21,7 +21,7 @@ kimi <subcommand> [options]
 | `--prompt <prompt>` | `-p` | 非交互执行单次 prompt，并把 Assistant 输出流式写到 stdout。该模式不会打开 TUI |
 | `--output-format <format>` | | 设置非交互输出格式，支持 `text` 与 `stream-json`。仅可与 `--prompt` 一起使用，默认 `text` |
 | `--yolo` | `-y` | 以 "Ask When Needed" 模式启动：常规修改和命令自动完成；高危操作、提问和计划仍会问你 |
-| `--auto` | | 以 "Never Ask" 模式启动：完全不打断，所有操作和判断自动完成 |
+| `--auto` | | 以 "Never Ask" 模式启动：所有操作和判断自动完成，只有 Plan 模式下的计划会等你审阅 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
 | `--agent <name>` | | 以指定 Agent 作为 main agent 启动新会话。不能与 `--session`/`--continue` 同时使用 |
@@ -42,6 +42,8 @@ kimi <subcommand> [options]
 - `--yolo` 和 `--auto` 互斥——两种权限模式互斥
 - `--prompt` 不能与 `--yolo`、`--auto` 或 `--plan` 同时使用——非交互模式固定使用 `auto` 权限
 - `--output-format` 只能与 `--prompt` 一起使用
+
+非交互模式下没人能审阅计划，所以新会话不应用 `default_plan_mode`。恢复已经处于 Plan 模式的会话时照常运行，会话仍在 Plan 模式中，但计划无法在非交互模式下批准，会等你下次用 `kimi -r` 打开会话时审阅。
 
 恢复会话时，可以通过 `--auto`、`--yolo` 或 `--plan` 覆盖原会话保存的权限或计划模式。例如，`kimi --continue --auto` 会恢复最近会话并切换到 "Never Ask" 模式。
 

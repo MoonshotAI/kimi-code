@@ -43,7 +43,9 @@ import {
 } from '../protocol/rest-question';
 import {
   archiveSessionResponseSchema,
+  takeoverSessionResponseSchema,
   deleteSessionResponseSchema,
+  getSessionResponseSchema,
 } from '../protocol/rest-session';
 
 const binarySchema = {
@@ -193,6 +195,14 @@ function patchSessionAction(paths: Record<string, unknown>): void {
   projectSessionAction(paths, pathItem, 'delete', 'runSessionDeleteAction', {
     description: 'Session delete response',
     content: jsonContent(openApiDocumentEnvelopeJsonSchema(deleteSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'reload', 'runSessionReloadAction', {
+    description: 'Session reload response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(getSessionResponseSchema)),
+  });
+  projectSessionAction(paths, pathItem, 'takeover', 'runSessionTakeoverAction', {
+    description: 'Session lock takeover response',
+    content: jsonContent(openApiDocumentEnvelopeJsonSchema(takeoverSessionResponseSchema)),
   });
   delete paths[internalPath];
 }

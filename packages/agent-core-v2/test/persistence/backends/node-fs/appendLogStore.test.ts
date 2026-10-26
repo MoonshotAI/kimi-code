@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { mkdtempSync, rmSync, appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -6,6 +10,7 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { AppendLogCorruptedError, IAppendLogStore, type AppendLogTruncation } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
+import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
 const enc = new TextEncoder();
@@ -30,6 +35,7 @@ function chunkedStorage(chunks: Uint8Array[]): IFileSystemStorageService {
     list: async () => [],
     delete: async () => {},
     size: async () => undefined,
+    sizeSync: () => undefined,
     mtime: async () => undefined,
     pathFor: () => undefined,
     flush: async () => {},
@@ -790,5 +796,186 @@ describe('AppendLogStore', () => {
     record.append<Rec>(SCOPE, KEY, { n: 1 });
     await expect(record.flush()).rejects.toThrow('disk full');
     expect(events).toEqual([`${SCOPE}/${KEY}`]);
+  });
+});
+
+describe('AppendLogStore session lock integration', () => {
+  let homeDir: string;
+  let disposables: DisposableStore;
+  let storage: FileStorageService;
+  let log: IAppendLogStore;
+
+  beforeEach(() => {
+    homeDir = mkdtempSync(join(tmpdir(), 'append-log-lock-'));
+    mkdirSync(join(homeDir, SCOPE), { recursive: true });
+    disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    storage = new FileStorageService(homeDir);
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    log = ix.get(IAppendLogStore);
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+    rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  async function readAll(): Promise<void> {
+    for await (const _ of log.read(SCOPE, KEY)) {
+      void _;
+    }
+  }
+
+  it('tracks external modification via known length', async () => {
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    await readAll();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    appendFileSync(join(homeDir, SCOPE, KEY), `${JSON.stringify({ n: 1 })}\n`);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+
+    await readAll();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+
+    log.append<Rec>(SCOPE, KEY, { n: 2 });
+    await log.flush();
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not treat bytes appended while reading as already consumed', async () => {
+    const path = join(homeDir, SCOPE, KEY);
+    writeFileSync(path, `${JSON.stringify({ n: 1 })}\n`);
+    const originalReadStream = storage.readStream.bind(storage);
+    storage.readStream = async function* (scope, key, range) {
+      yield* originalReadStream(scope, key, range);
+      appendFileSync(path, `${JSON.stringify({ n: 2 })}\n`);
+    };
+
+    await readAll();
+
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+  });
+
+  it('resets known length after rewrite', async () => {
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    await readAll();
+    appendFileSync(join(homeDir, SCOPE, KEY), `${JSON.stringify({ n: 2 })}\n`);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(true);
+
+    await log.rewrite<Rec>(SCOPE, KEY, [{ n: 3 }]);
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('keeps writes in memory while the session lock binding rejects, then flushes when released', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    let acquired = false;
+    const binding = log.bindWriteGuard(SCOPE, KEY, () => acquired);
+
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    await log.flush();
+    expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(false);
+    expect(warn).toHaveBeenCalledOnce();
+
+    acquired = true;
+    await log.flush();
+    expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+
+    const out: Rec[] = [];
+    for await (const r of log.read<Rec>(SCOPE, KEY)) out.push(r);
+    expect(out).toEqual([{ n: 1 }]);
+    binding.dispose();
+    warn.mockRestore();
+  });
+
+  it('does not report external modification while an own append is in flight', async () => {
+    const realAppend = storage.append.bind(storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storage.append = async (scope, key, data, options) => {
+      await realAppend(scope, key, data, options);
+      await gate;
+    };
+
+    await readAll();
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    const flushing = log.flush();
+    await vi.waitFor(() => {
+      expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+    });
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    release();
+    await flushing;
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not report external modification before an own append lands', async () => {
+    const realAppend = storage.append.bind(storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storage.append = async (scope, key, data, options) => {
+      await gate;
+      await realAppend(scope, key, data, options);
+    };
+
+    await readAll();
+    log.append<Rec>(SCOPE, KEY, { n: 1 });
+    const flushing = log.flush();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    release();
+    await flushing;
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+
+  it('does not report external modification in the middle of a chunked append', async () => {
+    const realAppend = storage.append.bind(storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storage.append = async (scope, key, data, options) => {
+      const half = Math.floor(data.length / 2);
+      await realAppend(scope, key, data.subarray(0, half), options);
+      await gate;
+      await realAppend(scope, key, data.subarray(half), options);
+    };
+
+    await readAll();
+    log.append<Rec>(SCOPE, KEY, { n: 1234567 });
+    const flushing = log.flush();
+    await vi.waitFor(() => {
+      expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+    });
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    release();
+    await flushing;
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+  });
+  it('does not report external modification while an own rewrite is in flight', async () => {
+    const realWrite = storage.write.bind(storage);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    storage.write = async (scope, key, data, options) => {
+      await realWrite(scope, key, data, options);
+      await gate;
+    };
+
+    await readAll();
+    const rewriting = log.rewrite<Rec>(SCOPE, KEY, [{ n: 1 }, { n: 2 }]);
+    await vi.waitFor(() => {
+      expect(existsSync(join(homeDir, SCOPE, KEY))).toBe(true);
+    });
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
+    release();
+    await rewriting;
+    expect(log.externallyModified(SCOPE, KEY)).toBe(false);
   });
 });

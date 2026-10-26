@@ -67,14 +67,11 @@ Foreground mode blocks the current turn until the command completes or times out
 
 | Tool | Default Approval | Description |
 | --- | --- | --- |
-| `EnterPlanMode` | Auto-allow | Enter Plan mode |
 | `ExitPlanMode` | Auto-allow (requires user to confirm the plan) | Exit Plan mode and submit the plan |
 
-Plan mode is a constrained working state: once entered, `Write` and `Edit` are restricted to writing the current plan file only, and `TaskStop` is blocked entirely. All other tools (including `Bash`) are still governed by the current permission rules.
+Plan mode is a constrained working state that only the user can turn on (`Shift-Tab` or `/plan`); the agent has no tool to enter it. Once it is on, `Write` and `Edit` are restricted to writing the current plan file only, and `TaskStop` is blocked entirely. All other tools (including `Bash`) are still governed by the current permission rules.
 
-**`EnterPlanMode`** accepts no parameters; upon success it returns workflow guidance and the plan file path.
-
-**`ExitPlanMode`** reads the current plan file, presents the plan to the user for approval, then exits Plan mode. The optional `options` parameter lets the Agent offer 1–3 alternative approaches (each with a `label` and `description`; `label` max 80 characters) for the user to choose from during approval. Labels must be unique and cannot use reserved words such as `Approve`, `Reject`, `Reject and Exit`, or `Revise`.
+**`ExitPlanMode`** reads the current plan file, presents the plan to the user for approval in every permission mode, then exits Plan mode. The optional `options` parameter lets the Agent offer 1–3 alternative approaches (each with a `label` and `description`; `label` max 80 characters) for the user to choose from during approval. Labels must be unique and cannot use reserved words such as `Approve`, `Reject`, `Reject and Exit`, or `Revise`.
 
 ## State Management
 

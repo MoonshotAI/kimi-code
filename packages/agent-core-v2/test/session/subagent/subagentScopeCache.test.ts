@@ -265,6 +265,8 @@ function recordingAppendLog(initial: readonly WireRecord[] = []): {
     close: () => Promise.resolve(),
     acquire: () => ({ dispose: () => {} }),
     drainRetirements: () => Promise.resolve(),
+    externallyModified: () => false,
+    bindWriteGuard: () => ({ dispose: () => undefined }),
   };
   return {
     appended,

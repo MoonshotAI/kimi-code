@@ -186,7 +186,8 @@ function turnEquals(turn: TranscriptTurn, header: TurnHeader): boolean {
     turn.origin.payload === header.origin.payload &&
     turn.usage === header.usage &&
     turn.durationMs === header.durationMs &&
-    turn.error === header.error
+    turn.error === header.error &&
+    turn.wedged === header.wedged
   );
 }
 

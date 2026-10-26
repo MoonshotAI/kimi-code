@@ -29,12 +29,37 @@ export function resolveRemoteControlRelayOrigin(
 }
 
 const MAX_HTTP_HEADER_BYTES = 64 * 1024;
-const MAX_HTTP_REQUEST_BYTES = 104 * 1024 * 1024;
-const MAX_RETAINED_HTTP_BYTES = 2 * MAX_HTTP_REQUEST_BYTES;
 const HTTP_FRAGMENT_OVERHEAD_BYTES = 1024;
-const MAX_SINGLE_FRAME_RESPONSE_BYTES = 10 * 1024 * 1024;
-const RESPONSE_CHUNK_BYTES = 5 * 1024 * 1024;
 const HTTP_TUNNEL_CAPABILITIES = 'request_chunk,response_chunk,abort';
+
+export interface HttpTunnelLimits {
+  readonly maxRequestBytes: number;
+  readonly maxRetainedBytes: number;
+  readonly maxSingleFrameResponseBytes: number;
+  readonly responseChunkBytes: number;
+}
+
+const DEFAULT_HTTP_TUNNEL_LIMITS: HttpTunnelLimits = {
+  maxRequestBytes: 104 * 1024 * 1024,
+  maxRetainedBytes: 208 * 1024 * 1024,
+  maxSingleFrameResponseBytes: 10 * 1024 * 1024,
+  responseChunkBytes: 5 * 1024 * 1024,
+};
+
+function validateHttpTunnelLimits(limits: HttpTunnelLimits): void {
+  if (!Number.isSafeInteger(limits.responseChunkBytes) || limits.responseChunkBytes <= 0) {
+    throw new Error('HTTP tunnel responseChunkBytes must be a positive safe integer');
+  }
+  for (const [name, value] of [
+    ['maxRequestBytes', limits.maxRequestBytes],
+    ['maxRetainedBytes', limits.maxRetainedBytes],
+    ['maxSingleFrameResponseBytes', limits.maxSingleFrameResponseBytes],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value < 0) {
+      throw new Error(`HTTP tunnel ${name} must be a non-negative safe integer`);
+    }
+  }
+}
 const HTTP_REQUEST_TIMEOUT_MS = 30_000;
 const REGISTER_TIMEOUT_MS = 10_000;
 const MAX_RECONNECT_DELAY_MS = 30_000;
@@ -126,6 +151,7 @@ export interface RemoteControlOptions {
   readonly onStatus?: (status: RemoteControlStatus) => void;
   readonly pingIntervalMs?: number;
   readonly silenceTimeoutMs?: number;
+  readonly httpTunnelLimits?: Partial<HttpTunnelLimits>;
   readonly signal?: AbortSignal;
 }
 
@@ -320,6 +346,8 @@ export async function startRemoteControl(
   if (localServerToken().length === 0) {
     throw new Error('Remote Control requires local server authentication.');
   }
+  const httpTunnelLimits = { ...DEFAULT_HTTP_TUNNEL_LIMITS, ...options.httpTunnelLimits };
+  validateHttpTunnelLimits(httpTunnelLimits);
   const auth = resolveKimiRemoteControlAuth({
     configuredOAuthHost: options.configuredOAuthHost,
     configuredOAuthKey: options.configuredOAuthKey,
@@ -347,6 +375,7 @@ export async function startRemoteControl(
   }
   const client = new RemoteControlClient({
     ...options,
+    httpTunnelLimits,
     localServerToken,
     relayOrigin,
     deviceId,
@@ -401,6 +430,7 @@ class RemoteControlClient {
   private reconnectImmediately = false;
   private readonly pingIntervalMs: number;
   private readonly silenceTimeoutMs: number;
+  private readonly httpTunnelLimits: HttpTunnelLimits;
   private stopped = false;
   private userRequested = false;
   private connected = false;
@@ -410,11 +440,12 @@ class RemoteControlClient {
   private initialReject: ((error: unknown) => void) | undefined;
 
   constructor(
-    options: Omit<RemoteControlOptions, 'localServerToken'> & {
+    options: Omit<RemoteControlOptions, 'localServerToken' | 'httpTunnelLimits'> & {
       readonly localServerToken: () => string;
       readonly relayOrigin: string;
       readonly deviceId: string;
       readonly refreshToken: string;
+      readonly httpTunnelLimits: HttpTunnelLimits;
     },
   ) {
     this.localOrigin = options.localOrigin.replace(/\/+$/, '');
@@ -427,6 +458,7 @@ class RemoteControlClient {
     this.onStatus = options.onStatus ?? (() => {});
     this.pingIntervalMs = options.pingIntervalMs ?? RELAY_PING_INTERVAL_MS;
     this.silenceTimeoutMs = options.silenceTimeoutMs ?? RELAY_SILENCE_TIMEOUT_MS;
+    this.httpTunnelLimits = options.httpTunnelLimits;
   }
 
   async start(): Promise<void> {
@@ -539,6 +571,7 @@ class RemoteControlClient {
           retain,
         ),
       this.stderr,
+      this.httpTunnelLimits,
     );
     this.httpTunnel = tunnel;
     this.watchSocket(http, 'http');
@@ -759,7 +792,10 @@ export class HttpTunnel {
     private readonly socket: WebSocket,
     private readonly forwardLocal: LocalHttpForward,
     private readonly stderr: Pick<NodeJS.WriteStream, 'write'>,
-  ) {}
+    private readonly limits: HttpTunnelLimits = DEFAULT_HTTP_TUNNEL_LIMITS,
+  ) {
+    validateHttpTunnelLimits(limits);
+  }
 
   handleMessage(data: RawData): void {
     if (this.socket.readyState !== WebSocket.OPEN) return;
@@ -787,20 +823,20 @@ export class HttpTunnel {
         throw new SyntaxError('invalid HTTP tunnel request message');
       }
       const minDecodedBytes = Math.floor(bodyBase64.length / 4) * 3 - 2;
-      if (transfer.size + minDecodedBytes > MAX_HTTP_REQUEST_BYTES) {
+      if (transfer.size + minDecodedBytes > this.limits.maxRequestBytes) {
         throw new SyntaxError(
-          `HTTP tunnel request exceeds ${MAX_HTTP_REQUEST_BYTES / 1024 / 1024} MiB`,
+          `HTTP tunnel request exceeds ${this.limits.maxRequestBytes / 1024 / 1024} MiB`,
         );
       }
       const chunk = decodeBase64(bodyBase64);
-      if (transfer.size + chunk.length > MAX_HTTP_REQUEST_BYTES) {
+      if (transfer.size + chunk.length > this.limits.maxRequestBytes) {
         throw new SyntaxError(
-          `HTTP tunnel request exceeds ${MAX_HTTP_REQUEST_BYTES / 1024 / 1024} MiB`,
+          `HTTP tunnel request exceeds ${this.limits.maxRequestBytes / 1024 / 1024} MiB`,
         );
       }
       if (!this.tryRetain(transfer, transfer.retained + chunk.length + HTTP_FRAGMENT_OVERHEAD_BYTES)) {
         throw new SyntaxError(
-          `HTTP tunnel retained bytes exceed ${MAX_RETAINED_HTTP_BYTES / 1024 / 1024} MiB`,
+          `HTTP tunnel retained bytes exceed ${this.limits.maxRetainedBytes / 1024 / 1024} MiB`,
         );
       }
       chunks.push(chunk);
@@ -859,7 +895,7 @@ export class HttpTunnel {
     if (transfer.controller.signal.aborted) return;
     transfer.chunks = undefined;
     this.retain(transfer, byteLength(response));
-    transfer.frames = responseFrames(transfer.id, response);
+    transfer.frames = responseFrames(transfer.id, response, this.limits);
     this.ready.add(transfer);
     void this.pump();
   }
@@ -889,7 +925,7 @@ export class HttpTunnel {
   private tryRetain(transfer: HttpTransfer, bytes: number): boolean {
     if (transfer.controller.signal.aborted) return false;
     const total = this.retainedBytes - transfer.retained + bytes;
-    if (bytes > transfer.retained && total > MAX_RETAINED_HTTP_BYTES) return false;
+    if (bytes > transfer.retained && total > this.limits.maxRetainedBytes) return false;
     this.retain(transfer, bytes);
     return true;
   }
@@ -910,7 +946,11 @@ export class HttpTunnel {
   }
 }
 
-function responseFrames(requestId: string, response: readonly Buffer[]): (() => string)[] {
+function responseFrames(
+  requestId: string,
+  response: readonly Buffer[],
+  limits: HttpTunnelLimits,
+): (() => string)[] {
   const length = byteLength(response);
   const frame =
     (type: string, isLast: boolean, start: number, end: number) =>
@@ -921,11 +961,11 @@ function responseFrames(requestId: string, response: readonly Buffer[]): (() => 
         is_last: isLast,
         body_base64: Buffer.concat(sliceChunks(response, start, end)).toString('base64'),
       });
-  if (length <= MAX_SINGLE_FRAME_RESPONSE_BYTES) return [frame('response', true, 0, length)];
+  if (length <= limits.maxSingleFrameResponseBytes) return [frame('response', true, 0, length)];
   const frames: (() => string)[] = [];
-  for (let offset = 0; offset <= length; offset += RESPONSE_CHUNK_BYTES) {
-    const end = Math.min(offset + RESPONSE_CHUNK_BYTES, length);
-    frames.push(frame('response_chunk', end - offset < RESPONSE_CHUNK_BYTES, offset, end));
+  for (let offset = 0; offset <= length; offset += limits.responseChunkBytes) {
+    const end = Math.min(offset + limits.responseChunkBytes, length);
+    frames.push(frame('response_chunk', end - offset < limits.responseChunkBytes, offset, end));
   }
   return frames;
 }

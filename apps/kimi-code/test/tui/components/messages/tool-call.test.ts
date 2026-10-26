@@ -198,6 +198,86 @@ describe('ToolCallComponent', () => {
     expect(collapsed).toContain('… (2 more lines, ctrl+o to expand)');
   });
 
+  it('keeps a failing command fully visible when only one row would hide', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_edge',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_edge',
+        output: ['err1', 'err2', 'err3', 'err4'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    const collapsed = strip(component.render(100).join('\n'));
+    expect(collapsed).toContain('err1');
+    expect(collapsed).toContain('err4');
+    expect(collapsed).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('advertises ctrl+o for a failing command once folding saves a row', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_fold',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_fold',
+        output: ['err1', 'err2', 'err3', 'err4', 'err5'].join('\n'),
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('counts error rows like the preview does, interior blanks included', () => {
+    // Four non-empty rows plus an interior blank: the preview folds (five
+    // rendered rows > cap + 1), so the predicate must not count non-empty
+    // lines only.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_blank',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_blank',
+        output: 'a\n\nb\nc\nd',
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('does not count control-only rows the preview strips from Bash errors', () => {
+    // Four visible rows plus a trailing reset: the sanitized preview shows
+    // all four without folding, so ctrl+o must stay off.
+    const component = new ToolCallComponent(
+      {
+        id: 'call_shell_err_ansi',
+        name: 'Bash',
+        args: { command: 'false' },
+      },
+      {
+        tool_call_id: 'call_shell_err_ansi',
+        output: 'a\nb\nc\nd\n\u001B[0m',
+        is_error: true,
+      },
+    );
+
+    component.render(100);
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
   it('renders live Bash output while the command is running', () => {
     const component = new ToolCallComponent(
       {
@@ -2005,6 +2085,62 @@ describe('ToolCallComponent', () => {
     expect(after).toContain('line1');
     expect(after).not.toContain('line25');
     expect(after).toContain('ctrl+o to expand');
+  });
+
+  it('shows a Write preview one row over the cap instead of swapping it for a same-height hint', () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_edge',
+        name: 'Write',
+        args: { file_path: 'edge.ts', content: lines.join('\n') },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line11');
+    expect(out).not.toContain('more lines');
+    expect(component.hasHiddenContent()).toBe(false);
+  });
+
+  it('caps the Write preview once folding saves at least one row', () => {
+    const lines: string[] = [];
+    for (let i = 1; i <= 12; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_edge_cap',
+        name: 'Write',
+        args: { file_path: 'edge2.ts', content: lines.join('\n') },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('line1');
+    expect(out).toContain('line10');
+    expect(out).not.toContain('line11');
+    expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
+  });
+
+  it('keeps the Write cap and the expand predicate consistent for a trailing newline', () => {
+    // highlightLines keeps a trailing empty entry for content ending in '\n',
+    // so the renderer counts 12 rows for 11 visible lines; the predicate must
+    // count the same way or ctrl+o is refused while the hint stays.
+    const lines: string[] = [];
+    for (let i = 1; i <= 11; i++) lines.push(`line${String(i)}`);
+    const component = new ToolCallComponent(
+      {
+        id: 'call_write_trailing',
+        name: 'Write',
+        args: { file_path: 'noext', content: lines.join('\n') + '\n' },
+      },
+      undefined,
+    );
+    const out = strip(component.render(100).join('\n'));
+    expect(out).toContain('… (2 more lines, 12 total, ctrl+o to expand)');
+    expect(component.hasHiddenContent()).toBe(true);
   });
 
   it('refreshes the header when file_path arrives in a later streaming delta', () => {
