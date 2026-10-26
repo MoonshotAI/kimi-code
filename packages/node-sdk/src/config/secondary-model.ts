@@ -24,7 +24,6 @@ export function secondaryModelPatch(
     model: _model,
     defaultModel: _defaultModel,
     models: _models,
-    force: _force,
     ...rawPatch
   } = secondary;
   const patch = Object.fromEntries(

@@ -73,7 +73,6 @@ import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
-  isSubagentModelForced,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
@@ -185,10 +184,7 @@ export class SubagentTool implements ISubagentTool {
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
     }
-    const modelLines = buildSubagentModelDescriptions(
-      this.config,
-      this.profile.data().modelAlias,
-    );
+    const modelLines = buildSubagentModelDescriptions(this.config);
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;
     }
@@ -242,19 +238,9 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private anySubagentModelSupports(supports: (capabilities: ModelCapability) => boolean): boolean {
-    if (isSubagentModelForced(this.config)) {
-      const forced = resolveSubagentModelPool(this.config)?.defaultModel;
-      if (forced === undefined) return false;
-      try {
-        const capabilities = this.modelCatalog.get(forced).capabilities;
-        return supports(capabilities);
-      } catch {
-        return false;
-      }
-    }
-    const own = this.profile.getModelCapabilities();
-    if (supports(own)) return true;
     const pool = resolveSubagentModelPool(this.config);
+    const ownReachable = pool === undefined || this.flags.enabled(SUBAGENT_FORK_FLAG_ID);
+    if (ownReachable && supports(this.profile.getModelCapabilities())) return true;
     if (pool === undefined) return false;
     for (const alias of Object.keys(pool.models)) {
       try {

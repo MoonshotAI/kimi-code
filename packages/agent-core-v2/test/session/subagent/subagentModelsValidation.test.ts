@@ -93,12 +93,6 @@ describe('SessionSubagentModelsValidationService', () => {
     );
   });
 
-  it('constructs fine when force pins the legacy model fallback', () => {
-    modelIds.add('provider/fast');
-    setup({ [SECONDARY_MODEL_SECTION]: { model: 'provider/fast', force: true } });
-    expect(resolve()).toBeUndefined();
-  });
-
   it('fails session creation when a pool table relies on the legacy model key for its default', () => {
     modelIds.add('provider/fast');
     setup({
@@ -198,45 +192,19 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(isError2((error as Error2).cause)).toBe(true);
   });
 
-  it('constructs fine when force pins a resolvable default_model', () => {
-    modelIds.add('provider/fast');
-    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/fast', force: true } });
-    expect(resolve()).toBeUndefined();
-  });
-
-  it('fails session creation when force is set without default_model', () => {
+  it('ignores the removed force key instead of failing session creation', () => {
     setup({ [SECONDARY_MODEL_SECTION]: { force: true } });
-    const error = resolve();
-    expect(isError2(error)).toBe(true);
-    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain(
-      '[secondary_model].default_model is required when [secondary_model].force is set',
-    );
-  });
+    expect(resolve()).toBeUndefined();
 
-  it('fails session creation when force is combined with a models table', () => {
-    modelIds.add('provider/fast');
+    modelIds.add('provider/fast').add('provider/smart');
     setup({
       [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/fast',
-        models: { 'provider/fast': 'fast and cheap' },
+        models: { 'provider/fast': 'fast and cheap', 'provider/smart': '' },
         force: true,
       },
     });
-    const error = resolve();
-    expect(isError2(error)).toBe(true);
-    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain(
-      '[secondary_model].force cannot be combined with [secondary_model.models]',
-    );
-  });
-
-  it('fails session creation when the forced default_model does not resolve', () => {
-    setup({ [SECONDARY_MODEL_SECTION]: { defaultModel: 'provider/typo', force: true } });
-    const error = resolve();
-    expect(isError2(error)).toBe(true);
-    expect((error as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
-    expect((error as Error2).message).toContain('"provider/typo"');
+    expect(resolve()).toBeUndefined();
   });
 
   it('fails session creation when default_effort is not supported by a pool model', () => {
@@ -284,7 +252,7 @@ describe('SessionSubagentModelsValidationService', () => {
     expect(resolve()).toBeUndefined();
   });
 
-  it('fails session creation when the forced model does not support default_effort', () => {
+  it('fails session creation when a lone default_model does not support default_effort', () => {
     modelIds.add('provider/fast');
     modelMeta.set('provider/fast', {
       capabilities: { thinking: true },
@@ -293,7 +261,6 @@ describe('SessionSubagentModelsValidationService', () => {
     setup({
       [SECONDARY_MODEL_SECTION]: {
         defaultModel: 'provider/fast',
-        force: true,
         defaultEffort: 'xhigh',
       },
     });
