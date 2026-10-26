@@ -136,6 +136,20 @@ function routeFor(model: Model): AdapterRoute {
   }
 }
 
+export function resolveProtocolCapability(
+  protocol: Protocol,
+  modelName: string,
+  providerType?: string,
+): ModelCapability {
+  const definition =
+    providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
+  const hooked = definition?.capability?.(modelName);
+  if (hooked !== undefined) return toV2Capability(hooked);
+  const baseId = definition?.baseProtocol ?? protocol;
+  const baseCapability = getProtocolBase(baseId)?.base.capability?.(modelName);
+  return baseCapability === undefined ? UNKNOWN_CAPABILITY : toV2Capability(baseCapability);
+}
+
 export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   declare readonly _serviceBrand: undefined;
 
@@ -157,18 +171,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   }
 
   resolveCapability(protocol: Protocol, modelName: string, providerType?: string): ModelCapability {
-    const identity = this.resolveAdapterIdentity(protocol, providerType);
-    const definition =
-      providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
-    const hooked = definition?.capability?.(modelName);
-    if (hooked !== undefined) {
-      return toV2Capability(hooked);
-    }
-    const baseCapability = getProtocolBase(identity.baseId)?.base.capability?.(modelName);
-    if (baseCapability !== undefined) {
-      return toV2Capability(baseCapability);
-    }
-    return UNKNOWN_CAPABILITY;
+    return resolveProtocolCapability(protocol, modelName, providerType);
   }
 
   resolve(model: Model): ResolvedLlmModel {

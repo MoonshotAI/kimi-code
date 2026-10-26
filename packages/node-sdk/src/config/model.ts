@@ -1,3 +1,5 @@
+import { resolveModelProtocol } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-auth';
+import { resolveProtocolCapability } from '@moonshot-ai/agent-core-v2/llm-adapter/protocol/protocolAdapterRegistry';
 import {
   BUDGET_THINKING_EFFORTS,
   matchKnownAnthropicModelProfile,
@@ -27,7 +29,26 @@ export function effectiveModelAlias(
       ? { ...effective, maxInputSize: effective.maxContextSize }
       : effective;
 
-  return withAnthropicProfile(clamped, providerType);
+  return withRuntimeThinkingCapabilities(withAnthropicProfile(clamped, providerType), providerType);
+}
+
+function withRuntimeThinkingCapabilities(model: ModelAlias, providerType?: ProviderType): ModelAlias {
+  const capabilities = model.capabilities?.map((capability) => {
+    const normalized = capability.trim().toLowerCase();
+    return normalized === 'thinking' || normalized === 'always_thinking' ? normalized : capability;
+  }) ?? [];
+  const protocol = resolveModelProtocol(model, providerType === undefined ? undefined : { type: providerType });
+  if (
+    protocol !== undefined &&
+    resolveProtocolCapability(protocol, model.model, providerType).thinking &&
+    !capabilities.includes('thinking') &&
+    !capabilities.includes('always_thinking')
+  ) {
+    capabilities.push('thinking');
+  }
+  return model.capabilities === undefined && capabilities.length === 0
+    ? model
+    : { ...model, capabilities };
 }
 
 function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): ModelAlias {

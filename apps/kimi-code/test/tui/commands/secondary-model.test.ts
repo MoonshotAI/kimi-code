@@ -403,6 +403,105 @@ describe('handleSecondaryModelCommand', () => {
     });
   });
 
+  it('preserves an effort for a reasoning model whose capability is detected by the engine', async () => {
+    await withRealConfig({ defaultModel: 'reasoner', defaultEffort: 'high' }, async (host, harness) => {
+      await harness.setConfig({ models: { reasoner: { model: 'o3-mini', capabilities: [] } } });
+      const config = await harness.getConfig();
+      host.state.appState.availableModels = config.models ?? {};
+      host.state.appState.availableProviders = config.providers;
+      await handleSecondaryModelCommand(host, '');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      expect(effortPicker.render(100).join('\n')).toContain('[ High ]');
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'reasoner', defaultEffort: 'high',
+      });
+    });
+  });
+
+  it.each([
+    { label: 'declared thinking', capabilities: [' Thinking '], override: undefined, alwaysThinking: false },
+    { label: 'declared always-thinking', capabilities: [' ALWAYS_THINKING '], override: undefined, alwaysThinking: true },
+    { label: 'overridden thinking', capabilities: [], override: { capabilities: [' Thinking '] }, alwaysThinking: false },
+  ])('normalizes $label capabilities before preserving the effort', async ({ capabilities, override, alwaysThinking }) => {
+    await withRealConfig({ defaultModel: 'reasoner', defaultEffort: 'high' }, async (host, harness) => {
+      await harness.setConfig({ models: { reasoner: { capabilities, overrides: override } } });
+      const config = await harness.getConfig();
+      host.state.appState.availableModels = config.models ?? {};
+      host.state.appState.availableProviders = config.providers;
+      await handleSecondaryModelCommand(host, '');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      const rendered = effortPicker.render(100).join('\n');
+      expect(rendered).toContain('[ High ]');
+      expect(rendered.includes('Off')).toBe(!alwaysThinking);
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'reasoner', defaultEffort: 'high',
+      });
+    });
+  });
+
+  it('revalidates detected capability if the provider changes while the picker is open', async () => {
+    await withRealConfig({ defaultModel: 'reasoner', defaultEffort: 'high' }, async (host, harness) => {
+      await harness.setConfig({ models: { reasoner: { model: 'o3-mini', capabilities: [] } } });
+      const config = await harness.getConfig();
+      host.state.appState.availableModels = config.models ?? {};
+      host.state.appState.availableProviders = config.providers;
+      await handleSecondaryModelCommand(host, '');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      expect(effortPicker.render(100).join('\n')).toContain('[ High ]');
+      await harness.setConfig({ providers: { test: { type: 'anthropic' } } });
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('high'));
+      });
+      expect(host.showStatus).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'reasoner', defaultEffort: 'high',
+      });
+    });
+  });
+
+  it('keeps concrete efforts unavailable for a model without runtime thinking support', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      await harness.setConfig({ models: { reasoner: { model: 'gpt-4o', capabilities: [] } } });
+      const config = await harness.getConfig();
+      host.state.appState.availableModels = config.models ?? {};
+      host.state.appState.availableProviders = config.providers;
+      await handleSecondaryModelCommand(host, '');
+      const picker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      picker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      const rendered = effortPicker.render(100).join('\n');
+      expect(rendered).not.toContain('Low');
+      expect(rendered).not.toContain('High');
+      expect(rendered).not.toContain('Max');
+      effortPicker.handleInput(RIGHT);
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'reasoner', defaultEffort: 'off',
+      });
+    });
+  });
+
   it('offers only levels shared by every effective model in the pool', async () => {
     const { host } = makeHost({
       secondaryModel: { defaultModel: 'reasoner', models: { reasoner: 'deep tasks', fast: 'quick tasks' } },
