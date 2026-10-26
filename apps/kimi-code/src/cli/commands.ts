@@ -4,7 +4,7 @@ import { registerImportSessionsCommand } from '#/session-import/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
-import type { InstallIntent } from './update/types';
+import type { InstallIntent, UpdateChannel } from './update/types';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
@@ -25,6 +25,7 @@ export type UpdateDownloadHandler = (
   version: string,
   manual: boolean,
   intent: InstallIntent,
+  channel: UpdateChannel,
 ) => void;
 
 export function createProgram(
@@ -158,19 +159,19 @@ export function createProgram(
     });
 
   // Self-spawned worker for native staged updates (detached background
-  // download, or foreground from `kimi upgrade` — `--manual` marks the
-  // latter's stage as user-requested, `--switch-channel` lets it install an
-  // older stable release over a canary build). Hidden: not user-facing.
+  // download, or foreground from `kimi upgrade`. Hidden: not user-facing.
   program
     .command('__update_download', { hidden: true })
     .argument('<version>')
     .option('--manual', 'the stage answers an explicit user-initiated upgrade')
-    .option('--switch-channel', 'the stage switches a canary build back to stable')
-    .action((targetVersion: string, options: { manual?: boolean; switchChannel?: boolean }) => {
+    .option('--switch-channel', 'the stage changes the selected update channel')
+    .option('--channel <channel>', 'the selected update channel')
+    .action((targetVersion: string, options: { manual?: boolean; switchChannel?: boolean; channel?: UpdateChannel }) => {
       onUpdateDownload(
         targetVersion,
         options.manual === true,
         options.switchChannel === true ? 'switch-channel' : 'upgrade',
+        options.channel ?? 'stable',
       );
     });
 

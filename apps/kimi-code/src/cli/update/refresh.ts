@@ -15,24 +15,22 @@ export interface RefreshUpdateCacheDeps {
   readonly timeoutMs?: number;
 }
 
-/** The cache just written, plus whether the canary pointer had to be skipped. */
-export interface RefreshedUpdateCache extends UpdateCache {
-  readonly degraded: boolean;
-}
+export type RefreshUpdateCacheOptions = Partial<RefreshUpdateCacheDeps> & {
+  readonly channel: UpdateChannel;
+};
 
 export async function refreshUpdateCache(
-  overrides: Partial<RefreshUpdateCacheDeps> = {},
-): Promise<RefreshedUpdateCache> {
-  const channel = overrides.channel ?? 'stable';
-  const resolved: RefreshUpdateCacheDeps = {
+  overrides: RefreshUpdateCacheOptions,
+): Promise<UpdateCache> {
+  const channel = overrides.channel;
+  const resolved = {
     fetchLatest:
       overrides.fetchLatest ?? (() => fetchChannelFeed(channel, undefined, overrides.timeoutMs)),
     writeCache: overrides.writeCache ?? writeUpdateCache,
     now: overrides.now ?? (() => new Date()),
-    channel,
   };
 
-  const { latest, manifest, degraded } = await resolved.fetchLatest();
+  const { latest, manifest } = await resolved.fetchLatest();
   const cache: UpdateCache = {
     source: 'cdn',
     channel,
@@ -41,5 +39,5 @@ export async function refreshUpdateCache(
     manifest,
   };
   await resolved.writeCache(cache);
-  return { ...cache, degraded };
+  return cache;
 }

@@ -15,13 +15,14 @@ import {
 } from '#/cli/update/install-lock';
 import {
   hashFileSha256,
+  matchesStagedUpdateRequest,
   promoteStagedUpdateToManual,
   readStagedNativeUpdate,
   stagedExePath,
   stageNativeUpdate,
 } from '#/cli/update/native-stage';
 import { detectNativeInstall } from '#/cli/update/source';
-import type { InstallIntent } from '#/cli/update/types';
+import type { InstallIntent, UpdateChannel } from '#/cli/update/types';
 
 const LOCK_HELD_POLL_INTERVAL_MS = 2_000;
 
@@ -50,24 +51,28 @@ type StagedUpdateWait =
  * restoring the metadata right now, and reporting adoption for a promotion
  * that never persisted would strand the update under the env opt-out.
  *
- * A channel switch adopts only a stage that carries the switch intent: any
- * other stage of an older version would be discarded by the startup swap's
- * downgrade guard, silently dropping the switch the user confirmed.
+ * A channel switch adopts only a stage with the same version, channel, and
+ * confirmed switch intent as the request.
  */
 async function waitForStagedUpdate(
   version: string,
   exePath: string,
   manual: boolean,
   intent: InstallIntent,
+  channel: UpdateChannel,
 ): Promise<StagedUpdateWait> {
   for (;;) {
     const staged = await readStagedNativeUpdate(exePath);
-    const digest =
-      staged !== null && staged.version === version
-        ? await hashFileSha256(stagedExePath(exePath, staged))
-        : null;
-    const intentMatches = intent !== 'switch-channel' || staged?.intent === 'switch-channel';
-    if (staged !== null && digest === staged.sha256 && intentMatches) {
+    const requestMatches = staged !== null && matchesStagedUpdateRequest(staged, {
+      version,
+      channel,
+      manual,
+      intent,
+    });
+    const digest = staged !== null && requestMatches
+      ? await hashFileSha256(stagedExePath(exePath, staged))
+      : null;
+    if (staged !== null && requestMatches && digest === staged.sha256) {
       if (!manual || (await promoteStagedUpdateToManual(exePath, staged))) {
         return { status: 'staged' };
       }
@@ -92,9 +97,14 @@ export async function runUpdateDownloadCommand(
   version: string,
   manual: boolean = false,
   intent: InstallIntent = 'upgrade',
+  channel: UpdateChannel = 'stable',
 ): Promise<number> {
   if (!detectNativeInstall()) {
     process.stderr.write('error: update download is only available in the native build\n');
+    return 1;
+  }
+  if (channel !== 'stable' && channel !== 'dev') {
+    process.stderr.write(`error: invalid update channel ${JSON.stringify(channel)}\n`);
     return 1;
   }
   const out = process.stdout;
@@ -107,7 +117,7 @@ export async function runUpdateDownloadCommand(
       out.write(
         `A download of Kimi Code ${version} is already in progress; waiting for it to finish…\n`,
       );
-      const wait = await waitForStagedUpdate(version, process.execPath, manual, intent);
+      const wait = await waitForStagedUpdate(version, process.execPath, manual, intent, channel);
       if (wait.status === 'staged') {
         out.write(`Kimi Code ${version} is downloaded; it applies on the next start.\n`);
         return 0;
@@ -132,6 +142,7 @@ export async function runUpdateDownloadCommand(
   try {
     const result = await stageNativeUpdate({
       version,
+      channel,
       exePath: process.execPath,
       onProgress,
       manual,

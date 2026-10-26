@@ -17,7 +17,8 @@ describe('refreshUpdateCache', () => {
   it('writes a fresh cache carrying the manifest on successful fetch', async () => {
     const writeCache = vi.fn(async () => {});
     const result = await refreshUpdateCache({
-      fetchLatest: async () => ({ latest: '0.5.0', manifest: MANIFEST, degraded: false }),
+      channel: 'stable',
+      fetchLatest: async () => ({ latest: '0.5.0', manifest: MANIFEST }),
       writeCache,
       now: () => new Date('2026-05-20T12:34:56.000Z'),
     });
@@ -29,34 +30,35 @@ describe('refreshUpdateCache', () => {
       latest: '0.5.0',
       manifest: MANIFEST,
     };
-    expect(result).toEqual({ ...written, degraded: false });
+    expect(result).toEqual(written);
     expect(writeCache).toHaveBeenCalledWith(written);
   });
 
-  it('tags the cache with the requested channel and reports a degraded canary feed', async () => {
+  it('tags the cache with the requested channel', async () => {
     const writeCache = vi.fn(async () => {});
     const result = await refreshUpdateCache({
-      channel: 'canary',
-      fetchLatest: async () => ({ latest: '0.5.0', manifest: MANIFEST, degraded: true }),
+      channel: 'dev',
+      fetchLatest: async () => ({ latest: '0.5.0', manifest: MANIFEST }),
       writeCache,
       now: () => new Date('2026-05-20T12:34:56.000Z'),
     });
 
     const written = {
       source: 'cdn',
-      channel: 'canary',
+      channel: 'dev',
       checkedAt: '2026-05-20T12:34:56.000Z',
       latest: '0.5.0',
       manifest: MANIFEST,
     };
-    expect(result).toEqual({ ...written, degraded: true });
+    expect(result).toEqual(written);
     expect(writeCache).toHaveBeenCalledWith(written);
   });
 
   it('writes a null manifest when the fetch fell back to plain text', async () => {
     const writeCache = vi.fn(async () => {});
     const result = await refreshUpdateCache({
-      fetchLatest: async () => ({ latest: '0.5.0', manifest: null, degraded: false }),
+      channel: 'stable',
+      fetchLatest: async () => ({ latest: '0.5.0', manifest: null }),
       writeCache,
       now: () => new Date('2026-05-20T12:34:56.000Z'),
     });
@@ -68,7 +70,7 @@ describe('refreshUpdateCache', () => {
       latest: '0.5.0',
       manifest: null,
     };
-    expect(result).toEqual({ ...written, degraded: false });
+    expect(result).toEqual(written);
     expect(writeCache).toHaveBeenCalledWith(written);
   });
 
@@ -76,6 +78,7 @@ describe('refreshUpdateCache', () => {
     const writeCache = vi.fn(async () => {});
     await expect(
       refreshUpdateCache({
+        channel: 'stable',
         fetchLatest: async () => {
           throw new Error('network down');
         },
@@ -101,6 +104,7 @@ describe('refreshUpdateCache', () => {
     );
     try {
       const result = refreshUpdateCache({
+        channel: 'stable',
         timeoutMs: 10_000,
         writeCache: async () => {},
       });

@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
       version:
-        description: 'Override the CLI package version before building (canary builds); empty keeps package.json'
+        description: 'Override the CLI package version before building; empty keeps package.json'
         required: false
         type: string
         default: ''

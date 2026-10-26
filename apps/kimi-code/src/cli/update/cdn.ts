@@ -1,8 +1,8 @@
-import { gt, valid } from 'semver';
+import { valid } from 'semver';
 import { z } from 'zod';
 
 import {
-  kimiCodeCdnCanaryChannelUrl,
+  kimiCodeCdnDevChannelUrl,
   kimiCodeCdnLatestJsonUrl,
   kimiCodeCdnLatestUrl,
 } from '#/constant/app';
@@ -37,17 +37,27 @@ export interface FetchLatestResult {
   readonly manifest: UpdateManifest | null;
 }
 
-async function fetchWithTimeout(
+async function fetchWithTimeout<T>(
   fetchImpl: typeof fetch,
   input: string,
   timeoutMs: number,
-): Promise<Response> {
+  read: (response: Response) => Promise<T>,
+): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => {
     controller.abort();
   }, timeoutMs);
+  const operation = (async () => {
+    const response = await fetchImpl(input, { signal: controller.signal });
+    return read(response);
+  })();
+  const aborted = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener('abort', () => {
+      reject(new Error('aborted'));
+    });
+  });
   try {
-    return await fetchImpl(input, { signal: controller.signal });
+    return await Promise.race([operation, aborted]);
   } finally {
     clearTimeout(timeout);
   }
@@ -67,15 +77,16 @@ export async function fetchLatestVersionFromCdn(
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
 ): Promise<string> {
-  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestUrl(), timeoutMs);
-  if (!response.ok) {
-    throw new Error(`CDN /latest returned HTTP ${response.status}`);
-  }
-  const raw = (await response.text()).trim();
-  if (valid(raw) === null) {
-    throw new Error(`CDN /latest returned invalid semver: ${JSON.stringify(raw)}`);
-  }
-  return raw;
+  return fetchWithTimeout(fetchImpl, kimiCodeCdnLatestUrl(), timeoutMs, async (response) => {
+    if (!response.ok) {
+      throw new Error(`CDN /latest returned HTTP ${response.status}`);
+    }
+    const raw = (await response.text()).trim();
+    if (valid(raw) === null) {
+      throw new Error(`CDN /latest returned invalid semver: ${JSON.stringify(raw)}`);
+    }
+    return raw;
+  });
 }
 
 async function fetchManifestFromCdn(
@@ -83,11 +94,12 @@ async function fetchManifestFromCdn(
   url: string,
   timeoutMs: number,
 ): Promise<UpdateManifest> {
-  const response = await fetchWithTimeout(fetchImpl, url, timeoutMs);
-  if (!response.ok) {
-    throw new Error(`CDN ${url} returned HTTP ${response.status}`);
-  }
-  return UpdateManifestSchema.parse(JSON.parse(await response.text()));
+  return fetchWithTimeout(fetchImpl, url, timeoutMs, async (response) => {
+    if (!response.ok) {
+      throw new Error(`CDN ${url} returned HTTP ${response.status}`);
+    }
+    return UpdateManifestSchema.parse(JSON.parse(await response.text()));
+  });
 }
 
 /**
@@ -113,38 +125,17 @@ export async function fetchLatestFromCdn(
 
 export interface ChannelFeed extends FetchLatestResult {
   readonly channel: UpdateChannel;
-  /** The canary pointer was unreachable, so this is the stable result. */
-  readonly degraded: boolean;
 }
 
-/**
- * The version a channel should move to right now. Stable is exactly
- * `fetchLatestFromCdn`. Canary reads both feeds in parallel and takes the
- * higher version, so a stable release that overtakes the last canary still
- * reaches canary users; an unreachable canary pointer degrades to the stable
- * result instead of stranding the channel.
- *
- * **Throws** only when every source fails; callers must catch.
- */
+/** Dev failures stay failures because stable is a different release line. */
 export async function fetchChannelFeed(
   channel: UpdateChannel,
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
 ): Promise<ChannelFeed> {
   if (channel === 'stable') {
-    return { channel, degraded: false, ...(await fetchLatestFromCdn(fetchImpl, timeoutMs)) };
+    return { channel, ...(await fetchLatestFromCdn(fetchImpl, timeoutMs)) };
   }
-  const [stable, canary] = await Promise.allSettled([
-    fetchLatestFromCdn(fetchImpl, timeoutMs),
-    fetchManifestFromCdn(fetchImpl, kimiCodeCdnCanaryChannelUrl(), timeoutMs),
-  ]);
-  if (canary.status === 'rejected') {
-    if (stable.status === 'rejected') throw stable.reason;
-    return { channel, degraded: true, ...stable.value };
-  }
-  const pointer = { latest: canary.value.version, manifest: canary.value };
-  if (stable.status === 'rejected' || gt(pointer.latest, stable.value.latest)) {
-    return { channel, degraded: false, ...pointer };
-  }
-  return { channel, degraded: false, ...stable.value };
+  const manifest = await fetchManifestFromCdn(fetchImpl, kimiCodeCdnDevChannelUrl(), timeoutMs);
+  return { channel, latest: manifest.version, manifest };
 }

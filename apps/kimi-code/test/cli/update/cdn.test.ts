@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { fetchChannelFeed, fetchLatestFromCdn, fetchLatestVersionFromCdn } from '#/cli/update/cdn';
 import {
-  kimiCodeCdnCanaryChannelUrl,
+  kimiCodeCdnDevChannelUrl,
   kimiCodeCdnLatestJsonUrl,
   kimiCodeCdnLatestUrl,
 } from '#/constant/app';
@@ -266,85 +266,81 @@ describe('fetchLatestFromCdn', () => {
 
 function pointerBody(version: string): string {
   return JSON.stringify({
+    schemaVersion: 1,
     version,
     publishedAt: '2026-10-26T01:00:00.000Z',
     rollout: [],
-    channel: 'canary',
-    commit: 'a'.repeat(40),
-    ref: 'main',
-    trigger: 'nightly',
-    builtAt: '2026-10-26T00:43:00.000Z',
   });
 }
 
 describe('fetchChannelFeed', () => {
   it('reads only the stable feed on the stable channel', async () => {
-    const f = mockRoutedFetch({
+    const fetchImpl = mockRoutedFetch({
       [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
-      [kimiCodeCdnCanaryChannelUrl()]: { body: pointerBody('2.1.0-canary.202610260043') },
+      [kimiCodeCdnDevChannelUrl()]: { body: pointerBody('0.0.0-dev.42') },
     });
 
-    await expect(fetchChannelFeed('stable', f)).resolves.toMatchObject({
+    await expect(fetchChannelFeed('stable', fetchImpl)).resolves.toMatchObject({
       channel: 'stable',
       latest: '2.0.0',
-      degraded: false,
     });
-    expect(f).toHaveBeenCalledTimes(1);
-    expect(f).toHaveBeenCalledWith(kimiCodeCdnLatestJsonUrl(), expect.anything());
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodeCdnLatestJsonUrl(), expect.anything());
   });
 
-  it('takes the canary pointer when it is ahead of stable', async () => {
-    const f = mockRoutedFetch({
+  it('reads only dev even when stable has a higher version', async () => {
+    const fetchImpl = mockRoutedFetch({
       [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
-      [kimiCodeCdnCanaryChannelUrl()]: { body: pointerBody('2.1.0-canary.202610260043') },
+      [kimiCodeCdnDevChannelUrl()]: { body: pointerBody('0.0.0-dev.42') },
     });
 
-    await expect(fetchChannelFeed('canary', f)).resolves.toEqual({
-      channel: 'canary',
-      latest: '2.1.0-canary.202610260043',
+    await expect(fetchChannelFeed('dev', fetchImpl)).resolves.toEqual({
+      channel: 'dev',
+      latest: '0.0.0-dev.42',
       manifest: {
-        version: '2.1.0-canary.202610260043',
+        version: '0.0.0-dev.42',
         publishedAt: '2026-10-26T01:00:00.000Z',
         rollout: [],
       },
-      degraded: false,
     });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodeCdnDevChannelUrl(), expect.anything());
   });
 
-  it('takes stable when a release overtakes the last canary', async () => {
-    const f = mockRoutedFetch({
+  it('aborts a dev response whose body stalls after headers arrive', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => new Promise<string>(() => {}),
+      })) as unknown as typeof fetch;
+      const result = fetchChannelFeed('dev', fetchImpl, 10);
+      const outcome = Promise.race([
+        result.then(() => 'resolved', () => 'rejected'),
+        new Promise<string>((resolve) => {
+          setTimeout(() => {
+            resolve('pending');
+          }, 50);
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(await outcome).toBe('rejected');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails without requesting stable when the dev pointer is unavailable', async () => {
+    const fetchImpl = mockRoutedFetch({
       [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
-      [kimiCodeCdnCanaryChannelUrl()]: { body: pointerBody('2.0.0-canary.202610260043') },
+      [kimiCodeCdnDevChannelUrl()]: { status: 503 },
     });
 
-    await expect(fetchChannelFeed('canary', f)).resolves.toMatchObject({
-      latest: '2.0.0',
-      degraded: false,
-    });
-  });
-
-  it('degrades to the stable result when the canary pointer is unavailable', async () => {
-    const f = mockRoutedFetch({
-      [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
-      [kimiCodeCdnCanaryChannelUrl()]: { status: 503 },
-    });
-
-    await expect(fetchChannelFeed('canary', f)).resolves.toMatchObject({
-      channel: 'canary',
-      latest: '2.0.0',
-      degraded: true,
-    });
-  });
-
-  it('uses the canary pointer alone when stable is unreachable, and throws when both fail', async () => {
-    const canaryOnly = mockRoutedFetch({
-      [kimiCodeCdnCanaryChannelUrl()]: { body: pointerBody('2.1.0-canary.202610260043') },
-    });
-    await expect(fetchChannelFeed('canary', canaryOnly)).resolves.toMatchObject({
-      latest: '2.1.0-canary.202610260043',
-      degraded: false,
-    });
-
-    await expect(fetchChannelFeed('canary', mockRoutedFetch({}))).rejects.toThrow(/HTTP 404/);
+    await expect(fetchChannelFeed('dev', fetchImpl)).rejects.toThrow(/HTTP 503/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodeCdnDevChannelUrl(), expect.anything());
   });
 });

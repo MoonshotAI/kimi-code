@@ -18,7 +18,9 @@ import type * as RolloutModule from '#/cli/update/rollout';
 import { detectInstallSource } from '#/cli/update/source';
 import {
   emptyUpdateCache,
+  type ActionableUpdatePlan,
   type UpdateCache,
+  type UpdateChannel,
   type UpdateInstallState,
   type UpdateManifest,
 } from '#/cli/update/types';
@@ -143,6 +145,22 @@ function cacheWithManifest(manifest: UpdateManifest): UpdateCache {
   };
 }
 
+function upgradePlan(channel: UpdateChannel, version: string): ActionableUpdatePlan {
+  return { kind: 'upgrade', target: { channel, version } };
+}
+
+function switchPlan(
+  sourceChannel: UpdateChannel,
+  targetChannel: UpdateChannel,
+  version: string,
+): ActionableUpdatePlan {
+  return {
+    kind: 'switch-channel',
+    sourceChannel,
+    target: { channel: targetChannel, version },
+  };
+}
+
 /** Every bucket delayed by 24h and the clock just started: nobody is eligible. */
 function heldForEveryone(version: string): UpdateManifest {
   return manifestFor(version, {
@@ -249,6 +267,7 @@ describe('runUpdatePreflight', () => {
     mocks.writeUpdateInstallState.mockResolvedValue(undefined);
     mocks.loadTuiConfig.mockResolvedValue(tuiConfig());
     mocks.resolveUpdateDeviceId.mockReturnValue('test-device');
+    mocks.detectInstallSource.mockResolvedValue('unsupported');
     mocks.appendRolloutDecisionLog.mockResolvedValue(undefined);
     mocks.tryAcquireUpdateInstallLock.mockResolvedValue({
       filePath: '/tmp/kimi-update-install.lock',
@@ -329,7 +348,7 @@ describe('runUpdatePreflight', () => {
     await expect(
       runUpdatePreflight('0.4.0', { ...options, isTTY: false }),
     ).resolves.toBe('continue');
-    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(detectInstallSource).toHaveBeenCalledTimes(1);
   });
 
   it('does not start a fresh-check background install when non-interactive', async () => {
@@ -343,7 +362,7 @@ describe('runUpdatePreflight', () => {
     await flushBackgroundInstall();
 
     expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
-    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(detectInstallSource).toHaveBeenCalledTimes(1);
     expect(promptForInstallChoice).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
@@ -386,7 +405,7 @@ describe('runUpdatePreflight', () => {
     expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
     expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
       expect.objectContaining({
-        target: { version: '0.7.0' },
+        plan: upgradePlan('stable', '0.7.0'),
         installCommand: 'npm install -g @moonshot-ai/kimi-code@0.7.0',
       }),
     );
@@ -414,7 +433,7 @@ describe('runUpdatePreflight', () => {
       await expect(result).resolves.toBe('continue');
       expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
         expect.objectContaining({
-          target: { version: '0.6.0' },
+          plan: upgradePlan('stable', '0.6.0'),
           installCommand: 'npm install -g @moonshot-ai/kimi-code@0.6.0',
         }),
       );
@@ -969,7 +988,7 @@ describe('runUpdatePreflight', () => {
     await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
 
     expect(promptForInstallChoice).toHaveBeenCalledWith(expect.objectContaining({
-      target: { version: '0.5.0' },
+      plan: upgradePlan('stable', '0.5.0'),
       installSource: 'npm-global',
     }));
     expect(mocks.spawn).not.toHaveBeenCalled();
@@ -1010,7 +1029,7 @@ describe('runUpdatePreflight', () => {
         notifiedAt: expect.any(String),
       }),
     }));
-    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(detectInstallSource).toHaveBeenCalledTimes(1);
   });
 
   it('infers a background update success notice when the active install version is now running', async () => {
@@ -1068,7 +1087,7 @@ describe('runUpdatePreflight', () => {
 
       expect(stdout.join('')).toBe('');
       expect(promptForInstallChoice).not.toHaveBeenCalled();
-      expect(detectInstallSource).not.toHaveBeenCalled();
+      expect(detectInstallSource).toHaveBeenCalledTimes(1);
       expect(mocks.spawn).not.toHaveBeenCalled();
       // The launch still refreshes the cache in the background so the device
       // flips to eligible purely by time passing.
@@ -1132,7 +1151,7 @@ describe('runUpdatePreflight', () => {
       await expect(runUpdatePreflight('0.4.0', { ...options, track })).resolves.toBe('continue');
 
       expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
-        expect.objectContaining({ target: { version: '0.5.0' } }),
+        expect.objectContaining({ plan: upgradePlan('stable', '0.5.0') }),
       );
       expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
         target_version: '0.5.0',
@@ -1162,7 +1181,7 @@ describe('runUpdatePreflight', () => {
       await expect(runUpdatePreflight('0.5.0', { ...options, track })).resolves.toBe('continue');
 
       expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
-        expect.objectContaining({ target: { version: '0.7.0' } }),
+        expect.objectContaining({ plan: upgradePlan('stable', '0.7.0') }),
       );
       expect(track).toHaveBeenCalledWith('update_prompted', expect.objectContaining({
         target_version: '0.7.0',
@@ -1196,7 +1215,7 @@ describe('runUpdatePreflight', () => {
       await flushBackgroundInstall();
 
       expect(refreshUpdateCache).toHaveBeenCalledTimes(1);
-      expect(detectInstallSource).not.toHaveBeenCalled();
+      expect(detectInstallSource).toHaveBeenCalledTimes(1);
       expect(mocks.spawn).not.toHaveBeenCalled();
     });
 
@@ -1274,19 +1293,21 @@ describe('runUpdatePreflight', () => {
       await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
 
       expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
-        expect.objectContaining({ target: { version: '0.5.0' } }),
+        expect.objectContaining({ plan: upgradePlan('stable', '0.5.0') }),
       );
     });
   });
 
   describe('update channels', () => {
-    const CANARY = '0.6.0-canary.202610260043';
+    const DEV = '0.6.0-dev.202610260043';
+    const NEXT_DEV = '0.6.0-dev.202610270043';
+    const FIXED_DEV = '0.0.0-dev.42';
 
-    function canaryCache(manifest: UpdateManifest): UpdateCache {
-      return { ...cacheWithManifest(manifest), channel: 'canary' };
+    function devCache(manifest: UpdateManifest): UpdateCache {
+      return { ...cacheWithManifest(manifest), channel: 'dev' };
     }
 
-    it('reads the stable feed when KIMI_CODE_UPDATE_CHANNEL is unset', async () => {
+    it('reads the stable feed for a stable installation when the channel is unset', async () => {
       mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
       mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.4.0'));
       const { options } = captureOutput();
@@ -1302,55 +1323,85 @@ describe('runUpdatePreflight', () => {
       }));
     });
 
-    it('canary skips rollout holds and installs the canary build in the background', async () => {
-      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'canary');
-      const held = canaryCache(heldForEveryone(CANARY));
-      mocks.readUpdateCache.mockResolvedValue(held);
-      mocks.refreshUpdateCache.mockResolvedValue(held);
+    it('follows a dev installation by default and uses the normal eligible rollout path', async () => {
+      const released = devCache(manifestFor(NEXT_DEV));
+      mocks.readUpdateCache.mockResolvedValue(released);
+      mocks.refreshUpdateCache.mockResolvedValue(released);
       mocks.detectInstallSource.mockResolvedValue('npm-global');
       mockSpawnExit(0);
       const { options } = captureOutput();
 
-      await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('continue');
+      await expect(runUpdatePreflight(DEV, options)).resolves.toBe('continue');
       await flushBackgroundInstall();
 
       expect(mocks.spawn).toHaveBeenCalledWith(
         expect.stringMatching(/^npm(\.cmd)?$/),
-        ['install', '-g', `@moonshot-ai/kimi-code@${CANARY}`],
+        ['install', '-g', `@moonshot-ai/kimi-code@${NEXT_DEV}`],
         { detached: true, stdio: 'ignore' },
       );
-      expect(refreshUpdateCache).toHaveBeenCalledWith({ channel: 'canary' });
+      expect(refreshUpdateCache).toHaveBeenCalledWith({ channel: 'dev' });
       expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
         phase: 'startup-cache',
-        channel: 'canary',
-        reason: 'canary',
-        target: CANARY,
+        channel: 'dev',
+        reason: 'eligible',
+        target: NEXT_DEV,
       }));
     });
 
-    it('records an unreachable canary pointer even when the refresh makes no decision', async () => {
-      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'canary');
-      const released = canaryCache(releasedForEveryone(CANARY));
-      mocks.readUpdateCache.mockResolvedValue(released);
-      mocks.refreshUpdateCache.mockResolvedValue({ ...cacheWith('0.5.0'), channel: 'canary', degraded: true });
+    it('requires confirmation for a cached channel switch even when automatic install is enabled', async () => {
+      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'dev');
+      const cached = devCache(manifestFor(FIXED_DEV));
+      mocks.readUpdateCache.mockResolvedValue(cached);
+      mocks.refreshUpdateCache.mockResolvedValue(cached);
       mocks.detectInstallSource.mockResolvedValue('npm-global');
-      mockSpawnExit(0);
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
       const { options } = captureOutput();
 
-      await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('continue');
+      await expect(runUpdatePreflight('2.5.0', options)).resolves.toBe('continue');
       await flushBackgroundInstall();
 
-      expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
-        phase: 'background-refresh',
-        channel: 'canary',
-        degraded: true,
+      expect(mocks.spawn).not.toHaveBeenCalled();
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(expect.objectContaining({
+        plan: switchPlan('stable', 'dev', FIXED_DEV),
       }));
+    });
+
+    it('refreshes and prompts during the same interactive startup when a cold cache selects another channel', async () => {
+      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'dev');
+      mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
+      mocks.refreshUpdateCache.mockResolvedValue(devCache(manifestFor(FIXED_DEV)));
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mocks.promptForInstallChoice.mockResolvedValue('skip');
+      const { options } = captureOutput();
+
+      await expect(runUpdatePreflight('2.5.0', options)).resolves.toBe('continue');
+
+      expect(refreshUpdateCache).toHaveBeenCalledWith({ channel: 'dev' });
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(expect.objectContaining({
+        plan: switchPlan('stable', 'dev', FIXED_DEV),
+      }));
+      expect(mocks.spawn).not.toHaveBeenCalled();
+    });
+
+    it('does not switch channels in a non-interactive startup', async () => {
+      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'dev');
+      const cached = devCache(manifestFor(FIXED_DEV));
+      mocks.readUpdateCache.mockResolvedValue(cached);
+      mocks.refreshUpdateCache.mockResolvedValue(cached);
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      const { options } = captureOutput();
+
+      await expect(runUpdatePreflight('2.5.0', { ...options, isTTY: false })).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(mocks.promptForInstallChoice).not.toHaveBeenCalled();
+      expect(mocks.spawn).not.toHaveBeenCalled();
     });
 
     it('ignores a cache written for the other channel', async () => {
-      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'canary');
+      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'dev');
       mocks.readUpdateCache.mockResolvedValue(cacheWithManifest(releasedForEveryone('0.6.0')));
-      mocks.refreshUpdateCache.mockResolvedValue(canaryCache(releasedForEveryone('0.5.0')));
+      mocks.refreshUpdateCache.mockResolvedValue(devCache(releasedForEveryone('0.5.0')));
       const { options } = captureOutput();
 
       await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('continue');
@@ -1363,43 +1414,51 @@ describe('runUpdatePreflight', () => {
       }));
     });
 
-    it('records an invalid channel value in the rollout log and stays on stable', async () => {
+    it('warns about an invalid channel value and follows the installed dev channel', async () => {
       vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'nightly');
       mocks.readUpdateCache.mockResolvedValue(emptyUpdateCache());
-      mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.4.0'));
-      const { options } = captureOutput();
+      mocks.refreshUpdateCache.mockResolvedValue(devCache(manifestFor(DEV)));
+      const { stderr, options } = captureOutput();
 
-      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+      await expect(runUpdatePreflight(DEV, options)).resolves.toBe('continue');
 
+      expect(stderr.join('')).toContain('Using dev');
+      expect(refreshUpdateCache).toHaveBeenCalledWith({ channel: 'dev' });
       expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
-        channel: 'stable',
+        channel: 'dev',
         invalidChannel: 'nightly',
       }));
     });
 
-    it('tells Homebrew users that canary builds come from npm', async () => {
-      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'canary');
-      const released = canaryCache(releasedForEveryone(CANARY));
-      mocks.readUpdateCache.mockResolvedValue(released);
-      mocks.refreshUpdateCache.mockResolvedValue(released);
+    it('keeps Homebrew on stable when dev is explicitly selected', async () => {
+      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'dev');
+      mocks.readUpdateCache.mockResolvedValue(cacheWith('0.6.0'));
+      mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.6.0'));
       mocks.detectInstallSource.mockResolvedValue('homebrew');
       const { stdout, options } = captureOutput();
 
       await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('continue');
 
-      expect(stdout.join('')).toContain('Homebrew does not ship canary builds');
-      expect(stdout.join('')).toContain(`npm install -g @moonshot-ai/kimi-code@${CANARY}`);
-      expect(stdout.join('')).not.toContain('brew upgrade');
+      expect(refreshUpdateCache).toHaveBeenCalledWith({ channel: 'stable' });
+      expect(stdout.join('')).toContain('brew upgrade');
+      expect(stdout.join('')).not.toContain('dev');
     });
 
-    it('native channel switch passes the switch flag to the staged downloader', async () => {
+    it('native channel switch passes the dev channel and switch flag to the staged downloader', async () => {
       mockSpawnExit(0);
+      const plan = switchPlan('stable', 'dev', FIXED_DEV);
+      expect(installCommandFor('native', FIXED_DEV, 'darwin', 'dev')).toBe(
+        'KIMI_CODE_UPDATE_CHANNEL=dev kimi update --yes',
+      );
+      expect(installCommandFor('native', FIXED_DEV, 'win32', 'dev')).toBe(
+        "$env:KIMI_CODE_UPDATE_CHANNEL='dev'; kimi update --yes",
+      );
 
-      await installUpdate('native', '0.4.0', 'darwin', 'switch-channel');
+      await installUpdate('native', plan, 'darwin');
 
       expect(mocks.spawn).toHaveBeenCalledWith(
         process.execPath,
-        ['__update_download', '0.4.0', '--manual', '--switch-channel'],
+        ['__update_download', FIXED_DEV, '--channel', 'dev', '--manual', '--switch-channel'],
         expect.objectContaining({ stdio: 'inherit' }),
       );
     });

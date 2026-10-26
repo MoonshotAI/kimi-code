@@ -1,107 +1,93 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  isCanaryVersion,
-  planManualUpdate,
-  resolveUpdateChannel,
-  selectUpdateTarget,
-} from '#/cli/update/select';
+import { decideUpdate, resolveUpdateChannel, updateChannelForVersion } from '#/cli/update/select';
 import type { ChannelSelection } from '#/cli/update/types';
 
-const CANARY = '2.5.0-canary.202610260043';
+const DEV = '2.5.0-dev.202610260043';
+const FIXED_DEV = '0.0.0-dev.42';
 const DEFAULT: ChannelSelection = { channel: 'stable', origin: 'default' };
+const DEV_DEFAULT: ChannelSelection = { channel: 'dev', origin: 'default' };
 const STABLE_ENV: ChannelSelection = { channel: 'stable', origin: 'env' };
-const CANARY_ENV: ChannelSelection = { channel: 'canary', origin: 'env' };
+const DEV_ENV: ChannelSelection = { channel: 'dev', origin: 'env' };
 
-describe('selectUpdateTarget', () => {
-  it('returns the latest version when it is newer than current', () => {
-    expect(selectUpdateTarget('0.4.0', '0.5.0')).toEqual({ version: '0.5.0' });
-  });
-
-  it('returns null when latest equals current', () => {
-    expect(selectUpdateTarget('0.5.0', '0.5.0')).toBeNull();
-  });
-
-  it('returns null when latest is older than current', () => {
-    expect(selectUpdateTarget('0.6.0', '0.5.0')).toBeNull();
-  });
-
-  it('returns null when latest is null (cache empty)', () => {
-    expect(selectUpdateTarget('0.5.0', null)).toBeNull();
-  });
-
-  it('returns null when current is not a valid semver', () => {
-    expect(selectUpdateTarget('not-a-version', '0.5.0')).toBeNull();
-  });
-
-  it('returns null when latest is not a valid semver', () => {
-    expect(selectUpdateTarget('0.5.0', 'not-a-version')).toBeNull();
-  });
-
-  it('handles prerelease semver comparisons correctly', () => {
-    expect(selectUpdateTarget('0.5.0-rc.1', '0.5.0')).toEqual({ version: '0.5.0' });
-    expect(selectUpdateTarget('0.5.0', '0.5.0-rc.1')).toBeNull();
+describe('updateChannelForVersion', () => {
+  it('recognizes only dev prereleases as dev', () => {
+    expect(updateChannelForVersion(DEV)).toBe('dev');
+    expect(updateChannelForVersion('2.5.0')).toBe('stable');
+    expect(updateChannelForVersion('2.5.0-rc.1')).toBe('stable');
+    expect(updateChannelForVersion('not-a-version')).toBe('stable');
   });
 });
 
 describe('resolveUpdateChannel', () => {
-  it('defaults to stable when KIMI_CODE_UPDATE_CHANNEL is unset or blank', () => {
-    expect(resolveUpdateChannel({})).toEqual(DEFAULT);
-    expect(resolveUpdateChannel({ KIMI_CODE_UPDATE_CHANNEL: '  ' })).toEqual(DEFAULT);
+  it('follows the installed channel when KIMI_CODE_UPDATE_CHANNEL is unset or blank', () => {
+    expect(resolveUpdateChannel('2.5.0', 'npm-global', {})).toEqual(DEFAULT);
+    expect(resolveUpdateChannel(FIXED_DEV, 'native', {})).toEqual(DEV_DEFAULT);
+    expect(resolveUpdateChannel(FIXED_DEV, 'native', { KIMI_CODE_UPDATE_CHANNEL: '  ' })).toEqual(DEV_DEFAULT);
   });
 
-  it('accepts stable and canary case-insensitively', () => {
-    expect(resolveUpdateChannel({ KIMI_CODE_UPDATE_CHANNEL: 'stable' })).toEqual(STABLE_ENV);
-    expect(resolveUpdateChannel({ KIMI_CODE_UPDATE_CHANNEL: ' Canary ' })).toEqual(CANARY_ENV);
+  it('accepts stable and dev case-insensitively', () => {
+    expect(resolveUpdateChannel(FIXED_DEV, 'native', { KIMI_CODE_UPDATE_CHANNEL: 'stable' })).toEqual(STABLE_ENV);
+    expect(resolveUpdateChannel('2.5.0', 'npm-global', { KIMI_CODE_UPDATE_CHANNEL: ' Dev ' })).toEqual(DEV_ENV);
   });
 
-  it('falls back to stable for an unknown value and keeps it for the warning', () => {
-    expect(resolveUpdateChannel({ KIMI_CODE_UPDATE_CHANNEL: 'nightly' })).toEqual({
-      channel: 'stable',
+  it('falls back to the installed channel for an unknown value and keeps it for the warning', () => {
+    expect(resolveUpdateChannel(FIXED_DEV, 'native', { KIMI_CODE_UPDATE_CHANNEL: 'nightly' })).toEqual({
+      channel: 'dev',
       origin: 'invalid',
       raw: 'nightly',
     });
   });
+
+  it('always uses stable for Homebrew and ignores the channel variable', () => {
+    expect(resolveUpdateChannel(FIXED_DEV, 'homebrew', { KIMI_CODE_UPDATE_CHANNEL: 'dev' })).toEqual({
+      channel: 'stable',
+      origin: 'homebrew',
+    });
+    expect(resolveUpdateChannel('2.5.0', 'homebrew', { KIMI_CODE_UPDATE_CHANNEL: 'nightly' })).toEqual({
+      channel: 'stable',
+      origin: 'homebrew',
+    });
+  });
 });
 
-describe('isCanaryVersion', () => {
-  it('recognizes only canary prereleases', () => {
-    expect(isCanaryVersion(CANARY)).toBe(true);
-    expect(isCanaryVersion('2.5.0')).toBe(false);
-    expect(isCanaryVersion('2.5.0-rc.1')).toBe(false);
-    expect(isCanaryVersion('not-a-version')).toBe(false);
-  });
-});
-
-describe('planManualUpdate', () => {
-  it('upgrades whenever the channel reports a newer version', () => {
-    expect(planManualUpdate('2.4.0', CANARY, CANARY_ENV)).toEqual({
+describe('decideUpdate', () => {
+  it('upgrades within a channel only when the target is newer', () => {
+    expect(decideUpdate('2.4.0', { channel: 'stable', latest: '2.5.0' })).toEqual({
       kind: 'upgrade',
-      target: { version: CANARY },
+      target: { channel: 'stable', version: '2.5.0' },
     });
-    expect(planManualUpdate(CANARY, '2.5.0', DEFAULT)).toEqual({
+    expect(decideUpdate('0.0.0-dev.99', { channel: 'dev', latest: '0.0.0-dev.100' })).toEqual({
       kind: 'upgrade',
-      target: { version: '2.5.0' },
+      target: { channel: 'dev', version: '0.0.0-dev.100' },
     });
   });
 
-  it('switches a canary build to an older stable only when the env asks for stable', () => {
-    expect(planManualUpdate(CANARY, '2.4.1', STABLE_ENV)).toEqual({
-      kind: 'switch-to-stable',
-      target: { version: '2.4.1' },
+  it('returns none for an equal, older, missing, or invalid same-channel target', () => {
+    for (const latest of ['2.4.0', '2.3.0', null, 'not-a-version']) {
+      expect(decideUpdate('2.4.0', { channel: 'stable', latest })).toEqual({ kind: 'none' });
+    }
+    expect(decideUpdate('not-a-version', { channel: 'stable', latest: '2.5.0' })).toEqual({ kind: 'none' });
+  });
+
+  it('switches in either direction without comparing versions across channels', () => {
+    expect(decideUpdate(DEV, { channel: 'stable', latest: '2.4.1' })).toEqual({
+      kind: 'switch-channel',
+      sourceChannel: 'dev',
+      target: { channel: 'stable', version: '2.4.1' },
+    });
+    expect(decideUpdate('2.5.0', { channel: 'dev', latest: FIXED_DEV })).toEqual({
+      kind: 'switch-channel',
+      sourceChannel: 'stable',
+      target: { channel: 'dev', version: FIXED_DEV },
     });
   });
 
-  it('holds a canary build on the default or an invalid channel', () => {
-    expect(planManualUpdate(CANARY, '2.4.1', DEFAULT)).toEqual({ kind: 'canary-hold', stable: '2.4.1' });
-    expect(
-      planManualUpdate(CANARY, '2.4.1', { channel: 'stable', origin: 'invalid', raw: 'nightly' }),
-    ).toEqual({ kind: 'canary-hold', stable: '2.4.1' });
-  });
-
-  it('never plans a downgrade for stable builds or on the canary channel', () => {
-    expect(planManualUpdate('2.4.1', '2.4.0', STABLE_ENV)).toEqual({ kind: 'up-to-date' });
-    expect(planManualUpdate(CANARY, '2.4.1', CANARY_ENV)).toEqual({ kind: 'up-to-date' });
-    expect(planManualUpdate(CANARY, null, STABLE_ENV)).toEqual({ kind: 'up-to-date' });
+  it('uses the selected channel rather than the target version suffix', () => {
+    expect(decideUpdate(DEV, { channel: 'stable', latest: DEV })).toEqual({
+      kind: 'switch-channel',
+      sourceChannel: 'dev',
+      target: { channel: 'stable', version: DEV },
+    });
   });
 });
