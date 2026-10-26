@@ -182,6 +182,13 @@ const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
   /invalid image(?: data| type| format)?/,
 ] as const;
 
+const UNSUPPORTED_MEDIA_STATUS_MESSAGE_PATTERNS = [
+  /tool_result[^a-z]{0,20}content[^a-z]{0,10}field required/,
+  /unsupported media type for base64 (?:video|audio)/,
+  /invalid data url for (?:video|audio)/,
+  /(?:video|audio)[^a-z]{0,20}(?:not supported|unsupported)/,
+] as const;
+
 const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
 
 const THINKING_EFFORT_CONFIG_DOCS_URL =
@@ -237,6 +244,9 @@ export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteEr
   }
   if (isRequestStructureStatusError(input.statusCode, input.message)) {
     return { kind: 'request_structure', message, ...info };
+  }
+  if (isUnsupportedMediaStatusError(input.statusCode, input.message)) {
+    return { kind: 'image_format', message, ...info };
   }
   if (isImageFormatStatusError(input.statusCode, input.message)) {
     return { kind: 'image_format', message, ...info };
@@ -317,4 +327,10 @@ export function isImageFormatStatusError(statusCode: number, message: string): b
     IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage)) ||
     (MEDIA_TYPE_FIELD_PATTERN.test(lowerMessage) && lowerMessage.includes('image'))
   );
+}
+
+export function isUnsupportedMediaStatusError(statusCode: number, message: string): boolean {
+  if (statusCode !== 400 && statusCode !== 422) return false;
+  const lowerMessage = message.toLowerCase();
+  return UNSUPPORTED_MEDIA_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }

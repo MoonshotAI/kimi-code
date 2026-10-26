@@ -1278,6 +1278,106 @@ describe('toolMessageConversion request config', () => {
     const output = input.find((item) => item['type'] === 'function_call_output');
     expect(output?.['output']).toBe('sunny\n(image omitted: tool result converted to plain text)');
   });
+
+  it('keeps a video-only tool result as a video part under keep_parts', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      { model, toolMessageConversion: 'keep_parts' },
+      {
+        messages: [
+          createToolMessage('call_1', [
+            { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+          ]),
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toEqual([
+      { type: 'video_url', video_url: { url: 'data:video/mp4;base64,AAAA' } },
+    ]);
+  });
+
+  it('fills an empty tool result with placeholder text under keep_parts', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      { model, toolMessageConversion: 'keep_parts' },
+      { messages: [createToolMessage('call_1', [])] },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toBe('Tool output is empty.');
+  });
+
+  it('converts a video-only tool result to an omitted-video text under extract_text', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      { model, toolMessageConversion: 'extract_text' },
+      {
+        messages: [
+          createToolMessage('call_1', [
+            { type: 'video_url', videoUrl: { url: 'ms://file-id-123' } },
+          ]),
+        ],
+      },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toBe('(video omitted: tool result converted to plain text)');
+  });
+
+  it('fills an empty tool result with placeholder text under extract_text', async () => {
+    const client = stubOpenAIClient(chatCompletionChunks);
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    await requester.generate(
+      { model, toolMessageConversion: 'extract_text' },
+      { messages: [createToolMessage('call_1', [])] },
+      { signal: new AbortController().signal },
+    );
+    const bodyMessages = client.body()['messages'] as Record<string, unknown>[];
+    const tool = bodyMessages.find((message) => message['role'] === 'tool');
+    expect(tool?.['content']).toBe('Tool output is empty.');
+  });
+
+  it('fills an empty tool result with placeholder text on the responses path', async () => {
+    const client = stubResponsesClient([
+      { type: 'response.completed', response: { id: 'resp_1', status: 'completed' } },
+    ]);
+    const requester = createOpenAIResponsesRequester({
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      { model },
+      { messages: [createToolMessage('call_1', [])] },
+      { signal: new AbortController().signal },
+    );
+    const input = client.body()['input'] as Record<string, unknown>[];
+    const output = input.find((item) => item['type'] === 'function_call_output');
+    expect(output?.['output']).toEqual([{ type: 'input_text', text: 'Tool output is empty.' }]);
+  });
+
+  it('fills an empty tool result with placeholder text on the responses extract_text path', async () => {
+    const client = stubResponsesClient([
+      { type: 'response.completed', response: { id: 'resp_1', status: 'completed' } },
+    ]);
+    const requester = createOpenAIResponsesRequester({
+      clientFactory: client.clientFactory,
+    });
+    await requester.generate(
+      { model, toolMessageConversion: 'extract_text' },
+      { messages: [createToolMessage('call_1', [])] },
+      { signal: new AbortController().signal },
+    );
+    const input = client.body()['input'] as Record<string, unknown>[];
+    const output = input.find((item) => item['type'] === 'function_call_output');
+    expect(output?.['output']).toBe('Tool output is empty.');
+  });
 });
 
 describe('anthropic trait', () => {

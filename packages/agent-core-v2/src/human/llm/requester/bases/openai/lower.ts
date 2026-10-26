@@ -7,6 +7,7 @@ import { DEFAULT_REASONING_KEY, REASONING_DETAILS_KEY } from './reasoning-key';
 
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
+const EMPTY_TOOL_CONTENT_PLACEHOLDER = 'Tool output is empty.';
 
 function convertContentPart(part: ContentPart): OpenAIContentPart | null {
   switch (part.type) {
@@ -116,7 +117,12 @@ export function lowerMessage(message: Message, lower: OpenAILowerContext): OpenA
           : undefined,
     };
   } else if (message.role === 'tool') {
-    converted = { role: 'tool', tool_call_id: message.toolCallId, content: content ?? '' };
+    converted = {
+      role: 'tool',
+      tool_call_id: message.toolCallId,
+      content:
+        content === undefined || content.length === 0 ? EMPTY_TOOL_CONTENT_PLACEHOLDER : content,
+    };
   } else {
     converted = { role: message.role, content: content ?? '' };
   }
