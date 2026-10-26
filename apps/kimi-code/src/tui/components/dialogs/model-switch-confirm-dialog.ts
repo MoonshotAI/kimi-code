@@ -1,7 +1,6 @@
 /**
- * Cloud-gated model-switch confirmation for new and existing sessions. The
- * actual session type chooses the local actions; the matched rule supplies
- * the body hint and optional highlighted warning.
+ * Cloud-gated model or effort confirmation. Model switches keep their
+ * session-specific actions; effort switches offer only confirm and cancel.
  */
 
 import {
@@ -17,7 +16,7 @@ import { currentTheme } from '#/tui/theme';
 import { SearchableList } from '#/tui/utils/searchable-list';
 import type { ModelSwitchAction } from '#/utils/model-switch-confirm-config';
 
-const TITLE = 'Switch model?';
+const MODEL_TITLE = 'Switch model?';
 
 interface ModelSwitchOption {
   readonly value: ModelSwitchAction;
@@ -44,10 +43,16 @@ const NEW_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
   { value: 'cancel', label: 'Cancel', description: 'Stay on the current model' },
 ];
 
+const EFFORT_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
+  { value: 'continue', label: 'Confirm switch' },
+  { value: 'cancel', label: 'Cancel', description: 'Stay on the current effort' },
+];
+
 export interface ModelSwitchConfirmDialogOptions {
   readonly fromModel: string;
   readonly toModel: string;
   readonly sessionType: 'old' | 'new';
+  readonly kind?: 'model' | 'effort';
   readonly hint?: string;
   readonly warning?: string;
   readonly onSelect: (action: ModelSwitchAction) => void;
@@ -63,7 +68,12 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
     super();
     this.opts = opts;
     this.list = new SearchableList({
-      items: opts.sessionType === 'old' ? OLD_SESSION_OPTIONS : NEW_SESSION_OPTIONS,
+      items:
+        opts.kind === 'effort'
+          ? EFFORT_SESSION_OPTIONS
+          : opts.sessionType === 'old'
+            ? OLD_SESSION_OPTIONS
+            : NEW_SESSION_OPTIONS,
       toSearchText: (o) => o.label,
       initialIndex: 0,
       searchable: false,
@@ -85,11 +95,17 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
 
   override render(width: number): string[] {
     const view = this.list.view();
-    const modelSuffix = `${this.opts.fromModel} → ${this.opts.toModel}`;
+    const title =
+      this.opts.kind === 'effort'
+        ? `Switch effort from ${this.opts.fromModel} to ${this.opts.toModel}?`
+        : MODEL_TITLE;
+    const titleSuffix =
+      this.opts.kind === 'effort'
+        ? ''
+        : currentTheme.fg('textMuted', `  ${this.opts.fromModel} → ${this.opts.toModel}`);
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ` ${TITLE}`) +
-        currentTheme.fg('textMuted', `  ${modelSuffix}`),
+      currentTheme.boldFg('primary', ` ${title}`) + titleSuffix,
       currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'),
       '',
     ];

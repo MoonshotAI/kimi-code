@@ -72,6 +72,29 @@ describe('ModelSwitchConfirmDialogComponent', () => {
     expect(lines.some((l) => l.includes('Start a new session'))).toBe(false);
   });
 
+  it.each(['old', 'new'] as const)('renders the effort title and cloud texts for a %s session', (sessionType) => {
+    const dialog = new ModelSwitchConfirmDialogComponent({
+      fromModel: 'low',
+      toModel: 'high',
+      sessionType,
+      kind: 'effort',
+      hint: DEFAULT_HINT,
+      warning: 'Effort warning',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = dialog.render(120).map(strip);
+
+    expect(lines.some((line) => line.includes('Switch effort from low to high?'))).toBe(true);
+    expect(lines.some((line) => line.includes('low → high'))).toBe(false);
+    expect(lines.some((line) => line.includes(DEFAULT_HINT))).toBe(true);
+    expect(lines.some((line) => line.includes('Effort warning'))).toBe(true);
+    expect(lines.some((line) => line.includes('Compact and continue'))).toBe(false);
+    expect(lines.some((line) => line.includes('Continue as-is'))).toBe(false);
+    expect(lines.some((line) => line.includes('Confirm switch'))).toBe(true);
+    expect(lines.some((line) => line.includes('Stay on the current effort'))).toBe(true);
+  });
+
   it('aligns old-session description columns', () => {
     const { lines } = renderDialog('old');
     const colOf = (labelNeedle: string, descNeedle: string) => {

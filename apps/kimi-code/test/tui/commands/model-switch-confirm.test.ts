@@ -2,13 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
-import { compactForModelSwitch, confirmThenPerformModelSwitch, showModelPicker } from '#/tui/commands/config';
+import { compactForModelSwitch, confirmThenPerformModelSwitch, handleEffortCommand, showModelPicker } from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import {
   refreshModelSwitchConfirmConfig,
   resetModelSwitchConfirmConfigCache,
   type ModelSwitchAction,
 } from '#/utils/model-switch-confirm-config';
+import {
+  refreshEffortSwitchConfig,
+  resetEffortSwitchConfigCache,
+} from '#/utils/effort-switch-config';
 
 type TestEvent = { type: string; code?: string };
 
@@ -120,6 +124,9 @@ describe('compactForModelSwitch', () => {
 type MountedDialog = {
   opts: {
     sessionType: 'old' | 'new';
+    kind?: 'model' | 'effort';
+    fromModel: string;
+    toModel: string;
     hint?: string;
     warning?: string;
     onSelect: (action: ModelSwitchAction) => void;
@@ -127,15 +134,29 @@ type MountedDialog = {
   };
 };
 
-function makeSwitchHost() {
+function makeSwitchHost(provider = 'custom') {
   const appState = {
     model: 'old-alias',
     thinkingEffort: 'off',
     streamingPhase: 'idle',
     sessionId: 'ses-old',
     availableModels: {
-      'old-alias': { model: 'upstream-old', displayName: 'Old' },
-      'new-alias': { model: 'upstream-new', displayName: 'New' },
+      'old-alias': {
+        provider,
+        model: 'upstream-old',
+        displayName: 'Old',
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      },
+      'new-alias': {
+        provider,
+        model: 'upstream-new',
+        displayName: 'New',
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      },
     },
     availableProviders: {},
   };
@@ -174,6 +195,40 @@ function mountedDialog(mountEditorReplacement: ReturnType<typeof vi.fn>): Mounte
   return mountEditorReplacement.mock.calls[0]?.[0] as unknown as MountedDialog;
 }
 
+async function enableEffortConfig(sessionType: 'old' | 'new' | 'all' = 'all'): Promise<void> {
+  await refreshEffortSwitchConfig({
+    fetchImpl: vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          name: 'effort_switch_confirm',
+          config: {
+            descriptions: {
+              enable: true,
+              items: {
+                low: { en: 'Light reasoning.' },
+                high: { en: 'Deeper reasoning.' },
+                max: { en: 'Maximum reasoning.' },
+              },
+            },
+            confirm: {
+              enable: true,
+              rules: [
+                {
+                  from: '*',
+                  to: '*',
+                  session_type: sessionType,
+                  hint: { en: 'Effort hint' },
+                  warning: { en: 'Effort warning' },
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    ) as unknown as typeof fetch,
+  });
+}
+
 async function enableRule(sessionType: 'old' | 'new' | 'all' = 'old'): Promise<void> {
   await refreshModelSwitchConfirmConfig({
     fetchImpl: vi.fn(
@@ -202,6 +257,7 @@ async function enableRule(sessionType: 'old' | 'new' | 'all' = 'old'): Promise<v
 describe('confirmThenPerformModelSwitch', () => {
   afterEach(() => {
     resetModelSwitchConfirmConfigCache();
+    resetEffortSwitchConfigCache();
   });
 
   it('passes old-session actions and both rule texts to the dialog', async () => {
@@ -225,7 +281,7 @@ describe('confirmThenPerformModelSwitch', () => {
     confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
 
     const dialog = mountedDialog(mountEditorReplacement);
-    expect(dialog.opts).toMatchObject({ sessionType: 'new', hint: 'Switch hint', warning: undefined });
+    expect(dialog.opts).toMatchObject({ sessionType: 'new', hint: 'Switch hint', warning: 'Switch warning' });
     dialog.opts.onSelect('continue');
     await vi.waitFor(() => {
       expect(session.setModel).toHaveBeenCalledWith('new-alias');
@@ -285,7 +341,104 @@ describe('confirmThenPerformModelSwitch', () => {
     expect(mountEditorReplacement).not.toHaveBeenCalled();
   });
 
-  it('does not refetch a failed config every time the model picker opens', async () => {
+  it('gates a pure effort switch for an OAuth subscription model', async () => {
+    const { host, session, mountEditorReplacement } = makeSwitchHost('managed:kimi-code');
+    await enableEffortConfig();
+
+    confirmThenPerformModelSwitch(host, 'old-alias', 'high', 'session');
+
+    const dialog = mountedDialog(mountEditorReplacement);
+    expect(dialog.opts).toMatchObject({
+      kind: 'effort',
+      fromModel: 'off',
+      toModel: 'high',
+      sessionType: 'old',
+      hint: 'Effort hint',
+      warning: 'Effort warning',
+    });
+    expect(session.setThinking).not.toHaveBeenCalled();
+    dialog.opts.onSelect('continue');
+    await vi.waitFor(() => expect(session.setThinking).toHaveBeenCalledWith('high'));
+    expect(session.compact).not.toHaveBeenCalled();
+  });
+
+  it('shows hint and warning for a new-session effort switch and keeps effort on cancel', async () => {
+    const { host, session, mountEditorReplacement } = makeSwitchHost('managed:kimi-code');
+    host.state.transcriptEntries = [];
+    await enableEffortConfig('new');
+
+    confirmThenPerformModelSwitch(host, 'old-alias', 'high', 'session');
+
+    const dialog = mountedDialog(mountEditorReplacement);
+    expect(dialog.opts).toMatchObject({
+      kind: 'effort',
+      sessionType: 'new',
+      hint: 'Effort hint',
+      warning: 'Effort warning',
+    });
+    dialog.opts.onCancel();
+    expect(session.setThinking).not.toHaveBeenCalled();
+  });
+
+  it('switches effort directly for a non-OAuth model', async () => {
+    const { host, session, mountEditorReplacement } = makeSwitchHost('custom');
+    await enableEffortConfig();
+
+    await handleEffortCommand(host, 'high');
+
+    expect(session.setThinking).toHaveBeenCalledWith('high');
+    expect(mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('ignores effort rules when the model changes at the same time', async () => {
+    const { host, session, mountEditorReplacement } = makeSwitchHost('managed:kimi-code');
+    await enableEffortConfig();
+
+    confirmThenPerformModelSwitch(host, 'new-alias', 'high', 'session');
+
+    await vi.waitFor(() => expect(session.setModel).toHaveBeenCalledWith('new-alias'));
+    expect(mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('gates a direct /effort argument before applying the new effort', async () => {
+    const { host, session, mountEditorReplacement } = makeSwitchHost('managed:kimi-code');
+    await enableEffortConfig();
+
+    await handleEffortCommand(host, 'high');
+
+    const dialog = mountedDialog(mountEditorReplacement);
+    expect(dialog.opts).toMatchObject({ kind: 'effort', fromModel: 'off', toModel: 'high' });
+    expect(session.setThinking).not.toHaveBeenCalled();
+    dialog.opts.onSelect('continue');
+    await vi.waitFor(() => expect(session.setThinking).toHaveBeenCalledWith('high'));
+  });
+
+  it('shows cloud descriptions and gates Alt+S while preserving session-only scope', async () => {
+    const { host, session, mountEditorReplacement } = makeSwitchHost('managed:kimi-code');
+    await enableEffortConfig();
+
+    await handleEffortCommand(host, '');
+
+    const selector = mountEditorReplacement.mock.calls[0]?.[0] as unknown as {
+      opts: {
+        descriptions: Record<string, string>;
+        onSessionOnlySelect: (effort: string) => void;
+      };
+    };
+    expect(selector.opts.descriptions).toEqual({
+      low: 'Light reasoning.',
+      high: 'Deeper reasoning.',
+      max: 'Maximum reasoning.',
+    });
+    selector.opts.onSessionOnlySelect('high');
+    await vi.waitFor(() => expect(mountEditorReplacement).toHaveBeenCalledTimes(2));
+    const dialog = mountEditorReplacement.mock.calls[1]?.[0] as unknown as MountedDialog;
+    dialog.opts.onSelect('continue');
+    await vi.waitFor(() => expect(session.setThinking).toHaveBeenCalledWith('high'));
+    expect(session.compact).not.toHaveBeenCalled();
+  });
+
+  it('does not refetch failed configs every time the model picker opens', async () => {
     const { host } = makeSwitchHost();
     host.setAppState({ availableModels: {} });
     const fetchImpl = vi.fn(async () => {
@@ -296,7 +449,7 @@ describe('confirmThenPerformModelSwitch', () => {
     await showModelPicker(host);
     await showModelPicker(host);
 
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(host.showNotice).toHaveBeenCalledTimes(2);
   });
 });

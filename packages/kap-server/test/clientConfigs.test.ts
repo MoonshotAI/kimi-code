@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   clientConfigsBaseUrl,
+  EFFORT_SWITCH_CONFIG_NAME,
   fetchClientConfig,
   isRegisteredClientConfig,
   MODEL_SWITCH_CONFIRM_CONFIG_NAME,
@@ -300,6 +301,43 @@ describe('server-v2 POST /api/v1/client_configs', () => {
         ],
       },
     });
+  });
+
+  it('preserves effort descriptions and confirm rules inside the ok envelope', async () => {
+    cloudBehavior = {
+      status: 200,
+      body: {
+        name: EFFORT_SWITCH_CONFIG_NAME,
+        config: {
+          descriptions: {
+            enable: true,
+            items: {
+              low: { en: 'Light reasoning.', zh: '轻量思考。' },
+              high: { en: 'Deeper reasoning.', zh: '深入思考。' },
+              max: { en: 'Maximum reasoning.', zh: '最大思考强度。' },
+            },
+          },
+          confirm: {
+            enable: true,
+            rules: [
+              {
+                from: 'low',
+                to: 'high',
+                session_type: 'old',
+                hint: { en: 'Switch effort?', zh: '切换思考强度？' },
+                warning: { en: 'Cache may be lost.', zh: '缓存可能失效。' },
+              },
+            ],
+          },
+        },
+      },
+    };
+    await boot();
+
+    const body = await postClientConfigs(EFFORT_SWITCH_CONFIG_NAME);
+
+    expect(body.code).toBe(0);
+    expect(body.data).toEqual(cloudBehavior.body);
   });
 
   it('fetches the cloud on every request, so config changes are picked up immediately', async () => {

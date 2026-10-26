@@ -11,6 +11,7 @@ import {
 } from '../commands/config';
 import type { SlashCommandHost } from '../commands/dispatch';
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import { refreshEffortSwitchConfig } from '#/utils/effort-switch-config';
 import { refreshModelSwitchConfirmConfig } from '#/utils/model-switch-confirm-config';
 import { lazyModelSelection } from '../utils/model-switch';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
@@ -105,7 +106,11 @@ export class AuthFlowController {
     const defaultModel = host.options.startup.model ?? config.defaultModel;
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
     try {
-      await refreshModelSwitchConfirmConfig({ accessToken: await host.harness.auth.getCachedAccessToken() });
+      const accessToken = await host.harness.auth.getCachedAccessToken();
+      await Promise.all([
+        refreshModelSwitchConfirmConfig({ accessToken }),
+        refreshEffortSwitchConfig({ accessToken }),
+      ]);
     } catch {}
 
     if (defaultModel === undefined || selected === undefined) {

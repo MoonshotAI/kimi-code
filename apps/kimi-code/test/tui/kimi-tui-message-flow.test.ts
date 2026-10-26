@@ -33,6 +33,7 @@ import {
   refreshModelSwitchConfirmConfig,
   resetModelSwitchConfirmConfigCache,
 } from '#/utils/model-switch-confirm-config';
+import { resetEffortSwitchConfigCache } from '#/utils/effort-switch-config';
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 import { kimiCodePluginMarketplaceUrl } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
@@ -563,6 +564,7 @@ async function makeExportedSessionZip(content = 'session zip'): Promise<string> 
 afterEach(async () => {
   resetCapabilitiesCache();
   resetModelSwitchConfirmConfigCache();
+  resetEffortSwitchConfigCache();
   for (const dir of tempDirs.splice(0)) {
     await rm(dir, { recursive: true, force: true });
   }
