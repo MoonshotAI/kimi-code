@@ -1,4 +1,5 @@
 export * from './baseWip';
+export * from './concurrency';
 export * from './frontmatter';
 export * from './git';
 export * from './missionGate';

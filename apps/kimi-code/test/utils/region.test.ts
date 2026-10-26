@@ -4,7 +4,12 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { currentKimiRegion, refreshKimiRegion, regionForBareLogin } from '#/utils/region';
+import {
+  currentKimiRegion,
+  refreshKimiRegion,
+  regionForBareLogin,
+  resetKimiRegionCache,
+} from '#/utils/region';
 
 const originalEnv = { ...process.env };
 
@@ -16,12 +21,12 @@ beforeEach(() => {
   delete process.env['KIMI_CODE_OAUTH_HOST'];
   delete process.env['KIMI_OAUTH_HOST'];
   delete process.env['KIMI_CODE_REGION_MARKER'];
-  refreshKimiRegion();
+  resetKimiRegionCache();
 });
 
 afterEach(() => {
   process.env = { ...originalEnv };
-  refreshKimiRegion();
+  resetKimiRegionCache();
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -60,9 +65,10 @@ describe('currentKimiRegion', () => {
 
 describe('regionForBareLogin', () => {
   it('follows the resolved region for a fresh install (no persisted ref)', () => {
+    writeFileSync(join(home, 'region'), 'mainland-cn\n');
     expect(regionForBareLogin(undefined)).toBe('mainland-cn');
     writeFileSync(join(home, 'region'), 'global\n');
-    refreshKimiRegion();
+    resetKimiRegionCache();
     expect(regionForBareLogin(undefined)).toBe('global');
   });
 

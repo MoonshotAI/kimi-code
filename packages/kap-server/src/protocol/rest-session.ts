@@ -159,6 +159,11 @@ export const archiveSessionResponseSchema = z.object({
 });
 export type ArchiveSessionResponse = z.infer<typeof archiveSessionResponseSchema>;
 
+export const takeoverSessionResponseSchema = z.object({
+  taken_over: z.literal(true),
+});
+export type TakeoverSessionResponse = z.infer<typeof takeoverSessionResponseSchema>;
+
 export const restoreSessionResponseSchema = sessionSchema;
 export type RestoreSessionResponse = z.infer<typeof restoreSessionResponseSchema>;
 

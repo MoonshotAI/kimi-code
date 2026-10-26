@@ -20,6 +20,7 @@ import type { ToolCall } from '#human/llm/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -145,6 +146,42 @@ describe('AgentProfileService.bind', () => {
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+  });
+
+  it('recomputes the bound subagent allowlist when the catalog gains a profile after bind', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan']);
+
+    ctx.get(IAgentProfileRegistry).register({
+      sourceId: 'workspace',
+      priority: 30,
+      contribution: {
+        profiles: [
+          normalizeAgentProfile({
+            name: 'code-reviewer',
+            description: 'Reviews code',
+            tools: ['Read'],
+            systemPrompt: () => 'reviewer',
+          }),
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.get(IWireService).flush();
+
+    expect(svc.data().subagents).toEqual(['coder', 'explore', 'plan', 'code-reviewer']);
+
+    const bindCount = persistence.records.filter((record) => record.type === 'profile.bind').length;
+    await ctx.get(ISessionAgentProfileCatalog).reload();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await ctx.get(IWireService).flush();
+    expect(persistence.records.filter((record) => record.type === 'profile.bind')).toHaveLength(
+      bindCount,
+    );
   });
 
   it('honors the explicit subagents of a discovered profile bound as main', async () => {
@@ -282,6 +319,7 @@ describe('AgentProfileService.bind', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -307,6 +345,42 @@ describe('AgentProfileService.bind', () => {
     expect(ctx.get(IAgentProfileService).data().agentsMdPaths).toEqual(
       bindingRecord?.['agentsMdPaths'],
     );
+  });
+
+  it('restores a binding recorded with EnterPlanMode with its prompt and rejects the removed tool', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    const legacyPrompt = 'Legacy system prompt recorded while EnterPlanMode existed.';
+    const legacyRecords = persistence.records.map((record) =>
+      record.type === 'profile.bind'
+        ? {
+            ...record,
+            systemPrompt: legacyPrompt,
+            activeToolNames: [
+              ...((record['activeToolNames'] as readonly string[] | undefined) ?? []),
+              'EnterPlanMode',
+            ],
+          }
+        : record,
+    );
+    ctx = createTestAgent(
+      { persistence: new InMemoryWireRecordPersistence(legacyRecords), autoConfigure: false },
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.restorePersisted();
+
+    const { profile, toolPolicy } = profileServices(ctx);
+    expect(profile.getSystemPrompt()).toBe(legacyPrompt);
+    expect(profile.getActiveToolNames()).toContain('EnterPlanMode');
+    expect(toolPolicy.isToolActive('ExitPlanMode')).toBe(true);
+    expect(await executeDirectToolCall(ctx, 'EnterPlanMode')).toMatchObject({
+      isError: true,
+      output: 'Tool "EnterPlanMode" not found',
+    });
   });
 
   it('keeps the system prompt frozen after a default bind when AGENTS.md changes', async () => {
@@ -600,6 +674,7 @@ describe('AgentToolPolicyService tool denylist', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -813,6 +888,7 @@ describe('AgentToolPolicyService.setSessionDisabledTools', () => {
     const emptyCatalog = {
       _serviceBrand: undefined,
       ready: Promise.resolve(),
+      onDidChange: Event.None,
       get: () => undefined,
       getDefault: () => ({
         name: DEFAULT_AGENT_PROFILE_NAME,
@@ -1333,5 +1409,90 @@ describe('agentsMdReminder seeding', () => {
     );
 
     expect(seedInjected).not.toHaveBeenCalled();
+  });
+});
+
+describe('change-notifier belief seeding', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+  let workDir: string;
+
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'belief-throws-on-prompt',
+      systemPrompt: () => {
+        throw new Error('prompt build boom');
+      },
+    });
+  });
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-belief-home-'));
+    workDir = await mkdtemp(join(tmpdir(), 'kimi-belief-work-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+    await rm(workDir, { recursive: true, force: true });
+  });
+
+  function buildNotifierContext(
+    seedBeliefs: IAgentChangeNotifierService['seedBeliefs'],
+  ): IAgentProfileService {
+    ctx = createTestAgent(
+      { cwd: workDir },
+      hostEnvironmentServices(homeDir),
+      agentService(IAgentChangeNotifierService, {
+        _serviceBrand: undefined,
+        notifyAgentsMdChanges: async () => {},
+        notifySkillChanges: async () => {},
+        notifySubagentChanges: async () => {},
+        seedBeliefs,
+        mute: () => {},
+        unmute: () => {},
+      }),
+    );
+    return ctx.get(IAgentProfileService);
+  }
+
+  it('seeds beliefs from the rendered prompt after a successful bind', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
+
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(seedBeliefs).toHaveBeenCalledTimes(1);
+    const seed = seedBeliefs.mock.calls[0]?.[0];
+    expect(seed?.agentsMdPaths).toEqual([normalize(join(workDir, 'AGENTS.md'))]);
+    expect(seed?.agentsMd).toContain('project instructions');
+    expect(seed?.skillsListing).toEqual(expect.any(String));
+  });
+
+  it('does not seed when the prompt build fails before the bind commits', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+
+    await expect(
+      profile.bind({ profile: 'belief-throws-on-prompt', model: MOCK_MODEL }),
+    ).rejects.toThrow('prompt build boom');
+
+    expect(seedBeliefs).not.toHaveBeenCalled();
+  });
+
+  it('does not reseed beliefs on binding snapshot restore', async () => {
+    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
+    const profile = buildNotifierContext(seedBeliefs);
+    await profile.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    seedBeliefs.mockClear();
+
+    profile.applyBindingSnapshot({
+      profileName: DEFAULT_AGENT_PROFILE_NAME,
+      thinkingLevel: 'off',
+      systemPrompt: 'restored prompt',
+    });
+
+    expect(seedBeliefs).not.toHaveBeenCalled();
   });
 });

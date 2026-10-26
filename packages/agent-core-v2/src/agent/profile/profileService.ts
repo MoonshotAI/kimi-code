@@ -1,4 +1,5 @@
 import { Disposable } from '#/_base/di/lifecycle';
+import { IInstantiationService } from '#/_base/di/instantiation';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -42,12 +43,14 @@ import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
+import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import {
   extractAgentsMdPathsFromSystemPrompt,
   prepareSystemPromptContext,
+  splitAgentsMdFiles,
   type LoadedAgentsMd,
 } from './context';
 import type {
@@ -66,6 +69,7 @@ import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type 
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionNotify } from '#/features/notify/sessionNotify';
 import { NOTIFY_USER_TOOL_NAME } from '#/features/notify/tools/notify-user/notify-user';
+import { EXIT_PLAN_MODE_TOOL_NAME } from '#/features/plan/tools/exit-plan-mode/exit-plan-mode';
 import { TODO_LIST_TOOL_NAME } from '#/features/todo/todoItem';
 import {
   renderAgentProfilePrompt,
@@ -171,6 +175,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     @IAgentIdentity private readonly identity: IAgentIdentity,
     @IAgentAgentsMdReminderService private readonly agentsMdReminder: IAgentAgentsMdReminderService,
     @IProviderDiscoveryService private readonly discovery: IProviderDiscoveryService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this.states.contributeState(profileKey);
@@ -189,18 +194,13 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
             : this.discovery.retiredModelReplacement(this.modelAlias);
         if (replacement !== undefined) await this.setModel(replacement).catch(() => {});
         this.syncTelemetryModelContext(this.modelAlias);
-        if (this.scopeContext.agentId === MAIN_AGENT_ID && this.profileName !== undefined) {
-          await this.catalog.ready;
-          const snapshot = this.data();
-          const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
-          if (
-            subagents?.length !== snapshot.subagents?.length ||
-            subagents?.some((name, index) => name !== snapshot.subagents?.[index])
-          ) {
-            this.applyBindingSnapshot({ ...snapshot, subagents });
-          }
-        }
+        await this.refreshBoundSubagentAllowlist();
         await next();
+      }),
+    );
+    this._register(
+      this.catalog.onDidChange(() => {
+        void this.refreshBoundSubagentAllowlist().catch(() => {});
       }),
     );
     this._register(
@@ -313,6 +313,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return withoutDelegatingTargets(this.catalog, allowlist);
   }
 
+  private async refreshBoundSubagentAllowlist(): Promise<void> {
+    if (this.scopeContext.agentId !== MAIN_AGENT_ID || this.profileName === undefined) return;
+    await this.catalog.ready;
+    const snapshot = this.data();
+    const subagents = this.bindSubagents(snapshot.profileName, snapshot.subagents);
+    if (
+      subagents?.length !== snapshot.subagents?.length ||
+      subagents?.some((name, index) => name !== snapshot.subagents?.[index])
+    ) {
+      this.applyBindingSnapshot({ ...snapshot, subagents });
+    }
+  }
+
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
     await this.identity.resolved();
@@ -376,6 +389,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       disallowedTools: profile.disallowedTools ?? [],
     });
     this.seedAgentsMdReminder(context);
+    await this.seedChangeNotifierBeliefs(context);
 
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -447,6 +461,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const context = await this.buildSystemPromptContext(profile, options);
     this.useProfile(profile, context);
     this.seedAgentsMdReminder(context);
+    await this.seedChangeNotifierBeliefs(context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
     this.publishToolPatternWarnings(profile);
@@ -456,6 +471,16 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     this.agentsMdReminder.seedInjected(
       context.agentsMdPaths ?? [],
       context.cwd ?? this.sessionContext.cwd,
+    );
+  }
+
+  private async seedChangeNotifierBeliefs(context: SystemPromptContext): Promise<void> {
+    await this.instantiation.invokeFunction((accessor) =>
+      accessor.get(IAgentChangeNotifierService).seedBeliefs({
+        agentsMd: context.agentsMd ?? '',
+        agentsMdPaths: context.agentsMdPaths ?? [],
+        skillsListing: context.skills ?? '',
+      }),
     );
   }
 
@@ -891,15 +916,19 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         this.notify.enabled &&
         this.isToolActiveForProfile(profile, NOTIFY_USER_TOOL_NAME),
       todoListActive: this.isToolActiveForProfile(profile, TODO_LIST_TOOL_NAME),
+      planModeAvailable: this.isToolActiveForProfile(profile, EXIT_PLAN_MODE_TOOL_NAME),
     };
   }
 
   private async workspaceInstructionsSnapshot(): Promise<LoadedAgentsMd> {
     await this.instructions.ready;
+    const paths = this.instructions.agentsMdPaths ?? [];
+    const content = this.instructions.agentsMd ?? '';
     return {
-      content: this.instructions.agentsMd ?? '',
+      content,
       warning: this.instructions.agentsMdWarning,
-      paths: this.instructions.agentsMdPaths ?? [],
+      paths,
+      files: splitAgentsMdFiles(content, paths),
     };
   }
 
