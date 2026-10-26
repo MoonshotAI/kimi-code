@@ -29,12 +29,13 @@ import { MASTER_ENV } from '#/app/flag/flagService';
 import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
-import { agentService, appService, appServices, createCommandRunner, execEnvServices, hostEnvironmentServices, requesterFromGenerateFn, sessionServices, testAgent as createTestAgent, type LegacyGenerateResult } from '../../harness';
+import { agentService, appService, appServices, createCommandRunner, execEnvServices, findGenerateCallPrefixBreak, hostEnvironmentServices, requesterFromGenerateFn, sessionServices, testAgent as createTestAgent, type LegacyGenerateResult } from '../../harness';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { renderCompactionInstruction } from '#/agent/fullCompaction/compactionInstruction';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
+import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import {
   IAgentFullCompactionService,
   IModelOAuthTokens,
@@ -307,7 +308,7 @@ describe('FullCompaction', () => {
       properties: expect.objectContaining({
         agent_id: 'main',
         source: 'manual',
-        tokens_before: 5_788,
+        tokens_before: 5_875,
         tokens_after: expect.any(Number),
         duration_ms: expect.any(Number),
         compacted_count: 6,
@@ -583,7 +584,7 @@ describe('FullCompaction', () => {
       session_id: 'test-session',
       cwd: dir,
       trigger: 'auto',
-      token_count: 5_788,
+      token_count: 5_875,
     });
     expect(post).toMatchObject({
       hook_event_name: 'PostCompact',
@@ -1951,8 +1952,8 @@ describe('FullCompaction', () => {
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        tokens_before: 5_795,
-        tokens_after: 5_812,
+        tokens_before: 5_882,
+        tokens_after: 5_899,
         compacted_count: 7,
         retry_count: 0,
       }),
@@ -4459,4 +4460,115 @@ describe('FullCompaction pre-shrink', () => {
     );
     await ctx.expectResumeMatches();
   });
+});
+
+describe('FullCompaction prompt-cache prefix', () => {
+  const DEFERRED_TOOL = 'mcp__srv__deferred';
+  const AUTO_COMPACTION_HEADROOM = 2_000;
+  const TOOL_SELECT_SCENARIOS = [
+    { label: 'tool select disabled', toolSelect: false, loadSchema: false },
+    { label: 'a deferred tool announced', toolSelect: true, loadSchema: false },
+    { label: 'a deferred tool schema loaded', toolSelect: true, loadSchema: true },
+  ] as const;
+  const MEDIA_SCENARIOS = ['none', 'media-degraded', 'media-stripped'] as const;
+  const CASES = (['manual', 'auto'] as const).flatMap((trigger) =>
+    TOOL_SELECT_SCENARIOS.flatMap((scenario) =>
+      MEDIA_SCENARIOS.map((media) => ({ trigger, ...scenario, media })),
+    ),
+  );
+
+  async function runFirstTurn(
+    toolSelect: boolean,
+    loadSchema: boolean,
+    media: (typeof MEDIA_SCENARIOS)[number],
+  ): Promise<TestAgentContext> {
+    vi.stubEnv(TOOL_SELECT_FLAG_ENV, toolSelect ? '1' : '0');
+    const ctx = testAgent({
+      initialConfig: { providers: {}, loopControl: { reservedContextSize: 0 } },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, dynamically_loaded_tools: true },
+    });
+    await ctx.restorePersisted();
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    ctx.get(IAgentToolRegistryService).register(
+      mcpTool(DEFERRED_TOOL, { type: 'object', properties: { query: { type: 'string' } } }),
+      { source: 'mcp', disclosure: 'deferred' },
+    );
+    if (media !== 'none') {
+      ctx.appendRichToolExchange();
+      ctx.appendRichToolExchange();
+      ctx.mockNextProviderResponse({
+        error:
+          media === 'media-degraded'
+            ? new APIRequestTooLargeError(413, 'Request Entity Too Large')
+            : new APIStatusError(400, 'unsupported image format: image/avif is not supported'),
+      });
+    }
+    if (loadSchema) {
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'call_select',
+        name: 'select_tools',
+        arguments: JSON.stringify({ names: [DEFERRED_TOOL] }),
+      });
+    }
+    ctx.mockNextResponse({ type: 'text', text: 'Ready.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the deferred tool' }] });
+    await ctx.untilTurnEnd();
+    return ctx;
+  }
+
+  function countMedia(history: readonly Message[]): number {
+    return history.reduce(
+      (count, message) =>
+        count +
+        message.content.filter((part) => part.type === 'image_url' || part.type === 'video_url')
+          .length,
+      0,
+    );
+  }
+
+  it.each(CASES)(
+    'keeps the $trigger compaction request a prefix extension with $label and $media',
+    async ({ trigger, toolSelect, loadSchema, media }) => {
+      const ctx = await runFirstTurn(toolSelect, loadSchema, media);
+      const loopCalls = ctx.llmCalls.length;
+      const lastLoopCall = ctx.llmCalls.at(-1)!;
+      const announced = lastLoopCall.history.some((message) =>
+        messageText(message).includes('<tools_added>'),
+      );
+      expect(announced).toBe(toolSelect);
+      expect(lastLoopCall.history.some((message) => message.tools !== undefined)).toBe(loadSchema);
+      expect(loopCalls).toBe((loadSchema ? 2 : 1) + (media === 'none' ? 0 : 1));
+      if (media !== 'none') {
+        expect(countMedia(ctx.llmCalls[0]!.history)).toBeGreaterThan(2);
+        expect(countMedia(lastLoopCall.history)).toBe(media === 'media-degraded' ? 2 : 0);
+      }
+
+      ctx.mockNextResponse({ type: 'text', text: 'Prefix summary.' });
+      if (trigger === 'manual') {
+        const completed = ctx.once('compaction.completed');
+        await ctx.rpc.beginCompaction({});
+        await completed;
+      } else {
+        ctx.kimiConfig = {
+          ...ctx.kimiConfig,
+          loopControl: {
+            reservedContextSize:
+              CATALOGUED_MODEL_CAPABILITIES.max_context_tokens - AUTO_COMPACTION_HEADROOM,
+          },
+        };
+        const largePrompt = `large prompt ${'x'.repeat(AUTO_COMPACTION_HEADROOM * 6)}`;
+        ctx.mockNextResponse({ type: 'text', text: 'Answered after compaction.' });
+        await ctx.rpc.prompt({ input: [{ type: 'text', text: largePrompt }] });
+        await ctx.untilTurnEnd();
+      }
+
+      const compactionCall = ctx.llmCalls[loopCalls]!;
+      expect(messageText(compactionCall.history.at(-1))).toBe(renderCompactionInstruction({}));
+      expect(findGenerateCallPrefixBreak(lastLoopCall, compactionCall)).toBeUndefined();
+    },
+  );
 });

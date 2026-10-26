@@ -3,15 +3,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import { fetchOpenPlatformModels } from '@moonshot-ai/kimi-code-oauth';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
-import type { Component, Focusable } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import type { Component, Focusable, ProgramStatus } from '@moonshot-ai/pi-tui';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
 import { handleLoginCommand, handleLogoutCommand } from '#/tui/commands/auth';
 import { promptPlatformSelection, promptLogoutProviderSelection } from '#/tui/commands/prompts';
+import { ApiKeyInputDialogComponent } from '#/tui/components/dialogs/api-key-input-dialog';
 import { ChoicePickerComponent } from '#/tui/components/dialogs/choice-picker';
+import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { BannerComponent } from '#/tui/components/chrome/banner';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { KimiTUI, type KimiTUIStartupInput, type TUIState } from '#/tui/kimi-tui';
@@ -19,6 +22,7 @@ import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
 import { REPLAY_FETCH_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { mountFooter } from '#/tui/tui-state';
 import { quoteShellArg } from '#/utils/shell-quote';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
@@ -28,6 +32,10 @@ import {
   TERMINAL_THEME_LIGHT,
 } from '#/tui/utils/terminal-theme';
 
+vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
+  return { ...actual, fetchOpenPlatformModels: vi.fn() };
+});
 vi.mock('#/tui/commands/prompts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('#/tui/commands/prompts')>();
   return { ...actual, promptPlatformSelection: vi.fn(), promptLogoutProviderSelection: vi.fn() };
@@ -35,6 +43,7 @@ vi.mock('#/tui/commands/prompts', async (importOriginal) => {
 vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: vi.fn(async () => {}),
 }));
+vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 const modelMigrationState = vi.hoisted(() => ({ acknowledged: {} as Record<string, string> }));
 vi.mock('#/utils/model-migration-state', () => ({
   readModelMigrationAcknowledgements: vi.fn(async () => ({ ...modelMigrationState.acknowledged })),
@@ -311,10 +320,10 @@ describe('KimiTUI startup', () => {
     expect(driver.state.ui.children).toHaveLength(0);
 
     await expect(driver.init()).resolves.toBe(false);
-    (driver as unknown as { mountFooter(): void }).mountFooter();
+    mountFooter(driver.state);
 
-    // Dock = 7 chrome containers + footer wrap, below the transcript viewport.
-    expect(driver.state.dockContainer?.children).toHaveLength(8);
+    // Dock = 6 chrome containers + footer wrap, below the transcript viewport.
+    expect(driver.state.dockContainer?.children).toHaveLength(7);
   });
 
   it('shows a session-less notice on v2 startup', async () => {
@@ -591,6 +600,95 @@ describe('KimiTUI startup', () => {
       model: '',
       permissionMode: 'auto',
     });
+  });
+
+  it('keeps open-platform login blocked across prompts until cancellation', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+    let respond!: (models: Awaited<ReturnType<typeof fetchOpenPlatformModels>>) => void;
+    const fetchModelsMock = vi.mocked(fetchOpenPlatformModels);
+    fetchModelsMock.mockImplementation(() => new Promise((resolve) => {
+      respond = resolve;
+    }));
+    try {
+      vi.mocked(promptPlatformSelection).mockResolvedValue('moonshot-cn');
+      const login = handleLoginCommand(driver as any);
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ApiKeyInputDialogComponent);
+      });
+      expect(rootStatus()).toMatchObject({ state: 'blocked', kind: 'auth' });
+
+      const apiKeyDialog = driver.state.editorContainer.children[0] as ApiKeyInputDialogComponent;
+      apiKeyDialog.handleInput('YOUR_API_KEY');
+      apiKeyDialog.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(fetchModelsMock).toHaveBeenCalledOnce();
+      });
+      const statusDuringVerification = rootStatus();
+
+      respond([{
+        id: 'kimi-k2.5',
+        contextLength: 262144,
+        supportsReasoning: true,
+        supportsImageIn: false,
+        supportsVideoIn: false,
+      }]);
+      await vi.waitFor(() => {
+        expect(driver.state.editorContainer.children[0]).toBeInstanceOf(ModelSelectorComponent);
+      });
+      const statusDuringModelSelection = rootStatus();
+
+      (driver.state.editorContainer.children[0] as ModelSelectorComponent).handleInput('\u001B');
+      await login;
+      expect(statusDuringVerification).toMatchObject({ state: 'blocked', kind: 'auth' });
+      expect(statusDuringModelSelection).toMatchObject({ state: 'blocked', kind: 'auth' });
+      expect(rootStatus()).toMatchObject({ state: 'idle' });
+    } finally {
+      fetchModelsMock.mockReset();
+    }
+  });
+
+  it('clears auth required after OAuth succeeds with an existing session model and no default model', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    driver.state.appState.model = 'session-only-model';
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    (driver as any).programStatus.setAuthRequired(true);
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(rootStatus()).toEqual({ state: 'idle', app: 'kimi-code' });
+  });
+
+  it('keeps auth required when login is cancelled before authentication succeeds', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    (driver as any).programStatus.setAuthRequired(true);
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue(undefined);
+    await handleLoginCommand(driver as any);
+
+    expect(rootStatus()).toMatchObject({ state: 'blocked', kind: 'auth' });
+  });
+
+  it('keeps auth required after OAuth succeeds when no model is available', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    driver.state.appState.model = '';
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    (driver as any).programStatus.setAuthRequired(true);
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(rootStatus()).toMatchObject({ state: 'blocked', kind: 'auth' });
   });
 
   it('carries the --agent/--agent-file binding for the lazy-created first session (v2)', async () => {
@@ -1949,6 +2047,9 @@ describe('KimiTUI startup', () => {
       makeStartupInput({}, { theme: 'auto' }),
     ) as unknown as ThemeTrackingDriver;
     const { listeners, write, addInputListener } = captureInputListeners(driver);
+    onTestFinished(() => {
+      driver.state.theme.setTerminalBackground(undefined);
+    });
 
     driver.refreshTerminalThemeTracking();
 
@@ -1966,22 +2067,29 @@ describe('KimiTUI startup', () => {
 
     expect(listeners[0]?.(DARK_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe('auto');
-    expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
+    expect(driver.state.ui.requestRender).toHaveBeenCalledOnce();
 
     expect(listeners[0]?.(LIGHT_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe('auto');
     expect(driver.state.ui.requestRender).toHaveBeenCalled();
   });
 
-  it('does not track terminal theme reports for explicit themes', () => {
+  it('tracks terminal background for explicit themes without changing their palette', () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, makeStartupInput()) as unknown as ThemeTrackingDriver;
-    const { write, addInputListener } = captureInputListeners(driver);
+    const { listeners, write, addInputListener } = captureInputListeners(driver);
+    onTestFinished(() => {
+      driver.state.theme.setTerminalBackground(undefined);
+    });
+    const palette = driver.state.theme.palette;
 
     driver.refreshTerminalThemeTracking();
 
-    expect(addInputListener).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
+    expect(addInputListener).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(OSC11_QUERY);
+    expect(listeners[0]?.(LIGHT_OSC11_REPORT)).toEqual({ consume: true });
+    expect(driver.state.theme.palette).toBe(palette);
+    expect(driver.state.ui.requestRender).toHaveBeenCalledOnce();
   });
 
   it('disables terminal theme reports after leaving auto theme', () => {
@@ -2775,6 +2883,46 @@ describe('KimiTUI startup', () => {
       method: 'oauth',
       already_logged_in: true,
     });
+  });
+
+  it('restores auth status after OAuth reissues a device code', async () => {
+    const statuses: ProgramStatus[] = [];
+    const rootStatus = () => statuses.findLast((status) => status.id === undefined);
+    let statusDuringRenewal: ProgramStatus | undefined;
+    const harness = makeHarness(makeSession(), {
+      auth: {
+        status: vi.fn(async () => ({ providers: [] })),
+        login: vi.fn(async (
+          _provider: string,
+          options: {
+            onDeviceCode: (auth: { verificationUriComplete: string; userCode: string }) => void;
+          },
+        ) => {
+          options.onDeviceCode({
+            verificationUriComplete: 'https://example.com/device',
+            userCode: 'FIRST',
+          });
+          options.onDeviceCode({
+            verificationUriComplete: 'https://example.com/device',
+            userCode: 'SECOND',
+          });
+          statusDuringRenewal = rootStatus();
+        }),
+        logout: vi.fn(),
+        getManagedUsage: vi.fn(),
+      },
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+    await expect(driver.init()).resolves.toBe(false);
+    vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation((status) => {
+      statuses.push(status);
+    });
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(statusDuringRenewal).toMatchObject({ state: 'blocked', kind: 'auth' });
+    expect(rootStatus()).toEqual({ state: 'idle', app: 'kimi-code' });
   });
 
   it('logs login failures with session context', async () => {

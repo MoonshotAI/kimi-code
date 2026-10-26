@@ -31,7 +31,9 @@ export function promptPlatformSelection(host: SlashCommandHost): Promise<string 
         resolve(undefined);
       },
     });
-    host.mountEditorReplacement(selector);
+    host.mountEditorReplacement(selector, undefined, () => {
+      resolve(undefined);
+    });
   });
 }
 
@@ -115,7 +117,8 @@ export function promptApiKey(
   platformName: string,
   subtitleLines: readonly string[] = ['Your key will be saved to ~/.kimi-code/config.toml'],
 ): Promise<string | undefined> {
-  return new Promise((resolve) => {
+  const releaseAuthBlock = host.beginAuthBlock();
+  return new Promise<string | undefined>((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
       platformName,
       subtitleLines,
@@ -124,8 +127,10 @@ export function promptApiKey(
         resolve(result.kind === 'ok' ? result.value : undefined);
       },
     );
-    host.mountEditorReplacement(dialog);
-  });
+    host.mountEditorReplacement(dialog, undefined, () => {
+      resolve(undefined);
+    });
+  }).finally(releaseAuthBlock);
 }
 
 /**

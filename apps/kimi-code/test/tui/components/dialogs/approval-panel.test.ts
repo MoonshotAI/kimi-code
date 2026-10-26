@@ -1,7 +1,10 @@
-import { CURSOR_MARKER } from '@moonshot-ai/pi-tui';
-import { describe, expect, it } from 'vitest';
+import { CURSOR_MARKER, type Component, type TuiMouseEvent } from '@moonshot-ai/pi-tui';
+import chalk from 'chalk';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
+import type { GutterContainer } from '#/tui/components/chrome/gutter-container';
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { currentTheme } from '#/tui/theme';
 import type {
   DiffDisplayBlock,
   FileContentDisplayBlock,
@@ -12,6 +15,12 @@ import { captureProcessWrite } from '../../../helpers/process';
 
 function strip(text: string): string {
   return text.replaceAll(/\u001B\[[0-9;]*m/g, '');
+}
+
+/** The host focuses a panel when it mounts one in place of the editor. */
+function mount(panel: ApprovalPanelComponent): ApprovalPanelComponent {
+  panel.focused = true;
+  return panel;
 }
 
 function makePending(): PendingApproval {
@@ -46,10 +55,10 @@ function makeDialog(): {
     feedback?: string | undefined;
     selected_label?: string | undefined;
   }> = [];
-  const dialog = new ApprovalPanelComponent(
+  const dialog = mount(new ApprovalPanelComponent(
     makePending(),
     (response) => responses.push(response),
-  );
+  ));
   return { dialog, responses };
 }
 
@@ -81,7 +90,7 @@ describe('ApprovalPanelComponent', () => {
         ],
       },
     };
-    const out = strip(new ApprovalPanelComponent(pending, () => {}).render(80).join('\n'));
+    const out = strip(mount(new ApprovalPanelComponent(pending, () => {})).render(80).join('\n'));
     expect(out).toContain('1. Switch to Never Ask and start');
     expect(out).toContain('Tools are approved automatically, and questions are skipped.');
     // A choice without a description stays label-only — no stray blank helper line.
@@ -107,7 +116,7 @@ describe('ApprovalPanelComponent', () => {
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {});
+    const dialog = mount(new ApprovalPanelComponent(pending, () => {}));
 
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('Dangerous: recursive delete');
@@ -136,7 +145,7 @@ describe('ApprovalPanelComponent', () => {
         choices: [{ label: 'Approve once', response: 'approved' }],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {});
+    const dialog = mount(new ApprovalPanelComponent(pending, () => {}));
 
     const rendered = dialog.render(60);
     const out = strip(rendered.join('\n'));
@@ -169,6 +178,64 @@ describe('ApprovalPanelComponent', () => {
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('▶ 4. Reject with feedback');
     expect(out).not.toContain('\n  > ');
+  });
+
+  it('lends the keyboard to Updates on ctrl+n, even while typing feedback', () => {
+    let updatesReady = false;
+    const lent: string[] = [];
+    const responses: unknown[] = [];
+    const dialog = mount(new ApprovalPanelComponent(makePending(), (response) => responses.push(response), undefined, undefined, {
+      onFocusUpdates: () => {
+        lent.push('ctrl+n');
+        return updatesReady;
+      },
+    }));
+
+    dialog.handleInput('\u000E');
+    expect(lent).toHaveLength(1);
+    updatesReady = true;
+    dialog.handleInput('\u000E');
+    expect(responses).toEqual([]);
+    dialog.handleInput('4');
+    dialog.handleInput('\u001B[78;69u');
+    dialog.handleInput('x');
+    dialog.handleInput('\r');
+    expect(lent).toHaveLength(3);
+    expect(responses).toEqual([{ response: 'rejected', feedback: 'x', selected_label: undefined }]);
+  });
+
+  it('fades while another panel holds the keyboard or the window is inactive', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
+    let terminalFocused = true;
+    const dialog = mount(new ApprovalPanelComponent(makePending(), () => {}, undefined, undefined, {
+      isTerminalFocused: () => terminalFocused,
+    }));
+    const faint = '\u001B[2m';
+    const fadedThroughout = (lines: string[]): boolean =>
+      lines.every(
+        (line) =>
+          line.length === 0 ||
+          (line.startsWith(faint) && !/\u001B\[22m(?!\u001B\[2m)./u.test(line)),
+      );
+    const focusedLines = dialog.render(80);
+    expect(focusedLines.join('\n')).not.toContain(faint);
+
+    dialog.focused = false;
+    const faded = dialog.render(80);
+    expect(fadedThroughout(faded)).toBe(true);
+    expect(faded.map(strip).at(-2)?.trim()).toBe('esc back to approval');
+    expect(faded[0]).not.toBe(focusedLines[0]);
+    expect(strip(faded.join('\n'))).toContain('▶ 1. Approve once');
+
+    dialog.focused = true;
+    terminalFocused = false;
+    const away = dialog.render(80);
+    expect(fadedThroughout(away)).toBe(true);
+    expect(strip(away.join('\n'))).toBe(strip(focusedLines.join('\n')));
   });
 
   it('legacy y/a/n/f shortcuts no longer trigger approval actions', () => {
@@ -239,7 +306,7 @@ describe('ApprovalPanelComponent', () => {
         ],
       },
     };
-    const dialog = new ApprovalPanelComponent(pending, () => {});
+    const dialog = mount(new ApprovalPanelComponent(pending, () => {}));
 
     const out = strip(dialog.render(80).join('\n'));
     expect(out).toContain('Ready to build with this plan?');
@@ -284,12 +351,12 @@ describe('ApprovalPanelComponent', () => {
     };
     let toolOutputToggles = 0;
     const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
-    const dialog = new ApprovalPanelComponent(
+    const dialog = mount(new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
       () => toolOutputToggles++,
       (block) => previewCalls.push(block),
-    );
+    ));
 
     const before = strip(dialog.render(120).join('\n'));
     expect(before).toContain('+30');
@@ -329,7 +396,7 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     let globalToggleCalls = 0;
-    const dialog = new ApprovalPanelComponent(pending, () => {}, () => globalToggleCalls++);
+    const dialog = mount(new ApprovalPanelComponent(pending, () => {}, () => globalToggleCalls++));
 
     dialog.handleInput('\u000F'); // Ctrl+O
 
@@ -352,12 +419,12 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
-    const dialog = new ApprovalPanelComponent(
+    const dialog = mount(new ApprovalPanelComponent(
       pending,
       () => {},
       undefined,
       (block) => previewCalls.push(block),
-    );
+    ));
 
     dialog.handleInput('\u0005'); // Ctrl+E
     expect(previewCalls).toEqual([]);
@@ -384,12 +451,12 @@ describe('ApprovalPanelComponent', () => {
       },
     };
     const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
-    const dialog = new ApprovalPanelComponent(
+    const dialog = mount(new ApprovalPanelComponent(
       pending,
       (r) => responses.push(r),
       undefined,
       (block) => previewCalls.push(block),
-    );
+    ));
 
     const collapsed = strip(dialog.render(120).join('\n'));
     // No diff markers, no +N -M header.
@@ -425,12 +492,12 @@ describe('ApprovalPanelComponent', () => {
     const stderr = captureProcessWrite('stderr');
     try {
       const previewCalls: Array<DiffDisplayBlock | FileContentDisplayBlock> = [];
-      const dialog = new ApprovalPanelComponent(
+      const dialog = mount(new ApprovalPanelComponent(
         pending,
         () => {},
         undefined,
         (block) => previewCalls.push(block),
-      );
+      ));
       const collapsed = strip(dialog.render(120).join('\n'));
       expect(collapsed).toContain('hello');
 
@@ -467,10 +534,10 @@ describe('ApprovalPanelComponent', () => {
         ],
       },
     };
-    const dialog = new ApprovalPanelComponent(
+    const dialog = mount(new ApprovalPanelComponent(
       pending,
       (response) => responses.push(response),
-    );
+    ));
 
     dialog.handleInput('2');
     dialog.handleInput('n');
@@ -479,5 +546,224 @@ describe('ApprovalPanelComponent', () => {
     expect(responses).toEqual([
       { response: 'rejected', feedback: 'no', selected_label: 'Revise' },
     ]);
+  });
+
+  describe('docked (fullscreen)', () => {
+    function goalPending(): PendingApproval {
+      return {
+        data: {
+          ...makePending().data,
+          tool_name: 'CreateGoal',
+          choices: [
+            {
+              label: 'Switch to Never Ask and start',
+              response: 'approved',
+              description: 'Tools are approved automatically, and questions are skipped.',
+            },
+            { label: 'Start in Always Ask', response: 'approved', description: 'Ask every time.' },
+            { label: 'Do not start', response: 'cancelled' },
+          ],
+        },
+      };
+    }
+
+    function dockedDialog(
+      pending: PendingApproval,
+    ): { dialog: ApprovalPanelComponent; responses: Array<{ response: string }> } {
+      const responses: Array<{ response: string }> = [];
+      const dialog = mount(new ApprovalPanelComponent(
+        pending,
+        (response) => responses.push(response),
+        undefined,
+        undefined,
+        { layout: { maxBodyRows: 6 } },
+      ));
+      return { dialog, responses };
+    }
+
+    function foot(dialog: ApprovalPanelComponent): string[] {
+      const lines = dialog.render(60).map((line) => strip(line).trimEnd());
+      return lines.slice(lines.findIndex((line) => line.includes('1. ')) - 1);
+    }
+
+    function mouse(type: 'move' | 'press' | 'release' | 'click', y: number): TuiMouseEvent {
+      return {
+        type,
+        button: type === 'move' ? 'none' : 'left',
+        x: 4,
+        y,
+        screenX: 4,
+        screenY: y,
+        width: 58,
+        height: 12,
+        shift: false,
+        alt: false,
+        ctrl: false,
+      };
+    }
+
+    function footRow(dialog: ApprovalPanelComponent, label: string): number {
+      return foot(dialog).findIndex((line) => line.includes(label));
+    }
+
+    function footPart(dialog: ApprovalPanelComponent): Component {
+      return (dialog.children.at(-1) as GutterContainer).children[0]!;
+    }
+
+    it('shows only the selected description in a fixed area so the choices never move', () => {
+      const { dialog } = dockedDialog(goalPending());
+      const first = foot(dialog);
+      expect(first).toEqual([
+        '',
+        '   ▶ 1. Switch to Never Ask and start',
+        '     2. Start in Always Ask',
+        '     3. Do not start',
+        '',
+        '   Tools are approved automatically, and questions are',
+        '   skipped.',
+        '',
+        '   ↑/↓ select · 1/2/3 choose · ↵ confirm',
+        ` ${'─'.repeat(58)}`,
+      ]);
+
+      dialog.handleInput('\u001B[B');
+      dialog.handleInput('\u001B[B');
+      const third = foot(dialog);
+      expect(third).toHaveLength(first.length);
+      expect(third.slice(1, 4)).toEqual([
+        '     1. Switch to Never Ask and start',
+        '     2. Start in Always Ask',
+        '   ▶ 3. Do not start',
+      ]);
+      expect(third.slice(5, 7)).toEqual(['', '']);
+    });
+
+    it('cuts a long description to three rows so the key hint stays below it', () => {
+      const pending = goalPending();
+      pending.data.choices[0] = {
+        ...pending.data.choices[0]!,
+        description: Array.from({ length: 30 }, (_, i) => `word${String(i)}`).join(' '),
+      };
+      const { dialog } = dockedDialog(pending);
+      const lines = foot(dialog);
+      expect(lines.slice(4, 9).map((line) => line.length > 0)).toEqual([false, true, true, true, false]);
+      expect(lines[7]).toMatch(/…$/);
+      expect(lines[9]).toBe('   ↑/↓ select · 1/2/3 choose · ↵ confirm');
+    });
+
+    function click(dialog: ApprovalPanelComponent, row: number): unknown {
+      let result: unknown;
+      for (const type of ['press', 'release', 'click'] as const) result = footPart(dialog).handleMouse?.(mouse(type, row));
+      return result;
+    }
+
+    function useClock(): (ms: number) => void {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(10_000);
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+      return (ms) => {
+        vi.setSystemTime(Date.now() + ms);
+      };
+    }
+
+    it('highlights and previews a hovered choice without selecting it', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      currentTheme.setTerminalBackground('#282C34');
+      onTestFinished(() => {
+        chalk.level = previousLevel;
+        currentTheme.setTerminalBackground(undefined);
+      });
+      const { dialog } = dockedDialog(goalPending());
+      const row = footRow(dialog, 'Start in Always Ask');
+      const hoverBackground = '\u001B[48;2;51;55;63m';
+
+      expect(footPart(dialog).handleMouse?.(mouse('move', row))).toEqual({ handled: true, render: true });
+      expect(footPart(dialog).handleMouse?.(mouse('move', row))).toEqual({ handled: true });
+      let lines = foot(dialog);
+      expect(lines[row - 1]).toContain('▶ 1. Switch to Never Ask and start');
+      expect(lines[row]).toBe('     2. Start in Always Ask');
+      expect(lines).toContain('   Ask every time.');
+      expect(dialog.render(60).find((line) => line.includes('Start in Always Ask'))).toContain(
+        hoverBackground,
+      );
+
+      expect(footPart(dialog).handleMouse?.(mouse('move', footRow(dialog, '↑/↓ select')))).toEqual({
+        handled: true,
+        render: true,
+      });
+      lines = foot(dialog);
+      expect(lines).not.toContain('   Ask every time.');
+      expect(lines).toContain('   Tools are approved automatically, and questions are');
+      expect(dialog.render(60).join('\n')).not.toContain(hoverBackground);
+
+      footPart(dialog).handleMouse?.(mouse('move', row));
+      dialog.handleInput('\u001B[B');
+      dialog.handleInput('\u001B[B');
+      expect(foot(dialog)).toContain('   ▶ 3. Do not start');
+      expect(foot(dialog)).not.toContain('   Ask every time.');
+    });
+
+    it('has no hover effect without a terminal background color', () => {
+      currentTheme.setTerminalBackground(undefined);
+      const { dialog } = dockedDialog(goalPending());
+      const row = footRow(dialog, 'Start in Always Ask');
+
+      footPart(dialog).handleMouse?.(mouse('move', row));
+      const lines = foot(dialog);
+      expect(lines).not.toContain('   Ask every time.');
+      expect(lines).toContain('   Tools are approved automatically, and questions are');
+      expect(dialog.render(60).join('\n')).not.toContain('\u001B[4m');
+    });
+
+    it('submits a deliberate click while ignoring clicks right after the panel appeared', () => {
+      const advance = useClock();
+      const { dialog, responses } = dockedDialog(goalPending());
+      const row = footRow(dialog, 'Do not start');
+
+      advance(299);
+      expect(click(dialog, row)).toEqual({ handled: true });
+      expect(responses).toEqual([]);
+
+      advance(1);
+      click(dialog, row);
+      expect(responses).toEqual([{ response: 'cancelled', feedback: undefined, selected_label: undefined }]);
+    });
+
+    it('only takes the keyboard back on the first click while faded', () => {
+      const advance = useClock();
+      const { dialog, responses } = dockedDialog(goalPending());
+      const row = footRow(dialog, 'Do not start');
+      advance(1_000);
+      dialog.focused = false;
+
+      expect(footPart(dialog).handleMouse?.(mouse('move', row))).toEqual({ handled: true });
+      expect(foot(dialog)).not.toContain('   Ask every time.');
+      expect(click(dialog, row)).toMatchObject({ handled: true, focus: true, focusTarget: dialog });
+      expect(responses).toEqual([]);
+
+      dialog.focused = true;
+      click(dialog, row);
+      expect(responses).toEqual([{ response: 'cancelled', feedback: undefined, selected_label: undefined }]);
+    });
+
+    it('only moves the selection on a click while typing feedback, keeping the text', () => {
+      const advance = useClock();
+      const { dialog, responses } = dockedDialog(makePending());
+      advance(1_000);
+      dialog.handleInput('4');
+      for (const key of 'too risky') dialog.handleInput(key);
+
+      click(dialog, footRow(dialog, '1. Approve once'));
+      expect(responses).toEqual([]);
+      expect(foot(dialog)).toContain('   ▶ 1. Approve once');
+
+      click(dialog, footRow(dialog, '4. Reject with feedback'));
+      expect(responses).toEqual([]);
+      dialog.handleInput('\r');
+      expect(responses).toEqual([{ response: 'rejected', feedback: 'too risky', selected_label: undefined }]);
+    });
   });
 });

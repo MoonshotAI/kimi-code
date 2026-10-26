@@ -44,4 +44,14 @@ describe('formatSessionLabel', () => {
     });
     expect(label).toBe('[imported] ');
   });
+
+  it('prepends the source tool for sessions imported from Claude Code or Codex', () => {
+    expect(formatSessionLabel({ title: 'Fix login', metadata: { imported_from: 'claude-code' } })).toBe(
+      '[Claude Code] Fix login',
+    );
+    expect(formatSessionLabel({ title: 'Add tests', metadata: { imported_from: 'codex' } })).toBe('[Codex] Add tests');
+    expect(formatSessionLabel({ title: 'Unknown source', metadata: { imported_from: 'other' } })).toBe(
+      'Unknown source',
+    );
+  });
 });

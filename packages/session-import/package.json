@@ -1,0 +1,17 @@
+{
+  "name": "@moonshot-ai/session-import",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Convert external coding sessions into portable textual history and attachments.",
+  "license": "MIT",
+  "type": "module",
+  "files": ["dist"],
+  "imports": { "#/*": "./src/*.ts" },
+  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  }
+}

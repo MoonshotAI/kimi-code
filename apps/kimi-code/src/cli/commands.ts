@@ -1,5 +1,6 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
 import { registerMigrateCommand, type MigrateCommandOptions } from '#/migration/index';
+import { registerImportSessionsCommand } from '#/session-import/index';
 import { Command, InvalidArgumentError, Option } from 'commander';
 
 import type { CLIOptions } from './options';
@@ -132,6 +133,7 @@ export function createProgram(
   registerInstallDesktopCommand(program);
   registerAppCommand(program);
   registerMigrateCommand(program, onMigrate);
+  registerImportSessionsCommand(program);
   program
     .command('upgrade')
     .alias('update')
