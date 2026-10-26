@@ -5,6 +5,7 @@ import { afterEach } from 'vitest';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
 import type {
   AgentLLMRequestOverrides,
   AgentLLMRequestPartHandler,
@@ -52,9 +53,29 @@ const PROFILE_FIELDS = [
   'toolMessageConversion',
 ] as const;
 
+const DEGRADED_PLACEHOLDERS = {
+  image_url:
+    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+  audio_url:
+    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
+  video_url:
+    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+} as const;
+
+const MEDIA_PATH_KIND = {
+  image_url: 'image',
+  audio_url: 'audio',
+  video_url: 'video',
+} as const;
+
 const requestScope = new AsyncLocalStorage<RequestScope>();
 const lastTurnRequests = new WeakMap<object, RecordedRequest>();
 const violations: string[] = [];
+let comparisons = 0;
+
+export function promptCacheComparisons(): number {
+  return comparisons;
+}
 
 export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequesterService {
   declare readonly _serviceBrand: undefined;
@@ -123,7 +144,7 @@ export function guardPromptCachePrefix(requester: LlmRequester): LlmRequester {
         call: generateCallOf(config, content),
       };
       scope.attempts += 1;
-      if (scope.attempts === 1) checkPrefixExtension(scope, request);
+      checkPrefixExtension(scope, request);
       await requester.generate(config, content, control);
       if (scope.source?.type === 'turn') lastTurnRequests.set(scope.agent, request);
     },
@@ -141,7 +162,15 @@ function checkPrefixExtension(scope: RequestScope, request: RecordedRequest): vo
   const previous = lastTurnRequests.get(scope.agent);
   if (previous === undefined) return;
   if (previous.contextRevision !== request.contextRevision || previous.model !== request.model) return;
-  const prefixBreak = findRequestPrefixBreak(previous, request, scope.mediaDegraded);
+  comparisons += 1;
+  const label = scope.attempts === 1 ? kind : `${kind} retry`;
+  recordPrefixBreak(label, findStableBreak(previous, request));
+  if (scope.attempts === 1) {
+    recordPrefixBreak(label, findHistoryBreak(previous, request, scope.mediaDegraded));
+  }
+}
+
+function recordPrefixBreak(kind: string, prefixBreak: unknown): void {
   if (prefixBreak === undefined) return;
   violations.push(
     `${kind} request does not extend the last turn request's prompt-cache prefix: ${JSON.stringify(prefixBreak, null, 2)}`,
@@ -154,11 +183,7 @@ function checkedRequestKind(source: AgentLLMRequestSource | undefined): string |
   return source.logFields?.['droppedCount'] === 0 ? 'full compaction' : undefined;
 }
 
-function findRequestPrefixBreak(
-  previous: RecordedRequest,
-  next: RecordedRequest,
-  mediaDegraded: boolean,
-): unknown {
+function findStableBreak(previous: RecordedRequest, next: RecordedRequest): unknown {
   const profileField = PROFILE_FIELDS.find(
     (field) => !isDeepStrictEqual(previous.profile[field], next.profile[field]),
   );
@@ -169,6 +194,21 @@ function findRequestPrefixBreak(
     {
       systemPrompt: previous.call.systemPrompt,
       tools: sameToolNames(previous.call, next.call) ? previous.call.tools : next.call.tools,
+      history: next.call.history,
+    },
+    next.call,
+  );
+}
+
+function findHistoryBreak(
+  previous: RecordedRequest,
+  next: RecordedRequest,
+  mediaDegraded: boolean,
+): unknown {
+  return findGenerateCallPrefixBreak(
+    {
+      systemPrompt: next.call.systemPrompt,
+      tools: next.call.tools,
       history: mediaDegraded
         ? alignDegradedMedia(previous.call.history, next.call.history)
         : previous.call.history,
@@ -190,14 +230,19 @@ function alignDegradedMedia(previous: readonly Message[], next: readonly Message
       ...message,
       content: message.content.map((part, partIndex) => {
         const replacement = counterpart.content[partIndex]!;
-        return isMediaPart(part) && replacement.type === 'text' ? replacement : part;
+        return isDegradedStandIn(part, replacement) ? replacement : part;
       }),
     };
   });
 }
 
-function isMediaPart(part: ContentPart): boolean {
-  return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
+function isDegradedStandIn(part: ContentPart, replacement: ContentPart): boolean {
+  if (replacement.type !== 'text') return false;
+  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+    return false;
+  }
+  if (replacement.text === DEGRADED_PLACEHOLDERS[part.type]) return true;
+  return matchSingleMediaPathTag(replacement.text)?.kind === MEDIA_PATH_KIND[part.type];
 }
 
 function modelIdentity(config: LlmRequestConfig): string {

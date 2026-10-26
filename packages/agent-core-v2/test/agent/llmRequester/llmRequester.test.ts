@@ -26,6 +26,7 @@ import {
   telemetryServices,
   type TestAgentContext,
 } from '../../harness';
+import { promptCacheComparisons } from '../../harness/prompt-cache-guard';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
@@ -716,6 +717,7 @@ describe('LLMRequester service migration coverage', () => {
     ])(
       'starts the next turn as a prefix extension of the $recovery request the previous turn settled on',
       async ({ error, keptMedia }) => {
+        const compared = promptCacheComparisons();
         const ctx = createTestAgent();
         try {
           ctx.configure({
@@ -749,6 +751,7 @@ describe('LLMRequester service migration coverage', () => {
           expect(countMedia(settled!.history)).toBe(keptMedia);
           expect(findGenerateCallPrefixBreak(settled!, nextTurn!)).toBeUndefined();
           expect(ctx.llmCalls).toHaveLength(3);
+          expect(promptCacheComparisons()).toBeGreaterThan(compared);
         } finally {
           await ctx.dispose();
         }
