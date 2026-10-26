@@ -1463,7 +1463,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       additionalDirs: input.additionalDirs,
       environmentId: input.environmentId,
       environmentCwd: input.environmentCwd,
-      mainAgentBinding: input.environmentId === undefined
+      mainAgentBinding: input.environmentId === undefined || input.environmentId === 'local'
         ? undefined
         : {
             profile: DEFAULT_AGENT_PROFILE_NAME,
@@ -1481,7 +1481,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     ) {
       const agent = await this.materializeMainAgent(
         handle,
-        input.environmentId === undefined
+        input.environmentId === undefined || input.environmentId === 'local'
           ? { model: input.model, thinking: input.thinking }
           : undefined,
       );
