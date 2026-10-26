@@ -10,6 +10,7 @@ import {
   isRolloutBypassedByExperimentalEnv,
   isRolloutEligible,
   MAX_ROLLOUT_DELAY_SECONDS,
+  resolveRolloutBypass,
   rolloutBucket,
   rolloutDelayForBucket,
   rolloutDelaySeconds,
@@ -321,7 +322,7 @@ describe('experimental flag bypass', () => {
   const heldManifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 86_400 }] });
 
   it('bypasses a held rollout and reports experimental', () => {
-    const decision = decidePassiveUpdateTarget('1.0.0', '2.0.0', heldManifest, 'device-a', now, true);
+    const decision = decidePassiveUpdateTarget('1.0.0', '2.0.0', heldManifest, 'device-a', now, 'experimental');
     expect(decision).toMatchObject({
       target: { version: '2.0.0' },
       reason: 'experimental',
@@ -332,21 +333,41 @@ describe('experimental flag bypass', () => {
   });
 
   it('still reports not-newer / no-latest under bypass', () => {
-    expect(decidePassiveUpdateTarget('2.0.0', '2.0.0', heldManifest, 'device-a', now, true)).toMatchObject({
+    expect(decidePassiveUpdateTarget('2.0.0', '2.0.0', heldManifest, 'device-a', now, 'experimental')).toMatchObject({
       target: null,
       reason: 'not-newer',
     });
-    expect(decidePassiveUpdateTarget('1.0.0', null, null, 'device-a', now, true)).toMatchObject({
+    expect(decidePassiveUpdateTarget('1.0.0', null, null, 'device-a', now, 'experimental')).toMatchObject({
       target: null,
       reason: 'no-latest',
     });
   });
 
   it('marks plain-latest visibility as experimental when bypassing', () => {
-    expect(decidePassiveUpdateTarget('1.0.0', '2.0.0', null, 'device-a', now, true)).toMatchObject({
+    expect(decidePassiveUpdateTarget('1.0.0', '2.0.0', null, 'device-a', now, 'experimental')).toMatchObject({
       target: { version: '2.0.0' },
       reason: 'experimental',
     });
+  });
+});
+
+describe('canary channel bypass', () => {
+  const now = secondsAfterPublish(60);
+  const heldManifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 86_400 }] });
+
+  it('skips a held rollout and reports canary', () => {
+    expect(decidePassiveUpdateTarget('1.0.0', '2.0.0', heldManifest, 'device-a', now, 'canary')).toMatchObject({
+      target: { version: '2.0.0' },
+      reason: 'canary',
+      bucket: null,
+    });
+  });
+
+  it('resolves canary before the experimental switch and stable to gated by default', () => {
+    expect(resolveRolloutBypass('canary', {})).toBe('canary');
+    expect(resolveRolloutBypass('canary', { KIMI_CODE_EXPERIMENTAL_FLAG: '1' })).toBe('canary');
+    expect(resolveRolloutBypass('stable', { KIMI_CODE_EXPERIMENTAL_FLAG: '1' })).toBe('experimental');
+    expect(resolveRolloutBypass('stable', {})).toBeNull();
   });
 });
 

@@ -3,8 +3,8 @@ import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/
 
 import { INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS } from '#/constant/app';
 
-import { refreshUpdateCache } from '#/cli/update/refresh';
-import { selectUpdateTarget } from '#/cli/update/select';
+import { refreshUpdateCache, type RefreshedUpdateCache } from '#/cli/update/refresh';
+import { planManualUpdate, resolveUpdateChannel, UPDATE_CHANNEL_ENV } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';
 import {
   canAutoInstall,
@@ -20,8 +20,11 @@ import {
 } from '#/cli/update/prompt';
 import {
   NPM_PACKAGE_NAME,
+  type ChannelSelection,
+  type InstallIntent,
   type InstallSource,
-  type UpdateCache,
+  type UpdateChannel,
+  type UpdateTarget,
 } from '#/cli/update/types';
 
 interface WritableLike {
@@ -32,12 +35,14 @@ type UpgradeTrack = (event: string, properties?: TelemetryProperties) => void;
 type UpgradeLogger = Pick<Logger, 'info' | 'warn'>;
 
 export interface UpgradeDeps {
-  readonly refreshUpdateCache: () => Promise<UpdateCache>;
+  readonly channelSelection: ChannelSelection;
+  readonly refreshUpdateCache: (channel: UpdateChannel) => Promise<RefreshedUpdateCache>;
   readonly detectInstallSource: () => Promise<InstallSource>;
   readonly installUpdate: (
     source: InstallSource,
     version: string,
     platform: NodeJS.Platform,
+    intent: InstallIntent,
   ) => Promise<void>;
   readonly promptForInstallChoice: (
     options: InstallPromptOptions,
@@ -56,10 +61,17 @@ export async function handleUpgrade(
   overrides: Partial<UpgradeDeps> = {},
 ): Promise<number> {
   const deps = createDefaultUpgradeDeps(overrides);
+  const selection = deps.channelSelection;
+  if (selection.origin === 'invalid') {
+    deps.stderr.write(
+      `warning: ignoring ${UPDATE_CHANNEL_ENV}=${JSON.stringify(selection.raw)}; ` +
+        'expected "stable" or "canary". Using stable.\n',
+    );
+  }
 
-  let cache: UpdateCache;
+  let cache: RefreshedUpdateCache;
   try {
-    cache = await deps.refreshUpdateCache();
+    cache = await deps.refreshUpdateCache(selection.channel);
   } catch (error) {
     const reason = formatErrorMessage(error);
     trackUpgradeEvent(deps.track, 'upgrade_command_failed', {
@@ -74,101 +86,91 @@ export async function handleUpgrade(
     deps.stderr.write(`error: failed to check for updates: ${reason}\n`);
     return 1;
   }
+  if (cache.degraded) {
+    deps.stderr.write('warning: the canary channel is unreachable; using the stable release instead.\n');
+  }
 
-  const target = selectUpdateTarget(currentVersion, cache.latest);
-  if (target === null) {
+  const plan = planManualUpdate(currentVersion, cache.latest, selection);
+  if (plan.kind === 'up-to-date' || plan.kind === 'canary-hold') {
     trackUpgradeEvent(deps.track, 'upgrade_command_no_update', {
       current_version: currentVersion,
+      canary_hold: plan.kind === 'canary-hold',
     });
     logUpgradeInfo(deps.logger, 'manual upgrade no update', {
       currentVersion,
+      plan: plan.kind,
     });
-    deps.stdout.write(`Kimi Code is already up to date (${formatDisplayVersion(currentVersion)}).\n`);
+    deps.stdout.write(
+      plan.kind === 'canary-hold'
+        ? renderCanaryHoldMessage(currentVersion, plan.stable)
+        : `Kimi Code is already up to date (${formatDisplayVersion(currentVersion)}).\n`,
+    );
     return 0;
   }
 
+  const target = plan.target;
+  const intent: InstallIntent = plan.kind === 'switch-to-stable' ? 'switch-channel' : 'upgrade';
   const source = await deps.detectInstallSource().catch(() => 'unsupported' as const);
   const installCommand = installCommandFor(source, target.version, deps.platform);
-  if (!canAutoInstall(source, deps.platform) || (!deps.yes && !deps.isInteractive)) {
-    trackUpgradeEvent(deps.track, 'upgrade_command_manual_command', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    logUpgradeInfo(deps.logger, 'manual upgrade command shown', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-    });
-    deps.stdout.write(renderManualUpdateMessage(currentVersion, target, source, installCommand));
+  const eventBase = {
+    current_version: currentVersion,
+    target_version: target.version,
+    source,
+    intent,
+  };
+  const logBase = {
+    currentVersion,
+    targetVersion: target.version,
+    source,
+    intent,
+  };
+  const sourceCanAutoInstall = canAutoInstall(source, deps.platform);
+  if (!sourceCanAutoInstall || (!deps.yes && !deps.isInteractive)) {
+    trackUpgradeEvent(deps.track, 'upgrade_command_manual_command', eventBase);
+    logUpgradeInfo(deps.logger, 'manual upgrade command shown', logBase);
+    deps.stdout.write(
+      intent === 'switch-channel'
+        ? renderSwitchToStableMessage(currentVersion, target, sourceCanAutoInstall, installCommand)
+        : renderManualUpdateMessage(currentVersion, target, source, installCommand),
+    );
     return 0;
   }
 
   if (!deps.yes) {
-    trackUpgradeEvent(deps.track, 'upgrade_command_prompted', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    logUpgradeInfo(deps.logger, 'manual upgrade prompted', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-    });
+    trackUpgradeEvent(deps.track, 'upgrade_command_prompted', eventBase);
+    logUpgradeInfo(deps.logger, 'manual upgrade prompted', logBase);
     const choice = await deps.promptForInstallChoice({
       currentVersion,
       target,
       installCommand,
       installSource: source,
+      intent,
     });
     if (choice === 'skip') {
-      trackUpgradeEvent(deps.track, 'upgrade_command_skipped', {
-        current_version: currentVersion,
-        target_version: target.version,
-        source,
-      });
-      logUpgradeInfo(deps.logger, 'manual upgrade skipped', {
-        currentVersion,
-        targetVersion: target.version,
-        source,
-      });
+      trackUpgradeEvent(deps.track, 'upgrade_command_skipped', eventBase);
+      logUpgradeInfo(deps.logger, 'manual upgrade skipped', logBase);
       return 0;
     }
   }
 
   try {
-    trackUpgradeEvent(deps.track, 'upgrade_command_install_selected', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    await deps.installUpdate(source, target.version, deps.platform);
-    trackUpgradeEvent(deps.track, 'upgrade_command_succeeded', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
-    });
-    logUpgradeInfo(deps.logger, 'manual upgrade install succeeded', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-    });
-    deps.stdout.write(renderInstallSuccessMessage(target));
+    trackUpgradeEvent(deps.track, 'upgrade_command_install_selected', eventBase);
+    await deps.installUpdate(source, target.version, deps.platform, intent);
+    trackUpgradeEvent(deps.track, 'upgrade_command_succeeded', eventBase);
+    logUpgradeInfo(deps.logger, 'manual upgrade install succeeded', logBase);
+    deps.stdout.write(
+      intent === 'switch-channel'
+        ? `Switched ${NPM_PACKAGE_NAME} to stable ${target.version}. Restart the CLI to use it.\n`
+        : renderInstallSuccessMessage(target),
+    );
     return 0;
   } catch (error) {
     trackUpgradeEvent(deps.track, 'upgrade_command_failed', {
-      current_version: currentVersion,
-      target_version: target.version,
-      source,
+      ...eventBase,
       stage: 'install',
       reason: formatErrorMessage(error),
     });
-    logUpgradeWarn(deps.logger, 'manual upgrade install failed', {
-      currentVersion,
-      targetVersion: target.version,
-      source,
-      error,
-    });
+    logUpgradeWarn(deps.logger, 'manual upgrade install failed', { ...logBase, error });
     deps.stderr.write(
       `warning: failed to install ${NPM_PACKAGE_NAME}@${target.version}: ` +
         `${formatErrorMessage(error)}\n`,
@@ -177,11 +179,37 @@ export async function handleUpgrade(
   }
 }
 
+function renderCanaryHoldMessage(currentVersion: string, stable: string): string {
+  return (
+    `Kimi Code is on the canary build ${formatDisplayVersion(currentVersion)}; ` +
+    `the stable release is ${formatDisplayVersion(stable)}.\n` +
+    'It stays on this build until a newer stable release ships.\n' +
+    `To switch back to stable now, set ${UPDATE_CHANNEL_ENV}=stable and run kimi update.\n`
+  );
+}
+
+function renderSwitchToStableMessage(
+  currentVersion: string,
+  target: UpdateTarget,
+  sourceCanAutoInstall: boolean,
+  installCommand: string,
+): string {
+  return (
+    `Kimi Code is on the canary build ${formatDisplayVersion(currentVersion)}; ` +
+    `switching to stable installs the older release ${formatDisplayVersion(target.version)}.\n` +
+    'Sessions or settings written by the canary build may not open in it.\n' +
+    (sourceCanAutoInstall
+      ? 'To switch, run: kimi update --yes\n'
+      : `To switch manually, run: ${installCommand}\n`)
+  );
+}
+
 function createDefaultUpgradeDeps(overrides: Partial<UpgradeDeps>): UpgradeDeps {
   return {
+    channelSelection: overrides.channelSelection ?? resolveUpdateChannel(),
     refreshUpdateCache:
       overrides.refreshUpdateCache ??
-      (() => refreshUpdateCache({ timeoutMs: INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS })),
+      ((channel) => refreshUpdateCache({ channel, timeoutMs: INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS })),
     detectInstallSource: overrides.detectInstallSource ?? (() => detectInstallSource()),
     installUpdate: overrides.installUpdate ?? installUpdateForeground,
     promptForInstallChoice: overrides.promptForInstallChoice ?? promptForInstallChoice,

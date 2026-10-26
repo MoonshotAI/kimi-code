@@ -130,7 +130,7 @@ function createSpawnMock(routes: {
 async function seedStagedUpdate(
   exePath: string,
   version: string,
-  options?: { readonly manual?: boolean },
+  options?: { readonly manual?: boolean; readonly intent?: 'switch-channel' },
 ): Promise<void> {
   const stagingDir = getNativeStagingDir(exePath);
   await mkdir(stagingDir, { recursive: true });
@@ -148,6 +148,7 @@ async function seedStagedUpdate(
       exeSize: STAGED_EXE_SIZE,
       stagedAt: new Date().toISOString(),
       manual: options?.manual === true ? true : undefined,
+      intent: options?.intent,
     }, null, 2)}\n`,
     'utf-8',
   );
@@ -237,6 +238,47 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     await expect(
       stat(join(getNativeStagingDir(exePath), stagedExeFileName(CURRENT_VERSION, 'linux'))),
     ).resolves.toBeDefined();
+  });
+
+  describe('channel switch', () => {
+    const CANARY_VERSION = '0.6.0-canary.202610260043';
+    const STABLE_VERSION = '0.5.0';
+
+    it('swaps an older stable release over a canary build when the stage carries the switch intent', async () => {
+      await seedStagedUpdate(exePath, STABLE_VERSION, { manual: true, intent: 'switch-channel' });
+      const { calls, spawnImpl } = createSpawnMock({ smokeStdout: `${STABLE_VERSION}\n` });
+      const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+        makeDeps(exePath, { spawnImpl, currentVersion: CANARY_VERSION }),
+      );
+
+      expect(relaunched).toBe(true);
+      expect(calls[0]?.args).toEqual(['--version']);
+      expect((await readFile(exePath)).equals(Buffer.alloc(STAGED_EXE_SIZE, 1))).toBe(true);
+    });
+
+    it('still discards an older stage without the switch intent on a canary build', async () => {
+      await seedStagedUpdate(exePath, STABLE_VERSION, { manual: true });
+      const { calls, spawnImpl } = createSpawnMock({ smokeStdout: `${STABLE_VERSION}\n` });
+      const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+        makeDeps(exePath, { spawnImpl, currentVersion: CANARY_VERSION }),
+      );
+
+      expect(relaunched).toBe(false);
+      expect(calls).toHaveLength(0);
+      expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
+    });
+
+    it('discards a switch stage once the running build is no longer canary', async () => {
+      await seedStagedUpdate(exePath, STABLE_VERSION, { manual: true, intent: 'switch-channel' });
+      const { calls, spawnImpl } = createSpawnMock({ smokeStdout: `${STABLE_VERSION}\n` });
+      const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+        makeDeps(exePath, { spawnImpl, currentVersion: '0.6.0' }),
+      );
+
+      expect(relaunched).toBe(false);
+      expect(calls).toHaveLength(0);
+      expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
+    });
   });
 
   it('discards staged metadata whose exe is missing', async () => {

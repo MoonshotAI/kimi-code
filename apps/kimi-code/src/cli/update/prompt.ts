@@ -12,7 +12,7 @@ import {
   UPDATE_PROMPT_WARNING,
 } from '#/constant/update';
 
-import { type InstallSource, type UpdateTarget } from './types';
+import { type InstallIntent, type InstallSource, type UpdateTarget } from './types';
 
 export const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
 
@@ -28,14 +28,27 @@ export interface InstallPromptOptions {
   readonly target: UpdateTarget;
   readonly installCommand: string;
   readonly installSource: InstallSource;
+  /** `switch-channel` asks to install an older stable release over a canary build. */
+  readonly intent?: InstallIntent;
   readonly input?: NodeJS.ReadStream;
   readonly output?: NodeJS.WriteStream;
 }
 
 const INSTALL_HINT = 'Install update now';
 const SKIP_HINT = 'Continue with current version';
+const SWITCH_HINT = 'Switch to stable now';
+const STAY_HINT = 'Stay on the canary build';
 
-export function createInstallPromptChoices(target: UpdateTarget): readonly InstallPromptChoice[] {
+export function createInstallPromptChoices(
+  target: UpdateTarget,
+  intent: InstallIntent = 'upgrade',
+): readonly InstallPromptChoice[] {
+  if (intent === 'switch-channel') {
+    return [
+      { value: 'install', label: `${SWITCH_HINT} (${target.version})` },
+      { value: 'skip', label: STAY_HINT },
+    ];
+  }
   return [
     { value: 'install', label: `${INSTALL_HINT} (${target.version})` },
     { value: 'skip', label: SKIP_HINT },
@@ -69,9 +82,16 @@ function renderInstallPrompt(
   const sourceLabel = chalk.hex(UPDATE_PROMPT_PRIMARY).bold(options.installSource);
   const command = chalk.hex(UPDATE_PROMPT_PRIMARY)(options.installCommand);
   const changelogText = chalk.hex(UPDATE_PROMPT_PRIMARY).underline(`View changelog: ${CHANGELOG_URL}`);
+  const switching = options.intent === 'switch-channel';
   const lines = [
-    chalk.hex(UPDATE_PROMPT_PRIMARY).bold('Kimi Code Update Available'),
-    chalk.hex(UPDATE_PROMPT_MUTED)(`${PRODUCT_NAME} has a newer release ready.`),
+    chalk.hex(UPDATE_PROMPT_PRIMARY).bold(
+      switching ? 'Switch Kimi Code to Stable' : 'Kimi Code Update Available',
+    ),
+    chalk.hex(UPDATE_PROMPT_MUTED)(
+      switching
+        ? 'This installs an older stable release. Sessions or settings written by the canary build may not open in it.'
+        : `${PRODUCT_NAME} has a newer release ready.`,
+    ),
     `]8;;${CHANGELOG_URL}\\${changelogText}]8;;\\`,
     '',
     `${label('Current')}  ${currentVersion}`,
@@ -125,7 +145,7 @@ export async function promptForInstallChoice(
 ): Promise<InstallPromptChoiceValue> {
   const input = options.input ?? process.stdin;
   const output = options.output ?? process.stdout;
-  const choices = createInstallPromptChoices(options.target);
+  const choices = createInstallPromptChoices(options.target, options.intent);
   let selectedIndex = getDefaultInstallPromptSelection(choices);
 
   return new Promise<InstallPromptChoiceValue>((resolve) => {

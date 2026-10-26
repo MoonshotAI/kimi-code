@@ -39,6 +39,7 @@ import {
   type StagedNativeUpdate,
 } from './native-stage';
 import { isAutoUpdateDisabledByEnv, shouldAutoInstallUpdates } from './preflight';
+import { isCanaryVersion } from './select';
 import { getNativeStagedStateFile, getNativeStagingDir } from '#/utils/paths';
 import { createFileIfAbsent } from '#/utils/persistence';
 
@@ -506,7 +507,11 @@ export async function maybeRelaunchWithStagedNativeUpdate(
 
   // Downgrade guard: the staged version must be newer than what is running.
   // (The user may have installed a newer build manually after we staged.)
-  if (!gt(staged.version, deps.currentVersion)) {
+  // The one exception is a confirmed switch from a canary build back to
+  // stable, and only while a canary build is still what is running.
+  const leavesCanary =
+    staged.intent === 'switch-channel' && isCanaryVersion(deps.currentVersion);
+  if (!gt(staged.version, deps.currentVersion) && !leavesCanary) {
     logSwap('discarding staged update (not newer)', {
       staged: staged.version,
       current: deps.currentVersion,

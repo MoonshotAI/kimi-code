@@ -283,8 +283,8 @@ function bootstrap(): void {
         process.exit(1);
       });
     },
-    (targetVersion, manual) => {
-      void runUpdateDownloadCommand(targetVersion, manual).then(
+    (targetVersion, manual, intent) => {
+      void runUpdateDownloadCommand(targetVersion, manual, intent).then(
         (code) => {
           process.exit(code);
         },

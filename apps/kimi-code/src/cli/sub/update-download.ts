@@ -21,6 +21,7 @@ import {
   stageNativeUpdate,
 } from '#/cli/update/native-stage';
 import { detectNativeInstall } from '#/cli/update/source';
+import type { InstallIntent } from '#/cli/update/types';
 
 const LOCK_HELD_POLL_INTERVAL_MS = 2_000;
 
@@ -48,11 +49,16 @@ type StagedUpdateWait =
  * marker landed on the stage — a concurrent startup swap may be claiming and
  * restoring the metadata right now, and reporting adoption for a promotion
  * that never persisted would strand the update under the env opt-out.
+ *
+ * A channel switch adopts only a stage that carries the switch intent: any
+ * other stage of an older version would be discarded by the startup swap's
+ * downgrade guard, silently dropping the switch the user confirmed.
  */
 async function waitForStagedUpdate(
   version: string,
   exePath: string,
   manual: boolean,
+  intent: InstallIntent,
 ): Promise<StagedUpdateWait> {
   for (;;) {
     const staged = await readStagedNativeUpdate(exePath);
@@ -60,7 +66,8 @@ async function waitForStagedUpdate(
       staged !== null && staged.version === version
         ? await hashFileSha256(stagedExePath(exePath, staged))
         : null;
-    if (staged !== null && digest === staged.sha256) {
+    const intentMatches = intent !== 'switch-channel' || staged?.intent === 'switch-channel';
+    if (staged !== null && digest === staged.sha256 && intentMatches) {
       if (!manual || (await promoteStagedUpdateToManual(exePath, staged))) {
         return { status: 'staged' };
       }
@@ -84,6 +91,7 @@ async function waitForStagedUpdate(
 export async function runUpdateDownloadCommand(
   version: string,
   manual: boolean = false,
+  intent: InstallIntent = 'upgrade',
 ): Promise<number> {
   if (!detectNativeInstall()) {
     process.stderr.write('error: update download is only available in the native build\n');
@@ -99,7 +107,7 @@ export async function runUpdateDownloadCommand(
       out.write(
         `A download of Kimi Code ${version} is already in progress; waiting for it to finish…\n`,
       );
-      const wait = await waitForStagedUpdate(version, process.execPath, manual);
+      const wait = await waitForStagedUpdate(version, process.execPath, manual, intent);
       if (wait.status === 'staged') {
         out.write(`Kimi Code ${version} is downloaded; it applies on the next start.\n`);
         return 0;
@@ -127,6 +135,7 @@ export async function runUpdateDownloadCommand(
       exePath: process.execPath,
       onProgress,
       manual,
+      intent,
     });
     if (out.isTTY) out.write('\n');
     if (result.status === 'already-staged') {

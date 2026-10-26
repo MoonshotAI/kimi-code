@@ -1,9 +1,13 @@
-import { valid } from 'semver';
+import { gt, valid } from 'semver';
 import { z } from 'zod';
 
-import { kimiCodeCdnLatestJsonUrl, kimiCodeCdnLatestUrl } from '#/constant/app';
+import {
+  kimiCodeCdnCanaryChannelUrl,
+  kimiCodeCdnLatestJsonUrl,
+  kimiCodeCdnLatestUrl,
+} from '#/constant/app';
 
-import type { UpdateManifest } from './types';
+import type { UpdateChannel, UpdateManifest } from './types';
 
 const CDN_FETCH_TIMEOUT_MS = 3_000;
 
@@ -74,13 +78,14 @@ export async function fetchLatestVersionFromCdn(
   return raw;
 }
 
-async function fetchUpdateManifestFromCdn(
+async function fetchManifestFromCdn(
   fetchImpl: typeof fetch,
+  url: string,
   timeoutMs: number,
 ): Promise<UpdateManifest> {
-  const response = await fetchWithTimeout(fetchImpl, kimiCodeCdnLatestJsonUrl(), timeoutMs);
+  const response = await fetchWithTimeout(fetchImpl, url, timeoutMs);
   if (!response.ok) {
-    throw new Error(`CDN /latest.json returned HTTP ${response.status}`);
+    throw new Error(`CDN ${url} returned HTTP ${response.status}`);
   }
   return UpdateManifestSchema.parse(JSON.parse(await response.text()));
 }
@@ -97,10 +102,49 @@ export async function fetchLatestFromCdn(
   fetchImpl: typeof fetch = fetch,
   timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
 ): Promise<FetchLatestResult> {
-  const manifest = await fetchUpdateManifestFromCdn(fetchImpl, timeoutMs).catch(() => null);
+  const manifest = await fetchManifestFromCdn(fetchImpl, kimiCodeCdnLatestJsonUrl(), timeoutMs)
+    .catch(() => null);
   if (manifest !== null) {
     return { latest: manifest.version, manifest };
   }
   const latest = await fetchLatestVersionFromCdn(fetchImpl, timeoutMs);
   return { latest, manifest: null };
+}
+
+export interface ChannelFeed extends FetchLatestResult {
+  readonly channel: UpdateChannel;
+  /** The canary pointer was unreachable, so this is the stable result. */
+  readonly degraded: boolean;
+}
+
+/**
+ * The version a channel should move to right now. Stable is exactly
+ * `fetchLatestFromCdn`. Canary reads both feeds in parallel and takes the
+ * higher version, so a stable release that overtakes the last canary still
+ * reaches canary users; an unreachable canary pointer degrades to the stable
+ * result instead of stranding the channel.
+ *
+ * **Throws** only when every source fails; callers must catch.
+ */
+export async function fetchChannelFeed(
+  channel: UpdateChannel,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs: number = CDN_FETCH_TIMEOUT_MS,
+): Promise<ChannelFeed> {
+  if (channel === 'stable') {
+    return { channel, degraded: false, ...(await fetchLatestFromCdn(fetchImpl, timeoutMs)) };
+  }
+  const [stable, canary] = await Promise.allSettled([
+    fetchLatestFromCdn(fetchImpl, timeoutMs),
+    fetchManifestFromCdn(fetchImpl, kimiCodeCdnCanaryChannelUrl(), timeoutMs),
+  ]);
+  if (canary.status === 'rejected') {
+    if (stable.status === 'rejected') throw stable.reason;
+    return { channel, degraded: true, ...stable.value };
+  }
+  const pointer = { latest: canary.value.version, manifest: canary.value };
+  if (stable.status === 'rejected' || gt(pointer.latest, stable.value.latest)) {
+    return { channel, degraded: false, ...pointer };
+  }
+  return { channel, degraded: false, ...stable.value };
 }

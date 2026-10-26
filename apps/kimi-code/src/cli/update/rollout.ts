@@ -8,7 +8,7 @@ import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 import { getUpdateRolloutLogFile } from '#/utils/paths';
 
 import { selectUpdateTarget } from './select';
-import type { RolloutBatch, UpdateManifest, UpdateTarget } from './types';
+import type { RolloutBatch, UpdateChannel, UpdateManifest, UpdateTarget } from './types';
 
 /**
  * Hard ceiling for any rollout delay. Combined with the uncovered-bucket
@@ -73,7 +73,12 @@ export type PassiveUpdateReason =
   /** Gated and the batch delay has elapsed: update is visible. */
   | 'eligible'
   /** KIMI_CODE_EXPERIMENTAL_FLAG is on: rollout skipped, newest always visible. */
-  | 'experimental';
+  | 'experimental'
+  /** KIMI_CODE_UPDATE_CHANNEL=canary: canary builds are never staged. */
+  | 'canary';
+
+/** Why a device skips staged rollout entirely; null means it is gated. */
+export type RolloutBypass = 'experimental' | 'canary';
 
 export interface PassiveUpdateDecision {
   readonly target: UpdateTarget | null;
@@ -98,16 +103,16 @@ export function decidePassiveUpdateTarget(
   manifest: UpdateManifest | null,
   deviceId: string,
   now: Date,
-  bypassRollout = false,
+  bypass: RolloutBypass | null = null,
 ): PassiveUpdateDecision {
-  if (bypassRollout) {
+  if (bypass !== null) {
     if (latest === null) {
       return { target: null, reason: 'no-latest', bucket: null, delaySeconds: null, eligibleAt: null };
     }
     const target = selectUpdateTarget(currentVersion, latest);
     return {
       target,
-      reason: target === null ? 'not-newer' : 'experimental',
+      reason: target === null ? 'not-newer' : bypass,
       bucket: null,
       delaySeconds: null,
       eligibleAt: null,
@@ -207,4 +212,13 @@ export function isRolloutBypassedByExperimentalEnv(
 ): boolean {
   const value = (env['KIMI_CODE_EXPERIMENTAL_FLAG'] ?? '').trim().toLowerCase();
   return ['1', 'true', 'yes', 'on'].includes(value);
+}
+
+/** The canary channel has no rollout batches; the experimental switch skips them too. */
+export function resolveRolloutBypass(
+  channel: UpdateChannel,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): RolloutBypass | null {
+  if (channel === 'canary') return 'canary';
+  return isRolloutBypassedByExperimentalEnv(env) ? 'experimental' : null;
 }

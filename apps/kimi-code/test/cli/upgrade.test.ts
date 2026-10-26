@@ -2,17 +2,28 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { handleUpgrade } from '#/cli/sub/upgrade';
 import type { InstallPromptChoiceValue } from '#/cli/update/prompt';
-import type { InstallSource, UpdateCache } from '#/cli/update/types';
+import type { RefreshedUpdateCache } from '#/cli/update/refresh';
+import type {
+  ChannelSelection,
+  InstallIntent,
+  InstallSource,
+  UpdateCache,
+} from '#/cli/update/types';
+
+const CANARY = '2.5.0-canary.202610260043';
 
 function cacheWith(
   version: string | null,
   manifest: UpdateCache['manifest'] = null,
-): UpdateCache {
+  degraded = false,
+): RefreshedUpdateCache {
   return {
     source: 'cdn',
+    channel: 'stable',
     checkedAt: '2026-04-23T08:00:00.000Z',
     latest: version,
     manifest,
+    degraded,
   };
 }
 
@@ -42,7 +53,14 @@ function createDeps(overrides: {
   readonly source?: InstallSource;
   readonly isInteractive?: boolean;
   readonly promptForInstallChoice?: () => Promise<InstallPromptChoiceValue>;
-  readonly installUpdate?: (source: InstallSource, version: string, platform: NodeJS.Platform) => Promise<void>;
+  readonly installUpdate?: (
+    source: InstallSource,
+    version: string,
+    platform: NodeJS.Platform,
+    intent: InstallIntent,
+  ) => Promise<void>;
+  readonly channelSelection?: ChannelSelection;
+  readonly degraded?: boolean;
 } = {}) {
   const installUpdate =
     overrides.installUpdate ??
@@ -50,12 +68,18 @@ function createDeps(overrides: {
       source: InstallSource,
       version: string,
       platform: NodeJS.Platform,
+      intent: InstallIntent,
     ) => Promise<void>>().mockResolvedValue(undefined);
 
   return {
+    channelSelection: overrides.channelSelection ?? { channel: 'stable', origin: 'default' },
     refreshUpdateCache: vi
       .fn()
-      .mockResolvedValue(cacheWith(overrides.latest ?? '0.5.0', overrides.manifest ?? null)),
+      .mockResolvedValue(cacheWith(
+        overrides.latest ?? '0.5.0',
+        overrides.manifest ?? null,
+        overrides.degraded ?? false,
+      )),
     detectInstallSource: vi.fn().mockResolvedValue(overrides.source ?? 'npm-global'),
     promptForInstallChoice:
       overrides.promptForInstallChoice ?? vi.fn().mockResolvedValue('install'),
@@ -86,8 +110,10 @@ describe('handleUpgrade', () => {
       target: { version: '0.5.0' },
       installCommand: 'npm install -g @moonshot-ai/kimi-code@0.5.0',
       installSource: 'npm-global',
+      intent: 'upgrade',
     });
-    expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
+    expect(deps.refreshUpdateCache).toHaveBeenCalledWith('stable');
+    expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin', 'upgrade');
     expect(deps.track).toHaveBeenCalledWith('upgrade_command_prompted', expect.objectContaining({
       current_version: '0.4.0',
       target_version: '0.5.0',
@@ -177,7 +203,7 @@ describe('handleUpgrade', () => {
     await expect(handleUpgrade('0.4.0', { ...yesDeps, ...yesRun.writable, yes: true })).resolves.toBe(0);
 
     expect(yesDeps.promptForInstallChoice).not.toHaveBeenCalled();
-    expect(yesDeps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
+    expect(yesDeps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin', 'upgrade');
     expect(yesDeps.track).not.toHaveBeenCalledWith('upgrade_command_prompted', expect.anything());
     expect(yesDeps.track).toHaveBeenCalledWith('upgrade_command_install_selected', expect.objectContaining({
       target_version: '0.5.0',
@@ -243,7 +269,98 @@ describe('handleUpgrade', () => {
 
     await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
 
-    expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin');
+    expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin', 'upgrade');
     expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
+  });
+
+  describe('update channels', () => {
+    it('checks the canary channel and installs the canary build it reports', async () => {
+      const { stdout, writable } = captureOutput();
+      const deps = createDeps({ latest: CANARY, channelSelection: { channel: 'canary', origin: 'env' } });
+
+      await expect(handleUpgrade('2.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(deps.refreshUpdateCache).toHaveBeenCalledWith('canary');
+      expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', CANARY, 'darwin', 'upgrade');
+      expect(stdout.join('')).toContain(`Updated @moonshot-ai/kimi-code to ${CANARY}`);
+    });
+
+    it('switches a canary build back to stable after confirmation when the env asks for stable', async () => {
+      const { stdout, writable } = captureOutput();
+      const deps = createDeps({
+        latest: '2.4.1',
+        source: 'native',
+        channelSelection: { channel: 'stable', origin: 'env' },
+      });
+
+      await expect(handleUpgrade(CANARY, { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(deps.promptForInstallChoice).toHaveBeenCalledWith(expect.objectContaining({
+        currentVersion: CANARY,
+        target: { version: '2.4.1' },
+        intent: 'switch-channel',
+      }));
+      expect(deps.installUpdate).toHaveBeenCalledWith('native', '2.4.1', 'darwin', 'switch-channel');
+      expect(deps.track).toHaveBeenCalledWith('upgrade_command_succeeded', expect.objectContaining({
+        target_version: '2.4.1',
+        intent: 'switch-channel',
+      }));
+      expect(stdout.join('')).toContain('Switched @moonshot-ai/kimi-code to stable 2.4.1');
+    });
+
+    it('does not switch without a prompt or --yes outside a terminal', async () => {
+      const { stdout, writable } = captureOutput();
+      const deps = createDeps({
+        latest: '2.4.1',
+        source: 'native',
+        isInteractive: false,
+        channelSelection: { channel: 'stable', origin: 'env' },
+      });
+
+      await expect(handleUpgrade(CANARY, { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(deps.installUpdate).not.toHaveBeenCalled();
+      expect(stdout.join('')).toContain('switching to stable installs the older release v2.4.1');
+      expect(stdout.join('')).toContain('To switch, run: kimi update --yes');
+    });
+
+    it('holds a canary build on the default channel and explains how to switch', async () => {
+      const { stdout, writable } = captureOutput();
+      const deps = createDeps({ latest: '2.4.1' });
+
+      await expect(handleUpgrade(CANARY, { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(deps.detectInstallSource).not.toHaveBeenCalled();
+      expect(deps.installUpdate).not.toHaveBeenCalled();
+      expect(stdout.join('')).toContain(`on the canary build v${CANARY}; the stable release is v2.4.1`);
+      expect(stdout.join('')).toContain('set KIMI_CODE_UPDATE_CHANNEL=stable and run kimi update');
+    });
+
+    it('warns about an invalid channel value and falls back to stable', async () => {
+      const { stderr, writable } = captureOutput();
+      const deps = createDeps({
+        latest: '0.5.0',
+        channelSelection: { channel: 'stable', origin: 'invalid', raw: 'nightly' },
+      });
+
+      await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(stderr.join('')).toContain('warning: ignoring KIMI_CODE_UPDATE_CHANNEL="nightly"');
+      expect(deps.refreshUpdateCache).toHaveBeenCalledWith('stable');
+      expect(deps.installUpdate).toHaveBeenCalledWith('npm-global', '0.5.0', 'darwin', 'upgrade');
+    });
+
+    it('warns when the canary pointer is unreachable instead of hiding the fallback', async () => {
+      const { stderr, writable } = captureOutput();
+      const deps = createDeps({
+        latest: '0.5.0',
+        degraded: true,
+        channelSelection: { channel: 'canary', origin: 'env' },
+      });
+
+      await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(stderr.join('')).toContain('warning: the canary channel is unreachable');
+    });
   });
 });

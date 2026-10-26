@@ -26,6 +26,7 @@ import {
   nativeBinaryUrl,
   selectPlatformEntry,
 } from './native-manifest';
+import type { InstallIntent } from './types';
 
 const StagedNativeUpdateSchema = z
   .object({
@@ -46,6 +47,11 @@ const StagedNativeUpdateSchema = z
      * still apply when automatic updates are opted out via env.
      */
     manual: z.boolean().optional(),
+    /**
+     * Set only by `kimi update` switching a canary build back to stable: the
+     * startup swap then installs this version even though it is older.
+     */
+    intent: z.literal('switch-channel').optional(),
   })
   .strict();
 
@@ -287,6 +293,7 @@ export interface StageNativeUpdateOptions {
   readonly idleTimeoutMs?: number;
   /** True when the stage answers an explicit user-initiated `kimi upgrade`. */
   readonly manual?: boolean;
+  readonly intent?: InstallIntent;
 }
 
 export type StageNativeUpdateStatus = 'already-staged' | 'staged';
@@ -434,7 +441,11 @@ export async function stageNativeUpdate(
   const exeFileName = uniqueStagedExeFileName(options.version, platform);
 
   const existing = await readStagedNativeUpdate(options.exePath);
-  if (existing !== null && existing.version === options.version) {
+  // A channel switch never adopts a stage without the switch intent: the
+  // startup swap would discard that older version as a downgrade.
+  const intentMatches =
+    options.intent !== 'switch-channel' || existing?.intent === 'switch-channel';
+  if (existing !== null && existing.version === options.version && intentMatches) {
     // readStagedNativeUpdate checks only the recorded size — a same-size
     // corruption after the download (disk damage, a non-durable write)
     // would still be adopted here and reported as success, only for the
@@ -479,6 +490,7 @@ export async function stageNativeUpdate(
     exeSize: 0,
     stagedAt: new Date().toISOString(),
     manual: options.manual === true ? true : undefined,
+    intent: options.intent === 'switch-channel' ? 'switch-channel' : undefined,
   };
 
   // The .part intermediate is just the publish name plus the suffix — the

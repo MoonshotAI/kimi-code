@@ -510,6 +510,43 @@ describe('stageNativeUpdate', () => {
     expect((await readStagedNativeUpdate(exePath))?.manual).toBe(true);
   });
 
+  it('records the switch intent and never adopts a stage without it for a channel switch', async () => {
+    await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: mockCdnFetch({ payload: PAYLOAD }),
+      manual: true,
+    });
+
+    const switchFetch = mockCdnFetch({ payload: PAYLOAD });
+    const result = await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: switchFetch,
+      manual: true,
+      intent: 'switch-channel',
+    });
+
+    expect(result.status).toBe('staged');
+    expect(switchFetch).toHaveBeenCalled();
+    expect((await readStagedNativeUpdate(exePath))?.intent).toBe('switch-channel');
+
+    const repeat = await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: mockCdnFetch({ payload: PAYLOAD }),
+      manual: true,
+      intent: 'switch-channel',
+    });
+    expect(repeat.status).toBe('already-staged');
+  });
+
   it('re-stages when the staged exe is corrupted at the same size', async () => {
     const first = await stageNativeUpdate({
       version: VERSION,
