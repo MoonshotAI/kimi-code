@@ -69,27 +69,63 @@ const modelSwitchConfirmConfigSchema = z.unknown().transform((raw): ModelSwitchC
 });
 
 /** In-process copy of the config. Unlike the other named configs this one is
- *  never persisted and has no TTL: the TUI refetches it once per process
- *  startup and the dialog gate reads only this memory copy. */
+ *  never persisted and has no TTL: startup and auth-context changes refresh
+ *  it, and the dialog gate reads only this memory copy. */
 let cached: ModelSwitchConfirmConfig | undefined;
-let inFlight: Promise<ModelSwitchConfirmConfig | undefined> | undefined;
+let loadState: 'idle' | 'loading' | 'settled' = 'idle';
+let inFlight:
+  | {
+      accessToken?: string;
+      fetchImpl?: typeof fetch;
+      path?: string;
+      region: ReturnType<typeof clientConfigs.region>;
+      request: Promise<ModelSwitchConfirmConfig | undefined>;
+    }
+  | undefined;
+let latestRequest: object | undefined;
 
-/** Starts or joins a network refresh; a failed fetch leaves (or resets) the
- *  copy to undefined, gating the dialog off. */
+/** Starts a network refresh, or joins one for the same auth context. Automatic
+ *  picker loads stop after the first settled attempt; explicit refreshes still
+ *  always refetch. A failed fetch disables the dialog until such a refresh. */
 export async function refreshModelSwitchConfirmConfig(
   options: ClientConfigFetchOptions = {},
 ): Promise<ModelSwitchConfirmConfig | undefined> {
-  if (inFlight !== undefined) return inFlight;
+  const region = clientConfigs.region();
+  if (
+    inFlight !== undefined &&
+    inFlight.accessToken === options.accessToken &&
+    inFlight.fetchImpl === options.fetchImpl &&
+    inFlight.path === options.path &&
+    inFlight.region === region
+  ) {
+    return inFlight.request;
+  }
+  cached = undefined;
+  loadState = 'loading';
+  const requestId = {};
+  latestRequest = requestId;
   const request = (async () => {
-    cached = await clientConfigs.fetch(CONFIG_NAME, modelSwitchConfirmConfigSchema, options);
-    return cached;
+    const next = await clientConfigs.fetch(CONFIG_NAME, modelSwitchConfirmConfigSchema, options);
+    if (latestRequest === requestId) cached = next;
+    return next;
   })();
-  inFlight = request;
+  inFlight = {
+    accessToken: options.accessToken,
+    fetchImpl: options.fetchImpl,
+    path: options.path,
+    region,
+    request,
+  };
   try {
     return await request;
   } finally {
-    if (inFlight === request) inFlight = undefined;
+    if (latestRequest === requestId) loadState = 'settled';
+    if (inFlight?.request === request) inFlight = undefined;
   }
+}
+
+export function needsModelSwitchConfirmConfigRefresh(): boolean {
+  return cached === undefined && loadState !== 'settled';
 }
 
 /** Synchronous read of the in-process copy; undefined until the first
@@ -101,7 +137,9 @@ export function peekModelSwitchConfirmConfig(): ModelSwitchConfirmConfig | undef
 /** Test hook: drop the in-process copy. */
 export function resetModelSwitchConfirmConfigCache(): void {
   cached = undefined;
+  loadState = 'idle';
   inFlight = undefined;
+  latestRequest = undefined;
 }
 
 export function matchModelSwitchRule(

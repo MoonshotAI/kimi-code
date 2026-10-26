@@ -30,6 +30,7 @@ import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
 import {
   matchModelSwitchRule,
+  needsModelSwitchConfirmConfigRefresh,
   peekModelSwitchConfirmConfig,
   refreshModelSwitchConfirmConfig,
   resolveModelSwitchHint,
@@ -372,7 +373,7 @@ function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias>
 }
 
 export async function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): Promise<void> {
-  if (peekModelSwitchConfirmConfig() === undefined) {
+  if (needsModelSwitchConfirmConfigRefresh()) {
     try {
       await refreshModelSwitchConfirmConfig({ accessToken: await host.harness.auth.getCachedAccessToken() });
     } catch {}
@@ -430,6 +431,7 @@ export function confirmThenPerformModelSwitch(
     availableModels[host.state.appState.model],
   );
   const toModel = modelDisplayName(alias, availableModels[alias]);
+  const sessionType = hasConversationHistory(host) ? 'old' : 'new';
   const dismiss = (): void => {
     // Only close while this dialog still owns the editor replacement: an
     // approval/question panel mounted over it must never be wiped out by the
@@ -443,9 +445,9 @@ export function confirmThenPerformModelSwitch(
     new ModelSwitchConfirmDialogComponent({
       fromModel,
       toModel,
-      sessionType: hasConversationHistory(host) ? 'old' : 'new',
+      sessionType,
       hint: resolveModelSwitchHint(rule),
-      warning: resolveModelSwitchWarning(rule),
+      warning: sessionType === 'old' ? resolveModelSwitchWarning(rule) : undefined,
       onSelect: (action) => {
         if (settled) return;
         settled = true;

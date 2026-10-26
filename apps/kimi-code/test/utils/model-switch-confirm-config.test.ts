@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   matchModelSwitchRule,
+  needsModelSwitchConfirmConfigRefresh,
   peekModelSwitchConfirmConfig,
   refreshModelSwitchConfirmConfig,
   resetModelSwitchConfirmConfigCache,
@@ -202,6 +203,41 @@ describe('refreshModelSwitchConfirmConfig', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     release();
     await expect(Promise.all([first, second])).resolves.toEqual([CLOUD_CONFIG, CLOUD_CONFIG]);
+  });
+
+  it('does not automatically retry a settled empty or failed load', async () => {
+    const missing = vi.fn(async () => jsonResponse({ name: 'survey_popup', config: CLOUD_CONFIG }));
+    expect(needsModelSwitchConfirmConfigRefresh()).toBe(true);
+    await refreshModelSwitchConfirmConfig({ fetchImpl: missing as typeof fetch });
+    expect(needsModelSwitchConfirmConfigRefresh()).toBe(false);
+
+    resetModelSwitchConfirmConfigCache();
+    const failing = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    await refreshModelSwitchConfirmConfig({ fetchImpl: failing as typeof fetch });
+    expect(needsModelSwitchConfirmConfigRefresh()).toBe(false);
+  });
+
+  it('separates auth contexts and prevents an older request from replacing newer rules', async () => {
+    const resolvers: ((response: Response) => void)[] = [];
+    const fetchImpl = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+
+    const first = refreshModelSwitchConfirmConfig({ accessToken: 'old-token', fetchImpl: fetchImpl as typeof fetch });
+    const second = refreshModelSwitchConfirmConfig({ accessToken: 'new-token', fetchImpl: fetchImpl as typeof fetch });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    resolvers[1]!(jsonResponse(ENVELOPE));
+    await second;
+    resolvers[0]!(jsonResponse({ name: 'model_switch_confirm', config: { enable: false, rules: [] } }));
+    await first;
+
+    expect(peekModelSwitchConfirmConfig()).toEqual(CLOUD_CONFIG);
   });
 });
 

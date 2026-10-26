@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
-import { compactForModelSwitch, confirmThenPerformModelSwitch } from '#/tui/commands/config';
+import { compactForModelSwitch, confirmThenPerformModelSwitch, showModelPicker } from '#/tui/commands/config';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import {
   refreshModelSwitchConfirmConfig,
@@ -44,6 +44,7 @@ function fakeHost(session: Session) {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('compactForModelSwitch', () => {
@@ -136,6 +137,7 @@ function makeSwitchHost() {
       'old-alias': { model: 'upstream-old', displayName: 'Old' },
       'new-alias': { model: 'upstream-new', displayName: 'New' },
     },
+    availableProviders: {},
   };
   const session = {
     setModel: vi.fn(async () => ({})),
@@ -154,6 +156,7 @@ function makeSwitchHost() {
       activeDialog: null,
     },
     session,
+    harness: { auth: { getCachedAccessToken: vi.fn(async () => 'test-token') } },
     authFlow: { activateModelAfterLogin: vi.fn(async () => true) },
     waitForSessionAssembly: vi.fn(async () => {}),
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(appState, patch)),
@@ -186,7 +189,7 @@ async function enableRule(sessionType: 'old' | 'new' | 'all' = 'old'): Promise<v
                   to: 'upstream-new',
                   session_type: sessionType,
                   hint: { en: 'Switch hint' },
-                  warning: sessionType === 'old' ? { en: 'Switch warning' } : undefined,
+                  warning: { en: 'Switch warning' },
                 },
               ],
             },
@@ -280,5 +283,20 @@ describe('confirmThenPerformModelSwitch', () => {
       expect(session.setModel).toHaveBeenCalledWith('new-alias');
     });
     expect(mountEditorReplacement).not.toHaveBeenCalled();
+  });
+
+  it('does not refetch a failed config every time the model picker opens', async () => {
+    const { host } = makeSwitchHost();
+    host.setAppState({ availableModels: {} });
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('offline');
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+
+    await showModelPicker(host);
+    await showModelPicker(host);
+
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(host.showNotice).toHaveBeenCalledTimes(2);
   });
 });
