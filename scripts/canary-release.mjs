@@ -104,6 +104,17 @@ export function canaryChanges(currentChangesets, previousNames) {
   return changes;
 }
 
+// The record doubles as a valid channels/canary.json pointer: the client
+// requires a semver `version`, a parseable `publishedAt`, and a `rollout`
+// array, and ignores every other field.
+export function buildCanaryRecord({ version, commit, ref, trigger, builtAt, publishedAt, changes }) {
+  if (parseCanaryVersion(version) === null) throw new Error(`invalid canary version ${version}`);
+  for (const [name, value] of Object.entries({ builtAt, publishedAt })) {
+    if (!Number.isFinite(Date.parse(value))) throw new Error(`${name} is not a timestamp: ${value}`);
+  }
+  return { version, publishedAt, rollout: [], channel: 'canary', commit, ref, trigger, builtAt, changes };
+}
+
 function git(args) {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
@@ -183,23 +194,21 @@ function record(outDir) {
     return value;
   };
   const versionValue = env('CANARY_VERSION');
-  if (parseCanaryVersion(versionValue) === null) throw new Error(`invalid canary version ${versionValue}`);
   const commit = env('CANARY_SHA');
   const previous = latestCanaryFromTags(canaryTags().filter((tag) => tag !== `${TAG_PREFIX}${versionValue}`));
   const previousNames = previous === null
     ? new Set()
     : new Set(changesetsAt(`${TAG_PREFIX}${previous}`).keys());
   const changes = canaryChanges(changesetsAt(commit), previousNames);
-  const buildRecord = {
+  const buildRecord = buildCanaryRecord({
     version: versionValue,
-    rollout: [],
-    channel: 'canary',
     commit,
     ref: env('CANARY_REF'),
     trigger: env('CANARY_TRIGGER'),
     builtAt: env('CANARY_BUILT_AT'),
+    publishedAt: new Date().toISOString(),
     changes,
-  };
+  });
   writeFileSync(join(outDir, 'canary.json'), `${JSON.stringify(buildRecord, null, 2)}\n`);
   const notes = [
     `Canary build of ${PACKAGE_NAME} from \`${buildRecord.ref}\` @ ${commit}.`,

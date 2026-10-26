@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  buildCanaryRecord,
   canaryChanges,
   compareCanaryVersions,
   computeCanaryVersion,
@@ -52,6 +53,23 @@ await test('latestCanaryFromTags orders by base, then by timestamp, and ignores 
 await test('pickNewestGreenCommit follows first-parent order, not run order', () => {
   assert.equal(pickNewestGreenCommit(['c', 'b', 'a'], ['a', 'b']), 'b');
   assert.equal(pickNewestGreenCommit(['c'], ['a']), null);
+});
+
+await test('buildCanaryRecord is a valid channel pointer for the client', () => {
+  const record = buildCanaryRecord({
+    version: '2.4.0-canary.202610260043',
+    commit: 'a'.repeat(40),
+    ref: 'main',
+    trigger: 'nightly',
+    builtAt: '2026-10-26T00:43:00.000Z',
+    publishedAt: '2026-10-26T01:10:00.000Z',
+    changes: ['Add the /foo command.'],
+  });
+  assert.equal(parseCanaryVersion(record.version)?.base, '2.4.0');
+  assert.ok(Number.isFinite(Date.parse(record.publishedAt)));
+  assert.deepEqual(record.rollout, []);
+  assert.throws(() => buildCanaryRecord({ ...record, publishedAt: undefined }), /publishedAt/);
+  assert.throws(() => buildCanaryRecord({ ...record, version: '2.4.0' }), /invalid canary version/);
 });
 
 await test('canaryChanges lists new CLI changesets only', () => {
