@@ -48,7 +48,13 @@ export class WorkspaceInstance {
   async dispose(): Promise<void> {
     if (this.lifecycle === 'disposed') return;
     this.lifecycle = 'closing';
-    this.program.dispose();
+    let failure: unknown;
+    try {
+      await this.program.dispose();
+    } catch (error) {
+      failure = error;
+    }
     this.lifecycle = 'disposed';
+    if (failure !== undefined) throw failure;
   }
 }

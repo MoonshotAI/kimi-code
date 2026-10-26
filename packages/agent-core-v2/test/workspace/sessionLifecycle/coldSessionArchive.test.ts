@@ -242,10 +242,12 @@ function sessionManagerResuming(sessionId: string): SessionManager {
     id: summary.workspaceId,
     program: { sessionControllerGeneration: 'generation-1', createSessionController: () => controller },
   } as unknown as WorkspaceInstance;
-  const workspaces = { getOrCreate: async () => workspace, get: () => workspace } as unknown as IWorkspaceInstanceManager;
   const environments = new EnvironmentRegistry() as unknown as IEnvironmentService;
   return new SessionManager(
-    workspaces,
+    {
+      acquire: async () => ({ instance: workspace, dispose: () => {} }),
+      get: () => workspace,
+    } as unknown as IWorkspaceInstanceManager,
     { get: async () => summary } as unknown as ISessionIndex,
     new EnvironmentDeclarationService(
       { _serviceBrand: undefined, ready: Promise.resolve(), assertValid: () => {}, get: () => undefined } as unknown as IConfigService,

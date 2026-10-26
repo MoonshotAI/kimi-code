@@ -23,9 +23,12 @@ import type { Event2 } from '@moonshot-ai/agent-core-v2';
  *   `task.notified`, `plan.revision`, and the `permission.approval.*` pair
  *   (v1 surfaces approvals through the `requestApproval` callback, never as
  *   events).
- * - `prompt.*`: the v2 prompt service publishes them on the agent bus, but in
- *   v1 they are synthesized by the daemon services layer onto the global
- *   `IEventService` — the in-process SDK client never sees them.
+ * - `prompt.*` other than `prompt.completed`: the v2 prompt service publishes
+ *   them on the agent bus, but in v1 they are synthesized by the daemon
+ *   services layer onto the global `IEventService` — the in-process SDK client
+ *   never sees them. Only `prompt.completed(blocked)` remains visible because
+ *   a pre-turn hook rejection has no `turn.ended` counterpart that could
+ *   settle the UI.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'context.spliced',
@@ -34,7 +37,6 @@ const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'permission.approval.requested',
   'permission.approval.resolved',
   'prompt.submitted',
-  'prompt.completed',
   'prompt.aborted',
   'prompt.started',
   'prompt.steered',
@@ -64,6 +66,12 @@ export function translateDomainEvent(
   sessionId: string,
   agentId: string,
 ): Event | undefined {
+  if (
+    event.type === 'prompt.completed' &&
+    (event as { readonly reason?: string }).reason !== 'blocked'
+  ) {
+    return undefined;
+  }
   if (DROPPED_DOMAIN_EVENT_TYPES.has(event.type)) return undefined;
   const type = RENAMED_DOMAIN_EVENT_TYPES[event.type] ?? event.type;
   if (event.type === 'turn.started') {

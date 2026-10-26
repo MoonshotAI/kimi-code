@@ -94,7 +94,7 @@ import {
   USER_INTERRUPTED_SUBAGENT_MESSAGE,
   type SubagentToolInput,
 } from './agent';
-import { SubagentTask, type SubagentHandle } from './subagent-task';
+import { NO_PARTIAL_OUTPUT, SubagentTask, type SubagentHandle } from './subagent-task';
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
@@ -398,6 +398,7 @@ export class SubagentTool implements ISubagentTool {
         usage: r.usage,
         stopReason: r.stopReason,
       })),
+      partialOutput: run.partialOutput,
     };
   }
 
@@ -597,7 +598,12 @@ export class SubagentTool implements ISubagentTool {
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
       : formatSubagentStoppedMessage(info?.stopReason);
     return {
-      output: formatForegroundAgentFailure(handle, message, failureStopReason(info, stopCode)),
+      output: formatForegroundAgentFailure(
+        handle,
+        message,
+        failureStopReason(info, stopCode),
+        await this.tasks.readOutput(taskId),
+      ),
       isError: true,
     };
   }
@@ -770,6 +776,7 @@ function formatForegroundAgentFailure(
   handle: SubagentHandle,
   message: string,
   reason: SubagentStopReason,
+  partialOutput: string,
 ): string {
   const lines = [
     `agent_id: ${handle.agentId}`,
@@ -778,6 +785,9 @@ function formatForegroundAgentFailure(
     `stop_reason: ${reason}`,
     '',
     `subagent error: ${message}`,
+    '',
+    partialOutput.length > 0 ? partialOutput : NO_PARTIAL_OUTPUT,
+    '',
   ];
   if (reason !== 'cancelled') lines.push(resumeHint(handle.agentId, 'continue'));
   const next = nextStep(reason);

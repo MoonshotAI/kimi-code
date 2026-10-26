@@ -23,6 +23,7 @@ export interface AuthFlowHost {
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
   resetSessionRuntime(): void;
+  setAuthRequired(required: boolean): void;
   appendStartupNotice(extra: string): void;
   hydrateLazyConfigDefaults(): Promise<void>;
 }
@@ -49,6 +50,7 @@ export class AuthFlowController {
       contextUsage: 0,
       sessionTitle: null,
     });
+    this.host.setAuthRequired(true);
     this.host.appendStartupNotice(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
     this.host.setStartupReady();
   }
@@ -72,6 +74,7 @@ export class AuthFlowController {
       if (effort !== undefined) {
         await session.setThinking(effort);
       }
+      host.setAuthRequired(false);
       return modelChanged;
     }
 
@@ -85,6 +88,7 @@ export class AuthFlowController {
       patch.lazySessionThinking = effort as ThinkingEffort;
     }
     host.setAppState(patch);
+    host.setAuthRequired(false);
     return false;
   }
 

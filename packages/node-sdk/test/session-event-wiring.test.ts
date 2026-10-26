@@ -150,6 +150,49 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events[1]).not.toHaveProperty('model');
   });
 
+  it('forwards prompt.completed so gate-blocked prompts can settle clients', () => {
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      sub.bus.emit({
+        type: 'prompt.completed',
+        promptId: 'prompt-1',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason: 'blocked',
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'prompt.completed',
+      sessionId: 's1',
+      agentId: 'agent-1',
+      promptId: 'prompt-1',
+      reason: 'blocked',
+    });
+  });
+
+  it.each(['completed', 'failed'] as const)('keeps prompt.completed(%s) on the internal bus', (reason) => {
+    const sub = new FakeAgentHandle('agent-1');
+    const { sink, events } = collectingSink();
+    const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    try {
+      sub.bus.emit({
+        type: 'prompt.completed',
+        promptId: 'prompt-1',
+        finishedAt: '2026-01-01T00:00:00.000Z',
+        reason,
+      });
+    } finally {
+      wiring.dispose();
+    }
+
+    expect(events).toEqual([]);
+  });
+
   it('passes status events through unchanged when the agent services are incomplete', () => {
     const sub = new FakeAgentHandle('agent-1');
     // No profile/usage/context/wire services bound — nothing to fold in.

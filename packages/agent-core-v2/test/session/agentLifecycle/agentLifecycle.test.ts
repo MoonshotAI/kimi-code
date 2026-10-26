@@ -1182,7 +1182,7 @@ describe('AgentLifecycleService', () => {
     expect(log.appended.filter((record) => record.type === 'environment.set_binding')).toEqual([
       expect.objectContaining({ agentId: 'agent-1', environmentId: 'local' }),
     ]);
-    expect(log.appended.some((record) => record.cwd === '/remote/work')).toBe(false);
+    expect(log.appended.some((record) => record['cwd'] === '/remote/work')).toBe(false);
     expectCurrentBinding('agent-1', { environmentId: 'local' });
   });
 

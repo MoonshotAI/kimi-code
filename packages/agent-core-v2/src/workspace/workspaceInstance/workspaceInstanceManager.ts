@@ -14,16 +14,20 @@ export interface WorkspaceInstancesSnapshot {
   readonly workspaces: readonly WorkspaceInstanceSnapshot[];
 }
 
+export interface WorkspaceInstanceLease {
+  readonly instance: WorkspaceInstance;
+  dispose(): void;
+}
+
 export interface IWorkspaceInstanceManager {
   readonly _serviceBrand: undefined;
   readonly onDidChange: Event<WorkspaceInstanceChange>;
-  getOrCreate(ref: WorkspaceInstanceRef): Promise<WorkspaceInstance>;
+  acquire(ref: WorkspaceInstanceRef): Promise<WorkspaceInstanceLease>;
   get(workspaceId: string): WorkspaceInstance | undefined;
   findByRoot(root: string): WorkspaceInstance | undefined;
   findContaining(cwd: string): WorkspaceInstance | undefined;
   list(): readonly WorkspaceInstance[];
   snapshot(): WorkspaceInstancesSnapshot;
-  close(workspaceId: string): Promise<void>;
 }
 
 export const IWorkspaceInstanceManager: ServiceIdentifier<IWorkspaceInstanceManager> = createDecorator<IWorkspaceInstanceManager>('workspaceInstanceManager');

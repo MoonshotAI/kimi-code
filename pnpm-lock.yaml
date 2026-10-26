@@ -823,6 +823,9 @@ importers:
       marked:
         specifier: 18.0.11
         version: 18.0.11
+      marked-cjk-friendly:
+        specifier: 0.1.2
+        version: 0.1.2(marked@18.0.11)
     devDependencies:
       '@xterm/headless':
         specifier: 5.5.0
@@ -7062,6 +7065,12 @@ packages:
   markdown-title@1.0.2:
     resolution: {integrity: sha512-MqIQVVkz+uGEHi3TsHx/czcxxCbRIL7sv5K5DnYw/tI+apY54IbPefV/cmgxp6LoJSEx/TqcHdLs/298afG5QQ==}
     engines: {node: '>=6'}
+
+  marked-cjk-friendly@0.1.2:
+    resolution: {integrity: sha512-GUj8HjiEbur9yhgUo52FBgKizggF1QtT6gVdrYdWW6ZB4lVVjgS3EyyXPyfyRD0V4ghGRPlO7MO80rgSWbm0eA==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      marked: '>=15.0.0'
 
   marked-terminal@7.3.0:
     resolution: {integrity: sha512-t4rBvPsHc57uE/2nJOLmMbZCQ4tgAccAED3ngXQqW6g+TxA488JzJ+FK3lQkzBQOI1mRV/r/Kq+1ZlJ4D0owQw==}
@@ -15878,6 +15887,10 @@ snapshots:
   markdown-table@3.0.4: {}
 
   markdown-title@1.0.2: {}
+
+  marked-cjk-friendly@0.1.2(marked@18.0.11):
+    dependencies:
+      marked: 18.0.11
 
   marked-terminal@7.3.0(marked@9.1.6):
     dependencies:

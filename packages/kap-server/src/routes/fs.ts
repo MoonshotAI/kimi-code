@@ -7,7 +7,6 @@ import {
   IEnvironmentService,
   ISessionWorkdir,
   IWorkspaceFsService,
-  IWorkspaceInstanceManager,
   IWorkspaceService,
   getLiveSessionById,
   resumeSessionById,
@@ -170,9 +169,6 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  await core.accessor
-    .get(IWorkspaceInstanceManager)
-    .getOrCreate({ workspaceId: ws.id, root: ws.root });
   return acquireLocalRootedFs(core, ws.id, { workDir: ws.root, additionalDirs: [] }, required);
 }
 

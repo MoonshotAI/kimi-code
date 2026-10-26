@@ -1,12 +1,10 @@
 import { EnvironmentService } from '#/app/environment/environmentService';
-import { InMemorySessionLockService } from '#/persistence/backends/memory/sessionLockService';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { Workspace, IWorkspaceService } from '#/app/workspace/workspace';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
 import type { Environment } from '#/environment/environment';
 import { WorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManagerService';
-import { sessionDirOf } from '#/workspace/sessionLifecycle/internal/addressing';
 
 function deferred(): { readonly promise: Promise<void>; resolve(): void } {
   let resolve!: () => void;
@@ -18,7 +16,7 @@ function workspace(id: string): Workspace {
   return { id, root: `/${id}`, name: id, createdAt: 0, lastOpenedAt: 0 };
 }
 
-function environment(workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
+function environment(_workspaceId: string, environmentId: string, status: Environment['status'] = 'connecting'): FakeEnvironment {
   return new FakeEnvironment({ environmentId, generation: `${environmentId}-one` }, { status });
 }
 
@@ -37,7 +35,7 @@ function environmentService(ready: Promise<void> = Promise.resolve()): Environme
 function manager(
   values: readonly Workspace[],
   ready: Promise<void> = Promise.resolve(),
-  events: string[] = [],
+  _events: string[] = [],
   customize?: (args: unknown[]) => void,
   environments = environmentService(ready),
 ): WorkspaceInstanceManager {
@@ -69,22 +67,23 @@ function manager(
 }
 
 describe('WorkspaceInstanceManager', () => {
-  it('single-flights materialization and closes an in-flight workspace without leaving an instance', async () => {
+  it('single-flights materialization and releases the instance with the last lease', async () => {
     const gate = deferred();
-    const events: string[] = [];
-    const value = manager([workspace('one')], gate.promise, events);
-    const first = value.getOrCreate({ workspaceId: 'one' });
-    const second = value.getOrCreate({ workspaceId: 'one' });
-    const inflight = (value as unknown as { inflight: Map<string, Promise<unknown>> }).inflight;
-    while (!inflight.has('one')) await Promise.resolve();
-    const closing = value.close('one');
+    const value = manager([workspace('one')], gate.promise);
+    const firstPromise = value.acquire({ workspaceId: 'one' });
+    const secondPromise = value.acquire({ root: '/one' });
     gate.resolve();
 
-    const [firstInstance, secondInstance] = await Promise.all([first, second]);
-    expect(firstInstance).toBe(secondInstance);
-    await closing;
-    expect(value.get('one')).toBeUndefined();
-    expect(events).toEqual([]);
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first).not.toBe(second);
+    expect(first.instance).toBe(second.instance);
+    first.dispose();
+    expect(value.get('one')).toBe(first.instance);
+    second.dispose();
+    await vi.waitFor(() => {
+      expect(value.get('one')).toBeUndefined();
+    });
+    await value.dispose();
   });
 
   it('rolls back environments registered by a provider that fails to attach', async () => {
@@ -105,10 +104,14 @@ describe('WorkspaceInstanceManager', () => {
 
   it('materializes the workspace even when project services are unavailable', async () => {
     const value = manager([workspace('one')]);
-    const instance = await value.getOrCreate({ workspaceId: 'one' });
+    const lease = await value.acquire({ workspaceId: 'one' });
 
-    expect(instance.program.status).toBe('degraded');
-    expect(instance.snapshot().lifecycle).toBe('active');
+    expect(lease.instance.program.status).toBe('degraded');
+    expect(lease.instance.snapshot().lifecycle).toBe('active');
+    lease.dispose();
+    await vi.waitFor(() => {
+      expect(value.get('one')).toBeUndefined();
+    });
     await value.dispose();
   });
 
@@ -122,8 +125,8 @@ describe('WorkspaceInstanceManager', () => {
         rootedWorkspace('repo', '/repo'),
         rootedWorkspace('sub', '/repo/sub'),
       ]);
-      await value.getOrCreate({ workspaceId: 'repo' });
-      await value.getOrCreate({ workspaceId: 'sub' });
+      const repo = await value.acquire({ workspaceId: 'repo' });
+      const sub = await value.acquire({ workspaceId: 'sub' });
 
       expect(value.findContaining('/repo')?.id).toBe('repo');
       expect(value.findContaining('/repo/sub')?.id).toBe('sub');
@@ -131,16 +134,19 @@ describe('WorkspaceInstanceManager', () => {
       expect(value.findContaining('/repo/other')?.id).toBe('repo');
       expect(value.findContaining('/repo-other')).toBeUndefined();
       expect(value.findContaining('/outside')).toBeUndefined();
+      repo.dispose();
+      sub.dispose();
       await value.dispose();
     });
 
     it('matches across Windows spelling variants', async () => {
       const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
-      await value.getOrCreate({ workspaceId: 'win' });
+      const lease = await value.acquire({ workspaceId: 'win' });
 
       expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
       expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
       expect(value.findContaining('D:/elsewhere')).toBeUndefined();
+      lease.dispose();
       await value.dispose();
     });
 
@@ -149,12 +155,14 @@ describe('WorkspaceInstanceManager', () => {
         rootedWorkspace('root', '/'),
         rootedWorkspace('repo', '/repo'),
       ]);
-      await value.getOrCreate({ workspaceId: 'root' });
-      await value.getOrCreate({ workspaceId: 'repo' });
+      const root = await value.acquire({ workspaceId: 'root' });
+      const repo = await value.acquire({ workspaceId: 'repo' });
 
       expect(value.findContaining('/')?.id).toBe('root');
       expect(value.findContaining('/elsewhere')?.id).toBe('root');
       expect(value.findContaining('/repo/sub')?.id).toBe('repo');
+      root.dispose();
+      repo.dispose();
       await value.dispose();
     });
   });
