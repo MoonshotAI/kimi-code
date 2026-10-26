@@ -721,7 +721,7 @@ describe('Agent tool description', () => {
     { enabled: false, primary: true, secondary: true, fork: false, expected: false },
     { enabled: true, primary: false, secondary: false, fork: false, expected: false },
     { enabled: true, primary: true, secondary: false, fork: false, expected: false },
-    { enabled: true, primary: true, secondary: false, fork: true, expected: true },
+    { enabled: true, primary: true, secondary: false, fork: true, expected: false },
     { enabled: true, primary: false, secondary: true, fork: false, expected: true },
   ])('describes select_tools for eligible subagent models: $enabled/$primary/$secondary/$fork', ({
     enabled, primary, secondary, fork, expected,
@@ -808,8 +808,8 @@ describe('Agent tool description', () => {
     expect(ctx.get(IAgentToolRegistryService).resolve('NotifyUser') !== undefined).toBe(enabled);
   });
 
-  it('renders the tool set for each subagent type', async () => {
-    ctx = createTestAgent();
+  it.each([false, true])('renders caller model tools without a pool when fork=%s', async (fork) => {
+    ctx = createTestAgent(forkFlags(fork));
     ctx.configure({
       modelCapabilities: {
         image_in: true,
@@ -885,7 +885,7 @@ describe('Agent tool description', () => {
     expect(description).not.toContain('ReadMediaFile');
   });
 
-  it('omits ReadMediaFile when the pool pins subagents to a text-only model even if the primary model has image input', async () => {
+  it.each([false, true])('omits caller-only ReadMediaFile from subagent types when fork=%s', async (fork) => {
     ctx = createTestAgent({
       initialConfig: {
         secondaryModel: { defaultModel: 'provider/text' },
@@ -897,7 +897,7 @@ describe('Agent tool description', () => {
           },
         },
       },
-    });
+    }, forkFlags(fork));
     ctx.configure({
       modelCapabilities: {
         image_in: true,
@@ -996,10 +996,12 @@ describe('Agent tool description', () => {
 
     const tool = ctx.toolsData().find((entry) => entry.name === 'Agent');
     expect(tool).toBeDefined();
-    expect(tool!.description).toContain('Context forking');
+    expect(tool!.description).toContain('inheriting your current agent type, model, and tool set.');
     const properties = (tool!.parameters as { properties?: Record<string, unknown> } | undefined)
       ?.properties;
-    expect(properties).toHaveProperty('fork');
+    expect(properties?.['fork']).toMatchObject({
+      description: 'Start with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
+    });
   });
 
   it('does not offer the default agent type to the builtin default caller', () => {
@@ -3605,6 +3607,18 @@ describe('AgentSwarm tool description', () => {
     ctx = createTestAgent();
 
     expect(agentSwarmDescription()).toContain('{{item}}');
+  });
+
+  it('describes fork as inheriting the current type, model, and tools', () => {
+    ctx = createTestAgent(forkFlags());
+
+    expect(agentSwarmDescription()).toContain(
+      'inheriting your current agent type, model, and tool set.',
+    );
+    const properties = agentSwarmParameters()['properties'] as Record<string, unknown>;
+    expect(properties['fork']).toMatchObject({
+      description: 'Start every item-spawned subagent with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
+    });
   });
 
   it('omits the models section when no [secondary_model.models] pool is configured', () => {
