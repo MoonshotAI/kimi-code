@@ -45,6 +45,7 @@ import {
   IAgentIdentity,
   IAgentTodoService,
   IAgentLifecycleService,
+  IAgentContextMemoryService,
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
@@ -61,6 +62,7 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  IWorkspaceInstanceManager,
   MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
@@ -1590,6 +1592,92 @@ key = "${titleOAuthRef.key}"
     },
     30_000,
   );
+
+  it('reloads workspace dirs without duplicating agent reminders', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    const failureDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-failure-'));
+    tempDirs.push(homeDir, workDir, extraDir, failureDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.setConfig({
+        providers: {
+          stub: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+      });
+      await client.createSession({ id: 'ses_dirs_reload', workDir });
+      await client.getStatus({ sessionId: 'ses_dirs_reload' });
+      const before = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
+      const workspaceId = before.accessor.get(ISessionContext).workspaceId;
+      const program = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId)!
+        .program;
+      const reloadDirs = vi.spyOn(program.dirs, 'reload');
+      const projectsPath = join(homeDir, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const project = Object.values(projects.projects).find((entry) => entry.root === workDir);
+      if (project === undefined) throw new Error('expected the session project');
+      project.additional_dirs = [extraDir];
+      await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(reloadDirs).toHaveBeenCalledTimes(1);
+      const context = () =>
+        getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
+          .accessor.get(IAgentLifecycleService)
+          .handleOf('main')!
+          .accessor.get(IAgentContextMemoryService)
+          .get();
+      const dirsReminders = () =>
+        context().filter(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'workspace_dirs_change',
+        );
+      expect(dirsReminders()).toHaveLength(1);
+      expect(JSON.stringify(dirsReminders()[0])).toContain(`Added directories: ${extraDir}.`);
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(reloadDirs).toHaveBeenCalledTimes(2);
+      expect(dirsReminders()).toHaveLength(1);
+
+      const beforeFailure = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
+      const latestProjects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const latestProject = Object.values(latestProjects.projects).find(
+        (entry) => entry.root === workDir,
+      );
+      if (latestProject === undefined) throw new Error('expected the latest session project');
+      latestProject.additional_dirs = [extraDir, failureDir];
+      await writeFile(projectsPath, JSON.stringify(latestProjects), 'utf8');
+      vi.spyOn(program.instructions, 'reload').mockRejectedValueOnce(
+        new Error('instructions reload failed'),
+      );
+      await expect(client.reloadSession({ sessionId: 'ses_dirs_reload' })).rejects.toThrow(
+        'instructions reload failed',
+      );
+      expect(getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')).toBe(beforeFailure);
+      expect(reloadDirs).toHaveBeenCalledTimes(3);
+      expect(dirsReminders()).toHaveLength(2);
+      expect(JSON.stringify(dirsReminders().at(-1))).toContain(
+        `Added directories: ${failureDir}.`,
+      );
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(dirsReminders()).toHaveLength(2);
+    } finally {
+      await client.close();
+    }
+  }, 15_000);
 
   it('serves getTodos from the live session todo state', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));

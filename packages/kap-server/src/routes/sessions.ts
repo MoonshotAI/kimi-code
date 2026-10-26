@@ -1109,6 +1109,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
         staleNotifier.notifyAgentsMdChanges(),
         staleNotifier.notifySkillChanges(),
         staleNotifier.notifySubagentChanges({}),
+        staleNotifier.notifyWorkspaceDirsChanges(),
       ]).catch(() => undefined);
     }
     throw error;
@@ -1127,6 +1128,7 @@ async function reloadSessionAction(ctx: SessionActionCtx): Promise<void> {
     await notifier.notifyAgentsMdChanges();
     await notifier.notifySkillChanges();
     await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+    await notifier.notifyWorkspaceDirsChanges();
   }
   const meta = await handle.accessor.get(ISessionMetadata).read();
   const sessionCtx = handle.accessor.get(ISessionContext);
@@ -1147,6 +1149,7 @@ async function refreshWorkspaceCatalogs(
   if (workspaceId !== undefined) {
     const target = core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
     if (target !== undefined) {
+      await target.program.dirs.reload();
       await target.program.instructions.reload();
       await target.program.skills.reload();
       await target.program.agentProfiles.reload().catch(() => undefined);
