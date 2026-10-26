@@ -209,6 +209,30 @@ describe('WorkspaceInstanceManager', () => {
     ]);
   });
 
+  it('replaces the instance when the registry root changes', async () => {
+    const events: string[] = [];
+    const initial = workspace('one');
+    const value = manager([initial], Promise.resolve(), events);
+    const first = await value.acquire({ workspaceId: 'one' });
+    const updated = { ...initial, root: '/new-one' };
+    const registry = (value as unknown as { workspaces: { get: (id: string) => Promise<Workspace | undefined> } }).workspaces;
+    const originalGet = registry.get;
+    registry.get = async (id: string) => (id === 'one' ? updated : originalGet(id));
+
+    const second = await value.acquire({ workspaceId: 'one' });
+
+    expect(second.instance).not.toBe(first.instance);
+    expect(second.instance.root).toBe('/new-one');
+    expect(events).toEqual([
+      'attach:local:one',
+      'detach:local:one',
+      'attach:local:one',
+    ]);
+    first.dispose();
+    second.dispose();
+    await value.dispose();
+  });
+
   it('keeps runtime registries and provider attachments isolated across workspaces', async () => {
     const events: string[] = [];
     const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);

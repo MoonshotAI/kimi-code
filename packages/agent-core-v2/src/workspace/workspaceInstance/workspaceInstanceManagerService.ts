@@ -33,6 +33,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
@@ -156,7 +157,13 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   private async acquireWorkspace(workspace: Workspace): Promise<WorkspaceInstanceLease> {
     while (!this.disposing) {
       const existing = this.instances.get(workspace.id);
-      if (existing !== undefined) return this.retain(existing);
+      if (existing !== undefined) {
+        if (workspaceRootKey(existing.root) === workspaceRootKey(workspace.root)) {
+          return this.retain(existing);
+        }
+        await this.close(existing);
+        continue;
+      }
       const closing = this.closing.get(workspace.id);
       if (closing !== undefined) {
         await closing;

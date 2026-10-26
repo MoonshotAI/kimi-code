@@ -1,7 +1,6 @@
 import {
   IBootstrapService,
   IHostFileSystem,
-  IWorkspaceInstanceManager,
   IWorkspaceService,
   IWorkspaceSessions,
   IWorkspaceTrust,
@@ -376,9 +375,6 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
           errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
         );
         return;
-      }
-      if (workspaceRootKey(ws.root) !== workspaceRootKey(existing.root)) {
-        await core.accessor.get(IWorkspaceInstanceManager).close(workspace_id);
       }
       reply.send(okEnvelope(await toWireWorkspace(core, ws), req.id));
     },
