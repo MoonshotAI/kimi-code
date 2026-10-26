@@ -74,6 +74,9 @@ export interface KimiHarnessEnvironmentOptions {
   readonly imageLimits?: ImageLimits | undefined;
 }
 
+/** @deprecated Use {@link KimiHarnessEnvironmentOptions}. */
+export type KimiHarnessRuntimeOptions = KimiHarnessEnvironmentOptions;
+
 export class KimiHarness {
   readonly homeDir: string;
   readonly configPath: string;

@@ -20,6 +20,7 @@ import type { WorkspaceConfig } from '#/tool/path-access';
 import { ToolAccesses, type ExecutableToolContext, type ExecutableToolResult, type ToolExecution } from '#/tool/toolContract';
 import { ensureRgPath } from '#/os/backends/node-local/tools/rgLocator';
 import { EditTool } from '#/agent/tools/edit/editTool';
+import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import { GlobTool } from '#/agent/tools/os/glob/globTool';
 import { GrepTool } from '#/agent/tools/os/grep/grepTool';
 import { ReadTool } from '#/agent/tools/os/read/readTool';
@@ -28,6 +29,7 @@ import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTo
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
 import { stubConfigService } from '../../../app/config/stubs';
 import { stubToolResultTruncationService } from '../../toolResultTruncation/stubs';
+import { makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
 
 vi.mock('#/os/backends/node-local/tools/rgLocator', async (importOriginal) => {
@@ -375,5 +377,44 @@ describe('tilde resolution against the reconnected host', () => {
     await expect(tool.resolveExecution({ pattern: '**/*.ts', path: '~/projects' })).rejects.toThrow(
       'connection refused',
     );
+  });
+});
+
+describe('Bash environment generation guard', () => {
+  function bashTool(service: IAgentEnvironmentService): BashTool {
+    return new BashTool(
+      service,
+      makeSessionContext({
+        sessionId: 'ses',
+        workspaceId: 'ws',
+        sessionDir: '/tmp/ses',
+        sessionScope: 'ses',
+        cwd: '/workspace',
+      }),
+      stubWorkspaceContext('/workspace'),
+      {} as never,
+      toolPolicy,
+      stubConfigService(),
+    );
+  }
+
+  it('rejects execution when the generation changes after a ready resolve', async () => {
+    const harness = readyHarness(createFakeHostFs());
+    const resolved = bashTool(harness.service).resolveExecution({ command: 'echo hi' });
+
+    await harness.registration.remove();
+    harness.registry.register(replacementReadyEnvironment());
+
+    const result = await finish(resolved);
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe(ENVIRONMENT_CHANGED_OUTPUT);
+  });
+
+  it('does not treat a pending resolve reconnect as an environment change', async () => {
+    const harness = connectSwappingHarness(createFakeHostFs());
+    const result = await finish(bashTool(harness.service).resolveExecution({ command: 'echo hi' }));
+
+    expect(harness.calls).toEqual(['connect']);
+    expect(outputText(result)).not.toContain(ENVIRONMENT_CHANGED_OUTPUT);
   });
 });
