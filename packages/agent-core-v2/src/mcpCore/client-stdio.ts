@@ -235,6 +235,7 @@ class RuntimeStdioTransport implements Transport {
     if (process !== undefined) {
       try {
         await process.kill();
+        await process.wait();
       } catch {}
       void process.dispose();
     }
