@@ -472,8 +472,8 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     pluginMarketplaceUrl: (() => {
       const configured = opts.pluginMarketplaceUrl ?? process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'];
       if (configured !== undefined) return () => configured;
-      return () =>
-        `${kimiRegionProfile(core.accessor.get(IOAuthService).getRegion()).cdnBase}/plugins/marketplace.json`;
+      return async () =>
+        `${kimiRegionProfile(await core.accessor.get(IOAuthService).getRegionAsync()).cdnBase}/plugins/marketplace.json`;
     })(),
     pluginMarketplaceIsDefault:
       opts.pluginMarketplaceUrl === undefined &&

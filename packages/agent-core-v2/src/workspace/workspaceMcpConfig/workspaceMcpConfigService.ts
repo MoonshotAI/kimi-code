@@ -33,6 +33,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
   private fileServers = new Map<string, McpServerConfig>();
   private pluginServers = new Map<string, McpServerConfig>();
   private current: Readonly<Record<string, McpServerConfig>> = {};
+  private initializationComplete = false;
   private readonly watchDebounce = this._register(new TimeoutTimer());
   private readonly changeEmitter = this._register(new AsyncEmitter<McpServersChangeEvent>());
   readonly onDidChange = this.changeEmitter.event;
@@ -62,7 +63,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     );
     this._register(
       this.trust.onDidChange(() => {
-        void this.reloadFileServers().catch((error) => {
+        void this.reloadAfterTrustChange().catch((error) => {
           this.log.warn(`mcp trust reload failed: ${String(error)}`);
         });
       }),
@@ -98,7 +99,7 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     return tail;
   }
 
-  private async initialize(): Promise<void> {
+  private async initialize(publish = false): Promise<void> {
     await this.config.ready;
     await this.trust.ready;
     const [fileServers, pluginServers] = await Promise.all([
@@ -112,7 +113,30 @@ export class WorkspaceMcpConfigService extends Disposable implements IWorkspaceM
     ]);
     this.fileServers = new Map(Object.entries(fileServers));
     this.pluginServers = new Map(Object.entries(pluginServers));
-    this.current = this.merged();
+    this.initializationComplete = true;
+    if (publish) {
+      await this.publishIfChanged();
+    } else {
+      this.current = this.merged();
+    }
+  }
+
+  private async reloadAfterTrustChange(): Promise<void> {
+    await this.ready;
+    await this.mutate(async () => {
+      if (!this.initializationComplete) {
+        await this.initialize(true);
+      } else {
+        const fresh = await loadMcpServers({
+          fs: this.fs,
+          cwd: this.workspace.cwd,
+          homeDir: this.bootstrap.homeDir,
+          includeProject: this.trust.isTrusted(),
+        });
+        this.fileServers = new Map(Object.entries(fresh));
+      }
+      await this.publishIfChanged();
+    });
   }
 
   private merged(): Record<string, McpServerConfig> {

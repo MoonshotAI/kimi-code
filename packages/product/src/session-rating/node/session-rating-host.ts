@@ -146,7 +146,10 @@ export class SessionRatingHost implements IDisposable {
         cacheDir: () => join(bootstrap.homeDir, CLIENT_CONFIG_CACHE_DIR),
       });
       this.config = new LazyConfigFeed(() =>
-        cloudSurveyPopupConfigFeed(client, () => oauth.getCachedAccessToken()),
+        cloudSurveyPopupConfigFeed(client, async () => {
+          await auth.getRegionAsync();
+          return oauth.getCachedAccessToken();
+        }),
       );
       this.cooldown = ratingCooldownFile(bootstrap.homeDir);
     }

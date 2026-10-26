@@ -28,10 +28,11 @@ function bootstrapStub(
   homeDir: string,
   platform = 'test_client',
   env: Record<string, string> = {},
+  userAgentSuffix?: string,
 ): IBootstrapService {
   return {
     homeDir,
-    clientIdentity: { productName: 'test', version: '0.0.0', platform },
+    clientIdentity: { productName: 'test', version: '0.0.0', platform, userAgentSuffix },
     getEnv: (name: string) => env[name],
   } as IBootstrapService;
 }
@@ -97,6 +98,44 @@ describe('SessionLockService', () => {
     expect(holder?.clientIdentity).toBe('client_a');
     expect(holder?.pid).toBe(process.pid);
     expect(serviceB.held(SID)).toBe(false);
+  });
+
+  it.each([
+    {
+      platform: 'kimi_code_cli',
+      userAgentSuffix: undefined,
+      displayName: 'Kimi Code CLI',
+    },
+    {
+      platform: 'kimi_code_desktop',
+      userAgentSuffix: undefined,
+      displayName: 'Kimi Code Desktop',
+    },
+    {
+      platform: 'kimi_code_cli',
+      userAgentSuffix: 'web',
+      displayName: 'Kimi Code Web',
+    },
+    {
+      platform: 'kimi_code_vscode',
+      userAgentSuffix: undefined,
+      displayName: 'Kimi Code for VS Code',
+    },
+  ])('names $displayName in the occupied error', ({ platform, userAgentSuffix, displayName }) => {
+    const lockingService = new SessionLockService(
+      bootstrapStub(homeDir, platform, {}, userAgentSuffix),
+      noopLogger,
+    );
+    try {
+      lockingService.hold(SID);
+      expect(() => {
+        serviceB.hold(SID);
+      }).toThrowError(
+        `This session is in use by another ${displayName} instance. Stop the session in that instance or exit it, then try again.`,
+      );
+    } finally {
+      lockingService.dispose();
+    }
   });
 
   it('reclaims a lock whose owner is dead', () => {

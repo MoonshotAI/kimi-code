@@ -103,7 +103,7 @@ import {
   CLI_USER_AGENT_PRODUCT,
   PROMPT_CLEANUP_TIMEOUT_MS,
 } from '#/constant/app';
-import { currentKimiProfile } from '#/utils/region';
+import { currentKimiProfile, currentKimiRegionResolution } from '#/utils/region';
 
 import {
   formatGoalSummaryText,
@@ -270,6 +270,7 @@ export async function runV2Print(
       );
       // No `first_launch` on the v1 client: the v2 side already tracks it via
       // `telemetryService.track2` below, so tracking here would double-send.
+      const regionResolution = currentKimiRegionResolution();
       initializeTelemetry({
         homeDir,
         deviceId,
@@ -277,6 +278,9 @@ export async function runV2Print(
         version,
         uiMode: PROMPT_UI_MODE,
         model: opts.model ?? defaultModel,
+        region: regionResolution.region,
+        regionSource: regionResolution.source,
+        resolveRegion: () => currentKimiRegionResolution(),
         endpoint: () => currentKimiProfile().telemetryEndpoint,
         getAccessToken: async () =>
           (await auth.getCachedAccessToken(KIMI_CODE_PROVIDER_NAME)) ?? null,

@@ -23,6 +23,7 @@ import {
   IFileSystemStorageService,
   IHostFileSystem,
   IOAuthToolkit,
+  IRegionService,
   ISessionContext,
   ISessionIndex,
   ISessionLockService,
@@ -43,6 +44,7 @@ import {
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
 import { runV2Print } from '../../src/cli/v2/run-v2-print';
+import { resetKimiRegionCache } from '../../src/utils/region';
 
 const mocks = vi.hoisted(() => ({
   bootstrap: vi.fn(),
@@ -331,6 +333,14 @@ function makeFakeHarness() {
       },
     ],
     [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
+    [
+      IRegionService,
+      {
+        current: () => ({ region: 'mainland-cn', source: 'env' }),
+        refresh: () => ({ region: 'mainland-cn', source: 'env' }),
+        getRegionAsync: async () => 'mainland-cn',
+      },
+    ],
     [IFileSystemStorageService, {}],
     [IHostFileSystem, {}],
     [
@@ -377,6 +387,8 @@ describe('runV2Print', () => {
     // Pin the telemetry kill-switch to "unset" so the host environment cannot
     // flip the default telemetry-on path these tests exercise.
     vi.stubEnv('KIMI_DISABLE_TELEMETRY', '');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://auth.kimi.com');
+    resetKimiRegionCache();
     // `vi.clearAllMocks` keeps implementations, so re-pin the default here.
     mocks.loadMcpServersDetailed.mockImplementation(async () => ({
       servers: {},
@@ -387,6 +399,7 @@ describe('runV2Print', () => {
   afterEach(() => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+    resetKimiRegionCache();
   });
 
   it('submits a prompt, renders native events, awaits completion, and drains', async () => {
@@ -852,6 +865,9 @@ describe('runV2Print', () => {
       version: '1.2.3-test',
       uiMode: 'print',
       model: 'k2',
+      region: 'mainland-cn',
+      regionSource: 'env',
+      resolveRegion: expect.any(Function),
       endpoint: expect.any(Function),
       getAccessToken: expect.any(Function),
       onUnexpectedError: expect.any(Function),

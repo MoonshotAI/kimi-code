@@ -72,7 +72,7 @@ export interface RegisterApiV1RoutesOptions {
   readonly broadcaster: SessionEventBroadcaster;
   readonly transcriptService: TranscriptService;
   readonly sessionRating: SessionRatingHost;
-  readonly pluginMarketplaceUrl: () => string;
+  readonly pluginMarketplaceUrl: () => string | Promise<string>;
   readonly pluginMarketplaceIsDefault: boolean;
   readonly remoteControl: RemoteControlRouteOptions;
   readonly dangerousBypassAuth?: boolean;

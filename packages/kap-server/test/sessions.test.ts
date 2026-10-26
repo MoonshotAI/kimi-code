@@ -673,6 +673,7 @@ describe('server-v2 /api/v1/sessions', () => {
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
       getRegion: () => 'mainland-cn',
+      getRegionAsync: async () => 'mainland-cn',
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,

@@ -1753,6 +1753,27 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(stillPlanning.meta.modes).toEqual({ plan: {} });
   });
 
+  it('keeps a model-started swarm that an older version never closed out of meta.modes', () => {
+    const base = baseWithMarker();
+    const markersOf = (snapshot: AgentTranscriptSnapshot) =>
+      snapshot.items
+        .filter((item) => item.kind === 'marker')
+        .map((item) => item.kind === 'marker' && item.marker);
+
+    const modelStarted = foldWireRecordFacts(
+      [{ type: 'swarm_mode.enter', agentId: 'main', trigger: 'tool', time: 1000 }],
+      base,
+    );
+    expect(modelStarted.meta.modes?.swarm).toBeUndefined();
+    expect(markersOf(modelStarted)).toEqual(['compaction', 'swarm.enter']);
+
+    const userStarted = foldWireRecordFacts(
+      [{ type: 'swarm_mode.enter', agentId: 'main', trigger: 'manual', time: 1000 }],
+      base,
+    );
+    expect(userStarted.meta.modes).toEqual({ swarm: {} });
+  });
+
   it('folds tower mode records into meta.modes without markers', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(

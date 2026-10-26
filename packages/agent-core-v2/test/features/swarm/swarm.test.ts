@@ -136,8 +136,8 @@ function mockSwarmHost({
   };
 }
 
-function mockSwarmMode() {
-  return { _serviceBrand: undefined, isActive: false, enter: vi.fn(), exit: vi.fn() };
+function mockSwarmMode(isActive = true) {
+  return { _serviceBrand: undefined, isActive, enter: vi.fn(), exit: vi.fn() };
 }
 
 function stubConfig(section?: {
@@ -471,16 +471,46 @@ describe('AgentSwarmService', () => {
     expect(messageText(context.get()[1])).toBe('later prompt');
   });
 
-  it('renders no reminder at all for tool-triggered swarms', async () => {
+  it('refuses the tool trigger so only the user can turn swarm mode on', async () => {
     const swarm = ix.get(IAgentSwarmService);
     const context = ix.get(IAgentContextMemoryService);
 
-    swarm.enter('tool');
-    await runInjectionBoundary(ix.get(IAgentLoopService));
-    swarm.exit();
+    expect(() => {
+      swarm.enter('tool');
+    }).toThrow('Only the user can turn on swarm mode.');
     await runInjectionBoundary(ix.get(IAgentLoopService));
 
+    const records: WireRecord[] = [];
+    for await (const record of ix.get(IAppendLogStore).read<WireRecord>(
+      testWireScope('wire', 'swarm-test'),
+      AGENT_WIRE_RECORD_KEY,
+    )) {
+      records.push(record);
+    }
+    expect(records).toEqual([]);
+    expect(swarm.isActive).toBe(false);
+    expect(telemetryTrack2).not.toHaveBeenCalled();
     expect(context.get()).toHaveLength(0);
+  });
+
+  it('ignores tool-triggered entries that older versions recorded, on replay', async () => {
+    const swarm = ix.get(IAgentSwarmService);
+    const context = ix.get(IAgentContextMemoryService);
+    await restoreTestEventDispatcher(
+      ix.get(IEventDispatcher),
+      ix.get(IAppendLogStore),
+      testWireScope('wire', 'swarm-test'),
+      [{ type: 'swarm_mode.enter', trigger: 'tool' }],
+    );
+
+    await runInjectionBoundary(ix.get(IAgentLoopService));
+
+    expect(swarm.isActive).toBe(false);
+    expect(context.get()).toHaveLength(0);
+
+    swarm.enter('manual');
+
+    expect(ix.get(IAgentStateService).get(swarmKey)).toBe('manual');
   });
 
   it('does not duplicate the enter guidance on resume while it is still live in history', async () => {
@@ -587,7 +617,7 @@ describe('AgentSwarmService', () => {
   });
 
   it('blocks a batch with multiple AgentSwarm calls before any other adjudication', async () => {
-    ix.get(IAgentSwarmService);
+    ix.get(IAgentSwarmService).enter('manual');
     const decision = await fire(
       hookContext([toolCall('AgentSwarm', 'call_swarm_1'), toolCall('AgentSwarm', 'call_swarm_2')]),
     );
@@ -603,7 +633,7 @@ describe('AgentSwarmService', () => {
   });
 
   it('blocks an AgentSwarm call mixed with other tools in one batch', async () => {
-    ix.get(IAgentSwarmService);
+    ix.get(IAgentSwarmService).enter('manual');
     const decision = await fire(
       hookContext([toolCall('AgentSwarm', 'call_swarm'), toolCall('Bash', 'call_bash')]),
     );
@@ -618,8 +648,19 @@ describe('AgentSwarmService', () => {
     expect(formatDenyMessage).toHaveBeenCalledTimes(1);
   });
 
-  it('abstains on a single AgentSwarm call', async () => {
+  it('lets the other tools in a mixed batch run while swarm mode is off', async () => {
     ix.get(IAgentSwarmService);
+    const decision = await fire(
+      hookContext([toolCall('AgentSwarm', 'call_swarm'), toolCall('Bash', 'call_bash')]),
+    );
+
+    expect(decision).toBeUndefined();
+    expect(permissionGateRan).toBe(true);
+    expect(formatDenyMessage).not.toHaveBeenCalled();
+  });
+
+  it('abstains on a single AgentSwarm call', async () => {
+    ix.get(IAgentSwarmService).enter('manual');
     const decision = await fire(hookContext([toolCall('AgentSwarm', 'call_swarm')]));
 
     expect(decision).toBeUndefined();
@@ -763,7 +804,7 @@ describe('AgentSwarmTool', () => {
 
     const result = await executeTool(tool, context(input));
 
-    expect(swarmMode.enter).toHaveBeenCalledWith('tool');
+    expect(swarmMode.enter).not.toHaveBeenCalled();
     expect(host.swarmService.run).toHaveBeenCalledTimes(1);
     expect(host.swarmService.run).toHaveBeenCalledWith(expect.objectContaining({ tasks: [
       {
@@ -830,6 +871,47 @@ describe('AgentSwarmTool', () => {
     if (execution.isError === true) throw new Error('expected a successful execution');
     expect(execution.approvalRule).toBe('AgentSwarm');
     expect(execution.matchesRule).toBeUndefined();
+  });
+
+  it('rejects the call without starting subagents while swarm mode is off', async () => {
+    const host = mockSwarmHost();
+    const swarmMode = mockSwarmMode(false);
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile());
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      }),
+    );
+
+    expect(result).toEqual({
+      isError: true,
+      output: expect.stringContaining('Swarm mode is off, so AgentSwarm did not run'),
+    });
+    expect(swarmMode.enter).not.toHaveBeenCalled();
+    expect(host.swarmService.run).not.toHaveBeenCalled();
+  });
+
+  it('rejects the call when swarm mode turns off before it executes', async () => {
+    const host = mockSwarmHost();
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), stubCallerProfile()), stubCallerProfile());
+    const execution = tool.resolveExecution({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    if (execution.isError === true) throw new Error('expected a runnable execution');
+
+    swarmMode.isActive = false;
+    const result = await execution.execute(context({}));
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Swarm mode is off, so AgentSwarm did not run');
+    expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
   it('description documents the {{item}} placeholder', () => {
