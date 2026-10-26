@@ -1718,6 +1718,52 @@ describe('AgentMcpService + AgentProfileService', () => {
     expect(profile.getSystemPrompt()).toBe(userPrompt);
   });
 
+  it('preserves environmentDisclosure and custom prompts starting with MCP header across restore', async () => {
+    const customHeaderPrompt =
+      '# MCP Server Instructions\n\nThe following MCP servers have provided instructions for how to use their tools and resources:\n\n## custom\nUser-authored prompt starting with the MCP header.';
+    const disclosure = {
+      cwd: '/workspace/project',
+      renderedOnDate: '2026-10-22',
+    };
+    profile.update({
+      systemPrompt: customHeaderPrompt,
+      environmentDisclosure: disclosure,
+    });
+
+    await ctx.get(IEventDispatcher).hooks.onDidRestore.run({});
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+    expect(profile.getSystemPrompt()).toBe(customHeaderPrompt);
+    expect(profile.data().environmentDisclosure).toEqual(disclosure);
+
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools.',
+    );
+    manager.connect('github');
+    expect(profile.data().environmentDisclosure).toEqual(disclosure);
+    expect(profile.getSystemPrompt()).toBe(
+      `${customHeaderPrompt}\n\n# MCP Server Instructions\n\n` +
+        'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+        '## github\nUse github tools.',
+    );
+
+    manager.disconnect('github');
+    expect(profile.getSystemPrompt()).toBe(customHeaderPrompt);
+    expect(profile.data().environmentDisclosure).toEqual(disclosure);
+  });
+
   it('delivers MCP instructions to the provider on the first turn and after mid-turn connection changes', async () => {
     const seenPrompts: string[] = [];
     const localManager = new FakeMcpManager();
@@ -1751,6 +1797,9 @@ describe('AgentMcpService + AgentProfileService', () => {
           seenPrompts.push(systemPrompt);
           stepCount += 1;
           if (stepCount === 1) {
+            localCtx.get(IAgentProfileService).update({
+              systemPrompt: 'Queued turn prompt.',
+            });
             localManager.connect('slack');
             return {
               id: 'resp-1',

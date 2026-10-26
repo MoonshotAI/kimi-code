@@ -86,7 +86,6 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     );
     this._register(
       this.dispatcher.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
-        this.recoverAppliedInstructionsSuffix();
         this.flushPendingDiscoveries();
         await next();
       }),
@@ -376,35 +375,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     }
   }
 
-  private recoverAppliedInstructionsSuffix(): void {
-    if (typeof this.profile.getSystemPrompt !== 'function') {
-      return;
-    }
-    const current = this.profile.getSystemPrompt();
-    if (
-      this.appliedInstructionsSuffix.length > 0 &&
-      current.endsWith(this.appliedInstructionsSuffix)
-    ) {
-      return;
-    }
-    const prefixedMarker = `\n\n${MCP_INSTRUCTIONS_HEADER}`;
-    const lastIndex = current.lastIndexOf(prefixedMarker);
-    if (lastIndex !== -1) {
-      this.appliedInstructionsSuffix = current.slice(lastIndex);
-      return;
-    }
-    if (current.startsWith(MCP_INSTRUCTIONS_HEADER)) {
-      this.appliedInstructionsSuffix = current;
-    }
-  }
-
   private syncMcpInstructions(): void {
-    if (
-      typeof this.profile.getSystemPrompt !== 'function' ||
-      typeof this.profile.update !== 'function'
-    ) {
-      return;
-    }
     const sections: string[] = [];
     for (const entry of this.list()) {
       if (!this.mcpHandle.isBaselineServer(entry.name) || entry.status !== 'connected') continue;
@@ -413,25 +384,37 @@ export class AgentMcpService extends Service implements IAgentMcpService {
         sections.push(`## ${entry.name}\n${instructions}`);
       }
     }
+    const block =
+      sections.length === 0 ? undefined : `${MCP_INSTRUCTIONS_HEADER}${sections.join('\n\n')}`;
+    if (typeof this.profile.setMcpInstructions === 'function') {
+      this.profile.setMcpInstructions(block);
+      return;
+    }
+    if (
+      typeof this.profile.getSystemPrompt !== 'function' ||
+      typeof this.profile.update !== 'function'
+    ) {
+      return;
+    }
     const current = this.profile.getSystemPrompt();
     const previousSuffix = this.appliedInstructionsSuffix;
     const base =
       previousSuffix.length > 0 && current.endsWith(previousSuffix)
         ? current.slice(0, current.length - previousSuffix.length)
         : current;
-    if (sections.length === 0) {
+    const environmentDisclosure = this.profile.data?.().environmentDisclosure;
+    if (block === undefined) {
       this.appliedInstructionsSuffix = '';
       if (base !== current) {
-        this.profile.update({ systemPrompt: base });
+        this.profile.update({ systemPrompt: base, environmentDisclosure });
       }
       return;
     }
-    const block = `${MCP_INSTRUCTIONS_HEADER}${sections.join('\n\n')}`;
     const nextSuffix = base.length === 0 ? block : `\n\n${block}`;
     const next = `${base}${nextSuffix}`;
     this.appliedInstructionsSuffix = nextSuffix;
     if (next !== current) {
-      this.profile.update({ systemPrompt: next });
+      this.profile.update({ systemPrompt: next, environmentDisclosure });
     }
   }
 

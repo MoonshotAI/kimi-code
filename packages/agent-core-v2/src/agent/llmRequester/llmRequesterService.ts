@@ -9,7 +9,11 @@ import {
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import {
+  composeSystemPromptWithMcpInstructions,
+  IAgentProfileService,
+  type ProfileModelContext,
+} from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -761,21 +765,23 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     for (const id of this.turnConfigs.keys()) {
       if (id < turnId) this.turnConfigs.delete(id);
     }
-    const systemPrompt = this.profile.getSystemPrompt();
     let snapshot = this.turnConfigs.get(turnId);
     if (snapshot === undefined) {
       snapshot = {
         resolved: this.profile.resolveModelContext(),
         params: this.profile.resolveRequestParams(),
-        systemPrompt,
+        systemPrompt: this.profile.getBaseSystemPrompt?.() ?? this.profile.getSystemPrompt(),
       };
       this.turnConfigs.set(turnId, snapshot);
-    } else if (snapshot.systemPrompt !== systemPrompt) {
-      snapshot = {
+    }
+    if (typeof this.profile.getBaseSystemPrompt === 'function') {
+      return {
         ...snapshot,
-        systemPrompt,
+        systemPrompt: composeSystemPromptWithMcpInstructions(
+          snapshot.systemPrompt,
+          this.profile.getMcpInstructions?.(),
+        ),
       };
-      this.turnConfigs.set(turnId, snapshot);
     }
     return snapshot;
   }
@@ -842,7 +848,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       toolSelect: this.toolSelect.enabled(),
       systemPromptHash,
       systemPrompt:
-        input.systemPrompt === this.profile.data().systemPrompt
+        input.systemPrompt ===
+        composeSystemPromptWithMcpInstructions(
+          this.profile.data().systemPrompt,
+          this.profile.getMcpInstructions?.(),
+        )
           ? undefined
           : input.systemPrompt,
       toolsHash,

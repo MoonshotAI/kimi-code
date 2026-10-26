@@ -63,7 +63,12 @@ import type {
   ProfileSetModelResult,
   ProfileUpdateData,
 } from './profile';
-import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
+import {
+  composeSystemPromptWithMcpInstructions,
+  IAgentProfileService,
+  ProfileError,
+  ProfileErrors,
+} from './profile';
 import { TOOLS_SECTION, type ToolsConfig } from '#/agent/toolPolicy/configSection';
 import { isToolActiveComposed, findInactiveToolPatterns, literalToolNames, type InactiveToolPattern } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -150,6 +155,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   private frozenSkillListing: string | undefined;
   private frozenPluginSections: string | undefined;
+  private mcpInstructionsOverlay: string | undefined;
 
   constructor(
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
@@ -574,7 +580,20 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   }
 
   getSystemPrompt(): string {
+    return composeSystemPromptWithMcpInstructions(this.systemPrompt, this.mcpInstructionsOverlay);
+  }
+
+  getBaseSystemPrompt(): string {
     return this.systemPrompt;
+  }
+
+  getMcpInstructions(): string | undefined {
+    return this.mcpInstructionsOverlay;
+  }
+
+  setMcpInstructions(instructions: string | undefined): void {
+    this.mcpInstructionsOverlay =
+      instructions !== undefined && instructions.length > 0 ? instructions : undefined;
   }
 
   getActiveToolNames(): readonly string[] | undefined {
