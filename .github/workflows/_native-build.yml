@@ -23,6 +23,16 @@ on:
         required: false
         type: boolean
         default: false
+      sha:
+        description: 'Commit to build; empty builds the triggering commit'
+        required: false
+        type: string
+        default: ''
+      version:
+        description: 'Override the CLI package version before building (canary builds); empty keeps package.json'
+        required: false
+        type: string
+        default: ''
     secrets:
       APPLE_CERTIFICATE_P12:
         required: false
@@ -68,6 +78,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v6
@@ -77,6 +89,14 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: 'pnpm'
+
+      - name: Override CLI version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node -e "const fs=require('node:fs');const f='apps/kimi-code/package.json';const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
