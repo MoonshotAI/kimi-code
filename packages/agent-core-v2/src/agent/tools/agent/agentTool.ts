@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { type CollectionView } from '#/_base/di/collection';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -27,8 +28,9 @@ import { TOOL_SELECT_FLAG_ID } from '#/agent/toolSelect/flag';
 import { SELECT_TOOLS_TOOL_NAME } from '#/agent/toolSelect/toolSelect';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { AssistantDelta } from '#/agent/loop/turnEvents';
+import { AssistantDelta, TurnStepCompleted, TurnStepStarted } from '#/agent/loop/turnEvents';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import {
   ToolAccesses,
@@ -462,7 +464,7 @@ export class SubagentTool implements ISubagentTool {
 
   private async execution(
     args: SubagentToolInput,
-    { toolCallId, signal }: ExecutableToolContext,
+    { turnId, toolCallId, signal }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
     try {
       signal.throwIfAborted();
@@ -586,6 +588,8 @@ export class SubagentTool implements ISubagentTool {
         timeoutMs,
         args.deliver_to_user === true,
         toolCallId,
+        turnId,
+        signal,
       );
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
@@ -598,6 +602,8 @@ export class SubagentTool implements ISubagentTool {
     timeoutMs: number,
     deliverToUser = false,
     toolCallId?: string,
+    turnId?: number,
+    signal?: AbortSignal,
   ): Promise<ExecutableToolResult> {
     const info = this.tasks.getTask(taskId);
     const stopCode = info?.kind === 'agent' ? info.stopCode : undefined;
@@ -605,34 +611,105 @@ export class SubagentTool implements ISubagentTool {
       const output = await this.tasks.readOutput(taskId);
       const shouldDeliver =
         deliverToUser &&
+        !signal?.aborted &&
         stopCode !== REPEAT_BREAKER_STOP_REASON &&
         output.trim().length > 0;
       if (shouldDeliver) {
+        const requester = this.agentLifecycle.handleOf(this.callerAgentId);
+        let loop: IAgentLoopService | undefined;
+        let dispatcher: IEventDispatcher | undefined;
+        let contextMemory: IAgentContextMemoryService | undefined;
         try {
-          const requester = this.agentLifecycle.handleOf(this.callerAgentId);
-          const loop = requester?.accessor.get(IAgentLoopService);
-          const dispatcher = requester?.accessor.get(IEventDispatcher);
-          if (loop?.hooks?.onDidFinishStep !== undefined && dispatcher !== undefined) {
-            const disposable = loop.hooks.onDidFinishStep.register(
-              `agent-deliver-${toolCallId ?? taskId}`,
-              async (stepCtx, next) => {
-                disposable.dispose();
-                void dispatcher.dispatch(
+          loop = requester?.accessor.get(IAgentLoopService);
+        } catch {}
+        try {
+          dispatcher = requester?.accessor.get(IEventDispatcher);
+        } catch {}
+        try {
+          contextMemory = requester?.accessor.get(IAgentContextMemoryService);
+        } catch {}
+        if (
+          loop?.hooks?.onDidFinishStep !== undefined &&
+          (dispatcher !== undefined || contextMemory !== undefined)
+        ) {
+          let cleanup = (): void => {};
+          const onAbort = (): void => {
+            cleanup();
+          };
+          const disposable = loop.hooks.onDidFinishStep.register(
+            `agent-deliver-${toolCallId ?? taskId}`,
+            async (stepCtx, next) => {
+              cleanup();
+              if (
+                !stepCtx.signal.aborted &&
+                !signal?.aborted &&
+                (turnId === undefined || stepCtx.turnId === turnId)
+              ) {
+                const deliveryStep = stepCtx.step + 1;
+                const deliveryStepId = randomUUID();
+                contextMemory?.appendLoopEvent({
+                  type: 'step.begin',
+                  uuid: deliveryStepId,
+                  turnId: String(stepCtx.turnId),
+                  step: deliveryStep,
+                });
+                contextMemory?.appendLoopEvent({
+                  type: 'content.part',
+                  uuid: randomUUID(),
+                  turnId: String(stepCtx.turnId),
+                  step: deliveryStep,
+                  stepUuid: deliveryStepId,
+                  part: { type: 'text', text: output },
+                });
+                contextMemory?.appendLoopEvent({
+                  type: 'step.end',
+                  uuid: deliveryStepId,
+                  turnId: String(stepCtx.turnId),
+                  step: deliveryStep,
+                  finishReason: 'completed',
+                });
+                void dispatcher?.dispatch(
+                  new TurnStepStarted({
+                    agentId: this.callerAgentId,
+                    turnId: stepCtx.turnId,
+                    step: deliveryStep,
+                    stepId: deliveryStepId,
+                  }),
+                );
+                void dispatcher?.dispatch(
                   new AssistantDelta({
                     agentId: this.callerAgentId,
                     turnId: stepCtx.turnId,
                     delta: output,
                   }),
                 );
-                await next();
-              },
-            );
+                void dispatcher?.dispatch(
+                  new TurnStepCompleted({
+                    agentId: this.callerAgentId,
+                    turnId: stepCtx.turnId,
+                    step: deliveryStep,
+                    stepId: deliveryStepId,
+                    finishReason: 'completed',
+                  }),
+                );
+              }
+              await next();
+            },
+          );
+          cleanup = (): void => {
+            signal?.removeEventListener('abort', onAbort);
+            disposable.dispose();
+          };
+          if (signal?.aborted) {
+            cleanup();
+          } else {
+            signal?.addEventListener('abort', onAbort, { once: true });
           }
-        } catch {}
+        }
       }
       return {
         output: formatForegroundAgentSuccess(handle, output, stopCode),
-        ...(shouldDeliver ? { stopTurn: true } : {}),
+        stopTurn: shouldDeliver ? true : undefined,
       };
     }
     const timedOut = info?.status === 'timed_out';

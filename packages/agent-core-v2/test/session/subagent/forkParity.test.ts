@@ -7,12 +7,16 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { Event } from '#/_base/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { reduceContextTranscript } from '#/agent/contextMemory/contextTranscript';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolExchange';
+import { foldWireRecords } from '#/agent/replayBuilder/fold';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { AssistantDelta } from '#/agent/loop/turnEvents';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IEventBus } from '#/app/event/eventBus';
+import { IConfigService } from '#/app/config/config';
+import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -31,6 +35,7 @@ import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { inputTotal } from '#human/llm/usage';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -677,5 +682,198 @@ describe('subagent task reminders and fork request parity', () => {
     expect(completion.state).toBe('completed');
     expect(ctx.llmCalls).toHaveLength(2);
     expect(mainDeltas).toContain(CHILD_FINAL_TEXT);
+
+    const mainHistory = ctx.get(IAgentContextMemoryService).get();
+    expect(mainHistory.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: CHILD_FINAL_TEXT }],
+      toolCalls: [],
+    });
+
+    const mainRecords = store.recordsFor(
+      'sessions/test-workspace/test-session/agents/main',
+      AGENT_WIRE_RECORD_KEY,
+    );
+    expect(reduceContextTranscript(mainRecords).entries.at(-1)).toMatchObject({
+      role: 'assistant',
+      content: [{ type: 'text', text: CHILD_FINAL_TEXT }],
+      toolCalls: [],
+    });
+    expect(foldWireRecords(mainRecords).replay.at(-1)).toMatchObject({
+      type: 'message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: CHILD_FINAL_TEXT }],
+        toolCalls: [],
+      },
+    });
+  });
+
+  it('persists deliver_to_user output for nested subagent delegation via latestAssistantText', async () => {
+    createMainForkCtx();
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    profile.update({
+      activeToolNames: contributedToolNames(),
+    });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_outer_agent',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'outer coordinator',
+        prompt: 'delegate writing to a forked subagent',
+        fork: true,
+      }),
+    });
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_inner_fork',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'inner writer fork',
+        prompt: 'write final response',
+        fork: true,
+        deliver_to_user: true,
+      }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
+    ctx.mockNextResponse({ type: 'text', text: 'main received nested delivery' });
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'run nested delegation' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const completion = await loop.promptHandle(id)!.completion;
+    expect(completion.state).toBe('completed');
+    expect(ctx.llmCalls).toHaveLength(4);
+    const mainFollowup = ctx.llmCalls[3]!;
+    const outerToolResult = mainFollowup.history.find(
+      (msg) => msg.role === 'tool' && msg.toolCallId === 'call_outer_agent',
+    );
+    expect(outerToolResult?.content).toEqual([
+      { type: 'text', text: expect.stringContaining(CHILD_FINAL_TEXT) },
+    ]);
+  });
+
+  it('disposes the deliver_to_user finish hook when a step is cancelled before finishing', async () => {
+    createMainForkCtx();
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    profile.update({ activeToolNames: contributedToolNames() });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+
+    const loop = ctx.get(IAgentLoopService);
+    ctx
+      .get(IAgentToolExecutorService)
+      .hooks.onDidExecuteTool.register('cancel-after-deliver-armed', async (toolCtx, next) => {
+        if (toolCtx.toolCall.id === 'call_fork_deliver') {
+          loop.cancel();
+        }
+        await next();
+      });
+
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_fork_deliver',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'fast fork',
+        prompt: 'produce stale text',
+        fork: true,
+        deliver_to_user: true,
+      }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'STALE_CANCELLED_DELIVERY' });
+
+    const mainDeltas: string[] = [];
+    ctx.get(IEventBus).subscribe(AssistantDelta, (event) => {
+      if (event.agentId === 'main') mainDeltas.push(event.delta);
+    });
+
+    const first = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'first turn' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const firstCompletion = await loop.promptHandle(first.id)!.completion;
+    expect(firstCompletion.state).toBe('cancelled');
+    expect(mainDeltas).not.toContain('STALE_CANCELLED_DELIVERY');
+
+    ctx.mockNextResponse({ type: 'text', text: 'FRESH_SECOND_TURN_ANSWER' });
+    const second = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'second turn' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const secondCompletion = await loop.promptHandle(second.id)!.completion;
+    expect(secondCompletion.state).toBe('completed');
+    expect(mainDeltas).toEqual(['FRESH_SECOND_TURN_ANSWER']);
+  });
+
+  it('resets thinking level to the target model default when forking to a different model', async () => {
+    createMainForkCtx();
+    const catalog = ctx.get(IModelCatalog);
+    const baseModel = catalog.get('mock-model');
+    vi.spyOn(catalog, 'get').mockImplementation((alias: string): Model => {
+      if (alias === 'writer-model') {
+        return {
+          ...baseModel,
+          id: 'writer-model',
+          name: 'writer-model',
+          capabilities: { ...baseModel.capabilities, thinking: true },
+          supportEfforts: ['low', 'medium', 'high'],
+          defaultEffort: undefined,
+        };
+      }
+      return {
+        ...baseModel,
+        capabilities: { ...baseModel.capabilities, thinking: true },
+        supportEfforts: ['low', 'medium', 'high'],
+        defaultEffort: 'high',
+      };
+    });
+    await ctx.get(IConfigService).set('secondaryModel', {
+      defaultModel: 'writer-model',
+      models: { 'writer-model': 'Writing model without declared defaultEffort' },
+    });
+
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model', thinking: 'high' });
+    profile.update({ activeToolNames: contributedToolNames() });
+    expect(profile.data().thinkingLevel).toBe('high');
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+
+    ctx.mockNextResponse({
+      type: 'function',
+      id: 'call_fork_writer',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'fork to writer-model',
+        prompt: 'write summary',
+        model: 'writer-model',
+        fork: true,
+      }),
+    });
+    ctx.mockNextResponse({ type: 'text', text: CHILD_FINAL_TEXT });
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'test fork thinking reset' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    const completion = await loop.promptHandle(id)!.completion;
+    expect(completion.state).toBe('completed');
+
+    const lifecycle = ctx.get(IAgentLifecycleService);
+    const childContext = lifecycle.list().find((agent) => agent.agentId !== 'main');
+    expect(childContext).toBeDefined();
+    const childProfile = lifecycle
+      .handleOf(childContext!.agentId)!
+      .accessor.get(IAgentProfileService);
+    expect(childProfile.data().modelAlias).toBe('writer-model');
+    expect(childProfile.data().thinkingLevel).toBe('medium');
   });
 });

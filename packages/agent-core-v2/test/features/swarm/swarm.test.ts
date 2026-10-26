@@ -1411,7 +1411,7 @@ describe('AgentSwarmTool', () => {
       defaultModel: 'provider/fast',
       models: { 'provider/fast': 'Fast model' },
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), config, stubFlag(true), realSubagents(stubSwarmCatalog(), config, callerProfile, ['main-model', 'provider/fast']), callerProfile);
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), config, stubFlag(true), realSubagents(stubSwarmCatalog(), config, callerProfile), callerProfile);
 
     const result = await executeTool(
       tool,
@@ -1433,6 +1433,48 @@ describe('AgentSwarmTool', () => {
               fork: true,
               model: 'provider/fast',
             }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('resolves a caller-in-pool alias through the pool on fork without inheriting thinking', async () => {
+    const host = mockSwarmHost();
+    const callerProfile = stubCallerProfile({
+      profileName: 'orchestrator',
+      modelAlias: 'main-model',
+      thinkingLevel: 'high',
+    });
+    const config = stubConfig({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'Fast model', 'main-model': 'Main model in pool' },
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), config, stubFlag(true), realSubagents(stubSwarmCatalog(), config, callerProfile), callerProfile);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        model: 'main-model',
+        fork: true,
+      }),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: expect.arrayContaining([
+          expect.objectContaining({
+            plan: {
+              profileName: 'orchestrator',
+              model: 'main-model',
+              modelSource: 'secondary_pool',
+              thinking: undefined,
+              fork: true,
+            },
           }),
         ]),
       }),

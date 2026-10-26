@@ -439,7 +439,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
         thinking: override?.thinking ?? sourceData.thinkingLevel,
       });
     } else {
-      childProfile.applyBindingSnapshot(sourceData);
+      childProfile.applyBindingSnapshot(
+        override?.model === undefined ? sourceData : { ...sourceData, modelAlias: undefined },
+      );
       if (override?.model !== undefined) await childProfile.setModel(override.model);
       if (override?.thinking !== undefined) childProfile.setThinking(override.thinking);
     }

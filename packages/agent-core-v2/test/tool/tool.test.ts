@@ -2045,6 +2045,58 @@ describe('Agent tool execution contract', () => {
     });
   });
 
+  it('resolves a caller-in-pool alias through the pool on fork without inheriting thinking', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child', 'agent-child-2'],
+      runCompletion: async () => ({ summary: 'child result' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      forkFlags(),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: {
+              'provider/fast': 'Fast model',
+              'mock-model': 'The main model in pool',
+            },
+          },
+        },
+      },
+    );
+
+    await executeAgentTool(context, {
+      prompt: 'Write explanation',
+      description: 'Pool alias fork',
+      model: 'mock-model',
+      fork: true,
+    });
+    await executeAgentTool(context, {
+      prompt: 'Write explanation',
+      description: 'Primary fork',
+      model: 'primary',
+      fork: true,
+    });
+
+    expect(lifecycle.fork).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ agentId: 'main' }),
+      {
+        binding: { model: 'mock-model', thinking: undefined },
+        labels: expect.objectContaining({ parentAgentId: 'main' }),
+      },
+    );
+    expect(lifecycle.fork).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ agentId: 'main' }),
+      {
+        binding: undefined,
+        labels: expect.objectContaining({ parentAgentId: 'main' }),
+      },
+    );
+  });
+
   it('delivers foreground subagent output directly to the user and stops the turn when deliver_to_user is true', async () => {
     const lifecycle = createAgentLifecycleStub({
       createAgentIds: ['agent-child'],
