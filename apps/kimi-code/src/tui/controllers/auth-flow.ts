@@ -11,6 +11,10 @@ import {
 } from '../commands/config';
 import type { SlashCommandHost } from '../commands/dispatch';
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import {
+  peekModelSwitchConfirmConfig,
+  refreshModelSwitchConfirmConfig,
+} from '#/utils/model-switch-confirm-config';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
 import type { AppState, KimiTUIOptions } from '../types';
 
@@ -116,6 +120,11 @@ export class AuthFlowController {
     const effort = thinkingEffortFromConfig(config.thinking);
     const slashHost = this.host as unknown as SlashCommandHost;
     host.setAppState({ availableModels, availableProviders });
+    if (peekModelSwitchConfirmConfig() === undefined) {
+      try {
+        await refreshModelSwitchConfirmConfig({ accessToken: await host.harness.auth.getCachedAccessToken() });
+      } catch {}
+    }
     if (matchedModelSwitchRule(slashHost, defaultModel) !== undefined) {
       // A matching cloud rule gates the activation exactly like a picker
       // switch: the dialog's actions own the session switch ('session' scope —

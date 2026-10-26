@@ -165,7 +165,7 @@ describe('refreshConfigAfterLogin with a matching cloud rule', () => {
               name: 'model_switch_confirm',
               config: {
                 enable: true,
-                rules: [{ from: 'upstream-old', to: 'upstream-new' }],
+                rules: [{ from: 'upstream-old', to: 'upstream-new', session_type: 'old' }],
               },
             }),
           ),

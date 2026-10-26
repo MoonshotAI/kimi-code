@@ -1,15 +1,7 @@
 /**
- * ModelSwitchConfirmDialog — cloud-gated confirmation shown when switching
- * models in a session that already has conversation history: the accumulated
- * context will be re-sent to a different model, so the prompt cache is lost
- * and output quality may vary. Offers new session / compact / continue /
- * cancel.
- *
- * The body hint comes from the matched `model_switch_confirm` rule (English
- * arm over the built-in default); the title, option labels, and keyboard hint
- * stay local per the DESIGN.md vocabulary. Layout mirrors the list-dialog
- * spec: top border, title, hint, body line, then options with right-column
- * descriptions.
+ * Cloud-gated model-switch confirmation for new and existing sessions. The
+ * actual session type chooses the local actions; the matched rule supplies
+ * the body hint and optional highlighted warning.
  */
 
 import {
@@ -33,12 +25,7 @@ interface ModelSwitchOption {
   readonly description?: string;
 }
 
-const OPTIONS: readonly ModelSwitchOption[] = [
-  {
-    value: 'new',
-    label: 'Start a new session',
-    description: 'No extra cost · best for a new task',
-  },
+const OLD_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
   {
     value: 'compact',
     label: 'Compact and continue',
@@ -52,14 +39,17 @@ const OPTIONS: readonly ModelSwitchOption[] = [
   { value: 'cancel', label: 'Cancel', description: 'Stay on the current model' },
 ];
 
+const NEW_SESSION_OPTIONS: readonly ModelSwitchOption[] = [
+  { value: 'continue', label: 'Confirm switch' },
+  { value: 'cancel', label: 'Cancel', description: 'Stay on the current model' },
+];
+
 export interface ModelSwitchConfirmDialogOptions {
-  /** Display name of the model in effect before the switch. */
   readonly fromModel: string;
-  /** Display name of the model the user is switching to. */
   readonly toModel: string;
-  /** Body text explaining the consequences of the switch; no body line when
-   *  absent. */
+  readonly sessionType: 'old' | 'new';
   readonly hint?: string;
+  readonly warning?: string;
   readonly onSelect: (action: ModelSwitchAction) => void;
   readonly onCancel: () => void;
 }
@@ -73,7 +63,7 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
     super();
     this.opts = opts;
     this.list = new SearchableList({
-      items: OPTIONS,
+      items: opts.sessionType === 'old' ? OLD_SESSION_OPTIONS : NEW_SESSION_OPTIONS,
       toSearchText: (o) => o.label,
       initialIndex: 0,
       searchable: false,
@@ -108,8 +98,13 @@ export class ModelSwitchConfirmDialogComponent extends Container implements Focu
         lines.push(currentTheme.fg('text', ` ${hintLine}`));
       }
     }
+    if (this.opts.warning !== undefined) {
+      for (const warningLine of this.opts.warning.split(/\r\n|\r|\n/)) {
+        lines.push(currentTheme.boldFg('warning', ` ${warningLine}`));
+      }
+    }
 
-    const maxLabelWidth = Math.max(...OPTIONS.map((o) => visibleWidth(o.label)));
+    const maxLabelWidth = Math.max(...view.items.map((o) => visibleWidth(o.label)));
     for (let i = view.page.start; i < view.page.end; i++) {
       const opt = view.items[i]!;
       const isSelected = i === view.selectedIndex;

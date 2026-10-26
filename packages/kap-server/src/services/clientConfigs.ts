@@ -9,7 +9,9 @@ export const MODEL_SWITCH_CONFIRM_CONFIG_NAME = 'model_switch_confirm';
 interface ModelSwitchRule {
   from: string | string[];
   to: string | string[];
+  session_type: 'old' | 'new' | 'all';
   hint?: { en?: string; zh?: string };
+  warning?: { en?: string; zh?: string };
 }
 
 interface ModelSwitchConfirmConfig {
@@ -22,7 +24,14 @@ const modelIdListSchema = z.union([z.string(), z.array(z.string()).min(1)]);
 const modelSwitchRuleSchema = z.object({
   from: modelIdListSchema,
   to: modelIdListSchema,
+  session_type: z.enum(['old', 'new', 'all']),
   hint: z
+    .object({
+      en: z.string().optional(),
+      zh: z.string().optional(),
+    })
+    .optional(),
+  warning: z
     .object({
       en: z.string().optional(),
       zh: z.string().optional(),
