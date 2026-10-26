@@ -72,6 +72,25 @@ describe('ModelSwitchConfirmDialogComponent', () => {
     expect(lines.some((l) => l.includes('Start a new session'))).toBe(false);
   });
 
+  it('renders only confirm and cancel for an effort switch in an old session', () => {
+    const dialog = new ModelSwitchConfirmDialogComponent({
+      fromModel: 'low',
+      toModel: 'high',
+      sessionType: 'old',
+      kind: 'effort',
+      hint: DEFAULT_HINT,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = dialog.render(120).map(strip);
+
+    expect(lines.some((line) => line.includes('Switch effort?') && line.includes('low → high'))).toBe(true);
+    expect(lines.some((line) => line.includes('Compact and continue'))).toBe(false);
+    expect(lines.some((line) => line.includes('Continue as-is'))).toBe(false);
+    expect(lines.some((line) => line.includes('Confirm switch'))).toBe(true);
+    expect(lines.some((line) => line.includes('Stay on the current effort'))).toBe(true);
+  });
+
   it('aligns old-session description columns', () => {
     const { lines } = renderDialog('old');
     const colOf = (labelNeedle: string, descNeedle: string) => {

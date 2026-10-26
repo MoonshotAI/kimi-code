@@ -130,6 +130,33 @@ describe('EffortSelectorComponent', () => {
     expect(lines[hintIdx + 1]).toBe('');
   });
 
+  it('updates the description as the highlighted effort changes', () => {
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'low',
+      descriptions: {
+        low: 'Light reasoning.',
+        high: 'Deeper reasoning.',
+        max: 'Maximum reasoning.',
+      },
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    expect(text(picker)).toContain('Light reasoning.');
+    expect(text(picker)).not.toContain('Deeper reasoning.');
+    picker.handleInput(RIGHT);
+    expect(text(picker)).toContain('Deeper reasoning.');
+    picker.handleInput(RIGHT);
+    expect(text(picker)).toContain('Maximum reasoning.');
+    picker.handleInput(LEFT);
+    picker.handleInput(LEFT);
+    picker.handleInput(LEFT);
+    expect(text(picker)).not.toContain('Light reasoning.');
+    expect(text(picker)).not.toContain('Deeper reasoning.');
+    expect(text(picker)).not.toContain('Maximum reasoning.');
+  });
+
   it('wraps a warning longer than the width instead of truncating it', () => {
     const warning =
       'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';

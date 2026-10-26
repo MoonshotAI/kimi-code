@@ -45,6 +45,7 @@ import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
 import { appendInputHistory, loadInputHistory } from '#/utils/history/input-history';
 import { openUrl } from '#/utils/open-url';
 import { getInputHistoryFile } from '#/utils/paths';
+import { refreshEffortSwitchConfig } from '#/utils/effort-switch-config';
 import { refreshModelSwitchConfirmConfig } from '#/utils/model-switch-confirm-config';
 import { applyRecommendedEffort } from '#/utils/recommended-effort';
 import { getRecommendedEffortConfig } from '#/utils/recommended-effort-config';
@@ -777,7 +778,7 @@ export class KimiTUI {
     this.state.editorContainer.addChild(this.state.editor);
     this.state.ui.setFocus(this.state.editor);
     this.applyRecommendedEffortInBackground();
-    this.refreshModelSwitchConfirmConfigInBackground();
+    this.refreshSwitchConfigsInBackground();
     return shouldReplayHistory;
   }
 
@@ -840,15 +841,16 @@ export class KimiTUI {
     });
   }
 
-  private refreshModelSwitchConfirmConfigInBackground(): void {
+  private refreshSwitchConfigsInBackground(): void {
     void (async () => {
       try {
-        await refreshModelSwitchConfirmConfig({
-          accessToken: await this.harness.auth.getCachedAccessToken(),
-        });
+        const accessToken = await this.harness.auth.getCachedAccessToken();
+        await Promise.all([
+          refreshModelSwitchConfirmConfig({ accessToken }),
+          refreshEffortSwitchConfig({ accessToken }),
+        ]);
       } catch {
-        // Best-effort warm-up: a failed token lookup or fetch just leaves the
-        // dialog gated off.
+        // Best-effort warm-up: failures leave cloud-gated features disabled.
       }
     })();
   }
