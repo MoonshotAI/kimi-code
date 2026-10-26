@@ -42,15 +42,14 @@ defaultCwd = "/workspace"
 
 [environments.sandbox]
 command = "sandbox"              # 可执行名或绝对路径
-args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server"]
+args = ["ssh", "i-1234567890", "--"]  # 进入目标的方式；Kimi Code 会追加执行器调用
 env = { SANDBOX_TOKEN = "..." }  # 可选：仅作用于本机启动器进程的环境变量
 defaultCwd = "/home/me/kimi-code"
 ```
 
 关键规则：
 
-- `type` 与 `command` 在同一条目内互斥：`type = "ssh"` 和 `type = "docker"` 是内置启动器，`command` + `args` 是通用形式（与 `.mcp.json` 的 stdio 条目形态一致）。`env` 设置的是本机启动器进程的环境，**不会**传播到 Agent 在目标环境执行的命令里。
+- `type` 与 `command` 在同一条目内互斥：`type = "ssh"` 和 `type = "docker"` 是内置启动器，`command` + `args` 是通用形式（与 `.mcp.json` 的 stdio 条目形态一致）。通用形式下，Kimi Code 会在 `args` 之后追加 `<remoteBin> exec-server`（默认 `~/.kimi-code/bin/kimi`），`args` 已经调用 `exec-server` 时不追加；`kubectl exec` 这类不经 shell、原样传递参数的启动器不会展开 `~`，需要把 `remoteBin` 设为绝对路径。`env` 设置的是本机启动器进程的环境，**不会**传播到 Agent 在目标环境执行的命令里。
 - `defaultCwd` 是在该环境上创建会话时使用的工作目录，可被 `--environment-cwd` 覆盖。它必须是目标环境上的 POSIX 绝对路径；相对路径和 `~` 不会按本机目录或目标机器的 home 展开。系统先规范化重复分隔符、`.` 和 `..`，再在目标环境上校验目录，并保存同一个规范化路径。符号链接名称会保留，不会用 realpath 改写；因此 `symlink/..` 使用路径拼写中的父目录，而不是符号链接目标的物理父目录。
 - 可选的顶层 `default` 指定创建会话时未显式给出绑定时使用的环境——冷启动、print 模式，或 API 创建。它指向的条目必须设置 `defaultCwd`。未设置 `default` 时，这些会话从 `local` 开始。TUI 里的 `/new` 不属于这种情况：它保留当前会话的环境和工作目录。还没有会话时，`/new` 使用进程启动时的 `--environment`；没有该参数时才用解析后的 default。
 - 配置文件无法读取或 `[environments]` 节无效时，创建会话会以 `config.invalid` 失败，不会将其视为未设置 default。显式选择 `local` 仍可创建本地会话。

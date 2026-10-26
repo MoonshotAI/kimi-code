@@ -592,13 +592,14 @@ The optional top-level `default` names the environment a session binds to when c
 
 ### Command entries
 
-The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The declared command must bridge stdio to `kimi exec-server` on the target.
+The generic launcher form, for any environment the built-in launchers do not cover (OrbStack machines, `kubectl exec`, Apple Container, managed sandboxes). The command and `args` describe how to reach the target: the launcher must run the arguments that follow it on the target, as `ssh host`, `kubectl exec -i pod --` and `docker exec -i container` do. Kimi Code appends `<remoteBin> exec-server` to `args`, unless `args` already invokes `exec-server`.
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `command` | `string` | Yes | Launcher executable: a name resolved against `PATH`, or an absolute path. A resolution landing inside the working directory is refused, so a project cannot shadow the launcher with a same-named binary |
-| `args` | `array<string>` | No | Launcher arguments; must include the executor invocation (`... exec-server`) |
+| `args` | `array<string>` | No | Launcher arguments that reach the target. When an argument already invokes `exec-server` (for example `--command "~/.kimi-code/bin/kimi exec-server"`), nothing is appended and the arguments run as written |
 | `env` | `table<string, string>` | No | Environment for the launcher process on your machine; never propagated into commands running on the target |
+| `remoteBin` | `string` | No | Executor path on the target, appended after `args`; defaults to `~/.kimi-code/bin/kimi`. Use a plain path without spaces or shell metacharacters. `~` only expands when the launcher runs the arguments through a shell on the target, as ssh does; launchers that pass arguments straight through, such as `kubectl exec` and `docker exec`, need an absolute path |
 | `defaultCwd` | `string` | No | Working-directory prefill when binding a session |
 
 ```toml
@@ -616,10 +617,15 @@ container = "myapp-dev"
 
 [environments.sandbox]
 command = "sandbox"
-args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server"]
+args = ["ssh", "i-1234567890", "--"]
 env = { SANDBOX_TOKEN = "..." }
 defaultCwd = "/home/me/kimi-code"
+
+[environments.k8s]
+command = "kubectl"
+args = ["exec", "-i", "dev-pod", "--"]
+remoteBin = "/root/.kimi-code/bin/kimi"
+defaultCwd = "/workspace"
 ```
 
 ## `tui.toml`

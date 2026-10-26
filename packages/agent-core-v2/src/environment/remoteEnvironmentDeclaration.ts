@@ -27,6 +27,7 @@ const commandEnvironmentEntrySchema = z
     command: z.string().min(1),
     args: z.array(z.string()).optional(),
     env: z.record(z.string(), z.string()).optional(),
+    remoteBin: z.string().min(1).optional(),
     defaultCwd: z.string().min(1).optional(),
   })
   .strict();

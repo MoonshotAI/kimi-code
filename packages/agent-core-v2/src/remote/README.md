@@ -128,8 +128,10 @@ stdio'` — the same word-initial tilde expansion on both, with the remainder of
   could not execute it, e.g. a missing exec bit), or the handshake **timed out**.
   The error gains install guidance: download the `kimi` binary for the target
   platform from the Kimi Code release CDN and install it at the executor path
-  the launcher invokes (named in the message; `command` environments are
-  pointed at the absolute path their command invokes). Guidance generation
+  the launcher invokes (named in the message; `command` environments append
+  `<remoteBin> exec-server` to their args and are pointed at that `remoteBin`,
+  unless their args already invoke `exec-server`, in which case they are
+  pointed at the path their command invokes). Guidance generation
   never masks the original handshake failure.
 - **Too-old executor** — the handshake answered but `executorVersion <
   MIN_EXECUTOR_VERSION`. The client rejects with *upgrade* guidance (current

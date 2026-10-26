@@ -42,15 +42,14 @@ defaultCwd = "/workspace"
 
 [environments.sandbox]
 command = "sandbox"              # executable name or absolute path
-args = ["ssh", "i-1234567890", "--",
-        "/home/me/.kimi-code/bin/kimi", "exec-server"]
+args = ["ssh", "i-1234567890", "--"]  # how to reach the target; Kimi Code appends the executor invocation
 env = { SANDBOX_TOKEN = "..." }  # optional: environment for the launcher process only
 defaultCwd = "/home/me/kimi-code"
 ```
 
 Key rules:
 
-- `type` and `command` are mutually exclusive within one entry: `type = "ssh"` and `type = "docker"` are built-in launchers, while `command` + `args` is the generic form (same shape as stdio entries in `.mcp.json`). `env` sets the launcher process's environment on your machine; it is **not** propagated into commands the agent runs on the target.
+- `type` and `command` are mutually exclusive within one entry: `type = "ssh"` and `type = "docker"` are built-in launchers, while `command` + `args` is the generic form (same shape as stdio entries in `.mcp.json`). For the generic form, Kimi Code appends `<remoteBin> exec-server` (default `~/.kimi-code/bin/kimi`) after `args` unless `args` already invokes `exec-server`; launchers that pass arguments straight through without a shell, such as `kubectl exec`, need an absolute `remoteBin` because `~` is not expanded. `env` sets the launcher process's environment on your machine; it is **not** propagated into commands the agent runs on the target.
 - `defaultCwd` is used when a session is created on the environment unless `--environment-cwd` overrides it. It must be an absolute POSIX path on the target; relative paths and `~` are not expanded against your machine or the target's home. Repeated separators, `.` and `..` are normalized before checking that directory on the target, and the normalized path is saved in the binding. Symlink names are preserved, not rewritten with realpath; `symlink/..` therefore uses the lexical parent, not the symlink target's physical parent.
 - The optional top-level `default` names the environment a session binds to when creation does not specify one — a cold start, print mode, or an API create. The entry it points at must set `defaultCwd`. Without a `default`, those sessions start on the `local` environment. In the TUI, `/new` instead keeps the current session's environment and working directory. If no session exists yet, `/new` uses `--environment` when the process was started with it, otherwise the resolved default.
 - If the configuration file cannot be read or the `[environments]` section is invalid, session creation fails with `config.invalid` instead of treating this as no default. Explicitly selecting `local` still creates a local session.

@@ -10,17 +10,19 @@ import {
 } from './remoteEnvironmentDeclaration';
 
 export function toLauncherSpec(entry: RemoteEnvironmentEntry): LauncherSpec {
-  if ('command' in entry) return { type: 'command', program: entry.command, args: entry.args, env: entry.env };
+  if ('command' in entry) {
+    return { type: 'command', program: entry.command, args: entry.args, env: entry.env, remoteBin: entry.remoteBin };
+  }
   return entry.type === 'ssh'
     ? { type: 'ssh', host: entry.host, remoteBin: entry.remoteBin }
     : { type: 'docker', container: entry.container, context: entry.context, remoteBin: entry.remoteBin };
 }
 
 export function declarationFingerprint(entry: RemoteEnvironmentEntry): string {
-  const launcher = toLauncherSpec(entry);
+  const launcher = { ...toLauncherSpec(entry), remoteBin: entry.remoteBin ?? DEFAULT_REMOTE_BIN };
   return JSON.stringify(launcher.type === 'command'
     ? { ...launcher, args: launcher.args ?? [], env: Object.fromEntries(Object.entries(launcher.env ?? {}).toSorted(([a], [b]) => a.localeCompare(b))) }
-    : { ...launcher, remoteBin: launcher.remoteBin ?? DEFAULT_REMOTE_BIN });
+    : launcher);
 }
 
 export async function resolveWorkspaceEnvironmentDeclarations(

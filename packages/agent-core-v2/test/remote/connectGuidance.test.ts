@@ -30,4 +30,28 @@ describe('connectWithGuidance', () => {
     expect(message).not.toContain('curl -fL');
     expect(message).not.toContain('/tmp/kimi-install');
   });
+
+  it('points a command launcher at the remoteBin it appends', async () => {
+    const error = await connectWithGuidance(
+      async () => {
+        throw missingExecutorError();
+      },
+      { launcher: { type: 'command', program: 'kubectl', args: ['exec', '-i', 'dev-pod', '--'], remoteBin: '/root/.kimi-code/bin/kimi' } },
+    ).catch((error: unknown) => error);
+    const message = (error as Error).message;
+    expect(message).toContain('was not found on command:kubectl (expected at /root/.kimi-code/bin/kimi)');
+    expect(message).toContain('executor path (/root/.kimi-code/bin/kimi)');
+  });
+
+  it('points a command launcher that invokes exec-server itself at its own command', async () => {
+    const error = await connectWithGuidance(
+      async () => {
+        throw missingExecutorError();
+      },
+      { launcher: { type: 'command', program: 'sandbox', args: ['ssh', 'i-1', '--', '/opt/kimi', 'exec-server'] } },
+    ).catch((error: unknown) => error);
+    const message = (error as Error).message;
+    expect(message).toContain('was not found on command:sandbox.');
+    expect(message).toContain('the absolute path your launcher command invokes');
+  });
 });

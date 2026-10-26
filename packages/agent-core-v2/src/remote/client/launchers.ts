@@ -1,7 +1,10 @@
 import { resolveProgramPath } from '#/environment/programPath';
 
 export const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
-export const EXEC_SERVER_ARGV: readonly string[] = ['exec-server', '--listen', 'stdio'];
+export const EXEC_SERVER_SUBCOMMAND = 'exec-server';
+export const EXEC_SERVER_ARGV: readonly string[] = [EXEC_SERVER_SUBCOMMAND, '--listen', 'stdio'];
+
+const EXEC_SERVER_WORD = /(^|[\s=])exec-server(\s|$)/;
 
 export const SSH_CONFIG_OPTIONS: readonly string[] = [
   '-o',
@@ -33,6 +36,7 @@ export type LauncherSpec =
       readonly program: string;
       readonly args?: readonly string[];
       readonly env?: Record<string, string>;
+      readonly remoteBin?: string;
     };
 
 export interface ResolvedLauncher {
@@ -46,6 +50,11 @@ export function assertLauncherOperand(kind: string, value: string): void {
   if (value.startsWith('-')) {
     throw new Error(`${kind} must not start with '-': ${value}`);
   }
+}
+
+export function launcherRemoteBin(spec: LauncherSpec): string | undefined {
+  if (spec.type === 'command' && (spec.args ?? []).some((arg) => EXEC_SERVER_WORD.test(arg))) return undefined;
+  return spec.remoteBin ?? DEFAULT_REMOTE_BIN;
 }
 
 export function shQuote(value: string): string {
@@ -131,11 +140,16 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
           `exec ${execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)}`,
         ],
       };
-    case 'command':
+    case 'command': {
+      const remoteBin = launcherRemoteBin(spec);
+      if (remoteBin !== undefined) assertLauncherOperand('remote bin', remoteBin);
       return {
         program: resolveProgramPath(spec.program),
-        args: [...(spec.args ?? [])],
+        args: remoteBin === undefined
+          ? [...(spec.args ?? [])]
+          : [...(spec.args ?? []), remoteBin, EXEC_SERVER_SUBCOMMAND],
         env: commandLauncherEnv(spec.env),
       };
+    }
   }
 }
