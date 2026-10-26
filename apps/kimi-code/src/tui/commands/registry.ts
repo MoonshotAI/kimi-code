@@ -417,6 +417,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'import-sessions',
+    aliases: [],
+    description: 'Import recent Claude Code and Codex sessions',
+    priority: 40,
+    availability: 'idle-only',
+  },
+  {
     name: 'copy',
     aliases: [],
     description: 'Copy the last assistant message to the clipboard',
