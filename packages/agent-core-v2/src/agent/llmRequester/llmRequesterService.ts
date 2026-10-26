@@ -139,13 +139,15 @@ export const llmRequesterTurnConfigsKey = defineState<Map<number, TurnRequestCon
   'llmRequester.turnConfigs',
   () => new Map(),
 );
-export const llmRequesterMediaDegradedTurnsKey = defineState<Set<number>>(
-  'llmRequester.mediaDegradedTurns',
-  () => new Set(),
-);
-export const llmRequesterMediaStrippedTurnsKey = defineState<Map<number, MediaStripSnapshot>>(
-  'llmRequester.mediaStrippedTurns',
-  () => new Map(),
+interface MediaRecovery {
+  readonly modelAlias: string;
+  readonly contextRevision: number;
+  readonly media: 'degraded' | { readonly strip: MediaStripSnapshot };
+}
+
+export const llmRequesterMediaRecoveryKey = defineState<MediaRecovery | undefined>(
+  'llmRequester.mediaRecovery',
+  () => undefined as MediaRecovery | undefined,
 );
 export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<string>>(
   'llmRequester.emittedThinkingEffortWarnings',
@@ -183,8 +185,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     this.states.contributeState(llmRequestTraceKey);
     this.states.contributeState(llmRequesterLastConfigLogSignatureKey);
     this.states.contributeState(llmRequesterTurnConfigsKey);
-    this.states.contributeState(llmRequesterMediaDegradedTurnsKey);
-    this.states.contributeState(llmRequesterMediaStrippedTurnsKey);
+    this.states.contributeState(llmRequesterMediaRecoveryKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
     this.states.contributeState(llmRequesterLastTurnRequestKey);
   }
@@ -199,14 +200,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private get turnConfigs(): Map<number, TurnRequestConfig> {
     return this.states.get(llmRequesterTurnConfigsKey);
-  }
-
-  private get mediaDegradedTurns(): Set<number> {
-    return this.states.get(llmRequesterMediaDegradedTurnsKey);
-  }
-
-  private get mediaStrippedTurns(): Map<number, MediaStripSnapshot> {
-    return this.states.get(llmRequesterMediaStrippedTurnsKey);
   }
 
   private get emittedThinkingEffortWarnings(): Set<string> {
@@ -352,17 +345,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<AgentLLMRequestFinish> {
     this.toolCallIdNormalizer.seedFrom(this.context.get());
     const shaped = this.toolSelect.shapeHistory(request.messages);
-    const recoveredStrip = this.mediaStripSnapshotForTurn(request.source);
+    const recoveredMedia = this.recoveredMedia(request);
     let policy: ProjectionPolicy | undefined =
-      recoveredStrip !== undefined
-        ? { media: { strip: recoveredStrip } }
-        : this.isRecoveryTurn(this.mediaDegradedTurns, request.source)
-          ? { media: 'degraded' }
-          : undefined;
+      recoveredMedia === undefined ? undefined : { media: recoveredMedia };
+    let mediaStrippedThisRequest = false;
     const captureMediaStripPolicy = (): { readonly strip: MediaStripSnapshot } => {
-      const snapshot = this.projector.captureMediaStripSnapshot(shaped);
-      this.markMediaStrippedRecoveryTurn(snapshot, request.source);
-      return { strip: snapshot };
+      mediaStrippedThisRequest = true;
+      const media = { strip: this.projector.captureMediaStripSnapshot(shaped) };
+      this.markMediaRecovery(request, media);
+      return media;
     };
     let previousMediaCount: number | undefined;
     let previousMediaPolicy: ProjectionPolicy['media'];
@@ -526,11 +517,15 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       try {
         return await run(policy);
       } catch (error) {
+        const canStripMedia =
+          !mediaStrippedThisRequest &&
+          (typeof policy?.media !== 'object' || (previousMediaCount ?? 0) > 0);
         const nextPolicy = this.nextProjectionPolicyForError(
           error,
           policy,
           request,
           signal,
+          canStripMedia,
           captureMediaStripPolicy,
         );
         if (nextPolicy !== undefined) {
@@ -574,6 +569,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     policy: ProjectionPolicy | undefined,
     request: ResolvedLLMRequest,
     signal: AbortSignal | undefined,
+    canStripMedia: boolean,
     captureMediaStripPolicy: () => { readonly strip: MediaStripSnapshot },
   ): ProjectionPolicy | undefined {
     if (signal?.aborted === true) return undefined;
@@ -584,7 +580,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     if (
       (raw instanceof APIRequestTooLargeError ||
         (raw instanceof LlmError && raw.kind === 'request_too_large')) &&
-      (media === undefined || media === 'degraded')
+      canStripMedia
     ) {
       signal?.throwIfAborted();
       if (media === undefined) {
@@ -592,12 +588,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           model: request.model.name,
           ...request.logFields,
         });
-        this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
+        this.markMediaRecovery(request, 'degraded');
         projection = 'media-degraded';
         nextPolicy = { ...policy, media: 'degraded' };
       } else {
         this.log.warn(
-          'provider rejected degraded-media request as too large; resending with rejected media stripped',
+          'provider rejected request as too large; resending with rejected media stripped',
           {
             model: request.model.name,
             ...request.logFields,
@@ -606,7 +602,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         projection = 'media-stripped';
         nextPolicy = { ...policy, media: captureMediaStripPolicy() };
       }
-    } else if (typeof media !== 'object' && isImageFormatError(raw)) {
+    } else if (canStripMedia && isImageFormatError(raw)) {
       signal?.throwIfAborted();
       this.log.warn(
         'provider rejected an image in the request; resending with rejected media stripped',
@@ -682,35 +678,25 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
   }
 
-  private isRecoveryTurn(set: ReadonlySet<number>, source: AgentLLMRequestSource | undefined): boolean {
-    if (source?.type !== 'turn') return false;
-    return set.has(source.turnId);
-  }
-
-  private mediaStripSnapshotForTurn(
-    source: AgentLLMRequestSource | undefined,
-  ): MediaStripSnapshot | undefined {
-    if (source?.type !== 'turn') return undefined;
-    return this.mediaStrippedTurns.get(source.turnId);
-  }
-
-  private markMediaStrippedRecoveryTurn(
-    snapshot: MediaStripSnapshot,
-    source: AgentLLMRequestSource | undefined,
-  ): void {
-    if (source?.type !== 'turn') return;
-    for (const id of this.mediaStrippedTurns.keys()) {
-      if (id < source.turnId) this.mediaStrippedTurns.delete(id);
+  private recoveredMedia(request: ResolvedLLMRequest): MediaRecovery['media'] | undefined {
+    const recovery = this.states.get(llmRequesterMediaRecoveryKey);
+    if (
+      recovery === undefined ||
+      recovery.modelAlias !== request.modelAlias ||
+      recovery.contextRevision !== request.contextRevision
+    ) {
+      return undefined;
     }
-    this.mediaStrippedTurns.set(source.turnId, snapshot);
+    return recovery.media;
   }
 
-  private markRecoveryTurn(set: Set<number>, source: AgentLLMRequestSource | undefined): void {
-    if (source?.type !== 'turn') return;
-    for (const id of set) {
-      if (id < source.turnId) set.delete(id);
-    }
-    set.add(source.turnId);
+  private markMediaRecovery(request: ResolvedLLMRequest, media: MediaRecovery['media']): void {
+    if (request.source?.type !== 'turn') return;
+    this.states.set(llmRequesterMediaRecoveryKey, {
+      modelAlias: request.modelAlias,
+      contextRevision: request.contextRevision,
+      media,
+    });
   }
 
   private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
