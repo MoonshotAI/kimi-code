@@ -509,7 +509,7 @@ describe('handleGoalCommand', () => {
     expect(yoloHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(yoloHost).render(80).join('\n'));
     expect(text.replaceAll(/\s+/g, ' ')).toContain(
-      'Ask When Needed mode approves tools and plan changes automatically, but can still stop for questions.',
+      'Ask When Needed mode approves tools automatically, but can still stop for questions.',
     );
     expect(text).toContain('Keep Ask When Needed and start');
     expect(text).not.toContain('Start in Always Ask');
