@@ -47,6 +47,7 @@ function makeHost(
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(appState, patch)),
     setStartupReady: vi.fn(),
     resetSessionRuntime: vi.fn(),
+    setAuthRequired: vi.fn(),
     setSession: vi.fn(async (next: unknown) => {
       (host as { session: unknown }).session = next;
     }),
@@ -69,7 +70,27 @@ function makeHost(
   return { host, appState, session };
 }
 
+describe('login-required startup', () => {
+  it('marks the application as blocked until authentication is resolved', () => {
+    const { host } = makeHost();
+    const authFlow = new AuthFlowController(host);
+
+    authFlow.enterLoginRequiredStartupState();
+
+    expect(host.setAuthRequired).toHaveBeenCalledWith(true);
+  });
+});
+
 describe('activateModelAfterLogin', () => {
+  it('clears auth required after a model is activated', async () => {
+    const { host } = makeHost();
+    const authFlow = new AuthFlowController(host);
+
+    await authFlow.activateModelAfterLogin('k2', 'high');
+
+    expect(host.setAuthRequired).toHaveBeenCalledWith(false);
+  });
+
   it('reports an engine-tracked switch when the pick changes the bound alias', async () => {
     const { host, session } = makeHost({ withSession: true });
     const authFlow = new AuthFlowController(host);

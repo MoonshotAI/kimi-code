@@ -131,4 +131,22 @@ describe('question reverse-rpc', () => {
       ],
     });
   });
+
+  it('tracks the requesting agent until the question handler settles', async () => {
+    const controller = new QuestionController();
+    vi.spyOn(controller, 'show').mockRejectedValue(new Error('boom'));
+    const token = Symbol('question');
+    const tracker = {
+      startInteraction: vi.fn(() => token),
+      endInteraction: vi.fn(),
+    };
+    const handler = createQuestionAskHandler(controller, tracker);
+
+    await expect(handler(questionEvent({ agentId: 'agent-1' }))).resolves.toBeNull();
+    expect(tracker.startInteraction).toHaveBeenCalledWith({
+      agentId: 'agent-1',
+      kind: 'question',
+    });
+    expect(tracker.endInteraction).toHaveBeenCalledWith(token);
+  });
 });

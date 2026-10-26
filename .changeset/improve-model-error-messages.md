@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Improve model error messages.
+Use backend-provided model error messages without SDK or protocol fallback text.

@@ -83,7 +83,8 @@ function detailsForErrorPayload(
   error: CodedErrorShape,
 ): Readonly<Record<string, unknown>> | undefined {
   const details = error.details;
-  if (details === undefined || !Object.prototype.hasOwnProperty.call(details, 'statusCode')) {
+  if (details === undefined || details === null) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(details, 'statusCode')) {
     return details;
   }
   const directStatusCode = (error as { readonly statusCode?: unknown }).statusCode;

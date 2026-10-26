@@ -30,6 +30,13 @@ describe('toErrorPayload', () => {
     expect(payload).not.toHaveProperty('details.statusCode');
   });
 
+  it('treats null details as absent instead of failing serialization', () => {
+    const error = { code: 'internal', message: 'null details', details: null };
+
+    expect(() => toErrorPayload(error)).not.toThrow();
+    expect(toErrorPayload(error).details).toBeUndefined();
+  });
+
   it('retains actual HTTP 503 metadata for canonical and legacy model errors', () => {
     const legacy = new APIStatusError(503, 'legacy unavailable', 'req-legacy-503', null, 'trace-legacy-503');
     const canonical = new LlmError({

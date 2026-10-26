@@ -1,5 +1,7 @@
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
+import type { ReverseRpcModalOwner } from '../reverse-rpc/modal-coordinator';
+
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
@@ -127,7 +129,12 @@ export interface SlashCommandHost {
   showNotice(title: string, detail?: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   track(event: string, props?: Record<string, unknown>): void;
-  mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void;
+  mountEditorReplacement(
+    panel: Component & Focusable,
+    onDisplaced?: () => void,
+    onReplaced?: () => void,
+    owner?: ReverseRpcModalOwner,
+  ): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
   refreshSlashCommandAutocomplete(): void;
@@ -177,6 +184,8 @@ export interface SlashCommandHost {
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
+  beginAuthBlock(): () => void;
+  setAuthRequired(required: boolean): void;
   showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme

@@ -256,42 +256,69 @@ describe('server-v2 /api/v1/workspaces', () => {
   });
 
   it('adds an additional directory and persists it by default', async () => {
-    const root = home as string;
-    const extra = join(root, 'extra');
-    await mkdir(extra);
-    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
-    const id = created.body.data.id;
+    const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-persist-'));
+    try {
+      const extra = join(root, 'extra');
+      await mkdir(extra);
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
 
-    const { status, body } = await postJson<AddDirWire>(`/api/v1/workspaces/${id}/add-dir`, {
-      path: extra,
-    });
-    expect(status).toBe(200);
-    expect(body.code).toBe(0);
-    expect(body.data.persisted).toBe(true);
-    expect(body.data.additional_dirs).toContain(extra);
-    expect(body.data.project_root).toBe(root);
-    expect(body.data.config_path).toBe(join(root, '.kimi-code', 'local.toml'));
-    const toml = await readFile(body.data.config_path, 'utf8');
-    expect(toml).toContain('additional_dir');
-    expect(toml).toContain(extra);
+      const { status, body } = await postJson<AddDirWire>(`/api/v1/workspaces/${id}/add-dir`, {
+        path: extra,
+      });
+      expect(status).toBe(200);
+      expect(body.code).toBe(0);
+      expect(body.data.persisted).toBe(true);
+      expect(body.data.additional_dirs).toContain(extra);
+      expect(body.data.project_root).toBe(root);
+      expect(body.data.config_path).toBe(join(root, '.kimi-code', 'local.toml'));
+      const toml = await readFile(body.data.config_path, 'utf8');
+      expect(toml).toContain('additional_dir');
+      expect(toml).toContain(extra);
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      expect(manager.get(id)).toBeUndefined();
+      const lease = await manager.acquire({ workspaceId: id, root });
+      try {
+        await lease.instance.program.dirs.ready;
+        expect(lease.instance.program.dirs.additionalDirs).toContain(extra);
+      } finally {
+        lease.dispose();
+      }
+      expect(manager.get(id)).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('adds a relative directory without persisting when persist is false', async () => {
     const root = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspaces-rel-'));
-    const extra = join(root, 'extra-rel');
-    await mkdir(extra);
-    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
-    const id = created.body.data.id;
+    try {
+      const extra = join(root, 'extra-rel');
+      await mkdir(extra);
+      const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+      const id = created.body.data.id;
 
-    const { body } = await postJson<AddDirWire>(`/api/v1/workspaces/${id}/add-dir`, {
-      path: 'extra-rel',
-      persist: false,
-    });
-    expect(body.code).toBe(0);
-    expect(body.data.persisted).toBe(false);
-    expect(body.data.additional_dirs).toContain(extra);
-    await expect(readFile(body.data.config_path, 'utf8')).rejects.toThrow();
-    await rm(root, { recursive: true, force: true });
+      const { body } = await postJson<AddDirWire>(`/api/v1/workspaces/${id}/add-dir`, {
+        path: 'extra-rel',
+        persist: false,
+      });
+      expect(body.code).toBe(0);
+      expect(body.data.persisted).toBe(false);
+      expect(body.data.additional_dirs).toContain(extra);
+      await expect(readFile(body.data.config_path, 'utf8')).rejects.toThrow();
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      expect(manager.get(id)).toBeUndefined();
+      const lease = await manager.acquire({ workspaceId: id, root });
+      try {
+        await lease.instance.program.dirs.ready;
+        expect(lease.instance.program.dirs.additionalDirs).not.toContain(extra);
+      } finally {
+        lease.dispose();
+      }
+      expect(manager.get(id)).toBeUndefined();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('returns 40410 when adding a directory to an unknown workspace', async () => {
@@ -339,7 +366,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       expect(created.body.code).toBe(0);
       const id = created.body.data.id;
       const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
-      const getOrCreate = vi.spyOn(manager, 'getOrCreate').mockRejectedValue(
+      const acquire = vi.spyOn(manager, 'acquire').mockRejectedValue(
         new Error('runtime environment unavailable'),
       );
       try {
@@ -354,9 +381,9 @@ describe('server-v2 /api/v1/workspaces', () => {
         const revoked = await postJson<{ trusted: boolean }>(`/api/v1/workspaces/${id}/untrust`);
         expect(revoked.body.code).toBe(0);
         expect(revoked.body.data.trusted).toBe(false);
-        expect(getOrCreate).not.toHaveBeenCalled();
+        expect(acquire).not.toHaveBeenCalled();
       } finally {
-        getOrCreate.mockRestore();
+        acquire.mockRestore();
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -451,10 +478,11 @@ describe('server-v2 /api/v1/workspaces', () => {
         }
         return read<T>(scope, key);
       });
-      let materialized = false;
+      let release: (() => void) | undefined;
       try {
-        const workspace = await manager.getOrCreate({ workspaceId: id, root });
-        materialized = true;
+        const lease = await manager.acquire({ workspaceId: id, root });
+        release = () => lease.dispose();
+        const workspace = lease.instance;
         await workspace.program.mcpConfig.ready;
         expect(failed).toBe(true);
         expect(workspace.program.mcpConfig.servers()).toEqual({});
@@ -472,7 +500,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         expect(recovered).toEqual([true]);
       } finally {
         get.mockRestore();
-        if (materialized) await manager.close(id);
+        release?.();
       }
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -504,10 +532,11 @@ describe('server-v2 /api/v1/workspaces', () => {
         }
         return read<T>(scope, key);
       });
-      let materialized = false;
+      let release: (() => void) | undefined;
       try {
-        const workspace = await manager.getOrCreate({ workspaceId: id, root });
-        materialized = true;
+        const lease = await manager.acquire({ workspaceId: id, root });
+        release = () => lease.dispose();
+        const workspace = lease.instance;
         await workspace.program.mcpConfig.ready;
         expect(failed).toBe(true);
         expect(workspace.program.mcpConfig.servers()).toEqual({});
@@ -521,7 +550,7 @@ describe('server-v2 /api/v1/workspaces', () => {
         });
       } finally {
         get.mockRestore();
-        if (materialized) await manager.close(id);
+        release?.();
       }
     } finally {
       vi.unstubAllEnvs();
@@ -535,8 +564,11 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(created.body.code).toBe(0);
     const id = created.body.data.id;
     const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+    let release: (() => void) | undefined;
     try {
-      const workspace = await manager.getOrCreate({ workspaceId: id, root });
+      const lease = await manager.acquire({ workspaceId: id, root });
+      release = () => lease.dispose();
+      const workspace = lease.instance;
       await workspace.program.trust.ready;
       const events: boolean[] = [];
       workspace.program.trust.onDidChange((change) => events.push(change.trusted));
@@ -550,7 +582,7 @@ describe('server-v2 /api/v1/workspaces', () => {
       expect(workspace.program.trust.isTrusted()).toBe(false);
       expect(events).toEqual([true, false]);
     } finally {
-      await manager.close(id);
+      release?.();
       await rm(root, { recursive: true, force: true });
     }
   });
