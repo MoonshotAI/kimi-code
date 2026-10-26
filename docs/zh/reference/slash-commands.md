@@ -40,6 +40,7 @@
 | `/init` | — | 分析当前代码库并生成 `AGENTS.md` | 否 |
 | `/export-md [<path>]` | `/export` | 将当前会话导出为 Markdown 文件 | 否 |
 | `/export-debug-zip` | — | 将当前会话导出为调试用 ZIP 压缩包（与 [`kimi export`](./kimi-command.md#kimi-export) 行为一致） | 否 |
+| `/import-sessions` | — | 将最近 15 天或 30 天的 Claude Code 和 Codex 会话导入为普通会话（与 [`kimi import-sessions`](./kimi-command.md#kimi-import-sessions) 行为一致） | 否 |
 | `/copy` | — | 将最后一条 AI 回复复制到剪贴板 | 否 |
 | `/add-dir [<path>]` | — | 为当前会话添加额外的工作目录。不带路径（或传入 `list`）运行时列出已配置的目录。添加时可选择是否将目录记入项目的 `.kimi-code/local.toml` | 否 |
 | `/web` | — | 在 web UI 中打开当前会话：选择一个运行中的实例进行连接，或在 TUI 退出后新开一个前台服务器。参见 [`kimi web`](./kimi-command.md#kimi-web) | 是 |
@@ -53,7 +54,7 @@
 | `/auto` | — | 打开权限模式列表并预选 "Never Ask"，按 `Enter` 确认开启。该模式下所有操作和判断自动完成，只有 Plan 模式下的计划会等你审阅 | 是 |
 | `/plan [on\|off]` | — | 切换 Plan 模式。不带参数时翻转；显式传 `on`/`off` 时强制设置。单纯切换不会创建空计划文件 | 是 |
 | `/plan clear` | — | 清除当前 plan 方案 | 否 |
-| `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。 | 是 |
+| `/swarm on\|off` | — | 开启或关闭 swarm mode，但不发送提示词。`AgentSwarm` 仅在 swarm mode 开启时运行。 | 是 |
 | `/swarm <task>` | — | 先开启 swarm mode，再把 `<task>` 作为普通提示词发送。如果该轮次正常完成，swarm mode 会自动关闭。若当前是 `manual` 权限模式，启动前会提示是否切换到 "Ask When Needed" 或 "Never Ask" 模式。 | 否 |
 | `/tower` 或 `/tower status` | — | 查看 base、mission、roster、review 门槛、inbox、并发和近期活动，不启动模型轮次 | 是 |
 | `/tower on` | — | 开启 Tower 模式，不改变已记录的 base，也不发送提示词；首次初始化时默认采用当前本地 branch | 是 |

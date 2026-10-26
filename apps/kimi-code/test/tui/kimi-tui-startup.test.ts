@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { BannerProvider } from '#/tui/banner/banner-provider';
 import { readBannerDisplayState } from '#/tui/banner/state';
@@ -19,6 +19,7 @@ import { maybeShowModelMigrationPrompt } from '#/tui/controllers/model-migration
 import type { ApprovalPanelData, QuestionPanelData } from '#/tui/reverse-rpc/types';
 import { REPLAY_FETCH_TURN_LIMIT } from '#/tui/utils/message-replay';
 import { copyTextToClipboard } from '#/utils/clipboard/clipboard-text';
+import { mountFooter } from '#/tui/tui-state';
 import { quoteShellArg } from '#/utils/shell-quote';
 import {
   DISABLE_TERMINAL_THEME_REPORTING,
@@ -311,10 +312,10 @@ describe('KimiTUI startup', () => {
     expect(driver.state.ui.children).toHaveLength(0);
 
     await expect(driver.init()).resolves.toBe(false);
-    (driver as unknown as { mountFooter(): void }).mountFooter();
+    mountFooter(driver.state);
 
-    // Dock = 7 chrome containers + footer wrap, below the transcript viewport.
-    expect(driver.state.dockContainer?.children).toHaveLength(8);
+    // Dock = 6 chrome containers + footer wrap, below the transcript viewport.
+    expect(driver.state.dockContainer?.children).toHaveLength(7);
   });
 
   it('shows a session-less notice on v2 startup', async () => {
@@ -1949,6 +1950,9 @@ describe('KimiTUI startup', () => {
       makeStartupInput({}, { theme: 'auto' }),
     ) as unknown as ThemeTrackingDriver;
     const { listeners, write, addInputListener } = captureInputListeners(driver);
+    onTestFinished(() => {
+      driver.state.theme.setTerminalBackground(undefined);
+    });
 
     driver.refreshTerminalThemeTracking();
 
@@ -1966,22 +1970,29 @@ describe('KimiTUI startup', () => {
 
     expect(listeners[0]?.(DARK_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe('auto');
-    expect(driver.state.ui.requestRender).not.toHaveBeenCalled();
+    expect(driver.state.ui.requestRender).toHaveBeenCalledOnce();
 
     expect(listeners[0]?.(LIGHT_OSC11_REPORT)).toEqual({ consume: true });
     expect(driver.state.appState.theme).toBe('auto');
     expect(driver.state.ui.requestRender).toHaveBeenCalled();
   });
 
-  it('does not track terminal theme reports for explicit themes', () => {
+  it('tracks terminal background for explicit themes without changing their palette', () => {
     const harness = makeHarness();
     const driver = makeDriver(harness, makeStartupInput()) as unknown as ThemeTrackingDriver;
-    const { write, addInputListener } = captureInputListeners(driver);
+    const { listeners, write, addInputListener } = captureInputListeners(driver);
+    onTestFinished(() => {
+      driver.state.theme.setTerminalBackground(undefined);
+    });
+    const palette = driver.state.theme.palette;
 
     driver.refreshTerminalThemeTracking();
 
-    expect(addInputListener).not.toHaveBeenCalled();
-    expect(write).not.toHaveBeenCalled();
+    expect(addInputListener).toHaveBeenCalledOnce();
+    expect(write).toHaveBeenCalledWith(OSC11_QUERY);
+    expect(listeners[0]?.(LIGHT_OSC11_REPORT)).toEqual({ consume: true });
+    expect(driver.state.theme.palette).toBe(palette);
+    expect(driver.state.ui.requestRender).toHaveBeenCalledOnce();
   });
 
   it('disables terminal theme reports after leaving auto theme', () => {

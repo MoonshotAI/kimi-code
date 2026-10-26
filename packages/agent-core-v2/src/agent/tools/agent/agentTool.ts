@@ -6,6 +6,7 @@ import {
   isUserCancellation,
   userCancellationReason,
 } from '#/_base/utils/abort';
+import { sliceOnCodePointBoundary } from '#/_base/text/code-points';
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { REPEAT_BREAKER_STOP_REASON } from '#/agent/toolDedupe/toolDedupe';
 import type { AgentTaskInfo } from '#/agent/task/types';
@@ -671,7 +672,7 @@ function failureStopReason(
 
 function truncateReason(reason: string): string {
   if (reason.length <= REASON_MAX_CHARS) return reason;
-  return `${reason.slice(0, REASON_MAX_CHARS)}… [truncated]`;
+  return `${sliceOnCodePointBoundary(reason, REASON_MAX_CHARS)}… [truncated]`;
 }
 
 registerAgentToolService(ISubagentTool, SubagentTool, {

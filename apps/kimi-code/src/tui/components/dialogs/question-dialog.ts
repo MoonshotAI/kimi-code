@@ -2,7 +2,8 @@
  * QuestionDialog — pi-tui version of the structured question prompt.
  *
  * Each question collects an answer locally, and a final Submit tab
- * reviews everything before the answers are emitted upstream.
+ * reviews everything before the answers are emitted upstream. `Ctrl+N`
+ * lends the keyboard to the Updates panel; meanwhile the dialog fades.
  */
 
 import {
@@ -17,6 +18,7 @@ import {
   wrapTextWithAnsi,
 } from '@moonshot-ai/pi-tui';
 
+import { normalizeCapsLockedCtrl } from '#/tui/components/editor/custom-editor';
 import { currentTheme } from '#/tui/theme';
 import type {
   PendingQuestion,
@@ -32,6 +34,13 @@ const REVIEW_TITLE = 'Review your answer before submit';
 const SUBMIT_PROMPT = 'Ready to submit your answers?';
 const UNANSWERED_WARNING = 'Some questions are still unanswered.';
 const SUBMIT_ACTIONS = ['Submit', 'Cancel'] as const;
+
+export interface QuestionDialogOptions {
+  /** Whether the terminal window has focus; the dialog fades while it does not. */
+  readonly isTerminalFocused?: () => boolean;
+  /** `Ctrl+N`: hand the keyboard to the Updates panel; false when it has nothing to show. */
+  readonly onFocusUpdates?: () => boolean;
+}
 
 interface DisplayOption {
   readonly label: string;
@@ -97,18 +106,23 @@ export class QuestionDialogComponent extends Container implements Focusable {
   private readonly answers: (string | undefined)[];
 
   private readonly onToggleToolOutput: (() => void) | undefined;
+  private readonly isTerminalFocused: () => boolean;
+  private readonly onFocusUpdates: (() => boolean) | undefined;
 
   constructor(
     request: PendingQuestion,
     onAnswer: (response: QuestionPanelResponse) => void,
     maxVisibleOptions = 6,
     onToggleToolOutput?: () => void,
+    options: QuestionDialogOptions = {},
   ) {
     super();
     this.request = request;
     this.onAnswer = onAnswer;
     this.maxVisibleOptions = maxVisibleOptions;
     this.onToggleToolOutput = onToggleToolOutput;
+    this.isTerminalFocused = options.isTerminalFocused ?? (() => true);
+    this.onFocusUpdates = options.onFocusUpdates;
     this.otherInput.onSubmit = (value) => {
       this.commitOtherInput(value, 'enter');
     };
@@ -125,6 +139,10 @@ export class QuestionDialogComponent extends Container implements Focusable {
   // ── Input ─────────────────────────────────────────────────────────
 
   handleInput(data: string): void {
+    if (matchesKey(normalizeCapsLockedCtrl(data), Key.ctrl('n')) && this.onFocusUpdates?.() === true) {
+      return;
+    }
+
     if (matchesKey(data, Key.escape)) {
       this.onAnswer({ answers: [] });
       return;
@@ -435,9 +453,15 @@ export class QuestionDialogComponent extends Container implements Focusable {
 
   // ── Render ────────────────────────────────────────────────────────
 
+  /** Faded while another panel holds the keyboard or the terminal window is inactive. */
   override render(width: number): string[] {
     this.otherInput.focused = this.focused && this.isEditingOther();
-    return this.isSubmitTab() ? this.renderSubmitTab(width) : this.renderQuestionTab(width);
+    const lines = this.isSubmitTab() ? this.renderSubmitTab(width) : this.renderQuestionTab(width);
+    return this.focused && this.isTerminalFocused() ? lines : lines.map((line) => currentTheme.fade(line));
+  }
+
+  private rule(width: number): string {
+    return currentTheme.fg(this.focused ? 'primary' : 'border', '─'.repeat(width));
   }
 
   private renderQuestionTab(width: number): string[] {
@@ -452,7 +476,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const success = (text: string) => currentTheme.fg('success', text);
 
     const renderWidth = Math.max(1, width);
-    const lines: string[] = [accent('─'.repeat(renderWidth)), currentTheme.boldFg('primary', ' question'), ''];
+    const lines: string[] = [this.rule(renderWidth), currentTheme.boldFg('primary', ' question'), ''];
     this.pushTabs(lines);
     lines.push('');
 
@@ -537,8 +561,8 @@ export class QuestionDialogComponent extends Container implements Focusable {
     }
 
     lines.push('');
-    lines.push(this.buildQuestionHint(dim, questionIdx));
-    lines.push(accent('─'.repeat(renderWidth)));
+    lines.push(this.focused ? this.buildQuestionHint(dim, questionIdx) : dim('  esc back to question'));
+    lines.push(this.rule(renderWidth));
 
     return lines.map((line) => truncateToWidth(line, width));
   }
@@ -550,7 +574,7 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const warning = (text: string) => currentTheme.fg('warning', text);
 
     const renderWidth = Math.max(1, width);
-    const lines: string[] = [accent('─'.repeat(renderWidth)), currentTheme.boldFg('primary', ' question'), ''];
+    const lines: string[] = [this.rule(renderWidth), currentTheme.boldFg('primary', ' question'), ''];
     this.pushTabs(lines);
     lines.push('');
     lines.push(currentTheme.boldFg('text', ` ${REVIEW_TITLE}`));
@@ -601,8 +625,8 @@ export class QuestionDialogComponent extends Container implements Focusable {
     }
 
     lines.push('');
-    lines.push(this.buildSubmitHint(dim));
-    lines.push(accent('─'.repeat(renderWidth)));
+    lines.push(this.focused ? this.buildSubmitHint(dim) : dim('  esc back to question'));
+    lines.push(this.rule(renderWidth));
 
     return lines.map((line) => truncateToWidth(line, width));
   }
