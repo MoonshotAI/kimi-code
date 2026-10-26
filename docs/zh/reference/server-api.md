@@ -1190,7 +1190,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；新的请求通过 WebSocket 以 `event.approval.requested` 与 `event.question.requested` 到达。
+审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)）。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -2392,7 +2392,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 轮次 | `turn.started`、`turn.ended`、`turn.step.started` / `completed` / `interrupted` / `retrying` |
 | 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
 | 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
-| 交互 | `event.approval.requested` / `resolved`、`event.question.requested` / `answered` / `dismissed` |
+| 交互 | `interaction` |
 | subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
@@ -2400,6 +2400,8 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
+
+会话内所有 agent（含 subagent）的审批与提问都以易失的 `interaction` 事件到达：`{ agent_id, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`，其中审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。由于它不回放，服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互。客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。
 
 ### 断线恢复
 

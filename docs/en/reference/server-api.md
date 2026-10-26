@@ -1190,7 +1190,7 @@ On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
 ### Approvals and questions
 
-Approvals and questions are the session's two pending-interaction kinds: an approval asks permission for a tool call, a question asks for structured input with labeled options. These endpoints list and resolve them; new requests arrive over the WebSocket as `event.approval.requested` and `event.question.requested`.
+Approvals and questions are the session's two pending-interaction kinds: an approval asks permission for a tool call, a question asks for structured input with labeled options. These endpoints list and resolve them; over the WebSocket, every change arrives as an `interaction` event (see [Events](#events)).
 
 | Method and path | Description |
 | --- | --- |
@@ -2392,7 +2392,7 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 | Turns | `turn.started`, `turn.ended`, `turn.step.started` / `completed` / `interrupted` / `retrying` |
 | Streaming text | `assistant.delta`, `thinking.delta` (carry `offset` for alignment) |
 | Tool calls | `tool.call.started`, `tool.call.delta`, `tool.progress`, `tool.result` |
-| Interactions | `event.approval.requested` / `resolved`, `event.question.requested` / `answered` / `dismissed` |
+| Interactions | `interaction` |
 | Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
 | Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
@@ -2400,6 +2400,8 @@ Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "sess
 Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
+
+Approvals and questions from every agent in the session, sub-agents included, arrive as the volatile `interaction` event: `{ agent_id, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`, where `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. Because it is not replayed, the server sends the session's pending interactions right after each successful `client_hello` / `subscribe` / `subscribe_v2` ack. Clients should drop their pending list for that session on the ack and rebuild it from the frames that follow.
 
 ### Reconnect and recovery
 
