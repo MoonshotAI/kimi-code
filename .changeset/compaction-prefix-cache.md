@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Reduce the token cost of conversation compaction by reusing cached prompt prefixes.
+Keep dynamically loaded tool announcements and schemas in the history sent for compaction when tool selection is enabled.

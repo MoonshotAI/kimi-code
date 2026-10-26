@@ -2420,6 +2420,63 @@ describe('FullCompaction', () => {
     }
   });
 
+  it('strips dynamic tool context from the compaction request when tool-select is disabled', async () => {
+    const ctx = testAgent({
+      initialConfig: {
+        providers: {},
+        loopControl: { reservedContextSize: 0 },
+      },
+    });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.context.append({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: wrapSystemReminder(renderLoadableToolsAnnouncement([LARGE_MCP_TOOL], [])),
+        },
+      ],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: LOADABLE_TOOLS_VARIANT },
+    });
+    ctx.context.append({
+      role: 'system',
+      content: [],
+      toolCalls: [],
+      tools: [
+        {
+          name: LARGE_MCP_TOOL,
+          description: `${LARGE_MCP_TOOL} desc`,
+          parameters: { type: 'object', properties: {} },
+        },
+      ],
+      origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+    });
+    ctx.appendExchange(2, 'later user two', 'later assistant two', 20);
+
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+    ctx.mockNextResponse({ type: 'text', text: 'Summary without dynamic context.' });
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    const call = ctx.llmCalls[0]!;
+    expect(call.history.map(messageText).join('\n')).not.toContain('tools_added');
+    expect(
+      call.history.some(
+        (message) => message.role === 'system' && (message.tools?.length ?? 0) > 0,
+      ),
+    ).toBe(false);
+    expect(messageText(call.history.at(-2))).toBe('later assistant two');
+    expect(messageText(call.history.at(-1))).toBe(renderCompactionInstruction({}));
+  });
+
   it('triggers auto compaction when pending tokens cross the reserved threshold', async () => {
     const ctx = testAgent({
       initialConfig: {

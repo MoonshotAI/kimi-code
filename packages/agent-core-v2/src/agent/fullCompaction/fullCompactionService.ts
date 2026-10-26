@@ -647,7 +647,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
       const maxAttempts = resolvedModel.compactionMaxAttempts ?? MAX_COMPACTION_RETRY_ATTEMPTS;
       let attempt: CompactionAttemptResult | undefined;
-      let historyForModel: readonly ContextMessage[] = originalHistory;
+      let historyForModel: readonly ContextMessage[] = this.toolSelect.shapeHistory(originalHistory);
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let requestAttempts = 0;
