@@ -31,6 +31,12 @@ describe('proxy utilities', () => {
     expect(isProxyConfiguredForUrl({ ALL_PROXY: 'socks5://127.0.0.1:1080', HTTPS_PROXY: 'http://p:3128' }, 'http://example.com')).toBe(false);
   });
 
+  it('treats invalid proxy URLs as a direct connection', () => {
+    expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'ftp://p:21' }, 'http://example.com')).toBe(false);
+    expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'http://' }, 'http://example.com')).toBe(false);
+    expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'ftp://p:21', HTTPS_PROXY: 'http://p:3128' }, 'https://example.com')).toBe(false);
+  });
+
   it('resolves NO_PROXY with loopback protection and wildcard passthrough', () => {
     expect(resolveNoProxy({})).toBe('localhost,127.0.0.1,::1,[::1]');
     expect(resolveNoProxy({ NO_PROXY: 'example.com, 127.0.0.1' })).toBe(

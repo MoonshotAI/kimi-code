@@ -85,6 +85,16 @@ export function isProxyConfigured(env: Env): boolean {
   return hasHttpProxy(env) || resolveSocksProxy(env) !== undefined;
 }
 
+function isValidHttpProxyUrl(value: string | undefined): boolean {
+  if (value === undefined) return true;
+  try {
+    const protocol = new URL(value).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function isProxyConfiguredForUrl(env: Env, input: string): boolean {
   const url = new URL(input);
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
@@ -92,6 +102,7 @@ export function isProxyConfiguredForUrl(env: Env, input: string): boolean {
   if (makeNoProxyMatcher(resolveNoProxy(env))(url.hostname, port)) return false;
   if (hasHttpProxy(env)) {
     const { httpProxy, httpsProxy } = resolveHttpProxyUrls(env);
+    if (!isValidHttpProxyUrl(httpProxy) || !isValidHttpProxyUrl(httpsProxy)) return false;
     return url.protocol === 'http:' ? httpProxy !== undefined : httpsProxy !== undefined;
   }
   return resolveSocksProxy(env) !== undefined;

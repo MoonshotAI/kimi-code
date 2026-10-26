@@ -75,6 +75,16 @@ describe('remote image network boundaries', () => {
     expect(dispatchers[1]).toBeUndefined();
   });
 
+  it('retains DNS pinning when the proxy configuration is invalid', async () => {
+    vi.stubEnv('HTTP_PROXY', 'ftp://proxy.example.test');
+    const dispatchers: unknown[] = [];
+    await fetchRemoteImage('http://images.example.test/pic.png', {
+      lookupImpl: async () => [{ address: '192.168.1.10', family: 4 }],
+      fetchImpl: successfulFetch(dispatchers),
+    });
+    expect(dispatchers).toEqual([expect.anything()]);
+  });
+
   it('rejects mixed DNS results before making a request', async () => {
     const fetchImpl = vi.fn();
     await expect(
