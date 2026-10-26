@@ -9,7 +9,8 @@ import { Event } from '#/_base/event';
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
-import { APIProviderRateLimitError } from '#/llm-adapter/contract/errors';
+import { APIProviderRateLimitError, LlmError } from '#/llm-adapter/contract/errors';
+import { Error2 } from '#/_base/errors/errors';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import { IAgentGoalService } from '#/features/goal/goalService';
@@ -728,7 +729,16 @@ describe('Agent loop', () => {
     });
 
     ctx.mockNextResponse({ type: 'text', text: 'First answer.' });
-    ctx.mockNextProviderResponse({ error: new APIProviderRateLimitError('slow down', null, 1) });
+    ctx.mockNextProviderResponse({
+      error: new LlmError({
+        kind: 'rate_limit',
+        message: 'slow down',
+        statusCode: 429,
+        requestId: null,
+        retryAfterMs: 1,
+        headers: null,
+      }),
+    });
     ctx.mockNextResponse({ type: 'text', text: 'Second answer.' });
     ctx.mockNextResponse({ type: 'text', text: 'Third answer.' });
 
@@ -759,6 +769,222 @@ describe('Agent loop', () => {
         origin: { kind: 'system_trigger', name: 'stop_hook' },
       }),
     );
+  });
+
+  it('preserves the first actual 429 and the terminal actual 503 across retries', async () => {
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+    });
+    try {
+      const first = new LlmError({
+        kind: 'rate_limit',
+        message: 'first attempt rate limited',
+        statusCode: 429,
+        requestId: 'req-first-429',
+        retryAfterMs: 1,
+        headers: { 'x-trace-id': 'trace-first-429' },
+      });
+      const final = new LlmError({
+        kind: 'status',
+        message: 'final attempt unavailable',
+        statusCode: 503,
+        requestId: 'req-final-503',
+        retryAfterMs: null,
+        headers: { 'x-trace-id': 'trace-final-503' },
+      });
+      local.mockNextProviderResponse({ error: first });
+      local.mockNextProviderResponse({ error: final });
+
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Hello');
+      await local.untilTurnEnd();
+      const result = await turn.result;
+
+      expect(local.llmCalls).toHaveLength(2);
+      expect(result.type).toBe('failed');
+      if (result.type === 'failed') expect(result.error).toBe(final);
+      const retries = local.allEvents.filter(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.retrying',
+      );
+      expect(retries).toHaveLength(1);
+      expect(retries[0]?.args).toMatchObject({
+        failedAttempt: 1,
+        nextAttempt: 2,
+        errorName: 'APIProviderRateLimitError',
+        errorMessage: 'first attempt rate limited',
+        statusCode: 429,
+      });
+      const ended = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      );
+      expect(ended?.args).toMatchObject({
+        reason: 'failed',
+        error: {
+          code: 'provider.api_error',
+          name: 'APIStatusError',
+          message: 'final attempt unavailable',
+          details: {
+            statusCode: 503,
+            requestId: 'req-final-503',
+            traceId: 'trace-final-503',
+          },
+        },
+      });
+      expect((ended?.args as TurnEnded).error?.details).toEqual({
+        statusCode: 503,
+        requestId: 'req-final-503',
+        traceId: 'trace-final-503',
+      });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('retries stream rate-limit semantics without serializing a synthetic HTTP status', async () => {
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+    });
+    try {
+      const first = new LlmError({
+        kind: 'rate_limit',
+        message: 'first stream rate limit',
+        requestId: null,
+        retryAfterMs: 1,
+        headers: null,
+      });
+      const final = new LlmError({
+        kind: 'rate_limit',
+        message: 'final stream rate limit',
+        requestId: 'req-final-stream',
+        retryAfterMs: null,
+        headers: { 'x-trace-id': 'trace-final-stream' },
+      });
+      local.mockNextProviderResponse({ error: first });
+      local.mockNextProviderResponse({ error: final });
+
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Hello');
+      await local.untilTurnEnd();
+      const result = await turn.result;
+
+      expect(local.llmCalls).toHaveLength(2);
+      expect(result.type).toBe('failed');
+      if (result.type === 'failed') expect(result.error).toBe(final);
+      const retry = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.retrying',
+      );
+      expect(retry?.args).toMatchObject({
+        errorName: 'APIProviderRateLimitError',
+        errorMessage: 'first stream rate limit',
+        statusCode: undefined,
+      });
+      const ended = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      );
+      expect(ended?.args).toMatchObject({
+        reason: 'failed',
+        error: {
+          code: 'provider.rate_limit',
+          name: 'APIProviderRateLimitError',
+          message: 'final stream rate limit',
+          details: { requestId: 'req-final-stream', traceId: 'trace-final-stream' },
+        },
+      });
+      expect((ended?.args as TurnEnded).error).not.toHaveProperty('details.statusCode');
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('retries legacy provider rate limits and preserves each original failure', async () => {
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+    });
+    try {
+      const first = new APIProviderRateLimitError(
+        'legacy first rate limit',
+        'req-legacy-first',
+        1,
+        'trace-legacy-first',
+      );
+      const final = new APIProviderRateLimitError(
+        'legacy final rate limit',
+        'req-legacy-final',
+        null,
+        'trace-legacy-final',
+      );
+      local.mockNextProviderResponse({ error: first });
+      local.mockNextProviderResponse({ error: final });
+
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Hello');
+      await local.untilTurnEnd();
+      const result = await turn.result;
+
+      expect(local.llmCalls).toHaveLength(2);
+      expect(result.type).toBe('failed');
+      if (result.type === 'failed') expect(result.error).toBe(final);
+      const retry = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.step.retrying',
+      );
+      expect(retry?.args).toMatchObject({
+        failedAttempt: 1,
+        nextAttempt: 2,
+        errorName: 'APIProviderRateLimitError',
+        errorMessage: 'legacy first rate limit',
+        statusCode: 429,
+      });
+      const ended = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      );
+      expect(ended?.args).toMatchObject({
+        reason: 'failed',
+        error: {
+          code: 'provider.rate_limit',
+          name: 'APIProviderRateLimitError',
+          message: 'legacy final rate limit',
+          details: {
+            statusCode: 429,
+            requestId: 'req-legacy-final',
+            traceId: 'trace-legacy-final',
+          },
+        },
+      });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('keeps KAP internal rejections internal through the model pipeline', async () => {
+    const local = createTestAgent({
+      initialConfig: { providers: {}, loopControl: { maxAttemptsPerStep: 2 } },
+    });
+    try {
+      const internal = new Error2('internal', 'KAP request failed', {
+        details: { statusCode: 503, operation: 'kap-request' },
+      });
+      local.mockNextProviderResponse({ error: internal });
+
+      const { turn } = submitTurn(local.get(IAgentLoopService), 'Hello');
+      await local.untilTurnEnd();
+      const result = await turn.result;
+
+      expect(local.llmCalls).toHaveLength(1);
+      expect(result.type).toBe('failed');
+      if (result.type === 'failed') expect(result.error).toBe(internal);
+      const ended = local.allEvents.find(
+        (event) => event.type === '[rpc]' && event.event === 'turn.ended',
+      );
+      expect(ended?.args).toMatchObject({
+        reason: 'failed',
+        error: {
+          code: 'internal',
+          name: 'Error2',
+          message: 'KAP request failed',
+          details: { operation: 'kap-request' },
+        },
+      });
+      expect((ended?.args as TurnEnded).error).not.toHaveProperty('details.statusCode');
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('raises the abort-listener ceiling on the step signal for parallel tool bursts', async () => {

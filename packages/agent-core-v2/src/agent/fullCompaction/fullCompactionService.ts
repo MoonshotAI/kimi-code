@@ -34,6 +34,7 @@ import {
   APIEmptyResponseError,
   APIStatusError,
   isRetryableGenerateError,
+  LlmError,
 } from '#/llm-adapter/contract/errors';
 import { createUserMessage, type Message } from '#/llm-adapter/contract/message';
 import type { ToolDescription as Tool } from '#human/llm/message';
@@ -309,7 +310,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   ): boolean {
     if (isCodedError(error) && error.code === ErrorCodes.CONTEXT_OVERFLOW) return true;
     const statusError = findAPIStatusError(error);
-    if (statusError instanceof APIContextOverflowError) return true;
+    if (
+      statusError instanceof APIContextOverflowError ||
+      (statusError instanceof LlmError && statusError.kind === 'context_overflow')
+    ) {
+      return true;
+    }
     if (statusError === undefined || statusError.statusCode !== 413) return false;
     const effectiveMax = this.getEffectiveMaxContextTokens();
     return (
@@ -717,10 +723,14 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             continue;
           }
           const unwrappedError = unwrapErrorCause(error);
+          const emptyResponse =
+            unwrappedError instanceof APIEmptyResponseError ||
+            (unwrappedError instanceof LlmError && unwrappedError.kind === 'empty_response')
+              ? unwrappedError
+              : undefined;
           if (
             (error instanceof CompactionTruncatedError ||
-              (unwrappedError instanceof APIEmptyResponseError &&
-                unwrappedError.finishReason !== 'filtered')) &&
+              (emptyResponse !== undefined && emptyResponse.finishReason !== 'filtered')) &&
             messagesToCompact.length > 1
           ) {
             if (requestAttempts >= maxAttempts) {
@@ -880,11 +890,11 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   }
 }
 
-function findAPIStatusError(error: unknown): APIStatusError | undefined {
+function findAPIStatusError(error: unknown): APIStatusError | LlmError | undefined {
   let current: unknown = error;
   const seen = new Set<unknown>();
   while (current !== undefined && current !== null && !seen.has(current)) {
-    if (current instanceof APIStatusError) return current;
+    if (current instanceof APIStatusError || current instanceof LlmError) return current;
     seen.add(current);
     current = current instanceof Error ? current.cause : undefined;
   }

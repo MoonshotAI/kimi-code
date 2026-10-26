@@ -69,7 +69,7 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
       code: error.code,
       message: error.message,
       name: error.name,
-      details: error.details,
+      details: detailsForErrorPayload(error),
       retryable: errorInfo(error.code).retryable,
     };
   }
@@ -77,6 +77,21 @@ function toShallowErrorPayload(error: unknown): ErrorPayload {
     return makeErrorPayload(CoreErrors.codes.INTERNAL, error.message, { name: error.name });
   }
   return makeErrorPayload(CoreErrors.codes.INTERNAL, String(error));
+}
+
+function detailsForErrorPayload(
+  error: CodedErrorShape,
+): Readonly<Record<string, unknown>> | undefined {
+  const details = error.details;
+  if (details === undefined || !Object.prototype.hasOwnProperty.call(details, 'statusCode')) {
+    return details;
+  }
+  const directStatusCode = (error as { readonly statusCode?: unknown }).statusCode;
+  if (typeof directStatusCode === 'number' && details['statusCode'] === directStatusCode) {
+    return details;
+  }
+  const { statusCode: _statusCode, ...remaining } = details;
+  return remaining;
 }
 
 function readErrorCause(error: unknown): unknown {

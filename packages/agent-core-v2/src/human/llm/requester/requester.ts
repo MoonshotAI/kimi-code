@@ -29,7 +29,7 @@ export type LlmRequestEvent =
   | { type: 'llm.streaming.usage'; usage: Partial<TokenUsage> }
   | { type: 'llm.streaming.finish'; finish: FinishInfo }
   | { type: 'llm.streaming.message_id'; messageId: string }
-  | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'> }
+  | { type: 'llm.failed.syntax'; error: LlmErrorMessage<'syntax'>; rawError?: unknown }
   | { type: 'llm.failed.remote'; error: LlmRemoteErrorMessage; rawError?: unknown }
   | { type: 'llm.request.retrying' }
   | { type: 'llm.done' };

@@ -24,6 +24,7 @@ import {
   isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  LlmError,
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#/llm-adapter/contract/message';
 import { type ThinkingEffort } from '#human/llm/thinking';
@@ -542,7 +543,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           !this.infiniteRetryEnabled ||
           isAbortError(error) ||
           signal?.aborted === true ||
-          raw instanceof APIContextOverflowError
+          raw instanceof APIContextOverflowError ||
+          (raw instanceof LlmError && raw.kind === 'context_overflow')
         ) {
           throw error;
         }
@@ -580,7 +582,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     let projection: LlmRequestProjectionFallbackEvent['projection'];
     let nextPolicy: ProjectionPolicy;
     if (
-      raw instanceof APIRequestTooLargeError &&
+      (raw instanceof APIRequestTooLargeError ||
+        (raw instanceof LlmError && raw.kind === 'request_too_large')) &&
       (media === undefined || media === 'degraded')
     ) {
       signal?.throwIfAborted();
@@ -987,6 +990,7 @@ function fingerprint(content: string): string {
 
 function apiStatusCode(error: unknown): number | undefined {
   const raw = unwrapErrorCause(error);
+  if (raw instanceof LlmError) return raw.statusCode;
   if (raw instanceof APIStatusError) return raw.statusCode;
   if (typeof raw === 'object' && raw !== null) {
     const statusCode = (raw as Record<string, unknown>)['statusCode'];
@@ -1006,6 +1010,7 @@ function apiStatusCode(error: unknown): number | undefined {
 
 function apiTraceId(error: unknown): string | undefined {
   const raw = unwrapErrorCause(error);
+  if (raw instanceof LlmError && raw.traceId !== null) return raw.traceId;
   if (raw instanceof APIStatusError && raw.traceId !== null) return raw.traceId;
   if (typeof error === 'object' && error !== null) {
     const details = (error as Record<string, unknown>)['details'];

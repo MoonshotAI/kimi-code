@@ -8,6 +8,7 @@ import {
   APIContextOverflowError,
   APIRequestTooLargeError,
   APIStatusError,
+  LlmError,
 } from '#/llm-adapter/contract/errors';
 import { type Message } from '#/llm-adapter/contract/message';
 import { type StreamedMessagePart, type ToolCall } from '#human/llm/message';
@@ -1185,10 +1186,17 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('attaches the failed request trace id to compaction_failed', async () => {
+  it('attaches a canonical failed request trace id to compaction_failed', async () => {
     const records: TelemetryRecord[] = [];
     const generate: GenerateFn = requesterFromGenerateFn(async () => {
-      throw new APIStatusError(400, 'Bad request', null, null, 'trace-compact-fail');
+      throw new LlmError({
+        kind: 'status',
+        message: 'Bad request',
+        statusCode: 400,
+        requestId: null,
+        retryAfterMs: null,
+        headers: { 'x-trace-id': 'trace-compact-fail' },
+      });
     });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
