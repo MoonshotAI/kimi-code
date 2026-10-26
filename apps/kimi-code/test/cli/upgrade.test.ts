@@ -321,7 +321,7 @@ describe('handleUpgrade', () => {
 
       expect(deps.installUpdate).not.toHaveBeenCalled();
       expect(stdout.join('')).toContain('switching to stable installs the older release v2.4.1');
-      expect(stdout.join('')).toContain('To switch, run: kimi update --yes');
+      expect(stdout.join('')).toContain('To switch, run kimi update --yes with KIMI_CODE_UPDATE_CHANNEL=stable set.');
     });
 
     it('holds a canary build on the default channel and explains how to switch', async () => {

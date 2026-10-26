@@ -199,7 +199,7 @@ function renderSwitchToStableMessage(
     `switching to stable installs the older release ${formatDisplayVersion(target.version)}.\n` +
     'Sessions or settings written by the canary build may not open in it.\n' +
     (sourceCanAutoInstall
-      ? 'To switch, run: kimi update --yes\n'
+      ? `To switch, run kimi update --yes with ${UPDATE_CHANNEL_ENV}=stable set.\n`
       : `To switch manually, run: ${installCommand}\n`)
   );
 }

@@ -1,7 +1,7 @@
 // Canary release helper for .github/workflows/canary.yml.
 //
 //   select   pick the newest CI-green commit on main and decide whether to build it
-//   version  compute the canary version for the checked-out commit
+//   version  compute the canary version for the selected commit checked out in <source-dir>
 //   record   write the canary.json GitHub prerelease asset and release notes
 //
 // Version format: <major>.<minor>.<patch>-canary.<YYYYMMDDHHmm UTC>. The base is
@@ -33,19 +33,19 @@ export function parseCanaryVersion(version) {
   return { base: match.slice(1, 4).join('.'), stamp: match[4] };
 }
 
-function compareRelease(a, b) {
-  const left = parseRelease(a);
-  const right = parseRelease(b);
+function compareRelease(leftVersion, rightVersion) {
+  const left = parseRelease(leftVersion);
+  const right = parseRelease(rightVersion);
   for (let i = 0; i < 3; i += 1) {
     if (left[i] !== right[i]) return left[i] - right[i];
   }
   return 0;
 }
 
-export function compareCanaryVersions(a, b) {
-  const left = parseCanaryVersion(a);
-  const right = parseCanaryVersion(b);
-  if (left === null || right === null) throw new Error(`not canary versions: ${a}, ${b}`);
+export function compareCanaryVersions(leftVersion, rightVersion) {
+  const left = parseCanaryVersion(leftVersion);
+  const right = parseCanaryVersion(rightVersion);
+  if (left === null || right === null) throw new Error(`not canary versions: ${leftVersion}, ${rightVersion}`);
   return compareRelease(left.base, right.base) || left.stamp.localeCompare(right.stamp);
 }
 
@@ -86,13 +86,15 @@ export function pickNewestGreenCommit(firstParentShas, greenShas) {
 export function parseChangeset(content) {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(content);
   if (match === null) return null;
-  const packages = [...match[1].matchAll(/^\s*["']?([^"':\s]+)["']?\s*:\s*(\w+)\s*$/gm)].map((m) => m[1]);
+  const packages = [...match[1].matchAll(/^\s*["']?([^"':\s]+)["']?\s*:\s*(\w+)\s*$/gm)]
+    .map((packageMatch) => packageMatch[1]);
   return { packages, summary: match[2].trim().replaceAll(/\s+/g, ' ') };
 }
 
 export function canaryChanges(currentChangesets, previousNames) {
   const changes = [];
-  for (const [name, content] of [...currentChangesets].toSorted(([a], [b]) => a.localeCompare(b))) {
+  const byName = [...currentChangesets].toSorted(([leftName], [rightName]) => leftName.localeCompare(rightName));
+  for (const [name, content] of byName) {
     if (previousNames.has(name)) continue;
     const parsed = parseChangeset(content);
     if (parsed !== null && parsed.packages.includes(PACKAGE_NAME) && parsed.summary !== '') {
@@ -152,14 +154,14 @@ function select() {
   writeOutputs({ skip: reason === '' ? 'false' : 'true', sha });
 }
 
-async function version() {
+async function version(sourceDir) {
   const require = createRequire(import.meta.url);
   const changesetsRequire = createRequire(require.resolve('@changesets/cli/package.json'));
   const loaded = changesetsRequire('@changesets/get-release-plan');
   const getReleasePlan = loaded.default ?? loaded;
-  const plan = await getReleasePlan(process.cwd());
+  const plan = await getReleasePlan(sourceDir);
   const plannedNext = plan.releases.find((release) => release.name === PACKAGE_NAME)?.newVersion ?? null;
-  const packageVersion = JSON.parse(readFileSync('apps/kimi-code/package.json', 'utf8')).version;
+  const packageVersion = JSON.parse(readFileSync(join(sourceDir, 'apps/kimi-code/package.json'), 'utf8')).version;
   const stableLatest = execFileSync('npm', ['view', PACKAGE_NAME, 'dist-tags.latest'], { encoding: 'utf8' }).trim();
   const builtAt = new Date();
   const result = computeCanaryVersion({
@@ -214,7 +216,7 @@ const isMain = process.argv[1] !== undefined && import.meta.url === pathToFileUR
 if (isMain) {
   const [command, arg] = process.argv.slice(2);
   if (command === 'select') select();
-  else if (command === 'version') await version();
+  else if (command === 'version' && arg !== undefined) await version(arg);
   else if (command === 'record' && arg !== undefined) record(arg);
-  else throw new Error(`usage: ${import.meta.filename} select | version | record <out-dir>`);
+  else throw new Error(`usage: ${import.meta.filename} select | version <source-dir> | record <out-dir>`);
 }

@@ -32,6 +32,10 @@ permissions:
   contents: read
 
 jobs:
+  # Control code (this workflow, scripts/canary-release.mjs, produce-manifest)
+  # always runs from the dispatched revision. The selected commit is only
+  # read as build input, so an older green commit that predates these
+  # scripts still builds.
   prepare:
     if: github.repository_owner == 'MoonshotAI'
     runs-on: ubuntu-latest
@@ -48,29 +52,28 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
+          cache: pnpm
       - name: Select commit
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
           CANARY_FORCE: ${{ inputs.force }}
         run: node scripts/canary-release.mjs select
-      - name: Check out selected commit
-        if: steps.select.outputs.skip == 'false'
-        env:
-          SHA: ${{ steps.select.outputs.sha }}
-        run: git checkout --detach "$SHA"
-      - uses: pnpm/action-setup@v6
-        if: steps.select.outputs.skip == 'false'
       - name: Install dependencies
         if: steps.select.outputs.skip == 'false'
         run: pnpm install --frozen-lockfile
       - name: Compute version
         id: version
         if: steps.select.outputs.skip == 'false'
-        run: node scripts/canary-release.mjs version
+        env:
+          SHA: ${{ steps.select.outputs.sha }}
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/canary-source" "$SHA"
+          node scripts/canary-release.mjs version "$RUNNER_TEMP/canary-source"
 
   native:
     name: Native canary artifact
@@ -94,6 +97,9 @@ jobs:
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
+  # Every step is safe to re-run with "Re-run failed jobs": the version comes
+  # from prepare's outputs, an already published npm version is skipped, and
+  # an existing (possibly draft) release gets its assets re-uploaded.
   publish:
     name: Publish canary
     needs: [prepare, native]
@@ -112,14 +118,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.prepare.outputs.sha }}
           fetch-depth: 0
-
       - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-          cache: pnpm
           registry-url: https://registry.npmjs.org
 
       # npm goes first so an existing prerelease always means every channel
@@ -127,12 +130,23 @@ jobs:
       # the package; set the repository variable KIMI_CODE_CANARY_NPM_PUBLISH
       # to 'true' to turn it on. Same publish command as the stable release,
       # with the canary dist-tag instead of latest.
+      - name: Check out selected commit for npm
+        if: vars.KIMI_CODE_CANARY_NPM_PUBLISH == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          path: canary-source
       - name: Publish to npm (canary dist-tag)
         if: vars.KIMI_CODE_CANARY_NPM_PUBLISH == 'true'
+        working-directory: canary-source
         run: |
+          if npm view "@moonshot-ai/kimi-code@$CANARY_VERSION" version >/dev/null 2>&1; then
+            echo "@moonshot-ai/kimi-code@$CANARY_VERSION is already on npm"
+            exit 0
+          fi
           npm install -g npm@11
           pnpm install --frozen-lockfile
-          node -e "const fs=require('node:fs');const f='apps/kimi-code/package.json';const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.CANARY_VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+          (cd apps/kimi-code && npm pkg set version="$CANARY_VERSION")
           CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           export KIMI_CODE_BUILT_IN_CATALOG_FILE="$CATALOG_FILE"
@@ -156,13 +170,19 @@ jobs:
           node scripts/canary-release.mjs record "$RUNNER_TEMP/canary-notes"
           cp "$RUNNER_TEMP/canary-notes/canary.json" dist-canary/canary.json
 
-      - name: Create GitHub prerelease
+      - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$CANARY_TAG" dist-canary/* \
-            --target "$CANARY_SHA" \
-            --title "$CANARY_TAG" \
-            --notes-file "$RUNNER_TEMP/canary-notes/notes.md" \
-            --prerelease \
-            --latest=false
+          notes="$RUNNER_TEMP/canary-notes/notes.md"
+          if gh release view "$CANARY_TAG" >/dev/null 2>&1; then
+            gh release upload "$CANARY_TAG" dist-canary/* --clobber
+            gh release edit "$CANARY_TAG" --notes-file "$notes" --prerelease --latest=false --draft=false
+          else
+            gh release create "$CANARY_TAG" dist-canary/* \
+              --target "$CANARY_SHA" \
+              --title "$CANARY_TAG" \
+              --notes-file "$notes" \
+              --prerelease \
+              --latest=false
+          fi

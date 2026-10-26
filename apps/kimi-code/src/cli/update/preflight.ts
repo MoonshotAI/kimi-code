@@ -258,7 +258,20 @@ interface UpdateCheckContext {
 }
 
 function refreshInBackground(check: UpdateCheckContext): void {
-  void refreshUpdateCache({ channel: check.selection.channel }).catch(() => {});
+  void refreshUpdateCache({ channel: check.selection.channel })
+    .then((refreshed) => {
+      // This refresh makes no update decision, but a canary pointer outage
+      // must still leave a trace in rollout.log.
+      if (!refreshed.degraded) return;
+      void appendRolloutDecisionLog({
+        ts: nowIso(),
+        phase: 'background-refresh',
+        channel: check.selection.channel,
+        degraded: true,
+        latest: refreshed.latest,
+      });
+    })
+    .catch(() => {});
 }
 
 /** Telemetry properties describing where this device sits in the rollout. */

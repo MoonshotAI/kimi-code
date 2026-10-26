@@ -93,10 +93,10 @@ jobs:
       - name: Override CLI version
         if: inputs.version != ''
         shell: bash
+        working-directory: apps/kimi-code
         env:
           VERSION: ${{ inputs.version }}
-        run: |
-          node -e "const fs=require('node:fs');const f='apps/kimi-code/package.json';const p=JSON.parse(fs.readFileSync(f,'utf8'));p.version=process.env.VERSION;fs.writeFileSync(f,JSON.stringify(p,null,2)+'\n')"
+        run: npm pkg set version="$VERSION"
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile

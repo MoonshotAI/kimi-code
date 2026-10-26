@@ -1328,6 +1328,25 @@ describe('runUpdatePreflight', () => {
       }));
     });
 
+    it('records an unreachable canary pointer even when the refresh makes no decision', async () => {
+      vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'canary');
+      const released = canaryCache(releasedForEveryone(CANARY));
+      mocks.readUpdateCache.mockResolvedValue(released);
+      mocks.refreshUpdateCache.mockResolvedValue({ ...cacheWith('0.5.0'), channel: 'canary', degraded: true });
+      mocks.detectInstallSource.mockResolvedValue('npm-global');
+      mockSpawnExit(0);
+      const { options } = captureOutput();
+
+      await expect(runUpdatePreflight('0.5.0', options)).resolves.toBe('continue');
+      await flushBackgroundInstall();
+
+      expect(mocks.appendRolloutDecisionLog).toHaveBeenCalledWith(expect.objectContaining({
+        phase: 'background-refresh',
+        channel: 'canary',
+        degraded: true,
+      }));
+    });
+
     it('ignores a cache written for the other channel', async () => {
       vi.stubEnv('KIMI_CODE_UPDATE_CHANNEL', 'canary');
       mocks.readUpdateCache.mockResolvedValue(cacheWithManifest(releasedForEveryone('0.6.0')));
