@@ -30,6 +30,7 @@ import { McpRegistryService } from '#/app/mcpRegistry/mcpRegistryService';
 import { IPluginService } from '#/app/plugin/plugin';
 import type { PluginMcpServerEntry } from '#/app/plugin/types';
 import { ErrorCodes, Error2 } from '#/errors';
+import { McpConnectionManager } from '#/mcpCore/connection-manager';
 import { McpOAuthService, type McpOAuthEvent } from '#/mcpCore/oauth/service';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
@@ -730,12 +731,45 @@ describe('McpManagementService', () => {
       expect(acquire).not.toHaveBeenCalled();
     }, 20000);
 
-    it('probes a nested cwd against the containing workspace runtimes', async () => {
+    it('retains the containing workspace through a nested cwd probe and its shutdown', async () => {
       const cwd = mkdtempSync(join(tmpdir(), 'kimi-mcp-management-nested-'));
       tempDirs.push(cwd);
-      findContaining.mockReturnValue({ id: 'test-workspace' } as unknown as WorkspaceInstance);
-
-      const result = await management.testServer({
+      const workspace = { id: 'test-workspace' } as unknown as WorkspaceInstance;
+      findContaining.mockReturnValue(workspace);
+      const events: string[] = [];
+      const dispose = vi.fn(() => {
+        events.push('release');
+      });
+      acquire.mockImplementation(async () => {
+        events.push('acquire');
+        return { instance: workspace, dispose };
+      });
+      const originalConnectAll = McpConnectionManager.prototype.connectAll;
+      const connectAll = vi.spyOn(McpConnectionManager.prototype, 'connectAll').mockImplementation(
+        function (this: McpConnectionManager, configs) {
+          events.push('connect');
+          return originalConnectAll.call(this, configs);
+        },
+      );
+      let notifyShutdownStarted: () => void = () => undefined;
+      const shutdownStarted = new Promise<void>((resolve) => {
+        notifyShutdownStarted = resolve;
+      });
+      let allowShutdown: () => void = () => undefined;
+      const shutdownGate = new Promise<void>((resolve) => {
+        allowShutdown = resolve;
+      });
+      const originalShutdown = McpConnectionManager.prototype.shutdown;
+      const shutdown = vi.spyOn(McpConnectionManager.prototype, 'shutdown').mockImplementation(
+        async function (this: McpConnectionManager) {
+          events.push('shutdown-start');
+          notifyShutdownStarted();
+          await shutdownGate;
+          await originalShutdown.call(this);
+          events.push('shutdown-end');
+        },
+      );
+      const probe = management.testServer({
         server: {
           name: 'stdio-probe',
           transport: 'stdio',
@@ -744,11 +778,24 @@ describe('McpManagementService', () => {
         },
         cwd,
       });
-
-      expect(result.success).toBe(true);
-      expect(result.output).toContain('Available tools: 4');
-      expect(findContaining).toHaveBeenCalledWith(cwd);
-      expect(acquire).not.toHaveBeenCalled();
+      try {
+        await shutdownStarted;
+        expect(events).toEqual(['acquire', 'connect', 'shutdown-start']);
+        expect(dispose).not.toHaveBeenCalled();
+        allowShutdown();
+        const result = await probe;
+        expect(result.success).toBe(true);
+        expect(result.output).toContain('Available tools: 4');
+        expect(findContaining).toHaveBeenCalledWith(cwd);
+        expect(acquire).toHaveBeenCalledWith({ workspaceId: 'test-workspace' });
+        expect(dispose).toHaveBeenCalledTimes(1);
+        expect(events).toEqual(['acquire', 'connect', 'shutdown-start', 'shutdown-end', 'release']);
+      } finally {
+        allowShutdown();
+        await probe.catch(() => {});
+        connectAll.mockRestore();
+        shutdown.mockRestore();
+      }
     }, 20000);
 
     it('rejects a non-local runtime_id probe when no workspace contains the cwd', async () => {
@@ -792,7 +839,7 @@ describe('McpManagementService', () => {
 
       expect(result.success).toBe(true);
       expect(findContaining).toHaveBeenCalledWith(cwd);
-      expect(acquire).not.toHaveBeenCalled();
+      expect(acquire).toHaveBeenCalledWith({ workspaceId: 'test-workspace' });
     }, 20000);
 
     it('keeps the transient local probe for an explicit local runtime_id', async () => {
