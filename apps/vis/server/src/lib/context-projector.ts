@@ -517,7 +517,7 @@ export function projectContext(
         goal = null;
         break;
       case 'swarm_mode.enter':
-        swarm = { active: true, trigger: rec.trigger };
+        if (rec.trigger !== 'tool') swarm = { active: true, trigger: rec.trigger };
         break;
       case 'swarm_mode.exit':
         swarm = { active: false };
