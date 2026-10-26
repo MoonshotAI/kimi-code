@@ -1,5 +1,7 @@
+import { createControlledPromise } from '@antfu/utils';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { userCancellationReason } from '#/_base/utils/abort';
 import { type CollectionView } from '#/_base/di/collection';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -12,10 +14,15 @@ import { INHERITED_IN_FLIGHT_TOOL_OUTPUT } from '#/agent/contextMemory/openToolE
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentTaskService } from '#/agent/task/task';
+import type {
+  LlmRequestContent,
+  LlmRequestControl,
+  LlmRequester,
+} from '#human/llm/requester/requester';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { LocalRuntime } from '#/runtime/localRuntime';
 import type {
@@ -58,6 +65,8 @@ import {
 import {
   appService,
   agentServices,
+  createScriptedGenerate,
+  llmGenerateServices,
   sessionServices,
   telemetryServices,
   testAgent,
@@ -133,9 +142,8 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostEnvironment environment: IHostEnvironment,
     @IHostFileSystem fs: IHostFileSystem,
     @IHostProcessService processes: IHostProcessService,
-    @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
+    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes);
   }
 
   inspect(_binding: RuntimeBinding): Runtime {
@@ -161,6 +169,37 @@ function taskReminders(history: readonly Pick<ContextMessage, 'content'>[]): str
   return history.flatMap((message) => message.content).flatMap((part) =>
     part.type === 'text' && part.text.includes(SUBAGENT_BACKGROUND_TASK_NOTICE) ? [part.text] : [],
   );
+}
+
+const STOPPED_CHILD_PROMPT = 'Find why the parser never terminates.';
+const STOPPED_CHILD_FINDING = '已定位 src/parser.ts:42 的循环条件，尚未执行验证。';
+const STOPPED_CHILD_DRAFT = 'Drafting the report: the loop never advances 🔁';
+
+function requestTexts(content: LlmRequestContent, role?: string): string[] {
+  return content.messages
+    .filter((message) => role === undefined || message.role === role)
+    .flatMap((message) => message.content)
+    .flatMap((part) => (part.type === 'text' ? [part.text] : []));
+}
+
+async function streamTextUntilAborted(
+  control: LlmRequestControl,
+  text: string,
+  onStreaming: () => void,
+): Promise<void> {
+  control.onEvent?.({ type: 'llm.streaming.headers', headers: {} });
+  control.onEvent?.({ type: 'llm.streaming.part', part: { type: 'text', text } });
+  onStreaming();
+  await new Promise<never>((_resolve, reject) => {
+    const abort = (): void => {
+      reject(control.signal.reason);
+    };
+    if (control.signal.aborted) {
+      abort();
+      return;
+    }
+    control.signal.addEventListener('abort', abort, { once: true });
+  });
 }
 
 describe('subagent task reminders and fork request parity', () => {
@@ -291,9 +330,11 @@ describe('subagent task reminders and fork request parity', () => {
   function createMainForkCtx(
     flags: IFlagService = stubFlag(true),
     telemetry: TelemetryRecord[] = [],
+    requester?: LlmRequester,
   ): void {
     store = new ScopedAppendLogStore();
     ctx = testAgent(
+      requester === undefined ? [] : llmGenerateServices(requester),
       appService(IAppendLogStore, store),
       appService(IFlagService, flags),
       appService(IWebSearchProviderService, {
@@ -647,5 +688,143 @@ describe('subagent task reminders and fork request parity', () => {
     expect(probes[1]?.['system_prompt_match']).toBeUndefined();
     expect(probes[1]?.['parent_input_tokens']).toBeUndefined();
     expect(probes[1]?.['parent_request_gap_ms']).toBeUndefined();
+  });
+
+  it('hands a stopped background subagent its run text back through TaskStop without extra requests', async () => {
+    const parentScript = createScriptedGenerate();
+    const childScript = createScriptedGenerate();
+    const childStreaming = createControlledPromise<void>();
+    let childRequests = 0;
+    createMainForkCtx(stubFlag(true), [], {
+      async generate(config, content, control) {
+        if (requestTexts(content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
+          childRequests += 1;
+          if (childRequests === 2) {
+            await streamTextUntilAborted(control, STOPPED_CHILD_DRAFT, () => {
+              childStreaming.resolve();
+            });
+            return;
+          }
+          await childScript.requester.generate(config, content, control);
+          return;
+        }
+        if (parentScript.calls.length === 1) {
+          await childStreaming;
+          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(requestTexts(content).join('\n'))?.[1];
+          parentScript.mockNextResponse({
+            type: 'function',
+            id: 'call_stop',
+            name: 'TaskStop',
+            arguments: JSON.stringify({ task_id: taskId }),
+          });
+        } else if (parentScript.calls.length === 2) {
+          parentScript.mockNextResponse({ type: 'text', text: 'Stopped the subagent.' });
+        }
+        await parentScript.requester.generate(config, content, control);
+      },
+    });
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    profile.update({ activeToolNames: contributedToolNames() });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+    parentScript.mockNextResponse({
+      type: 'function',
+      id: 'call_agent',
+      name: 'Agent',
+      arguments: JSON.stringify({
+        description: 'trace parser loop',
+        prompt: STOPPED_CHILD_PROMPT,
+        run_in_background: true,
+      }),
+    });
+    childScript.mockNextResponse(
+      { type: 'text', text: STOPPED_CHILD_FINDING },
+      {
+        type: 'function',
+        id: 'call_read',
+        name: 'Read',
+        arguments: JSON.stringify({ path: 'src/parser.ts' }),
+      },
+    );
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop in the background' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    expect((await loop.promptHandle(id)!.completion).state).toBe('completed');
+
+    expect(parentScript.calls).toHaveLength(3);
+    expect(childRequests).toBe(2);
+    const stopResult = parentScript.calls[2]!.history
+      .filter((message) => message.role === 'tool' && message.toolCallId === 'call_stop')
+      .flatMap((message) => message.content)
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n');
+    expect(stopResult).toContain('status: killed');
+    expect(stopResult).toContain('[partial output]');
+    expect(stopResult).toContain(STOPPED_CHILD_FINDING);
+    expect(stopResult).toContain(STOPPED_CHILD_DRAFT);
+    expect(stopResult).not.toContain(STOPPED_CHILD_PROMPT);
+    expect(JSON.stringify(parentScript.calls[2]!.history)).not.toContain('<notification id=');
+
+    const tasks = ctx.get(IAgentTaskService);
+    const [task] = tasks.list(false);
+    expect(task).toMatchObject({ kind: 'agent', status: 'killed' });
+    const output = await tasks.getOutputSnapshot(task!.taskId, 64 * 1024);
+    expect(output.preview.indexOf(STOPPED_CHILD_FINDING)).toBeLessThan(
+      output.preview.indexOf(STOPPED_CHILD_DRAFT),
+    );
+    expect(output.preview.split(STOPPED_CHILD_DRAFT)).toHaveLength(2);
+  });
+
+  it('records the text a foreground subagent wrote when the user interrupts the parent turn', async () => {
+    const parentScript = createScriptedGenerate();
+    const childStreaming = createControlledPromise<void>();
+    let childRequests = 0;
+    createMainForkCtx(stubFlag(true), [], {
+      async generate(config, content, control) {
+        if (requestTexts(content, 'user').some((text) => text.includes(STOPPED_CHILD_PROMPT))) {
+          childRequests += 1;
+          await streamTextUntilAborted(control, STOPPED_CHILD_FINDING, () => {
+            childStreaming.resolve();
+          });
+          return;
+        }
+        await parentScript.requester.generate(config, content, control);
+      },
+    });
+    const profile = ctx.get(IAgentProfileService);
+    await profile.bind({ profile: 'agent', model: 'mock-model' });
+    profile.update({ activeToolNames: contributedToolNames() });
+    ctx.get(IAgentPermissionModeService).setMode('yolo');
+    parentScript.mockNextResponse({
+      type: 'function',
+      id: 'call_agent',
+      name: 'Agent',
+      arguments: JSON.stringify({ description: 'trace parser loop', prompt: STOPPED_CHILD_PROMPT }),
+    });
+
+    const loop = ctx.get(IAgentLoopService);
+    const { id } = loop.submit({
+      message: { role: 'user', content: [{ type: 'text', text: 'investigate the parser loop' }] },
+      meta: { origin: { kind: 'user' }, tracked: true },
+    });
+    await childStreaming;
+    loop.cancel(undefined, userCancellationReason());
+    expect((await loop.promptHandle(id)!.completion).state).toBe('cancelled');
+
+    expect(parentScript.calls).toHaveLength(1);
+    expect(childRequests).toBe(1);
+    const agentResult = ctx
+      .get(IAgentContextMemoryService)
+      .get()
+      .filter((message) => message.role === 'tool' && message.toolCallId === 'call_agent')
+      .flatMap((message) => message.content)
+      .map((part) => (part.type === 'text' ? part.text : ''))
+      .join('\n');
+    expect(agentResult).toContain('stop_reason: cancelled');
+    expect(agentResult).toContain('[partial output]');
+    expect(agentResult).toContain(STOPPED_CHILD_FINDING);
   });
 });

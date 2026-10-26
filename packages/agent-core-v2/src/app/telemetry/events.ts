@@ -198,14 +198,9 @@ export interface PlanResolvedEvent {
     | 'dismissed'
     | 'rejected_and_exited'
     | 'revise'
-    | 'rejected'
-    | 'auto_approved';
+    | 'rejected';
   chosen_option?: string;
   has_feedback?: boolean;
-}
-
-export interface PlanEnterResolvedEvent {
-  outcome: 'auto_approved';
 }
 
 export interface TowerModeEnterEvent {
@@ -847,13 +842,6 @@ export const telemetryEventDefinitions = {
       has_feedback: 'Whether the user attached revision feedback',
     },
   }),
-  plan_enter_resolved: defineAgentTelemetryEvent<PlanEnterResolvedEvent>({
-    owner: 'kimi-code',
-    comment: 'A request to enter plan mode is resolved.',
-    properties: {
-      outcome: 'How the request was resolved',
-    },
-  }),
   tower_mode_enter: defineAgentTelemetryEvent<TowerModeEnterEvent>({
     owner: 'kimi-code',
     comment: 'A request to enter tower mode resolves.',
@@ -1459,7 +1447,7 @@ export const telemetryEventDefinitions = {
   }),
   workspace_trust_read_failed: defineTelemetryEvent<WorkspaceTrustReadFailedEvent>({
     owner: 'kimi-code',
-    comment: 'Reading the workspace trust record fails and the workspace silently falls back to untrusted.',
+    comment: 'Reading the workspace trust record fails and the error is propagated to the caller.',
     properties: { error_type: 'Classified error category' },
   }),
 } as const;

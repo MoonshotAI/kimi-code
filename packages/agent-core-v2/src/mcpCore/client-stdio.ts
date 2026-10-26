@@ -33,6 +33,7 @@ export interface StdioMcpClientOptions {
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const STDIO_TERMINATION_GRACE_MS = 5_000;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
@@ -235,6 +236,24 @@ class RuntimeStdioTransport implements Transport {
     if (process !== undefined) {
       try {
         await process.kill();
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        const exited = await Promise.race([
+          process.wait().then(
+            () => true,
+            () => true,
+          ),
+          new Promise<false>((resolve) => {
+            graceTimer = setTimeout(() => {
+              resolve(false);
+            }, STDIO_TERMINATION_GRACE_MS);
+            graceTimer.unref?.();
+          }),
+        ]);
+        if (graceTimer !== undefined) clearTimeout(graceTimer);
+        if (!exited && process.exitCode === null) {
+          await process.kill('SIGKILL');
+          await process.wait();
+        }
       } catch {}
       void process.dispose();
     }

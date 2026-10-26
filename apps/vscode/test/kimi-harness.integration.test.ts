@@ -1201,7 +1201,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     expect(rig.provider.requests).toHaveLength(0);
   });
 
-  it("keeps a slash-added directory after VS Code closes and resumes the session", async () => {
+  it("clears a non-persisted slash-added directory after VS Code closes and resumes the session", async () => {
     const rig = await createRuntimeRig();
     const additionalDir = join(rig.workDir, "directory with spaces");
     await mkdir(additionalDir);
@@ -1212,7 +1212,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await rig.runtime.detachView("view-1");
     const resumed = await openRuntimeSession(rig, sessionId);
 
-    expect(resumed.session.summary?.additionalDirs).toContain(additionalDir);
+    expect(resumed.session.summary?.additionalDirs).not.toContain(additionalDir);
   });
 
   it("rejects an invalid plan subcommand without leaving the runtime busy", async () => {

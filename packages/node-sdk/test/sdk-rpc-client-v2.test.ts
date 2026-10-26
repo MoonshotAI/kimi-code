@@ -1616,9 +1616,12 @@ key = "${titleOAuthRef.key}"
       await client.getStatus({ sessionId: 'ses_dirs_reload' });
       const before = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
       const workspaceId = before.accessor.get(ISessionContext).workspaceId;
-      const program = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId)!
-        .program;
-      const reloadDirs = vi.spyOn(program.dirs, 'reload');
+      const currentProgram = () => {
+        const current = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+        if (current === undefined) throw new Error('expected the current workspace program');
+        return current.program;
+      };
+      const reloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
       const projectsPath = join(homeDir, 'projects.json');
       const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
         projects: Record<string, { root: string; additional_dirs?: string[] }>;
@@ -1645,8 +1648,9 @@ key = "${titleOAuthRef.key}"
       expect(dirsReminders()).toHaveLength(1);
       expect(JSON.stringify(dirsReminders()[0])).toContain(`Added directories: ${extraDir}.`);
 
+      const secondReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
       await client.reloadSession({ sessionId: 'ses_dirs_reload' });
-      expect(reloadDirs).toHaveBeenCalledTimes(2);
+      expect(secondReloadDirs).toHaveBeenCalledTimes(1);
       expect(dirsReminders()).toHaveLength(1);
 
       const beforeFailure = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
@@ -1659,14 +1663,15 @@ key = "${titleOAuthRef.key}"
       if (latestProject === undefined) throw new Error('expected the latest session project');
       latestProject.additional_dirs = [extraDir, failureDir];
       await writeFile(projectsPath, JSON.stringify(latestProjects), 'utf8');
-      vi.spyOn(program.instructions, 'reload').mockRejectedValueOnce(
+      const failureReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      vi.spyOn(currentProgram().instructions, 'reload').mockRejectedValueOnce(
         new Error('instructions reload failed'),
       );
       await expect(client.reloadSession({ sessionId: 'ses_dirs_reload' })).rejects.toThrow(
         'instructions reload failed',
       );
       expect(getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')).toBe(beforeFailure);
-      expect(reloadDirs).toHaveBeenCalledTimes(3);
+      expect(failureReloadDirs).toHaveBeenCalledTimes(1);
       expect(dirsReminders()).toHaveLength(2);
       expect(JSON.stringify(dirsReminders().at(-1))).toContain(
         `Added directories: ${failureDir}.`,

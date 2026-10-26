@@ -378,7 +378,6 @@ export const kimiErrorCodeSchema = z.enum([
   'session.busy',
   'shell.git_bash_not_found',
   'workspace.not_found',
-  'terminal.not_found',
   'file.not_found',
   'file.too_large',
   'fs.path_not_found',

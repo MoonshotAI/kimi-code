@@ -35,6 +35,7 @@ import {
 import {
   IRuntimeResolver,
   IWorkspaceInstanceManager,
+  type WorkspaceInstanceLease,
 } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
@@ -182,12 +183,14 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
     let workspaceId: string | undefined;
     let stdioCwd = cwd;
     let runtimeResolver = this.runtimeResolver;
+    let workspaceLease: WorkspaceInstanceLease | undefined;
     let transientRuntimes: RuntimeRegistry | undefined;
     if (server.transport === 'stdio') {
       stdioCwd = normalize(cwd ?? process.cwd());
       const workspace = this.workspaceInstances.findContaining(stdioCwd);
       if (workspace !== undefined) {
-        workspaceId = workspace.id;
+        workspaceLease = await this.workspaceInstances.acquire({ workspaceId: workspace.id });
+        workspaceId = workspaceLease.instance.id;
       } else {
         const runtimeId = server.runtime_id;
         if (runtimeId !== undefined && runtimeId !== 'local') {
@@ -205,7 +208,6 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
             this.hostEnvironment,
             undefined,
             this.hostProcess,
-            undefined,
           ),
         );
         runtimeResolver = {
@@ -215,26 +217,28 @@ export class McpManagementService extends Disposable implements IMcpManagementSe
         };
       }
     }
-    const manager = new McpConnectionManager({
-      log: this.log,
-      stdioCwd,
-      runtimeResolver,
-      workspaceId,
-      runtimeId: workspaceId === undefined ? undefined : 'local',
-      oauthService: this.oauth,
-      resolveClientName: () => this.identity.current().slug,
-      resolveDefaults: () => ({
-        startupTimeoutMs: section?.startupTimeoutMs,
-        toolTimeoutMs: section?.toolTimeoutMs,
-      }),
-    });
+    let manager: McpConnectionManager | undefined;
     try {
+      manager = new McpConnectionManager({
+        log: this.log,
+        stdioCwd,
+        runtimeResolver,
+        workspaceId,
+        runtimeId: workspaceId === undefined ? undefined : 'local',
+        oauthService: this.oauth,
+        resolveClientName: () => this.identity.current().slug,
+        resolveDefaults: () => ({
+          startupTimeoutMs: section?.startupTimeoutMs,
+          toolTimeoutMs: section?.toolTimeoutMs,
+        }),
+      });
       await manager.connectAll({ [server.name]: mcpConfigWithoutName(server) });
       return inspect(manager);
     } finally {
       try {
-        await manager.shutdown();
+        await manager?.shutdown();
       } finally {
+        workspaceLease?.dispose();
         await transientRuntimes?.dispose();
       }
     }

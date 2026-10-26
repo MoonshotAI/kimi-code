@@ -21,7 +21,7 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--prompt <prompt>` | `-p` | Run a single prompt non-interactively and stream the Assistant output to stdout. This mode does not open the TUI |
 | `--output-format <format>` | | Set the non-interactive output format; supports `text` and `stream-json`. Can only be used with `--prompt`; defaults to `text` |
 | `--yolo` | `-y` | Start in Ask When Needed mode: routine edits and commands run automatically; risky actions, questions, and plans still ask |
-| `--auto` | | Start in Never Ask mode: never interrupts you; everything runs and is decided automatically |
+| `--auto` | | Start in Never Ask mode: everything runs and is decided automatically; only plans in Plan mode wait for your review |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
 | `--agent <name>` | | Start a new session with the specified agent as the main Agent. Cannot be combined with `--session`/`--continue` |
@@ -42,6 +42,8 @@ The following combinations are rejected at startup:
 - `--yolo` and `--auto` are mutually exclusive — the two permission modes cannot be combined
 - `--prompt` cannot be used with `--yolo`, `--auto`, or `--plan` — non-interactive mode uses `auto` permission by default
 - `--output-format` can only be used together with `--prompt`
+
+Nobody can review a plan in non-interactive mode, so `default_plan_mode` is not applied to new sessions. A resumed session that is already in Plan mode still runs and stays in Plan mode, but its plan cannot be approved in non-interactive mode: it waits for your review the next time you open the session with `kimi -r`.
 
 When resuming a session, you can override its saved permission or plan mode by adding `--auto`, `--yolo`, or `--plan`. For example, `kimi --continue --auto` resumes the latest session and switches it to Never Ask mode.
 
@@ -133,7 +135,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -283,6 +285,20 @@ kimi migrate
 ```
 
 For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
+
+### `kimi import-sessions`
+
+Import recent Claude Code and Codex sessions as regular Kimi Code sessions. The command opens an interactive page: choose the last 15 days (the default) or the last 30 days, then follow the progress and the summary. Inside the TUI, `/import-sessions` opens the same page.
+
+```sh
+kimi import-sessions
+```
+
+- Each run imports at most the newest 100 sessions; sessions imported before are skipped.
+- Sessions without a prompt, subagent sessions, and non-interactive runs such as `codex exec` are not listed. Sessions whose project folder no longer exists, sessions still being written, and Codex sessions that were forked or restarted from an earlier message are skipped and reported.
+- Sessions are read from `~/.claude` and `~/.codex`; set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to read them from other locations. The original session files are not changed.
+
+See [Importing sessions from Claude Code and Codex](../guides/sessions.md#importing-sessions-from-claude-code-and-codex) for what an imported session contains.
 
 ### `kimi upgrade`
 

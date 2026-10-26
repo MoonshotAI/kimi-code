@@ -16,6 +16,7 @@ import {
   isError2,
   Error2,
   type Scope,
+  type WorkspaceInstanceLease,
 } from '@moonshot-ai/agent-core-v2';
 import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry';
@@ -134,7 +135,16 @@ interface RuntimeFsScope {
   readonly fs: IWorkspaceFsService;
   readonly hostFs: IHostFileSystem;
   readonly lease: RuntimeLease;
+  readonly workspaceLease?: WorkspaceInstanceLease;
   readonly roots: { readonly workDir: string; readonly additionalDirs: readonly string[] };
+}
+
+function releaseRuntimeFs(runtimeFs: RuntimeFsScope): void {
+  try {
+    runtimeFs.lease.dispose();
+  } finally {
+    runtimeFs.workspaceLease?.dispose();
+  }
 }
 
 function createRuntimeFs(
@@ -152,6 +162,25 @@ function createRuntimeFs(
     return buildRuntimeFsScope(core, workspaceId, roots, runtimeId, lease);
   } catch (error) {
     lease.dispose();
+    throw error;
+  }
+}
+
+async function acquireWorkspaceFs(
+  core: Scope,
+  workspaceId: string,
+  roots: { readonly workDir: string; readonly additionalDirs?: readonly string[] },
+  runtimeId: string,
+  required: readonly RuntimeCapability[],
+): Promise<RuntimeFsScope> {
+  const workspaceLease = await core.accessor.get(IWorkspaceInstanceManager).acquire({
+    workspaceId,
+    root: roots.workDir,
+  });
+  try {
+    return { ...createRuntimeFs(core, workspaceId, roots, runtimeId, required), workspaceLease };
+  } catch (error) {
+    workspaceLease.dispose();
     throw error;
   }
 }
@@ -248,17 +277,17 @@ function buildRuntimeFsScope(
   };
 }
 
-function acquireSessionFs(
+async function acquireSessionFs(
   core: Scope,
   sessionId: string,
   runtimeId: string,
   required: readonly RuntimeCapability[],
-): RuntimeFsScope {
+): Promise<RuntimeFsScope> {
   const session = getLiveSessionById(core.accessor, sessionId);
   if (session === undefined) throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
   const context = session.accessor.get(ISessionContext);
   const workspace = session.accessor.get(ISessionWorkspaceContext);
-  return createRuntimeFs(core, context.workspaceId, workspace, runtimeId, required);
+  return acquireWorkspaceFs(core, context.workspaceId, workspace, runtimeId, required);
 }
 
 async function resolveWorkspaceFs(
@@ -277,10 +306,7 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  await core.accessor
-    .get(IWorkspaceInstanceManager)
-    .getOrCreate({ workspaceId: ws.id, root: ws.root });
-  return createRuntimeFs(core, ws.id, { workDir: ws.root }, runtimeId, required);
+  return acquireWorkspaceFs(core, ws.id, { workDir: ws.root }, runtimeId, required);
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
@@ -345,7 +371,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           ? await resolveWorkspaceFs(core, session_id, runtimeId, required)
           : session === undefined
             ? undefined
-            : acquireSessionFs(core, session_id, runtimeId, required);
+            : await acquireSessionFs(core, session_id, runtimeId, required);
         if (runtimeFs === undefined) {
           reply.send(
             errEnvelope(ErrorCode.SESSION_NOT_FOUND, `session ${session_id} does not exist`, req.id),
@@ -399,7 +425,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
-        runtimeFs?.lease.dispose();
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
     },
   );
@@ -445,7 +471,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
-        runtimeFs?.lease.dispose();
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
     },
   );
@@ -490,7 +516,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       } catch (error) {
         sendMappedError(reply, req, error);
       } finally {
-        runtimeFs?.lease.dispose();
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
     },
   );
@@ -561,7 +587,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         }
         sendMappedError(reply, req, error);
       } finally {
-        runtimeFs?.lease.dispose();
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
     },
   );
@@ -617,10 +643,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let resolved: Awaited<ReturnType<IWorkspaceFsService['resolveDownload']>>;
       let runtimeFs: RuntimeFsScope | undefined;
       try {
-        runtimeFs = acquireSessionFs(core, session_id, req.query.runtime_id ?? 'local', ['fs']);
+        runtimeFs = await acquireSessionFs(core, session_id, req.query.runtime_id ?? 'local', ['fs']);
         resolved = await runtimeFs.fs.resolveDownload(relPath);
       } catch (error) {
-        runtimeFs?.lease.dispose();
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
         sendMappedError(reply, req, error);
         return;
       }
@@ -630,7 +656,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       const ifNoneMatch = pickHeader(headers, 'if-none-match');
       if (ifNoneMatch !== undefined && ifNoneMatch === resolved.etag) {
-        runtimeFs.lease.dispose();
+        releaseRuntimeFs(runtimeFs);
         r.code(304).header('etag', resolved.etag).send('');
         return;
       }
@@ -702,18 +728,30 @@ function createRuntimeReadStream(
       yield chunk;
     }
   }
-  const stream = Readable.from(chunks());
-  const tracked = runtimeFs.lease.track({ dispose: () => { stream.destroy(); } });
+  let stream: Readable | undefined;
+  let tracked: { dispose(): void } | undefined;
   let released = false;
   const release = (): void => {
     if (released) return;
     released = true;
-    tracked.dispose();
-    runtimeFs.lease.dispose();
+    try {
+      tracked?.dispose();
+    } finally {
+      releaseRuntimeFs(runtimeFs);
+    }
   };
-  stream.once('end', release);
-  stream.once('close', release);
-  return stream;
+  try {
+    stream = Readable.from(chunks());
+    const current = stream;
+    tracked = runtimeFs.lease.track({ dispose: () => { current.destroy(); } });
+    current.once('end', release);
+    current.once('close', release);
+    return current;
+  } catch (error) {
+    release();
+    stream?.destroy();
+    throw error;
+  }
 }
 
 type Req = { id: string; body: unknown };
@@ -967,5 +1005,5 @@ function buildValidationEnvelope(
 function sanitizeFilename(rel: string): string {
   const segs = rel.split('/');
   const base = segs.at(-1) ?? rel;
-  return base.replaceAll(/"/g, '\\"');
+  return base.replaceAll('"', '\\"');
 }

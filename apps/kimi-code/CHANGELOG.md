@@ -1,5 +1,27 @@
 # @moonshot-ai/kimi-code
 
+## 2.3.2
+
+### Patch Changes
+
+- [#4386](https://github.com/MoonshotAI/kimi-code/pull/4386) [`fd2e2c7`](https://github.com/MoonshotAI/kimi-code/commit/fd2e2c7e2a3672dda91365d66b2ba74a1630521e) Thanks [@RealKai42](https://github.com/RealKai42)! - Handle tasks directly by default instead of proactively launching subagents; request delegation explicitly in your message, AGENTS.md, a skill, or an enabled multi-agent mode.
+
+- [#4384](https://github.com/MoonshotAI/kimi-code/pull/4384) [`c9a4836`](https://github.com/MoonshotAI/kimi-code/commit/c9a48369843fdee1b494b9d49b1f4b3aeee73497) Thanks [@RealKai42](https://github.com/RealKai42)! - Agent swarms now start only when you turn on swarm mode: the agent can no longer launch `AgentSwarm` by itself, so swarms are no longer available in `kimi -p` or ACP clients such as Zed.
+
+## 2.3.1
+
+### Patch Changes
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix workspace trust failures when Git Bash is unavailable on Windows.
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix sessions occasionally remaining occupied after an application crash on macOS and Linux.
+
+- [#4356](https://github.com/MoonshotAI/kimi-code/pull/4356) [`0e3980e`](https://github.com/MoonshotAI/kimi-code/commit/0e3980e75e9af9d28955a5e93cff82d616b11353) Thanks [@7Sageer](https://github.com/7Sageer)! - Show the holding client's name in session-in-use errors.
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - Offer to take over a session that is still in use after a retry, so sessions left locked by an exited process can be used again, and add a `KIMI_CODE_SESSION_LOCK=0` switch that turns off the session lock.
+
+- [#4348](https://github.com/MoonshotAI/kimi-code/pull/4348) [`c569bab`](https://github.com/MoonshotAI/kimi-code/commit/c569bab55d4d510b09f01205d760001d16117aff) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Improved interactions and fixed known bugs.
+
 ## 2.3.0
 
 ### Minor Changes

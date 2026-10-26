@@ -347,6 +347,42 @@ describe('AgentProfileService.bind', () => {
     );
   });
 
+  it('restores a binding recorded with EnterPlanMode with its prompt and rejects the removed tool', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    const legacyPrompt = 'Legacy system prompt recorded while EnterPlanMode existed.';
+    const legacyRecords = persistence.records.map((record) =>
+      record.type === 'profile.bind'
+        ? {
+            ...record,
+            systemPrompt: legacyPrompt,
+            activeToolNames: [
+              ...((record['activeToolNames'] as readonly string[] | undefined) ?? []),
+              'EnterPlanMode',
+            ],
+          }
+        : record,
+    );
+    ctx = createTestAgent(
+      { persistence: new InMemoryWireRecordPersistence(legacyRecords), autoConfigure: false },
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.restorePersisted();
+
+    const { profile, toolPolicy } = profileServices(ctx);
+    expect(profile.getSystemPrompt()).toBe(legacyPrompt);
+    expect(profile.getActiveToolNames()).toContain('EnterPlanMode');
+    expect(toolPolicy.isToolActive('ExitPlanMode')).toBe(true);
+    expect(await executeDirectToolCall(ctx, 'EnterPlanMode')).toMatchObject({
+      isError: true,
+      output: 'Tool "EnterPlanMode" not found',
+    });
+  });
+
   it('keeps the system prompt frozen after a default bind when AGENTS.md changes', async () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-bind-work-'));
     try {
