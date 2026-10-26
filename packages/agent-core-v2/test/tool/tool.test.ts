@@ -1454,6 +1454,48 @@ describe('Agent tool execution contract', () => {
     return ctx;
   }
 
+  function resumedProfileStub(
+    initial: {
+      readonly profileName: string;
+      readonly modelAlias: string;
+      readonly thinkingLevel?: string;
+      readonly systemPrompt?: string;
+    },
+    modelCatalog?: IModelCatalog,
+  ): IAgentProfileService {
+    let data: ProfileData = {
+      modelAlias: initial.modelAlias,
+      modelCapabilities: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: 262_144,
+      },
+      profileName: initial.profileName,
+      thinkingLevel: initial.thinkingLevel ?? 'off',
+      systemPrompt: initial.systemPrompt ?? 'preserved prompt',
+    };
+    return {
+      _serviceBrand: undefined,
+      data: vi.fn(() => data),
+      setModel: vi.fn(async (modelAlias: string) => {
+        modelCatalog?.get(modelAlias);
+        data = { ...data, modelAlias };
+        return { model: modelAlias };
+      }),
+      setThinking: vi.fn((thinkingLevel: string) => {
+        data = { ...data, thinkingLevel };
+      }),
+      bind: vi.fn(),
+      update: vi.fn(),
+      republishStatus: vi.fn(),
+      getEffectiveThinkingLevel: vi.fn(() => data.thinkingLevel),
+      getActiveToolNames: () => [],
+    } as unknown as IAgentProfileService;
+  }
+
   function allowlistCatalog(allowlist: readonly string[]): ISessionAgentProfileCatalog {
     const caller: AgentProfile = normalizeAgentProfile({
       name: 'orchestrator',
@@ -2669,6 +2711,94 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('resumed result');
   });
 
+  it('rebinds a live resumed subagent to an explicit model before running', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      runCompletion: async () => ({ summary: 'resumed on smart model' }),
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            defaultEffort: 'high',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+        },
+      },
+    );
+    const targetProfile = resumedProfileStub(
+      {
+        profileName: 'explore',
+        modelAlias: 'provider/fast',
+        systemPrompt: 'preserved conversation prompt',
+      },
+      context.get(IModelCatalog),
+    );
+    const resumedContext = stubAgentContext('agent-existing', 3);
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+      resumedContext,
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue with full context',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'provider/smart',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(lifecycle.create).not.toHaveBeenCalled();
+    expect(targetProfile.setModel).toHaveBeenCalledOnce();
+    expect(targetProfile.setModel).toHaveBeenCalledWith('provider/smart');
+    expect(targetProfile.setThinking).toHaveBeenCalledOnce();
+    expect(targetProfile.setThinking).toHaveBeenCalledWith('high');
+    expect(targetProfile.bind).not.toHaveBeenCalled();
+    expect(vi.mocked(targetProfile.setModel).mock.invocationCallOrder[0]).toBeLessThan(
+      lifecycle.run.mock.invocationCallOrder[0]!,
+    );
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      resumedContext,
+      { kind: 'prompt', prompt: 'Continue with full context' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(targetProfile.data()).toMatchObject({
+      profileName: 'explore',
+      modelAlias: 'provider/smart',
+      thinkingLevel: 'high',
+      systemPrompt: 'preserved conversation prompt',
+    });
+    const taskId = lifecycle.publishedEvents
+      .map((event) => event.serialize()['taskId'])
+      .find((id): id is string => typeof id === 'string');
+    expect(context.get(IAgentTaskService).getTask(taskId!)).toMatchObject({
+      kind: 'agent',
+      agentId: 'agent-existing',
+      subagentType: 'explore',
+      model: 'provider/smart',
+      thinkingEffort: 'high',
+    });
+    expect(lifecycle.publishedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-existing',
+        subagentName: 'explore',
+        model: 'provider/smart',
+        thinkingEffort: 'high',
+      }),
+    );
+    expect(result.output).toContain('agent_id: agent-existing');
+    expect(result.output).toContain('actual_subagent_type: explore');
+    expect(result.output).toContain('resumed on smart model');
+  });
+
   it('rebuilds a persisted subagent that is not live before resuming it', async () => {
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'resumed after restart' }),
@@ -2867,54 +2997,90 @@ describe('Agent tool execution contract', () => {
     );
   });
 
-  it('keeps a rebuilt tower worker on its pinned permission mode', async () => {
+  it('rebinds a cold rebuilt tower worker without replacing its profile, permission, or context', async () => {
     const setMode = vi.fn();
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'worker resumed' }),
-      handleServices: new Map<string, ReadonlyMap<unknown, unknown>>([
-        [
-          'agent-existing',
-          new Map<unknown, unknown>([
-            [
-              IAgentProfileService,
-              {
-                _serviceBrand: undefined,
-                data: () => ({ profileName: TOWER_WORKER_PROFILE }),
-                update: () => {},
-                republishStatus: () => {},
-                getEffectiveThinkingLevel: () => 'off',
-                getActiveToolNames: () => [],
-                isToolActive: () => false,
-              },
-            ],
-            [
-              IAgentPermissionModeService,
-              { _serviceBrand: undefined, mode: 'auto', setMode, onDidChangeMode: Event.None },
-            ],
-          ]),
-        ],
-      ]),
     });
+    const labels = {
+      parentAgentId: 'main',
+      profileName: TOWER_WORKER_PROFILE,
+      missionId: 'mission-1',
+      worktree: '/tmp/tower-worktree',
+    };
     const context = createAgentToolContext(
       lifecycle,
       sessionService(
         ISessionMetadata,
         sessionMetadataStub({
-          'agent-existing': { labels: { parentAgentId: 'main', profileName: TOWER_WORKER_PROFILE } },
+          'agent-existing': { labels, forkedFrom: 'main' },
         }),
       ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+        },
+      },
     );
+    const targetProfile = resumedProfileStub(
+      {
+        profileName: TOWER_WORKER_PROFILE,
+        modelAlias: 'provider/fast',
+        systemPrompt: 'preserved tower mission briefing',
+      },
+      context.get(IModelCatalog),
+    );
+    const permission = {
+      _serviceBrand: undefined,
+      mode: 'auto',
+      setMode,
+      onDidChangeMode: Event.None,
+    };
+    const resumedContext = stubAgentContext('agent-existing', 4);
+    lifecycle.addHandle(
+      'agent-existing',
+      TOWER_WORKER_PROFILE,
+      new Map<unknown, unknown>([
+        [IAgentProfileService, targetProfile],
+        [IAgentPermissionModeService, permission],
+      ]),
+      resumedContext,
+    );
+    await lifecycle.remove(resumedContext);
     context.get(IAgentPermissionModeService).setMode('manual');
 
     const result = await executeAgentTool(context, {
-      prompt: 'Continue',
+      prompt: 'Continue the mission',
       description: 'Continue work',
       resume: 'agent-existing',
+      model: 'provider/smart',
     });
 
-    expect(result).toEqual({ output: expect.stringContaining(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`) });
+    expect(result.isError).not.toBe(true);
+    expect(result.output).toContain(`actual_subagent_type: ${TOWER_WORKER_PROFILE}`);
+    expect(lifecycle.create).toHaveBeenCalledOnce();
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      agentId: 'agent-existing',
+      labels,
+      forkedFrom: 'main',
+    });
+    expect(targetProfile.setModel).toHaveBeenCalledWith('provider/smart');
+    expect(targetProfile.bind).not.toHaveBeenCalled();
+    expect(targetProfile.data()).toMatchObject({
+      profileName: TOWER_WORKER_PROFILE,
+      modelAlias: 'provider/smart',
+      systemPrompt: 'preserved tower mission briefing',
+    });
     expect(setMode).not.toHaveBeenCalled();
-    expect(lifecycle.run).toHaveBeenCalledOnce();
+    expect(permission.mode).toBe('auto');
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      resumedContext,
+      { kind: 'prompt', prompt: 'Continue the mission' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('rejects direct resume of a non-subagent', async () => {
@@ -2967,7 +3133,7 @@ describe('Agent tool execution contract', () => {
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
-  it('rejects direct resume of an already running subagent before launching a turn', async () => {
+  it('rejects model rebinding for a running resume target without mutation', async () => {
     const lifecycle = createAgentLifecycleStub();
     const context = createAgentToolContext(
       lifecycle,
@@ -2975,11 +3141,24 @@ describe('Agent tool execution contract', () => {
         ISessionMetadata,
         sessionMetadataStub({ 'agent-existing': subagentMeta() }),
       ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+        },
+      },
     );
+    const targetProfile = resumedProfileStub({
+      profileName: 'explore',
+      modelAlias: 'provider/fast',
+    });
     lifecycle.addHandle(
       'agent-existing',
       'explore',
-      new Map([
+      new Map<unknown, unknown>([
+        [IAgentProfileService, targetProfile],
         [
           IAgentLoopService,
           {
@@ -2994,6 +3173,7 @@ describe('Agent tool execution contract', () => {
       prompt: 'Continue',
       description: 'Continue work',
       resume: 'agent-existing',
+      model: 'provider/smart',
     });
 
     expect(result).toMatchObject({
@@ -3001,18 +3181,25 @@ describe('Agent tool execution contract', () => {
       output:
         'subagent error: Agent instance "agent-existing" is already running and cannot run concurrently',
     });
+    expect(targetProfile.setModel).not.toHaveBeenCalled();
+    expect(targetProfile.setThinking).not.toHaveBeenCalled();
+    expect(targetProfile.data().modelAlias).toBe('provider/fast');
     expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
-  it('keeps a directly resumed subagent on its own recorded model', async () => {
-    const targetProfile = {
-      _serviceBrand: undefined,
-      data: () => ({ profileName: 'explore', modelAlias: 'stale-model' }),
-      update: vi.fn(),
-      republishStatus: vi.fn(),
-      getEffectiveThinkingLevel: () => 'medium',
-      isToolActive: () => false,
-    } as unknown as IAgentProfileService;
+  it.each([
+    {
+      name: 'pool default',
+      secondaryModel: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+      },
+    },
+    {
+      name: 'forced default',
+      secondaryModel: { defaultModel: 'provider/fast', force: true },
+    },
+  ])('keeps a resumed subagent on its recorded model despite a $name', async ({ secondaryModel }) => {
     const lifecycle = createAgentLifecycleStub({
       runCompletion: async () => ({ summary: 'resumed result' }),
     });
@@ -3022,6 +3209,132 @@ describe('Agent tool execution contract', () => {
         ISessionMetadata,
         sessionMetadataStub({ 'agent-existing': subagentMeta() }),
       ),
+      { initialConfig: { secondaryModel } },
+    );
+    const targetProfile = resumedProfileStub({
+      profileName: 'explore',
+      modelAlias: 'stale-model',
+      thinkingLevel: 'medium',
+    });
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(targetProfile.setModel).not.toHaveBeenCalled();
+    expect(targetProfile.setThinking).not.toHaveBeenCalled();
+    expect(targetProfile.bind).not.toHaveBeenCalled();
+    expect(targetProfile.update).not.toHaveBeenCalled();
+    expect(targetProfile.data()).toMatchObject({
+      modelAlias: 'stale-model',
+      thinkingLevel: 'medium',
+    });
+    expect(lifecycle.run).toHaveBeenCalledWith(
+      expect.objectContaining({ agentId: 'agent-existing' }),
+      { kind: 'prompt', prompt: 'Continue' },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(lifecycle.publishedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-existing',
+        model: 'stale-model',
+        thinkingEffort: 'medium',
+      }),
+    );
+  });
+
+  it.each([
+    {
+      name: 'an invalid pool alias',
+      model: 'provider/typo',
+      secondaryModel: {
+        defaultModel: 'provider/fast',
+        models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+      },
+      expected: 'Invalid model "provider/typo"',
+    },
+    {
+      name: 'an explicit alias with force enabled',
+      model: 'provider/smart',
+      secondaryModel: { defaultModel: 'provider/fast', force: true },
+      expected: '[secondary_model].force is set',
+    },
+    {
+      name: 'primary with force enabled',
+      model: 'primary',
+      secondaryModel: { defaultModel: 'provider/fast', force: true },
+      expected: '[secondary_model].force is set',
+    },
+  ])('rejects $name on resume without mutation or running', async ({
+    model,
+    secondaryModel,
+    expected,
+  }) => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      { initialConfig: { secondaryModel } },
+    );
+    const targetProfile = resumedProfileStub({
+      profileName: 'explore',
+      modelAlias: 'provider/fast',
+    });
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(expected);
+    expect(targetProfile.setModel).not.toHaveBeenCalled();
+    expect(targetProfile.setThinking).not.toHaveBeenCalled();
+    expect(targetProfile.bind).not.toHaveBeenCalled();
+    expect(targetProfile.data().modelAlias).toBe('provider/fast');
+    expect(lifecycle.run).not.toHaveBeenCalled();
+  });
+
+  it('resolves an explicit primary resume model from the caller profile', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+        },
+      },
+    );
+    context.get(IAgentProfileService).update({ thinkingLevel: 'high' });
+    const targetProfile = resumedProfileStub(
+      { profileName: 'explore', modelAlias: 'provider/fast', thinkingLevel: 'low' },
+      context.get(IModelCatalog),
     );
     lifecycle.addHandle(
       'agent-existing',
@@ -3029,18 +3342,111 @@ describe('Agent tool execution contract', () => {
       new Map([[IAgentProfileService, targetProfile]]),
     );
 
-    await executeAgentTool(context, {
+    const result = await executeAgentTool(context, {
       prompt: 'Continue',
       description: 'Continue work',
       resume: 'agent-existing',
+      model: 'primary',
     });
 
-    expect(targetProfile.update).not.toHaveBeenCalled();
-    expect(lifecycle.run).toHaveBeenCalledWith(
-      expect.objectContaining({ agentId: 'agent-existing' }),
-      { kind: 'prompt', prompt: 'Continue' },
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    expect(result.isError).not.toBe(true);
+    expect(targetProfile.setModel).toHaveBeenCalledWith('mock-model');
+    expect(targetProfile.setThinking).toHaveBeenCalledWith('high');
+    expect(targetProfile.data()).toMatchObject({ modelAlias: 'mock-model', thinkingLevel: 'high' });
+    expect(lifecycle.run).toHaveBeenCalledOnce();
+    expect(lifecycle.publishedEvents).toContainEqual(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-existing',
+        model: 'mock-model',
+        thinkingEffort: 'high',
+      }),
     );
+  });
+
+  it('resumes onto a valid model when the old model is missing from the catalog', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/smart': 'smart' },
+          },
+        },
+      },
+    );
+    const targetProfile = resumedProfileStub(
+      { profileName: 'explore', modelAlias: 'retired-model' },
+      context.get(IModelCatalog),
+    );
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+    const catalogGet = vi.spyOn(context.get(IModelCatalog), 'get');
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'provider/smart',
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(catalogGet).toHaveBeenCalledWith('provider/smart');
+    expect(catalogGet).not.toHaveBeenCalledWith('retired-model');
+    expect(targetProfile.data().modelAlias).toBe('provider/smart');
+    expect(lifecycle.run).toHaveBeenCalledOnce();
+  });
+
+  it('wraps resume model catalog failures without changing the old model', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      {
+        initialConfig: {
+          secondaryModel: {
+            defaultModel: 'provider/fast',
+            models: { 'provider/fast': 'fast', 'provider/missing': 'missing' },
+          },
+        },
+      },
+    );
+    const targetProfile = resumedProfileStub(
+      { profileName: 'explore', modelAlias: 'provider/fast' },
+      context.get(IModelCatalog),
+    );
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'provider/missing',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('Model "provider/missing" is not configured in config.toml.');
+    expect(result.output).toContain('comes from [secondary_model.models]');
+    expect(targetProfile.setModel).toHaveBeenCalledWith('provider/missing');
+    expect(targetProfile.setThinking).not.toHaveBeenCalled();
+    expect(targetProfile.data().modelAlias).toBe('provider/fast');
+    expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
   it('registers background subagents with the task manager', async () => {

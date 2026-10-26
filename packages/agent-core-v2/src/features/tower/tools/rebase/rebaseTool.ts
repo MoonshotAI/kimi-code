@@ -60,14 +60,18 @@ export class TowerRebaseTool implements ITowerRebaseTool {
               output: [
                 `rebase of mission ${mission.id} (${mission.branch}) onto "${state.base}" conflicted and was aborted — the mission is marked blocked.`,
                 `conflicted files: ${result.files?.join(', ') || '(none reported)'}`,
-                `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree and requests a fresh review.`,
+                mission.kind === 'artifact'
+                  ? `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree; the moved tip then needs fresh explicit human acceptance.`
+                  : `resume the worker in the background (foreground only when background task tools are unavailable) so it resolves the conflicts in its worktree and requests a fresh review.`,
               ].join('\n'),
             };
           }
           return {
             output: [
               `rebased mission ${mission.id} (${mission.branch}) onto "${state.base}": ${result.fromCommit!.slice(0, 7)} → ${result.toCommit!.slice(0, 7)}.`,
-              'The pre-rebase review keeps its exact-tip binding, but merge approval still requires a clean review with merge verdict "merge" — retry TowerMerge.',
+              mission.kind === 'artifact'
+                ? 'The pre-rebase human acceptance does not carry over — present the current committed artifact paths for fresh explicit human acceptance, record it with TowerReview, then retry TowerMerge.'
+                : 'The pre-rebase review keeps its exact-tip binding, but merge approval still requires a clean review with merge verdict "merge" — retry TowerMerge.',
             ].join('\n'),
           };
         }),

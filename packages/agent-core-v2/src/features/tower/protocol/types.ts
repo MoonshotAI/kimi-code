@@ -31,7 +31,7 @@ export type TowerMissionStatus =
   | 'merged'
   | 'abandoned';
 
-export type TowerMissionKind = 'build' | 'survey';
+export type TowerMissionKind = 'build' | 'survey' | 'artifact';
 
 export interface TowerMissionTask {
   text: string;

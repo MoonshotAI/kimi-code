@@ -1016,6 +1016,57 @@ describe('TowerSpawnTool', () => {
     expect(prompt).not.toContain('subject="survey-summary"');
   });
 
+  it('briefs the artifact worker to commit deliverables and name paths for human acceptance', async () => {
+    const [artifact] = await store.plan([
+      { title: 'Render report', scope: ['artifacts/**'], kind: 'artifact' },
+    ]);
+
+    const result = await execute({ name: 'agent-artifact', kind: 'worker', mission_id: artifact!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('git commit` every artifact needed for acceptance');
+    expect(prompt).toContain('Uncommitted files are excluded from acceptance and merge');
+    expect(prompt).toContain('naming every committed artifact path');
+    expect(prompt).toContain('stores acceptance-request to the tower');
+    expect(prompt).toContain('explicit human acceptance; no independent reviewer is required');
+    expect(prompt).not.toContain('source files only — no build outputs');
+    expect(prompt).not.toContain('READ-ONLY survey mission');
+    expect(prompt).not.toContain('zero commits');
+  });
+
+  it('briefs an artifact respawn with the previous acceptance-request and human feedback', async () => {
+    const [artifact] = await store.plan([
+      { title: 'Render report', scope: ['artifacts/**'], kind: 'artifact' },
+    ]);
+    const first = await execute({ name: 'agent-artifact', kind: 'worker', mission_id: artifact!.id });
+    expect(first.isError).toBeUndefined();
+    await store.send('agent-artifact', {
+      to: 'tower',
+      subject: 'acceptance-request',
+      body: 'Committed artifacts for acceptance:\n- artifacts/report.html',
+    });
+    await store.submitReview('tower', {
+      target: artifact!.branch,
+      status: 'p1-1items',
+      merge: 'hold',
+      findings: 'the summary needs a correction',
+      decision: 'human requested changes',
+    });
+
+    const result = await execute({ name: 'agent-artifact-2', kind: 'worker', mission_id: artifact!.id });
+
+    expect(result.isError).toBeUndefined();
+    const prompt = (runAgent.mock.calls.at(-1)?.[1] as { prompt: string }).prompt;
+    expect(prompt).toContain('# Previous work on this branch');
+    expect(prompt).toContain('Latest feedback — round 1 by tower: p1-1items');
+    expect(prompt).toContain('the summary needs a correction');
+    expect(prompt).toContain('human requested changes');
+    expect(prompt).toContain("The previous worker's acceptance-request to the tower");
+    expect(prompt).toContain('artifacts/report.html');
+    expect(prompt).not.toContain("The previous worker's review-request to the tower");
+  });
+
   it('briefs the reviewer with the mission text and the worker self-report', async () => {
     const [docs] = await store.plan([
       {

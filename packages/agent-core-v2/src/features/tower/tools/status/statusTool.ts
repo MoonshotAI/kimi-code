@@ -44,7 +44,8 @@ export class TowerStatusTool implements ITowerStatusTool {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
   ) {}
 
-  resolveExecution(_args: TowerStatusToolInput): ToolExecution {
+  resolveExecution(args: TowerStatusToolInput): ToolExecution {
+    const limit = args.limit ?? 20;
     return {
       description: 'Reading tower status',
       approvalRule: this.name,
@@ -74,17 +75,17 @@ export class TowerStatusTool implements ITowerStatusTool {
             ...renderRecoveredAtWarning(state),
             '## Missions',
             '',
-            ...renderMissions(state),
-            ...renderUnspawnedMissions(state),
-            ...renderDeathWarnings(state),
+            ...renderMissions(state, limit),
+            ...renderUnspawnedMissions(state, limit),
+            ...renderDeathWarnings(state, limit),
             '',
             '## Roster',
             '',
-            ...renderRoster(state),
+            ...renderRoster(state, limit),
             '',
             '## Review gate (unmerged branches)',
             '',
-            ...renderReviewGate(state, gate),
+            ...renderReviewGate(state, gate, limit),
           ];
 
           if (
@@ -149,13 +150,18 @@ function renderRecoveredAtWarning(state: TowerStatusState): string[] {
 function renderReviewGate(
   state: TowerStatusState,
   gate: readonly TowerStatusGate[],
+  limit: number,
 ): string[] {
   const pending = state.missions.filter(
     (mission) => mission.status !== 'merged' && mission.status !== 'abandoned',
   );
   if (pending.length === 0) return ['(no open missions — or none planned yet)'];
-  const lines: string[] = [];
-  for (const missionGate of gate) {
+  const visible = gate.slice(-limit).toReversed();
+  const lines: string[] = [
+    `Showing ${String(visible.length)} of ${String(pending.length)} open mission(s), newest first.`,
+    '',
+  ];
+  for (const missionGate of visible) {
     const review = missionGate.selectedReview;
     const reviewText =
       review === undefined
@@ -175,7 +181,10 @@ function renderReviewGate(
       `- ${missionGate.branch} (${missionGate.missionId}): BLOCKED reasons=${reasons}; ${details}${reviewText}`,
     );
   }
-  return lines;
+  return [
+    ...lines,
+    ...renderOmission(pending.length - visible.length, 'review gate entries'),
+  ];
 }
 
 function renderConcurrency(snapshot: TowerStatusConcurrency): string {
@@ -194,23 +203,40 @@ function renderConcurrency(snapshot: TowerStatusConcurrency): string {
   return parts.join(' · ');
 }
 
-function renderMissions(state: TowerStatusState): string[] {
+function renderMissions(state: TowerStatusState, limit: number): string[] {
   if (state.missions.length === 0) return ['(no missions planned — use TowerPlan)'];
+  const counts = new Map<TowerMission['status'], number>();
+  for (const mission of state.missions) {
+    counts.set(mission.status, (counts.get(mission.status) ?? 0) + 1);
+  }
+  const totals = [...counts]
+    .map(([status, count]) => `${String(count)} ${status}`)
+    .join(', ');
+  const visible = state.missions.slice(-limit).toReversed();
   return [
+    `Showing ${String(visible.length)} of ${String(state.missions.length)} mission(s), newest first.`,
+    `Status totals: ${totals}.`,
+    '',
     '| ID | Mission | Branch | Worktree | Status | Owner |',
     '| -- | ------- | ------ | -------- | ------ | ----- |',
-    ...state.missions.map(
+    ...visible.map(
       (m) =>
         `| ${m.id} | ${m.title}${m.kind === 'survey' ? ' 🔍' : ''} | ${m.branch} | ${m.worktree} | ${STATUS_EMOJI[m.status]} ${m.status} | ${m.owner ?? '—'} |`,
     ),
+    ...renderOmission(state.missions.length - visible.length, 'missions'),
   ];
 }
 
-function renderRoster(state: TowerStatusState): string[] {
+function renderRoster(state: TowerStatusState, limit: number): string[] {
   if (state.roster.agents.length === 0) {
     return ['(no agents registered — spawn workers/reviewers with TowerSpawn)'];
   }
-  return state.roster.agents.map((a) => {
+  const workers = state.roster.agents.filter((agent) => agent.kind === 'worker').length;
+  const reviewers = state.roster.agents.length - workers;
+  const visible = [...state.roster.agents]
+    .toSorted((a, b) => b.spawnedAt.localeCompare(a.spawnedAt))
+    .slice(0, limit);
+  const lines = visible.map((a) => {
     const assignment =
       a.kind === 'worker'
         ? `mission ${a.missionId ?? '?'} (branch ${a.branch ?? '?'}, worktree ${a.worktree ?? '?'})`
@@ -218,23 +244,33 @@ function renderRoster(state: TowerStatusState): string[] {
     const death = a.diedAt === undefined ? '' : ` — 💀 ${a.deathStatus ?? 'died'}`;
     return `- ${a.name} (${a.kind}) — agent ${a.agentId}, ${assignment}${death}`;
   });
+  return [
+    `Showing ${String(visible.length)} of ${String(state.roster.agents.length)} agent(s) (${String(workers)} workers, ${String(reviewers)} reviewers), newest spawned first.`,
+    '',
+    ...lines,
+    ...renderOmission(state.roster.agents.length - visible.length, 'roster entries'),
+  ];
 }
 
-function renderUnspawnedMissions(state: TowerStatusState): string[] {
+function renderUnspawnedMissions(state: TowerStatusState, limit: number): string[] {
   const pending = state.missions.filter((m) => m.status === 'planned' && m.owner === undefined);
   if (pending.length === 0) return [];
+  const visible = pending.slice(-limit).toReversed();
   return [
     '',
     '## Awaiting spawn',
     '',
-    ...pending.map(
+    `Showing ${String(visible.length)} of ${String(pending.length)} planned mission(s), newest first.`,
+    '',
+    ...visible.map(
       (m) =>
         `- ${m.id} (${m.branch}) — planned but no worker spawned yet: launch one with TowerSpawn(kind="worker", mission_id="${m.id}", name="...")`,
     ),
+    ...renderOmission(pending.length - visible.length, 'awaiting-spawn missions'),
   ];
 }
 
-function renderDeathWarnings(state: TowerStatusState): string[] {
+function renderDeathWarnings(state: TowerStatusState, limit: number): string[] {
   const deadByName = new Map(
     state.roster.agents.filter((a) => a.diedAt !== undefined).map((a) => [a.name, a]),
   );
@@ -253,7 +289,24 @@ function renderDeathWarnings(state: TowerStatusState): string[] {
     );
   }
   if (lines.length === 0) return lines;
-  return ['', '## Dead workers', '', ...lines];
+  const visible = lines.slice(-limit).toReversed();
+  return [
+    '',
+    '## Dead workers',
+    '',
+    `Showing ${String(visible.length)} of ${String(lines.length)} death warning(s), newest mission first.`,
+    '',
+    ...visible,
+    ...renderOmission(lines.length - visible.length, 'death warnings'),
+  ];
+}
+
+function renderOmission(omitted: number, noun: string): string[] {
+  if (omitted === 0) return [];
+  return [
+    '',
+    `${String(omitted)} earlier ${noun} omitted; call TowerStatus with a larger limit to inspect them.`,
+  ];
 }
 
 function isStoppedByUser(entry: TowerRosterEntry): boolean {
