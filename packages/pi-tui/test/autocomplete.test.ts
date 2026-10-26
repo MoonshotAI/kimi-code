@@ -750,6 +750,18 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.strictEqual(await getSuggestions(provider, [""], 0, 0), null);
 		});
 
+		test("preserves unmatched leading wrappers in literal filenames", async () => {
+			setupFolder(baseDir, { files: { "(draft.md": "x" } });
+			const provider = new CombinedAutocompleteProvider([], baseDir);
+			const line = "see (dra";
+			const result = await getSuggestions(provider, [line], 0, line.length, true);
+			assert.ok(result);
+			assert.strictEqual(result.prefix, "(dra");
+			assert.deepStrictEqual(result.items.map((item) => item.value), ["(draft.md"]);
+			const applied = provider.applyCompletion([line], 0, line.length, result.items[0]!, result.prefix);
+			assert.strictEqual(applied.lines[0], "see (draft.md");
+		});
+
 		test("completes paths after opening wrappers like ( [ { < and backticks", async () => {
 			setupFolder(baseDir, { files: { "src/main.ts": "x" } });
 			const provider = new CombinedAutocompleteProvider([], baseDir);
