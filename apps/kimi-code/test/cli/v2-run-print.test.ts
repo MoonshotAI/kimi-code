@@ -346,8 +346,11 @@ function makeFakeHarness() {
     [
       IWorkspaceInstanceManager,
       {
-        getOrCreate: vi.fn(async () => ({
-          program: { trust: { get: vi.fn(async () => trustState.trusted) } },
+        acquire: vi.fn(async () => ({
+          instance: {
+            program: { trust: { get: vi.fn(async () => trustState.trusted) } },
+          },
+          dispose: vi.fn(),
         })),
       },
     ],
@@ -1241,9 +1244,9 @@ describe('runV2Print', () => {
     const { app, appServices, trustState } = makeFakeHarness();
     trustState.trusted = false;
     const workspaces = appServices.get(IWorkspaceInstanceManager) as {
-      getOrCreate: ReturnType<typeof vi.fn>;
+      acquire: ReturnType<typeof vi.fn>;
     };
-    workspaces.getOrCreate.mockRejectedValueOnce(new Error('trust store unavailable'));
+    workspaces.acquire.mockRejectedValueOnce(new Error('trust store unavailable'));
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });

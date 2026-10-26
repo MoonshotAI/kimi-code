@@ -22,7 +22,7 @@ import {
   type SessionWillCreateEvent,
 } from '#/workspace/sessionLifecycle/sessionLifecycle';
 import type { SessionLifecycleService } from '#/workspace/sessionLifecycle/sessionLifecycleService';
-import { IWorkspaceInstanceManager } from '#/workspace/workspaceInstance/workspaceInstanceManager';
+import { IWorkspaceInstanceManager, type WorkspaceInstanceLease, type WorkspaceInstanceRef } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 
 import {
   ISessionManager,
@@ -31,22 +31,26 @@ import {
 } from './sessionManager';
 
 interface SessionControllerEntry {
+  readonly workspaceId: string;
+  readonly workspaceLease: WorkspaceInstanceLease;
   readonly generation: string;
   readonly controller: SessionLifecycleService;
   readonly subscriptions: DisposableStore;
   sessionCount: number;
+  operationCount: number;
 }
 
 export class SessionManager implements ISessionManager {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
-  private readonly owners = new Map<string, SessionLifecycleService>();
+  private readonly owners = new Map<string, SessionControllerEntry>();
   private readonly pendingResumes = new Map<string, Promise<ISessionScopeHandle | undefined>>();
   private readonly resumeFailures = new Map<string, Error>();
   private readonly reclaimed = new Set<string>();
   private readonly lifecycleChains = new Map<string, Promise<void>>();
   private readonly controllers = new Map<string, SessionControllerEntry>();
   private readonly controllerEntries = new Set<SessionControllerEntry>();
+  private disposed = false;
   private readonly willCreateEmitter = new Emitter<SessionWillCreateEvent>();
   readonly onWillCreateSession: Event<SessionWillCreateEvent> = this.willCreateEmitter.event;
   private readonly didCreateEmitter = new Emitter<SessionCreatedEvent & IWaitUntil>();
@@ -69,12 +73,14 @@ export class SessionManager implements ISessionManager {
   ) {}
 
   async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
-    const workspace = await this.workspaces.getOrCreate(
-      options.workspaceId === undefined
-        ? { root: options.workDir }
-        : { workspaceId: options.workspaceId, root: options.workDir },
-    );
-    const create = () => this.controllerForWorkspace(workspace.id).create(options);
+    const create = async () => {
+      const entry = await this.controllerForWorkspace(
+        options.workspaceId === undefined
+          ? { root: options.workDir }
+          : { workspaceId: options.workspaceId, root: options.workDir },
+      );
+      return this.runControllerOperation(entry, (controller) => controller.create(options));
+    };
     if (options.sessionId === undefined) return create();
     return this.serializeLifecycle(options.sessionId, create);
   }
@@ -83,13 +89,15 @@ export class SessionManager implements ISessionManager {
     const inflight = this.pendingResumes.get(sessionId);
     if (inflight !== undefined) return inflight;
     this.resumeFailures.delete(sessionId);
-    const promise = this.serializeLifecycle(sessionId, async () =>
-      (await this.controllerForSession(sessionId))?.resume(
+    const promise = this.serializeLifecycle(sessionId, async () => {
+      const entry = await this.controllerForSession(sessionId);
+      if (entry === undefined) return undefined;
+      return this.runControllerOperation(entry, (controller) => controller.resume(
         sessionId,
         options,
         this.reclaimed.has(sessionId) ? 'reclaimed' : 'resume',
-      ),
-    ).finally(() => this.pendingResumes.delete(sessionId));
+      ));
+    }).finally(() => this.pendingResumes.delete(sessionId));
     this.pendingResumes.set(sessionId, promise);
     void promise.catch((error: unknown) => {
       this.resumeFailures.set(sessionId, error instanceof Error ? error : new Error('session resume failed'));
@@ -109,7 +117,7 @@ export class SessionManager implements ISessionManager {
     await this.pendingResumes.get(sessionId);
     const failure = this.resumeFailures.get(sessionId);
     if (failure !== undefined) throw failure;
-    await this.owners.get(sessionId)?.whenResumeSettled(sessionId);
+    await this.owners.get(sessionId)?.controller.whenResumeSettled(sessionId);
   }
 
   private serializeLifecycle<T>(sessionId: string, work: () => Promise<T>): Promise<T> {
@@ -153,30 +161,39 @@ export class SessionManager implements ISessionManager {
   }
 
   async close(sessionId: string): Promise<void> {
-    await this.serializeLifecycle(sessionId, async () => this.owners.get(sessionId)?.close(sessionId));
+    await this.serializeLifecycle(sessionId, async () => {
+      const entry = this.owners.get(sessionId);
+      if (entry === undefined) return;
+      await this.runControllerOperation(
+        this.retainController(entry),
+        (controller) => controller.close(sessionId),
+      );
+    });
   }
 
   async closeIfIdle(sessionId: string, idleTimeoutMs: number): Promise<boolean> {
     return this.serializeLifecycle(sessionId, async () => {
       const handle = this.sessions.get(sessionId);
-      const owner = this.owners.get(sessionId);
-      if (handle === undefined || owner === undefined) return false;
-      if (Date.now() - handle.accessor.get(ISessionActivityView).lastActiveAt() < idleTimeoutMs) return false;
-      let lease: SessionLockLease;
-      try {
-        lease = this.sessionLocks.lease(sessionId);
-      } catch (error) {
-        if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
-        throw error;
-      }
-      try {
-        if (await this.retained(handle)) return false;
-        await owner.close(sessionId, 'reclaim');
-        this.reclaimed.add(sessionId);
-        return true;
-      } finally {
-        lease.release();
-      }
+      const entry = this.owners.get(sessionId);
+      if (handle === undefined || entry === undefined) return false;
+      return this.runControllerOperation(this.retainController(entry), async (controller) => {
+        if (Date.now() - handle.accessor.get(ISessionActivityView).lastActiveAt() < idleTimeoutMs) return false;
+        let lease: SessionLockLease;
+        try {
+          lease = this.sessionLocks.lease(sessionId);
+        } catch (error) {
+          if (isError2(error) && error.code === SessionErrors.codes.SESSION_OCCUPIED) return false;
+          throw error;
+        }
+        try {
+          if (await this.retained(handle)) return false;
+          await controller.close(sessionId, 'reclaim');
+          this.reclaimed.add(sessionId);
+          return true;
+        } finally {
+          lease.release();
+        }
+      });
     });
   }
 
@@ -191,7 +208,10 @@ export class SessionManager implements ISessionManager {
   }
 
   private async archiveInner(sessionId: string): Promise<void> {
-    await (await this.controllerForSession(sessionId))?.archive(sessionId);
+    const entry = await this.controllerForSession(sessionId);
+    if (entry !== undefined) {
+      await this.runControllerOperation(entry, (controller) => controller.archive(sessionId));
+    }
     this.reclaimed.delete(sessionId);
   }
 
@@ -203,7 +223,9 @@ export class SessionManager implements ISessionManager {
     sessionId: string,
     options?: ResumeSessionOptions,
   ): Promise<ISessionScopeHandle | undefined> {
-    return (await this.controllerForSession(sessionId))?.restore(sessionId, options);
+    const entry = await this.controllerForSession(sessionId);
+    if (entry === undefined) return undefined;
+    return this.runControllerOperation(entry, (controller) => controller.restore(sessionId, options));
   }
 
   async restore(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -212,26 +234,28 @@ export class SessionManager implements ISessionManager {
 
   async delete(sessionId: string): Promise<void> {
     await this.serializeLifecycle(sessionId, async () => {
-      const controller = await this.controllerForSession(sessionId);
-      if (controller === undefined) {
+      const entry = await this.controllerForSession(sessionId);
+      if (entry === undefined) {
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
       }
-      await controller.close(sessionId);
-      const cleanups: Promise<unknown>[] = [];
-      this.willDeleteEmitter.fire({
-        sessionId,
-        signal: new AbortController().signal,
-        waitUntil: (cleanup) => {
-          if (Object.isFrozen(cleanups)) throw new Error('waitUntil must be called synchronously');
-          cleanups.push(cleanup);
-        },
+      await this.runControllerOperation(entry, async (controller) => {
+        await controller.close(sessionId);
+        const cleanups: Promise<unknown>[] = [];
+        this.willDeleteEmitter.fire({
+          sessionId,
+          signal: new AbortController().signal,
+          waitUntil: (cleanup) => {
+            if (Object.isFrozen(cleanups)) throw new Error('waitUntil must be called synchronously');
+            cleanups.push(cleanup);
+          },
+        });
+        void Object.freeze(cleanups);
+        const settled = await Promise.allSettled(cleanups);
+        const failed = settled.find((result) => result.status === 'rejected');
+        if (failed?.status === 'rejected') throw failed.reason;
+        await controller.delete(sessionId);
+        this.reclaimed.delete(sessionId);
       });
-      void Object.freeze(cleanups);
-      const settled = await Promise.allSettled(cleanups);
-      const failed = settled.find((result) => result.status === 'rejected');
-      if (failed?.status === 'rejected') throw failed.reason;
-      await controller.delete(sessionId);
-      this.reclaimed.delete(sessionId);
     });
   }
 
@@ -239,14 +263,14 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycleForKeys(
       this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
       async () => {
-        const controller = await this.controllerForSession(options.sourceSessionId);
-        if (controller === undefined) {
+        const entry = await this.controllerForSession(options.sourceSessionId);
+        if (entry === undefined) {
           throw new Error2(
             ErrorCodes.SESSION_NOT_FOUND,
             `session ${options.sourceSessionId} does not exist`,
           );
         }
-        return controller.fork(options);
+        return this.runControllerOperation(entry, (controller) => controller.fork(options));
       },
     );
   }
@@ -255,23 +279,21 @@ export class SessionManager implements ISessionManager {
     return this.serializeLifecycleForKeys(
       this.lifecycleKeys(options.sourceSessionId, options.newSessionId),
       async () => {
-        const controller = await this.controllerForSession(options.sourceSessionId);
-        if (controller === undefined) {
+        const entry = await this.controllerForSession(options.sourceSessionId);
+        if (entry === undefined) {
           throw new Error2(
             ErrorCodes.SESSION_NOT_FOUND,
             `session ${options.sourceSessionId} does not exist`,
           );
         }
-        return controller.createChild(options);
+        return this.runControllerOperation(entry, (controller) => controller.createChild(options));
       },
     );
   }
 
   dispose(): void {
-    for (const { controller, subscriptions } of [...this.controllerEntries].toReversed()) {
-      subscriptions.dispose();
-      controller.dispose();
-    }
+    this.disposed = true;
+    for (const entry of [...this.controllerEntries].toReversed()) this.disposeEntry(entry);
     this.controllerEntries.clear();
     this.controllers.clear();
     this.sessions.clear();
@@ -286,60 +308,106 @@ export class SessionManager implements ISessionManager {
     this.didForkEmitter.dispose();
   }
 
-  private controllerForWorkspace(workspaceId: string): SessionLifecycleService {
-    const workspace = this.workspaces.get(workspaceId);
-    if (workspace === undefined) throw new Error(`workspace ${workspaceId} is not materialized`);
-    const generation = workspace.program.sessionControllerGeneration;
-    const existing = this.controllers.get(workspaceId);
-    if (existing?.generation === generation) return existing.controller;
-    const controller = workspace.program.createSessionController();
-    const subscriptions = new DisposableStore();
-    const entry: SessionControllerEntry = { generation, controller, subscriptions, sessionCount: 0 };
-    subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
-    subscriptions.add(controller.onDidCreateSession((event) => {
-      entry.sessionCount += 1;
-      this.reclaimed.delete(event.sessionId);
-      this.sessions.set(event.sessionId, event.handle);
-      this.owners.set(event.sessionId, controller);
-      this.didCreateEmitter.fire(event);
-    }));
-    subscriptions.add(controller.onWillCloseSession((event) => this.willCloseEmitter.fire(event)));
-    subscriptions.add(controller.onDidCloseSession((event) => {
-      entry.sessionCount -= 1;
-      this.sessions.delete(event.sessionId);
-      this.owners.delete(event.sessionId);
-      this.didCloseEmitter.fire(event);
-      this.retireEntryIfIdle(workspaceId, entry);
-    }));
-    subscriptions.add(controller.onDidArchiveSession((event) => {
-      entry.sessionCount -= 1;
-      this.sessions.delete(event.sessionId);
-      this.owners.delete(event.sessionId);
-      this.didArchiveEmitter.fire(event);
-      this.retireEntryIfIdle(workspaceId, entry);
-    }));
-    subscriptions.add(controller.onDidForkSession((event) => this.didForkEmitter.fire(event)));
-    this.controllerEntries.add(entry);
-    this.controllers.set(workspaceId, entry);
-    if (existing !== undefined) this.retireEntryIfIdle(workspaceId, existing);
-    return controller;
+  private async controllerForWorkspace(ref: WorkspaceInstanceRef): Promise<SessionControllerEntry> {
+    const workspaceLease = await this.workspaces.acquire(ref);
+    try {
+      if (this.disposed) throw new Error('session manager is disposed');
+      const workspace = workspaceLease.instance;
+      const workspaceId = workspace.id;
+      const generation = workspace.program.sessionControllerGeneration;
+      const existing = this.controllers.get(workspaceId);
+      if (existing?.generation === generation) {
+        existing.operationCount += 1;
+        workspaceLease.dispose();
+        return existing;
+      }
+      const controller = workspace.program.createSessionController();
+      const subscriptions = new DisposableStore();
+      const entry: SessionControllerEntry = {
+        workspaceId,
+        workspaceLease,
+        generation,
+        controller,
+        subscriptions,
+        sessionCount: 0,
+        operationCount: 1,
+      };
+      subscriptions.add(controller.onWillCreateSession((event) => this.willCreateEmitter.fire(event)));
+      subscriptions.add(controller.onDidCreateSession((event) => {
+        entry.sessionCount += 1;
+        this.reclaimed.delete(event.sessionId);
+        this.sessions.set(event.sessionId, event.handle);
+        this.owners.set(event.sessionId, entry);
+        this.didCreateEmitter.fire(event);
+      }));
+      subscriptions.add(controller.onWillCloseSession((event) => this.willCloseEmitter.fire(event)));
+      subscriptions.add(controller.onDidCloseSession((event) => {
+        entry.sessionCount -= 1;
+        this.sessions.delete(event.sessionId);
+        this.owners.delete(event.sessionId);
+        this.didCloseEmitter.fire(event);
+        this.retireEntryIfIdle(entry);
+      }));
+      subscriptions.add(controller.onDidArchiveSession((event) => {
+        entry.sessionCount -= 1;
+        this.sessions.delete(event.sessionId);
+        this.owners.delete(event.sessionId);
+        this.didArchiveEmitter.fire(event);
+        this.retireEntryIfIdle(entry);
+      }));
+      subscriptions.add(controller.onDidForkSession((event) => this.didForkEmitter.fire(event)));
+      this.controllerEntries.add(entry);
+      this.controllers.set(workspaceId, entry);
+      if (existing !== undefined) this.retireEntryIfIdle(existing);
+      return entry;
+    } catch (error) {
+      workspaceLease.dispose();
+      throw error;
+    }
   }
 
-  private retireEntryIfIdle(workspaceId: string, entry: SessionControllerEntry): void {
-    if (entry.sessionCount !== 0 || !this.controllerEntries.has(entry)) return;
+  private retainController(entry: SessionControllerEntry): SessionControllerEntry {
+    entry.operationCount += 1;
+    return entry;
+  }
+
+  private async runControllerOperation<T>(
+    entry: SessionControllerEntry,
+    work: (controller: SessionLifecycleService) => Promise<T>,
+  ): Promise<T> {
+    try {
+      return await work(entry.controller);
+    } finally {
+      entry.operationCount -= 1;
+      this.retireEntryIfIdle(entry);
+    }
+  }
+
+  private retireEntryIfIdle(entry: SessionControllerEntry): void {
+    if (entry.sessionCount !== 0 || entry.operationCount !== 0 || !this.controllerEntries.has(entry)) return;
     this.controllerEntries.delete(entry);
-    if (this.controllers.get(workspaceId) === entry) this.controllers.delete(workspaceId);
-    entry.subscriptions.dispose();
-    entry.controller.dispose();
+    if (this.controllers.get(entry.workspaceId) === entry) this.controllers.delete(entry.workspaceId);
+    this.disposeEntry(entry);
   }
 
-  private async controllerForSession(sessionId: string): Promise<SessionLifecycleService | undefined> {
+  private disposeEntry(entry: SessionControllerEntry): void {
+    try {
+      entry.subscriptions.dispose();
+    } finally {
+      try {
+        entry.controller.dispose();
+      } finally {
+        entry.workspaceLease.dispose();
+      }
+    }
+  }
+
+  private async controllerForSession(sessionId: string): Promise<SessionControllerEntry | undefined> {
     const live = this.owners.get(sessionId);
-    if (live !== undefined) return live;
+    if (live !== undefined) return this.retainController(live);
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
-    const workspace = await this.workspaces.getOrCreate({ workspaceId: summary.workspaceId, root: summary.cwd });
-    return this.controllerForWorkspace(workspace.id);
+    return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
   }
 }
 
