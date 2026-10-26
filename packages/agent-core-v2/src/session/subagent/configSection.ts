@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { Error2, ErrorCodes, isError2 } from '#/errors';
 import { isPlainObject } from '#/app/config/toml';
+import { deepMerge } from '#/app/config/configPure';
 import {
   type EnvBindings,
   envBindings,
@@ -71,7 +72,15 @@ registerConfigSection(SUBAGENT_SECTION, SubagentConfigSchema, {
   stripEnv: stripSubagentEnv,
 });
 
-registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema);
+registerConfigSection(SECONDARY_MODEL_SECTION, SecondaryModelConfigSchema, {
+  merge: (base, patch) => {
+    const merged = deepMerge(base, patch);
+    if (isPlainObject(patch) && patch['defaultEffort'] === null) {
+      return { ...merged, defaultEffort: undefined };
+    }
+    return merged;
+  },
+});
 
 export function resolveSubagentTimeoutMs(config: IConfigService): number {
   return (
@@ -194,7 +203,7 @@ function assertValidSubagentDefaultEffort(
   if (effort === undefined || pool === undefined) return;
   for (const alias of Object.keys(pool.models)) {
     const model = modelCatalog.get(alias);
-    if (effort === 'off' && model.alwaysThinking === true) {
+    if (effort === 'off' && model.alwaysThinking) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
         `[secondary_model].default_effort "off" cannot disable thinking for model "${alias}", which always reasons. Choose a concrete thinking effort instead of "off".`,

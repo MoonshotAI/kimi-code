@@ -1,16 +1,26 @@
 /**
  * Scenario: /secondary-model command behavior in the interactive TUI.
- * Responsibilities: picker filtering, persistence of `[secondary_model] default_model`
- * (keeping existing pool descriptions), and error paths.
- * Wiring: real command and selector with the SDK/session boundaries stubbed by a small host rig.
+ * Responsibilities: model and effort selection, persistence, subagent binding,
+ * preservation of pool descriptions, cancellation, and error paths.
+ * Wiring: real command and selectors, real SDK config and subagent integration,
+ * plus a small host rig for focused error cases.
  * Run: pnpm -C apps/kimi-code exec vitest run test/tui/commands/secondary-model.test.ts
  */
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { createKimiHarness, type Event, type KimiConfig, type ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { SlashCommandHost } from '#/tui/commands';
 import { handleSecondaryModelCommand } from '#/tui/commands/config';
+import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
+
+const ESC = String.fromCodePoint(27);
+const LEFT = `${ESC}[D`;
+const RIGHT = `${ESC}[C`;
 
 interface PickerOptions {
   readonly models: Record<string, ModelAlias>;
@@ -31,7 +41,7 @@ function model(name: string): ModelAlias {
 }
 
 function makeHost(options?: {
-  readonly secondaryModel?: { defaultModel?: string; models?: Record<string, string> };
+  readonly secondaryModel?: KimiConfig['secondaryModel'];
 }) {
   const appState = {
     availableModels: {
@@ -87,7 +97,263 @@ function mountedPicker(host: { mountEditorReplacement: ReturnType<typeof vi.fn> 
   return (component as unknown as { opts: PickerOptions }).opts;
 }
 
+function mountedEffortPicker(host: { mountEditorReplacement: ReturnType<typeof vi.fn> }): EffortSelectorComponent {
+  const component = host.mountEditorReplacement.mock.calls.at(-1)![0];
+  expect(component).toBeInstanceOf(EffortSelectorComponent);
+  return component as EffortSelectorComponent;
+}
+
+async function withRealConfig(
+  secondaryModel: KimiConfig['secondaryModel'],
+  run: (host: ReturnType<typeof makeHost>['host'], harness: ReturnType<typeof createKimiHarness>) => Promise<void>,
+): Promise<void> {
+  const homeDir = await mkdtemp(join(tmpdir(), 'kimi-secondary-effort-'));
+  const harness = createKimiHarness({
+    homeDir,
+    identity: { productName: 'test', version: '0.0.0-test', platform: 'test' },
+  });
+  const { host } = makeHost();
+  try {
+    const reasoner: ModelAlias = {
+      ...model('reasoner'),
+      capabilities: ['thinking', 'always_thinking'],
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'high',
+    };
+    await harness.setConfig({
+      providers: { test: { type: 'openai', apiKey: 'YOUR_API_KEY' } },
+      models: { reasoner },
+      secondaryModel,
+    });
+    Object.assign(host, { harness });
+    host.state.appState.availableModels = { reasoner };
+    await run(host, harness);
+  } finally {
+    await harness.close();
+    await rm(homeDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  }
+}
+
 describe('handleSecondaryModelCommand', () => {
+  it('lets the user choose and persist subagent effort with the real config service', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      await handleSecondaryModelCommand(host, '');
+      const modelPicker = host.mountEditorReplacement.mock.calls.at(-1)![0] as TabbedModelSelectorComponent;
+      modelPicker.handleInput('\r');
+      const effortPicker = mountedEffortPicker(host);
+      expect(effortPicker.render(100).join('\n')).toContain('Select subagent thinking effort');
+      effortPicker.handleInput(RIGHT);
+      effortPicker.handleInput(RIGHT);
+      effortPicker.handleInput('\r');
+
+      await vi.waitFor(async () => {
+        expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+          defaultModel: 'reasoner',
+          defaultEffort: 'high',
+        });
+      });
+    });
+  });
+
+  it('removes the pool effort override when the user selects Default', async () => {
+    await withRealConfig({
+      defaultModel: 'reasoner',
+      defaultEffort: 'max',
+      models: { reasoner: 'complex tasks' },
+    }, async (host, harness) => {
+      await handleSecondaryModelCommand(host, '');
+      mountedPicker(host).onSelect({ alias: 'reasoner' });
+      const effortPicker = mountedEffortPicker(host);
+      for (let i = 0; i < 3; i++) effortPicker.handleInput(LEFT);
+      effortPicker.handleInput('\r');
+      await vi.waitFor(async () => {
+        expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+          defaultModel: 'reasoner',
+          models: { reasoner: 'complex tasks' },
+        });
+      });
+      const restarted = createKimiHarness({
+        homeDir: harness.homeDir,
+        identity: { productName: 'test', version: '0.0.0-test', platform: 'test' },
+      });
+      try {
+        expect((await restarted.getConfig()).secondaryModel).toEqual({
+          defaultModel: 'reasoner',
+          models: { reasoner: 'complex tasks' },
+        });
+      } finally {
+        await restarted.close();
+      }
+    });
+  });
+
+  it('rejects a level if the pool changes to an incompatible model while the picker is open', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      await handleSecondaryModelCommand(host, '');
+      mountedPicker(host).onSelect({ alias: 'reasoner' });
+      const effortPicker = mountedEffortPicker(host);
+      for (let i = 0; i < 3; i++) effortPicker.handleInput(RIGHT);
+      await harness.setConfig({
+        models: {
+          fast: {
+            ...model('fast'),
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+          },
+        },
+        secondaryModel: { models: { reasoner: 'deep tasks', fast: 'quick tasks' } },
+      });
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showError).toHaveBeenCalledWith(expect.stringContaining('max'));
+      });
+      expect((await harness.getConfig({ reload: true })).secondaryModel?.defaultEffort).toBeUndefined();
+    });
+  });
+
+  it('uses the chosen effort on a new subagent without changing the main agent', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      await harness.setConfig({
+        providers: { test: { baseUrl: 'https://model.example.test/v1' } },
+        models: {
+          main: {
+            ...host.state.appState.availableModels['reasoner']!,
+            model: 'main',
+          },
+        },
+        defaultModel: 'main',
+        thinking: { enabled: true, effort: 'max' },
+        autoSessionTitle: false,
+      });
+      await handleSecondaryModelCommand(host, '');
+      mountedPicker(host).onSelect({ alias: 'reasoner' });
+      const effortPicker = mountedEffortPicker(host);
+      effortPicker.handleInput(RIGHT);
+      effortPicker.handleInput(RIGHT);
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+
+      const requests: Array<{ model: string; reasoning_effort?: string }> = [];
+      const fetchStub = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = input instanceof Request ? input.url : String(input);
+        if (url !== 'https://model.example.test/v1/chat/completions') {
+          throw new Error(`Unexpected fetch: ${url}`);
+        }
+        if (typeof init?.body !== 'string') throw new Error('Expected a JSON request body');
+        const request = JSON.parse(init.body) as (typeof requests)[number];
+        const delegate = request.model === 'main' && requests.length === 0;
+        requests.push(request);
+        const delta = delegate
+          ? { tool_calls: [{ index: 0, id: 'delegate', type: 'function', function: {
+            name: 'Agent', arguments: JSON.stringify({ prompt: 'Say hello.', description: 'Say hello', subagent_type: 'coder' }),
+          } }] }
+          : { content: 'hello' };
+        const chunk = { id: 'test', object: 'chat.completion.chunk', created: 0, model: request.model };
+        return new Response([
+          `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta, finish_reason: null }] })}`,
+          `data: ${JSON.stringify({ ...chunk, choices: [{ index: 0, delta: {}, finish_reason: delegate ? 'tool_calls' : 'stop' }] })}`,
+          'data: [DONE]',
+        ].join('\n\n') + '\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+      });
+      try {
+        const session = await harness.createSession({ workDir: harness.homeDir, permission: 'yolo' });
+        let ended: Event | undefined;
+        const unsubscribe = session.onEvent((event) => {
+          if (event.type === 'turn.ended' && event.agentId === 'main') ended = event;
+        });
+        await session.prompt('Use a coder subagent to say hello.');
+        await vi.waitFor(() => {
+          expect(ended).toMatchObject({ reason: 'completed' });
+        }, { timeout: 5_000 });
+        unsubscribe();
+        expect(requests.filter((request) => request.model === 'reasoner')).toEqual([
+          expect.objectContaining({ reasoning_effort: 'high' }),
+        ]);
+        expect(requests.filter((request) => request.model === 'main')).toEqual([
+          expect.objectContaining({ reasoning_effort: 'max' }),
+          expect.objectContaining({ reasoning_effort: 'max' }),
+        ]);
+      } finally {
+        fetchStub.mockRestore();
+      }
+    });
+  }, 15_000);
+
+  it('keeps an existing On override selected for an effort-capable model', async () => {
+    await withRealConfig({ defaultModel: 'reasoner', defaultEffort: 'on' }, async (host, harness) => {
+      await handleSecondaryModelCommand(host, '');
+      mountedPicker(host).onSelect({ alias: 'reasoner' });
+      const effortPicker = mountedEffortPicker(host);
+      expect(effortPicker.render(100).join('\n')).toContain('[ On ]');
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect((await harness.getConfig({ reload: true })).secondaryModel?.defaultEffort).toBe('on');
+    });
+  });
+
+  it('saves an effort inferred from the selected model provider', async () => {
+    await withRealConfig({ defaultModel: 'reasoner' }, async (host, harness) => {
+      const claude = { ...model('claude-latest') };
+      await harness.setConfig({
+        providers: { test: { type: 'anthropic' } },
+        models: { claude },
+        secondaryModel: { defaultModel: 'claude' },
+      });
+      host.state.appState.availableModels = { claude };
+      host.state.appState.availableProviders = { test: { type: 'anthropic' } };
+      await handleSecondaryModelCommand(host, '');
+      mountedPicker(host).onSelect({ alias: 'claude' });
+      const effortPicker = mountedEffortPicker(host);
+      for (let i = 0; i < 4; i++) effortPicker.handleInput(RIGHT);
+      expect(effortPicker.render(100).join('\n')).toContain('[ High ]');
+      effortPicker.handleInput('\r');
+      await vi.waitFor(() => {
+        expect(host.showStatus).toHaveBeenCalled();
+      });
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'claude', defaultEffort: 'high',
+      });
+      expect(host.showError).not.toHaveBeenCalled();
+    });
+  });
+
+  it('offers only levels shared by every effective model in the pool', async () => {
+    const { host } = makeHost({
+      secondaryModel: { defaultModel: 'reasoner', models: { reasoner: 'deep tasks', fast: 'quick tasks' } },
+    });
+    host.state.appState.availableModels = {
+      reasoner: { ...model('reasoner'), capabilities: ['always_thinking'], supportEfforts: ['low', 'high', 'max'] },
+      fast: { ...model('fast'), capabilities: ['thinking'], supportEfforts: ['low', 'high', 'max'], overrides: { supportEfforts: ['high'] } },
+    };
+    await handleSecondaryModelCommand(host, '');
+    mountedPicker(host).onSelect({ alias: 'reasoner' });
+    const rendered = mountedEffortPicker(host).render(100).join('\n');
+    expect(rendered).toContain('Default');
+    expect(rendered).toContain('High');
+    expect(rendered).not.toContain('Low');
+    expect(rendered).not.toContain('Max');
+    expect(rendered).not.toContain('Off');
+    expect(rendered).toContain('entire subagent model pool');
+  });
+
+  it('leaves the model and effort unchanged when the effort step is cancelled', async () => {
+    await withRealConfig({ defaultModel: 'reasoner', defaultEffort: 'max' }, async (host, harness) => {
+      await handleSecondaryModelCommand(host, '');
+      mountedPicker(host).onSelect({ alias: 'reasoner' });
+      const effortPicker = mountedEffortPicker(host);
+      effortPicker.handleInput(LEFT);
+      effortPicker.handleInput(ESC);
+      expect((await harness.getConfig({ reload: true })).secondaryModel).toEqual({
+        defaultModel: 'reasoner', defaultEffort: 'max',
+      });
+      expect(host.showStatus).not.toHaveBeenCalled();
+    });
+  });
+
   it('opens the picker filtered to user models, with the configured default as current', async () => {
     const { host } = makeHost({ secondaryModel: { defaultModel: 'cheap' } });
 
@@ -97,8 +363,7 @@ describe('handleSecondaryModelCommand', () => {
     expect(Object.keys(opts.models)).toEqual(['k2', 'cheap']);
     expect(opts.currentValue).toBe('cheap');
     expect(opts.title).toContain('secondary model');
-    // Pool bindings carry no explicit thinking level — the picker hides the
-    // Thinking footer instead of offering a no-op choice.
+    // The following step selects effort and explains its pool-wide scope.
     expect(opts.thinkingControl).toBe(false);
   });
 
@@ -107,6 +372,7 @@ describe('handleSecondaryModelCommand', () => {
 
     await handleSecondaryModelCommand(host, '');
     mountedPicker(host).onSelect({ alias: 'k2' });
+    mountedEffortPicker(host).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalled();
@@ -127,6 +393,7 @@ describe('handleSecondaryModelCommand', () => {
 
     await handleSecondaryModelCommand(host, '');
     mountedPicker(host).onSelect({ alias: 'k2' });
+    mountedEffortPicker(host).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalled();
@@ -149,6 +416,7 @@ describe('handleSecondaryModelCommand', () => {
 
     await handleSecondaryModelCommand(host, '');
     mountedPicker(host).onSelect({ alias: 'k2' });
+    mountedEffortPicker(host).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(host.showStatus).toHaveBeenCalled();
@@ -224,6 +492,7 @@ describe('handleSecondaryModelCommand', () => {
 
     await handleSecondaryModelCommand(host, '');
     mountedPicker(host).onSelect({ alias: 'k2' });
+    mountedEffortPicker(host).handleInput('\r');
 
     await vi.waitFor(() => {
       expect(host.showError).toHaveBeenCalled();

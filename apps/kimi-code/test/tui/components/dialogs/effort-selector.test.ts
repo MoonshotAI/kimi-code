@@ -1,3 +1,4 @@
+import { visibleWidth } from '@moonshot-ai/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 
 import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
@@ -13,6 +14,18 @@ function text(component: EffortSelectorComponent, width = 120): string {
 }
 
 describe('EffortSelectorComponent', () => {
+  it('keeps the selected effort visible in a narrow terminal', () => {
+    const picker = new EffortSelectorComponent({
+      efforts: ['default', 'off', 'low', 'medium', 'high', 'xhigh', 'max'],
+      currentValue: 'max',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(32);
+    expect(lines.map(strip).join('\n')).toContain('[ Max ]');
+    expect(lines.every((line) => visibleWidth(line) <= 32)).toBe(true);
+  });
+
   it('renders efforts as horizontal segments with the active one bracketed', () => {
     const picker = new EffortSelectorComponent({
       efforts: ['off', 'low', 'high', 'max'],

@@ -222,7 +222,14 @@ Constraints between the fields:
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
-In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately, no session restart needed.
+In the interactive TUI, run [`/secondary-model`](../reference/slash-commands.md) (alias `/subagent-model`) to choose the subagent model and thinking effort:
+
+1. Select a model and press `Enter`.
+2. Use `Left` / `Right` to choose `Default` or a thinking level, then press `Enter` to save both choices.
+
+An explicit thinking level writes `default_effort` for the **entire subagent model pool**, overriding each model's own default. Only levels supported by every model in the resulting pool are offered. Choosing `Default` removes this override and restores the configured model defaults. Cancelling either step saves neither choice.
+
+The model choice is written to `default_model`. When a `models` table exists and the picked alias is not in it, an entry with an empty description is added. Newly spawned subagents pick up the choices immediately, with no session restart; already running subagents keep their existing model and effort.
 
 A configured pool (an explicit `models` table or a lone `default_model`) enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
 

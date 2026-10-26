@@ -326,7 +326,9 @@ const PermissionConfigPatchSchema = PermissionConfigSchema.partial();
 const LoopControlPatchSchema = LoopControlSchema.partial();
 const BackgroundConfigPatchSchema = BackgroundConfigSchema.partial();
 const SubagentConfigPatchSchema = SubagentConfigSchema.partial();
-const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial();
+const SecondaryModelConfigPatchSchema = SecondaryModelConfigSchema.partial().extend({
+  defaultEffort: z.string().nullable().optional(),
+});
 const McpConfigPatchSchema = McpConfigSchema.partial();
 const ImageConfigPatchSchema = ImageConfigSchema.partial();
 const ModelCatalogConfigPatchSchema = ModelCatalogConfigSchema.partial();
