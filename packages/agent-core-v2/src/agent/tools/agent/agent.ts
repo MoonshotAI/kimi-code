@@ -51,7 +51,13 @@ export const SubagentToolInputSchema = z.preprocess(
       .boolean()
       .optional()
       .describe(
-        'Fork the current context: the subagent starts with a snapshot of this agent\'s completed conversation history instead of zero context, inheriting this agent\'s agent type, tool set, and model. A non-empty resume is rejected. If subagent_type is provided, it must match this agent\'s type; if model is provided, it must be this agent\'s model or "primary". Different types and model overrides are rejected.',
+        'Fork the current context: the subagent starts with a snapshot of this agent\'s completed conversation history instead of zero context, inheriting this agent\'s agent type, tool set, and default model (unless overridden via model). A non-empty resume is rejected. If subagent_type is provided, it must match this agent\'s type.',
+      ),
+    deliver_to_user: z
+      .boolean()
+      .optional()
+      .describe(
+        'If true (foreground only), deliver the subagent\'s final output directly to the user as this turn\'s response and end the turn immediately without another main-agent synthesis step. Ideal when delegating long-form explanations or user-facing reports to a specialized writing model. Cannot be combined with run_in_background.',
       ),
     model: z
       .string()
@@ -80,6 +86,8 @@ export type SubagentToolOutput = z.infer<typeof SubagentToolOutputSchema>;
 
 export const BACKGROUND_AGENT_UNAVAILABLE =
   'Background agent execution is not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.';
+export const DELIVER_TO_USER_WITH_BACKGROUND_UNAVAILABLE =
+  'Cannot combine deliver_to_user with run_in_background. Direct delivery to the user requires foreground execution.';
 export const RESUME_WITH_TYPE_UNAVAILABLE =
   'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.';
 export const USER_INTERRUPTED_SUBAGENT_MESSAGE =

@@ -380,13 +380,24 @@ export function stripSubagentForkParameter(
   parameters: Record<string, unknown>,
 ): Record<string, unknown> {
   const properties = parameters['properties'];
-  if (!isPlainObject(properties) || !('fork' in properties)) return parameters;
+  if (
+    !isPlainObject(properties) ||
+    (!('fork' in properties) && !('deliver_to_user' in properties))
+  ) {
+    return parameters;
+  }
   const nextProperties = { ...properties };
   delete nextProperties['fork'];
+  delete nextProperties['deliver_to_user'];
   const next: Record<string, unknown> = { ...parameters, properties: nextProperties };
   const required = parameters['required'];
-  if (Array.isArray(required) && required.includes('fork')) {
-    next['required'] = required.filter((entry) => entry !== 'fork');
+  if (
+    Array.isArray(required) &&
+    (required.includes('fork') || required.includes('deliver_to_user'))
+  ) {
+    next['required'] = required.filter(
+      (entry) => entry !== 'fork' && entry !== 'deliver_to_user',
+    );
   }
   return next;
 }

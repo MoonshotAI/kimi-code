@@ -33,7 +33,6 @@ import { AgentSwarmToolInputSchema } from '#/features/swarm/tools/agent-swarm/ag
 import { AgentSwarmTool } from '#/features/swarm/tools/agent-swarm/agentSwarmTool';
 import {
   FORK_EXPERIMENTAL_UNAVAILABLE,
-  FORK_WITH_MODEL_UNAVAILABLE,
   FORK_WITH_RESUME_UNAVAILABLE,
   FORK_WITH_TYPE_UNAVAILABLE,
 } from '#/session/subagent/spawn';
@@ -1405,10 +1404,14 @@ describe('AgentSwarmTool', () => {
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
-  it('rejects fork with a model override', async () => {
+  it('accepts fork with a model override from the secondary model pool', async () => {
     const host = mockSwarmHost();
     const callerProfile = stubCallerProfile({ profileName: 'orchestrator', modelAlias: 'main-model' });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(), stubFlag(true), realSubagents(stubSwarmCatalog(), stubConfig(), callerProfile), callerProfile);
+    const config = stubConfig({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'Fast model' },
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), config, stubFlag(true), realSubagents(stubSwarmCatalog(), config, callerProfile), callerProfile);
 
     const result = await executeTool(
       tool,
@@ -1421,8 +1424,61 @@ describe('AgentSwarmTool', () => {
       }),
     );
 
-    expect(result).toMatchObject({ isError: true, output: FORK_WITH_MODEL_UNAVAILABLE });
-    expect(host.swarmService.run).not.toHaveBeenCalled();
+    expect(result.isError).toBeUndefined();
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: expect.arrayContaining([
+          expect.objectContaining({
+            plan: expect.objectContaining({
+              fork: true,
+              model: 'provider/fast',
+            }),
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('resolves a caller-in-pool alias through the pool on fork without inheriting thinking', async () => {
+    const host = mockSwarmHost();
+    const callerProfile = stubCallerProfile({
+      profileName: 'orchestrator',
+      modelAlias: 'main-model',
+      thinkingLevel: 'high',
+    });
+    const config = stubConfig({
+      defaultModel: 'provider/fast',
+      models: { 'provider/fast': 'Fast model', 'main-model': 'Main model in pool' },
+    });
+    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), config, stubFlag(true), realSubagents(stubSwarmCatalog(), config, callerProfile), callerProfile);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        model: 'main-model',
+        fork: true,
+      }),
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: expect.arrayContaining([
+          expect.objectContaining({
+            plan: {
+              profileName: 'orchestrator',
+              model: 'main-model',
+              modelSource: 'secondary_pool',
+              thinking: undefined,
+              fork: true,
+            },
+          }),
+        ]),
+      }),
+    );
   });
 
   it('rejects fork while the subagent_fork experimental flag is off', async () => {
