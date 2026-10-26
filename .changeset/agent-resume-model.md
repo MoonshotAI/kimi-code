@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Allow choosing a different model with Agent(resume=..., model=...) when resuming a stopped subagent.
+Support model overrides when resuming subagents, artifact missions with human acceptance, and a configurable TowerStatus detail limit.

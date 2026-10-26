@@ -18,13 +18,13 @@ export const TowerPlanToolInputSchema = z
               .array(z.string())
               .min(1)
               .describe(
-                'Files/globs this mission may touch (e.g. "src/build/**"). Scopes of different build and artifact missions should be disjoint; when they overlap, the store auto-adds a dependency that serializes their merges. Survey scopes are informational and reserve nothing.',
+                'Files/globs this mission may touch (e.g. "src/build/**"). Scopes of different build and artifact missions should be disjoint; when they overlap, the store auto-adds a dependency that serializes their merges.',
               ),
             tasks: z
               .array(z.string())
               .optional()
               .describe(
-                'Checklist the worker will tick off via TowerMission task_done — write each task as a verifiable item a reviewer or the human acceptance step can map to the diff',
+                'Checklist the worker will tick off via TowerMission task_done — write each task as a verifiable item',
               ),
             context: z
               .string()
@@ -40,7 +40,7 @@ export const TowerPlanToolInputSchema = z
               .enum(['build', 'survey', 'artifact'])
               .optional()
               .describe(
-                '"survey" = read-only investigation: the scope is informational and reserves nothing (other missions may overlap it), the worker must not change code, and closing it needs no review or git merge. "artifact" = committed deliverables in a reserved scope: no independent reviewer, but explicit human acceptance is required before a real merge. Default "build".',
+                '"survey" = read-only, zero-diff investigation with no reserved scope or review. "artifact" = committed deliverables with reserved scope and explicit human acceptance instead of independent review. Default "build".',
               ),
           })
           .strict(),

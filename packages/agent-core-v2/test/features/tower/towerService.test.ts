@@ -4183,8 +4183,7 @@ describe('TowerModeInjection', () => {
     expect(text).toContain('acceptance-request');
     expect(text).toContain('explicit user approval');
     expect(text).toContain('auto or noninteractive mode');
-    expect(text).toContain('Tower-recorded artifact acceptance and feedback are exempt');
-    expect(text).toContain('Artifact acceptance never receives that waiver');
+    expect(text).toContain('never self-approve or substitute an independent review');
     expect(text).toContain('merged or abandoned');
     expect(text).toContain('background execution is unavailable');
     expect(text).toContain('break-glass');
