@@ -731,6 +731,27 @@ describe('openai requester thinking', () => {
       ).then((content) => content.filter((part) => part.type === 'think')),
     ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning_content' }]);
     await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_content: '',
+            reasoning: '',
+            tool_calls: [
+              { index: 0, id: 'call_2', type: 'function', function: { name: 'f', arguments: '' } },
+            ],
+          },
+          {
+            reasoning_content: '',
+            reasoning: '',
+            tool_calls: [{ index: 0, function: { arguments: '{}' } }],
+          },
+        ]),
+      ).then((content) => content.filter((part) => part.type === 'think')),
+    ).resolves.toEqual([
+      { type: 'think', think: '', reasoningKey: 'reasoning_content' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    await expect(
       collect(chatCompletionChunks([{ reasoning: '' }, { content: 'hi' }])),
     ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning' }, { type: 'text', text: 'hi' }]);
     await expect(
