@@ -188,7 +188,6 @@ Switches that control the behavior of subsystems such as telemetry, background t
 | `KIMI_CODE_LLM_HEADERS_TIMEOUT_MS` | Max time (ms) an LLM request on the `openai` / `openai-responses` / `anthropic` protocols may wait for the response headers (first byte), replacing the HTTP client's default 300 s headers timeout — raise it for long non-streaming thinking; unset keeps the default; the SDK's own total request timeout (default 10 minutes) still caps each attempt; not supported for `google-genai` (its SDK exposes no dispatcher option) or behind a SOCKS proxy (requests still go through the proxy) | Positive integer no greater than 2147483647; invalid values fail the request |
 | `KIMI_CODE_NO_AUTO_UPDATE` | Fully disable the update preflight: no check, background install, or prompt. Legacy alias `KIMI_CLI_NO_AUTO_UPDATE` also honored | Truthy: `1`/`true`/`yes`/`on` |
 | `KIMI_DISABLE_CRON` | Disable the scheduled-task tool (`CronCreate` rejects new schedules; existing tasks do not fire) | `1` to disable |
-| `PI_PROGRAM_STATUS` | Override OSC 7501 program-status reporting in the interactive TUI; unset = auto-detect terminal support or use Rex hints | `1` = always report, `0` = disable |
 
 The `KIMI_CODE_INFINITE_RETRY`, `KIMI_CODE_IDENTITY_*`, and `KIMI_CODE_BUILTIN_PRODUCT_SKILLS` variables are read by the `agent-core-v2` engine.
 
@@ -213,8 +212,7 @@ The CLI also reads several standard system variables to detect the runtime envir
 - `PATH`: used to locate dependencies such as `rg`, `fd`, `fdfind`, and `git`; on Windows, Git Bash detection checks each `git.exe` found on `PATH`, including package-manager shims such as Scoop
 - `NO_COLOR`, `FORCE_COLOR`: control color output (following the [no-color.org](https://no-color.org) convention)
 - `CI`: when non-empty and not `"0"`, disables theme detection and falls back to the dark theme
-- `TERM_PROGRAM`, `TERM`, `TMUX`, `STY`, `ZELLIJ`, `HERDR_ENV`: detect terminal features, notification support, and multiplexer status reporting
-- `REX_SESSION`, `REX_BLOCK`: enable OSC 7501 program-status reporting in auto mode when the terminal cannot answer the support query
+- `TERM_PROGRAM`, `TERM`, `TMUX`: detect terminal features and notification support
 - `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_SESSION_TYPE`: detect Linux graphical sessions (for clipboard and image features)
 - `WSL_DISTRO_NAME`, `WSLENV`: detect WSL for the clipboard PowerShell bridge
 - `LOCALAPPDATA`: used on Windows as a fallback when probing for the Git Bash installation path

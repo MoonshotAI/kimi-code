@@ -134,24 +134,6 @@ The input box remains usable while the agent is thinking or calling tools, and s
 
 When the agent is waiting for background tasks through `WaitFor`, sending a message with `Enter` steers it in and ends that wait early; messages already queued when the wait starts are steered in automatically as well. If the queue holds a shell command or a skill, automatic steering is skipped and the queue and new input stay queued until the turn ends. Press `Ctrl-S` to manually steer non-shell inputs from the editor and the queue. Background tasks keep running and existing tool results are preserved. If other foreground tools remain in the same batch, the agent processes your message after they return.
 
-## Terminal program status
-
-On compatible terminals, Kimi Code CLI reports persistent program status using OSC 7501 (a protocol for telling the terminal what the program is doing). The terminal chooses the presentation, such as a tab badge for working, blocked, done, or error.
-
-The root record describes the main session. It covers foreground turns, compaction, queued messages, and foreground `!` shell commands. It does not stay working merely because a background subagent is still running: after the main turn ends, the root can be done while that subagent continues to report working. Background shell commands and monitor tasks do not get records.
-
-Every foreground and background subagent has its own record titled with its task. A subagent's completion or failure never overwrites the root result. If the main agent or any subagent is waiting for an approval or an answer, the root and the affected subagent report blocked. Plan approvals and workspace trust are permission blocks, questions are question blocks, and sign-in is an auth block. A prompt-hook termination reports error because the current turn has already ended rather than waiting for an edit or resend.
-
-A successful main turn reports done, a failed one reports error, and a cancelled one returns to idle. Foreground shell commands and compaction report working while they run. They return to idle after an ordinary shell result or a successful or cancelled compaction, and report error when the shell call or compaction request itself fails. A queued sequence stays working until its last turn finishes.
-
-Finished subagent records stay visible until a turn started by you or a scheduled task ends. Automatic turns that handle task results or continue goals do not clear them. Returning focus to the terminal changes a root done or error to idle and clears finished subagent records, while running ones remain. Results have no time-based expiry. Resuming a session restores only subagents that are still running.
-
-At most 63 subagent records are reported: blocked first, then errors, working agents, and finally completed agents, with recent activity first within each group. This limit affects only which records appear, not which agents run.
-
-In tmux, screen, zellij, and herdr, only the root record is reported. In tmux, enable `set -g allow-passthrough on` so reports and exit cleanup reach the outer terminal. Normal exit clears the whole record tree. Status reports use session titles, task descriptions, short action labels, or the first line of an error; they do not include full prompts, tool arguments, model output, working directories, or stack traces.
-
-This applies only to the interactive TUI, not `kimi -p`. Percentage progress and desktop notifications remain separate channels. Terminal support is auto-detected by default; see [`PI_PROGRAM_STATUS`](../configuration/env-vars.md#runtime-switches) to force it on or off.
-
 ## External editor
 
 Press `Ctrl-G` to send the current input content to an external editor. When you save and close, the text is written back into the input box; if you close without saving, the original content is preserved. This is handy when you need to enter large blocks of text or content with complex formatting.
