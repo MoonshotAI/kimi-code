@@ -215,6 +215,8 @@ function createService(
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
     readonly contextMessages?: Message[];
     readonly env?: Record<string, string>;
+    readonly modelAlias?: () => string;
+    readonly prefixRevision?: () => number;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -223,7 +225,7 @@ function createService(
   const profile: Partial<IAgentProfileService> = {
     hasProvider: () => true,
     resolveModelContext: () => ({
-      modelAlias: 'm',
+      modelAlias: options.modelAlias?.() ?? 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
@@ -257,7 +259,7 @@ function createService(
   const usage = { record: () => Promise.resolve(), status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
-    prefixRevision: () => 0,
+    prefixRevision: options.prefixRevision ?? (() => 0),
   };
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
@@ -896,6 +898,29 @@ describe('AgentLLMRequesterService media recovery prefix parity', () => {
 
     expectPrefixExtension(settled, inputs[2]!);
     expect(inputs).toHaveLength(3);
+  });
+
+  it.each([
+    { change: 'the history prefix is rewritten', bump: 'revision' },
+    { change: 'the model changes', bump: 'model' },
+  ] as const)('retries full media on the next turn after $change', async ({ bump }) => {
+    let revision = 0;
+    let modelAlias = 'm';
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(mediaRejectingRequester(inputs), undefined, {
+      modelAlias: () => modelAlias,
+      prefixRevision: () => revision,
+    });
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(inputs).toHaveLength(2);
+
+    if (bump === 'revision') revision += 1;
+    else modelAlias = 'other';
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 2, step: 1 } });
+
+    expect(inputs).toHaveLength(4);
+    expect(inputs[2]!.messages).toEqual(degradedTurn);
   });
 
   it.each([
