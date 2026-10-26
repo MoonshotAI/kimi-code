@@ -226,6 +226,33 @@ describe("mouse-aware components", () => {
 		tui.stop();
 	});
 
+	it("does not move the editor caret with the refocusing gesture", async (context) => {
+		context.mock.timers.enable({ apis: ["Date"] });
+		context.mock.timers.setTime(1_000);
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TuiAltScreen(terminal, undefined, undefined, { refocusMouseGuardMs: 300 });
+		const editor = new Editor(tui, editorTheme);
+		editor.setText("hello");
+		tui.addChild(editor);
+		tui.setFocus(editor);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		terminal.sendInput("\x1b[<0;3;2M");
+		terminal.sendInput("\x1b[<0;3;2m");
+		terminal.sendInput("X");
+		assert.strictEqual(editor.getText(), "helloX");
+
+		context.mock.timers.setTime(1_300);
+		terminal.sendInput("\x1b[<0;3;2M");
+		terminal.sendInput("\x1b[<0;3;2m");
+		terminal.sendInput("Y");
+		assert.strictEqual(editor.getText(), "heYlloX");
+		tui.stop();
+	});
+
 	it("positions and focuses the multiline editor through alternate-screen dispatch", async () => {
 		const terminal = new VirtualTerminal(20, 6);
 		const tui = new TuiAltScreen(terminal);

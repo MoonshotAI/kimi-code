@@ -34,7 +34,6 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: readonly KeyboardShortcut[] = [
   { keys: 'Shift-Tab', description: 'Toggle plan mode' },
   { keys: 'Ctrl-G', description: 'Edit in external editor ($VISUAL / $EDITOR)' },
   { keys: 'Ctrl-O', description: 'Toggle tool output / compaction summary expansion' },
-  { keys: 'Ctrl-T', description: 'Expand / collapse the todo list (when truncated)' },
   { keys: 'Ctrl-S', description: 'Steer — inject a follow-up during streaming' },
   { keys: 'Shift-Enter / Ctrl-J', description: 'Insert newline' },
   { keys: 'Ctrl-C', description: 'Interrupt stream / clear input' },
