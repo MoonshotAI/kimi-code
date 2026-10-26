@@ -568,6 +568,9 @@ importers:
       picomatch:
         specifier: ^4.0.4
         version: 4.0.4
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
       radashi:
         specifier: ^12.9.1
         version: 12.9.1
@@ -611,6 +614,9 @@ importers:
       '@types/picomatch':
         specifier: ^4.0.3
         version: 4.0.3
+      '@types/proper-lockfile':
+        specifier: ^4.1.4
+        version: 4.1.4
       '@types/retry':
         specifier: 0.12.0
         version: 0.12.0

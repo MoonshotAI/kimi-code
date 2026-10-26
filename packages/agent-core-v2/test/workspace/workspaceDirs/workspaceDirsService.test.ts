@@ -53,7 +53,7 @@ describe('WorkspaceDirsService (registry source)', () => {
     const hostFs = new HostFileSystem();
     const bootstrap = stubBootstrap(homeDir);
     persistence = disposables.add(
-      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), bootstrap),
+      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), storage, bootstrap),
     );
     const localConfig = new FileProjectLocalConfigService(bootstrap, hostFs);
     workspaces = new WorkspaceService(

@@ -134,6 +134,17 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     );
   }
 
+  async function writeProjectsJson(
+    projects: Record<string, PersistedWorkspaceEntry>,
+    deletedIds: readonly string[] = [],
+  ): Promise<void> {
+    await fsp.writeFile(
+      join(homeDir, 'projects.json'),
+      JSON.stringify({ schema_version: 2, projects, deleted_project_ids: deletedIds }),
+      'utf8',
+    );
+  }
+
   it('resolveAliasIds returns every registered id for one physical directory', async () => {
     const lowerRoot = 'c:\\users\\foo\\proj';
     const typedRoot = 'C:\\Users\\Foo\\Proj';
@@ -251,7 +262,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   it('resolveAliasIds coalesces concurrent cold loads', async () => {
     const root = join(homeDir, 'proj');
     const id = encodeWorkDirKey(root);
-    await writeWorkspacesJson({
+    await writeProjectsJson({
       [id]: {
         root,
         name: 'proj',
@@ -287,13 +298,13 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
 
     const persistence = currentHost!.app.accessor.get(IWorkspacePersistence);
-    await persistence.save({
+    await persistence.update(() => ({
       workspaces: [
         { id: typedId, root: typedRoot, name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
         { id: legacyId, root: 'c:\\users\\foo\\proj', name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
       ],
       deletedIds: [],
-    });
+    }));
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
       [legacyId, typedId].toSorted(),
     );
@@ -314,8 +325,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         if (this.gate !== undefined) await this.gate;
         return catalog;
       }
-      save(catalog: WorkspaceCatalog): Promise<void> {
-        return this.inner.save(catalog);
+      update(
+        mutator: (current: WorkspaceCatalog) => WorkspaceCatalog | Promise<WorkspaceCatalog>,
+      ): Promise<void> {
+        return this.inner.update(mutator);
       }
     }
     const entry = (root: string): PersistedWorkspaceEntry => ({
@@ -330,7 +343,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const storage = new FileStorageService(homeDir);
     const persistence = new GatedPersistence(
-      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), stubBootstrap(homeDir)),
+      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), storage, stubBootstrap(homeDir)),
     );
     const aliases = build(undefined, storage, persistence);
     const ws = (id: string, root: string): Workspace => ({
@@ -344,7 +357,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     });
 
     await aliases.resolveAliasIds(typedId);
-    await persistence.save({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] });
+    await persistence.update(() => ({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] }));
 
     let release: (() => void) | undefined;
     persistence.gate = new Promise<void>((resolve) => {
@@ -355,10 +368,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await vi.waitFor(() => {
       expect(persistence.loads).toBe(baseline + 1);
     });
-    await persistence.save({
+    await persistence.update(() => ({
       workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
       deletedIds: [],
-    });
+    }));
     const p2 = aliases.resolveAliasIds(legacyId);
     release!();
 
@@ -420,10 +433,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await vi.waitFor(() => {
       expect(storage.indexReads).toBe(baseline + 1);
     });
-    await persistence.save({
+    await persistence.update(() => ({
       workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
       deletedIds: [],
-    });
+    }));
     release!();
 
     expect((await p).toSorted()).toEqual([legacyId, typedId].toSorted());
@@ -469,7 +482,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const aliases = build();
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
 
-    await writeWorkspacesJson({
+    await writeProjectsJson({
       [typedId]: entry(typedRoot),
       [legacyId]: entry('c:\\users\\foo\\proj'),
     });

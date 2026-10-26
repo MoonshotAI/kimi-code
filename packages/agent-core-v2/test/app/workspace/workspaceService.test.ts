@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
@@ -29,7 +31,11 @@ import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLoca
 import { IWorkspaceService } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
-import { IWorkspacePersistence, type PersistedWorkspaceEntry } from '#/app/workspace/workspacePersistence';
+import {
+  IWorkspacePersistence,
+  type PersistedProjectsFile,
+  type PersistedWorkspaceEntry,
+} from '#/app/workspace/workspacePersistence';
 import { stubBootstrap } from '../bootstrap/stubs';
 
 interface SessionIndexLine {
@@ -136,14 +142,26 @@ describe('WorkspaceService (file-backed)', () => {
     );
   }
 
-  async function readWorkspacesJson(): Promise<{
+  async function writeProjectsJson(
+    projects: Record<string, PersistedWorkspaceEntry>,
+    deletedIds: readonly string[] = [],
+  ): Promise<void> {
+    await fsp.writeFile(
+      join(homeDir, 'projects.json'),
+      JSON.stringify({ schema_version: 2, projects, deleted_project_ids: deletedIds }),
+      'utf8',
+    );
+  }
+
+  async function readRegistry(): Promise<{
     workspaces: Record<string, PersistedWorkspaceEntry>;
     deleted_workspace_ids?: unknown;
   }> {
-    return JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
-      workspaces: Record<string, PersistedWorkspaceEntry>;
-      deleted_workspace_ids?: unknown;
+    const file = JSON.parse(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')) as {
+      projects: Record<string, PersistedWorkspaceEntry>;
+      deleted_project_ids?: unknown;
     };
+    return { workspaces: file.projects, deleted_workspace_ids: file.deleted_project_ids };
   }
 
   it('persists the catalog across registry instances', async () => {
@@ -294,7 +312,7 @@ describe('WorkspaceService (file-backed)', () => {
     await registry.delete(a.id);
     expect((await registry.list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
 
-    const onDisk = await readWorkspacesJson();
+    const onDisk = await readRegistry();
     expect(onDisk.deleted_workspace_ids).toEqual([a.id]);
     expect(onDisk.workspaces[a.id]).toBeUndefined();
 
@@ -317,7 +335,7 @@ describe('WorkspaceService (file-backed)', () => {
 
     await registry.createOrTouch(dirA);
     expect((await registry.list()).map((w) => w.id)).toEqual([a.id]);
-    expect(await readWorkspacesJson().then((f) => f.deleted_workspace_ids)).toEqual([]);
+    expect(await readRegistry().then((f) => f.deleted_workspace_ids)).toEqual([]);
 
     expect((await restart().list()).map((w) => w.id)).toEqual([a.id]);
   });
@@ -331,26 +349,18 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     await registry.createOrTouch(dirA);
 
-    const onDisk = await readWorkspacesJson();
+    const onDisk = await readRegistry();
     onDisk.workspaces[encodeWorkDirKey(dirB)] = {
       root: dirB,
       name: 'dir-b',
       created_at: '2024-01-01T00:00:00.000Z',
       last_opened_at: '2024-01-01T00:00:00.000Z',
     };
-    await fsp.writeFile(
-      join(homeDir, 'workspaces.json'),
-      JSON.stringify({
-        version: 1,
-        workspaces: onDisk.workspaces,
-        deleted_workspace_ids: ['wd_external_tombstone'],
-      }),
-      'utf8',
-    );
+    await writeProjectsJson(onDisk.workspaces, ['wd_external_tombstone']);
 
     await registry.createOrTouch(dirC);
 
-    const after = await readWorkspacesJson();
+    const after = await readRegistry();
     expect(Object.keys(after.workspaces).toSorted()).toEqual(
       [encodeWorkDirKey(dirA), encodeWorkDirKey(dirB), encodeWorkDirKey(dirC)].toSorted(),
     );
@@ -364,20 +374,12 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const a = await registry.createOrTouch(dirA);
 
-    const onDisk = await readWorkspacesJson();
-    await fsp.writeFile(
-      join(homeDir, 'workspaces.json'),
-      JSON.stringify({
-        version: 1,
-        workspaces: onDisk.workspaces,
-        deleted_workspace_ids: ['wd_external_tombstone'],
-      }),
-      'utf8',
-    );
+    const onDisk = await readRegistry();
+    await writeProjectsJson(onDisk.workspaces, ['wd_external_tombstone']);
 
     await registry.delete(a.id);
 
-    const after = await readWorkspacesJson();
+    const after = await readRegistry();
     expect(after.workspaces[a.id]).toBeUndefined();
     expect((after.deleted_workspace_ids as string[]).toSorted()).toEqual(
       ['wd_external_tombstone', a.id].toSorted(),
@@ -390,25 +392,17 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     const a = await registry.createOrTouch(dirA);
 
-    const onDisk = await readWorkspacesJson();
+    const onDisk = await readRegistry();
     const entry = onDisk.workspaces[a.id];
     if (entry === undefined) throw new Error('seed entry missing');
     onDisk.workspaces[a.id] = { ...entry, name: 'external-name' };
-    await fsp.writeFile(
-      join(homeDir, 'workspaces.json'),
-      JSON.stringify({ version: 1, workspaces: onDisk.workspaces, deleted_workspace_ids: [] }),
-      'utf8',
-    );
+    await writeProjectsJson(onDisk.workspaces);
 
     const renamed = await registry.update(a.id, { name: 'local-name' });
     expect(renamed?.name).toBe('local-name');
     expect(renamed?.lastOpenedAt).toBe(Date.parse(entry.last_opened_at));
 
-    await fsp.writeFile(
-      join(homeDir, 'workspaces.json'),
-      JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [] }),
-      'utf8',
-    );
+    await writeProjectsJson({});
     expect(await registry.update(a.id, { name: 'whatever' })).toBeUndefined();
   });
 
@@ -556,7 +550,7 @@ describe('WorkspaceService (file-backed)', () => {
     const list = await registry.list();
     expect(list.map((w) => w.id).toSorted()).toEqual([implicit.id, created.id].toSorted());
 
-    const saved = await readWorkspacesJson();
+    const saved = await readRegistry();
     const record = saved.workspaces[created.id] as unknown as Record<string, unknown>;
     expect(record['additional_dirs']).toEqual([extra]);
     expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
@@ -613,12 +607,12 @@ describe('WorkspaceService (file-backed)', () => {
 
     const replaced = await registry.update(created.id, { additionalDirs: [extraB] });
     expect(replaced?.additionalDirs).toEqual([extraB]);
-    let saved = await readWorkspacesJson();
+    let saved = await readRegistry();
     expect((saved.workspaces[created.id] as unknown as Record<string, unknown>)['additional_dirs']).toEqual([extraB]);
 
     const cleared = await registry.update(created.id, { additionalDirs: [] });
     expect(cleared?.additionalDirs).toEqual([]);
-    saved = await readWorkspacesJson();
+    saved = await readRegistry();
     expect((saved.workspaces[created.id] as unknown as Record<string, unknown>)['additional_dirs']).toBeUndefined();
 
     const renamed = await registry.update(created.id, { name: 'renamed' });
@@ -634,7 +628,7 @@ describe('WorkspaceService (file-backed)', () => {
     await registry.delete(project.id);
 
     expect((await registry.list()).map((w) => w.id)).toEqual([implicit.id]);
-    const saved = await readWorkspacesJson();
+    const saved = await readRegistry();
     expect(saved.deleted_workspace_ids).toEqual([project.id]);
     expect(Object.keys(saved.workspaces)).toEqual([implicit.id]);
   });
@@ -647,7 +641,7 @@ describe('WorkspaceService (file-backed)', () => {
     await registry.delete(implicit.id);
 
     expect((await registry.list()).map((w) => w.id)).toEqual([project.id]);
-    const saved = await readWorkspacesJson();
+    const saved = await readRegistry();
     expect(Object.keys(saved.workspaces)).toEqual([project.id]);
     expect(saved.deleted_workspace_ids).toEqual([implicit.id]);
   });
@@ -681,15 +675,15 @@ describe('WorkspaceService (file-backed)', () => {
     const implicit = await registry.createOrTouch(homeDir);
     expect(implicit.kind).toBe('implicit');
 
-    const saved = await readWorkspacesJson();
+    const saved = await readRegistry();
     expect(saved.workspaces[managed.id]?.kind).toBe('managed');
     expect(saved.workspaces[implicit.id]?.kind).toBe('implicit');
 
-    const raw = JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
-      workspaces: Record<string, Record<string, unknown>>;
+    const raw = JSON.parse(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')) as {
+      projects: Record<string, Record<string, unknown>>;
     };
-    delete raw.workspaces[implicit.id]?.['kind'];
-    await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify(raw), 'utf8');
+    delete raw.projects[implicit.id]?.['kind'];
+    await fsp.writeFile(join(homeDir, 'projects.json'), JSON.stringify(raw), 'utf8');
 
     expect((await registry.get(implicit.id))?.kind).toBe('implicit');
     expect((await registry.get(managed.id))?.kind).toBe('managed');
@@ -752,7 +746,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(promoted?.root).toBe(extraA);
     expect(promoted?.additionalDirs).toEqual([homeDir, extraB]);
 
-    const saved = await readWorkspacesJson();
+    const saved = await readRegistry();
     expect(saved.workspaces[created.id]?.root).toBe(extraA);
     expect((await restart().get(created.id))?.additionalDirs).toEqual([homeDir, extraB]);
 
@@ -796,7 +790,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(list.map((w) => w.id)).toEqual([encodeWorkDirKey(workB)]);
   });
 
-  it('save preserves unknown entry and top-level fields while bumping the version', async () => {
+  it('migration and patch preserve unknown entry and top-level fields', async () => {
     const id = encodeWorkDirKey(homeDir);
     await writeWorkspacesJson(
       {
@@ -821,13 +815,13 @@ describe('WorkspaceService (file-backed)', () => {
     const registry = build();
     await registry.touch(id);
 
-    const saved = JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
-      version: number;
-      workspaces: Record<string, Record<string, unknown>>;
+    const saved = JSON.parse(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')) as {
+      schema_version: number;
+      projects: Record<string, Record<string, unknown>>;
       future_top_level?: unknown;
     };
-    expect(saved.version).toBe(2);
-    expect(saved.workspaces[id]?.['icon']).toBe('rocket-2');
+    expect(saved.schema_version).toBe(2);
+    expect(saved.projects[id]?.['icon']).toBe('rocket-2');
     expect(saved.future_top_level).toEqual({ nested: true });
   });
 
@@ -880,7 +874,7 @@ describe('WorkspaceService (file-backed)', () => {
     );
     expect(stillListed).toEqual([]);
     const unrelatedId = encodeWorkDirKey(join(homeDir, 'unrelated'));
-    const saved = await readWorkspacesJson();
+    const saved = await readRegistry();
     expect(Object.keys(saved.workspaces)).toEqual([unrelatedId]);
     expect([...(saved.deleted_workspace_ids as string[])].toSorted()).toEqual(
       [typedId, aliasId, indexOnlyId].toSorted(),
@@ -891,7 +885,7 @@ describe('WorkspaceService (file-backed)', () => {
       (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
     );
     expect(relisted).toEqual([]);
-    const afterMerge = await readWorkspacesJson();
+    const afterMerge = await readRegistry();
     expect(Object.keys(afterMerge.workspaces)).toEqual([unrelatedId]);
   });
 
@@ -1050,6 +1044,214 @@ describe('WorkspaceService (file-backed)', () => {
     expect([...ids]).toEqual(['s_live']);
     expect(compacted).toHaveLength(1);
   });
+
+describe('projects.json migration and patch', () => {
+  function createPersistence(): FileWorkspacePersistence {
+    const storage = new FileStorageService(homeDir);
+    return new FileWorkspacePersistence(
+      new JsonAtomicDocumentStore(storage),
+      storage,
+      stubBootstrap(homeDir),
+    );
+  }
+
+  async function readProjects(): Promise<PersistedProjectsFile & Record<string, unknown>> {
+    return JSON.parse(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')) as PersistedProjectsFile & Record<string, unknown>;
+  }
+
+  async function writeProjects(value: unknown): Promise<void> {
+    await fsp.writeFile(join(homeDir, 'projects.json'), JSON.stringify(value), 'utf8');
+  }
+
+  async function backupFiles(): Promise<string[]> {
+    return (await fsp.readdir(homeDir)).filter((name) =>
+      name.startsWith('workspaces.json.pre-projects-migration-'),
+    );
+  }
+
+  it('migrates once, preserves source bytes, and ignores later legacy writes', async () => {
+    const id = 'wm_legacy';
+    const legacy = {
+      version: 1,
+      workspaces: {
+        [id]: {
+          root: homeDir,
+          name: 'legacy',
+          kind: 'managed',
+          additional_dirs: ['/tmp/extra'],
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-02T00:00:00.000Z',
+        },
+      },
+      deleted_workspace_ids: ['wd_deleted'],
+      idempotency_keys: { retry: id },
+      future_top_level: { nested: true },
+    };
+    await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify(legacy), 'utf8');
+    const before = await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8');
+
+    const registry = build();
+    expect((await registry.list()).map((workspace) => workspace.id)).toEqual([id]);
+    const migrated = await readProjects();
+    expect(migrated.schema_version).toBe(2);
+    expect(migrated.projects[id]?.additional_dirs).toEqual(['/tmp/extra']);
+    expect(migrated.migration).toMatchObject({
+      source_file: 'workspaces.json',
+      source_version: 1,
+      source_sha256: createHash('sha256').update(before).digest('hex'),
+    });
+    expect(migrated['future_top_level']).toEqual({ nested: true });
+    expect(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')).toBe(before);
+    const backups = await backupFiles();
+    expect(backups).toHaveLength(1);
+    expect(await fsp.readFile(join(homeDir, backups[0]!), 'utf8')).toBe(before);
+
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [] }),
+      'utf8',
+    );
+    expect((await restart().list()).map((workspace) => workspace.id)).toEqual([id]);
+    expect((await restart().get(id))?.additionalDirs).toEqual(['/tmp/extra']);
+    expect(await backupFiles()).toHaveLength(1);
+    expect((await readProjects())['future_top_level']).toEqual({ nested: true });
+  });
+
+  it('initializes a fresh projects file without migration metadata', async () => {
+    expect(await build().list()).toEqual([]);
+    const file = await readProjects();
+    expect(file).toMatchObject({
+      schema_version: 2,
+      projects: {},
+      deleted_project_ids: [],
+      idempotency_keys: {},
+    });
+    expect(file.migration).toBeUndefined();
+  });
+
+  it('rejects a newer schema without rebuilding from legacy data', async () => {
+    await writeWorkspacesJson({});
+    const invalid = { schema_version: 3, projects: {}, deleted_project_ids: [] };
+    await writeProjects(invalid);
+    await expect(build().list()).rejects.toThrow(/newer than supported/);
+    expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(JSON.stringify(invalid));
+  });
+
+  it('rejects malformed projects without rebuilding from legacy data', async () => {
+    await writeWorkspacesJson({});
+    await writeProjects({ schema_version: 2, projects: null, deleted_project_ids: [] });
+    await expect(build().list()).rejects.toThrow(/invalid projects.json projects/);
+  });
+
+  it('coalesces concurrent first-load migration', async () => {
+    const id = encodeWorkDirKey(homeDir);
+    await writeWorkspacesJson({
+      [id]: {
+        root: homeDir,
+        name: 'legacy',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-02T00:00:00.000Z',
+      },
+    });
+    const first = createPersistence();
+    const second = createPersistence();
+    try {
+      const [a, b] = await Promise.all([first.load(), second.load()]);
+      expect(a?.workspaces.map((workspace) => workspace.id)).toEqual([id]);
+      expect(b?.workspaces.map((workspace) => workspace.id)).toEqual([id]);
+      expect(await backupFiles()).toHaveLength(1);
+      expect((await readProjects()).projects[id]?.name).toBe('legacy');
+    } finally {
+      first.dispose();
+      second.dispose();
+    }
+  });
+
+  it('merges concurrent patches and preserves unrelated records and extensions', async () => {
+    const idA = 'wd_a';
+    const idB = 'wd_b';
+    const entry = (root: string, name: string): PersistedWorkspaceEntry => ({
+      root,
+      name,
+      kind: 'implicit',
+      additional_dirs: [],
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    });
+    await writeProjects({
+      schema_version: 2,
+      projects: {
+        [idA]: entry('/a', 'a'),
+        [idB]: { ...entry('/b', 'b'), icon: 'rocket-2' },
+      },
+      deleted_project_ids: [],
+      idempotency_keys: { keep: idA },
+      future_top_level: { nested: true },
+    });
+    const first = createPersistence();
+    const second = createPersistence();
+    try {
+      await Promise.all([first.load(), second.load()]);
+      await Promise.all([
+        first.update((catalog) => ({
+          ...catalog,
+          workspaces: catalog.workspaces.map((workspace) =>
+            workspace.id === idA ? { ...workspace, name: 'renamed-a' } : workspace,
+          ),
+        })),
+        second.update((catalog) => ({
+          ...catalog,
+          workspaces: catalog.workspaces.map((workspace) =>
+            workspace.id === idB ? { ...workspace, name: 'renamed-b' } : workspace,
+          ),
+        })),
+      ]);
+      const saved = await readProjects();
+      expect(saved.projects[idA]?.name).toBe('renamed-a');
+      expect(saved.projects[idB]?.name).toBe('renamed-b');
+      expect((saved.projects[idB] as unknown as Record<string, unknown>)['icon']).toBe('rocket-2');
+      expect(saved.idempotency_keys).toEqual({ keep: idA });
+      expect(saved['future_top_level']).toEqual({ nested: true });
+
+      const before = await fsp.readFile(join(homeDir, 'projects.json'), 'utf8');
+      await first.update((catalog) => catalog);
+      expect(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')).toBe(before);
+    } finally {
+      first.dispose();
+      second.dispose();
+    }
+  });
+
+  it('reads schema_version 1 and upgrades on the next patch', async () => {
+    const id = encodeWorkDirKey(homeDir);
+    await writeProjects({
+      schema_version: 1,
+      projects: {
+        [id]: {
+          root: homeDir,
+          name: 'legacy',
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      deleted_project_ids: [],
+    });
+    const persistence = createPersistence();
+    try {
+      expect((await persistence.load())?.workspaces.map((workspace) => workspace.id)).toEqual([id]);
+      await persistence.update((catalog) => ({
+        ...catalog,
+        workspaces: catalog.workspaces.map((workspace) => ({
+          ...workspace,
+          lastOpenedAt: workspace.lastOpenedAt + 1,
+        })),
+      }));
+      expect((await readProjects()).schema_version).toBe(2);
+    } finally {
+      persistence.dispose();
+    }
+  });
+});
 });
 
 describe('workspaceRootKey', () => {
