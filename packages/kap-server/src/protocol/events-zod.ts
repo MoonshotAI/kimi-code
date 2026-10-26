@@ -230,6 +230,12 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   retryOriginSchema,
 ]);
 
+export const promptOriginProjectionSchema = z.object({
+  kind: z.string(),
+  name: z.string().optional(),
+  trigger: z.string().optional(),
+});
+
 export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']) satisfies z.ZodType<GoalStatus>;
 
 export const goalActorSchema = z.enum(['user', 'model', 'runtime', 'system']) satisfies z.ZodType<GoalActor>;
@@ -1003,6 +1009,7 @@ export const promptSubmittedEventSchema = z.object({
   status: z.enum(['running', 'queued', 'blocked']),
   content: z.array(messageContentSchema),
   createdAt: isoDateTimeSchema,
+  origin: promptOriginProjectionSchema.optional(),
 });
 
 export const promptCompletedEventSchema = z.object({
@@ -1011,6 +1018,7 @@ export const promptCompletedEventSchema = z.object({
   promptId: z.string(),
   finishedAt: isoDateTimeSchema,
   reason: z.enum(['completed', 'failed', 'blocked']).optional(),
+  origin: promptOriginProjectionSchema.optional(),
 });
 
 export const promptAbortedEventSchema = z.object({
@@ -1018,6 +1026,7 @@ export const promptAbortedEventSchema = z.object({
   agentId: z.string(),
   promptId: z.string(),
   abortedAt: isoDateTimeSchema,
+  origin: promptOriginProjectionSchema.optional(),
 });
 
 export const promptSteeredEventSchema = z.object({

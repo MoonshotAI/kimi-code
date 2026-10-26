@@ -51,7 +51,6 @@ export class AgentPromptChannel implements IAgentPromptChannel {
   async submitSteer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
     this.telemetry.track2('input_steer', { parts: payload.input.length });
     await this.updateMetadata(promptMetadataTextFromContentParts(payload.input));
-    const status = this.loop.snapshot();
     const { id } = this.loop.submit(
       {
         message: { role: 'user', content: [...payload.input] },
@@ -59,7 +58,6 @@ export class AgentPromptChannel implements IAgentPromptChannel {
       },
       { steerIfActive: true },
     );
-    if (status.state === 'running' && status.activePromptId === undefined) return undefined;
     return launchResult(this.loop, id);
   }
 

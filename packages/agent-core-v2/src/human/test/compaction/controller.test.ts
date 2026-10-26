@@ -54,6 +54,12 @@ function startAgent(
       }),
     },
   });
+  actor.on('steerGate.requested', (event) => {
+    actor.send({
+      type: 'steerGate.resolved',
+      outcomes: event.entries.map((entry) => ({ entry, verdict: 'passed' as const })),
+    });
+  });
   actor.start();
   return actor;
 }

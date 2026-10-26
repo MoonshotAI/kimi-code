@@ -1152,6 +1152,7 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await failed;
 
+    await ctx.get(IWireService).drainPersisted();
     const events = ctx.newEvents();
     expect(events).toEqual(
       expect.arrayContaining([
@@ -1742,6 +1743,7 @@ describe('FullCompaction', () => {
     ctx.appendExchange(2, 'new user while compacting', 'new assistant while compacting', 6_000);
     await cancelled;
 
+    await ctx.get(IWireService).drainPersisted();
     const events = ctx.newEvents();
     expect(countEvents(events, 'full_compaction.cancel')).toBe(1);
     expect(countEvents(events, 'compaction.started')).toBe(1);

@@ -233,6 +233,8 @@ import { ISessionSwarmService } from '#/features/swarm/session/sessionSwarm';
 import type { PathAccessOperation } from '#/session/workspaceContext/workspaceContext';
 
 import { stubAgentIdentity } from '../app/agentIdentity/stubs';
+import { stubPluginService } from '../app/plugin/stubs';
+import { IPluginService } from '#/app/plugin/plugin';
 import { stubClientIdentity } from '../app/bootstrap/stubs';
 import { recordAgentEvents, type RecordedEventEntry } from '../snapshot/events';
 import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
@@ -729,6 +731,7 @@ const noopHookRunner: IExternalHooksRunnerService = {
   triggerBlock: async () => undefined,
   fireAndForgetTrigger: async () => [],
   hasHooksFor: () => false,
+  loaded: true,
 };
 
 export function permissionModeServices(mode: PermissionMode): TestAgentServiceOverride {
@@ -1157,6 +1160,7 @@ export class AgentTestContext {
             configService(() => this.kimiConfig),
           );
           reg.defineInstance(IAgentIdentity, stubAgentIdentity());
+          reg.defineInstance(IPluginService, stubPluginService({ sessionStarts: [], enabledPluginIds: [] }));
           reg.defineInstance(
             IAppendLogStore,
             new PersistenceAppendLogStore(
@@ -2881,7 +2885,6 @@ async function submitSteerPromptFacade(
       promptMetadataTextFromContentParts(payload.input),
     );
   }
-  const status = loop.snapshot();
   const { id } = loop.submit(
     {
       message: { role: 'user', content: [...payload.input] },
@@ -2889,7 +2892,6 @@ async function submitSteerPromptFacade(
     },
     { steerIfActive: true },
   );
-  if (status.state === 'running' && status.activePromptId === undefined) return undefined;
   const turn = await loop.promptHandle(id)?.launched;
   if (turn === undefined) return undefined;
   await turn.ready.catch(() => undefined);

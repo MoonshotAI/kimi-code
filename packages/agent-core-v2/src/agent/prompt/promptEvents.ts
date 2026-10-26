@@ -1,4 +1,4 @@
-import type { UserPromptOrigin } from '#/agent/contextMemory/types';
+import type { PromptOrigin, UserPromptOrigin } from '#/agent/contextMemory/types';
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { z } from 'zod';
 
@@ -6,11 +6,29 @@ import { AgentEvent2, registerEvent2Class } from '#/app/event/event2';
 import type { ContentPart } from '#human/llm/message';
 import type { MessageContent } from '#/agent/prompt/messageContent';
 
+export interface PromptOriginProjection {
+  readonly kind: string;
+  readonly name?: string;
+  readonly trigger?: string;
+}
+
+export function projectPromptOriginForWire(
+  origin: PromptOrigin | undefined,
+): PromptOriginProjection | undefined {
+  if (origin === undefined) return undefined;
+  return {
+    kind: origin.kind,
+    name: 'name' in origin && typeof origin.name === 'string' ? origin.name : undefined,
+    trigger: 'trigger' in origin && typeof origin.trigger === 'string' ? origin.trigger : undefined,
+  };
+}
+
 export interface PromptCompletedPayload {
   readonly agentId: string;
   readonly promptId: string;
   readonly finishedAt: string;
   readonly reason: 'completed' | 'failed' | 'blocked';
+  readonly origin?: PromptOriginProjection;
 }
 
 const promptCompletedSchema = z.object({
@@ -18,6 +36,7 @@ const promptCompletedSchema = z.object({
   promptId: z.string().min(1),
   finishedAt: z.string(),
   reason: z.union([z.literal('completed'), z.literal('failed'), z.literal('blocked')]),
+  origin: z.custom<PromptOriginProjection>().optional(),
 });
 
 export class PromptCompleted extends AgentEvent2<z.infer<typeof promptCompletedSchema>> {
@@ -33,18 +52,21 @@ export interface PromptCompletedEvent {
   readonly promptId: string;
   readonly finishedAt: string;
   readonly reason?: 'completed' | 'failed' | 'blocked';
+  readonly origin?: PromptOriginProjection;
 }
 
 export interface PromptAbortedPayload {
   readonly agentId: string;
   readonly promptId: string;
   readonly abortedAt: string;
+  readonly origin?: PromptOriginProjection;
 }
 
 const promptAbortedSchema = z.object({
   agentId: z.string(),
   promptId: z.string().min(1),
   abortedAt: z.string(),
+  origin: z.custom<PromptOriginProjection>().optional(),
 });
 
 export class PromptAborted extends AgentEvent2<z.infer<typeof promptAbortedSchema>> {
@@ -66,6 +88,7 @@ export interface PromptSubmittedEvent {
   readonly status: 'running' | 'queued' | 'blocked';
   readonly content: readonly MessageContent[];
   readonly createdAt: string;
+  readonly origin?: PromptOriginProjection;
 }
 
 export interface PromptSteeredEvent {
@@ -109,6 +132,7 @@ export interface PromptQueuedPayload {
   readonly content: ContentPart[];
   readonly queueLength: number;
   readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
+  readonly origin?: PromptOriginProjection;
 }
 
 export class PromptQueued extends AgentEvent2<PromptQueuedPayload> {
@@ -125,6 +149,7 @@ export interface PromptSubmittedPayload {
   readonly content: ContentPart[];
   readonly createdAt: string;
   readonly clientMetadata?: UserPromptOrigin['clientMetadata'];
+  readonly origin?: PromptOriginProjection;
 }
 
 export class PromptSubmitted extends AgentEvent2<PromptSubmittedPayload> {
@@ -136,6 +161,7 @@ export interface PromptSubmitted extends PromptSubmittedPayload {}
 export interface PromptStartedPayload {
   readonly agentId: string;
   readonly promptId: string;
+  readonly origin?: PromptOriginProjection;
 }
 
 export class PromptStarted extends AgentEvent2<PromptStartedPayload> {

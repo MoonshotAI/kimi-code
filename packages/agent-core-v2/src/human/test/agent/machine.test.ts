@@ -81,7 +81,7 @@ function createTestAgent(
   tools: readonly ToolDefinition[] = [],
   options?: { retry?: LlmRetryOptions; abortTimeoutMs?: number; maxStepsPerTurn?: number },
 ) {
-  return createActor(
+  const actor = createActor(
     createAgentMachine({
       abortTimeoutMs: options?.abortTimeoutMs,
       maxStepsPerTurn: options?.maxStepsPerTurn,
@@ -98,6 +98,13 @@ function createTestAgent(
       },
     },
   );
+  actor.on('steerGate.requested', (event) => {
+    actor.send({
+      type: 'steerGate.resolved',
+      outcomes: event.entries.map((entry) => ({ entry, verdict: 'passed' as const })),
+    });
+  });
+  return actor;
 }
 
 function stubTools(

@@ -732,7 +732,7 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
   const loop = context.runtime.get(IAgentLoopService);
   const { id } = loop.submit({
     message: { role: 'user', content: message.content },
-    meta: { origin: message.origin },
+    meta: { origin: message.origin, tracked: true },
   });
   const handle = loop.promptHandle(id)!;
   const pending: PendingContinuation = { promptId: id, goalId };
@@ -741,9 +741,25 @@ function launchContinuationTurn(context: GoalOperationContext, goalId: string, s
     pending.turn = launchedTurn;
     pending.turnId = launchedTurn?.id;
   }).catch(() => undefined);
-  void handle.completion.finally(() => {
+  void handle.completion.then((completion) => {
     if (pending.turnId !== undefined) context.effects.pendingContinuationGoals.delete(pending.turnId);
     if (context.effects.pendingContinuation === pending) context.effects.pendingContinuation = undefined;
+    if (pending.turnId !== undefined) return;
+    if (completion.state === 'blocked') {
+      void markBlocked(context, { reason: 'Blocked by UserPromptSubmit hook' }).catch(() => undefined);
+    } else if (completion.state === 'cancelled') {
+      void settleGoalAfterContinuationFailure(
+        context,
+        new Error2(ErrorCodes.INTERNAL, 'Goal continuation cancelled before launch'),
+        goalId,
+      );
+    } else if (completion.state === 'failed') {
+      void settleGoalAfterContinuationFailure(
+        context,
+        new Error2(ErrorCodes.INTERNAL, 'Goal continuation failed to launch'),
+        goalId,
+      );
+    }
   });
 }
 

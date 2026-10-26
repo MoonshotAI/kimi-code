@@ -47,12 +47,6 @@ export const promptItemSchema = z.object({
 });
 export type PromptItem = z.infer<typeof promptItemSchema>;
 
-export const promptListResponseSchema = z.object({
-  active: promptItemSchema.nullable(),
-  queued: z.array(promptItemSchema),
-});
-export type PromptListResponse = z.infer<typeof promptListResponseSchema>;
-
 export const promptSubmitResultSchema = promptItemSchema;
 export type PromptSubmitResult = z.infer<typeof promptSubmitResultSchema>;
 

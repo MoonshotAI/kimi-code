@@ -740,6 +740,9 @@ function friendlyZodExpr(expr: string, ownerFile: string, depth = 0): Sketch {
   }
   const stringLiteral = /^'([^']*)'$/.exec(text);
   if (stringLiteral?.[1] !== undefined) return tsQuote(stringLiteral[1]);
+  if (/^z\.string\(\)(?:\.\w+\([^()]*\))+$/.test(text)) return 'string';
+  if (/^z\.number\(\)(?:\.\w+\([^()]*\))+$/.test(text)) return 'number';
+  if (/^z\.boolean\(\)(?:\.\w+\([^()]*\))+$/.test(text)) return 'boolean';
   const custom = /^z\.custom<(.+)>\(\)$/.exec(text);
   if (custom?.[1] !== undefined) {
     const typeName = custom[1].trim();

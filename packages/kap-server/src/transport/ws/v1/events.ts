@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import type { agentEventSchema } from '../../../protocol/events-zod';
 import type { MessageContent } from '../../../protocol/message';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
+import type { PromptOriginProjection } from '@moonshot-ai/agent-core-v2/agent/prompt/promptEvents';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
@@ -164,6 +165,7 @@ export interface PromptSubmittedEvent {
   readonly status: 'running' | 'queued' | 'blocked';
   readonly content: readonly MessageContent[];
   readonly createdAt: string;
+  readonly origin?: PromptOriginProjection;
 }
 
 export type TaskLifecycleStatus =

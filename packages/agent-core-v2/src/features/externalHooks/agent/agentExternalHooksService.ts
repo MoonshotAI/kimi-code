@@ -1,5 +1,6 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { IInstantiationService } from '#/_base/di/instantiation';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import { Service } from '#/_base/di/service';
 import { defineState } from '#/state/state';
 import { isPlainRecord } from '#/_base/utils/canonical-args';
@@ -7,7 +8,6 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import {
   IAgentFullCompactionService,
   type FullCompactionTask,
@@ -191,25 +191,38 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private registerPromptHooks(loop: IAgentLoopService): void {
-    this._register(
+    const registerSubmitHook = (): IDisposable =>
       loop.hooks.onBeforeSubmitPrompt.register('externalHooks', async (ctx, next) => {
         if (await this.runPromptSubmitHook(ctx)) {
           ctx.block = true;
           return;
         }
         await next();
-      }),
-    );
+      });
+    this.promptSubmitHookRegistration = this._register(registerSubmitHook());
+    const syncRegistration = (): void => {
+      const shouldRegister = this.runner.hasHooksFor('UserPromptSubmit');
+      if (shouldRegister && this.promptSubmitHookRegistration === undefined) {
+        this.promptSubmitHookRegistration = this._register(registerSubmitHook());
+      } else if (!shouldRegister) {
+        this.promptSubmitHookRegistration?.dispose();
+        this.promptSubmitHookRegistration = undefined;
+      }
+    };
+    void this.runner.ready.then(syncRegistration, syncRegistration);
+    this._register(this.runner.onDidReload(syncRegistration));
     this._register(
       this.eventBus.subscribe(PromptQueued, (e) => {
         this.fireAndForget(
           'UserPromptQueued',
-          { promptId: e.promptId, prompt: e.content, queueLength: e.queueLength },
+          { promptId: e.promptId, prompt: e.content, queueLength: e.queueLength, origin: e.origin },
           e.content,
         );
       }),
     );
   }
+
+  private promptSubmitHookRegistration: IDisposable | undefined;
 
   private registerTurnHooks(): void {
     this._register(
@@ -337,8 +350,6 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   private async runPromptSubmitHook(
     ctx: PromptSubmitContext,
   ): Promise<boolean> {
-    if ((ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
-
     const signal = new AbortController().signal;
     const input = ctx.promptMessage.content;
     signal.throwIfAborted();
@@ -347,7 +358,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       signal,
       cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer }),
+      inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer, origin: ctx.promptMessage.origin }),
     });
     signal.throwIfAborted();
 

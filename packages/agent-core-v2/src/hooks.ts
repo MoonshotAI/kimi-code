@@ -6,6 +6,10 @@ export type Hooks<TEvents extends Record<string, unknown>> = {
 };
 
 export interface HookSlot<TContext> {
+  readonly size: number;
+
+  has(id: string): boolean;
+
   register(
     id: string,
     handler: HookHandler<TContext>,
@@ -60,6 +64,14 @@ export class OrderedHookSlot<TContext> implements HookSlot<TContext> {
     const insertAt = options.before !== undefined ? targetIndex : targetIndex + 1;
     this.entries.splice(insertAt, 0, entry);
     return this.toEntryDisposable(entry);
+  }
+
+  get size(): number {
+    return this.entries.length;
+  }
+
+  has(id: string): boolean {
+    return this.entries.some((entry) => entry.id === id);
   }
 
   delete(id: string): boolean {
