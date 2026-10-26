@@ -5,6 +5,7 @@ export interface ISessionWorkdir {
   readonly _serviceBrand: undefined;
 
   readonly environmentId: string;
+  readonly cwd?: string;
   readonly fs: IWorkspaceFsService;
 }
 

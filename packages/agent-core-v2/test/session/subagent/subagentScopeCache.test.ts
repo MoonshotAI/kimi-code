@@ -72,6 +72,7 @@ import { createAgentAwaitingClose } from '#/session/agentLifecycle/createAwaitin
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
@@ -374,6 +375,11 @@ describe('SessionSubagentScopeCacheService', () => {
         dispose: () => {},
       }),
     });
+    ix.stub(ISessionWorkdir, {
+      _serviceBrand: undefined,
+      environmentId: 'local',
+      fs: undefined,
+    } as unknown as ISessionWorkdir);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),

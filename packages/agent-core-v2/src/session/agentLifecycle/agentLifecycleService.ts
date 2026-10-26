@@ -25,6 +25,7 @@ import { profileKey } from '#/agent/profile/profileOps';
 import { hasPinnedPermissionMode } from '#/features/tower/tower';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { withSubagentProfile } from '#/session/agentLifecycle/subagentMetadata';
 import {
@@ -123,6 +124,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   constructor(
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionContext private readonly ctx: ISessionContext,
+    @ISessionWorkdir private readonly workdir: ISessionWorkdir,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
@@ -297,7 +299,9 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
             [ITelemetryService, telemetryBinding.telemetry],
             [IAgentEnvironmentBindingSeed, {
               _serviceBrand: undefined,
-              binding: { environmentId: opts.environmentId ?? LOCAL_ENVIRONMENT_ID, cwd: opts.environmentCwd },
+              binding: opts.environmentId === undefined
+                ? { environmentId: this.workdir.environmentId, cwd: this.workdir.cwd }
+                : { environmentId: opts.environmentId, cwd: opts.environmentCwd },
             }],
             [IAgentBlobService, blobView],
             [IWireService, wire],

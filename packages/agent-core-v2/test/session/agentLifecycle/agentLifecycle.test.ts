@@ -94,6 +94,7 @@ import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionWorkdir } from '#/session/workdir/workdir';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IWireService } from '#/wire/wire';
@@ -313,6 +314,11 @@ describe('AgentLifecycleService', () => {
         dispose: () => {},
       }),
     });
+    ix.stub(ISessionWorkdir, {
+      _serviceBrand: undefined,
+      environmentId: 'local',
+      fs: undefined,
+    } as unknown as ISessionWorkdir);
     ix.stub(IWorkspaceInstanceManager, {
       _serviceBrand: undefined,
       onDidChange: () => ({ dispose: () => {} }),
@@ -1133,6 +1139,51 @@ describe('AgentLifecycleService', () => {
       }),
     ]);
     expectCurrentBinding('agent-1', { environmentId: 'remote', cwd: '/remote/work' });
+  });
+
+  it('inherits the session workdir when create omits the environment', async () => {
+    const log = recordingAppendLog();
+    ix.stub(IAppendLogStore, log.store);
+    stubRemoteResolver({ remoteStatus: 'ready' });
+    ix.stub(ISessionWorkdir, {
+      _serviceBrand: undefined,
+      environmentId: 'remote',
+      cwd: '/remote/work',
+      fs: undefined,
+    } as unknown as ISessionWorkdir);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1' });
+
+    expect(log.appended.filter((record) => record.type === 'environment.set_binding')).toEqual([
+      expect.objectContaining({
+        agentId: 'agent-1',
+        environmentId: 'remote',
+        cwd: '/remote/work',
+      }),
+    ]);
+    expectCurrentBinding('agent-1', { environmentId: 'remote', cwd: '/remote/work' });
+  });
+
+  it('keeps an explicit local binding when the session workdir is remote', async () => {
+    const log = recordingAppendLog();
+    ix.stub(IAppendLogStore, log.store);
+    stubRemoteResolver({ remoteStatus: 'ready' });
+    ix.stub(ISessionWorkdir, {
+      _serviceBrand: undefined,
+      environmentId: 'remote',
+      cwd: '/remote/work',
+      fs: undefined,
+    } as unknown as ISessionWorkdir);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'agent-1', environmentId: 'local' });
+
+    expect(log.appended.filter((record) => record.type === 'environment.set_binding')).toEqual([
+      expect.objectContaining({ agentId: 'agent-1', environmentId: 'local' }),
+    ]);
+    expect(log.appended.some((record) => record.cwd === '/remote/work')).toBe(false);
+    expectCurrentBinding('agent-1', { environmentId: 'local' });
   });
 
   it('keeps a restored gone environment declaration bound and fails explicitly at use', async () => {
