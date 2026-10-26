@@ -809,6 +809,60 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it.each([
+    {
+      recovery: 'media-degraded',
+      reject: (mediaCount: number) =>
+        mediaCount > 2 ? new APIRequestTooLargeError(413, 'Request Entity Too Large') : undefined,
+    },
+    {
+      recovery: 'media-stripped',
+      reject: (mediaCount: number) =>
+        mediaCount > 0 ? new APIStatusError(400, 'unsupported image format: image/avif') : undefined,
+    },
+  ])(
+    'starts the compaction request after a $recovery turn as a prefix extension of its last loop request',
+    async ({ reject }) => {
+      const requests: { readonly systemPrompt: string; readonly history: Message[] }[] = [];
+      const generate: GenerateFn = requesterFromGenerateFn(async (_provider, systemPrompt, _tools, history) => {
+        requests.push({ systemPrompt, history: structuredClone(history) });
+        const mediaCount = history.reduce(
+          (count, message) =>
+            count +
+            message.content.filter((part) => part.type === 'image_url' || part.type === 'video_url')
+              .length,
+          0,
+        );
+        const error = reject(mediaCount);
+        if (error !== undefined) throw error;
+        const last = messageText(history.at(-1));
+        return textResult(last === renderCompactionInstruction({}) ? 'Media summary.' : 'Loop answer.');
+      });
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: CATALOGUED_PROVIDER,
+        modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+      });
+      ctx.appendRichToolExchange();
+      ctx.appendRichToolExchange();
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'describe the media' }] });
+      await ctx.untilTurnEnd();
+      expect(requests).toHaveLength(2);
+      const lastLoop = requests[1]!;
+
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await completed;
+
+      const compaction = requests[2]!;
+      expect(messageText(compaction.history.at(-1))).toBe(renderCompactionInstruction({}));
+      expect(compaction.systemPrompt).toBe(lastLoop.systemPrompt);
+      expect(compaction.history.slice(0, lastLoop.history.length)).toEqual(lastLoop.history);
+      expect(requests).toHaveLength(3);
+    },
+  );
+
   it('retries compaction responses with empty summaries before applying context', async () => {
     vi.useFakeTimers();
     const firstEmptySummary = deferred<void>();
