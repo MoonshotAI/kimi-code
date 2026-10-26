@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SlashCommandHost } from '#/tui/commands';
 import { handleProviderCommand, setDefaultModel } from '#/tui/commands/provider';
+import { promptApiKey } from '#/tui/commands/prompts';
 
 function makeHost(
   options: {
@@ -59,6 +60,52 @@ function makeHost(
   };
   return { host };
 }
+
+describe('promptApiKey', () => {
+  it('releases auth blocked when the API key prompt is replaced', async () => {
+    let replace: (() => void) | undefined;
+    const release = vi.fn();
+    const host = {
+      beginAuthBlock: vi.fn(() => release),
+      mountEditorReplacement: vi.fn(
+        (
+          _dialog: unknown,
+          _onDisplaced: unknown,
+          onReplaced: (() => void) | undefined,
+        ) => {
+          replace = onReplaced;
+        },
+      ),
+      restoreEditor: vi.fn(),
+    } as unknown as SlashCommandHost;
+
+    const prompt = promptApiKey(host, 'Example provider');
+    expect(replace).toBeDefined();
+    replace!();
+
+    await expect(prompt).resolves.toBeUndefined();
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds auth blocked until the prompt resolves', async () => {
+    const release = vi.fn();
+    const host = {
+      beginAuthBlock: vi.fn(() => release),
+      mountEditorReplacement: vi.fn((dialog: { handleInput(data: string): void }) => {
+        dialog.handleInput('YOUR_API_KEY');
+        dialog.handleInput('\r');
+      }),
+      restoreEditor: vi.fn(),
+    } as unknown as SlashCommandHost;
+
+    const prompt = promptApiKey(host, 'Example provider');
+    expect(host.beginAuthBlock).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+
+    await expect(prompt).resolves.toBe('YOUR_API_KEY');
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('setDefaultModel', () => {
   it('applies an above-default pick to the runtime when the gate keeps it session-only', async () => {

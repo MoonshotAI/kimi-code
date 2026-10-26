@@ -23,6 +23,19 @@ describe('terminal focus tracking', () => {
     expect(handleTerminalFocusInput(state, 'x')).toBeUndefined();
   });
 
+  it('notifies only on an actual unfocused-to-focused transition', () => {
+    const state = { focused: true };
+    const onFocusIn = vi.fn();
+
+    handleTerminalFocusInput(state, TERMINAL_FOCUS_IN, onFocusIn);
+    expect(onFocusIn).not.toHaveBeenCalled();
+
+    handleTerminalFocusInput(state, TERMINAL_FOCUS_OUT, onFocusIn);
+    handleTerminalFocusInput(state, TERMINAL_FOCUS_IN, onFocusIn);
+    handleTerminalFocusInput(state, TERMINAL_FOCUS_IN, onFocusIn);
+    expect(onFocusIn).toHaveBeenCalledTimes(1);
+  });
+
   it('enables focus reporting and removes the listener on dispose', () => {
     const listeners: Array<(data: string) => { consume: true } | undefined> = [];
     const removeInputListener = vi.fn();

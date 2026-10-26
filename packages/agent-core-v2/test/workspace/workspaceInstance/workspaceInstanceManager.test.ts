@@ -151,83 +151,147 @@ function manager(
 }
 
 describe('WorkspaceInstanceManager', () => {
-  it('single-flights materialization and closes an in-flight workspace without leaving an instance', async () => {
-    const gate = deferred();
+  it('single-flights materialization while keeping leases independent and serializing replacement', async () => {
+    const materialization = deferred();
+    const closing = deferred();
     const events: string[] = [];
-    const value = manager([workspace('one')], gate.promise, events);
-    const first = value.getOrCreate({ workspaceId: 'one' });
-    const second = value.getOrCreate({ workspaceId: 'one' });
-    const inflight = (value as unknown as { inflight: Map<string, Promise<unknown>> }).inflight;
-    while (!inflight.has('one')) await Promise.resolve();
-    const closing = value.close('one');
-    gate.resolve();
+    const value = manager([workspace('one')], materialization.promise, events);
+    const providers = (value as unknown as { providers: Map<string, RuntimeProviderFactory> }).providers;
+    const local = provider('local', 'local', events);
+    providers.set('local', {
+      ...local,
+      attach: async (context, host) => {
+        const attachment = await local.attach(context, host);
+        return {
+          dispose: async () => {
+            await closing.promise;
+            await attachment.dispose();
+          },
+        };
+      },
+    });
+    const firstPromise = value.acquire({ workspaceId: 'one' });
+    const secondPromise = value.acquire({ root: '/one' });
+    materialization.resolve();
 
-    const [firstInstance, secondInstance] = await Promise.all([first, second]);
-    expect(firstInstance).toBe(secondInstance);
-    await closing;
+    const [first, second] = await Promise.all([firstPromise, secondPromise]);
+    expect(first).not.toBe(second);
+    expect(first.instance).toBe(second.instance);
+    first.dispose();
+    expect(value.get('one')).toBe(first.instance);
+    second.dispose();
     expect(value.get('one')).toBeUndefined();
-    expect(events).toEqual(['attach:local:one', 'detach:local:one']);
+    const replacementPromise = value.acquire({ workspaceId: 'one' });
+    let replacementSettled = false;
+    void replacementPromise.then(() => { replacementSettled = true; });
+    await Promise.resolve();
+    expect(replacementSettled).toBe(false);
+    closing.resolve();
+
+    const replacement = await replacementPromise;
+    expect(replacement.instance).not.toBe(first.instance);
+    second.dispose();
+    replacement.dispose();
+    await value.dispose();
+    expect(events).toEqual([
+      'attach:local:one',
+      'detach:local:one',
+      'attach:local:one',
+      'detach:local:one',
+    ]);
   });
 
   it('keeps runtime registries and provider attachments isolated across workspaces', async () => {
     const events: string[] = [];
     const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
-    const two = await value.getOrCreate({ workspaceId: 'two' });
+    const one = await value.acquire({ workspaceId: 'one' });
+    const two = await value.acquire({ workspaceId: 'two' });
 
-    expect(one.runtimes.current('local')?.identity.workspaceId).toBe('one');
-    expect(two.runtimes.current('local')?.identity.workspaceId).toBe('two');
-    expect(one.runtimes.current('local')).not.toBe(two.runtimes.current('local'));
+    expect(one.instance.runtimes.current('local')?.identity.workspaceId).toBe('one');
+    expect(two.instance.runtimes.current('local')?.identity.workspaceId).toBe('two');
+    expect(one.instance.runtimes.current('local')).not.toBe(two.instance.runtimes.current('local'));
 
-    await value.close('one');
-    expect(value.get('two')).toBe(two);
-    expect(two.runtimes.current('local')).toBeDefined();
+    one.dispose();
+    expect(value.get('two')).toBe(two.instance);
+    expect(two.instance.runtimes.current('local')).toBeDefined();
+    two.dispose();
     await value.dispose();
   });
 
-  it('maintains both provider and workspace axes and detaches each matrix cell', async () => {
+  it('maintains both provider and workspace axes and isolates concurrent attachment cleanup', async () => {
     const events: string[] = [];
     const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
+    const one = await value.acquire({ workspaceId: 'one' });
     const remote = await value.addProvider(provider('remote-provider', 'remote', events, { status: 'ready' }));
-    const two = await value.getOrCreate({ workspaceId: 'two' });
+    const two = await value.acquire({ workspaceId: 'two' });
 
-    expect(one.runtimes.current('remote')).toBeDefined();
-    expect(two.runtimes.current('remote')).toBeDefined();
+    expect(one.instance.runtimes.current('remote')).toBeDefined();
+    expect(two.instance.runtimes.current('remote')).toBeDefined();
 
     await remote.dispose();
-    expect(one.runtimes.current('remote')).toBeUndefined();
-    expect(two.runtimes.current('remote')).toBeUndefined();
+    expect(one.instance.runtimes.current('remote')).toBeUndefined();
+    expect(two.instance.runtimes.current('remote')).toBeUndefined();
     expect(events.filter((event) => event.startsWith('detach:remote-provider:')).toSorted()).toEqual([
       'detach:remote-provider:one',
       'detach:remote-provider:two',
     ]);
+
+    const gate = deferred();
+    const adding = value.addProvider({
+      id: 'slow',
+      imports,
+      attach: async (context, host) => {
+        events.push(`attach:slow:${context.id}`);
+        await gate.promise;
+        host.registerRuntime(runtime(context.id, 'slow', 'ready'));
+        return { dispose: () => { events.push(`detach:slow:${context.id}`); } };
+      },
+    });
+    await vi.waitFor(() => {
+      expect(events).toContain('attach:slow:one');
+    });
+    one.dispose();
+    const replacementPromise = value.acquire({ workspaceId: 'one' });
+    gate.resolve();
+    const [slow, replacement] = await Promise.all([adding, replacementPromise]);
+    expect(replacement.instance).not.toBe(one.instance);
+    expect(replacement.instance.runtimes.current('slow')).toBeDefined();
+    expect(events.indexOf('detach:slow:one')).toBeLessThan(events.lastIndexOf('attach:slow:one'));
+    await slow.dispose();
+    replacement.dispose();
+    two.dispose();
     await value.dispose();
   });
 
   it('rolls back earlier attachments when adding a provider fails on a later workspace', async () => {
     const events: string[] = [];
-    const value = manager([workspace('one'), workspace('two')], Promise.resolve(), events);
-    const one = await value.getOrCreate({ workspaceId: 'one' });
-    await value.getOrCreate({ workspaceId: 'two' });
+    const value = manager([workspace('one'), workspace('two'), workspace('three')], Promise.resolve(), events);
+    const one = await value.acquire({ workspaceId: 'one' });
+    const two = await value.acquire({ workspaceId: 'two' });
 
     await expect(value.addProvider(provider('broken', 'remote', events, { failWorkspace: 'two' })))
       .rejects.toThrow('attach failed two');
-    expect(one.runtimes.current('remote')).toBeUndefined();
+    expect(one.instance.runtimes.current('remote')).toBeUndefined();
     expect(events).toContain('detach:broken:one');
 
-    const three = workspace('three');
+    const providers = (value as unknown as { providers: Map<string, RuntimeProviderFactory> }).providers;
+    providers.set('local', provider('local', 'local', events, { failWorkspace: 'three' }));
+    await expect(value.acquire({ workspaceId: 'three' })).rejects.toThrow('attach failed three');
+    expect(value.get('three')).toBeUndefined();
+    one.dispose();
+    two.dispose();
     await value.dispose();
-    expect(three.id).toBe('three');
   });
 
   it('materializes once required local structure exists without waiting for ready status', async () => {
     const value = manager([workspace('one')]);
-    const instance = await value.getOrCreate({ workspaceId: 'one' });
+    const lease = await value.acquire({ workspaceId: 'one' });
 
-    expect(instance.runtimes.current('local')?.status).toBe('connecting');
-    expect(instance.program.status).toBe('preparing');
-    expect(instance.snapshot().lifecycle).toBe('active');
+    expect(lease.instance.runtimes.current('local')?.status).toBe('connecting');
+    expect(lease.instance.program.status).toBe('preparing');
+    expect(lease.instance.snapshot().lifecycle).toBe('active');
+    lease.dispose();
+    expect(value.get('one')).toBeUndefined();
     await value.dispose();
   });
 
@@ -241,8 +305,10 @@ describe('WorkspaceInstanceManager', () => {
         rootedWorkspace('repo', '/repo'),
         rootedWorkspace('sub', '/repo/sub'),
       ]);
-      await value.getOrCreate({ workspaceId: 'repo' });
-      await value.getOrCreate({ workspaceId: 'sub' });
+      const leases = [
+        await value.acquire({ workspaceId: 'repo' }),
+        await value.acquire({ workspaceId: 'sub' }),
+      ];
 
       expect(value.findContaining('/repo')?.id).toBe('repo');
       expect(value.findContaining('/repo/sub')?.id).toBe('sub');
@@ -250,16 +316,18 @@ describe('WorkspaceInstanceManager', () => {
       expect(value.findContaining('/repo/other')?.id).toBe('repo');
       expect(value.findContaining('/repo-other')).toBeUndefined();
       expect(value.findContaining('/outside')).toBeUndefined();
+      for (const lease of leases) lease.dispose();
       await value.dispose();
     });
 
     it('matches across Windows spelling variants', async () => {
       const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
-      await value.getOrCreate({ workspaceId: 'win' });
+      const lease = await value.acquire({ workspaceId: 'win' });
 
       expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
       expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
       expect(value.findContaining('D:/elsewhere')).toBeUndefined();
+      lease.dispose();
       await value.dispose();
     });
 
@@ -268,12 +336,15 @@ describe('WorkspaceInstanceManager', () => {
         rootedWorkspace('root', '/'),
         rootedWorkspace('repo', '/repo'),
       ]);
-      await value.getOrCreate({ workspaceId: 'root' });
-      await value.getOrCreate({ workspaceId: 'repo' });
+      const leases = [
+        await value.acquire({ workspaceId: 'root' }),
+        await value.acquire({ workspaceId: 'repo' }),
+      ];
 
       expect(value.findContaining('/')?.id).toBe('root');
       expect(value.findContaining('/elsewhere')?.id).toBe('root');
       expect(value.findContaining('/repo/sub')?.id).toBe('repo');
+      for (const lease of leases) lease.dispose();
       await value.dispose();
     });
   });

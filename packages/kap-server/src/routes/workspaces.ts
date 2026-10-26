@@ -314,24 +314,28 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         );
         return;
       }
-      const workspace = await core
+      const lease = await core
         .accessor.get(IWorkspaceInstanceManager)
-        .getOrCreate({ workspaceId: workspace_id, root: ws.root });
-      const result = await workspace.program.dirs.addDir({
-        path: req.body.path,
-        persist: req.body.persist,
-      });
-      reply.send(
-        okEnvelope(
-          {
-            project_root: result.projectRoot,
-            config_path: result.configPath,
-            additional_dirs: [...result.additionalDirs],
-            persisted: result.persisted,
-          },
-          req.id,
-        ),
-      );
+        .acquire({ workspaceId: workspace_id, root: ws.root });
+      try {
+        const result = await lease.instance.program.dirs.addDir({
+          path: req.body.path,
+          persist: req.body.persist,
+        });
+        reply.send(
+          okEnvelope(
+            {
+              project_root: result.projectRoot,
+              config_path: result.configPath,
+              additional_dirs: [...result.additionalDirs],
+              persisted: result.persisted,
+            },
+            req.id,
+          ),
+        );
+      } finally {
+        lease.dispose();
+      }
     },
   );
   app.post(

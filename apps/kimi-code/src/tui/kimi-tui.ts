@@ -134,6 +134,7 @@ import { BtwPanelController } from './controllers/btw-panel';
 import { ClipboardImageHintController } from './controllers/clipboard-image-hint';
 import { EditorKeyboardController } from './controllers/editor-keyboard';
 import { ModelMigrationController } from './controllers/model-migration';
+import { ProgramStatusController } from './controllers/program-status';
 import { SessionEventHandler } from './controllers/session-event-handler';
 import { showSessionOccupancyPrompt } from './controllers/session-occupancy';
 import { SessionReplayRenderer } from './controllers/session-replay';
@@ -146,6 +147,7 @@ import { adaptPanelResponse } from './reverse-rpc/approval/adapter';
 import { ApprovalController } from './reverse-rpc/approval/controller';
 import { createApprovalRequestHandler } from './reverse-rpc/approval/handler';
 import { registerReverseRPCHandlers } from './reverse-rpc/index';
+import type { ReverseRpcModalOwner } from './reverse-rpc/modal-coordinator';
 import { QuestionController } from './reverse-rpc/question/controller';
 import { createQuestionAskHandler } from './reverse-rpc/question/handler';
 import type { ApprovalPanelData, QuestionPanelData } from './reverse-rpc/types';
@@ -395,6 +397,7 @@ export class KimiTUI {
     { entry: TranscriptEntry; component: ShellRunComponent; taskId?: string }
   >();
   readonly streamingUI: StreamingUIController;
+  readonly programStatus: ProgramStatusController;
   readonly authFlow: AuthFlowController;
   readonly btwPanelController: BtwPanelController;
   readonly sessionEventHandler: SessionEventHandler;
@@ -404,6 +407,8 @@ export class KimiTUI {
   readonly editorKeyboard: EditorKeyboardController;
   readonly modelMigration: ModelMigrationController;
   private editorReplacementOnDisplaced: (() => void) | undefined;
+  private editorReplacementOnReplaced: (() => void) | undefined;
+  private editorReplacementOwner: ReverseRpcModalOwner | undefined;
 
   /** Timer that auto-clears the one-shot "moved to background" footer hint. */
   private detachHintClearTimer: ReturnType<typeof setTimeout> | undefined;
@@ -484,6 +489,7 @@ export class KimiTUI {
     this.telemetryDisabled = startupInput.telemetryDisabled ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
+    this.programStatus = new ProgramStatusController(this.state, this.state.terminal);
     this.state.footer.setExpandHintProvider(() => this.toolOutputExpandHint());
     this.state.transcriptContainer.setUnhandledClick((index) =>
       this.toggleClickedFoldBlock(index),
@@ -784,8 +790,11 @@ export class KimiTUI {
     // event loop (e.g. a future TUI reconnect) can't stack duplicate listeners.
     this.disposeTerminalTracking();
     this.state.ui.start();
+    this.programStatus.refresh();
     this.startClipboardImageHintController();
-    this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state);
+    this.terminalFocusTrackingDispose = installTerminalFocusTracking(this.state, () => {
+      this.programStatus.acknowledgeResults();
+    });
     this.refreshTerminalThemeTracking();
   }
 
@@ -1387,6 +1396,7 @@ export class KimiTUI {
       (error: unknown) => {
         const message = formatErrorMessage(error);
         this.finishShellOutput(commandId, '', message, true);
+        this.programStatus.failRequest(message);
         this.showError(`Shell command failed: ${message}`);
       },
     );
@@ -1438,6 +1448,7 @@ export class KimiTUI {
     // When the last shell command finishes, leave the shell streaming phase,
     // release one queued message (if any), and refresh the activity pane.
     if (this.shellOutputStreams.size === 0) {
+      this.programStatus.finishShell();
       this.setAppState({ streamingPhase: 'idle' });
       this.drainOneQueuedMessage();
     }
@@ -1913,6 +1924,7 @@ export class KimiTUI {
   }
 
   failSessionRequest(message: string): void {
+    this.programStatus.failRequest(message);
     this.setAppState({ streamingPhase: 'idle' });
     this.resetLivePane();
     this.showError(message);
@@ -1949,7 +1961,10 @@ export class KimiTUI {
         if (this.session !== session) return;
         const retries = (item.compactRetries ?? 0) + 1;
         if (retries >= 3) {
-          this.showError(`Failed to run queued /compact: ${formatErrorMessage(error)}`);
+          const message = formatErrorMessage(error);
+          this.setAppState({ isCompacting: false });
+          this.programStatus.failRequest(message);
+          this.showError(`Failed to run queued /compact: ${message}`);
           this.drainOneQueuedMessage();
           return;
         }
@@ -2024,11 +2039,13 @@ export class KimiTUI {
   handleTurnStarted(event: TurnStartedEvent): void {
     this.staging.handleTurnStarted(event);
     this.surveyController.notifyTurnStarted(event.origin);
+    this.programStatus.beginTurn(event.origin);
   }
 
   handleTurnEnded(event: TurnEndedEvent): void {
     this.staging.handleTurnEnded(event);
     this.surveyController.notifyTurnEnded(event.traceId);
+    this.programStatus.finishTurn(event);
     this.state.footer.refreshGitStatus();
     if (event.reason === 'completed') void this.maybeAutoGenerateSessionTitle();
   }
@@ -2149,6 +2166,12 @@ export class KimiTUI {
     if (goalActive) {
       if (runningTurnId !== undefined) this.staging.bindToTurn(stagingLease, runningTurnId);
       const request = this.trackPendingEntries([entry], session.steer(sdkInput));
+      void request.then(
+        () => {
+          if (this.session === session) this.programStatus.markUserSteer();
+        },
+        () => {},
+      );
       this.staging.trackDispatch(stagingLease, request, (error) => {
         const recovered = this.handlePromptConflict({
           session,
@@ -2388,6 +2411,7 @@ export class KimiTUI {
       this.steerMessage(session, items, (steered) => {
         for (const message of group) this.steeringQueuedMessages.delete(message);
         if (this.session !== session) return;
+        if (steered) this.programStatus.markUserSteer();
         if (steered || manual) {
           const done = new Set(group);
           this.state.queuedMessages = this.state.queuedMessages.filter((message) => !done.has(message));
@@ -2615,6 +2639,18 @@ export class KimiTUI {
     return this.sessionEventHandler.backgroundTasks;
   }
 
+  handleBackgroundTaskStatus(info: BackgroundTaskInfo): void {
+    this.programStatus.updateBackgroundTask(info);
+  }
+
+  restoreProgramStatusBackground(tasks: readonly BackgroundTaskInfo[]): void {
+    this.programStatus.restoreBackgroundTasks(tasks);
+  }
+
+  handleCompactionCancelled(): void {
+    this.programStatus.finishCompaction();
+  }
+
   getCurrentSessionId(): string {
     return this.state.appState.sessionId;
   }
@@ -2656,6 +2692,7 @@ export class KimiTUI {
       this.updateQueueDisplay();
       this.sessionEventHandler.retryQueuedGoalPromotion();
     }
+    if (busyChanged || 'sessionTitle' in patch) this.programStatus.refresh();
     if (additionalDirsChanged) this.setupAutocomplete();
     this.modelMigration.retry();
     this.state.ui.requestRender();
@@ -2965,11 +3002,17 @@ export class KimiTUI {
   private registerSessionHandlers(session: Session): void {
     session.setStaleReloadHandler(() => this.refreshAfterStaleReload(session));
     session.setApprovalHandler(
-      createApprovalRequestHandler(this.approvalController, (request, response) => {
-        this.appendApprovalTranscriptEntry(request, response);
-      }),
+      createApprovalRequestHandler(
+        this.approvalController,
+        (request, response) => {
+          this.appendApprovalTranscriptEntry(request, response);
+        },
+        this.programStatus,
+      ),
     );
-    session.setQuestionHandler(createQuestionAskHandler(this.questionController));
+    session.setQuestionHandler(
+      createQuestionAskHandler(this.questionController, this.programStatus),
+    );
   }
 
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {
@@ -3085,6 +3128,7 @@ export class KimiTUI {
     this.surveyController.reset();
     this.streamingUI.discardPending();
     if (options?.keepQueuedMessages !== true) this.clearQueuedMessages();
+    this.programStatus.resetSession();
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -3839,6 +3883,14 @@ export class KimiTUI {
     };
   }
 
+  beginAuthBlock(): () => void {
+    return this.programStatus.beginAuthBlock();
+  }
+
+  setAuthRequired(required: boolean): void {
+    this.programStatus.setAuthRequired(required);
+  }
+
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle {
     openUrl(auth.verificationUriComplete);
     this.state.transcriptContainer.addChild(
@@ -3850,7 +3902,15 @@ export class KimiTUI {
       }),
     );
     this.state.ui.requestRender();
-    return this.showLoginProgressSpinner('Waiting for authorization…');
+    const spinner = this.showLoginProgressSpinner('Waiting for authorization…');
+    return {
+      stop: (result) => {
+        spinner.stop(result);
+      },
+      setLabel: (label) => {
+        spinner.setLabel(label);
+      },
+    };
   }
 
   // =========================================================================
@@ -4014,6 +4074,7 @@ export class KimiTUI {
   }
 
   updateQueueDisplay(): void {
+    this.programStatus?.refresh();
     const { queueContainer, queuePane, queuedMessages } = this.state;
     if (queuedMessages.length === 0) {
       queuePane.scrollBodyToTop();
@@ -4350,9 +4411,18 @@ export class KimiTUI {
   // While the Updates panel holds the keyboard, whatever takes the editor slot
   // waits faded until the user comes back (Esc / Ctrl+N / a click), so an
   // approval arriving mid-read cannot catch keys meant for Updates.
-  mountEditorReplacement(panel: Component & Focusable, onDisplaced?: () => void): void {
+  mountEditorReplacement(
+    panel: Component & Focusable,
+    onDisplaced?: () => void,
+    onReplaced?: () => void,
+    owner?: ReverseRpcModalOwner,
+  ): void {
     const previousOnDisplaced = this.editorReplacementOnDisplaced;
+    const previousOnReplaced = this.editorReplacementOnReplaced;
+    const previousOwner = this.editorReplacementOwner;
     this.editorReplacementOnDisplaced = onDisplaced;
+    this.editorReplacementOnReplaced = onReplaced;
+    this.editorReplacementOwner = owner;
     this.surveyController.notifyDisplaced();
     if (this.state.activeDialog === 'model-switch-confirm') this.state.activeDialog = null;
     this.state.editorReplacementMounted = true;
@@ -4360,11 +4430,15 @@ export class KimiTUI {
     if (!this.state.notifyPanel.focused) this.state.ui.setFocus(panel);
     this.state.ui.requestRender();
     previousOnDisplaced?.();
+    const continuingSameOwner = owner !== undefined && previousOwner === owner;
+    if (!continuingSameOwner) previousOnReplaced?.();
   }
 
   restoreEditor(): void {
     const onDisplaced = this.editorReplacementOnDisplaced;
     this.editorReplacementOnDisplaced = undefined;
+    this.editorReplacementOnReplaced = undefined;
+    this.editorReplacementOwner = undefined;
     this.state.editorReplacementMounted = false;
     setEditorSlot(this.state, this.state.editor);
     if (!this.state.notifyPanel.focused) this.state.ui.setFocus(this.state.editor);
@@ -4396,6 +4470,7 @@ export class KimiTUI {
   /** Compaction shrinks the cached prefix — reset the cache-break baseline. */
   noteCompactionFinished(): void {
     this.cacheHint.resetCacheBreakBaseline();
+    this.programStatus.finishCompaction();
   }
 
   /** /undo cut the context — the next step's cache drop is expected. */
@@ -4460,20 +4535,29 @@ export class KimiTUI {
       return false;
     }
     this.startEventLoop();
-    const choice = await new Promise<TrustPromptChoice>((resolve) => {
-      this.state.activeDialog = 'trust-prompt';
-      this.mountEditorReplacement(
-        new TrustPromptComponent({
-          workDir,
-          info,
-          getAvailableRows: () =>
-            this.state.terminal.rows - (this.state.ui instanceof TuiAltScreen ? 1 : 0),
-          onSelect: (c) => {
-            resolve(c);
-          },
-        }),
-      );
+    const interaction = this.programStatus.startInteraction({
+      kind: 'permission',
+      message: 'Workspace trust required',
     });
+    let choice: TrustPromptChoice;
+    try {
+      choice = await new Promise<TrustPromptChoice>((resolve) => {
+        this.state.activeDialog = 'trust-prompt';
+        this.mountEditorReplacement(
+          new TrustPromptComponent({
+            workDir,
+            info,
+            getAvailableRows: () =>
+              this.state.terminal.rows - (this.state.ui instanceof TuiAltScreen ? 1 : 0),
+            onSelect: (c) => {
+              resolve(c);
+            },
+          }),
+        );
+      });
+    } finally {
+      this.programStatus.endInteraction(interaction);
+    }
     this.state.activeDialog = null;
     if (choice !== 'trust') {
       // Declining trust exits the program (Claude Code's "No, exit" semantics):
@@ -4743,7 +4827,11 @@ export class KimiTUI {
       },
     );
     this.activeApprovalPanel = panel;
-    this.mountEditorReplacement(panel);
+    this.mountEditorReplacement(panel, undefined, () => {
+      this.activeApprovalPanel = undefined;
+      this.patchLivePane({ pendingApproval: null });
+      this.approvalController.cancelAll('Approval panel displaced', false);
+    }, 'approval');
   }
 
   private hideApprovalPanel(): void {
@@ -4809,7 +4897,10 @@ export class KimiTUI {
         onFocusUpdates: () => this.focusNotifyPanel(),
       },
     );
-    this.mountEditorReplacement(dialog);
+    this.mountEditorReplacement(dialog, undefined, () => {
+      this.patchLivePane({ pendingQuestion: null });
+      this.questionController.cancelAll('Question panel displaced', false);
+    }, 'question');
   }
 
   private hideQuestionDialog(): void {
