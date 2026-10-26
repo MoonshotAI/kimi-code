@@ -19,7 +19,6 @@ import type {
   InteractionRespondRequest,
   InteractionRespondResult,
 } from '@moonshot-ai/kap-server/protocol/interaction';
-import type { ListPendingApprovalsResponse } from '@moonshot-ai/kap-server/protocol/rest-approval';
 import type {
   ListModelsResponse,
   ListProvidersResponse,
@@ -31,7 +30,6 @@ import type {
   PromptSteerResult,
   PromptSubmitResult,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
-import type { ListPendingQuestionsResponse } from '@moonshot-ai/kap-server/protocol/rest-question';
 import type {
   CompactSessionRequest,
   CompactSessionResponse,
@@ -375,20 +373,6 @@ export class HttpClient {
       'POST',
       `/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(interactionId)}`,
       body,
-    );
-  }
-  listPendingApprovals(sid: string): Promise<ListPendingApprovalsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/approvals?status=pending`,
-      undefined,
-    );
-  }
-  listPendingQuestions(sid: string): Promise<ListPendingQuestionsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/questions?status=pending`,
-      undefined,
     );
   }
 }

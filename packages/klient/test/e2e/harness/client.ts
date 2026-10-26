@@ -28,7 +28,6 @@ import type {
   InteractionRespondRequest,
   InteractionRespondResult,
 } from '@moonshot-ai/kap-server/protocol/interaction';
-import type { ListPendingApprovalsResponse } from '@moonshot-ai/kap-server/protocol/rest-approval';
 import type {
   ListModelsResponse,
   ListProvidersResponse,
@@ -42,7 +41,6 @@ import type {
   PromptSubmitResult,
   PromptThinking,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
-import type { ListPendingQuestionsResponse } from '@moonshot-ai/kap-server/protocol/rest-question';
 import type {
   CompactSessionRequest,
   CompactSessionResponse,
@@ -297,12 +295,6 @@ export class DaemonClient {
     body: InteractionRespondRequest,
   ): Promise<InteractionRespondResult> {
     return this.http.respondInteraction(sid, interactionId, body);
-  }
-  listPendingApprovals(sid: string): Promise<ListPendingApprovalsResponse> {
-    return this.http.listPendingApprovals(sid);
-  }
-  listPendingQuestions(sid: string): Promise<ListPendingQuestionsResponse> {
-    return this.http.listPendingQuestions(sid);
   }
 
   // ── WS lifecycle ────────────────────────────────────────────────────────

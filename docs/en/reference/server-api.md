@@ -1190,41 +1190,11 @@ On success, `data` is `{ steered: true, prompt_ids: [prompt_id] }`.
 
 ### Approvals and questions
 
-Approvals and questions are the session's two pending-interaction kinds: an approval asks permission for a tool call, a question asks for structured input with labeled options. The list endpoints read them, and one endpoint responds to either kind; over the WebSocket, every change arrives as an `interaction` event (see [Events](#events)).
+Approvals and questions are the session's two pending-interaction kinds: an approval asks permission for a tool call, a question asks for structured input with labeled options. Over the WebSocket, every change arrives as an `interaction` event (see [Events](#events)), and one endpoint responds to either kind.
 
 | Method and path | Description |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/approvals` | List pending approval requests (`status=pending` is required) |
-| `GET /api/v1/sessions/{session_id}/questions` | List pending questions (`status=pending` is required) |
 | `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | Respond to an approval or a question |
-
-#### `GET /api/v1/sessions/{session_id}/approvals`
-
-Lists the session's pending approval requests — the permission prompts raised by tool calls. Reading the list resumes the session when it is cold.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `status` | query | string | **Required.** Must be `pending` |
-
-On success, `data` is `{ items }` where each item is `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`: `agent_id` names the agent whose tool call is waiting for permission (`main` for the main agent); `tool_name` / `action` / `tool_input_display` describe the call waiting for permission, and `expires_at` is 24 hours after `created_at`.
-
-- `40001`: `status` missing or not `pending`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/questions`
-
-Lists the session's pending questions.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `status` | query | string | **Required.** Must be `pending` |
-
-On success, `data` is `{ items }` where each item is `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`. `agent_id` names the asking agent when known (`main` for the main agent). `questions` holds 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`; `multi_select` allows several options, `allow_other` a free-text answer.
-
-- `40001`: `status` missing or not `pending`
-- `40401`: session not found
 
 #### `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`
 
@@ -1233,7 +1203,7 @@ Responds to a pending approval or question. The body's `kind` must match the int
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
-| `interaction_id` | path | string | **Required.** The `approval_id` / `question_id`, which is also the event's `interaction_id` |
+| `interaction_id` | path | string | **Required.** The event's `interaction_id` |
 | `kind` | body | string | **Required.** `approval` / `question` |
 
 With `kind: "approval"`:
@@ -2380,7 +2350,7 @@ Three global lifecycle events keep a cross-workspace overview fresh without poll
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 
-Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `seq`, `timestamp`, or `payload` wrapper — and it is never journaled or replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`; a question's is `{ questions }`. The server sends the session's pending interactions right after each successful `client_hello` / `subscribe` / `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
+Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `seq`, `timestamp`, or `payload` wrapper — and it is never journaled or replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `client_hello` / `subscribe` / `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
 
 ### Reconnect and recovery
 

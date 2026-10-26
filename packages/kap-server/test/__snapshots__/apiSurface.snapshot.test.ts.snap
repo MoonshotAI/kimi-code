@@ -194,10 +194,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/approvals",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/children",
     ],
     [
@@ -235,10 +231,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/sessions/{session_id}/prompts",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/questions",
     ],
     [
       "GET",

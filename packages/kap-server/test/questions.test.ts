@@ -26,43 +26,12 @@ interface Envelope<T> {
   details?: { path: string; message: string }[];
 }
 
-interface QuestionOptionWire {
-  id: string;
-  label: string;
-  description?: string;
-}
-
-interface QuestionItemWire {
-  id: string;
-  question: string;
-  header?: string;
-  body?: string;
-  options: QuestionOptionWire[];
-  multi_select?: boolean;
-  allow_other?: boolean;
-  other_label?: string;
-  other_description?: string;
-}
-
-interface QuestionWire {
-  question_id: string;
-  session_id: string;
-  turn_id?: number;
-  tool_call_id?: string;
-  questions: QuestionItemWire[];
-  created_at: string;
-}
-
-interface ListWire {
-  items: QuestionWire[];
-}
-
 interface RespondWire {
   outcome: string;
   ended_at: string;
 }
 
-describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
+describe('server-v2 /api/v1/sessions/{sid}/interactions (question)', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
   let base: string;
@@ -106,13 +75,6 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
-  async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
-    const res = await fetch(`${base}${path}`, {
-      headers: authHeaders(server as RunningServer),
-    } as never);
-    return { status: res.status, body: (await res.json()) as Envelope<T> };
-  }
-
   async function createSession(): Promise<string> {
     const { body } = await postJson<{ id: string }>('/api/v1/sessions', {
       metadata: { cwd: home as string },
@@ -150,6 +112,10 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     return interactions.wait<QuestionResult>(parked.id);
   }
 
+  function pendingQuestions(sessionId: string) {
+    return interactions.findAll({ kind: 'question', resolved: false, tags: { sessionId } });
+  }
+
   function makeRequest(id: string): QuestionRequest {
     return {
       id,
@@ -162,32 +128,6 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       ],
     };
   }
-
-  it('lists a pending question projected onto the wire shape', async () => {
-    const sid = await createSession();
-    enqueueQuestion(sid, makeRequest('q-1'));
-
-    const { body } = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
-    expect(body.code).toBe(0);
-    expect(body.data.items).toHaveLength(1);
-    const item = body.data.items[0]!;
-    expect(item.question_id).toBe('q-1');
-    expect(item.session_id).toBe(sid);
-    expect(item.tool_call_id).toBe('tc-q-1');
-    expect(item.questions).toEqual([
-      {
-        id: 'q_0',
-        question: 'Pick one',
-        options: [
-          { id: 'opt_0_0', label: 'Yes' },
-          { id: 'opt_0_1', label: 'No', description: 'decline' },
-        ],
-        allow_other: true,
-      },
-    ]);
-    expect(Number.isNaN(Date.parse(item.created_at))).toBe(false);
-    expect(item).not.toHaveProperty('expires_at');
-  });
 
   it('resolves a pending question', async () => {
     const sid = await createSession();
@@ -202,8 +142,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     expect(body.data.outcome).toBe('answered');
     expect(Number.isNaN(Date.parse(body.data.ended_at))).toBe(false);
 
-    const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
-    expect(listed.body.data.items).toHaveLength(0);
+    expect(pendingQuestions(sid)).toEqual([]);
   });
 
   it('flattens the protocol response into the in-process result', async () => {
@@ -330,8 +269,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     expect(Number.isNaN(Date.parse(body.data.ended_at))).toBe(false);
 
     await expect(resultPromise).resolves.toBeNull();
-    const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
-    expect(listed.body.data.items).toHaveLength(0);
+    expect(pendingQuestions(sid)).toEqual([]);
   });
 
   it('returns 40902 on a duplicate resolve (recently-resolved window)', async () => {
@@ -371,8 +309,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       ],
     });
 
-    const list = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
-    expect(list.body.data.items[0]!.question_id).toBe('AskUserQuestion:0');
+    expect(pendingQuestions(sid).map((i) => i.id)).toEqual(['AskUserQuestion:0']);
 
     const { body } = await postJson<RespondWire>(
       `/api/v1/sessions/${sid}/interactions/AskUserQuestion%3A0`,
@@ -395,13 +332,12 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
       ],
     });
 
-    const list = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
-    const item = list.body.data.items[0]!;
-    expect(item.tool_call_id).toBe('AskUserQuestion:0');
-    expect(item.question_id).not.toBe('AskUserQuestion:0');
+    const [item] = pendingQuestions(sid);
+    expect(item!.tags['toolCallId']).toBe('AskUserQuestion:0');
+    expect(item!.id).not.toBe('AskUserQuestion:0');
 
     const { body } = await postJson<RespondWire>(
-      `/api/v1/sessions/${sid}/interactions/${encodeURIComponent(item.question_id)}`,
+      `/api/v1/sessions/${sid}/interactions/${encodeURIComponent(item!.id)}`,
       { kind: 'question', answers: { q_0: { kind: 'single', option_id: 'opt_0_0' } } },
     );
     expect(body.code).toBe(0);
@@ -423,8 +359,7 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
     const neither = await postJson<null>(url, { kind: 'question' });
     expect(neither.body.code).toBe(40001);
 
-    const listed = await getJson<ListWire>(`/api/v1/sessions/${sid}/questions?status=pending`);
-    expect(listed.body.data.items).toHaveLength(1);
+    expect(pendingQuestions(sid).map((i) => i.id)).toEqual(['q-6']);
   });
 
   it('returns 40902 on a duplicate resolve of a colon-id question', async () => {
@@ -448,7 +383,10 @@ describe('server-v2 /api/v1/sessions/{sid}/questions', () => {
   });
 
   it('returns 40401 for an unknown session', async () => {
-    const { body } = await getJson<null>('/api/v1/sessions/nope/questions?status=pending');
+    const { body } = await postJson<null>('/api/v1/sessions/nope/interactions/nope', {
+      kind: 'question',
+      dismissed: true,
+    });
     expect(body.code).toBe(40401);
   });
 });

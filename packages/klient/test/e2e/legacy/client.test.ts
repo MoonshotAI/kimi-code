@@ -470,8 +470,8 @@ describe('DaemonClient session action helpers', () => {
     expect(parseRecordedJsonBody(calls[2])).toEqual({});
   });
 
-  it('child-session and pending reverse-RPC helpers call recovery routes', async () => {
-    const log = createCaseLogger('client helper: children + pending');
+  it('child-session and interaction helpers call recovery routes', async () => {
+    const log = createCaseLogger('client helper: children + interactions');
     const calls: FetchCall[] = [];
     const child = testSession({ id: 'sess_child', title: 'Child session' });
     const client = new DaemonClient({
@@ -480,8 +480,6 @@ describe('DaemonClient session action helpers', () => {
         [
           okEnvelope(child),
           okEnvelope({ items: [child], has_more: false }),
-          okEnvelope({ items: [] }),
-          okEnvelope({ items: [] }),
           okEnvelope({ outcome: 'dismissed', ended_at: '2026-06-09T00:00:00.000Z' }),
         ],
         calls,
@@ -497,8 +495,6 @@ describe('DaemonClient session action helpers', () => {
     await expect(
       client.listChildren('sess_parent', { page_size: 5, busy: false }),
     ).resolves.toEqual({ items: [child], has_more: false });
-    await expect(client.listPendingApprovals('sess_parent')).resolves.toEqual({ items: [] });
-    await expect(client.listPendingQuestions('sess_parent')).resolves.toEqual({ items: [] });
     await expect(
       client.respondInteraction('sess_parent', 'question_1', { kind: 'question', dismissed: true }),
     ).resolves.toEqual({
@@ -510,15 +506,13 @@ describe('DaemonClient session action helpers', () => {
     expect(calls.map((call) => [call.init.method, call.url])).toEqual([
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/children'],
       ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/children?page_size=5&busy=false'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/approvals?status=pending'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/questions?status=pending'],
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/interactions/question_1'],
     ]);
     expect(parseRecordedJsonBody(calls[0])).toEqual({
       title: 'Child session',
       metadata: { topic: 'side-question' },
     });
-    expect(parseRecordedJsonBody(calls[4])).toEqual({ kind: 'question', dismissed: true });
+    expect(parseRecordedJsonBody(calls[2])).toEqual({ kind: 'question', dismissed: true });
   });
 
   it('uploadFile posts multipart form data and deleteFile hits the file route', async () => {

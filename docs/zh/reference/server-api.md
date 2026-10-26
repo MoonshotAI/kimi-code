@@ -1190,41 +1190,11 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。列表端点用于读取，回应两类交互共用一个端点；WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)）。
+审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)），回应两类交互共用一个端点。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/approvals` | 列出待处理的审批请求（必须 `status=pending`） |
-| `GET /api/v1/sessions/{session_id}/questions` | 列出待处理的提问（必须 `status=pending`） |
 | `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | 回应审批或提问 |
-
-#### `GET /api/v1/sessions/{session_id}/approvals`
-
-列出会话待处理的审批请求——即工具调用发起的权限提示。读取列表会在会话为冷态时将其恢复。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | **必填。** 必须为 `pending` |
-
-成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`agent_id` 是发起审批的 agent id（主 agent 为 `main`）；`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
-
-- `40001`：`status` 缺失或不是 `pending`
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/questions`
-
-列出会话待处理的提问。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | **必填。** 必须为 `pending` |
-
-成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`。`agent_id?` 是发起提问的 agent id（已知时；主 agent 为 `main`）。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
-
-- `40001`：`status` 缺失或不是 `pending`
-- `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`
 
@@ -1233,7 +1203,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `interaction_id` | path | string | **必填。** 即 `approval_id` / `question_id`，也是事件中的 `interaction_id` |
+| `interaction_id` | path | string | **必填。** 事件中的 `interaction_id` |
 | `kind` | body | string | **必填。** `approval` / `question` |
 
 `kind: "approval"` 时：
@@ -2380,7 +2350,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
 
-会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `seq`、`timestamp` 和 `payload` 包装——且从不写入日志、不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，提问的为 `{ questions }`。服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
+会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `seq`、`timestamp` 和 `payload` 包装——且从不写入日志、不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的为 `{ questions }`，含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`，每个带 2–4 个 `{ id, label, description? }` 形式的 `options`。服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
 
 ### 断线恢复
 

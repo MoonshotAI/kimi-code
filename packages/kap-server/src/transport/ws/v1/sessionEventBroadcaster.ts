@@ -65,7 +65,7 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { InteractionEventMessage, InteractionOutcome } from '../../../protocol/interaction';
-import { approvalExpiresAt, interactionAgentId } from '../../../routes/approvals';
+import { approvalExpiresAt, interactionAgentId } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
