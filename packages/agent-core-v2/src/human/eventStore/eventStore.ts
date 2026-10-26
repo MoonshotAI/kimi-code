@@ -25,6 +25,7 @@ export interface EventStoreOptions<SM extends SliceMap> {
   slices: SM;
   drainLimit?: number;
   onError?: (error: unknown) => void;
+  mutableReplay?: boolean;
 }
 
 export interface EventStore<SM extends SliceMap> {
@@ -74,6 +75,7 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
   private tail: Promise<unknown> = Promise.resolve();
   private readonly drainLimit: number;
   private readonly report: (error: unknown) => void;
+  private readonly mutableReplay: boolean;
   private readonly listeners = new Set<Listener<SM>>();
   private readonly replayFreshSlices = new Set<string>();
 
@@ -83,6 +85,7 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     this.state = {};
     this.drainLimit = opts.drainLimit ?? DEFAULT_DRAIN_LIMIT;
     this.report = opts.onError ?? ((error) => console.error(error));
+    this.mutableReplay = opts.mutableReplay === true;
   }
 
   get ref(): { tree: string; branch: string } {
@@ -136,8 +139,14 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
       throw new StoreError('duplicate-slice', `slice '${slice.name}' is already registered`);
     }
     const op = this.tail.then(async () => {
+      const previousSlices = this.slices;
       this.slices = { ...this.slices, [slice.name]: slice };
-      await this.refold(this.journal);
+      try {
+        await this.refold(this.journal);
+      } catch (error) {
+        this.slices = previousSlices;
+        throw error;
+      }
     });
     this.tail = op.then(noop, noop);
     await op;
@@ -158,8 +167,8 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     }
     const op = this.tail.then(async () => {
       await this.journal.settled();
-      this.journal = journal;
       await this.refold(journal);
+      this.journal = journal;
     });
     this.tail = op.then(noop, noop);
     return op.then(() => {
@@ -194,16 +203,23 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
     for (const [name, slice] of Object.entries(this.slices)) {
       seeded[name] = slice.initialState();
     }
+    const previous = this.state;
     this.state = seeded;
     this.replayFreshSlices.clear();
-    for (const record of records) {
-      if (record.kind !== EVENT_ENTRY_KIND) continue;
-      this.replayRecord(record);
+    try {
+      for (const record of records) {
+        if (record.kind !== EVENT_ENTRY_KIND) continue;
+        this.replayRecord(record);
+      }
+      for (const name of this.replayFreshSlices) {
+        this.state[name] = freeze(this.state[name], true);
+      }
+      this.replayFreshSlices.clear();
+    } catch (error) {
+      this.state = previous;
+      this.replayFreshSlices.clear();
+      throw error;
     }
-    for (const name of this.replayFreshSlices) {
-      this.state[name] = freeze(this.state[name], true);
-    }
-    this.replayFreshSlices.clear();
   }
 
   private replayRecord(record: JournalRecord): void {
@@ -271,9 +287,13 @@ class EventStoreImpl<SM extends SliceMap> implements EventStore<SM> {
       const reducer = slice.reducers[event.type];
       if (reducer === undefined) continue;
       changed = true;
-      const produced = produceFor(next[name], (draft) => reducer(draft, event, ctx));
-      if (replaying && produced !== next[name]) this.replayFreshSlices.add(name);
-      next[name] = produced;
+      const current = next[name];
+      const mutable = replaying && this.mutableReplay;
+      const produced = mutable
+        ? reducer(current, event, ctx)
+        : produceFor(current, (draft) => reducer(draft, event, ctx));
+      if (replaying && (mutable || produced !== current)) this.replayFreshSlices.add(name);
+      next[name] = mutable && produced === undefined ? current : produced;
     }
     if (changed) {
       this.state = next;

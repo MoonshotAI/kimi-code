@@ -21,7 +21,6 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
-import { IHostTerminalService } from '#/os/interface/terminal';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { LocalRuntime } from '#/runtime/localRuntime';
 import type {
@@ -122,6 +121,14 @@ class ScopedAppendLogStore implements IAppendLogStore {
   drainRetirements(): Promise<void> {
     return Promise.resolve();
   }
+
+  externallyModified(): boolean {
+    return false;
+  }
+
+  bindWriteGuard(): IDisposable {
+    return { dispose: () => undefined };
+  }
 }
 
 class TestRuntimeResolver implements IRuntimeResolver {
@@ -132,9 +139,8 @@ class TestRuntimeResolver implements IRuntimeResolver {
     @IHostEnvironment environment: IHostEnvironment,
     @IHostFileSystem fs: IHostFileSystem,
     @IHostProcessService processes: IHostProcessService,
-    @IHostTerminalService terminal: IHostTerminalService,
   ) {
-    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes, terminal);
+    this.runtime = new LocalRuntime('test-workspace', environment, fs, processes);
   }
 
   inspect(_binding: RuntimeBinding): Runtime {

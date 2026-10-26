@@ -90,6 +90,16 @@ describe('PlanModeService dynamic injection content', () => {
     expect(text).toContain(`Plan file: ${planFilePath}`);
   });
 
+  it('lets the model answer in text while plan mode stays on', async () => {
+    await enterPlan(plan);
+
+    await injectDynamic(ctx);
+    const text = lastPlanReminder(context);
+
+    expect(text).toContain('answer in text');
+    expect(text).not.toContain('any other way');
+  });
+
   it('derives a plan file path before injecting the full reminder', async () => {
     const planFilePath = await enterPlan(plan, 'derived-plan');
 
@@ -107,6 +117,10 @@ describe('PlanModeService dynamic injection content', () => {
     await injectDynamic(ctx);
 
     expect(planReminderMessages(context)).toHaveLength(2);
+    const text = lastPlanReminder(context);
+    expect(text).toContain('If the user approved a plan, carry it out');
+    expect(text).toContain("otherwise follow the user's latest message");
+    expect(text).not.toContain('Continue with the approved plan');
   });
 
   it('does not inject anything when plan mode is inactive from the start', async () => {

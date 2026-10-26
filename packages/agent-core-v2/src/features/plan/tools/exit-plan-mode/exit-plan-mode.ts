@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { createDecorator } from '#/_base/di/instantiation';
 import type { AgentTool } from '#/tool/toolContract';
 
+export const EXIT_PLAN_MODE_TOOL_NAME = 'ExitPlanMode';
+
 export interface ExitPlanModeOption {
   label: string;
   description: string;

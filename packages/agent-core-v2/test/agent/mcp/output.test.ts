@@ -50,6 +50,9 @@ interface TelemetryRecord {
 function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
   const telemetry: ITelemetryService = {
     _serviceBrand: undefined,
+    track(event, properties) {
+      records.push({ event, properties });
+    },
     track2(event, properties) {
       records.push({ event, properties: properties as TelemetryProperties });
     },

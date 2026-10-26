@@ -91,7 +91,7 @@ export class AgentAgentsMdReminderService
     );
     this._register(
       this.instructions.onDidChange((changes) => {
-        this.announceChanged(changes);
+        this.trackChanges(changes);
       }),
     );
     this._register(
@@ -119,7 +119,7 @@ export class AgentAgentsMdReminderService
     this.states.set(agentsMdReminderSeededKey, true);
   }
 
-  private announceChanged(changes: readonly WatchChange[]): void {
+  private trackChanges(changes: readonly WatchChange[]): void {
     if (!this.states.get(agentsMdReminderSeededKey)) return;
     const entries = new Map<string, WatchChange>();
     for (const change of changes) {
@@ -128,9 +128,6 @@ export class AgentAgentsMdReminderService
     }
     if (entries.size === 0) return;
     const list = [...entries.values()];
-    this.reminder.notify(changeReminderText(list), {
-      variant: 'agents_md_change',
-    });
     this.markKnown(
       list.filter((change) => change.action === 'modified').map((change) => change.path),
     );
@@ -355,16 +352,6 @@ function reminderText(paths: readonly string[]): string {
     'The following AGENTS.md file(s) apply to paths accessed by your recent tool call, but were not included in your system prompt:\n' +
     paths.map((path) => `- ${path}`).join('\n') +
     '\nRead them before making changes in those directories.'
-  );
-}
-
-function changeReminderText(changes: readonly WatchChange[]): string {
-  return (
-    'The AGENTS.md instruction file(s) below changed on disk after they were injected into the system prompt:\n' +
-    changes
-      .map((change) => `- ${change.path}${change.action === 'deleted' ? ' (deleted)' : ''}`)
-      .join('\n') +
-    '\nRead the current file(s) and follow the latest contents; the copies injected in the system prompt are stale.'
   );
 }
 

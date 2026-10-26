@@ -8,6 +8,7 @@ import {
   resolveCatalogImport,
   SECONDARY_DERIVED_MODEL_ALIAS,
   type Catalog,
+  type RefreshProviderModelsResponse,
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -40,10 +41,81 @@ import type { SlashCommandHost } from './dispatch';
 // /provider command
 // ---------------------------------------------------------------------------
 
-export async function handleProviderCommand(host: SlashCommandHost): Promise<void> {
+export async function handleProviderCommand(host: SlashCommandHost, rawArgs = ''): Promise<void> {
+  const args = rawArgs.trim().split(/\s+/).filter((part) => part.length > 0);
+  if (args[0] === 'refresh') {
+    if (args.length > 2) {
+      host.showError('Usage: /provider [refresh [providerId]]');
+      return;
+    }
+    await handleProviderRefresh(host, args[1]);
+    return;
+  }
+  if (args.length > 0) {
+    host.showError('Usage: /provider [refresh [providerId]]');
+    return;
+  }
   const options = buildProviderManagerOptions(host);
   const component = new ProviderManagerComponent(options);
   host.mountEditorReplacement(component);
+}
+
+async function handleProviderRefresh(
+  host: SlashCommandHost,
+  providerId: string | undefined,
+): Promise<void> {
+  const spinner = host.showProgressSpinner(
+    providerId === undefined
+      ? 'Refreshing models for all providers…'
+      : `Refreshing models for ${providerId}…`,
+  );
+  let result: RefreshProviderModelsResponse;
+  try {
+    result = await host.authFlow.refreshProviderModels(
+      providerId === undefined ? undefined : { providerId },
+    );
+  } catch (error) {
+    spinner.stop({ ok: false, label: 'Refresh failed.' });
+    host.showError(`Failed to refresh models: ${formatErrorMessage(error)}`);
+    return;
+  }
+  spinner.stop({ ok: true, label: 'Refresh finished.' });
+  reportProviderRefresh(host, result);
+  if (result.retired_default !== undefined) {
+    await host.modelMigration.retire(result.retired_default);
+  }
+}
+
+function reportProviderRefresh(
+  host: SlashCommandHost,
+  result: RefreshProviderModelsResponse,
+): void {
+  for (const change of result.changed) {
+    if (change.added === 0 && change.removed === 0) {
+      // Metadata-only refresh: display name, capabilities, or upgrade info changed.
+      host.showStatus(`${change.provider_name}: model metadata updated.`);
+      continue;
+    }
+    const parts: string[] = [];
+    if (change.added > 0) parts.push(`+${change.added}`);
+    if (change.removed > 0) parts.push(`-${change.removed}`);
+    // A removed alias can break agents bound to it on their next turn, so
+    // removals surface as a warning rather than a plain status.
+    const total = change.added + change.removed;
+    host.showStatus(
+      `${change.provider_name}: ${parts.join(' / ')} model${total === 1 ? '' : 's'}.`,
+      change.removed > 0 ? 'warning' : undefined,
+    );
+  }
+  for (const failure of result.failed) {
+    host.showStatus(`Skipped refreshing ${failure.provider}: ${failure.reason}`, 'warning');
+  }
+  if (result.changed.length === 0 && result.failed.length === 0) {
+    const count = result.unchanged.length;
+    host.showStatus(
+      `No model changes (${count} provider${count === 1 ? '' : 's'} up to date).`,
+    );
+  }
 }
 
 function buildProviderManagerOptions(host: SlashCommandHost): ProviderManagerOptions {
@@ -319,11 +391,15 @@ export async function setDefaultModel(
   // lazy session can come live while the config writes above are pending; a
   // session created BY activation (v1) or a same-alias rebind does not count
   // — both bind the model without an engine event.
-  let engineTrackedSwitch = await host.authFlow.refreshConfigAfterLogin();
+  const refreshed = await host.authFlow.refreshConfigAfterLogin(effort);
+  // A mounted confirmation gate owns the whole switch — including the picked
+  // effort — so the follow-up activation must not fire under the open dialog.
+  const gateOwnsSwitch = refreshed === 'gated';
+  let engineTrackedSwitch = refreshed === 'gated' ? true : refreshed;
   // refreshConfigAfterLogin reactivates from the persisted config, so a pick
   // the gate keeps session-only never reaches the runtime — apply it after
   // the refresh, or the persisted value would clobber it.
-  if (thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
+  if (!gateOwnsSwitch && thinking.effort === undefined && effort !== 'off' && effort !== 'on') {
     engineTrackedSwitch =
       (await host.authFlow.activateModelAfterLogin(alias, effort)) || engineTrackedSwitch;
   }

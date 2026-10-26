@@ -179,9 +179,8 @@ function renderReviewGate(
 }
 
 function renderConcurrency(snapshot: TowerStatusConcurrency): string {
-  const parts = [
-    `budget: ${String(snapshot.budget)} agent(s) · inflight: ${String(snapshot.inflight)}`,
-  ];
+  const budget = Number.isFinite(snapshot.budget) ? String(snapshot.budget) : 'unlimited';
+  const parts = [`budget: ${budget} agent(s) · inflight: ${String(snapshot.inflight)}`];
   if (snapshot.blockedUntil !== null) {
     const remainingMs = snapshot.blockedUntil - Date.now();
     parts.push(

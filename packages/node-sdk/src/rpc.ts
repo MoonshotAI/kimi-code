@@ -169,11 +169,22 @@ export interface SessionWarningInfo {
   readonly severity: 'info' | 'warning' | 'error';
 }
 
+export interface ConfigSectionChange {
+  readonly domain: string;
+  readonly source: 'load' | 'reload' | 'set';
+  readonly value: unknown;
+  readonly previousValue: unknown;
+}
+
 export abstract class SDKRpcClientBase {
   private readonly interactiveAgentScope = new AsyncLocalStorage<string>();
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+  private readonly staleReloadHandlers = new Map<
+    string,
+    (summary: ResumedSessionSummary) => Promise<void>
+  >();
 
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
@@ -214,6 +225,8 @@ export abstract class SDKRpcClientBase {
   abstract getConfig(input?: GetConfigOptions): Promise<KimiConfig>;
 
   abstract getConfigDiagnostics(): Promise<ConfigDiagnostics>;
+
+  abstract onConfigSectionChanged(listener: (change: ConfigSectionChange) => void): Unsubscribe;
 
   abstract getExperimentalFeatures(): Promise<readonly ExperimentalFeatureState[]>;
 
@@ -371,6 +384,8 @@ export abstract class SDKRpcClientBase {
 
   abstract undoHistory(input: SessionIdRpcInput & { count: number }): Promise<void>;
 
+  abstract takeOverSessionLock(input: SessionIdRpcInput): Promise<void>;
+
   abstract getContext(input: SessionIdRpcInput): Promise<AgentContextData>;
 
   abstract getUsage(input: SessionIdRpcInput): Promise<SessionUsage>;
@@ -489,9 +504,28 @@ export abstract class SDKRpcClientBase {
     this.questionHandlers.set(sessionId, handler);
   }
 
+  setStaleReloadHandler(
+    sessionId: string,
+    handler: ((summary: ResumedSessionSummary) => Promise<void>) | undefined,
+  ): void {
+    if (handler === undefined) {
+      this.staleReloadHandlers.delete(sessionId);
+      return;
+    }
+    this.staleReloadHandlers.set(sessionId, handler);
+  }
+
   clearSessionHandlers(sessionId: string): void {
     this.approvalHandlers.delete(sessionId);
     this.questionHandlers.delete(sessionId);
+    this.staleReloadHandlers.delete(sessionId);
+  }
+
+  protected async notifyStaleReload(
+    sessionId: string,
+    summary: ResumedSessionSummary,
+  ): Promise<void> {
+    await this.staleReloadHandlers.get(sessionId)?.(summary);
   }
 
   async requestApproval(

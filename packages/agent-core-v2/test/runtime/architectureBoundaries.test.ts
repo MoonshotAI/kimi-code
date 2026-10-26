@@ -46,7 +46,6 @@ describe('runtime architecture boundaries', () => {
     expect(program).not.toContain('IHostEnvironment');
     expect(program).not.toContain('IHostFileSystem');
     expect(program).not.toContain('IHostProcessService');
-    expect(program).not.toContain('IHostTerminalService');
     expect(dependencies).not.toContain('IInstantiationService');
     expect(workspaceInstance).not.toContain('createChild(');
     expect(workspaceSources).not.toMatch(/registerScopedService\(\s*['"]program['"]/);
@@ -85,24 +84,20 @@ describe('runtime architecture boundaries', () => {
       const contents = source(path);
       expect(contents).toContain('new RuntimeWorkspaceView(');
       expect(contents).toMatch(/\.runtime\.(acquire|inspect)\(/);
-      expect(contents).not.toMatch(/@IHost(?:Environment|FileSystem|FsWatchService|ProcessService|TerminalService)/);
+      expect(contents).not.toMatch(/@IHost(?:Environment|FileSystem|FsWatchService|ProcessService)/);
     }
     const readTool = source('agent/tools/os/read/readTool.ts');
     expect(readTool).not.toContain('IAgentRuntimeService | IHostFileSystem');
     expect(readTool).not.toContain("'acquire' in runtime");
   });
 
-  it('routes terminal, MCP, and external FS through explicit runtime selection', () => {
-    const terminal = source('session/terminal/terminalService.ts');
+  it('routes MCP and external FS through explicit runtime selection', () => {
     const mcp = source('workspace/workspaceMcp/workspaceMcpService.ts');
     const externalFs = kapSource('routes/fs.ts');
 
-    expect(terminal).toContain('this.runtimeResolver.acquire(');
-    expect(terminal).toContain('new RuntimeWorkspaceView(');
-    expect(terminal).not.toMatch(/@IHostTerminalService/);
     expect(mcp).toContain('runtimeResolver: this.runtimeResolver');
-    expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)/);
+    expect(mcp).not.toMatch(/@IHost(?:FileSystem|FsWatchService|ProcessService)/);
     expect(externalFs).toContain('get(IRuntimeResolver).acquire(');
-    expect(externalFs).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService|TerminalService)\)/);
+    expect(externalFs).not.toMatch(/\.get\(IHost(?:FileSystem|FsWatchService|ProcessService)\)/);
   });
 });
