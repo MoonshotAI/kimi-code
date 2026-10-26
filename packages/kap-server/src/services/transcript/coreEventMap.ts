@@ -1791,6 +1791,9 @@ function mapInteractionEndState(
   kind: 'approval' | 'question',
   response: unknown,
 ): TranscriptInteraction['state'] {
+  if ((response as { cancelled?: unknown } | null | undefined)?.cancelled === true) {
+    return 'cancelled';
+  }
   if (kind === 'question') return response === null ? 'dismissed' : 'answered';
   const decision = (response as { decision?: unknown } | null | undefined)?.decision;
   if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {

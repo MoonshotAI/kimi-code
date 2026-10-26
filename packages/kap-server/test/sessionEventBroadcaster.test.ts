@@ -488,6 +488,10 @@ function agentEvent(type: string, extra: Record<string, unknown> = {}): AgentEve
   return { type, ...extra } as unknown as AgentEvent;
 }
 
+function interactionFrames(envelopes: readonly EventEnvelope[]): EventEnvelope[] {
+  return envelopes.filter((e) => e.type === 'interaction');
+}
+
 function collectingTarget(): {
   target: BroadcastTarget;
   envelopes: EventEnvelope[];
@@ -2131,7 +2135,7 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes.at(-1)!.type).toBe('event.session.work_changed');
   });
 
-  it('broadcasts question requested / answered as durable v1 events', async () => {
+  it('broadcasts a question as volatile interaction frames from pending to answered', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
@@ -2147,242 +2151,137 @@ describe('SessionEventBroadcaster', () => {
       },
       tags: { sessionId: 's1' },
     });
-    await bc.getCursor('s1');
-
-    expect(envelopes).toHaveLength(2);
-    expect(envelopes[0]).toMatchObject({
-      type: 'event.session.work_changed',
-      seq: 1,
-      payload: { pending_interaction: 'question' },
-    });
-    expect(envelopes[1]).toMatchObject({
-      type: 'event.question.requested',
-      seq: 2,
-      session_id: 's1',
-      payload: {
-        type: 'event.question.requested',
-        agentId: 'main',
-        sessionId: 's1',
-        question_id: 'q1',
-        session_id: 's1',
-        tool_call_id: 'call_1',
-        questions: [{ id: 'q_0', question: 'Pick one', options: [{ id: 'opt_0_0', label: 'A' }, { id: 'opt_0_1', label: 'B' }] }],
-      },
-    });
-    expect(envelopes[1]!.volatile).toBeUndefined();
-
     interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(4);
-    expect(envelopes[2]).toMatchObject({
-      type: 'event.question.answered',
-      seq: 3,
-      session_id: 's1',
-      payload: {
-        question_id: 'q1',
-        answers: { q_0: 'opt_0_0' },
+    const frames = interactionFrames(envelopes);
+    expect(frames.every((e) => e.volatile === true && e.session_id === 's1')).toBe(true);
+    expect(frames.map((e) => e.payload)).toMatchObject([
+      {
+        type: 'interaction',
+        agent_id: 'main',
+        interaction_id: 'q1',
+        kind: 'question',
+        status: 'pending',
+        tool_call_id: 'call_1',
+        request: {
+          questions: [
+            {
+              id: 'q_0',
+              question: 'Pick one',
+              options: [
+                { id: 'opt_0_0', label: 'A' },
+                { id: 'opt_0_1', label: 'B' },
+              ],
+            },
+          ],
+        },
       },
-    });
-    expect((envelopes[2]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
-    expect(envelopes[3]).toMatchObject({
-      type: 'event.session.work_changed',
-      seq: 4,
-      payload: { pending_interaction: 'none' },
-    });
-  });
-
-  it('broadcasts question dismissed when resolved with null', async () => {
-    const lc = new FakeLifecycle();
-    lc.addAgent('main');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    interactions.enqueue({
-      id: 'q1',
-      kind: 'question',
-      payload: { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] },
-      tags: { sessionId: 's1' },
-    });
-    interactions.respond('q1', null);
-    await bc.getCursor('s1');
-
-    expect(envelopes.map((e) => e.type)).toEqual([
-      'event.session.work_changed',
-      'event.question.requested',
-      'event.question.dismissed',
-      'event.session.work_changed',
+      {
+        interaction_id: 'q1',
+        status: 'ended',
+        outcome: 'answered',
+        response: { answers: { q_0: 'opt_0_0' }, method: 'enter' },
+      },
     ]);
-    expect(envelopes[0]!.payload).toMatchObject({ pending_interaction: 'question' });
-    expect(envelopes[2]!.payload).toMatchObject({ question_id: 'q1' });
-    expect((envelopes[2]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
-    expect(envelopes[3]!.payload).toMatchObject({ pending_interaction: 'none' });
+    expect((frames[1]!.payload as { ended_at?: unknown }).ended_at).toBeTypeOf('string');
+
+    const replay = await bc.getBufferedSince('s1', { seq: 0 });
+    expect(replay.events.map((e) => e.envelope.type)).not.toContain('interaction');
   });
 
-  it('carries the requesting agent onto resolved interaction events', async () => {
-    const lc = new FakeLifecycle();
-    lc.addAgent('main');
-    lc.addAgent('sub-1');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    interactions.enqueue({
-      id: 'q-sub',
-      kind: 'question',
-      payload: {
-        toolCallId: 'call_q',
-        questions: [{ question: 'Pick', options: [{ label: 'A' }] }],
-      },
-      tags: { agentId: 'sub-1', sessionId: 's1' },
-    });
-    await bc.getCursor('s1');
-    expect(
-      envelopes.find((e) => e.type === 'event.question.requested')?.payload,
-    ).toMatchObject({ agentId: 'sub-1', question_id: 'q-sub' });
-
-    interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
-    await bc.getCursor('s1');
-    expect(
-      envelopes.find((e) => e.type === 'event.question.answered')?.payload,
-    ).toMatchObject({ agentId: 'sub-1', question_id: 'q-sub' });
-  });
-
-  it('broadcasts approval requested / resolved as durable v1 events', async () => {
+  it('ends dismissed and cancelled questions without a response', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
     await bc.subscribe('s1', target);
 
-    interactions.enqueue({
-      id: 'a1',
-      kind: 'approval',
-      payload: {
-        toolCallId: 'call_9',
-        toolName: 'Bash',
-        action: 'run',
-        display: { kind: 'command', command: 'ls' },
-      },
-      tags: { sessionId: 's1', turnId: 3 },
-    });
+    const question = { questions: [{ question: 'Pick', options: [{ label: 'A' }] }] };
+    interactions.enqueue({ id: 'q1', kind: 'question', payload: question, tags: { sessionId: 's1' } });
+    interactions.respond('q1', null);
+    interactions.enqueue({ id: 'q2', kind: 'question', payload: question, tags: { sessionId: 's1' } });
+    interactions.respond('q2', { cancelled: true, reason: 'turn_ended' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(2);
-    expect(envelopes[0]).toMatchObject({
-      type: 'event.session.work_changed',
-      seq: 1,
-      payload: { pending_interaction: 'approval' },
-    });
-    expect(envelopes[1]).toMatchObject({
-      type: 'event.approval.requested',
-      seq: 2,
-      session_id: 's1',
-      payload: {
-        approval_id: 'a1',
-        session_id: 's1',
-        turn_id: 3,
-        tool_call_id: 'call_9',
-        tool_name: 'Bash',
-        action: 'run',
-        tool_input_display: { kind: 'command', command: 'ls' },
-      },
-    });
-    expect(envelopes[1]!.volatile).toBeUndefined();
+    const ended = interactionFrames(envelopes)
+      .map((e) => e.payload as Record<string, unknown>)
+      .filter((p) => p['status'] === 'ended');
+    expect(ended).toMatchObject([
+      { interaction_id: 'q1', outcome: 'dismissed' },
+      { interaction_id: 'q2', outcome: 'cancelled' },
+    ]);
+    expect(ended.map((p) => p['response'])).toEqual([undefined, undefined]);
+  });
 
+  it('carries the approval decision, including cancellation, on ended approvals', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    const request = {
+      toolCallId: 'call_9',
+      toolName: 'Bash',
+      action: 'run',
+      display: { kind: 'command', command: 'ls' },
+    };
+    interactions.enqueue({ id: 'a1', kind: 'approval', payload: request, tags: { sessionId: 's1' } });
     interactions.respond('a1', { decision: 'approved', scope: 'session' });
+    interactions.enqueue({ id: 'a2', kind: 'approval', payload: request, tags: { sessionId: 's1' } });
+    interactions.respond('a2', { cancelled: true, reason: 'agent_closed' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(4);
-    expect(envelopes[2]).toMatchObject({
-      type: 'event.approval.resolved',
-      seq: 3,
-      session_id: 's1',
-      payload: {
-        approval_id: 'a1',
-        decision: 'approved',
-        scope: 'session',
+    expect(interactionFrames(envelopes).map((e) => e.payload)).toMatchObject([
+      {
+        interaction_id: 'a1',
+        kind: 'approval',
+        status: 'pending',
+        tool_call_id: 'call_9',
+        request: {
+          tool_name: 'Bash',
+          action: 'run',
+          tool_input_display: { kind: 'command', command: 'ls' },
+        },
       },
-    });
-    expect((envelopes[2]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
-    expect(envelopes[3]).toMatchObject({
-      type: 'event.session.work_changed',
-      seq: 4,
-      payload: { pending_interaction: 'none' },
-    });
+      {
+        interaction_id: 'a1',
+        status: 'ended',
+        outcome: 'approved',
+        response: { decision: 'approved', scope: 'session' },
+      },
+      { interaction_id: 'a2', status: 'pending' },
+      {
+        interaction_id: 'a2',
+        status: 'ended',
+        outcome: 'cancelled',
+        response: { decision: 'cancelled' },
+      },
+    ]);
   });
 
-  it('delivers sub-agent approval events past the agent filter on live fan-out and replay', async () => {
+  it('delivers sub-agent interactions to a main-only subscriber even while that sub-agent is transcript-graded', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     lc.addAgent('agent-0');
     sessions.set('s1', lc);
     const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target, new Set(['main']));
+    await bc.subscribe('s1', target, new Set(['main']), { 'agent-0': 'delta' });
 
     interactions.enqueue({
       id: 'a-sub',
       kind: 'approval',
-      payload: {
-        toolCallId: 'call_sub',
-        toolName: 'Bash',
-        action: 'run',
-        display: { kind: 'command', command: 'ls' },
-      },
+      payload: { toolCallId: 'call_sub', toolName: 'Bash', action: 'run' },
       tags: { agentId: 'agent-0', sessionId: 's1' },
     });
+    interactions.respond('a-sub', { decision: 'rejected' });
     await bc.getCursor('s1');
 
-    expect(
-      envelopes.find((e) => e.type === 'event.approval.requested')?.payload,
-    ).toMatchObject({ agentId: 'agent-0', agent_id: 'agent-0', approval_id: 'a-sub' });
-
-    interactions.respond('a-sub', { decision: 'approved' });
-    await bc.getCursor('s1');
-
-    expect(
-      envelopes.find((e) => e.type === 'event.approval.resolved')?.payload,
-    ).toMatchObject({ agentId: 'agent-0', approval_id: 'a-sub' });
-
-    const replay = await bc.getBufferedSince('s1', { seq: 1 }, new Set(['main']));
-    expect(replay.resyncRequired).toBe(false);
-    expect(replay.events.map((e) => e.envelope.type)).toEqual([
-      'event.approval.requested',
-      'event.approval.resolved',
-      'event.session.work_changed',
+    expect(interactionFrames(envelopes).map((e) => e.payload)).toMatchObject([
+      { agent_id: 'agent-0', interaction_id: 'a-sub', status: 'pending' },
+      { agent_id: 'agent-0', interaction_id: 'a-sub', status: 'ended', outcome: 'rejected' },
     ]);
-  });
-
-  it('delivers sub-agent question events past the agent filter on live fan-out', async () => {
-    const lc = new FakeLifecycle();
-    lc.addAgent('main');
-    lc.addAgent('agent-0');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target, new Set(['main']));
-
-    interactions.enqueue({
-      id: 'q-sub',
-      kind: 'question',
-      payload: {
-        toolCallId: 'call_q',
-        questions: [{ question: 'Pick', options: [{ label: 'A' }] }],
-      },
-      tags: { agentId: 'agent-0', sessionId: 's1' },
-    });
-    await bc.getCursor('s1');
-
-    expect(
-      envelopes.find((e) => e.type === 'event.question.requested')?.payload,
-    ).toMatchObject({ agentId: 'agent-0', agent_id: 'agent-0', question_id: 'q-sub' });
-
-    interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
-    await bc.getCursor('s1');
-
-    expect(
-      envelopes.find((e) => e.type === 'event.question.answered')?.payload,
-    ).toMatchObject({ agentId: 'agent-0', question_id: 'q-sub' });
   });
 
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {
@@ -2415,7 +2314,7 @@ describe('SessionEventBroadcaster', () => {
     expect(s1View.envelopes.some((e) => e.type === 'turn.started')).toBe(false);
   });
 
-  it('does not re-announce interactions already pending at activation, but still broadcasts their resolution', async () => {
+  it('sends pending interactions only to the requesting target and immediately', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
     sessions.set('s1', lc);
@@ -2426,19 +2325,33 @@ describe('SessionEventBroadcaster', () => {
       tags: { sessionId: 's1' },
     });
 
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
+    const asking = collectingTarget();
+    const other = collectingTarget();
+    await bc.subscribe('s1', asking.target);
+    await bc.subscribe('s1', other.target);
     await bc.getCursor('s1');
-    expect(envelopes).toHaveLength(0);
+    expect(interactionFrames(asking.envelopes)).toHaveLength(0);
+
+    bc.sendPendingInteractions('s1', asking.target);
+    expect(interactionFrames(asking.envelopes).map((e) => e.payload)).toMatchObject([
+      { interaction_id: 'q0', status: 'pending' },
+    ]);
+    expect(asking.deliveries.at(-1)).toBe('immediate');
+    expect(asking.envelopes.at(-1)!.volatile).toBe(true);
+    expect(interactionFrames(other.envelopes)).toHaveLength(0);
 
     interactions.respond('q0', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
-    expect(envelopes.map((e) => e.type)).toEqual([
-      'event.question.answered',
-      'event.session.work_changed',
-    ]);
-    expect(envelopes[0]!.payload).toMatchObject({ question_id: 'q0' });
-    expect(envelopes[1]!.payload).toMatchObject({ pending_interaction: 'none' });
+    for (const view of [asking, other]) {
+      expect(interactionFrames(view.envelopes).at(-1)!.payload).toMatchObject({
+        interaction_id: 'q0',
+        status: 'ended',
+      });
+    }
+
+    const before = asking.envelopes.length;
+    bc.sendPendingInteractions('s1', asking.target);
+    expect(asking.envelopes).toHaveLength(before);
   });
 
   it('fans out the legacy background.task.* alias alongside native task.* for v1 clients', async () => {

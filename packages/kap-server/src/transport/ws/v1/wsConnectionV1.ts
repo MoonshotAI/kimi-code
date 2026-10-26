@@ -136,7 +136,7 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).sort();
+    return Array.from(this.subscriptions.keys()).toSorted();
   }
 
   send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
@@ -224,6 +224,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors: serverCursors,
       }),
     );
+    this.sendPendingInteractions(accepted);
   }
 
   private async onSubscribe(frame: InboundFrame): Promise<void> {
@@ -256,6 +257,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors: serverCursors,
       }),
     );
+    this.sendPendingInteractions(accepted);
   }
 
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
@@ -288,6 +290,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors: serverCursors,
       }),
     );
+    this.sendPendingInteractions(accepted);
   }
 
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
@@ -332,6 +335,10 @@ export class WsConnectionV1 implements BroadcastTarget {
         resync_required: [],
       }),
     );
+  }
+
+  private sendPendingInteractions(sessionIds: readonly string[]): void {
+    for (const sid of sessionIds) this.broadcaster.sendPendingInteractions(sid, this);
   }
 
   private async attachSession(

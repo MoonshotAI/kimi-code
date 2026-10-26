@@ -1,12 +1,12 @@
 import { rm } from 'node:fs/promises';
 
 import type {
+  ApprovalRequest,
   ApprovalResponse,
   Event2,
   IAgentScopeHandle,
   IDisposable,
   Interaction,
-  InteractionKind,
   ISessionScopeHandle,
   Scope,
   SessionActivityState,
@@ -18,6 +18,7 @@ import {
   IEventBus,
   IEventService,
   INTERACTION_TAG_SESSION_ID,
+  INTERACTION_TAG_TOOL_CALL_ID,
   ISessionActivityView,
   ISessionIndex,
   ISessionManager,
@@ -26,6 +27,7 @@ import {
   getLiveSessionById,
   resumeSessionById,
   interactions,
+  isInteractionCancellation,
   toDisposable,
 } from '@moonshot-ai/agent-core-v2';
 import type {
@@ -60,7 +62,7 @@ import {
   type TranscriptStore,
 } from '@moonshot-ai/transcript';
 
-import { interactionAgentId, toWireApproval } from '../../../routes/approvals';
+import { interactionAgentId } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../protocol/question-wire';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import { projectPromptContentParts } from '../../../services/messages/messageProjection';
@@ -126,7 +128,7 @@ interface SessionState {
   queue: Promise<void>;
   readonly agentDisposables: Map<string, IDisposable>;
   readonly lifecycleDisposables: IDisposable[];
-  readonly knownInteractions: Map<string, { readonly kind: InteractionKind; readonly agentId: string }>;
+  readonly knownInteractions: Map<string, Interaction>;
   transcriptStream?: TranscriptStream;
   readonly transcriptSeeded: Set<BroadcastTarget>;
   readonly deferredTranscriptSeeds: Map<
@@ -1136,31 +1138,36 @@ export class SessionEventBroadcaster {
     }
   }
 
+  sendPendingInteractions(sessionId: string, target: BroadcastTarget): void {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined || state.detached === true) return;
+    for (const interaction of pendingInteractionsOf(sessionId)) {
+      const event = interactionEvent(interaction, sessionId);
+      if (event === undefined) continue;
+      target.send(
+        this.buildEnvelope(state.journal.seq, sessionId, event, {
+          epoch: state.journal.epoch,
+          volatile: true,
+        }),
+        'immediate',
+      );
+    }
+  }
+
   private attachInteractions(
     sessionId: string,
     state: SessionState,
   ): void {
-    const pendingOfSession = (): readonly Interaction[] =>
-      interactions.findAll({
-        resolved: false,
-        tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
-      });
-    for (const i of pendingOfSession()) {
-      state.knownInteractions.set(i.id, { kind: i.kind, agentId: interactionAgentId(i) });
+    for (const i of pendingInteractionsOf(sessionId)) {
+      state.knownInteractions.set(i.id, i);
     }
     state.lifecycleDisposables.push(
       toDisposable(
         interactions.onDidChangePending(() => {
-          for (const i of pendingOfSession()) {
+          for (const i of pendingInteractionsOf(sessionId)) {
             if (state.knownInteractions.has(i.id)) continue;
-            state.knownInteractions.set(i.id, {
-              kind: i.kind,
-              agentId: interactionAgentId(i),
-            });
-            const event = interactionRequestedEvent(i, sessionId);
-            if (event !== undefined) {
-              this.enqueueDurable(state, event);
-            }
+            state.knownInteractions.set(i.id, i);
+            this.enqueueInteraction(state, interactionEvent(i, sessionId));
           }
         }),
       ),
@@ -1169,13 +1176,17 @@ export class SessionEventBroadcaster {
           const known = state.knownInteractions.get(id);
           if (known === undefined) return;
           state.knownInteractions.delete(id);
-          const event = interactionResolvedEvent(known.kind, id, response, sessionId, known.agentId);
-          if (event !== undefined) {
-            this.enqueueDurable(state, event);
-          }
+          this.enqueueInteraction(state, interactionEvent(known, sessionId, { response }));
         }),
       ),
     );
+  }
+
+  private enqueueInteraction(state: SessionState, event: Event | undefined): void {
+    if (event === undefined) return;
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, true))
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   private enqueueDurable(state: SessionState, event: Event): void {
@@ -1333,15 +1344,10 @@ function isAgentLifecycleEvent(type: string): boolean {
   return type === 'agent.created' || type === 'agent.disposed';
 }
 
-function isInteractionEvent(type: string): boolean {
-  return type.startsWith('event.approval.') || type.startsWith('event.question.');
-}
-
 function matchesAgentFilter(envelope: EventEnvelope, filter: AgentFilter): boolean {
   if (filter === undefined) return true;
   if (isGlobalEvent(envelope.type)) return true;
   if (isAgentLifecycleEvent(envelope.type)) return true;
-  if (isInteractionEvent(envelope.type)) return true;
   const payload = envelope.payload;
   const agentId =
     typeof payload === 'object' && payload !== null
@@ -1398,11 +1404,6 @@ const TRANSCRIPT_PROJECTED_EVENT_TYPES: ReadonlySet<string> = new Set([
   'prompt.aborted',
   'prompt.steered',
   'turn.steer',
-  'event.question.requested',
-  'event.question.dismissed',
-  'event.question.answered',
-  'event.approval.requested',
-  'event.approval.resolved',
 ]);
 
 function suppressedByTranscript(
@@ -1422,74 +1423,83 @@ function suppressedByTranscript(
   return TRANSCRIPT_PROJECTED_EVENT_TYPES.has(envelope.type);
 }
 
-function interactionRequestedEvent(interaction: Interaction, sessionId: string): Event | undefined {
-  const agentId = interactionAgentId(interaction);
-  switch (interaction.kind) {
-    case 'question':
-      return {
-        type: 'event.question.requested',
-        agentId,
-        sessionId,
-        ...toWireQuestion(interaction, sessionId, agentId),
-      } as unknown as Event;
-    case 'approval':
-      return {
-        type: 'event.approval.requested',
-        agentId,
-        sessionId,
-        ...toWireApproval(interaction, sessionId),
-      } as unknown as Event;
-    default:
-      return undefined;
-  }
+type InteractionOutcome = 'approved' | 'rejected' | 'cancelled' | 'answered' | 'dismissed';
+
+function pendingInteractionsOf(sessionId: string): readonly Interaction[] {
+  return interactions.findAll({
+    resolved: false,
+    tags: { [INTERACTION_TAG_SESSION_ID]: sessionId },
+  });
 }
 
-function interactionResolvedEvent(
-  kind: InteractionKind,
-  id: string,
-  response: unknown,
+function interactionEvent(
+  interaction: Interaction,
   sessionId: string,
-  agentId: string,
+  resolution?: { readonly response: unknown },
 ): Event | undefined {
-  const resolvedAt = new Date().toISOString();
-  switch (kind) {
-    case 'question': {
-      if (response === null) {
-        return {
-          type: 'event.question.dismissed',
-          agentId,
-          sessionId,
-          question_id: id,
-          dismissed_at: resolvedAt,
-        } as unknown as Event;
-      }
-      const answers = (response as { answers?: unknown }).answers ?? response;
-      return {
-        type: 'event.question.answered',
-        agentId,
-        sessionId,
-        question_id: id,
-        answers,
-        resolved_at: resolvedAt,
-      } as unknown as Event;
-    }
-    case 'approval': {
-      const r = response as Partial<ApprovalResponse>;
-      return {
-        type: 'event.approval.resolved',
-        agentId,
-        sessionId,
-        approval_id: id,
-        decision: r.decision,
-        scope: r.scope,
-        feedback: r.feedback,
-        selected_label: r.selectedLabel,
-        resolved_at: resolvedAt,
-      } as unknown as Event;
-    }
-    default:
-      return undefined;
+  const kind = interaction.kind;
+  if (kind !== 'approval' && kind !== 'question') return undefined;
+  const outcome =
+    resolution === undefined ? undefined : interactionOutcome(kind, resolution.response);
+  return {
+    type: 'interaction',
+    agent_id: interactionAgentId(interaction),
+    interaction_id: interaction.id,
+    kind,
+    status: outcome === undefined ? 'pending' : 'ended',
+    outcome,
+    ended_at: outcome === undefined ? undefined : new Date().toISOString(),
+    tool_call_id: interactionToolCallId(interaction),
+    request:
+      kind === 'approval'
+        ? approvalRequestOf(interaction)
+        : { questions: toWireQuestion(interaction, sessionId).questions },
+    response:
+      outcome === undefined ? undefined : interactionResponse(kind, outcome, resolution?.response),
+  } as unknown as Event;
+}
+
+function interactionOutcome(kind: 'approval' | 'question', response: unknown): InteractionOutcome {
+  if (isInteractionCancellation(response)) return 'cancelled';
+  if (kind === 'question') return response === null ? 'dismissed' : 'answered';
+  const decision = (response as Partial<ApprovalResponse> | null | undefined)?.decision;
+  return decision === 'approved' || decision === 'rejected' ? decision : 'cancelled';
+}
+
+function interactionToolCallId(interaction: Interaction): string | undefined {
+  const tag = interaction.tags[INTERACTION_TAG_TOOL_CALL_ID];
+  if (typeof tag === 'string') return tag;
+  const fromPayload = (interaction.payload as { toolCallId?: unknown } | null | undefined)
+    ?.toolCallId;
+  return typeof fromPayload === 'string' ? fromPayload : undefined;
+}
+
+function approvalRequestOf(interaction: Interaction): Record<string, unknown> {
+  const request = interaction.payload as ApprovalRequest;
+  return {
+    tool_name: request.toolName,
+    action: request.action,
+    tool_input_display: request.display,
+  };
+}
+
+function interactionResponse(
+  kind: 'approval' | 'question',
+  outcome: InteractionOutcome,
+  response: unknown,
+): Record<string, unknown> | undefined {
+  if (kind === 'approval') {
+    const r = (response ?? {}) as Partial<ApprovalResponse>;
+    return {
+      decision: outcome,
+      scope: r.scope,
+      feedback: r.feedback,
+      selected_label: r.selectedLabel,
+    };
   }
+  if (outcome !== 'answered') return undefined;
+  const r = response as { answers?: unknown; method?: unknown };
+  return { answers: r.answers ?? response, method: r.method };
 }
 
 function sessionMetaUpdatedPayload(

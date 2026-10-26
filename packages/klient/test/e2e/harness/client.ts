@@ -23,15 +23,9 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type {
-  ApprovalRequest,
-  ApprovalResponse,
-} from '@moonshot-ai/kap-server/protocol/approval';
+import type { ApprovalResponse } from '@moonshot-ai/kap-server/protocol/approval';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
-import type {
-  QuestionRequest,
-  QuestionResponse,
-} from '@moonshot-ai/kap-server/protocol/question';
+import type { QuestionResponse } from '@moonshot-ai/kap-server/protocol/question';
 import type {
   ApprovalResolveResult,
   ListPendingApprovalsResponse,
@@ -76,7 +70,6 @@ import { ulid } from 'ulid';
 import { WebSocket as WsWebSocket } from 'ws';
 
 import { HttpClient } from './http.js';
-import { installReverseRpcHandler } from './reverse-rpc.js';
 import { DEFAULT_FRAME_TIMEOUT_MS, waitForSessionBusy } from './wait.js';
 import { type AnyFrame, WsClient } from './ws.js';
 
@@ -444,56 +437,6 @@ export class DaemonClient {
     opts?: { timeoutMs?: number; pollMs?: number },
   ): Promise<Session> {
     return waitForSessionBusy(this.http, sid, busy, opts);
-  }
-
-  // ── Reverse RPC (approval + question) ───────────────────────────────────
-  /**
-   * Install a handler invoked on every `event.approval.requested` frame.
-   * The handler's return value is POSTed to `/sessions/{sid}/approvals/{aid}`.
-   * Returns an unsubscribe handle (also auto-disposed by `close()`).
-   */
-  onApprovalRequested(
-    handler: (req: ApprovalRequest) => Promise<ApprovalResponse> | ApprovalResponse,
-  ): () => void {
-    const ws = this._requireWs();
-    const unsubscribe = installReverseRpcHandler<ApprovalRequest, ApprovalResponse>(ws, {
-      requestEventType: 'event.approval.requested',
-      idField: 'approval_id',
-      buildPath: (sid, aid) => `/sessions/${sid}/approvals/${aid}`,
-      handler,
-      postResolve: (sid, aid, body) => this.http.resolveApproval(sid, aid, body),
-      logger: this._logger,
-    });
-    this._disposers.push(unsubscribe);
-    return () => {
-      const idx = this._disposers.indexOf(unsubscribe);
-      if (idx >= 0) this._disposers.splice(idx, 1);
-      unsubscribe();
-    };
-  }
-
-  /**
-   * Install a handler invoked on every `event.question.requested` frame.
-   * Returns an unsubscribe handle (also auto-disposed by `close()`).
-   */
-  onQuestionAsked(
-    handler: (req: QuestionRequest) => Promise<QuestionResponse> | QuestionResponse,
-  ): () => void {
-    const ws = this._requireWs();
-    const unsubscribe = installReverseRpcHandler<QuestionRequest, QuestionResponse>(ws, {
-      requestEventType: 'event.question.requested',
-      idField: 'question_id',
-      buildPath: (sid, qid) => `/sessions/${sid}/questions/${qid}`,
-      handler,
-      postResolve: (sid, qid, body) => this.http.resolveQuestion(sid, qid, body),
-      logger: this._logger,
-    });
-    this._disposers.push(unsubscribe);
-    return () => {
-      const idx = this._disposers.indexOf(unsubscribe);
-      if (idx >= 0) this._disposers.splice(idx, 1);
-      unsubscribe();
-    };
   }
 
   // ── High-level convenience ──────────────────────────────────────────────
