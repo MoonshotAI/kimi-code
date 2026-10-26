@@ -650,6 +650,47 @@ describe('KimiTUI startup', () => {
     }
   });
 
+  it('clears auth required after OAuth succeeds with an existing session model and no default model', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    driver.state.appState.model = 'session-only-model';
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    (driver as any).programStatus.setAuthRequired(true);
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(rootStatus()).toEqual({ state: 'idle', app: 'kimi-code' });
+  });
+
+  it('keeps auth required when login is cancelled before authentication succeeds', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    (driver as any).programStatus.setAuthRequired(true);
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue(undefined);
+    await handleLoginCommand(driver as any);
+
+    expect(rootStatus()).toMatchObject({ state: 'blocked', kind: 'auth' });
+  });
+
+  it('keeps auth required after OAuth succeeds when no model is available', async () => {
+    const driver = makeDriver(makeHarness(), makeStartupInput());
+    driver.state.appState.model = '';
+    const statusWrites = vi.spyOn(driver.state.terminal, 'setProgramStatus').mockImplementation(() => {});
+    (driver as any).programStatus.setAuthRequired(true);
+    const rootStatus = () => statusWrites.mock.calls
+      .findLast(([status]) => status.id === undefined)?.[0];
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    await handleLoginCommand(driver as any);
+
+    expect(rootStatus()).toMatchObject({ state: 'blocked', kind: 'auth' });
+  });
+
   it('carries the --agent/--agent-file binding for the lazy-created first session (v2)', async () => {
     const harness = makeHarness(makeSession());
     const driver = makeDriver(

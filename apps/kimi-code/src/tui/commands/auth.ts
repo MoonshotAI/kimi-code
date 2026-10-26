@@ -79,6 +79,7 @@ async function handleKimiCodeOAuthLogin(
       },
     });
     refreshKimiRegion();
+    if (host.state.appState.model.trim().length > 0) host.setAuthRequired(false);
     spinner?.stop({ ok: true, label: 'Logged in.' });
     spinner = undefined;
     try {

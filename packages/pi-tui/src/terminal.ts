@@ -20,6 +20,12 @@ const KEYBOARD_PROTOCOL_RESPONSE_FRAGMENT_TIMEOUT_MS = 150;
 const KITTY_KEYBOARD_PROTOCOL_QUERY = `\x1b[>${DESIRED_KITTY_KEYBOARD_PROTOCOL_FLAGS}u\x1b[?u`;
 const DEVICE_ATTRIBUTES_QUERY = "\x1b[c";
 
+function formatProgramStatusOutput(status: ProgramStatus): string {
+	const formatted = formatProgramStatus(status);
+	if (process.env['TMUX'] === undefined) return formatted;
+	return `\x1bPtmux;${formatted.replace(/\x1b/g, "\x1b\x1b")}\x1b\\`;
+}
+
 export type KeyboardProtocolNegotiationSequence =
 	| { type: "kitty-flags"; flags: number }
 	| { type: "device-attributes" };
@@ -298,8 +304,19 @@ export class ProcessTerminal implements Terminal {
 		this.pendingKeyboardProtocolDeviceAttributes += 1;
 		this.clearKeyboardProtocolNegotiationBuffer();
 		const programStatusOverride = process.env['PI_PROGRAM_STATUS'];
-		this.programStatusSupported = programStatusOverride === "1";
-		this.programStatusQueryPending = programStatusOverride !== "1" && programStatusOverride !== "0";
+		const rexProgramStatus = Boolean(process.env['REX_SESSION'] || process.env['REX_BLOCK']);
+		const multiplexerWithoutQuery =
+			process.env['TMUX'] !== undefined ||
+			process.env['STY'] !== undefined ||
+			process.env['ZELLIJ'] !== undefined ||
+			process.env['ZELLIJ_SESSION_NAME'] !== undefined;
+		this.programStatusSupported =
+			programStatusOverride === "1" || (programStatusOverride !== "0" && rexProgramStatus);
+		this.programStatusQueryPending =
+			programStatusOverride !== "1" &&
+			programStatusOverride !== "0" &&
+			!rexProgramStatus &&
+			!multiplexerWithoutQuery;
 		const programStatusQuery = this.programStatusQueryPending ? PROGRAM_STATUS_QUERY : "";
 		process.stdout.write(`${KITTY_KEYBOARD_PROTOCOL_QUERY}${programStatusQuery}${DEVICE_ATTRIBUTES_QUERY}`);
 		this.writeProgramStatuses();
@@ -476,7 +493,7 @@ export class ProcessTerminal implements Terminal {
 		}
 		// Remove the status while stopped, for example after exit or while suspended. start() reports it again.
 		if (this.programStatusSupported && this.programStatuses.size > 0) {
-			process.stdout.write(formatProgramStatus({ state: "clear" }));
+			process.stdout.write(formatProgramStatusOutput({ state: "clear" }));
 		}
 		this.programStatusSupported = false;
 		this.programStatusQueryPending = false;
@@ -528,7 +545,7 @@ export class ProcessTerminal implements Terminal {
 		let sequence = before;
 		if (this.progressInterval) sequence += TERMINAL_PROGRESS_CLEAR_SEQUENCE;
 		if (this.programStatusSupported && this.programStatuses.size > 0) {
-			sequence += formatProgramStatus({ state: "clear" });
+			sequence += formatProgramStatusOutput({ state: "clear" });
 		}
 		sequence += "\x1b[?2004l";
 		if (this.keyboardProtocolPushed || this._kittyProtocolActive) sequence += "\x1b[<u";
@@ -598,7 +615,7 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	setProgramStatus(status: ProgramStatus): void {
-		const formatted = formatProgramStatus(status);
+		const formatted = formatProgramStatusOutput(status);
 		if (status.state === "clear") {
 			if (status.id === undefined) {
 				this.programStatuses.clear();
@@ -618,7 +635,7 @@ export class ProcessTerminal implements Terminal {
 	private writeProgramStatuses(): void {
 		if (!this.programStatusSupported) return;
 		for (const status of this.programStatuses.values()) {
-			process.stdout.write(formatProgramStatus(status));
+			process.stdout.write(formatProgramStatusOutput(status));
 		}
 	}
 

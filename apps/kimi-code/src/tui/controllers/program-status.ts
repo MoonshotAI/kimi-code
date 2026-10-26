@@ -22,15 +22,12 @@ export interface ProgramStatusTerminal {
 }
 
 export interface ProgramStatusState {
-  readonly appState: Pick<
-    AppState,
-    'isCompacting' | 'sessionTitle' | 'streamingPhase'
-  >;
+  readonly appState: Pick<AppState, 'isCompacting' | 'sessionTitle' | 'streamingPhase'>;
   readonly queuedMessages: readonly unknown[];
   readonly queuedMessageDispatchPending: boolean;
 }
 
-export interface ProgramStatusBlocked {
+interface ProgramStatusBlocked {
   readonly kind: 'permission' | 'question' | 'auth';
   readonly message: string;
 }
@@ -38,11 +35,18 @@ export interface ProgramStatusBlocked {
 export interface ProgramStatusInteraction {
   readonly agentId?: string;
   readonly kind: 'permission' | 'question';
+  readonly message?: string;
 }
 
 export interface ProgramStatusInteractionTracker {
   startInteraction(interaction: ProgramStatusInteraction): symbol;
   endInteraction(token: symbol): void;
+}
+
+export interface ProgramStatusSubagentStart {
+  readonly agentId: string;
+  readonly title: string;
+  readonly taskId?: string;
 }
 
 type WorkOutcome =
@@ -52,46 +56,51 @@ type WorkOutcome =
 
 interface ChildBase {
   readonly id: string;
-  readonly taskId: string;
-  readonly agentId?: string;
+  readonly agentId: string;
+  readonly taskId?: string;
   readonly title: string;
+  readonly lastActive: number;
 }
 
-type SettledChild = ChildBase &
+type ChildWork = ChildBase &
   (
-    | { readonly status: 'done'; readonly settledOrder: number }
-    | {
-        readonly status: 'error';
-        readonly message: string;
-        readonly settledOrder: number;
-      }
+    | { readonly status: 'working' }
+    | { readonly status: 'done' }
+    | { readonly status: 'error'; readonly message: string }
   );
 
-type ChildWork = (ChildBase & { readonly status: 'running' }) | SettledChild;
+type TrackedInteraction = ProgramStatusInteraction & { readonly order: number };
 
 export class ProgramStatusController implements ProgramStatusInteractionTracker {
   private readonly children = new Map<string, ChildWork>();
-  private readonly interactions = new Map<symbol, ProgramStatusInteraction>();
+  private readonly interactions = new Map<symbol, TrackedInteraction>();
   private readonly childReports = new Map<string, string>();
   private rootReport: string | undefined;
   private outcome: WorkOutcome = { state: 'idle' };
-  private editorBlocked: ProgramStatusBlocked | undefined;
   private readonly authBlocks = new Set<symbol>();
-  private settlementOrder = 0;
+  private authRequired = false;
+  private activityOrder = 0;
+  private interactionOrder = 0;
+  private clearSettledOnTurnEnd = false;
 
   constructor(
     private readonly state: ProgramStatusState,
     private readonly terminal: ProgramStatusTerminal,
+    private readonly childrenEnabled = allowsChildRecords(),
   ) {}
 
   refresh(): void {
-    this.pruneSettledChildren();
     this.publishRoot(this.rootStatus());
-    const active = [...this.children.values()].filter((child) => child.status === 'running');
-    const settled = [...this.children.values()]
-      .filter(isSettledChild)
-      .toSorted((a, b) => b.settledOrder - a.settledOrder);
-    const selected = [...active, ...settled].slice(0, MAX_CHILD_RECORDS);
+    const selected = this.childrenEnabled
+      ? [...this.children.values()]
+          .toSorted(
+            (leftChild, rightChild) =>
+              childRank(leftChild, this.interactionFor(leftChild.agentId) !== undefined) -
+                childRank(rightChild, this.interactionFor(rightChild.agentId) !== undefined) ||
+              rightChild.lastActive - leftChild.lastActive,
+          )
+          .slice(0, MAX_CHILD_RECORDS)
+      : [];
     const selectedIds = new Set<string>();
     for (const child of selected) {
       selectedIds.add(child.id);
@@ -113,22 +122,19 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     this.childReports.clear();
     this.rootReport = undefined;
     this.outcome = { state: 'idle' };
-    this.editorBlocked = undefined;
     this.authBlocks.clear();
-    this.publishRoot({ state: 'idle', app: 'kimi-code' });
+    this.clearSettledOnTurnEnd = false;
+    this.publishRoot(this.rootStatus());
   }
 
   beginTurn(origin: TurnStartedEvent['origin'] | undefined): void {
-    if (isExplicitUserTurn(origin)) {
-      this.beginUserInstruction();
-      return;
+    if (origin !== undefined && clearsSettledChildren(origin)) {
+      this.clearSettledOnTurnEnd = true;
     }
-    this.refresh();
   }
 
-  beginUserInstruction(): void {
-    this.clearSettledChildren();
-    this.refresh();
+  markUserSteer(): void {
+    this.clearSettledOnTurnEnd = true;
   }
 
   finishTurn(event: TurnEndedEvent): void {
@@ -152,11 +158,26 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
         };
         break;
     }
+    if (this.clearSettledOnTurnEnd) {
+      this.clearSettledChildren();
+      this.clearSettledOnTurnEnd = false;
+    }
     this.refresh();
   }
 
-  finishCompaction(cancelled: boolean): void {
-    this.outcome = cancelled ? { state: 'idle' } : { state: 'done' };
+  finishCompaction(): void {
+    this.outcome = { state: 'idle' };
+    this.refresh();
+  }
+
+  finishShell(): void {
+    this.outcome = { state: 'idle' };
+    this.refresh();
+  }
+
+  acknowledgeResults(): void {
+    this.outcome = { state: 'idle' };
+    this.clearSettledChildren();
     this.refresh();
   }
 
@@ -165,23 +186,64 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     this.refresh();
   }
 
+  startSubagent(input: ProgramStatusSubagentStart): void {
+    const previous = this.children.get(input.agentId);
+    this.children.set(input.agentId, {
+      id: previous?.id ?? recordId(input.agentId),
+      agentId: input.agentId,
+      taskId: input.taskId ?? previous?.taskId,
+      title: nonEmpty(input.title) ?? previous?.title ?? input.agentId,
+      status: 'working',
+      lastActive: ++this.activityOrder,
+    });
+    this.refresh();
+  }
+
+  completeSubagent(agentId: string): void {
+    this.settleSubagent(agentId, 'done');
+  }
+
+  failSubagent(agentId: string, message: string): void {
+    this.settleSubagent(agentId, 'error', undefined, firstLine(message) ?? 'Subagent failed');
+  }
+
+  cancelSubagent(agentId: string): void {
+    this.children.delete(agentId);
+    this.removeAgentInteractions(agentId);
+    this.refresh();
+  }
+
+  touchSubagent(agentId: string): void {
+    const previous = this.children.get(agentId);
+    if (previous === undefined) return;
+    this.children.set(agentId, { ...previous, lastActive: ++this.activityOrder });
+    this.refresh();
+  }
+
   updateBackgroundTask(info: BackgroundTaskInfo): void {
-    if (info.kind !== 'agent') return;
-    const previous = this.children.get(info.taskId);
-    const base = childBase(info, previous);
-    if (info.status !== 'running') this.removeAgentInteractions(info.agentId);
+    if (info.kind !== 'agent' || info.agentId === undefined) return;
+    const { agentId } = info;
+    const previous = this.children.get(agentId);
+    const base = childBase(info, agentId, previous);
+    if (info.status !== 'running') this.removeAgentInteractions(agentId);
     switch (info.status) {
       case 'running':
-        this.children.set(info.taskId, { ...base, status: 'running' });
+        if (
+          previous !== undefined &&
+          previous.status !== 'working' &&
+          (previous.taskId === undefined || previous.taskId === info.taskId)
+        ) {
+          return;
+        }
+        this.children.set(agentId, {
+          ...base,
+          status: 'working',
+          lastActive: ++this.activityOrder,
+        });
         break;
       case 'completed':
-        this.children.set(info.taskId, {
-          ...base,
-          status: 'done',
-          settledOrder: ++this.settlementOrder,
-        });
-        this.outcome = { state: 'done' };
-        break;
+        this.settleSubagent(agentId, 'done', base);
+        return;
       case 'failed':
       case 'timed_out':
       case 'lost': {
@@ -192,18 +254,11 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
             : info.status === 'timed_out'
               ? 'Background agent timed out'
               : 'Background agent was lost');
-        this.children.set(info.taskId, {
-          ...base,
-          status: 'error',
-          message,
-          settledOrder: ++this.settlementOrder,
-        });
-        this.outcome = { state: 'error', message };
-        break;
+        this.settleSubagent(agentId, 'error', base, message);
+        return;
       }
       case 'killed':
-        this.children.delete(info.taskId);
-        this.outcome = { state: 'idle' };
+        this.children.delete(agentId);
         break;
     }
     this.refresh();
@@ -213,15 +268,23 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     this.children.clear();
     this.interactions.clear();
     for (const info of tasks) {
-      if (info.kind !== 'agent' || info.status !== 'running') continue;
-      this.children.set(info.taskId, { ...childBase(info), status: 'running' });
+      if (info.kind !== 'agent' || info.agentId === undefined || info.status !== 'running') continue;
+      this.children.set(info.agentId, {
+        ...childBase(info, info.agentId),
+        status: 'working',
+        lastActive: ++this.activityOrder,
+      });
     }
     this.refresh();
   }
 
   startInteraction(interaction: ProgramStatusInteraction): symbol {
     const token = Symbol(interaction.kind);
-    this.interactions.set(token, interaction);
+    this.interactions.set(token, {
+      ...interaction,
+      message: interaction.message ?? defaultInteractionMessage(interaction.kind),
+      order: ++this.interactionOrder,
+    });
     this.refresh();
     return token;
   }
@@ -231,8 +294,9 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     this.refresh();
   }
 
-  setEditorBlocked(blocked: ProgramStatusBlocked | undefined): void {
-    this.editorBlocked = blocked;
+  setAuthRequired(required: boolean): void {
+    if (this.authRequired === required) return;
+    this.authRequired = required;
     this.refresh();
   }
 
@@ -247,11 +311,20 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
   }
 
   private rootStatus(): ProgramStatus {
-    const blocked = this.editorBlocked ?? (this.authBlocks.size > 0 ? AUTH_BLOCKED : undefined);
-    if (blocked !== undefined) {
-      return { state: 'blocked', app: 'kimi-code', ...blocked };
+    if (this.authRequired || this.authBlocks.size > 0) {
+      return { state: 'blocked', app: 'kimi-code', ...AUTH_BLOCKED };
     }
-    if (this.hasAgentWork()) {
+    const blocked =
+      this.interactionOfKind('permission') ?? this.interactionOfKind('question');
+    if (blocked !== undefined) {
+      return {
+        state: 'blocked',
+        app: 'kimi-code',
+        kind: blocked.kind,
+        message: blocked.message,
+      };
+    }
+    if (this.hasMainWork()) {
       return { state: 'working', app: 'kimi-code', message: this.sessionLabel() };
     }
     switch (this.outcome.state) {
@@ -265,7 +338,7 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
   }
 
   private childStatus(child: ChildWork): ProgramStatus {
-    if (child.status === 'running') {
+    if (child.status === 'working') {
       const interaction = this.interactionFor(child.agentId);
       if (interaction !== undefined) {
         return {
@@ -273,7 +346,7 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
           id: child.id,
           title: child.title,
           kind: interaction.kind,
-          message: interaction.kind === 'permission' ? 'Approval required' : 'Answer required',
+          message: interaction.message,
         };
       }
       return { state: 'working', id: child.id, title: child.title };
@@ -289,12 +362,10 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     };
   }
 
-  private hasAgentWork(): boolean {
+  private hasMainWork(): boolean {
     const { appState } = this.state;
-    if (appState.isCompacting) return true;
-    if (appState.streamingPhase !== 'idle' && appState.streamingPhase !== 'shell') return true;
-    if (this.state.queuedMessages.length > 0 || this.state.queuedMessageDispatchPending) return true;
-    return [...this.children.values()].some((child) => child.status === 'running');
+    if (appState.isCompacting || appState.streamingPhase !== 'idle') return true;
+    return this.state.queuedMessages.length > 0 || this.state.queuedMessageDispatchPending;
   }
 
   private sessionLabel(): string {
@@ -302,36 +373,62 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
     return title === undefined || title.length === 0 ? PRODUCT_NAME : title;
   }
 
-  private interactionFor(agentId: string | undefined): ProgramStatusInteraction | undefined {
-    if (agentId === undefined) return undefined;
+  private interactionOfKind(
+    kind: 'permission' | 'question',
+  ): TrackedInteraction | undefined {
+    let selected: TrackedInteraction | undefined;
     for (const interaction of this.interactions.values()) {
-      if (interaction.agentId === agentId) return interaction;
+      if (interaction.kind !== kind) continue;
+      if (selected === undefined || interaction.order < selected.order) selected = interaction;
     }
-    return undefined;
+    return selected;
   }
 
-  private removeAgentInteractions(agentId: string | undefined): void {
-    if (agentId === undefined) return;
+  private interactionFor(agentId: string): TrackedInteraction | undefined {
+    let selected: TrackedInteraction | undefined;
+    for (const interaction of this.interactions.values()) {
+      if (interaction.agentId !== agentId) continue;
+      if (selected === undefined || interaction.order < selected.order) selected = interaction;
+    }
+    return selected;
+  }
+
+  private removeAgentInteractions(agentId: string): void {
     for (const [token, interaction] of this.interactions) {
       if (interaction.agentId === agentId) this.interactions.delete(token);
     }
   }
 
-  private clearSettledChildren(): void {
-    for (const [taskId, child] of this.children) {
-      if (child.status !== 'running') this.children.delete(taskId);
+  private settleSubagent(
+    agentId: string,
+    status: 'done' | 'error',
+    base?: ChildBase,
+    message?: string,
+  ): void {
+    const previous = this.children.get(agentId);
+    const current = base ?? previous ?? childIdentity(agentId);
+    const unchanged =
+      previous?.status === status &&
+      (status === 'done' || (previous.status === 'error' && previous.message === message));
+    const lastActive = unchanged ? current.lastActive : ++this.activityOrder;
+    if (status === 'done') {
+      this.children.set(agentId, { ...current, status, lastActive });
+    } else {
+      this.children.set(agentId, {
+        ...current,
+        status,
+        message: message ?? 'Subagent failed',
+        lastActive,
+      });
     }
+    this.removeAgentInteractions(agentId);
+    this.refresh();
   }
 
-  private pruneSettledChildren(): void {
-    const activeCount = [...this.children.values()].filter(
-      (child) => child.status === 'running',
-    ).length;
-    const settled = [...this.children.values()]
-      .filter(isSettledChild)
-      .toSorted((a, b) => b.settledOrder - a.settledOrder);
-    const keep = Math.max(0, MAX_CHILD_RECORDS - activeCount);
-    for (const child of settled.slice(keep)) this.children.delete(child.taskId);
+  private clearSettledChildren(): void {
+    for (const [agentId, child] of this.children) {
+      if (child.status !== 'working') this.children.delete(agentId);
+    }
   }
 
   private publishRoot(status: ProgramStatus): void {
@@ -350,32 +447,73 @@ export class ProgramStatusController implements ProgramStatusInteractionTracker 
   }
 }
 
-function childBase(info: AgentBackgroundTaskInfo, previous?: ChildWork): ChildBase {
+function childBase(
+  info: AgentBackgroundTaskInfo,
+  agentId: string,
+  previous?: ChildWork,
+): ChildBase {
   return {
-    id: previous?.id ?? recordId(info.taskId),
+    id: previous?.id ?? recordId(agentId),
+    agentId,
     taskId: info.taskId,
-    agentId: info.agentId,
-    title: info.subagentType === undefined ? 'Background agent' : `Background agent: ${info.subagentType}`,
+    title:
+      nonEmpty(info.description) ??
+      previous?.title ??
+      nonEmpty(info.subagentType) ??
+      'Subagent',
+    lastActive: previous?.lastActive ?? 0,
   };
 }
 
-function isSettledChild(child: ChildWork): child is SettledChild {
-  return child.status !== 'running';
+function childIdentity(agentId: string): ChildBase {
+  return {
+    id: recordId(agentId),
+    agentId,
+    title: agentId,
+    lastActive: 0,
+  };
 }
 
-function recordId(taskId: string): string {
-  return `agent-${createHash('sha256').update(taskId).digest('hex').slice(0, 24)}`;
+function childRank(child: ChildWork, blocked: boolean): number {
+  if (blocked && child.status === 'working') return 0;
+  if (child.status === 'error') return 1;
+  if (child.status === 'working') return 2;
+  return 3;
+}
+
+function defaultInteractionMessage(kind: 'permission' | 'question'): string {
+  return kind === 'permission' ? 'Approval required' : 'Answer required';
+}
+
+function recordId(agentId: string): string {
+  return `agent-${createHash('sha256').update(agentId).digest('hex').slice(0, 24)}`;
+}
+
+function nonEmpty(text: string | undefined): string | undefined {
+  const value = text?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
 }
 
 function firstLine(text: string | undefined): string | undefined {
-  const line = text?.split(/\r\n?|\n/, 1)[0]?.trim();
-  return line === undefined || line.length === 0 ? undefined : line;
+  return nonEmpty(text?.split(/\r\n?|\n/, 1)[0]);
 }
 
-function isExplicitUserTurn(origin: TurnStartedEvent['origin'] | undefined): boolean {
+function clearsSettledChildren(origin: NonNullable<TurnStartedEvent['origin']>): boolean {
   return (
-    origin?.kind === 'user' ||
-    origin?.kind === 'plugin_command' ||
-    (origin?.kind === 'skill_activation' && origin.trigger === 'user-slash')
+    origin.kind === 'user' ||
+    origin.kind === 'plugin_command' ||
+    origin.kind === 'cron_job' ||
+    origin.kind === 'cron_missed' ||
+    (origin.kind === 'skill_activation' && origin.trigger === 'user-slash')
+  );
+}
+
+function allowsChildRecords(): boolean {
+  return (
+    process.env['TMUX'] === undefined &&
+    process.env['STY'] === undefined &&
+    process.env['ZELLIJ'] === undefined &&
+    process.env['ZELLIJ_SESSION_NAME'] === undefined &&
+    process.env['HERDR_ENV'] === undefined
   );
 }

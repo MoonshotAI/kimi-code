@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Support OSC 7501 in the TUI.
+Report main-session and subagent status to compatible terminals with OSC 7501, including pending interactions and retained results.

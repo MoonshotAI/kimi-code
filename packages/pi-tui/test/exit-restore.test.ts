@@ -5,12 +5,12 @@ import { fileURLToPath } from "node:url";
 
 const fixture = fileURLToPath(new URL("./fixtures/exit-without-stop.ts", import.meta.url));
 
-function runFixture(mode: "exit" | "stop"): string {
+function runFixture(mode: "exit" | "stop", tmux = false): string {
 	const result = spawnSync(process.execPath, [fixture, mode], {
 		encoding: "utf8",
 		env: {
 			...process.env,
-			TMUX: undefined,
+			TMUX: tmux ? "/tmp/tmux-test/default,1,0" : undefined,
 			STY: undefined,
 			ZELLIJ: undefined,
 			TERM: "xterm-256color",
@@ -39,6 +39,13 @@ describe("terminal restore on process exit", () => {
 		assert.ok(output.indexOf("\x1b[<u") < output.indexOf("\x1b[?1049l"), "Kitty pop must precede leaving alt screen");
 		assert.equal(count(output, programStatusClear), 1);
 		assert.ok(output.endsWith("\x1b[?1049l\x1b[?25h"));
+	});
+
+	it("wraps the program status clear in tmux passthrough on direct exit", () => {
+		const output = runFixture("exit", true);
+		const tmuxClear = "\x1bPtmux;\x1b\x1b]7501;state=clear\x1b\x1b\\\x1b\\";
+		assert.equal(count(output, tmuxClear), 1);
+		assert.equal(count(output, programStatusClear), 0);
 	});
 
 	it("does not restore twice after a normal stop()", () => {

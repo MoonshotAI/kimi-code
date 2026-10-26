@@ -158,6 +158,8 @@ export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	FAKE_CURSOR_END,
+	FAKE_CURSOR_START,
 	compositeTuiLine,
 	type Focusable,
 	isFocusable,

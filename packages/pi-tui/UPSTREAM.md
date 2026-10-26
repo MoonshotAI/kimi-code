@@ -133,6 +133,12 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 
 **Why not in the app:** The file walker is inside the combined autocomplete provider.
 
+### autocomplete-preserves-literal-wrappers — keep
+
+**Decision:** Path completion tries the prose-stripped token first, then retries the original token when no file matches. Unmatched leading wrappers in real filenames therefore remain valid path characters.
+
+**Why not in the app:** Token extraction and file lookup both live inside the combined autocomplete provider.
+
 ### opt-in-inline-slash-autocomplete — keep
 
 **Decision:** When enabled, `/` after whitespace mid-input or at the start of a later line opens autocomplete, and further token characters refresh the in-flight request.
@@ -210,3 +216,9 @@ Each card: **decision** and **why not in the app**. Status is `keep` or `absorbe
 **Decision:** OSC 7501 supports `id` and `title`, caches one report per record, clears an id subtree, clears every record during direct-exit restoration, and replays every live record after terminal restart. Invalid ids throw instead of falling back to the root record.
 
 **Why not in the app:** Record replacement, subtree clearing, capability-gated output, and restart replay share the terminal lifecycle that already owns root program status.
+
+### program-status-multiplexer-routing — keep
+
+**Decision:** In tmux, program-status reports and clears use DCS passthrough. Auto mode uses the Rex environment fallback and does not send a support query in tmux, screen, or zellij; explicit enablement still reports the root record.
+
+**Why not in the app:** The terminal owns capability detection, replay, stop, and direct-exit restoration. An app wrapper around ordinary reports would leave the other lifecycle paths unwrapped.

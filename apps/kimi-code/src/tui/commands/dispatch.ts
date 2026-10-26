@@ -1,7 +1,7 @@
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
 import type { DeviceAuthorization } from '@moonshot-ai/kimi-code-oauth';
+import type { ReverseRpcModalOwner } from '../reverse-rpc/modal-coordinator';
 
-import type { ProgramStatusBlocked } from '../controllers/program-status';
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
@@ -132,7 +132,8 @@ export interface SlashCommandHost {
   mountEditorReplacement(
     panel: Component & Focusable,
     onDisplaced?: () => void,
-    blocked?: ProgramStatusBlocked,
+    onReplaced?: () => void,
+    owner?: ReverseRpcModalOwner,
   ): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -184,6 +185,7 @@ export interface SlashCommandHost {
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;
   showLoginAuthorizationPrompt(auth: DeviceAuthorization): LoginProgressSpinnerHandle;
   beginAuthBlock(): () => void;
+  setAuthRequired(required: boolean): void;
   showProgressSpinner(label: string): LoginProgressSpinnerHandle;
 
   // Theme

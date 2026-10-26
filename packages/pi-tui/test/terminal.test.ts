@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it, mock } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { setKittyProtocolActive } from "../src/keys.ts";
 import {
 	normalizeAppleTerminalInput,
@@ -70,6 +70,28 @@ describe("normalizeAppleTerminalInput", () => {
 });
 
 describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
+	const environmentKeys = [
+		"TMUX",
+		"STY",
+		"ZELLIJ",
+		"ZELLIJ_SESSION_NAME",
+		"REX_SESSION",
+		"REX_BLOCK",
+		"HERDR_ENV",
+	];
+	let previousEnvironment: Record<string, string | undefined>;
+	beforeEach(() => {
+		previousEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
+		for (const key of environmentKeys) delete process.env[key];
+	});
+	afterEach(() => {
+		for (const key of environmentKeys) {
+			const value = previousEnvironment[key];
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	});
+
 	type NegotiationHarness = {
 		terminal: ProcessTerminal;
 		writes: string[];
@@ -237,7 +259,6 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 	describe("program status (OSC 7501)", () => {
 		const working = "\x1b]7501;state=working:app=pi\x1b\\";
 		const clear = "\x1b]7501;state=clear\x1b\\";
-
 		function withOverride(value: string | undefined, fn: () => void): void {
 			const previous = process.env.PI_PROGRAM_STATUS;
 			if (value === undefined) delete process.env.PI_PROGRAM_STATUS;
@@ -249,6 +270,25 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 				else process.env.PI_PROGRAM_STATUS = previous;
 			}
 		}
+
+		function withEnv(values: Record<string, string | undefined>, fn: () => void): void {
+			const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+			for (const [key, value] of Object.entries(values)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			try {
+				fn();
+			} finally {
+				for (const [key, value] of Object.entries(previous)) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+			}
+		}
+
+		const tmuxWorking = "\x1bPtmux;\x1b\x1b]7501;state=working:app=pi\x1b\x1b\\\x1b\\";
+		const tmuxClear = "\x1bPtmux;\x1b\x1b]7501;state=clear\x1b\x1b\\\x1b\\";
 
 		it("reports the latest status once the terminal answers the query before DA", () => {
 			withOverride(undefined, () => {
@@ -329,6 +369,72 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 				} finally {
 					harness.cleanup();
 				}
+			});
+		});
+
+		it("uses tmux passthrough for status reports and stop when explicitly enabled", () => {
+			withEnv({ TMUX: "/tmp/tmux-test/default,1,0" }, () => {
+				withOverride("1", () => {
+					const harness = setupNegotiation();
+					try {
+						harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+						assert.equal(harness.writes.at(-1), tmuxWorking);
+						harness.terminal.stop();
+						assert.equal(harness.writes.filter((write) => write === tmuxClear).length, 1);
+					} finally {
+						harness.cleanup();
+					}
+				});
+			});
+		});
+
+		it("uses the Rex fallback in tmux without sending a support query", () => {
+			withEnv({ TMUX: "/tmp/tmux-test/default,1,0", REX_SESSION: "rex-test" }, () => {
+				withOverride(undefined, () => {
+					const harness = setupNegotiation();
+					try {
+						assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+						harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+						assert.equal(harness.writes.at(-1), tmuxWorking);
+					} finally {
+						harness.cleanup();
+					}
+				});
+			});
+		});
+
+		it("keeps auto reporting off in tmux without Rex and in screen", () => {
+			for (const environment of [
+				{ TMUX: "/tmp/tmux-test/default,1,0" },
+				{ STY: "screen-test" },
+			]) {
+				withEnv({ ...environment, REX_SESSION: undefined, REX_BLOCK: undefined }, () => {
+					withOverride(undefined, () => {
+						const harness = setupNegotiation();
+						try {
+							assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+							harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+							assert.equal(harness.writes.includes(working), false);
+							assert.equal(harness.writes.includes(tmuxWorking), false);
+						} finally {
+							harness.cleanup();
+						}
+					});
+				});
+			}
+		});
+
+		it("reports raw root records in screen when explicitly enabled", () => {
+			withEnv({ STY: "screen-test" }, () => {
+				withOverride("1", () => {
+					const harness = setupNegotiation();
+					try {
+						harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+						assert.equal(harness.writes.at(-1), working);
+					} finally {
+						harness.cleanup();
+					}
+				});
 			});
 		});
 
