@@ -34,7 +34,7 @@ const CLOUD_CONFIG: EffortSwitchConfig = {
 };
 
 function response(config: unknown): Response {
-  return new Response(JSON.stringify({ name: 'effort_switch', config }));
+  return new Response(JSON.stringify({ name: 'effort_switch_confirm', config }));
 }
 
 afterEach(() => {

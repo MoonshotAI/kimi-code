@@ -53,7 +53,7 @@ const modelSwitchConfirmConfigSchema = z.unknown().transform((raw): ModelSwitchC
   return { enable: enable.success ? enable.data : false, rules };
 });
 
-export const EFFORT_SWITCH_CONFIG_NAME = 'effort_switch';
+export const EFFORT_SWITCH_CONFIG_NAME = 'effort_switch_confirm';
 
 interface EffortSwitchConfig {
   descriptions: {

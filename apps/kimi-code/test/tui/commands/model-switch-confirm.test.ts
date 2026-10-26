@@ -200,7 +200,7 @@ async function enableEffortConfig(sessionType: 'old' | 'new' | 'all' = 'all'): P
     fetchImpl: vi.fn(async () =>
       new Response(
         JSON.stringify({
-          name: 'effort_switch',
+          name: 'effort_switch_confirm',
           config: {
             descriptions: {
               enable: true,

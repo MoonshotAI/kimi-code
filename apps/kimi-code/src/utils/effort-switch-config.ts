@@ -11,7 +11,7 @@ import {
   type ModelSwitchSessionType,
 } from './model-switch-confirm-config';
 
-export const EFFORT_SWITCH_CONFIG_NAME = 'effort_switch';
+export const EFFORT_SWITCH_CONFIG_NAME = 'effort_switch_confirm';
 
 export type EffortSwitchRule = ModelSwitchRule;
 
