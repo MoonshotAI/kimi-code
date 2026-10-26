@@ -1338,6 +1338,46 @@ key = "${titleOAuthRef.key}"
     }
   });
 
+  it('preserves registry transport failure metadata through the memory klient', async () => {
+    const failure = new TypeError('fetch failed', {
+      cause: new AggregateError([new Error('connect ECONNREFUSED 127.0.0.1:443')], 'aggregate transport failure'),
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw failure;
+      }),
+    );
+    const { harness } = await makeHarness();
+    try {
+      await harness.setConfig({
+        providers: {
+          acme: {
+            type: 'openai',
+            apiKey: 'sk-acme',
+            source: { kind: 'apiJson', url: 'https://registry.example.test/api.json', apiKey: 'sk-registry' },
+          },
+        },
+        models: {},
+      });
+
+      const result = await harness.refreshProviderModels();
+
+      expect(result.failed).toEqual([
+        {
+          provider: 'acme',
+          reason: expect.stringContaining('connect ECONNREFUSED 127.0.0.1:443'),
+          kind: 'network',
+          registry_group: expect.any(String),
+          registry_url: 'https://registry.example.test/api.json',
+        },
+      ]);
+    } finally {
+      vi.unstubAllGlobals();
+      await harness.close();
+    }
+  });
+
   it('round-trips the secondaryModel pool field to the [secondary_model] config section', async () => {
     const { harness, homeDir } = await makeHarness();
     try {

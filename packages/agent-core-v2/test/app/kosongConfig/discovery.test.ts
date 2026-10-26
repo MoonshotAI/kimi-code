@@ -493,6 +493,56 @@ describe('refreshProviderModels write behavior', () => {
     }
   });
 
+  it('groups registry transport failures and preserves their sanitized root causes', async () => {
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('connect ECONNREFUSED 127.0.0.1:443'),
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw failure;
+      }),
+    );
+    const source = {
+      kind: 'apiJson' as const,
+      url: 'https://registry.example.test/api.json?token=sensitive-token#sensitive-token',
+      apiKey: 'sk-registry',
+    };
+    const { host, discovery } = await createHost({
+      providers: {
+        acme: { type: 'openai', apiKey: 'sk-acme', source },
+        acme_messages: { type: 'anthropic', apiKey: 'sk-acme-messages', source },
+      },
+      models: {},
+    });
+    try {
+      const result = await discovery.refreshProviderModels({ scope: 'all' });
+
+      expect(result.failed).toEqual([
+        {
+          provider: 'acme',
+          reason: expect.stringContaining('connect ECONNREFUSED 127.0.0.1:443'),
+          kind: 'network',
+          registry_group: expect.any(String),
+          registry_url: 'https://registry.example.test/api.json',
+        },
+        {
+          provider: 'acme_messages',
+          reason: expect.stringContaining('connect ECONNREFUSED 127.0.0.1:443'),
+          kind: 'network',
+          registry_group: expect.any(String),
+          registry_url: 'https://registry.example.test/api.json',
+        },
+      ]);
+      expect(result.failed[0]?.registry_group).toBe(result.failed[1]?.registry_group);
+      expect(result.failed[0]?.reason).toContain('fetch failed');
+      expect(result.failed[0]?.reason).not.toContain('sensitive-token');
+      expect(result.failed[1]?.reason).not.toContain('sensitive-token');
+    } finally {
+      host.dispose();
+    }
+  });
+
   it('refreshes a hand-configured API-key provider at the managed endpoint', async () => {
     const baseUrl = 'https://api.managed.example.test/coding/v1';
     vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);

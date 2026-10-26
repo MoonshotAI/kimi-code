@@ -25,7 +25,15 @@ export const refreshProviderModelsResponseSchema = z.object({
     }),
   ),
   unchanged: z.array(z.string()),
-  failed: z.array(z.object({ provider: z.string(), reason: z.string() })),
+  failed: z.array(
+    z.object({
+      provider: z.string(),
+      reason: z.string(),
+      kind: z.literal('network').optional(),
+      registry_group: z.string().optional(),
+      registry_url: z.string().optional(),
+    }),
+  ),
   retired_default: z
     .object({
       from: z.string(),

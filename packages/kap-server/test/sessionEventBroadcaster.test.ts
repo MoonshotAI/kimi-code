@@ -1817,7 +1817,15 @@ describe('SessionEventBroadcaster', () => {
       const changed = [
         { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
       ];
-      const failed = [{ provider: 'managed:kimi-code', reason: 'network disabled' }];
+      const failed = [
+        {
+          provider: 'acme',
+          reason: 'network disabled',
+          kind: 'network',
+          registry_group: 'registry-0',
+          registry_url: 'https://registry.example.test/api.json',
+        },
+      ];
       eventBus.emit({
         type: 'event.model_catalog.changed',
         payload: { changed, unchanged: ['openai-main'], failed },
@@ -3357,18 +3365,41 @@ describe('sessionEventMessageSchema', () => {
       ).success,
     ).toBe(true);
 
-    expect(
-      sessionEventMessageSchema.safeParse(
-        envelope({
-          type: 'event.model_catalog.changed',
-          changed: [
-            { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+    const catalogEvent = sessionEventMessageSchema.safeParse(
+      envelope({
+        type: 'event.model_catalog.changed',
+        changed: [
+          { provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 2, removed: 1 },
+        ],
+        unchanged: ['openai-main'],
+        failed: [
+          {
+            provider: 'acme',
+            reason: 'network disabled',
+            kind: 'network',
+            registry_group: 'registry-0',
+            registry_url: 'https://registry.example.test/api.json',
+          },
+        ],
+      }),
+    );
+    expect(catalogEvent.success).toBe(true);
+    expect(catalogEvent).toMatchObject({
+      success: true,
+      data: {
+        payload: {
+          failed: [
+            {
+              provider: 'acme',
+              reason: 'network disabled',
+              kind: 'network',
+              registry_group: 'registry-0',
+              registry_url: 'https://registry.example.test/api.json',
+            },
           ],
-          unchanged: ['openai-main'],
-          failed: [{ provider: 'managed:kimi-code', reason: 'network disabled' }],
-        }),
-      ).success,
-    ).toBe(true);
+        },
+      },
+    });
   });
 
   it('rejects malformed config and model catalog event envelopes', () => {

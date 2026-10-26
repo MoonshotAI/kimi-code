@@ -410,6 +410,79 @@ describe('server-v2 /api/v1 model/provider catalog', () => {
     expect(refreshProviderModels).toHaveBeenCalledWith({ scope: 'all' });
   });
 
+  it('returns grouped registry transport failures through POST /providers:refresh', async () => {
+    const registryToml = [
+      '[providers.acme]',
+      'type = "openai"',
+      'api_key = "sk-acme"',
+      '[providers.acme.source]',
+      'kind = "apiJson"',
+      'url = "https://registry.example.test/api.json?token=sensitive-token#sensitive-token"',
+      'apiKey = "sk-registry"',
+      '[providers.acme_messages]',
+      'type = "anthropic"',
+      'api_key = "sk-acme-messages"',
+      '[providers.acme_messages.source]',
+      'kind = "apiJson"',
+      'url = "https://registry.example.test/api.json?token=sensitive-token#sensitive-token"',
+      'apiKey = "sk-registry"',
+      '',
+    ].join('\n');
+    await boot(registryToml);
+    const failure = new TypeError('fetch failed', {
+      cause: new Error('connect ECONNREFUSED 127.0.0.1:443'),
+    });
+    const requestUrl = (input: Parameters<typeof fetch>[0]): string => {
+      if (typeof input === 'string') return input;
+      if (input instanceof URL) return input.href;
+      return input.url;
+    };
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (requestUrl(input).includes('registry.example.test')) throw failure;
+      return originalFetch(input, init);
+    });
+
+    try {
+      const { status, body } = await postJson<{
+        failed: Array<{
+          provider: string;
+          reason: string;
+          kind: string;
+          registry_group: string;
+          registry_url: string;
+        }>;
+      }>('/api/v1/providers:refresh', {});
+
+      expect(status).toBe(200);
+      expect(body.code).toBe(0);
+      expect(body.data.failed).toEqual([
+        {
+          provider: 'acme',
+          reason: expect.stringContaining('connect ECONNREFUSED 127.0.0.1:443'),
+          kind: 'network',
+          registry_group: expect.any(String),
+          registry_url: 'https://registry.example.test/api.json',
+        },
+        {
+          provider: 'acme_messages',
+          reason: expect.stringContaining('connect ECONNREFUSED 127.0.0.1:443'),
+          kind: 'network',
+          registry_group: expect.any(String),
+          registry_url: 'https://registry.example.test/api.json',
+        },
+      ]);
+      expect(body.data.failed[0]?.registry_group).toBe(body.data.failed[1]?.registry_group);
+      expect(body.data.failed[0]?.reason).not.toContain('sensitive-token');
+      expect(body.data.failed[1]?.reason).not.toContain('sensitive-token');
+      expect(
+        fetchMock.mock.calls.filter(([input]) => requestUrl(input).includes('registry.example.test')),
+      ).toHaveLength(1);
+    } finally {
+      fetchMock.mockRestore();
+    }
+  });
+
   it('refreshes a single provider through POST /providers/{id}:refresh', async () => {
     const refreshProviderModels = vi.fn(async () => ({
       changed: [],

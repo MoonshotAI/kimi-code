@@ -117,6 +117,9 @@ export interface ModelCatalogRefreshChange {
 export interface ModelCatalogRefreshFailure {
   readonly provider: string;
   readonly reason: string;
+  readonly kind?: 'network';
+  readonly registry_group?: string;
+  readonly registry_url?: string;
 }
 
 export interface ModelCatalogRetiredDefault {

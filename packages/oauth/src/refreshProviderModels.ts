@@ -1,5 +1,6 @@
 import {
   applyCustomRegistryProvider,
+  CustomRegistryNetworkError,
   declaredUpgradeTarget,
   fetchCustomRegistry,
   isReservedProviderId,
@@ -63,12 +64,20 @@ export interface ProviderChange {
   readonly removed: number;
 }
 
+export interface ProviderRefreshFailure {
+  readonly provider: string;
+  readonly reason: string;
+  readonly kind?: 'network';
+  readonly registryGroup?: string;
+  readonly registryUrl?: string;
+}
+
 export interface RefreshResult {
   /** Providers whose model list actually changed. */
   readonly changed: readonly ProviderChange[];
   /** Providers whose model list stayed identical after refresh. */
   readonly unchanged: readonly string[];
-  readonly failed: ReadonlyArray<{ readonly provider: string; readonly reason: string }>;
+  readonly failed: readonly ProviderRefreshFailure[];
   /**
    * Set when a registry dropped the default model and the default moved to the
    * replacement that model had declared through `upgrade`.
@@ -442,7 +451,7 @@ export async function refreshProviderModels(
 ): Promise<RefreshResult> {
   const changed: ProviderChange[] = [];
   const unchanged: string[] = [];
-  const failed: Array<{ provider: string; reason: string }> = [];
+  const failed: ProviderRefreshFailure[] = [];
   let retiredDefault: RefreshResult['retiredDefault'];
   const scope = options.scope ?? 'all';
   const targetId = options.providerId;
@@ -732,7 +741,10 @@ export async function refreshProviderModels(
     }
   }
 
+  let registryGroupIndex = 0;
   for (const { sources, providerIds } of customSources.values()) {
+    const registryGroup = `registry-${registryGroupIndex}`;
+    registryGroupIndex += 1;
     // When scoped to a single provider, only refresh the registry group it
     // belongs to and only apply the target entry (siblings under the same URL
     // are left untouched).
@@ -889,10 +901,14 @@ export async function refreshProviderModels(
       }
     } catch (error) {
       const reportedIds = targetId !== undefined ? [targetId] : providerIds;
+      const networkError = error instanceof CustomRegistryNetworkError ? error : undefined;
       for (const providerId of reportedIds) {
         failed.push({
           provider: providerId,
           reason: error instanceof Error ? error.message : String(error),
+          kind: networkError === undefined ? undefined : 'network',
+          registryGroup: networkError === undefined ? undefined : registryGroup,
+          registryUrl: networkError?.registryUrl,
         });
       }
     }
