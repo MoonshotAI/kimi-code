@@ -1,4 +1,5 @@
 import type { ContentPart, ToolDescription as KosongTool } from '#human/llm/message';
+import { emptyUsage } from '#human/llm/usage';
 import { Jimp } from 'jimp';
 import { CallToolResultSchema, ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -41,7 +42,13 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
 
-import { createTestAgent, mcpServices, type TestAgentContext } from '../../harness';
+import {
+  createTestAgent,
+  llmGenerateServices,
+  mcpServices,
+  requesterFromGenerateFn,
+  type TestAgentContext,
+} from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
@@ -59,6 +66,7 @@ interface ResolvedServer {
   readonly rawTools: readonly MCPToolDefinition[];
   readonly enabledNames: ReadonlySet<string>;
   readonly deferred: boolean;
+  readonly instructions?: string;
 }
 
 class FakeMcpManager {
@@ -137,6 +145,7 @@ class FakeMcpManager {
     enabledNames = new Set(tools.map((tool) => tool.name)),
     rawTools?: readonly MCPToolDefinition[],
     deferred = false,
+    instructions?: string,
   ): void {
     const resolvedRawTools =
       rawTools ??
@@ -151,6 +160,7 @@ class FakeMcpManager {
       rawTools: resolvedRawTools,
       enabledNames,
       deferred,
+      instructions,
     });
   }
 
@@ -200,6 +210,7 @@ class FakeMcpManager {
     const current = this.entries.get(name);
     if (current === undefined) return;
     const entry: McpServerEntry = { ...current, status: 'disabled', toolCount: 0 };
+    this.entries.set(name, entry);
     this.emit(entry);
     this.entries.delete(name);
   }
@@ -1576,5 +1587,280 @@ describe('AgentMcpService + AgentProfileService', () => {
         .filter((tool) => tool.source === 'mcp' && tool.active)
         .map((tool) => tool.name),
     ).toEqual(['mcp__slack__echo']);
+  });
+
+  it('injects connected MCP server instructions into the system prompt before a step begins', async () => {
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools for pull requests and issues.',
+    );
+    manager.connect('github');
+    profile.update({ systemPrompt: 'Base system prompt.' });
+
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+
+    expect(profile.getSystemPrompt()).toBe(
+      'Base system prompt.\n\n# MCP Server Instructions\n\n' +
+        'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+        '## github\nUse github tools for pull requests and issues.',
+    );
+  });
+
+  it('removes stale MCP instructions when servers disconnect, are removed, or reconnect without instructions', async () => {
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools for pull requests and issues.',
+    );
+    manager.connect('github');
+    profile.update({ systemPrompt: 'Base system prompt.' });
+
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+    expect(profile.getSystemPrompt()).toContain('## github\nUse github tools for pull requests and issues.');
+
+    manager.disconnect('github');
+    expect(profile.getSystemPrompt()).toBe('Base system prompt.');
+
+    manager.connect('github');
+    expect(profile.getSystemPrompt()).toContain('## github\nUse github tools for pull requests and issues.');
+
+    manager.setResolved('github', githubClient, await discoverTools(githubClient));
+    manager.connect('github');
+    expect(profile.getSystemPrompt()).toBe('Base system prompt.');
+  });
+
+  it('installs and clears MCP instructions when the base system prompt is empty', async () => {
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools for pull requests and issues.',
+    );
+    manager.connect('github');
+    profile.update({ systemPrompt: '' });
+
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+
+    expect(profile.getSystemPrompt()).toBe(
+      '# MCP Server Instructions\n\n' +
+        'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+        '## github\nUse github tools for pull requests and issues.',
+    );
+
+    manager.markRemoved('github');
+    expect(profile.getSystemPrompt()).toBe('');
+  });
+
+  it('preserves user-authored prompt sections that contain an MCP Server Instructions heading', async () => {
+    const userPrompt =
+      'Intro guidance.\n\n# MCP Server Instructions\n\nUser-authored custom instructions that must stay intact.';
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Server-reported instructions.',
+    );
+    manager.connect('github');
+    profile.update({ systemPrompt: userPrompt });
+
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+
+    expect(profile.getSystemPrompt()).toBe(
+      `${userPrompt}\n\n# MCP Server Instructions\n\n` +
+        'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+        '## github\nServer-reported instructions.',
+    );
+
+    manager.disconnect('github');
+    expect(profile.getSystemPrompt()).toBe(userPrompt);
+  });
+
+  it('preserves environmentDisclosure and custom prompts starting with MCP header across restore', async () => {
+    const customHeaderPrompt =
+      '# MCP Server Instructions\n\nThe following MCP servers have provided instructions for how to use their tools and resources:\n\n## custom\nUser-authored prompt starting with the MCP header.';
+    const disclosure = {
+      cwd: '/workspace/project',
+      renderedOnDate: '2026-10-22',
+    };
+    profile.update({
+      systemPrompt: customHeaderPrompt,
+      environmentDisclosure: disclosure,
+    });
+
+    await ctx.get(IEventDispatcher).hooks.onDidRestore.run({});
+    const loop = ctx.get(IAgentLoopService);
+    await loop.hooks.onWillBeginStep.run({
+      turnId: 1,
+      step: 1,
+      firstStepOfTurn: true,
+      signal: new AbortController().signal,
+    });
+    expect(profile.getSystemPrompt()).toBe(customHeaderPrompt);
+    expect(profile.data().environmentDisclosure).toEqual(disclosure);
+
+    const githubClient = fakeMcpClient();
+    manager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools.',
+    );
+    manager.connect('github');
+    expect(profile.data().environmentDisclosure).toEqual(disclosure);
+    expect(profile.getSystemPrompt()).toBe(
+      `${customHeaderPrompt}\n\n# MCP Server Instructions\n\n` +
+        'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+        '## github\nUse github tools.',
+    );
+
+    manager.disconnect('github');
+    expect(profile.getSystemPrompt()).toBe(customHeaderPrompt);
+    expect(profile.data().environmentDisclosure).toEqual(disclosure);
+  });
+
+  it('delivers MCP instructions to the provider on the first turn and after mid-turn connection changes', async () => {
+    const seenPrompts: string[] = [];
+    const localManager = new FakeMcpManager();
+    const githubClient = fakeMcpClient();
+    const slackClient = fakeMcpClient();
+    localManager.setResolved(
+      'github',
+      githubClient,
+      await discoverTools(githubClient),
+      undefined,
+      undefined,
+      false,
+      'Use github tools.',
+    );
+    localManager.setResolved(
+      'slack',
+      slackClient,
+      await discoverTools(slackClient),
+      undefined,
+      undefined,
+      false,
+      'Use slack tools.',
+    );
+    localManager.connect('github');
+
+    let stepCount = 0;
+    const localCtx = createTestAgent(
+      mcpServices({ manager: localManager as unknown as McpConnectionManager }),
+      llmGenerateServices(
+        requesterFromGenerateFn(async (_provider, systemPrompt) => {
+          seenPrompts.push(systemPrompt);
+          stepCount += 1;
+          if (stepCount === 1) {
+            localCtx.get(IAgentProfileService).update({
+              systemPrompt: 'Queued turn prompt.',
+            });
+            localManager.connect('slack');
+            return {
+              id: 'resp-1',
+              message: {
+                role: 'assistant',
+                content: [],
+                toolCalls: [
+                  {
+                    type: 'function',
+                    id: 'call-1',
+                    name: 'mcp__github__noop',
+                    arguments: '{}',
+                  },
+                ],
+              },
+              usage: emptyUsage(),
+              finishReason: 'tool_calls',
+              rawFinishReason: 'tool_calls',
+            };
+          }
+          return {
+            id: 'resp-2',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'done' }],
+              toolCalls: [],
+            },
+            usage: emptyUsage(),
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+          };
+        }),
+      ),
+    );
+
+    try {
+      localCtx.get(IAgentMcpService).list();
+      localCtx.get(IAgentProfileService).update({
+        systemPrompt: 'Base prompt.',
+        activeToolNames: ['mcp__*'],
+      });
+
+      await localCtx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+      await localCtx.untilApproval(true);
+      await localCtx.untilTurnEnd();
+
+      expect(seenPrompts).toHaveLength(2);
+      expect(seenPrompts[0]).toBe(
+        'Base prompt.\n\n# MCP Server Instructions\n\n' +
+          'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+          '## github\nUse github tools.',
+      );
+      expect(seenPrompts[1]).toBe(
+        'Base prompt.\n\n# MCP Server Instructions\n\n' +
+          'The following MCP servers have provided instructions for how to use their tools and resources:\n\n' +
+          '## github\nUse github tools.\n\n' +
+          '## slack\nUse slack tools.',
+      );
+      await localCtx.expectResumeMatches();
+    } finally {
+      await localCtx.dispose();
+    }
   });
 });

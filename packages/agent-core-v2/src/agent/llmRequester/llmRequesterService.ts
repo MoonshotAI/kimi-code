@@ -9,7 +9,11 @@ import {
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import {
+  composeSystemPromptWithMcpInstructions,
+  IAgentProfileService,
+  type ProfileModelContext,
+} from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -766,9 +770,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       snapshot = {
         resolved: this.profile.resolveModelContext(),
         params: this.profile.resolveRequestParams(),
-        systemPrompt: this.profile.getSystemPrompt(),
+        systemPrompt: this.profile.getBaseSystemPrompt?.() ?? this.profile.getSystemPrompt(),
       };
       this.turnConfigs.set(turnId, snapshot);
+    }
+    if (typeof this.profile.getBaseSystemPrompt === 'function') {
+      return {
+        ...snapshot,
+        systemPrompt: composeSystemPromptWithMcpInstructions(
+          snapshot.systemPrompt,
+          this.profile.getMcpInstructions?.(),
+        ),
+      };
     }
     return snapshot;
   }
@@ -835,7 +848,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       toolSelect: this.toolSelect.enabled(),
       systemPromptHash,
       systemPrompt:
-        input.systemPrompt === this.profile.data().systemPrompt
+        input.systemPrompt ===
+        composeSystemPromptWithMcpInstructions(
+          this.profile.data().systemPrompt,
+          this.profile.getMcpInstructions?.(),
+        )
           ? undefined
           : input.systemPrompt,
       toolsHash,

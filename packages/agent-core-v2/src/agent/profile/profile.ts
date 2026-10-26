@@ -135,9 +135,22 @@ export interface IAgentProfileService {
   isRunnable(): boolean;
   hasProvider(): boolean;
   getSystemPrompt(): string;
+  getBaseSystemPrompt?(): string;
+  getMcpInstructions?(): string | undefined;
+  setMcpInstructions?(instructions: string | undefined): void;
   getActiveToolNames(): readonly string[] | undefined;
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;
+}
+
+export function composeSystemPromptWithMcpInstructions(
+  basePrompt: string,
+  mcpInstructions: string | undefined,
+): string {
+  if (mcpInstructions === undefined || mcpInstructions.length === 0) {
+    return basePrompt;
+  }
+  return basePrompt.length === 0 ? mcpInstructions : `${basePrompt}\n\n${mcpInstructions}`;
 }
 
 export const IAgentProfileService = createDecorator<IAgentProfileService>('agentProfileService');

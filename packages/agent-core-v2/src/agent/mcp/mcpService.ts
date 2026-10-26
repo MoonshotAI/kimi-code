@@ -45,10 +45,16 @@ export const mcpDiscoveryWritesReadyKey = defineState<boolean>(
   () => false,
 );
 
+const MCP_INSTRUCTIONS_HEADER =
+  '# MCP Server Instructions\n\n' +
+  'The following MCP servers have provided instructions for how to use their tools and resources:\n\n';
+
 export class AgentMcpService extends Service implements IAgentMcpService {
   declare readonly _serviceBrand: undefined;
   private readonly mcpTools = new Map<string, McpToolRegistration>();
   private readonly pendingDiscoveries: Array<() => void> = [];
+  private appliedInstructionsSuffix = '';
+  private instructionsSyncActive = false;
 
   constructor(
     @ISessionMcpHandle private readonly mcpHandle: ISessionMcpHandle,
@@ -69,6 +75,8 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     this.attachMcpTools();
     loop.hooks.onWillBeginStep.register('mcp', async (ctx, next) => {
       await this.waitForInitialLoad(ctx.signal);
+      this.instructionsSyncActive = true;
+      this.syncMcpInstructions();
       await next();
     });
     this._register(
@@ -161,6 +169,9 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     this._register(
       this.onStatusChange((entry) => {
         this.handleMcpServerStatusChange(entry);
+        if (this.instructionsSyncActive) {
+          this.syncMcpInstructions();
+        }
       }),
     );
   }
@@ -361,6 +372,49 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     const pending = this.pendingDiscoveries.splice(0);
     for (const work of pending) {
       work();
+    }
+  }
+
+  private syncMcpInstructions(): void {
+    const sections: string[] = [];
+    for (const entry of this.list()) {
+      if (!this.mcpHandle.isBaselineServer(entry.name) || entry.status !== 'connected') continue;
+      const instructions = this.resolved(entry.name)?.instructions?.trim();
+      if (instructions !== undefined && instructions.length > 0) {
+        sections.push(`## ${entry.name}\n${instructions}`);
+      }
+    }
+    const block =
+      sections.length === 0 ? undefined : `${MCP_INSTRUCTIONS_HEADER}${sections.join('\n\n')}`;
+    if (typeof this.profile.setMcpInstructions === 'function') {
+      this.profile.setMcpInstructions(block);
+      return;
+    }
+    if (
+      typeof this.profile.getSystemPrompt !== 'function' ||
+      typeof this.profile.update !== 'function'
+    ) {
+      return;
+    }
+    const current = this.profile.getSystemPrompt();
+    const previousSuffix = this.appliedInstructionsSuffix;
+    const base =
+      previousSuffix.length > 0 && current.endsWith(previousSuffix)
+        ? current.slice(0, current.length - previousSuffix.length)
+        : current;
+    const environmentDisclosure = this.profile.data?.().environmentDisclosure;
+    if (block === undefined) {
+      this.appliedInstructionsSuffix = '';
+      if (base !== current) {
+        this.profile.update({ systemPrompt: base, environmentDisclosure });
+      }
+      return;
+    }
+    const nextSuffix = base.length === 0 ? block : `\n\n${block}`;
+    const next = `${base}${nextSuffix}`;
+    this.appliedInstructionsSuffix = nextSuffix;
+    if (next !== current) {
+      this.profile.update({ systemPrompt: next, environmentDisclosure });
     }
   }
 
