@@ -338,11 +338,13 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(promoted.body.data.root).toBe(extra);
     expect(promoted.body.data.additional_dirs).toEqual([root]);
 
-    const session = await postJson<{ workspace_id: string }>('/api/v1/sessions', {
-      workspace_id: id,
-    });
+    const session = await postJson<{ workspace_id: string; metadata: { cwd: string } }>(
+      '/api/v1/sessions',
+      { workspace_id: id },
+    );
     expect(session.body.code).toBe(0);
     expect(session.body.data.workspace_id).toBe(id);
+    expect(session.body.data.metadata.cwd).toBe(extra);
   });
 
   it('rejects invalid primary paths and unknown workspaces (40001/40409/40410)', async () => {
