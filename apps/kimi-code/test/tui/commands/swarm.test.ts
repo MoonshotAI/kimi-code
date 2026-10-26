@@ -129,7 +129,9 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(host).render(80).join('\n'));
-    expect(text).toContain('Always Ask mode can block swarm work');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and can block swarm work while agents are running.',
+    );
     mountedPicker(host).handleInput(ENTER);
 
     await vi.waitFor(() => {
@@ -223,7 +225,9 @@ describe('handleSwarmCommand', () => {
     expect(session.setPermission).not.toHaveBeenCalled();
     expect(host.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(host).render(80).join('\n'));
-    expect(text).toContain('Always Ask mode can block swarm work');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and can block swarm work while agents are running.',
+    );
     expect(text).toContain('Switch to Ask When Needed and start');
     expect(text).not.toContain('Do not start');
   });

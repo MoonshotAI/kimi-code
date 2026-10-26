@@ -359,7 +359,9 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(manualHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(manualHost).render(80).join('\n'));
-    expect(text).toContain('Always Ask mode is not suitable for unattended goal work');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and is not suitable for unattended goal work.',
+    );
     expect(text).toContain('Return to the input box with your goal command');
   });
 
@@ -477,7 +479,9 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
     expect(yoloHost.sendNormalUserInput).not.toHaveBeenCalled();
     const text = stripAnsi(mountedPicker(yoloHost).render(80).join('\n'));
-    expect(text).toContain('Ask When Needed mode can still stop for questions');
+    expect(text.replaceAll(/\s+/g, ' ')).toContain(
+      'Ask When Needed mode approves tools and plan changes automatically, but can still stop for questions.',
+    );
     expect(text).toContain('Keep Ask When Needed and start');
     expect(text).not.toContain('Start in Always Ask');
   });
