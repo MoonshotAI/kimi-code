@@ -170,11 +170,35 @@ describe('handleUpgrade', () => {
     await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
 
     expect(deps.detectInstallSource).toHaveBeenCalledTimes(1);
+    expect(deps.detectInstallSource).toHaveBeenCalledWith({ allowGlobalPrefix: false });
     expect(deps.installUpdate).not.toHaveBeenCalled();
     expect(deps.track).toHaveBeenCalledWith('upgrade_command_no_update', expect.objectContaining({
       current_version: '0.4.0',
     }));
     expect(stdout.join('')).toContain('Kimi Code is already up to date (v0.4.0).');
+  });
+
+  it('defers the full source probe through the default dependency assembly', async () => {
+    const sourceModule = await import('#/cli/update/source');
+    const detector = vi.spyOn(sourceModule, 'detectInstallSource');
+    const { writable } = captureOutput();
+    try {
+      detector.mockResolvedValue(null);
+      const deps = { ...createDeps({ latest: '0.4.0' }), detectInstallSource: undefined };
+      await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+      expect(detector).toHaveBeenCalledWith({ allowGlobalPrefix: false });
+      expect(detector).toHaveBeenCalledTimes(1);
+
+      detector.mockClear();
+      detector.mockResolvedValueOnce(null).mockResolvedValueOnce('npm-global');
+      const actionable = { ...createDeps({ latest: '0.5.0' }), detectInstallSource: undefined };
+      await expect(handleUpgrade('0.4.0', { ...actionable, ...writable })).resolves.toBe(0);
+      expect(detector).toHaveBeenCalledTimes(2);
+      expect(detector.mock.calls[0]).toEqual([{ allowGlobalPrefix: false }]);
+      expect(detector.mock.calls[1]).toEqual([]);
+    } finally {
+      detector.mockRestore();
+    }
   });
 
   it('prints the manual update command when the install source cannot be auto-installed', async () => {

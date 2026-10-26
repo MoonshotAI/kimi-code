@@ -349,6 +349,7 @@ describe('runUpdatePreflight', () => {
       runUpdatePreflight('0.4.0', { ...options, isTTY: false }),
     ).resolves.toBe('continue');
     expect(detectInstallSource).toHaveBeenCalledTimes(1);
+    expect(detectInstallSource).toHaveBeenCalledWith({ allowGlobalPrefix: false });
   });
 
   it('does not start a fresh-check background install when non-interactive', async () => {

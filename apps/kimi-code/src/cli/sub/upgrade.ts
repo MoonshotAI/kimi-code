@@ -36,7 +36,10 @@ type UpgradeLogger = Pick<Logger, 'info' | 'warn'>;
 export interface UpgradeDeps {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly refreshUpdateCache: (channel: UpdateChannel) => Promise<UpdateCache>;
-  readonly detectInstallSource: () => Promise<InstallSource>;
+  readonly detectInstallSource: {
+    (options: { readonly allowGlobalPrefix: false }): Promise<InstallSource | null>;
+    (): Promise<InstallSource>;
+  };
   readonly installUpdate: (
     source: InstallSource,
     plan: ActionableUpdatePlan,
@@ -59,8 +62,8 @@ export async function handleUpgrade(
   overrides: Partial<UpgradeDeps> = {},
 ): Promise<number> {
   const deps = createDefaultUpgradeDeps(overrides);
-  const source = await deps.detectInstallSource().catch(() => 'unsupported' as const);
-  const selection = resolveUpdateChannel(currentVersion, source, deps.env);
+  const sourceHint = await deps.detectInstallSource({ allowGlobalPrefix: false }).catch(() => null);
+  const selection = resolveUpdateChannel(currentVersion, sourceHint ?? 'unsupported', deps.env);
   const channelWarning = formatUpdateChannelWarning(selection);
   if (channelWarning !== null) deps.stderr.write(channelWarning);
 
@@ -95,6 +98,7 @@ export async function handleUpgrade(
     return 0;
   }
 
+  const source = sourceHint ?? await deps.detectInstallSource().catch(() => 'unsupported' as const);
   const target = plan.target;
   const intent: InstallIntent = plan.kind;
   const installCommand = installCommandFor(source, target.version, deps.platform, target.channel);
@@ -162,7 +166,7 @@ function createDefaultUpgradeDeps(overrides: Partial<UpgradeDeps>): UpgradeDeps 
     refreshUpdateCache:
       overrides.refreshUpdateCache ??
       ((channel) => refreshUpdateCache({ channel, timeoutMs: INTERACTIVE_UPDATE_CHECK_TIMEOUT_MS })),
-    detectInstallSource: overrides.detectInstallSource ?? (() => detectInstallSource()),
+    detectInstallSource: overrides.detectInstallSource ?? detectInstallSource,
     installUpdate: overrides.installUpdate ?? installUpdateForeground,
     promptForInstallChoice: overrides.promptForInstallChoice ?? promptForInstallChoice,
     platform: overrides.platform ?? process.platform,

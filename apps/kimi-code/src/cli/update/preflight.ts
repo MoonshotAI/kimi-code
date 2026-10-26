@@ -332,7 +332,7 @@ function refreshAndMaybeInstallInBackground(
   check: UpdateCheckContext,
   isInteractive: boolean,
   installState: UpdateInstallState,
-  source: InstallSource,
+  sourceHint: InstallSource | null,
   platform: NodeJS.Platform,
   track: RunUpdatePreflightOptions['track'],
   logger: UpdateLogger,
@@ -356,6 +356,7 @@ function refreshAndMaybeInstallInBackground(
     );
     const plan = decision.plan;
     if (plan.kind !== 'upgrade') return;
+    const source = sourceHint ?? await detectInstallSource().catch(() => 'unsupported' as const);
     await tryStartAutomaticBackgroundInstall(
       installState,
       currentVersion,
@@ -839,8 +840,8 @@ export async function runUpdatePreflight(
   try {
     const isInteractive = options.isTTY ?? (process.stdin.isTTY && process.stdout.isTTY);
     const deviceId = resolveUpdateDeviceId();
-    const source = await detectInstallSource().catch(() => 'unsupported' as const);
-    const selection = resolveUpdateChannel(currentVersion, source);
+    const sourceHint = await detectInstallSource({ allowGlobalPrefix: false }).catch(() => null);
+    const selection = resolveUpdateChannel(currentVersion, sourceHint ?? 'unsupported');
     const channelWarning = formatUpdateChannelWarning(selection);
     if (channelWarning !== null) stderr.write(channelWarning);
     const check: UpdateCheckContext = {
@@ -886,7 +887,7 @@ export async function runUpdatePreflight(
           check,
           isInteractive,
           installState,
-          source,
+          sourceHint,
           platform,
           options.track,
           logger,
@@ -907,6 +908,7 @@ export async function runUpdatePreflight(
     let plan = decision.plan;
     if (plan.kind === 'none') return 'continue';
 
+    const source = sourceHint ?? await detectInstallSource().catch(() => 'unsupported' as const);
     const promptAction = decideUpdateAction(plan, isInteractive, source, platform);
     if (promptAction === 'none') {
       refreshInBackground(check);
