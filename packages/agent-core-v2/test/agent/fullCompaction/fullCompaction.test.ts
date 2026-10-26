@@ -42,7 +42,10 @@ import {
   ITelemetryService,
   IAgentToolRegistryService,
   DYNAMIC_TOOL_SCHEMA_VARIANT,
+  LOADABLE_TOOLS_VARIANT,
   normalizeAgentProfile,
+  renderLoadableToolsAnnouncement,
+  wrapSystemReminder,
   type ExecutableTool,
   type ResolvedAgentProfile,
   type ToolExecution,
@@ -2306,6 +2309,112 @@ describe('FullCompaction', () => {
       expect(eventIndex(events, 'compaction.started')).toBe(-1);
       expect(ctx.llmCalls).toHaveLength(1);
       expect(messageText(ctx.llmCalls[0]?.history.at(-1))).toBe('small prompt');
+    } finally {
+      registration.dispose();
+    }
+  });
+
+  it('keeps dynamic tool context in the compaction request across repeated compactions', async () => {
+    vi.stubEnv(MASTER_ENV, '1');
+    const ctx = testAgent(
+      agentService(IAgentToolSelectAnnouncementsService, { _serviceBrand: undefined }),
+      {
+        initialConfig: {
+          providers: {},
+          loopControl: { reservedContextSize: 0 },
+        },
+      },
+    );
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        dynamically_loaded_tools: true,
+      },
+      tools: [LARGE_MCP_TOOL],
+    });
+    const parameters = {
+      type: 'object',
+      properties: {
+        payload: {
+          type: 'string',
+          description: 'payload',
+        },
+      },
+    };
+    const registration = ctx
+      .get(IAgentToolRegistryService)
+      .register(mcpTool(LARGE_MCP_TOOL, parameters), { source: 'mcp', disclosure: 'deferred' });
+    const appendAnnouncement = () => {
+      ctx.context.append({
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: wrapSystemReminder(renderLoadableToolsAnnouncement([LARGE_MCP_TOOL], [])),
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: LOADABLE_TOOLS_VARIANT },
+      });
+    };
+    try {
+      ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+      appendAnnouncement();
+      ctx.context.append({
+        role: 'system',
+        content: [],
+        toolCalls: [],
+        tools: [
+          {
+            name: LARGE_MCP_TOOL,
+            description: `${LARGE_MCP_TOOL} desc`,
+            parameters,
+          },
+        ],
+        origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
+      });
+      ctx.appendExchange(2, 'later user two', 'later assistant two', 20);
+
+      const compacted = ctx.once('full_compaction.complete');
+      const completed = ctx.once('compaction.completed');
+      ctx.mockNextResponse({ type: 'text', text: 'Summary one.' });
+      await ctx.rpc.beginCompaction({});
+      await compacted;
+      await completed;
+
+      expect(ctx.llmCalls).toHaveLength(1);
+      const first = ctx.llmCalls[0]!;
+      expect(first.history.map(messageText)).toEqual(
+        expect.arrayContaining([expect.stringContaining('<tools_added>')]),
+      );
+      const firstSchema = first.history.find(
+        (message) => message.role === 'system' && (message.tools?.length ?? 0) > 0,
+      );
+      expect(firstSchema?.tools?.map((tool) => tool.name)).toEqual([LARGE_MCP_TOOL]);
+      expect(messageText(first.history.at(-1))).toBe(renderCompactionInstruction({}));
+      expect(messageText(first.history.at(-2))).toBe('later assistant two');
+
+      ctx.appendExchange(3, 'new user three', 'new assistant three', 20);
+      appendAnnouncement();
+
+      const compactedAgain = ctx.once('full_compaction.complete');
+      const completedAgain = ctx.once('compaction.completed');
+      ctx.mockNextResponse({ type: 'text', text: 'Summary two.' });
+      await ctx.rpc.beginCompaction({});
+      await compactedAgain;
+      await completedAgain;
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      const second = ctx.llmCalls[1]!;
+      expect(second.history.map(messageText)).toEqual(
+        expect.arrayContaining([
+          expect.stringContaining('Summary one.'),
+          expect.stringContaining('<tools_added>'),
+        ]),
+      );
+      expect(messageText(second.history.at(-2))).toContain('<tools_added>');
+      expect(messageText(second.history.at(-1))).toBe(renderCompactionInstruction({}));
     } finally {
       registration.dispose();
     }
