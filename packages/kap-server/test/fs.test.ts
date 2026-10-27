@@ -29,6 +29,7 @@ interface FsEntryWire {
   modified_at: string;
   etag?: string;
   mime?: string;
+  is_directory?: boolean;
 }
 
 describe('server-v2 /api/v1 fs routes', () => {
@@ -204,6 +205,67 @@ describe('server-v2 /api/v1 fs routes', () => {
     const names = body.data.items.map((i) => i.name).toSorted();
     expect(names).toEqual(['a.txt', 'b.txt']);
     expect(body.data.truncated).toBe(false);
+  });
+
+  it('fs:list expands in-workspace symlink directories and keeps outside links closed', async () => {
+    await mkdir(join(work!, 'real/nested'), { recursive: true });
+    await writeFile(join(work!, 'real/nested/inside.txt'), '');
+    await symlink(join(work!, 'real'), join(work!, 'link'));
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-outside-'));
+    await writeFile(join(outside, 'secret.txt'), '');
+    await symlink(outside, join(work!, 'outside-link'));
+    try {
+      const id = await createSession();
+      const recursive = await postFs<{
+        items: FsEntryWire[];
+        truncated: boolean;
+        children_by_path?: Record<string, FsEntryWire[]>;
+      }>(id, 'list', { depth: 2 });
+      expect(recursive.code).toBe(0);
+      expect(recursive.data.items.find((i) => i.path === 'link')).toMatchObject({
+        kind: 'symlink',
+        is_directory: true,
+      });
+      expect(recursive.data.children_by_path?.['link']?.map((i) => i.name)).toContain('nested');
+      expect(
+        recursive.data.items.find((i) => i.path === 'outside-link')?.is_directory,
+      ).toBeUndefined();
+
+      const direct = await postFs<{ items: FsEntryWire[] }>(id, 'list', { path: 'link' });
+      expect(direct.code).toBe(0);
+      expect(direct.data.items.map((i) => i.name)).toEqual(['nested']);
+
+      const escaped = await postFs<null>(id, 'list', { path: 'outside-link' });
+      expect(escaped.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+
+      const allowed = await postFs<{
+        items: FsEntryWire[];
+        children_by_path?: Record<string, FsEntryWire[]>;
+      }>(id, 'list', { depth: 2, allow_external_symlinks: true });
+      expect(allowed.code).toBe(0);
+      expect(allowed.data.items.find((i) => i.path === 'outside-link')).toMatchObject({
+        kind: 'symlink',
+        is_directory: true,
+      });
+      expect(allowed.data.children_by_path?.['outside-link']?.map((i) => i.name)).toEqual([
+        'secret.txt',
+      ]);
+
+      const allowedDirect = await postFs<{ items: FsEntryWire[] }>(id, 'list', {
+        path: 'outside-link',
+        allow_external_symlinks: true,
+      });
+      expect(allowedDirect.data.items.map((i) => i.name)).toEqual(['secret.txt']);
+
+      const allowedRead = await postFs<{ content: string }>(id, 'read', {
+        path: 'outside-link/secret.txt',
+        allow_external_symlinks: true,
+      });
+      expect(allowedRead.code).toBe(0);
+      expect(allowedRead.data.content).toBe('');
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
   });
 
   it('fs:list keeps gitignored paths hidden unless allowed via allow_ignored_globs', async () => {
@@ -487,6 +549,70 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(read.data.content).toBe('through-link');
     } finally {
       await rm(link, { force: true });
+    }
+  });
+
+  async function postWorkspaceList<T>(body: unknown): Promise<Envelope<T>> {
+    const res = await fetch(`${base}/api/v1/workspace/fs:list`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ runtime_id: 'local', ...(body as object) }),
+    } as never);
+    return (await res.json()) as Envelope<T>;
+  }
+
+  it('workspace fs:list expands symlink directories without a session', async () => {
+    await mkdir(join(work!, 'real/nested'), { recursive: true });
+    await writeFile(join(work!, 'real/nested/inside.txt'), '');
+    await symlink(join(work!, 'real'), join(work!, 'link'));
+
+    const root = await postWorkspaceList<{
+      items: FsEntryWire[];
+      truncated: boolean;
+      children_by_path?: Record<string, FsEntryWire[]>;
+    }>({ workspace: work, depth: 2 });
+    expect(root.code).toBe(0);
+    expect(root.data.items.find((i) => i.path === 'link')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(root.data.children_by_path?.['link']?.map((i) => i.name)).toContain('nested');
+
+    const children = await postWorkspaceList<{ items: FsEntryWire[] }>({
+      workspace: work,
+      path: 'link',
+    });
+    expect(children.code).toBe(0);
+    expect(children.data.items.map((i) => i.name)).toEqual(['nested']);
+  });
+
+  it('workspace fs:list can open external symlink directories when enabled', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-workspace-outside-'));
+    await writeFile(join(outside, 'secret.txt'), '');
+    await symlink(outside, join(work!, 'outside-link'));
+    try {
+      const root = await postWorkspaceList<{
+        items: FsEntryWire[];
+        children_by_path?: Record<string, FsEntryWire[]>;
+      }>({ workspace: work, depth: 2, allow_external_symlinks: true });
+      expect(root.code).toBe(0);
+      expect(root.data.items.find((i) => i.path === 'outside-link')).toMatchObject({
+        kind: 'symlink',
+        is_directory: true,
+      });
+      expect(root.data.children_by_path?.['outside-link']?.map((i) => i.name)).toEqual([
+        'secret.txt',
+      ]);
+
+      const children = await postWorkspaceList<{ items: FsEntryWire[] }>({
+        workspace: work,
+        path: 'outside-link',
+        allow_external_symlinks: true,
+      });
+      expect(children.code).toBe(0);
+      expect(children.data.items.map((i) => i.name)).toEqual(['secret.txt']);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
     }
   });
 

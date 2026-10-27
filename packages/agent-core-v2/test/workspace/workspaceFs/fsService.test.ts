@@ -105,7 +105,32 @@ function fakeFs(
     err.code = 'ENOENT';
     return err;
   };
-  const lstatImpl = async (p: string) => {
+  const resolveSymlinks = (p: string): string => {
+    let cur = p;
+    for (let hops = 0; hops < 10; hops += 1) {
+      let longest: string | undefined;
+      for (const linkPath of symlinkTargetMap.keys()) {
+        if (
+          (cur === linkPath || cur.startsWith(`${linkPath}/`)) &&
+          (longest === undefined || linkPath.length > longest.length)
+        ) {
+          longest = linkPath;
+        }
+      }
+      if (longest === undefined) return cur;
+      const target = symlinkTargetMap.get(longest)!;
+      const resolvedTarget = isAbsolute(target) ? target : join(longest, '..', target);
+      cur = `${resolvedTarget}${cur.slice(longest.length)}`;
+    }
+    return cur;
+  };
+  const resolveParentSymlinks = (p: string): string => {
+    const slash = p.lastIndexOf('/');
+    if (slash <= 0) return p;
+    return `${resolveSymlinks(p.slice(0, slash))}${p.slice(slash)}`;
+  };
+  const lstatImpl = async (rawPath: string) => {
+    const p = resolveParentSymlinks(rawPath);
     if (fileMap.has(p)) {
       const c = fileMap.get(p)!;
       return {
@@ -127,14 +152,14 @@ function fakeFs(
   return {
     _serviceBrand: undefined,
     readText: async (p) => {
-      const c = fileMap.get(p);
+      const c = fileMap.get(resolveSymlinks(p));
       if (c === undefined) throw enoent(p);
       return typeof c === 'string' ? c : c.toString('utf8');
     },
     writeText: async () => {},
     appendText: async () => {},
     readBytes: async (p, n) => {
-      const c = fileMap.get(p);
+      const c = fileMap.get(resolveSymlinks(p));
       if (c === undefined) throw enoent(p);
       const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
       return buf.subarray(0, n ?? buf.length);
@@ -144,18 +169,11 @@ function fakeFs(
     writeBytes: async () => {},
     createExclusive: async () => false,
     lstat: lstatImpl,
-    stat: async (p) => {
-      let cur = p;
-      for (let hops = 0; hops < 10 && symlinkSet.has(cur); hops += 1) {
-        const target = symlinkTargetMap.get(cur);
-        if (target === undefined) break;
-        cur = isAbsolute(target) ? target : join(cur, '..', target);
-      }
-      return lstatImpl(cur);
-    },
+    stat: async (p) => lstatImpl(resolveSymlinks(p)),
     readdir: async (p) => {
-      if (!isDir(p)) throw enoent(p);
-      const prefix = `${p}/`;
+      const dir = resolveSymlinks(p);
+      if (!isDir(dir)) throw enoent(p);
+      const prefix = `${dir}/`;
       const children = new Map<string, HostDirEntry>();
       const addDir = (name: string): void => {
         if (!children.has(name)) {
@@ -173,7 +191,7 @@ function fakeFs(
         }
       };
       const visit = (key: string, kind: 'file' | 'dir' | 'symlink'): void => {
-        if (key === p || !key.startsWith(prefix)) return;
+        if (key === dir || !key.startsWith(prefix)) return;
         const rest = key.slice(prefix.length);
         const first = rest.split('/')[0];
         if (first === undefined || first.length === 0) return;
@@ -1358,6 +1376,192 @@ describe('WorkspaceFsService.list', () => {
       'a.ts',
       'sub',
     ]);
+  });
+
+  it('marks in-workspace symlink directories as expandable and recurses into them', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': '', 'real/sub/b.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {
+        link: '/repo/real',
+        fileLink: '/repo/real/a.txt',
+        broken: '/repo/missing',
+      },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'link')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.items.find((i) => i.path === 'fileLink')?.is_directory).toBeUndefined();
+    expect(result.items.find((i) => i.path === 'broken')?.is_directory).toBeUndefined();
+    expect(result.children_by_path?.['link']?.map((i) => i.name).toSorted()).toEqual([
+      'a.txt',
+      'sub',
+    ]);
+    expect(result.children_by_path?.['link/sub']?.map((i) => i.name)).toEqual(['b.ts']);
+  });
+
+  it('lists the direct path of an in-workspace symlink directory', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': '', 'real/sub/b.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: 'link',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.map((i) => i.name).toSorted()).toEqual(['a.txt', 'sub']);
+  });
+
+  it('does not mark symlink directories outside the workspace as expandable', async () => {
+    const fs = makeSession(
+      {},
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { docs: '/outside' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'docs')).toMatchObject({ kind: 'symlink' });
+    expect(result.items.find((i) => i.path === 'docs')?.is_directory).toBeUndefined();
+    expect(result.children_by_path?.['docs']).toBeUndefined();
+  });
+
+  it('expands and reads external symlink directories when explicitly allowed', async () => {
+    const fs = makeSession(
+      { '/outside/secret.txt': 'secret' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { docs: '/outside' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      allow_external_symlinks: true,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'docs')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['docs']?.map((i) => i.name)).toEqual(['secret.txt']);
+
+    const children = await fs.list({
+      path: 'docs',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      allow_external_symlinks: true,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(children.items.map((i) => i.name)).toEqual(['secret.txt']);
+
+    const read = await fs.read({
+      path: 'docs/secret.txt',
+      offset: 0,
+      length: 1024,
+      encoding: 'utf-8',
+      allow_external_symlinks: true,
+    });
+    expect(read.content).toBe('secret');
+  });
+
+  it('marks symlink directories inside additional dirs as expandable', async () => {
+    const fs = makeSession(
+      { '/extra/lib/util.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { extra: '/extra' },
+      ['/extra'],
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'extra')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['extra']?.map((i) => i.name)).toEqual(['lib']);
+  });
+
+  it('does not recurse through symlink cycles', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { loop: '/repo' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.find((i) => i.path === 'loop')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['loop']).toBeUndefined();
+    expect(Object.keys(result.children_by_path ?? {}).some((key) => key.startsWith('loop/'))).toBe(
+      false,
+    );
   });
 
   it('rejects paths that escape the workspace', async () => {
