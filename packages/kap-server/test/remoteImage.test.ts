@@ -77,6 +77,26 @@ describe('remote image network boundaries', () => {
     expect(result.mimeType).toBe('image/png');
   });
 
+  it('preserves ports and IPv6 brackets in proxied Host headers', async () => {
+    vi.stubEnv('HTTP_PROXY', 'http://proxy.example.test');
+    const calls: Array<{ input: unknown; init?: RequestInit }> = [];
+    const options = {
+      lookupImpl: async () => [{ address: '192.168.1.10', family: 4 as const }],
+      fetchImpl: async (input: unknown, init?: RequestInit) => {
+        calls.push({ input, init });
+        return new Response(PNG, { status: 200, headers: { 'content-type': 'text/plain' } });
+      },
+    };
+
+    await fetchRemoteImage('http://images.example.test:8080/pic.png', options);
+    await fetchRemoteImage('http://[2001:db8::1]:8080/pic.png', options);
+
+    expect(String(calls[0]!.input)).toBe('http://192.168.1.10:8080/pic.png');
+    expect(String(calls[1]!.input)).toBe('http://[2001:db8::1]:8080/pic.png');
+    expect(calls[0]!.init?.headers).toMatchObject({ host: 'images.example.test:8080' });
+    expect(calls[1]!.init?.headers).toMatchObject({ host: '[2001:db8::1]:8080' });
+  });
+
   it('keeps independent dispatchers for direct and proxied schemes', async () => {
     vi.stubEnv('HTTPS_PROXY', 'http://proxy.example.test');
     const dispatchers: unknown[] = [];

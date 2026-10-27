@@ -70,7 +70,7 @@ export async function fetchRemoteImage(input: string, options: RemoteImageOption
       const useProxy = isProxyConfiguredForUrl(process.env, target.url);
       const requestUrl = remoteImageRequestUrl(target, useProxy);
       const headers: Record<string, string> = { accept: 'image/avif,image/png,image/jpeg,image/gif,image/webp' };
-      if (useProxy) headers['host'] = target.host;
+      if (useProxy) headers['host'] = new URL(target.url).host;
       const response = await fetchImpl(requestUrl, {
         headers,
         redirect: 'manual',
