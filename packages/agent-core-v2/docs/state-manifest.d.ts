@@ -991,6 +991,8 @@ export interface AgentStateSnapshot {
     readonly contextRevision: number;
     readonly toolsHash: string;
     readonly systemPromptHash: string;
+    readonly messageCount: number;
+    readonly historyHash: string;
     readonly inputTokens?: number;
     readonly startedAt: number;
     readonly finishedAt: number;

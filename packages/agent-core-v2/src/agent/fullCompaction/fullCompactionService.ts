@@ -651,6 +651,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       let droppedCount = 0;
       let overflowShrinkCount = 0;
       let requestAttempts = 0;
+      let cacheProbePending = true;
       const preShrunkHistory = this.preShrinkHistoryToWindowBudget(
         historyForModel,
         instruction,
@@ -670,6 +671,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               {
                 messages,
                 maxOutputSize: compactionMaxOutputSize,
+                promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
                 source: {
                   type: 'operation',
                   turnId: active.originTurnId,
@@ -688,6 +690,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             runRequest,
             signal,
           );
+          cacheProbePending = false;
           attempt = collectSummary(result);
           break;
         } catch (error) {

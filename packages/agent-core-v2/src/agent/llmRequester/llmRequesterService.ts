@@ -109,6 +109,9 @@ interface ResolvedLLMRequest {
   readonly tools: readonly Tool[];
   readonly messages: Message[];
   readonly contextRevision: number;
+  readonly promptCacheProbe:
+    | { readonly source: 'compaction'; readonly baseline?: AgentLLMTurnRequestSnapshot }
+    | undefined;
   readonly source: AgentLLMRequestSource | undefined;
   readonly logFields: AgentLLMRequestLogFields;
 }
@@ -242,9 +245,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal?: AbortSignal,
   ): AgentLLMRequestTask {
     const trace = new MutableLLMRequestTrace();
+    const promptCacheProbe =
+      overrides.promptCacheProbe === undefined
+        ? undefined
+        : { source: overrides.promptCacheProbe, baseline: this.lastTurnRequest() };
     return {
       trace,
-      result: this.requestWithTrace(trace, overrides, onPart, signal),
+      result: this.requestWithTrace(trace, overrides, onPart, signal, promptCacheProbe),
     };
   }
 
@@ -253,6 +260,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     overrides: AgentLLMRequestOverrides,
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
+    promptCacheProbe: ResolvedLLMRequest['promptCacheProbe'],
   ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
@@ -265,7 +273,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     setTrace(undefined);
     try {
       return await this.runRequest(
-        this.resolveRequest(overrides),
+        this.resolveRequest(overrides, promptCacheProbe),
         onPart,
         signal,
         setTrace,
@@ -345,6 +353,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
     this.toolCallIdNormalizer.seedFrom(this.context.get());
+    const cacheProbeBaseline = request.promptCacheProbe?.baseline;
+    let cacheProbeReported = false;
     const shaped = this.toolSelect.shapeHistory(request.messages);
     const recoveredMedia = this.recoveredMedia(request);
     let policy: ProjectionPolicy | undefined =
@@ -484,12 +494,48 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         throw error;
       }
 
+      if (request.promptCacheProbe?.source === 'compaction' && !cacheProbeReported) {
+        cacheProbeReported = true;
+        const compared =
+          cacheProbeBaseline !== undefined &&
+          cacheProbeBaseline.modelAlias === request.modelAlias &&
+          cacheProbeBaseline.contextRevision === request.contextRevision;
+        const historyPrefixMatch =
+          compared && cacheProbeBaseline.messageCount <= input.messages.length
+            ? fingerprint(
+                JSON.stringify(input.messages.slice(0, cacheProbeBaseline.messageCount)),
+              ) === cacheProbeBaseline.historyHash
+            : undefined;
+        this.telemetry.track2('prompt_cache_probe', {
+          source: 'compaction',
+          turn_id: request.source?.turnId,
+          provider_type: request.model.providerType ?? request.model.protocol,
+          protocol: request.model.protocol,
+          input_tokens: inputTotal(usage ?? emptyUsage()),
+          input_cache_read: usage?.inputCacheRead ?? 0,
+          input_cache_creation: usage?.inputCacheCreation ?? 0,
+          output_tokens: usage?.output ?? 0,
+          model_match:
+            cacheProbeBaseline === undefined
+              ? undefined
+              : cacheProbeBaseline.modelAlias === request.modelAlias,
+          tools_match: compared ? recorded.toolsHash === cacheProbeBaseline.toolsHash : undefined,
+          system_prompt_match: compared
+            ? recorded.systemPromptHash === cacheProbeBaseline.systemPromptHash
+            : undefined,
+          history_prefix_match: historyPrefixMatch,
+          parent_input_tokens: compared ? cacheProbeBaseline.inputTokens : undefined,
+          parent_request_gap_ms: compared ? startedAt - cacheProbeBaseline.finishedAt : undefined,
+        });
+      }
       if (request.source?.type === 'turn') {
         this.states.set(llmRequesterLastTurnRequestKey, {
           modelAlias: request.modelAlias,
           contextRevision: request.contextRevision,
           toolsHash: recorded.toolsHash,
           systemPromptHash: recorded.systemPromptHash,
+          messageCount: input.messages.length,
+          historyHash: fingerprint(JSON.stringify(input.messages)),
           inputTokens: usage === undefined ? undefined : inputTotal(usage),
           startedAt,
           finishedAt: Date.now(),
@@ -704,7 +750,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     });
   }
 
-  private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
+  private resolveRequest(
+    overrides: AgentLLMRequestOverrides,
+    promptCacheProbe: ResolvedLLMRequest['promptCacheProbe'],
+  ): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
@@ -741,6 +790,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       tools: [...(overrides.tools ?? this.defaultTools())],
       messages: [...messages],
       contextRevision: this.context.prefixRevision(),
+      promptCacheProbe,
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
