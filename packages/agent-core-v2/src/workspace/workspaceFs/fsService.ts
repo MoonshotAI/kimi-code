@@ -299,15 +299,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   private async pathHasSymlink(absPath: string): Promise<boolean> {
-    const rel = this.path.relative(this.workDir, absPath);
-    if (rel === '' || rel.startsWith('..') || this.path.isAbsolute(rel)) return false;
-    let current = this.workDir;
-    for (const segment of rel.split(this.path.separator)) {
-      current = this.path.join(current, segment);
+    let current = absPath;
+    for (;;) {
       const st = await this.hostFs.lstat(current).catch(() => undefined);
       if (st?.isSymbolicLink === true) return true;
+      const parent = this.path.dirname(current);
+      if (parent === current) return false;
+      current = parent;
     }
-    return false;
   }
 
   private async symlinkDirectoryTarget(

@@ -1676,6 +1676,33 @@ describe('WorkspaceFsService.list', () => {
     ).toBe(9_999);
   });
 
+  it('counts a symlinked workspace root toward the budget', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`/repo-real/bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(
+      files,
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { '': '/repo-real' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.children_by_path?.['bulk']).toHaveLength(9_999);
+  });
+
   it('counts symlinks in intermediate root path segments', async () => {
     const files: Record<string, string> = {};
     for (let index = 0; index < 10_001; index += 1) {
