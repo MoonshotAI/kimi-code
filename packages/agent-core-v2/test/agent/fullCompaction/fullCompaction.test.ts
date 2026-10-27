@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   DefaultCompactionStrategy,
+  RuntimeCompactionStrategy,
 } from '#/agent/fullCompaction/strategy';
 import {
   buildCompactionContinuationText,
@@ -26,9 +27,9 @@ import {
 import { makeHookRunner } from '../../features/externalHooks/runner-stub';
 import type { IExternalHooksRunnerService } from '#/features/externalHooks/app/externalHooksRunner';
 import { MASTER_ENV } from '#/app/flag/flagService';
-import { estimateTokensForMessages } from '#/llm-adapter/contract/tokens';
+import { estimateTokens, estimateTokensForMessages, estimateTokensForTools } from '#/llm-adapter/contract/tokens';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import type { TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
+import type { GenerateCall, TestAgentContext, TestAgentOptions, TestAgentServiceOverride } from '../../harness';
 import { agentService, appService, appServices, createCommandRunner, execEnvServices, findGenerateCallPrefixBreak, hostEnvironmentServices, requesterFromGenerateFn, sessionServices, testAgent as createTestAgent, type LegacyGenerateResult } from '../../harness';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
@@ -4569,6 +4570,152 @@ describe('FullCompaction prompt-cache prefix', () => {
       const compactionCall = ctx.llmCalls[loopCalls]!;
       expect(messageText(compactionCall.history.at(-1))).toBe(renderCompactionInstruction({}));
       expect(findGenerateCallPrefixBreak(lastLoopCall, compactionCall)).toBeUndefined();
+    },
+  );
+
+  const FILLER_CHUNK_TOKENS = 50_000;
+  const TRIGGER_PROMPT_TOKENS = 2_000;
+  const DEFAULT_THRESHOLD_WINDOWS = [128_000, 256_000, 1_048_576, 2_000_000] as const;
+  const TRIGGERS = ['manual', 'auto'] as const;
+
+  interface MeteredAgent {
+    readonly ctx: TestAgentContext;
+    readonly calls: GenerateCall[];
+  }
+
+  function isCompactionCall(call: GenerateCall): boolean {
+    return messageText(call.history.at(-1)) === renderCompactionInstruction({});
+  }
+
+  async function meteredAgent(maxContextTokens: number): Promise<MeteredAgent> {
+    const calls: GenerateCall[] = [];
+    let summaries = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, systemPrompt, tools, history) => {
+      const call: GenerateCall = {
+        systemPrompt,
+        tools: tools.map(({ name, description, parameters }) => ({ name, description, parameters })),
+        history: structuredClone(history),
+      };
+      calls.push(call);
+      if (isCompactionCall(call)) summaries += 1;
+      const text = isCompactionCall(call) ? `Metered summary ${String(summaries)}.` : 'Ready.';
+      return {
+        id: `metered-${String(calls.length)}`,
+        message: { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] },
+        usage: {
+          inputOther:
+            estimateTokens(systemPrompt) +
+            estimateTokensForTools(tools) +
+            estimateTokensForMessages(history),
+          output: estimateTokens(text),
+          inputCacheRead: 0,
+          inputCacheCreation: 0,
+        },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: { ...CATALOGUED_MODEL_CAPABILITIES, max_context_tokens: maxContextTokens },
+    });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'warm up' }] });
+    await ctx.untilTurnEnd();
+    return { ctx, calls };
+  }
+
+  function defaultCompactionThreshold(ctx: TestAgentContext): number {
+    const model = () => ctx.get(IAgentProfileService).resolveModelContext();
+    const strategy = new RuntimeCompactionStrategy(model);
+    let low = 0;
+    let high = model().modelCapabilities.max_context_tokens;
+    while (low < high) {
+      const mid = Math.floor((low + high) / 2);
+      if (strategy.shouldCompact(mid)) high = mid;
+      else low = mid + 1;
+    }
+    return low;
+  }
+
+  function fillContextUntil(ctx: TestAgentContext, size: number): void {
+    for (let step = 1; ctx.tokenCounting.get().size < size; step += 1) {
+      const chunk = Math.min(FILLER_CHUNK_TOKENS, size - ctx.tokenCounting.get().size);
+      ctx.context.append(
+        {
+          role: 'user',
+          content: [{ type: 'text', text: `filler user ${String(step)}` }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: `filler ${String(step)} ${'x'.repeat(Math.max(0, chunk - 16) * 4)}` },
+          ],
+          toolCalls: [],
+        },
+      );
+    }
+  }
+
+  async function compactAtDefaultThreshold(
+    { ctx, calls }: MeteredAgent,
+    trigger: (typeof TRIGGERS)[number],
+  ): Promise<{ readonly lastTurnCall: GenerateCall; readonly compactionCall: GenerateCall }> {
+    const threshold = defaultCompactionThreshold(ctx);
+    fillContextUntil(ctx, threshold - TRIGGER_PROMPT_TOKENS / 2);
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
+    const lastTurnCall = calls.at(-1)!;
+    expect(isCompactionCall(lastTurnCall)).toBe(false);
+    expect(ctx.tokenCounting.get().size).toBeLessThan(threshold);
+
+    if (trigger === 'manual') {
+      const completed = ctx.once('compaction.completed');
+      await ctx.rpc.beginCompaction({});
+      await completed;
+    } else {
+      const triggerPrompt = `trigger ${'y'.repeat(TRIGGER_PROMPT_TOKENS * 4)}`;
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: triggerPrompt }] });
+      await ctx.untilTurnEnd();
+    }
+
+    const compactionCalls = calls.slice(calls.indexOf(lastTurnCall) + 1).filter(isCompactionCall);
+    expect(compactionCalls).toHaveLength(1);
+    return { lastTurnCall, compactionCall: compactionCalls[0]! };
+  }
+
+  it.each(TRIGGERS)(
+    'keeps successive %s compactions at the default threshold a prefix extension of the last turn request',
+    async (trigger) => {
+      const agent = await meteredAgent(CATALOGUED_MODEL_CAPABILITIES.max_context_tokens);
+
+      const first = await compactAtDefaultThreshold(agent, trigger);
+      expect(findGenerateCallPrefixBreak(first.lastTurnCall, first.compactionCall)).toBeUndefined();
+
+      const second = await compactAtDefaultThreshold(agent, trigger);
+      expect(findGenerateCallPrefixBreak(second.lastTurnCall, second.compactionCall)).toBeUndefined();
+      expect(
+        second.compactionCall.history.some((message) =>
+          messageText(message).includes('Metered summary 1.'),
+        ),
+      ).toBe(true);
+    },
+  );
+
+  it.each(
+    DEFAULT_THRESHOLD_WINDOWS.flatMap((maxContextTokens) =>
+      TRIGGERS.map((trigger) => ({ maxContextTokens, trigger })),
+    ),
+  )(
+    'sends the full history in a $trigger compaction at the default threshold of a $maxContextTokens-token window',
+    async ({ maxContextTokens, trigger }) => {
+      const agent = await meteredAgent(maxContextTokens);
+
+      const { lastTurnCall, compactionCall } = await compactAtDefaultThreshold(agent, trigger);
+
+      expect(findGenerateCallPrefixBreak(lastTurnCall, compactionCall)).toBeUndefined();
     },
   );
 });

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { createUserMessage, type Message } from '#/llm/message';
+import { createToolMessage, createUserMessage, type Message, type ToolDescription } from '#/llm/message';
 import type { LlmModel } from '#/llm/model';
 import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import type { LlmClientContext } from '#/llm/requester/requester';
+import type { LlmClientContext, LlmRequester } from '#/llm/requester/requester';
+import { kimiOpenAITrait } from '#/llm-kimi/trait';
 
 const model: LlmModel = {
   provider: 'test',
@@ -160,4 +161,124 @@ describe('anthropic requester cacheKey', () => {
     expect(client.body()['metadata']).toEqual({ user_id: 'session-1' });
     expect(client.body()['top_k']).toBe(5);
   });
+});
+
+describe('serialized prompt-cache prefix', () => {
+  const conversation: readonly Message[] = [
+    createUserMessage('inspect the repository'),
+    {
+      role: 'assistant',
+      content: [
+        { type: 'think', think: 'planning the inspection' },
+        { type: 'text', text: 'I will list the files.' },
+      ],
+      toolCalls: [{ type: 'function', id: 'call_1', name: 'ListFiles', arguments: '{"path":"."}' }],
+    },
+    createToolMessage('call_1', 'README.md\nsrc/'),
+    {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'The repository has a README and a src directory.' }],
+      toolCalls: [],
+    },
+    {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'look at this screenshot' },
+        { type: 'image_url', imageUrl: { url: 'https://example.test/screen.png' } },
+      ],
+    },
+    {
+      role: 'assistant',
+      content: [
+        { type: 'think', think: 'reading the screenshot' },
+        { type: 'text', text: 'It shows a failing build.' },
+      ],
+      toolCalls: [],
+    },
+    createUserMessage('fix the build'),
+  ];
+  const requestEnds = [1, 3, 5, 7] as const;
+  const tools: readonly ToolDescription[] = [
+    {
+      name: 'ListFiles',
+      description: 'List files under a path.',
+      parameters: { type: 'object', properties: { path: { type: 'string' } } },
+    },
+  ];
+
+  function withoutCacheControl(value: unknown): unknown {
+    if (Array.isArray(value)) return value.map(withoutCacheControl);
+    if (value === null || typeof value !== 'object') return value;
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== 'cache_control')
+        .map(([key, entry]) => [key, withoutCacheControl(entry)]),
+    );
+  }
+
+  it.each([
+    {
+      protocol: 'openai',
+      firstReasoningHistoryParams: { reasoning_effort: 'medium' },
+      create: () => {
+        const client = stubOpenAIClient(chatCompletionChunks);
+        return { client, requester: createOpenAIRequester({ clientFactory: client.clientFactory }) };
+      },
+    },
+    {
+      protocol: 'kimi',
+      firstReasoningHistoryParams: {},
+      create: () => {
+        const client = stubOpenAIClient(chatCompletionChunks);
+        return {
+          client,
+          requester: createOpenAIRequester({
+            trait: kimiOpenAITrait,
+            clientFactory: client.clientFactory,
+          }),
+        };
+      },
+    },
+    {
+      protocol: 'anthropic',
+      firstReasoningHistoryParams: {},
+      create: () => {
+        const client = stubAnthropicClient(anthropicStreamEvents);
+        return { client, requester: createAnthropicRequester({ clientFactory: client.clientFactory }) };
+      },
+    },
+  ] satisfies readonly {
+    readonly protocol: string;
+    readonly firstReasoningHistoryParams: Record<string, unknown>;
+    readonly create: () => {
+      readonly client: { readonly body: () => Record<string, unknown> };
+      readonly requester: LlmRequester;
+    };
+  }[])(
+    'serializes each $protocol request as a prefix extension of the previous request',
+    async ({ create, firstReasoningHistoryParams }) => {
+      const { client, requester } = create();
+      const bodies: Record<string, unknown>[] = [];
+      for (const end of requestEnds) {
+        await requester.generate(
+          { model, systemPrompt: 'You are a coding agent.', tools: [...tools], cacheKey: 'session-1' },
+          { messages: conversation.slice(0, end) },
+          { signal: new AbortController().signal },
+        );
+        bodies.push(withoutCacheControl(client.body()) as Record<string, unknown>);
+      }
+
+      for (const [index, body] of bodies.entries()) {
+        if (index === 0) continue;
+        const { messages: previousMessages, ...previousRest } = bodies[index - 1]!;
+        const { messages: nextMessages, ...nextRest } = body;
+        expect(nextRest).toEqual(
+          index === 1 ? { ...previousRest, ...firstReasoningHistoryParams } : previousRest,
+        );
+        const previousList = previousMessages as readonly unknown[];
+        expect(previousList.length).toBeGreaterThan(0);
+        expect((nextMessages as readonly unknown[]).slice(0, previousList.length)).toEqual(previousList);
+      }
+    },
+  );
 });

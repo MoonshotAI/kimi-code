@@ -42,6 +42,7 @@ import { IWireService } from '#/wire/wire';
 import {
   createTestAgent,
   execEnvServices,
+  findGenerateCallPrefixBreak,
   telemetryServices,
   InMemoryWireRecordPersistence,
   requesterFromGenerateFn,
@@ -745,6 +746,25 @@ describe('AgentConversationUndoService', () => {
     expect(calls).toBe(2);
     expect(maxActive).toBe(1);
     expect(ctx.context.get()).toEqual([]);
+  });
+
+  it('keeps everything before the undone turn as the prompt-cache prefix of the next request', async () => {
+    await setup();
+    for (const text of ['first question', 'second question', 'third question']) {
+      ctx.mockNextResponse({ type: 'text', text: `answer to ${text}` });
+      await ctx.rpc.prompt({ input: [{ type: 'text', text }] });
+      await ctx.untilTurnEnd();
+    }
+    const undoneTurnCall = ctx.llmCalls.at(-1)!;
+
+    await ctx.rpc.undoHistory({ count: 1 });
+    ctx.mockNextResponse({ type: 'text', text: 'answer to fourth question' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'fourth question' }] });
+    await ctx.untilTurnEnd();
+
+    const keptPrefix = { ...undoneTurnCall, history: undoneTurnCall.history.slice(0, -1) };
+    expect(keptPrefix.history).toHaveLength(4);
+    expect(findGenerateCallPrefixBreak(keptPrefix, ctx.llmCalls.at(-1)!)).toBeUndefined();
   });
 
   it('publishes context.undone and tracks conversation_undo', async () => {
