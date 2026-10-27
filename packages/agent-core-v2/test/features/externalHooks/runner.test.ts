@@ -7,7 +7,7 @@ import { HostProcessService } from '#/os/backends/node-local/hostProcessService'
 const hostProcess = new HostProcessService();
 
 function nodeCommand(source: string): string {
-  return `node -e ${JSON.stringify(source.replace(/\s*\n\s*/g, ' '))}`;
+  return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
 }
 
 describe('runHook process runner', () => {

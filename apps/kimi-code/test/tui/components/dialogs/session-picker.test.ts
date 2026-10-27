@@ -1075,17 +1075,21 @@ describe('SessionPickerComponent', () => {
       const { promise, resolve } = deferred();
       const onSelect = vi.fn(() => promise);
       const onDeleteRequest = vi.fn(async () => {});
+      const requestRender = vi.fn();
       const component = new SessionPickerComponent({
         sessions: [alpha, beta],
         loading: false,
         currentSessionId: '',
         onSelect,
         onCancel: vi.fn(),
+        requestRender,
         onDeleteRequest,
       });
 
       component.handleInput('\r');
       expect(onSelect).toHaveBeenCalledOnce();
+      expect(renderPlain(component)).toContain('Resuming session…');
+      expect(requestRender).toHaveBeenCalledOnce();
 
       component.handleInput(CTRL_X);
       expect(renderPlain(component)).not.toContain('Delete session');
@@ -1096,6 +1100,8 @@ describe('SessionPickerComponent', () => {
 
       resolve();
       await flushMicrotasks();
+      expect(renderPlain(component)).not.toContain('Resuming session…');
+      expect(requestRender).toHaveBeenCalledTimes(2);
 
       component.handleInput(CTRL_X);
       expect(renderPlain(component)).toContain('Delete session "Alpha session"? [y/N]');

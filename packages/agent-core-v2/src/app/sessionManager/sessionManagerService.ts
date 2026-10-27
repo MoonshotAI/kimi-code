@@ -1,9 +1,14 @@
 
+import { IEnvironmentService } from '#/app/environment/environment';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { normalizeRemoteCwd } from '#/environment/environmentDefaults';
+import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { Emitter, type Event, type IWaitUntil } from '#/_base/event';
 import { ScopeActivation, registerScopedService, type ISessionScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
-import { Error2, ErrorCodes, isError2, SessionErrors } from '#/errors';
+import { Error2, ErrorCodes, isError2, SessionErrors, unwrapErrorCause } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAgentCronService } from '#/features/cron/cronService';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -69,20 +74,114 @@ export class SessionManager implements ISessionManager {
   constructor(
     @IWorkspaceInstanceManager private readonly workspaces: IWorkspaceInstanceManager,
     @ISessionIndex private readonly index: ISessionIndex,
+    @IEnvironmentDeclarationService private readonly environmentDeclarations: IEnvironmentDeclarationService,
+    @IEnvironmentService private readonly environments: IEnvironmentService,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
   ) {}
 
-  async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
-    const create = async () => {
-      const entry = await this.controllerForWorkspace(
-        options.workspaceId === undefined
-          ? { root: options.workDir }
-          : { workspaceId: options.workspaceId, root: options.workDir },
-      );
-      return this.runControllerOperation(entry, (controller) => controller.create(options));
+  async resolveCreationEnvironment(options: CreateManagedSessionOptions) {
+    const opened = await this.openCreation(options);
+    opened.lease.dispose();
+    return {
+      workspaceId: opened.workspaceId,
+      environmentId: opened.environmentId,
+      environmentCwd: opened.environmentCwd,
     };
-    if (options.sessionId === undefined) return create();
-    return this.serializeLifecycle(options.sessionId, create);
+  }
+
+  async create(options: CreateManagedSessionOptions): Promise<ISessionScopeHandle> {
+    const opened = await this.openCreation(options);
+    try {
+      const effective = opened.environmentId === undefined && opened.environmentCwd === undefined
+        ? options
+        : { ...options, environmentId: opened.environmentId, environmentCwd: opened.environmentCwd };
+      const create = async () => {
+        const entry = await this.controllerForWorkspace({
+          workspaceId: opened.workspaceId,
+          root: options.workDir,
+        });
+        return this.runControllerOperation(entry, (controller) => controller.create(effective));
+      };
+      if (options.sessionId === undefined) return await create();
+      return await this.serializeLifecycle(options.sessionId, create);
+    } finally {
+      opened.lease.dispose();
+    }
+  }
+
+  private async openCreation(options: CreateManagedSessionOptions) {
+    await this.environments.ready;
+    const declarations = options.environmentId === LOCAL_ENVIRONMENT_ID
+      ? undefined
+      : await this.environmentDeclarations.declarations();
+    const environmentId = options.environmentId ?? declarations?.defaultId;
+    const remote = environmentId !== undefined && environmentId !== LOCAL_ENVIRONMENT_ID;
+    if (options.workDir !== undefined && !remote) await this.assertUsableWorkDir(options.workDir);
+    const lease = await this.workspaces.acquire(
+      options.workspaceId === undefined
+        ? { root: options.workDir }
+        : { workspaceId: options.workspaceId, root: options.workDir },
+    );
+    try {
+      if (!remote) {
+        return {
+          workspaceId: lease.instance.id,
+          environmentId,
+          environmentCwd: options.environmentCwd,
+          lease,
+        };
+      }
+      const registrationError = this.environmentDeclarations.registrationError(environmentId);
+      if (registrationError !== undefined) throw registrationError;
+      const declared = declarations?.entries.find((entry) => entry.id === environmentId);
+      if (declared === undefined && this.environments.current(environmentId) === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          `environment "${environmentId}" is not declared in [environments]`,
+        );
+      }
+      const cwd = options.environmentCwd ?? declared?.entry.defaultCwd;
+      if (cwd === undefined) {
+        throw new Error2(
+          ErrorCodes.CONFIG_INVALID,
+          declared === undefined
+            ? `environment "${environmentId}" requires a cwd`
+            : `environment "${environmentId}" does not set defaultCwd in [environments]`,
+        );
+      }
+      return {
+        workspaceId: lease.instance.id,
+        environmentId,
+        environmentCwd: declared === undefined ? cwd : normalizeRemoteCwd(cwd),
+        lease,
+      };
+    } catch (error) {
+      lease.dispose();
+      throw error;
+    }
+  }
+
+  private async assertUsableWorkDir(workDir: string): Promise<void> {
+    let stat;
+    try {
+      stat = await this.hostFs.stat(workDir);
+    } catch (error) {
+      const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${workDir} does not exist`);
+      }
+      throw error;
+    }
+    if (!stat.isDirectory) {
+      try {
+        stat = await this.hostFs.stat(await this.hostFs.realpath(workDir));
+      } catch {
+      }
+    }
+    if (!stat.isDirectory) {
+      throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${workDir} is not a directory`);
+    }
   }
 
   async resume(sessionId: string, options?: ResumeSessionOptions): Promise<ISessionScopeHandle | undefined> {
@@ -407,6 +506,7 @@ export class SessionManager implements ISessionManager {
     if (live !== undefined) return this.retainController(live);
     const summary = await this.index.get(sessionId);
     if (summary === undefined) return undefined;
+    await this.environments.ready;
     return this.controllerForWorkspace({ workspaceId: summary.workspaceId, root: summary.cwd });
   }
 }

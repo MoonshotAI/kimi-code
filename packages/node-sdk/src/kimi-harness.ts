@@ -53,7 +53,7 @@ import type {
   WorkspaceTrustInfo,
 } from '#/types';
 
-export interface KimiHarnessRuntimeOptions {
+export interface KimiHarnessEnvironmentOptions {
   readonly identity?: KimiHostIdentity;
   readonly uiMode?: string;
   readonly homeDir: string;
@@ -73,6 +73,9 @@ export interface KimiHarnessRuntimeOptions {
   readonly sessionStartedDynamicProperties?: () => TelemetryProperties;
   readonly imageLimits?: ImageLimits | undefined;
 }
+
+/** @deprecated Use {@link KimiHarnessEnvironmentOptions}. */
+export type KimiHarnessRuntimeOptions = KimiHarnessEnvironmentOptions;
 
 export class KimiHarness {
   readonly homeDir: string;
@@ -97,7 +100,7 @@ export class KimiHarness {
 
   constructor(
     private readonly rpc: SDKRpcClientBase,
-    options: KimiHarnessRuntimeOptions,
+    options: KimiHarnessEnvironmentOptions,
   ) {
     this.identity = options.identity;
     this.uiMode = options.uiMode ?? DEFAULT_SESSION_STARTED_UI_MODE;
@@ -138,6 +141,10 @@ export class KimiHarness {
 
   setTelemetryContext(patch: TelemetryContextPatch): void {
     this.telemetry.setContext?.(patch);
+  }
+
+  async resolveSessionEnvironment(options: Pick<CreateSessionOptions, 'workDir' | 'environmentId' | 'environmentCwd'>) {
+    return this.rpc.resolveSessionEnvironment(options);
   }
 
   async createSession(options: CreateSessionOptions): Promise<Session> {

@@ -14,6 +14,7 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 
 export interface IExtraFileSkillSource extends ISkillSource {
@@ -36,6 +37,7 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
     @IConfigService private readonly config: IConfigService,
     @IWorkspaceContext private readonly workspace: IWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    private readonly fs: IHostFileSystem,
   ) {
     super();
     this._register(
@@ -49,7 +51,7 @@ export class ExtraFileSkillSource extends Disposable implements IExtraFileSkillS
     await this.config.ready;
     const extraSkillDirs = this.config.get<ExtraSkillDirsConfig>(EXTRA_SKILL_DIRS_SECTION) ?? [];
     return this.discovery.discover(
-      await configuredRoots(extraSkillDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'extra'),
+      await configuredRoots(extraSkillDirs, this.workspace.cwd, this.bootstrap.osHomeDir, 'extra', this.fs),
     );
   }
 }

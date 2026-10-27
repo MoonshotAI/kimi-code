@@ -1,6 +1,6 @@
 # Hooks
 
-Hooks are an automatic trigger mechanism: you tell Kimi Code CLI in advance "whenever X happens, run this script." The script runs on your local machine, and you can put any logic inside it. Typical use cases:
+Hooks are an automatic trigger mechanism: you tell Kimi Code CLI in advance "whenever X happens, run this script." The script runs on your local machine, and you can put any logic inside it. This stays true when a session is bound to a [remote environment](../guides/remote-environment.md): hooks always execute on the machine running Kimi Code, so in a remote session they observe local files and processes, not the target's. Typical use cases:
 
 - **Security interception**: Before the Agent executes a shell command, check whether it contains dangerous operations (such as `rm -rf`) and block execution if so
 - **Desktop notifications**: When a background task completes, pop up a system notification to bring you back to review the results
@@ -52,7 +52,9 @@ All hook rules are written in the `[[hooks]]` array in `~/.kimi-code/config.toml
 
 **When multiple rules match the same event**, all matching hooks run in parallel; multiple rules with identical `command` values run only once.
 
-The working directory for hook commands is the current session's project directory.
+Hook rules live only in your user-level `config.toml` and in local plugins — there is no project-level hook file, so content checked out on a remote target can never inject hook definitions into your session.
+
+Hook commands always execute on the machine running Kimi Code, with the current session's **local** project directory as their working directory. When the session is bound to a [remote environment](../guides/remote-environment.md), hooks that reference project paths operate on that local directory (the carrier of the binding), never on the target; running hooks on the target itself is not supported and remains a future, undesigned concept.
 
 <details>
 <summary>Process group and timeout handling</summary>
@@ -87,6 +89,8 @@ After the script exits, the CLI determines the hook's intent based on the exit c
 | `2` | Intentional block | Stop the current operation; stderr content (printed via `console.error`) is used as the reason for blocking |
 | Other non-zero | Script error | Default allow (fail-open) |
 | Timeout or crash | Script exception | Default allow (fail-open) |
+
+When a hook fails to execute — it cannot be started, times out, or exits with an error code — the CLI logs the failure and shows a one-time warning in the session; later failures are only logged. Blocking decisions stay fail-open: a failed hook never blocks an operation.
 
 You can also return a JSON object via stdout to block:
 

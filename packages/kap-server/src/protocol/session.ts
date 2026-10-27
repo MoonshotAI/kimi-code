@@ -63,12 +63,24 @@ export const sessionSchema = z.object({
 
 export type Session = z.infer<typeof sessionSchema>;
 
-export const sessionCreateSchema = z.object({
-  title: z.string().min(1).optional(),
-  metadata: sessionMetadataSchema.optional(),
-  agent_config: sessionAgentConfigPartialSchema.optional(),
-  workspace_id: workspaceIdSchema.optional(),
-});
+export const sessionCreateSchema = z
+  .object({
+    title: z.string().min(1).optional(),
+    metadata: sessionMetadataSchema.optional(),
+    agent_config: sessionAgentConfigPartialSchema.optional(),
+    workspace_id: workspaceIdSchema.optional(),
+    environment_id: z.string().min(1).optional(),
+    environment_cwd: z.string().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.environment_cwd !== undefined && value.environment_id === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'environment_cwd requires environment_id',
+        path: ['environment_cwd'],
+      });
+    }
+  });
 
 export type SessionCreate = z.infer<typeof sessionCreateSchema>;
 

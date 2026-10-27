@@ -1,6 +1,8 @@
 import { join } from 'pathe';
+import type { EnvironmentPath } from '#/environment/environment';
 
 import { BugIndicatingError } from '#/errors';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import type { IFileSystemStorageService } from '#/persistence/interface/storage';
 
@@ -24,6 +26,12 @@ type DiskPersistedTask = PersistedTask | LegacyPersistedTask;
 export interface AgentTaskPersistenceRoot {
   readonly dir: string;
   readonly scope: string;
+}
+
+export interface AgentTaskSpillTarget {
+  readonly fs: IHostFileSystem;
+  readonly dir: string;
+  readonly path?: Pick<EnvironmentPath, 'join'>;
 }
 
 export interface AgentTaskStoredOutputSnapshot {
@@ -50,13 +58,24 @@ function validateTaskId(taskId: string): void {
   }
 }
 
+export function isTaskOutputFilePath(path: string, agentDir: string, pathApi: Pick<EnvironmentPath, 'isAbsolute' | 'relative'>): boolean {
+  if (!pathApi.isAbsolute(path) || path.includes('\0')) return false;
+  const parts = pathApi.relative(agentDir, path).replaceAll('\\', '/').split('/');
+  return parts.length === 3 && parts[0] === TASKS_SCOPE && VALID_TASK_ID.test(parts[1]!) && parts[2] === OUTPUT_LOG_KEY;
+}
+
 export class AgentTaskPersistence {
+  private readonly mirrors = new WeakMap<IHostFileSystem, Map<string, { readonly scope: string; readonly size: number }>>();
+  private readonly outputSizes = new Map<string, number>();
+  private readonly outputTails = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly agentDir: string,
     private readonly agentScope: string,
     private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
     private readonly fallbackRoot?: AgentTaskPersistenceRoot,
+    private readonly spillTarget?: () => AgentTaskSpillTarget | undefined,
   ) {}
 
   private primaryRoot(): AgentTaskPersistenceRoot {
@@ -78,6 +97,40 @@ export class AgentTaskPersistence {
   private taskOutputFileAt(taskId: string, root: AgentTaskPersistenceRoot): string {
     validateTaskId(taskId);
     return join(root.dir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
+  }
+
+  private async outputPathFor(taskId: string, output: TaskOutputData): Promise<string> {
+    const target = this.spillTarget?.();
+    if (target !== undefined && await this.mirrorOutput(taskId, output, target)) {
+      return (target.path?.join ?? join)(target.dir, `${taskId}.log`);
+    }
+    return this.taskOutputFileAt(taskId, output.root);
+  }
+
+  private async mirrorOutput(taskId: string, output: TaskOutputData, target: AgentTaskSpillTarget): Promise<boolean> {
+    const mirrors = this.mirrors.get(target.fs) ?? new Map<string, { readonly scope: string; readonly size: number }>();
+    this.mirrors.set(target.fs, mirrors);
+    const path = (target.path?.join ?? join)(target.dir, `${taskId}.log`);
+    const mirrored = mirrors.get(path);
+    if (mirrored?.scope === output.root.scope && mirrored.size === output.data.byteLength) return true;
+    try {
+      await target.fs.mkdir(target.dir, { recursive: true });
+      await target.fs.writeText(path, textDecoder.decode(output.data));
+      mirrors.set(path, { scope: output.root.scope, size: output.data.byteLength });
+      return true;
+    } catch {
+      mirrors.delete(path);
+      return false;
+    }
+  }
+
+  private serializeOutput<T>(taskId: string, operation: () => Promise<T>): Promise<T> {
+    validateTaskId(taskId);
+    const run = (this.outputTails.get(taskId) ?? Promise.resolve()).catch(() => undefined).then(operation);
+    this.outputTails.set(taskId, run);
+    return run.finally(() => {
+      if (this.outputTails.get(taskId) === run) this.outputTails.delete(taskId);
+    });
   }
 
   taskOutputFile(taskId: string): string {
@@ -105,7 +158,30 @@ export class AgentTaskPersistence {
 
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
     if (chunk.length === 0) return;
-    await this.bytes.append(this.taskOutputScope(taskId), OUTPUT_LOG_KEY, textEncoder.encode(chunk));
+    await this.serializeOutput(taskId, async () => {
+      const scope = this.taskOutputScope(taskId);
+      const previousSize = this.outputSizes.get(taskId) ?? (await this.bytes.read(scope, OUTPUT_LOG_KEY))?.byteLength ?? 0;
+      const data = textEncoder.encode(chunk);
+      await this.bytes.append(scope, OUTPUT_LOG_KEY, data);
+      const size = previousSize + data.byteLength;
+      this.outputSizes.set(taskId, size);
+      const target = this.spillTarget?.();
+      if (target === undefined) return;
+      const path = (target.path?.join ?? join)(target.dir, `${taskId}.log`);
+      const mirrors = this.mirrors.get(target.fs);
+      const mirrored = mirrors?.get(path);
+      if (mirrored?.scope === this.agentScope && mirrored.size === previousSize) {
+        try {
+          await target.fs.appendText(path, chunk);
+          mirrors!.set(path, { scope: this.agentScope, size });
+        } catch {
+          mirrors!.delete(path);
+        }
+        return;
+      }
+      const output = await this.readTaskOutputData(taskId);
+      if (output !== undefined) await this.mirrorOutput(taskId, output, target);
+    });
   }
 
   async taskOutputSizeBytes(taskId: string): Promise<number> {
@@ -131,18 +207,20 @@ export class AgentTaskPersistence {
     taskId: string,
     maxPreviewBytes: number,
   ): Promise<AgentTaskStoredOutputSnapshot | undefined> {
-    const output = await this.readTaskOutputData(taskId);
-    if (output === undefined) return undefined;
-    const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
-    const previewBytes = Math.min(previewLimit, output.data.byteLength);
-    const previewOffset = output.data.byteLength - previewBytes;
-    return {
-      outputPath: this.taskOutputFileAt(taskId, output.root),
-      outputSizeBytes: output.data.byteLength,
-      previewBytes,
-      truncated: previewOffset > 0,
-      preview: textDecoder.decode(output.data.subarray(previewOffset)),
-    };
+    return this.serializeOutput(taskId, async () => {
+      const output = await this.readTaskOutputData(taskId);
+      if (output === undefined) return undefined;
+      const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
+      const previewBytes = Math.min(previewLimit, output.data.byteLength);
+      const previewOffset = output.data.byteLength - previewBytes;
+      return {
+        outputPath: await this.outputPathFor(taskId, output),
+        outputSizeBytes: output.data.byteLength,
+        previewBytes,
+        truncated: previewOffset > 0,
+        preview: textDecoder.decode(output.data.subarray(previewOffset)),
+      };
+    });
   }
 
   async listTasks(): Promise<readonly PersistedTask[]> {

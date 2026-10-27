@@ -22,8 +22,7 @@ import type { TUIState } from '../tui-state';
 import { evaluateCacheHint } from '../utils/cache-hint';
 import { formatErrorMessage } from '../utils/event-payload';
 import {
-  makeExtractionResendable,
-  originalsDirForSession,
+  makeSessionExtractionResendable,
   type ExtractionResult,
 } from '../utils/image-placeholder';
 
@@ -374,13 +373,27 @@ export class CacheHintController {
   }
 
   private async releaseToSendPath(stash: StashedSubmit): Promise<void> {
-    // A session reset cleared the image store: rebuild the extraction from
-    // its snapshots, persisting compressed pastes' originals into the NEW
-    // session's originals dir so the compression caption survives the move.
-    const extraction =
-      stash.extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId
-        ? makeExtractionResendable(stash.extraction, originalsDirForSession(this.host.session))
-        : stash.extraction;
+    // A reset cleared the store, so register snapshot originals in the new
+    // session and rebuild image parts before returning to the send path.
+    let extraction = stash.extraction;
+    if (extraction !== undefined && this.host.state.appState.sessionId !== stash.sessionId) {
+      const session = this.host.session;
+      if (session === undefined) {
+        this.restoreStashedInput(stash);
+        return;
+      }
+      try {
+        extraction = await makeSessionExtractionResendable(extraction, session);
+      } catch (error) {
+        this.host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}. Paste the image again before retrying.`);
+        this.restoreStashedInput(stash);
+        return;
+      }
+      if (this.host.session !== session) {
+        this.restoreStashedInput(stash);
+        return;
+      }
+    }
     if (stash.inlineSkillActivations !== undefined && stash.inlineSkillActivations.length > 0) {
       await this.host.sendInlineSkillUserInput(stash.text, stash.inlineSkillActivations, extraction);
       return;

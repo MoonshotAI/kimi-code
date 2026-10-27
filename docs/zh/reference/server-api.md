@@ -632,8 +632,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/status` | 实时状态汇总 |
 | `GET /api/v1/sessions/{session_id}/goal` | 当前目标快照（无则 `null`） |
 | `GET /api/v1/sessions/{session_id}/warnings` | 会话级告警 |
-| `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
-| `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
+| `GET /api/v1/sessions/{session_id}/environment` | 读取 main agent 的环境绑定 |
+| `GET /api/v1/sessions/{session_id}/environments` | 列出会话工作区已注册的环境 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
@@ -916,31 +916,29 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 - `40401`：会话不存在
 
-#### `GET /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environment`
 
-读取 main agent 的运行时绑定——即该会话的 Agent 循环运行在哪个运行时上。
+读取 main agent 的环境绑定——即该会话的 Agent 循环运行在哪个环境上。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 
-成功时，`data` 为 `{ workspace_id, runtime_id }`。
+成功时，`data` 为 `{ workspace_id, environment_id, cwd? }`；`cwd` 是被绑定环境上的工作目录，绑定带有该值时返回。
 
 - `40401`：会话不存在
 
-#### `POST /api/v1/sessions/{session_id}/runtime`
+#### `GET /api/v1/sessions/{session_id}/environments`
 
-切换 main agent 的运行时绑定。
+列出会话可用的环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `runtime_id` | body | string | **必填。** 目标运行时 id |
 
-成功时，`data` 为新的绑定 `{ workspace_id, runtime_id }`。
+成功时，`data` 为 `{ environments }`。`environments` 每项为 `{ environment_id, type, status, connect_error? }`，其中 `type` 取 `local` / `ssh` / `docker` / `command` 之一，`status` 取 `pending` / `connecting` / `ready` / `disconnected` / `disposed` 之一；`pending` 表示没有可用连接且未观察到失败（尚未连接过），`connect_error` 记录 `disconnected` 条目的失败原因。
 
-- `40420`：不存在该 `runtime_id` 的运行时
-- `40926`：运行时存在但不可用
+- `40401`：会话不存在
 
 #### `POST /api/v1/sessions/{session_id}/export`
 
@@ -1640,7 +1638,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 文件系统
 
-会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。每个动作的请求体还接受可选的 `runtime_id`（string，默认 `local`），用于选择执行操作的运行时；`open`、`open-in` 与 `reveal` 仅在 `local` 运行时上可用。另有：
+会话内文件操作走 `POST /api/v1/sessions/{session_id}/fs:{action}`，请求体为 JSON；动作包括 `list` / `read` / `list_many` / `stat` / `stat_many` / `mkdir` / `search` / `grep` / `git_status` / `diff` / `open` / `open-in` / `reveal`。动作在会话创建时所在的环境上执行；`open`、`open-in` 与 `reveal` 仅对 `local` 环境上的会话可用。另有：
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1835,7 +1833,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:open`
 
-用宿主操作系统的默认程序打开会话文件。仅限 local 运行时。
+用宿主操作系统的默认程序打开会话文件。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1852,7 +1850,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:open-in`
 
-在指定的宿主应用程序中打开会话文件或目录。仅限 local 运行时。
+在指定的宿主应用程序中打开会话文件或目录。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1871,7 +1869,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/sessions/{session_id}/fs:reveal`
 
-在宿主操作系统的文件管理器中显示会话文件。仅限 local 运行时。
+在宿主操作系统的文件管理器中显示会话文件。仅限 local 环境。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1893,7 +1891,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
-| `runtime_id` | query | string | 从哪个运行时读取。默认 `local` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
@@ -1912,7 +1909,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
-| `runtime_id` | body | string | 在哪个运行时上搜索。默认 `local` |
 
 成功时 `data` 为 `{ items, truncated }`，命中结构与排序同 `fs:search`。
 
@@ -1932,7 +1928,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `show_hidden` | body | boolean | 包含点文件。默认 `false` |
 | `include_globs` | body | string[] | 只保留匹配这些 glob 之一的路径 |
 | `exclude_globs` | body | string[] | 跳过匹配这些 glob 的路径 |
-| `runtime_id` | body | string | 在哪个运行时上补全。默认 `local` |
 
 成功时 `data` 为 `{ items, truncated }`，每项为 `{ path, name, kind, score, match_positions }`，命中结构同 `fs:search`。
 

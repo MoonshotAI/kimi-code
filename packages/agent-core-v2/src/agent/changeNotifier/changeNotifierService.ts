@@ -8,13 +8,14 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { IAgentReminderService } from '#/features/reminder/reminderService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
-import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionInstructionsProvider } from '#/session/sessionInstructions/instructionsProvider';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -67,9 +68,10 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     @ISessionAgentProfileCatalog private readonly agentCatalog: ISessionAgentProfileCatalog,
     @IAgentReminderService private readonly reminder: IAgentReminderService,
     @IAgentStateService private readonly states: IAgentStateService,
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
+    @IHostFileSystem private readonly localFs: IHostFileSystem,
+    @IHostEnvironment private readonly localEnvironment: IHostEnvironment,
     @IConfigService private readonly config: IConfigService,
-    @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionInstructionsProvider private readonly instructions: ISessionInstructionsProvider,
     @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
@@ -121,13 +123,14 @@ export class AgentChangeNotifierService extends Disposable implements IAgentChan
     try {
       const profileData = this.profile.data();
       if (profileData.profileName === undefined) return;
-      const lease = this.runtime.acquire(['fs']);
+      const lease = this.environment.acquire(['fs']);
       let fresh: LoadedAgentsMd;
       try {
         fresh = await loadAgentsMdForRoots(
-          { fs: lease.runtime.fs!, homeDir: lease.runtime.environment.homeDir },
+          { fs: lease.environment.fs!, homeDir: this.localEnvironment.homeDir },
           this.bootstrap.homeDir,
-          [this.sessionContext.cwd],
+          [this.environment.workspaceRoots().workDir],
+          this.localFs,
         );
       } finally {
         lease.dispose();

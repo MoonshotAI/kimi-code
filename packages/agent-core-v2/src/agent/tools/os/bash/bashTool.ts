@@ -5,8 +5,8 @@ import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentRuntimeService, inspectAgentRuntime } from '#/agent/runtimeBinding/agentRuntime';
-import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
+import { acquireOrWhenReady, pinnedGeneration, IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { getShellPathBridge } from '#/_base/execEnv/shellPathBridge';
 import {
@@ -99,7 +99,7 @@ export class BashTool implements IBashTool {
   readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
 
   constructor(
-    @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
+    @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
@@ -126,7 +126,7 @@ export class BashTool implements IBashTool {
   }
 
   get description(): string {
-    const renderedDescription = renderBashDescription(inspectAgentRuntime(this.runtime).environment.shellName);
+    const renderedDescription = renderBashDescription(this.environment.inspect().host?.shellName ?? 'sh');
     if (!this.allowBackground()) return withoutBackgroundDescription(renderedDescription);
     if (!this.autoBackgroundOnTimeout()) {
       return withoutAutoBackgroundOnTimeout(renderedDescription);
@@ -135,6 +135,7 @@ export class BashTool implements IBashTool {
   }
 
   resolveExecution(args: BashInput): ToolExecution {
+    const expectedGeneration = this.reviewedGeneration();
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
       description: args.run_in_background
@@ -143,15 +144,32 @@ export class BashTool implements IBashTool {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: args.cwd ?? this.ctx.cwd,
+        cwd: this.executionCwd(args),
         description: args.description,
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
       execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart),
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration),
     };
+  }
+
+  private reviewedGeneration(): string | undefined {
+    try {
+      return pinnedGeneration(this.environment.inspect());
+    } catch {
+      return undefined;
+    }
+  }
+
+  private executionCwd(args: BashInput): string {
+    try {
+      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
+      return view.resolve(args.cwd ?? view.workDir);
+    } catch {
+      return args.cwd ?? this.ctx.cwd;
+    }
   }
 
   private spawn(
@@ -165,11 +183,11 @@ export class BashTool implements IBashTool {
     const noninteractiveEnv: Record<string, string> = {
       NO_COLOR: '1',
       TERM: 'dumb',
-      GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
+      GIT_TERMINAL_PROMPT: '0',
       SHELL: env.shellPath,
     };
 
-    return processService.spawn(env.shellPath, ['-c', shellCommand], { env: noninteractiveEnv });
+    return processService.spawn(env.shellPath, ['-c', shellCommand], { cwd: effectiveCwd, env: noninteractiveEnv });
   }
 
   private async execution(
@@ -178,15 +196,20 @@ export class BashTool implements IBashTool {
     toolCallId: string,
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
+    expectedGeneration?: string,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = this.runtime.acquire(['process']);
-    const view = new RuntimeWorkspaceView(lease.runtime, this.workspaceCtx);
-    const env = lease.runtime.environment;
+    const lease = await acquireOrWhenReady(this.environment, ['process']);
+    if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
+      lease.dispose();
+      return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
+    }
+    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
@@ -199,7 +222,7 @@ export class BashTool implements IBashTool {
     const builder = new ToolOutputAccumulator();
     let proc: IHostProcess;
     try {
-      proc = lease.track(await this.spawn(lease.runtime.process!, env, effectiveCwd, command));
+      proc = lease.track(await this.spawn(lease.environment.process!, env, effectiveCwd, command), this.ctx.sessionId);
     } catch (error) {
       lease.dispose();
       return {
@@ -439,7 +462,7 @@ export class BashTool implements IBashTool {
 registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
-  requiredRuntimeCapabilities: ['process'],
+  requiredEnvironmentCapabilities: ['process'],
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {
