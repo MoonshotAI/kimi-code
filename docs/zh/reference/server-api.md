@@ -2256,7 +2256,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 面向会话管理页的批量硬删除。请求体与响应形态同 `:archive` / `:restore`：`{ "ids": ["session_..."] }`——非空、去重后不超过 5000 条；只有请求体校验失败才会让整个请求失败（`40001`），`data.results` 保持输入顺序按条返回，不存在的 id 在自身条目里报 `40401`，并附 `succeeded` / `failed` 计数。
 
-单项语义与 v1 `:delete` 一致：任意状态硬删除，没有 archived/busy 守卫——仍在线的会话先关闭再物理删除会话目录，冷会话直接删除目录；每个成功项广播全局 `event.session.deleted` 事件。被另一个 Kimi Code 进程占用的会话在自身条目里报 `40931`，条目的 `error.details` 带占用方信息（同 v1 的公开 details）。
+单项语义与 v1 `:delete` 一致：任意状态硬删除，没有 archived/busy 守卫——仍在线的会话先关闭再物理删除会话目录，冷会话直接删除目录；每个成功项广播全局 `event.session.deleted` 事件。逐项错误码与 v1 `:delete` 走同一映射器；被另一个 Kimi Code 进程占用的会话在自身条目里报 `40931`，条目的 `error.details` 带占用方信息（同 v1 的公开 details）。
 
 ### MCP 管理（`/api/v2/mcp`）
 

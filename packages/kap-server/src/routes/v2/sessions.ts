@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { defineRoute } from '../../middleware/defineRoute';
 import { errEnvelope, okEnvelope } from '../../protocol/envelope';
 import { ErrorCode } from '../../protocol/error-codes';
+import { mapError } from '../../transport/errors';
 import { resolveSessionFacts, type SessionFacts } from '../sessions';
 
 interface V2SessionsRouteHost {
@@ -474,24 +475,19 @@ async function runBatchDelete(
 ): Promise<void> {
   const ids = [...new Set(rawIds)];
   const outcomes = await deleteSessionsBatch(core.accessor, ids);
-  const results: V2BatchItemResult[] = outcomes.map((outcome) =>
-    outcome.ok
-      ? { id: outcome.id, ok: true }
-      : {
-          id: outcome.id,
-          ok: false,
-          error:
-            outcome.reason === 'not_found'
-              ? { code: ErrorCode.SESSION_NOT_FOUND, message: outcome.message }
-              : outcome.reason === 'occupied'
-                ? {
-                    code: ErrorCode.SESSION_OCCUPIED,
-                    message: outcome.message,
-                    details: outcome.details,
-                  }
-                : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
-        },
-  );
+  const results: V2BatchItemResult[] = outcomes.map((outcome) => {
+    if (outcome.ok) return { id: outcome.id, ok: true };
+    const mapped = mapError(outcome.error, requestId);
+    return {
+      id: outcome.id,
+      ok: false,
+      error: {
+        code: mapped.code,
+        message: mapped.msg,
+        details: mapped.details as Record<string, unknown> | undefined,
+      },
+    };
+  });
   await core.accessor.get(ISessionIndexMirror).drain();
   const succeeded = results.filter((result) => result.ok).length;
   reply.send(
@@ -824,7 +820,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
       },
       description:
-        'Batch-delete sessions by id ({ ids }, ≤5000 unique). Per-item results — a missing session folds into its own item; a session leased by another process reports 40931 with the lock-holder details in its own item; live sessions are closed before their session directories are removed, cold sessions are deleted on disk directly.',
+        'Batch-delete sessions by id ({ ids }, ≤5000 unique). Per-item results — item errors carry the v1 protocol codes (a missing session reports 40401 in its own item; a session leased by another process reports 40931 with the lock-holder details); live sessions are closed before their session directories are removed, cold sessions are deleted on disk directly.',
       tags: ['v2-sessions'],
     },
     async (req, reply) => {

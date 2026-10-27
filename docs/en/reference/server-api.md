@@ -2256,7 +2256,7 @@ Only a body validation failure fails the whole request (`40001`). Otherwise the 
 
 Batch hard-delete for session-management views. The body and response shapes mirror `:archive` / `:restore`: `{ "ids": ["session_..."] }` — non-empty, at most 5000 unique ids (duplicates collapse). Only a body validation failure fails the whole request (`40001`); `data.results` keeps the input order, an unknown id reports `40401` in its own item, and `succeeded` / `failed` counts accompany the results.
 
-Each item follows the v1 `:delete` semantics: a hard delete in any state with no archived/busy guards — a live session is closed before its session directory is physically removed, a cold session's directory is removed directly, and every succeeded item broadcasts the global `event.session.deleted` event. A session leased by another Kimi Code process fails its own item with `40931`, and the item's `error.details` carries the lock-holder information (the same public details v1 exposes).
+Each item follows the v1 `:delete` semantics: a hard delete in any state with no archived/busy guards — a live session is closed before its session directory is physically removed, a cold session's directory is removed directly, and every succeeded item broadcasts the global `event.session.deleted` event. Item errors carry the same protocol codes as v1 `:delete`; in particular a session leased by another Kimi Code process fails its own item with `40931`, and the item's `error.details` carries the lock-holder information (the same public details v1 exposes).
 
 ### MCP management (`/api/v2/mcp`)
 

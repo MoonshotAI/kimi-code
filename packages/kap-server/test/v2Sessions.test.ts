@@ -1241,9 +1241,10 @@ describe('server /api/v2/sessions batch delete', () => {
     expect(await listedIds()).toEqual([]);
   });
 
-  it('reports a leased session as 40931 with the lock-holder details in its own item', async () => {
+  it('preserves v1 protocol errors per item: occupied details and fs-not-found', async () => {
     const ok = await createSession();
     const blocked = await createSession();
+    const gone = await createSession();
     const holder = { pid: 4242, host: 'other-box', process: 'kimi-code' };
     const manager = core().get(ISessionManager);
     const realDelete = manager.delete.bind(manager);
@@ -1253,11 +1254,16 @@ describe('server /api/v2/sessions batch delete', () => {
           details: { sessionId, holder },
         });
       }
+      if (sessionId === gone.id) {
+        throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, 'cwd gone');
+      }
       return realDelete(sessionId);
     });
 
     try {
-      const body = await postBatch('/api/v2/sessions:delete', { ids: [ok.id, blocked.id] });
+      const body = await postBatch('/api/v2/sessions:delete', {
+        ids: [ok.id, blocked.id, gone.id],
+      });
       expect(body.code).toBe(0);
       expect(body.data?.results).toEqual([
         { id: ok.id, ok: true },
@@ -1270,9 +1276,14 @@ describe('server /api/v2/sessions batch delete', () => {
             details: { sessionId: blocked.id, holder },
           },
         },
+        {
+          id: gone.id,
+          ok: false,
+          error: { code: 40409, message: 'cwd gone' },
+        },
       ]);
       expect(body.data?.succeeded).toBe(1);
-      expect(body.data?.failed).toBe(1);
+      expect(body.data?.failed).toBe(2);
       expect(await sessionDirExists(ok.workspace_id, ok.id)).toBe(false);
       expect(await sessionDirExists(blocked.workspace_id, blocked.id)).toBe(true);
     } finally {
