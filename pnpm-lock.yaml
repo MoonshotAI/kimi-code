@@ -514,9 +514,6 @@ importers:
       '@noble/hashes':
         specifier: ^2.0.0
         version: 2.4.0
-      '@xstate/store':
-        specifier: 4.3.0
-        version: 4.3.0(xstate@5.32.5)
       jimp:
         specifier: ^1.6.1
         version: 1.6.1
@@ -529,9 +526,6 @@ importers:
       undici:
         specifier: ^7.27.1
         version: 7.27.1
-      xstate:
-        specifier: ^5.32.5
-        version: 5.32.5
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -4884,14 +4878,6 @@ packages:
 
   '@vueuse/shared@12.8.2':
     resolution: {integrity: sha512-dznP38YzxZoNloI0qpEfpkms8knDtaoQ6Y/sfS0L7Yki4zh40LFHEhur0odJC6xTHG5dxWVPiUWBXn+wCG2s5w==}
-
-  '@xstate/store@4.3.0':
-    resolution: {integrity: sha512-Zoe4h8aqsSZLV8KRmwdpfYbfkmHrfZZunKLAB09xz5LwfPQRKyZhDBnQiTaXV3nKe0defaDg+L2N0XHcsa60AQ==}
-    peerDependencies:
-      xstate: ^5.0.0
-    peerDependenciesMeta:
-      xstate:
-        optional: true
 
   '@xterm/headless@5.5.0':
     resolution: {integrity: sha512-5xXB7kdQlFBP82ViMJTwwEc3gKCLGKR/eoxQm4zge7GPBl86tCdI0IdPJjoKd8mUSFXz5V7i/25sfsEkP4j46g==}
@@ -13559,10 +13545,6 @@ snapshots:
       vue: 3.5.35(typescript@6.0.2)
     transitivePeerDependencies:
       - typescript
-
-  '@xstate/store@4.3.0(xstate@5.32.5)':
-    optionalDependencies:
-      xstate: 5.32.5
 
   '@xterm/headless@5.5.0': {}
 

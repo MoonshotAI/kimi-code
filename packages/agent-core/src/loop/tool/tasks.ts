@@ -1,8 +1,3 @@
-import { waitFor } from 'xstate';
-
-import type { ToolCall } from '#/llm/message';
-import type { ToolActorRef } from './machine';
-
 export interface TaskWaitInput {
   taskId?: string;
   timeoutMs: number;
@@ -17,43 +12,45 @@ export interface TaskWaitOutcome {
 
 export type WaitForTasks = (input: TaskWaitInput) => Promise<TaskWaitOutcome>;
 
-interface LoopSnapshotSource {
-  getSnapshot(): {
-    context: { toolActors: Record<string, { ref: ToolActorRef; toolCall: ToolCall; detached: boolean }> };
-  };
+export interface TaskWaitSlot {
+  readonly toolCall: { readonly id: string };
+  readonly done: boolean;
+  readonly waiters: Set<() => void>;
 }
 
-export function createWaitForTasks(self: LoopSnapshotSource): WaitForTasks {
-  return async ({ taskId, timeoutMs }) => {
-    const detached = Object.values(self.getSnapshot().context.toolActors).filter((slot) => slot.detached);
-    const targets = (taskId === undefined ? detached : detached.filter((slot) => slot.toolCall.id === taskId)).map(
-      (slot) => ({ id: slot.toolCall.id, ref: slot.ref }),
-    );
+export function createWaitForTasks(source: () => readonly TaskWaitSlot[]): WaitForTasks {
+  return ({ taskId, timeoutMs }) => {
+    const targets = source().filter((slot) => taskId === undefined || slot.toolCall.id === taskId);
     const unknown = taskId !== undefined && targets.length === 0 ? [taskId] : [];
     if (targets.length === 0) {
-      return { completed: [], running: [], unknown, timedOut: false };
+      return Promise.resolve({ completed: [], running: [], unknown, timedOut: false });
     }
-    const waitForAny = () =>
-      Promise.any(
-        targets.map(({ ref }) =>
-          waitFor(ref, (snapshot) => snapshot.status === 'done').catch(() => undefined),
-        ),
-      );
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => {
-        resolve('timeout');
-      }, timeoutMs);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const waiting: Array<{ slot: (typeof targets)[number]; notify: () => void }> = [];
+      const cleanup = (): void => {
+        for (const { slot, notify } of waiting) slot.waiters.delete(notify);
+        if (timer !== undefined) clearTimeout(timer);
+      };
+      const settle = (timedOut: boolean): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve({
+          completed: targets.filter((slot) => slot.done).map((slot) => slot.toolCall.id),
+          running: targets.filter((slot) => !slot.done).map((slot) => slot.toolCall.id),
+          unknown,
+          timedOut,
+        });
+      };
+      for (const slot of targets) waiting.push({ slot, notify: () => settle(false) });
+      for (const { slot, notify } of waiting) slot.waiters.add(notify);
+      if (targets.some((slot) => slot.done)) {
+        settle(false);
+        return;
+      }
+      timer = setTimeout(() => settle(true), timeoutMs);
     });
-    const timedOut =
-      (await Promise.race([waitForAny().then(() => 'done' as const), timeout])) === 'timeout';
-    clearTimeout(timer);
-    const completed = targets
-      .filter(({ ref }) => ref.getSnapshot().status === 'done')
-      .map(({ id }) => id);
-    const running = targets
-      .filter(({ ref }) => ref.getSnapshot().status !== 'done')
-      .map(({ id }) => id);
-    return { completed, running, unknown, timedOut };
   };
 }

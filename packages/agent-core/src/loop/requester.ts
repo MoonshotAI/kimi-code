@@ -2,7 +2,7 @@ import { toRequestMessages, type HistoryMessage } from '#/history/message';
 import { usedContextTokens } from '#/history/usage';
 import { contentsOf, mergeFields, requesterContents, type LlmRequestPart } from '#/llm/requester';
 
-import type { LoopLlmRequester } from './machine/request-actor';
+import type { LoopLlmRequester } from './request';
 
 type Fields = Readonly<Record<string, unknown>>;
 

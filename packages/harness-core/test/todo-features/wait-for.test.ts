@@ -35,7 +35,10 @@ function detachThenWaitRequester(): LoopLlmRequester {
   return scriptedRequester(() => {
     step += 1;
     if (step === 1) {
-      return textOutcome('dispatching', [{ type: 'function', id: 'bg-1', name: 'bg_tool', arguments: '{}' }]);
+      return textOutcome('dispatching', [
+        { type: 'function', id: 'bg-1', name: 'bg_tool', arguments: '{}' },
+        { type: 'function', id: 'bg-2', name: 'bg_tool', arguments: '{}' },
+      ]);
     }
     if (step === 2) {
       return textOutcome('waiting', [
@@ -51,26 +54,38 @@ function detachThenWaitRequester(): LoopLlmRequester {
   });
 }
 
-function backgroundProbe(): { feature: Feature<void>; release: () => void } {
-  let release: () => void = () => undefined;
-  const gate = new Promise<void>((resolve) => {
-    release = resolve;
-  });
+function backgroundProbe(): { feature: Feature<void>; release: (taskId: string) => void } {
+  const gates = new Map<string, Promise<void>>();
+  const releases = new Map<string, () => void>();
+  const gate = (taskId: string): Promise<void> => {
+    const current = gates.get(taskId);
+    if (current !== undefined) return current;
+    const pending = new Promise<void>((resolve) => {
+      releases.set(taskId, resolve);
+    });
+    gates.set(taskId, pending);
+    return pending;
+  };
   const feature = createFeature('bg-probe', {
     agent: () => {
       useAgentTools({
         name: 'bg_tool',
         description: 'background probe',
         parameters: { type: 'object' },
-        execute: async ({ detach }) => {
+        execute: async ({ toolCall, detach }) => {
           detach?.('bg running');
-          await gate;
+          await gate(toolCall.id);
           return { content: [{ type: 'text', text: 'bg-result' }] };
         },
       });
     },
   });
-  return { feature, release };
+  return {
+    feature,
+    release: (taskId) => {
+      releases.get(taskId)?.();
+    },
+  };
 }
 
 function user(text: string) {
@@ -95,11 +110,30 @@ describe('wait-for feature', () => {
     setRequester(harness, 's1', 'main', detachThenWaitRequester());
     agent.loop.subscribe((event) => {
       if (event.type === 'tool.started' && event.toolCall.name === 'WaitFor') {
-        setTimeout(() => bg.release(), 0);
+        setTimeout(() => bg.release('bg-1'), 0);
       }
     });
 
-    const outcome = await agent.loop.runTurn(user('go'));
+    const secondDetached = agent.loop.wait('tool.ended', {
+      match: (event) => event.detached && event.toolCallId === 'bg-2',
+    });
+    const running = agent.loop.runTurn(user('go'));
+    await secondDetached;
+    await expect(agent.loop.waitForTasks({ taskId: 'missing', timeoutMs: 1 })).resolves.toEqual({
+      completed: [],
+      running: [],
+      unknown: ['missing'],
+      timedOut: false,
+    });
+    const any = agent.loop.waitForTasks({ timeoutMs: 1000 });
+    await expect(agent.loop.waitForTasks({ taskId: 'bg-2', timeoutMs: 1 })).resolves.toEqual({
+      completed: [],
+      running: ['bg-2'],
+      unknown: [],
+      timedOut: true,
+    });
+    await expect(any).resolves.toEqual({ completed: ['bg-1'], running: ['bg-2'], unknown: [], timedOut: false });
+    const outcome = await running;
     expect(outcome.type).toBe('done');
     await agent.flush();
 
@@ -123,5 +157,11 @@ describe('wait-for feature', () => {
     expect(completionText).toContain('[async tool completed] bg_tool (tool_call_id=bg-1)');
     expect(completionText).toContain('bg-result');
     await harness.close();
+    await expect(agent.loop.waitForTasks({ taskId: 'bg-2', timeoutMs: 1 })).resolves.toEqual({
+      completed: [],
+      running: [],
+      unknown: ['bg-2'],
+      timedOut: false,
+    });
   });
 });

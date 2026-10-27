@@ -94,9 +94,15 @@ describe('loop record', () => {
     });
     expect(restored.state.messages).toEqual(loop.state.messages);
 
+    let settleBackground: ((result: ToolResult) => void) | undefined;
     const executor = {
       execute: ({ toolCall, detach }: ToolExecuteInput) => {
-        if (toolCall.name === 'bg') detach?.('bg ack');
+        if (toolCall.name === 'bg') {
+          detach?.('bg ack');
+          return new Promise<ToolResult>((resolve) => {
+            settleBackground = resolve;
+          });
+        }
         return new Promise<ToolResult>(() => {});
       },
     };
@@ -115,7 +121,16 @@ describe('loop record', () => {
     expect(crashed.unfinished).toEqual({ turnId: 2, trigger: 'normal', step: 1, stepUnfinished: true, appended: true });
     expect(crashed.nextTurnId).toBe(3);
 
-    await working.close();
+    let closes: { first: Promise<void>; second: Promise<void> } | undefined;
+    const stop = working.subscribe((event) => {
+      if (event.type !== 'prompt.reminded') return;
+      stop();
+      closes = { first: working.close(), second: working.close() };
+    });
+    working.remind(prompt('reentrant close'));
+    const { first, second } = closes!;
+    expect(second).toBe(first);
+    await first;
     const closed = fold([...records, ...live]);
     expect(closed.unfinished).toBeUndefined();
     expect(closed.turns.at(-1)).toMatchObject({ turnId: 2, outcome: { type: 'aborted', reason: { reason: 'closed' } } });
@@ -123,6 +138,10 @@ describe('loop record', () => {
     expect(closed.notify.map((entry) => extractText(entry.message))).toEqual([
       '[async tool aborted] bg (tool_call_id=call-bg)',
     ]);
+    const recordsAtClose = live.length;
+    settleBackground?.({ content: [{ type: 'text', text: 'late' }] });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(live).toHaveLength(recordsAtClose);
 
     const answering = requester([done('next')]);
     const recovered = createLoop({

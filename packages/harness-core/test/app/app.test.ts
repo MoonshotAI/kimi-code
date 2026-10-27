@@ -181,7 +181,8 @@ describe('app units', () => {
   it('runs a full turn only while idle and settles signal aborts and timeouts as aborted outcomes', async () => {
     const app = createApp();
     const session = await app.open('sess');
-    const agent = await session.open('main', agentCaps());
+    const agent = await session.open('main', { ...agentCaps(), abortGraceMs: 5 });
+    await expect(agent.loop.runTurn(undefined as never)).rejects.toThrow('entry must be a user entry');
     expect((await agent.loop.runTurn(user('hello'))).type).toBe('done');
     expect(agent.loop.state.messages.map((entry) => extractText(entry.message))).toContain('echo:hello');
     const release = gate();
@@ -211,19 +212,79 @@ describe('app units', () => {
     agent.loop.cancel('h2');
     await expect(agent.loop.runTurn(user('skip'), { signal: controller.signal })).resolves.toMatchObject({ type: 'aborted' });
     expect(agent.loop.state.inbox.normal).toEqual([]);
+
+    const grace = gate();
+    agent.loop.setRequester(
+      scriptedRequester(async () => {
+        await grace.promise;
+        return textOutcome('grace-llm');
+      }),
+    );
+    const graceStarted = loopEvent(agent.loop, 'turn.started');
+    const graceTurn = agent.loop.runTurn(user('grace', { promptId: 'grace' }));
+    await graceStarted;
+    agent.loop.abort('grace');
+    await expect(graceTurn).resolves.toMatchObject({ type: 'aborted', reason: 'grace' });
+    agent.loop.cancel('grace');
+
+    const late = gate();
+    agent.loop.setRequester(
+      scriptedRequester(async () => {
+        await late.promise;
+        return textOutcome('late-llm');
+      }),
+    );
+    let ended = 0;
+    const stop = agent.loop.subscribe((event) => {
+      if (event.type === 'turn.ended') ended += 1;
+    });
+    const lateStarted = loopEvent(agent.loop, 'turn.started');
+    const lateTurn = agent.loop.runTurn(user('late', { promptId: 'late' }));
+    await lateStarted;
+    agent.loop.abort('first');
+    agent.loop.abort('second');
+    await expect(lateTurn).resolves.toMatchObject({ type: 'aborted', reason: 'first' });
+    agent.loop.cancel('late');
+    agent.loop.setRequester(echoRequester());
+    expect((await agent.loop.runTurn(user('fresh'))).type).toBe('done');
+    const endedBeforeLate = ended;
+    grace.resolve();
+    late.resolve();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(ended).toBe(endedBeforeLate);
+    expect(agent.loop.state.messages.map((entry) => extractText(entry.message))).not.toContain('late-llm');
+    expect(agent.loop.state.messages.map((entry) => extractText(entry.message))).not.toContain('grace-llm');
+    const closing = gate();
+    agent.loop.setRequester(
+      scriptedRequester(async () => {
+        await closing.promise;
+        return textOutcome('closing-llm');
+      }),
+    );
+    const closingStarted = loopEvent(agent.loop, 'turn.started');
+    const closingTurn = agent.loop.runTurn(user('closing', { promptId: 'closing' }));
+    await closingStarted;
+    agent.loop.abort('first-close');
+    await agent.loop.close();
+    await expect(closingTurn).resolves.toMatchObject({ type: 'aborted', reason: 'first-close' });
+    closing.resolve();
+    stop();
     await app.close();
   });
 
   it('aborts a detached background tool with abortTool', async () => {
+    const continueGate = gate();
     const requester = scriptedRequester((rest) => {
       const last = (rest.content?.messages ?? []).at(-1);
       if (last !== undefined && last.role === 'user' && extractText(last) === 'bg') {
         return textOutcome('', [{ type: 'function', id: 'call-bg', name: 'bg', arguments: '{}' }]);
       }
-      return textOutcome('done');
+      return continueGate.promise.then(() => textOutcome('done'));
     });
+    let backgroundSignal: AbortSignal | undefined;
     const executor = {
       execute: ({ signal, detach }: { signal: AbortSignal; detach?: (text: string) => void }) => {
+        backgroundSignal = signal;
         detach?.('bg ack');
         return new Promise<ToolResult>((_resolve, reject) => {
           signal.addEventListener('abort', () => reject(new Error('bg aborted')));
@@ -232,16 +293,21 @@ describe('app units', () => {
     };
     const app = createApp();
     const session = await app.open('sess');
-    const agent = await session.open('main', agentCaps(executor, requester));
+    const agent = await session.open('main', { ...agentCaps(executor, requester), abortGraceMs: 5 });
     const detached = loopEvent(agent.loop, 'tool.ended', {
       match: (event) => event.toolCallId === 'call-bg' && event.detached,
     });
     expect(agent.loop.submit(user('bg'))?.type).toBe('prompt.submitted');
     await detached;
+    const turnEnded = loopEvent(agent.loop, 'turn.ended');
+    agent.loop.abort('turn stop');
+    await expect(turnEnded).resolves.toMatchObject({ outcome: { type: 'aborted', reason: 'turn stop' } });
+    expect(backgroundSignal?.aborted).toBe(false);
     agent.loop.abortTool('missing');
     const settled = loopEvent(agent.loop, 'tool.async_ended', { match: (event) => event.toolCallId === 'call-bg' });
     agent.loop.abortTool('call-bg', 'test stop');
     await expect(settled).resolves.toMatchObject({ outcome: { type: 'aborted', reason: 'test stop' } });
+    expect(backgroundSignal?.aborted).toBe(true);
     await app.close();
   });
 
@@ -254,24 +320,27 @@ describe('app units', () => {
       return textOutcome('done');
     });
     let settle: ((result: ToolResult) => void) | undefined;
+    let executions = 0;
     const executor = {
-      execute: () =>
-        new Promise<ToolResult>((resolve) => {
+      execute: () => {
+        executions += 1;
+        return new Promise<ToolResult>((resolve) => {
           settle = resolve;
-        }),
+        });
+      },
     };
     const app = createApp();
     const session = await app.open('sess');
     const agent = await session.open('main', agentCaps(executor, requester));
     agent.loop.detachTool('missing');
-    const spawned = loopEvent(agent.loop, 'tool.started', { match: (event) => event.toolCall.id === 'call-fg' });
+    agent.loop.subscribe((event) => {
+      if (event.type === 'tool.started' && event.toolCall.id === 'call-fg') agent.loop.detachTool('call-fg');
+    });
     const detached = loopEvent(agent.loop, 'tool.ended', {
       match: (event) => event.toolCallId === 'call-fg' && event.detached,
     });
     const firstTurn = loopEvent(agent.loop, 'turn.ended', { match: (event) => event.outcome.type === 'done' });
     expect(agent.loop.submit(user('fg'))?.type).toBe('prompt.submitted');
-    await spawned;
-    agent.loop.detachTool('call-fg');
     await expect(detached).resolves.toMatchObject({
       toolCallId: 'call-fg',
       outcome: {
@@ -281,6 +350,9 @@ describe('app units', () => {
           },
         },
       },
+    });
+    await vi.waitFor(() => {
+      expect(executions).toBe(1);
     });
     await firstTurn;
     await agent.flush();

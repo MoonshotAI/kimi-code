@@ -4,7 +4,7 @@ export * from './contract/inbox';
 export * from './contract/outcome';
 export * from './contract/profile';
 export { createMaxStepsHook, MAX_STEPS_REASON } from './builtin/max-steps';
-export type { LoopLlmRequester } from './machine/request-actor';
+export type { LoopLlmRequester } from './request';
 export type { HookRegistry } from './hook/registry';
 export type { PolicyRegistry } from '../llm/policy/registry';
 export type { LoopInput, UnfinishedTurn } from './contract/command';

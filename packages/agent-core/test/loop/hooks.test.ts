@@ -213,7 +213,7 @@ describe('tool.batch-starting', () => {
           id: 'swarm',
           hook: () => ({
             blocked: { reason: 'denied' },
-            result: { content: [{ type: 'text' as const, text: 'nope' }] },
+            result: { content: [{ type: 'text' as const, text: 'nope' }], stopTurn: true },
           }),
         },
         {
@@ -611,6 +611,9 @@ describe('hook failure policies', () => {
         outcome: { type: 'blocked', cause: { by: 'batch-strict', reason: 'hook_failed' } },
       });
     }
+    expect(events.findIndex((event) => event.type === 'hook.failed')).toBeGreaterThan(
+      events.findLastIndex((event) => event.type === 'tool.ended'),
+    );
     const tools = loop.state.messages.filter((entry) => entry.message.role === 'tool');
     expect(tools.map((entry) => extractText(entry.message))).toEqual([
       '[hook failed] tool.batch-starting: bang',
