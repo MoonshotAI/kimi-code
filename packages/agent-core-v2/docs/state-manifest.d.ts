@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 74 keys)
+// Index (App: 0 keys · Workspace: 6 keys · Session: 9 keys · Agent: 75 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -67,6 +67,7 @@
 //     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
+//     llmRequester.lastMeasuredTurnRequest            src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastTurnRequest                    src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.mediaRecovery                      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
@@ -986,6 +987,28 @@ export interface AgentStateSnapshot {
   // src/agent/llmRequester/llmRequesterService.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
+  'llmRequester.lastMeasuredTurnRequest': /* MeasuredTurnRequest — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+    readonly thinkingEffort: /* ThinkingEffort — packages/agent-core-v2/src/human/llm/thinking.ts */ 'off' | 'on' | (string & {});
+    readonly turnId: number;
+    readonly step?: number;
+    readonly traceId?: string;
+    readonly usage: /* TokenUsage — packages/agent-core-v2/src/human/llm/usage.ts */ {
+      inputOther: number;
+      output: number;
+      inputCacheRead: number;
+      inputCacheCreation: number;
+      raw?: Record<string, unknown>;
+    };
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly toolsHash: string;
+    readonly systemPromptHash: string;
+    readonly messageCount: number;
+    readonly historyHash: string;
+    readonly inputTokens?: number;
+    readonly startedAt: number;
+    readonly finishedAt: number;
+  } | undefined;
   'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/llmRequester/llmRequester.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
