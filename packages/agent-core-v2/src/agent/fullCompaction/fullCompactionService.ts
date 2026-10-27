@@ -830,13 +830,15 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
       compactionMaxOutputSize === undefined
         ? Math.floor(effectiveMaxTokens / 8)
         : Math.min(compactionMaxOutputSize, Math.floor(effectiveMaxTokens / 8));
-    const messageBudget =
-      Math.floor((effectiveMaxTokens - outputReserve) * OVERFLOW_CONTEXT_SAFETY_RATIO) -
-      this.requestTokens([]);
+    const inputLimit = effectiveMaxTokens - outputReserve;
+    const overheadTokens = this.requestTokens([]);
     const estimatedMessagesTokens =
       this.tokenCounting.estimateMessages(history) +
       this.tokenCounting.estimateMessage(createUserMessage(instruction));
-    if (messageBudget <= 0 || estimatedMessagesTokens <= messageBudget) return history;
+    if (estimatedMessagesTokens + overheadTokens <= inputLimit) return history;
+    const messageBudget =
+      Math.floor(inputLimit * OVERFLOW_CONTEXT_SAFETY_RATIO) - overheadTokens;
+    if (messageBudget <= 0) return history;
     const preShrunk = takeRecentMessagesWithinTokenBudget(
       history,
       messageBudget,

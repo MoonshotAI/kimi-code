@@ -4180,7 +4180,7 @@ describe('FullCompaction pre-shrink', () => {
 
   function appendPreShrinkHistory(ctx: TestAgentContext, tokenTotals?: readonly [number, number, number]): void {
     const [oldTotal = 20, midTotal = 40, recentTotal = 80] = tokenTotals ?? [];
-    ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(32_000)}`, oldTotal);
+    ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(56_000)}`, oldTotal);
     ctx.appendExchange(2, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, midTotal);
     ctx.appendExchange(3, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, recentTotal);
   }
@@ -4396,6 +4396,36 @@ describe('FullCompaction pre-shrink', () => {
       }),
     );
     await ctx.expectResumeMatches();
+  });
+
+  it('sends the full history when an auto compaction request fits the window', async () => {
+    const ctx = testAgent();
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    for (let step = 1; step <= 4; step++) {
+      ctx.appendExchange(
+        step,
+        `user ${step}`,
+        `assistant ${step} ${'lorem ipsum '.repeat(15_000)}`,
+        step === 4 ? 200_000 : 0,
+      );
+    }
+    const previousHistory = ctx.context.get().map(messageText);
+
+    ctx.mockNextResponse({ type: 'text', text: 'Full-history summary.' });
+    ctx.mockNextResponse({ type: 'text', text: 'Answer after compaction.' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: `large prompt ${' zz'.repeat(12_000)}` }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls).toHaveLength(2);
+    const [compactionCall, answerCall] = ctx.llmCalls;
+    const compactionTexts = compactionCall!.history.map(messageText);
+    expect(compactionTexts.slice(0, previousHistory.length)).toEqual(previousHistory);
+    expect(compactionTexts.at(-1)).toBe(renderCompactionInstruction({}));
+    const answerTexts = answerCall!.history.map(messageText);
+    expect(answerTexts.some((text) => text.includes('Full-history summary.'))).toBe(true);
   });
 
   it('does not pre-shrink when the effective context window is unknown', async () => {
