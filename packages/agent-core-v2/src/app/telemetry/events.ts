@@ -118,6 +118,7 @@ export interface CacheBreakDetectedEvent {
   curr_effort: string;
   prev_input_cache_read: number;
   curr_input_cache_read: number;
+  curr_cache_read_reported: boolean;
   prev_input_other: number;
   curr_input_other: number;
   prev_output: number;
@@ -125,6 +126,10 @@ export interface CacheBreakDetectedEvent {
   prev_input_cache_creation: number;
   curr_input_cache_creation: number;
   cache_read_drop_ratio: number;
+  tools_match: boolean;
+  system_prompt_match: boolean;
+  history_prefix_match: boolean;
+  gap_ms: number;
   interval_ms: number;
 }
 
@@ -759,6 +764,8 @@ export const telemetryEventDefinitions = {
       curr_effort: 'Thinking effort of the current request',
       prev_input_cache_read: 'Cache-read input tokens of the baseline request',
       curr_input_cache_read: 'Cache-read input tokens of the current request',
+      curr_cache_read_reported:
+        'Whether the provider reported cache-read tokens for the current request; false means the field was absent and counted as zero',
       prev_input_other: 'Other input tokens of the baseline request',
       curr_input_other: 'Other input tokens of the current request',
       prev_output: 'Output tokens of the baseline request',
@@ -766,6 +773,10 @@ export const telemetryEventDefinitions = {
       prev_input_cache_creation: 'Cache-creation input tokens of the baseline request',
       curr_input_cache_creation: 'Cache-creation input tokens of the current request',
       cache_read_drop_ratio: 'Cache-read token drop from baseline to current request, divided by baseline cache-read tokens',
+      tools_match: 'Whether the current request sent the same tool definitions as the baseline request',
+      system_prompt_match: 'Whether the current request sent the same system prompt as the baseline request',
+      history_prefix_match: "Whether the current request's history starts with the baseline request's full history",
+      gap_ms: 'Milliseconds from the baseline request finishing to the current request starting',
       interval_ms: 'Milliseconds from the baseline request finishing to the current request finishing',
     },
   }),

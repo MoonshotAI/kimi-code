@@ -392,8 +392,12 @@ function cacheBreaks(records: readonly TelemetryRecord[]): TelemetryRecord[] {
   return records.filter((record) => record.event === 'cache_break_detected');
 }
 
-async function requestCacheTurn(service: IAgentLLMRequesterService, turnId: number): Promise<void> {
-  await service.request({ source: { type: 'turn', turnId, step: turnId } });
+async function requestCacheTurn(
+  service: IAgentLLMRequesterService,
+  turnId: number,
+  systemPrompt?: string,
+): Promise<void> {
+  await service.request({ source: { type: 'turn', turnId, step: turnId }, systemPrompt });
 }
 
 describe('AgentLLMRequesterService cache break telemetry', () => {
@@ -422,6 +426,7 @@ describe('AgentLLMRequesterService cache break telemetry', () => {
       curr_effort: 'off',
       prev_input_cache_read: 10000,
       curr_input_cache_read: 7000,
+      curr_cache_read_reported: true,
       prev_input_other: 100,
       curr_input_other: 100,
       prev_output: 50,
@@ -429,8 +434,33 @@ describe('AgentLLMRequesterService cache break telemetry', () => {
       prev_input_cache_creation: 0,
       curr_input_cache_creation: 0,
       cache_read_drop_ratio: 0.3,
+      tools_match: true,
+      system_prompt_match: true,
+      history_prefix_match: true,
     });
+    expect(events[0]?.properties?.['gap_ms']).toEqual(expect.any(Number));
     expect(events[0]?.properties?.['interval_ms']).toEqual(expect.any(Number));
+  });
+
+  it('reports which request parts changed from the baseline', async () => {
+    const contextMessages: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'first' }], toolCalls: [] },
+    ];
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(1000)]),
+      undefined,
+      { contextMessages },
+    );
+
+    await requestCacheTurn(service, 1, 'system-a');
+    contextMessages[0] = { role: 'user', content: [{ type: 'text', text: 'rewritten' }], toolCalls: [] };
+    await requestCacheTurn(service, 2, 'system-b');
+
+    expect(cacheBreaks(telemetryRecords)[0]?.properties).toMatchObject({
+      tools_match: true,
+      system_prompt_match: false,
+      history_prefix_match: false,
+    });
   });
 
   it('stays quiet within the ratio gate or under the token threshold', async () => {
@@ -463,7 +493,7 @@ describe('AgentLLMRequesterService cache break telemetry', () => {
     });
   });
 
-  it('skips responses whose provider did not report cache reads without replacing the baseline', async () => {
+  it('counts unreported cache reads as zero and flags them', async () => {
     const { service, telemetryRecords } = createService(
       createCacheRequester([cacheUsage(10000), 'unreported', cacheUsage(5000)]),
       undefined,
@@ -476,9 +506,22 @@ describe('AgentLLMRequesterService cache break telemetry', () => {
     expect(events[0]?.properties).toMatchObject({
       prev_turn_id: 1,
       prev_input_cache_read: 10000,
-      turn_id: 3,
-      curr_input_cache_read: 5000,
+      turn_id: 2,
+      curr_input_cache_read: 0,
+      curr_cache_read_reported: false,
     });
+  });
+
+  it('never reports a provider that does not report cache reads at all', async () => {
+    const { service, telemetryRecords } = createService(
+      createCacheRequester(['unreported', 'unreported']),
+      undefined,
+    );
+
+    await requestCacheTurn(service, 1);
+    await requestCacheTurn(service, 2);
+
+    expect(cacheBreaks(telemetryRecords)).toHaveLength(0);
   });
 
   it('resets the baseline after a context revision change', async () => {
