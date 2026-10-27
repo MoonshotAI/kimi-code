@@ -29,7 +29,6 @@ import type {
   TurnStepInterruptedEvent,
   TurnStepRetryingEvent,
   TurnStepStartedEvent,
-  TokenUsage,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
 
@@ -111,7 +110,6 @@ export interface SessionEventHost {
   updateActivityPane(): void;
   track(event: string, props?: Record<string, unknown>): void;
   recordSessionActivity(): void;
-  noteStepUsage(usage: TokenUsage | undefined): void;
   noteCompactionFinished(): void;
   handleCompactionCancelled?(): void;
   handleBackgroundTaskStatus?(info: BackgroundTaskInfo): void;
@@ -458,7 +456,7 @@ export class SessionEventHandler {
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
     this.host.streamingUI.flushNow();
     this.clearStepRetry();
-    this.host.noteStepUsage(event.usage);
+    this.host.recordSessionActivity();
     this.maybeShowDebugTiming(event);
 
     if (event.providerFinishReason === 'filtered') {
@@ -1182,8 +1180,7 @@ export class SessionEventHandler {
     );
     // A completed compaction just refreshed and shrank the cached context —
     // count it as activity so the next submit isn't judged against the
-    // pre-compaction timestamp, and reset the cache-break baseline (the drop
-    // is expected). Cancellations do neither: the context was not cut.
+    // pre-compaction timestamp. Cancellations do not count as activity.
     this.host.recordSessionActivity();
     if (!this.compactionFailed) this.host.noteCompactionFinished();
     this.host.surveyController.notifyCompactionFinished();

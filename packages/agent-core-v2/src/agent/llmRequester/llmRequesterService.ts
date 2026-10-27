@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -49,6 +50,7 @@ import { THINKING_SECTION } from '#/app/kosongConfig/configSection';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import type {
   ApiErrorEvent,
+  CacheBreakDetectedEvent,
   LlmRequestProjectionFallbackEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -98,6 +100,20 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
 
 export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
+
+const CACHE_BREAK_MIN_DROP_TOKENS = 2000;
+const CACHE_BREAK_DROP_RATIO = 0.95;
+
+interface CacheBreakBaseline {
+  readonly model: string;
+  readonly effort: ThinkingEffort;
+  readonly usage: TokenUsage;
+  readonly contextRevision: number;
+  readonly turnId: number;
+  readonly step?: number;
+  readonly traceId?: string;
+  readonly finishedAt: number;
+}
 
 interface ResolvedLLMRequest {
   readonly requester: ModelRequester;
@@ -166,6 +182,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   declare readonly _serviceBrand: undefined;
 
   private readonly toolCallIdNormalizer = new ToolCallIdNormalizer();
+  private cacheBreakBaseline: CacheBreakBaseline | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -434,6 +451,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.logRequest(logInput);
       const recorded = this.recordRequest(logInput);
       const startedAt = Date.now();
+      const cacheBreakStartedAt = performance.now();
 
       let message: Message | undefined;
       let usage: TokenUsage | undefined;
@@ -529,6 +547,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         });
       }
       if (request.source?.type === 'turn') {
+        const finishedAt = Date.now();
+        this.trackCacheBreak(request, usage, finish.traceId, cacheBreakStartedAt, performance.now());
         this.states.set(llmRequesterLastTurnRequestKey, {
           modelAlias: request.modelAlias,
           contextRevision: request.contextRevision,
@@ -538,7 +558,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           historyHash: fingerprint(JSON.stringify(input.messages)),
           inputTokens: usage === undefined ? undefined : inputTotal(usage),
           startedAt,
-          finishedAt: Date.now(),
+          finishedAt,
         });
       }
       void this.usage.record(
@@ -614,6 +634,71 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         await sleepForRetry(delayMs, signal);
       }
     }
+  }
+
+  private trackCacheBreak(
+    request: ResolvedLLMRequest,
+    usage: TokenUsage | undefined,
+    traceId: string | undefined,
+    startedAt: number,
+    finishedAt: number,
+  ): void {
+    const source = request.source;
+    if (source?.type !== 'turn' || usage === undefined) return;
+    if (!hasCacheReadMeasurement(request.model.protocol, usage)) return;
+    if (
+      usage.inputOther === 0 &&
+      usage.output === 0 &&
+      usage.inputCacheRead === 0 &&
+      usage.inputCacheCreation === 0
+    ) {
+      return;
+    }
+    const prev = this.cacheBreakBaseline;
+    this.cacheBreakBaseline = {
+      model: request.modelAlias,
+      effort: request.thinkingEffort,
+      usage,
+      contextRevision: request.contextRevision,
+      turnId: source.turnId,
+      step: source.step,
+      traceId,
+      finishedAt,
+    };
+    if (
+      prev === undefined ||
+      prev.contextRevision !== request.contextRevision ||
+      startedAt < prev.finishedAt
+    ) {
+      return;
+    }
+    const prevRead = prev.usage.inputCacheRead;
+    const currRead = usage.inputCacheRead;
+    if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
+    if (prevRead - currRead <= CACHE_BREAK_MIN_DROP_TOKENS) return;
+    const properties: CacheBreakDetectedEvent = {
+      turn_id: source.turnId,
+      step_no: source.step,
+      trace_id: traceId,
+      prev_turn_id: prev.turnId,
+      prev_step_no: prev.step,
+      prev_trace_id: prev.traceId,
+      prev_model: prev.model,
+      curr_model: request.modelAlias,
+      prev_effort: prev.effort,
+      curr_effort: request.thinkingEffort,
+      prev_input_cache_read: prevRead,
+      curr_input_cache_read: currRead,
+      prev_input_other: prev.usage.inputOther,
+      curr_input_other: usage.inputOther,
+      prev_output: prev.usage.output,
+      curr_output: usage.output,
+      prev_input_cache_creation: prev.usage.inputCacheCreation,
+      curr_input_cache_creation: usage.inputCacheCreation,
+      cache_read_drop_ratio: (prevRead - currRead) / prevRead,
+      interval_ms: Math.round(finishedAt - prev.finishedAt),
+    };
+    this.telemetry.track2('cache_break_detected', properties);
   }
 
   private get infiniteRetryEnabled(): boolean {
@@ -1022,6 +1107,35 @@ function projectionField(fields: AgentLLMRequestLogFields): LlmRequestProjection
     default:
       return undefined;
   }
+}
+
+function hasCacheReadMeasurement(protocol: Protocol, usage: TokenUsage): boolean {
+  const raw = usage.raw;
+  if (raw === undefined) return true;
+  switch (protocol) {
+    case 'anthropic':
+      return typeof raw['cache_read_input_tokens'] === 'number';
+    case 'openai': {
+      const details = raw['prompt_tokens_details'];
+      return (
+        typeof raw['cached_tokens'] === 'number' ||
+        (typeof details === 'object' &&
+          details !== null &&
+          typeof (details as Record<string, unknown>)['cached_tokens'] === 'number')
+      );
+    }
+    case 'openai_responses': {
+      const details = raw['input_tokens_details'];
+      return (
+        typeof details === 'object' &&
+        details !== null &&
+        typeof (details as Record<string, unknown>)['cached_tokens'] === 'number'
+      );
+    }
+    case 'google-genai':
+      return typeof raw['cachedContentTokenCount'] === 'number';
+  }
+  return true;
 }
 
 function fingerprint(content: string): string {

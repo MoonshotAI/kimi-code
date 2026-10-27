@@ -48,7 +48,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { emptyUsage, mergeUsagePatch, type TokenUsage } from '#human/llm/usage';
 import { type Message } from '#/llm-adapter/contract/message';
 import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
 import type { ThinkingEffort } from '#human/llm/thinking';
@@ -360,6 +360,225 @@ describe('AgentLLMRequesterService measured anchors', () => {
 
     expect(measuredCalls).toHaveLength(1);
     expect(measuredCalls[0]?.usage.inputOther).toBe(40);
+  });
+});
+
+function cacheUsage(inputCacheRead: number, raw?: Record<string, unknown>): TokenUsage {
+  return {
+    inputOther: 100,
+    output: 50,
+    inputCacheRead,
+    inputCacheCreation: 0,
+    raw: raw ?? { cache_read_input_tokens: inputCacheRead },
+  };
+}
+
+function createCacheRequester(usages: readonly (TokenUsage | undefined)[]): ModelRequester {
+  const requester = createRequester({ value: 0 }, null);
+  const base = requester.request.bind(requester);
+  let index = 0;
+  requester.request = async function* (input, signal, options) {
+    const current = index++;
+    const usage = usages[current];
+    if (usage !== undefined) yield { type: 'usage', usage, model: 'wire-model' };
+    for await (const event of base(input, signal, options)) {
+      yield event.type === 'finish' ? { ...event, traceId: `trace-${current + 1}` } : event;
+    }
+  };
+  return requester;
+}
+
+function cacheBreaks(records: readonly TelemetryRecord[]): TelemetryRecord[] {
+  return records.filter((record) => record.event === 'cache_break_detected');
+}
+
+async function requestCacheTurn(service: IAgentLLMRequesterService, turnId: number): Promise<void> {
+  await service.request({ source: { type: 'turn', turnId, step: turnId } });
+}
+
+describe('AgentLLMRequesterService cache break telemetry', () => {
+  it('preserves raw usage fields while merging stream patches', () => {
+    const merged = mergeUsagePatch(
+      cacheUsage(300, { cache_read_input_tokens: 300, input_tokens: 500 }),
+      { output: 87, raw: { output_tokens: 87 } },
+    );
+
+    expect(merged.output).toBe(87);
+    expect(merged.raw).toEqual({
+      cache_read_input_tokens: 300,
+      input_tokens: 500,
+      output_tokens: 87,
+    });
+  });
+
+  it('reports current and actual baseline request identifiers with both usages', async () => {
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(7000)]),
+      undefined,
+    );
+
+    await requestCacheTurn(service, 1);
+    expect(cacheBreaks(telemetryRecords)).toHaveLength(0);
+    await requestCacheTurn(service, 2);
+
+    const events = cacheBreaks(telemetryRecords);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.properties).toMatchObject({
+      turn_id: 2,
+      step_no: 2,
+      trace_id: 'trace-2',
+      prev_turn_id: 1,
+      prev_step_no: 1,
+      prev_trace_id: 'trace-1',
+      prev_model: 'm',
+      curr_model: 'm',
+      prev_effort: 'off',
+      curr_effort: 'off',
+      prev_input_cache_read: 10000,
+      curr_input_cache_read: 7000,
+      prev_input_other: 100,
+      curr_input_other: 100,
+      prev_output: 50,
+      curr_output: 50,
+      prev_input_cache_creation: 0,
+      curr_input_cache_creation: 0,
+      cache_read_drop_ratio: 0.3,
+    });
+    expect(events[0]?.properties?.['interval_ms']).toEqual(expect.any(Number));
+  });
+
+  it('stays quiet within the ratio gate or under the token threshold', async () => {
+    const a = createService(createCacheRequester([cacheUsage(100000), cacheUsage(96000)]), undefined);
+    await requestCacheTurn(a.service, 1);
+    await requestCacheTurn(a.service, 2);
+    expect(cacheBreaks(a.telemetryRecords)).toHaveLength(0);
+
+    const b = createService(createCacheRequester([cacheUsage(4000), cacheUsage(2500)]), undefined);
+    await requestCacheTurn(b.service, 1);
+    await requestCacheTurn(b.service, 2);
+    expect(cacheBreaks(b.telemetryRecords)).toHaveLength(0);
+  });
+
+  it('skips missing and all-zero usage without replacing the baseline', async () => {
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), undefined, emptyUsage(), cacheUsage(5000)]),
+      undefined,
+    );
+
+    for (let turnId = 1; turnId <= 4; turnId++) await requestCacheTurn(service, turnId);
+
+    const events = cacheBreaks(telemetryRecords);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.properties).toMatchObject({
+      prev_turn_id: 1,
+      prev_input_cache_read: 10000,
+      turn_id: 4,
+      curr_input_cache_read: 5000,
+    });
+  });
+
+  it('skips provider responses without a cache-read measurement across protocols', async () => {
+    const cases = [
+      ['anthropic', (read: number) => ({ cache_read_input_tokens: read })],
+      ['openai', (read: number) => ({ cached_tokens: read })],
+      ['openai_responses', (read: number) => ({ input_tokens_details: { cached_tokens: read } })],
+      ['google-genai', (read: number) => ({ cachedContentTokenCount: read })],
+    ] as const;
+
+    for (const [protocol, reported] of cases) {
+      const requester = createCacheRequester([
+        cacheUsage(10000, reported(10000)),
+        cacheUsage(0, {}),
+        cacheUsage(5000, reported(5000)),
+      ]);
+      Object.defineProperty(requester.model, 'protocol', { value: protocol });
+      const { service, telemetryRecords } = createService(requester, undefined);
+      for (let turnId = 1; turnId <= 3; turnId++) await requestCacheTurn(service, turnId);
+
+      const events = cacheBreaks(telemetryRecords);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.properties).toMatchObject({
+        prev_turn_id: 1,
+        prev_input_cache_read: 10000,
+        turn_id: 3,
+        curr_input_cache_read: 5000,
+      });
+    }
+  });
+
+  it('resets the baseline after a context revision change', async () => {
+    let revision = 0;
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(5000), cacheUsage(1000)]),
+      undefined,
+      { prefixRevision: () => revision },
+    );
+
+    await requestCacheTurn(service, 1);
+    revision = 1;
+    await requestCacheTurn(service, 2);
+    expect(cacheBreaks(telemetryRecords)).toHaveLength(0);
+    await requestCacheTurn(service, 3);
+
+    const events = cacheBreaks(telemetryRecords);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.properties).toMatchObject({
+      prev_turn_id: 2,
+      prev_input_cache_read: 5000,
+      turn_id: 3,
+      curr_input_cache_read: 1000,
+    });
+  });
+
+  it('records model changes instead of resetting the baseline', async () => {
+    let model = 'm';
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), cacheUsage(100)]),
+      undefined,
+      { modelAlias: () => model },
+    );
+
+    await requestCacheTurn(service, 1);
+    model = 'other-model';
+    await requestCacheTurn(service, 2);
+
+    expect(cacheBreaks(telemetryRecords)[0]?.properties).toMatchObject({
+      prev_model: 'm',
+      curr_model: 'other-model',
+    });
+  });
+
+  it('skips comparisons when the current request overlapped the baseline request', async () => {
+    const secondGate = createControlledPromise<void>();
+    const thirdGate = createControlledPromise<void>();
+    const requester = createRequester({ value: 0 }, null);
+    const base = requester.request.bind(requester);
+    const started: number[] = [];
+    let index = 0;
+    requester.request = async function* (input, signal, options) {
+      const current = index++;
+      started.push(current);
+      if (current === 1) await secondGate;
+      if (current === 2) await thirdGate;
+      const usage = cacheUsage(current === 2 ? 0 : 10000);
+      yield { type: 'usage', usage, model: 'wire-model' };
+      yield* base(input, signal, options);
+    };
+    const { service, telemetryRecords } = createService(requester, undefined);
+
+    await requestCacheTurn(service, 1);
+    const second = requestCacheTurn(service, 2);
+    const third = requestCacheTurn(service, 3);
+    for (let i = 0; i < 20 && started.length < 3; i++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(started).toEqual([0, 1, 2]);
+    secondGate.resolve();
+    await second;
+    thirdGate.resolve();
+    await third;
+
+    expect(cacheBreaks(telemetryRecords)).toHaveLength(0);
   });
 });
 
