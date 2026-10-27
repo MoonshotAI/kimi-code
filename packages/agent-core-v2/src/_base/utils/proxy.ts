@@ -66,6 +66,8 @@ export function resolveSocksProxy(env: Env): SocksProxyConfig | undefined {
     let url: URL;
     try {
       url = new URL(value);
+      decodeURIComponent(url.username);
+      decodeURIComponent(url.password);
     } catch {
       continue;
     }

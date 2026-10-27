@@ -131,6 +131,9 @@ describe('proxy utilities', () => {
   it('rejects malformed proxy credentials instead of treating them as proxied', () => {
     expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'http://user:%ZZ@proxy:3128' }, 'http://example.com')).toBe(false);
     expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'http://user:p%40ss@proxy:3128' }, 'http://example.com')).toBe(true);
+    expect(isProxyConfiguredForUrl({ ALL_PROXY: 'socks5://user:%ZZ@proxy:1080' }, 'http://example.com')).toBe(false);
+    expect(resolveSocksProxy({ ALL_PROXY: 'socks5://user:%ZZ@proxy:1080' })).toBeUndefined();
+    expect(isProxyConfiguredForUrl({ ALL_PROXY: 'socks5://user:p%40ss@proxy:1080' }, 'http://example.com')).toBe(true);
   });
 
   it('installs the global dispatcher only when a proxy dispatcher exists', () => {
