@@ -127,8 +127,7 @@ const history: Message[] = [
 type ProjectionKind = 'normal' | 'strict' | 'degraded' | 'stripped';
 
 function classifyProjectionPolicy(policy: ProjectionPolicy | undefined): ProjectionKind {
-  if (typeof policy?.media === 'object') return 'stripped';
-  if (policy?.media === 'degraded') return 'degraded';
+  if (policy?.media !== undefined) return 'degradeCount' in policy.media ? 'degraded' : 'stripped';
   if (policy?.structure === 'strict') return 'strict';
   return 'normal';
 }
@@ -208,7 +207,7 @@ function createService(
   requester: ModelRequester,
   projector:
     | (Pick<IAgentContextProjectorService, 'project'> &
-        Partial<Pick<IAgentContextProjectorService, 'captureMediaStripSnapshot'>>)
+        Partial<Pick<IAgentContextProjectorService, 'captureMediaStripSnapshot' | 'captureMediaDegradeCount'>>)
     | undefined,
   options: {
     readonly thinkingLevel?: ThinkingEffort;
@@ -295,6 +294,7 @@ function createService(
   } else {
     ix.stub(IAgentContextProjectorService, {
       captureMediaStripSnapshot: () => testSnapshot,
+      captureMediaDegradeCount: () => 0,
       ...projector,
     });
   }
@@ -806,11 +806,11 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
   it('warns for each escalation when the degraded resend is also rejected as too large', async () => {
     const calls = { value: 0 };
     const projection = recordProjectionCalls((messages, policy) => {
-      if (policy?.media === 'degraded') {
+      if (policy?.media !== undefined && 'degradeCount' in policy.media) {
         const message = messages[0]!;
         return [{ ...message, content: message.content.slice(-2) }];
       }
-      return typeof policy?.media === 'object' ? history : messages;
+      return policy?.media !== undefined ? history : messages;
     });
     const contextMessages: Message[] = [
       {
@@ -898,6 +898,45 @@ describe('AgentLLMRequesterService media recovery prefix parity', () => {
 
     expectPrefixExtension(settled, inputs[2]!);
     expect(inputs).toHaveLength(3);
+  });
+
+  it('keeps the media-degraded prefix when a later turn adds new media', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester({ value: 0 }, BODY_TOO_LARGE_413, [], inputs),
+      undefined,
+    );
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(inputs).toHaveLength(2);
+    const settled = inputs[1]!;
+
+    await service.request({
+      messages: [...degradedTurn, imageMessage('data:image/png;base64,FRESH', 'fresh')],
+      source: { type: 'turn', turnId: 2, step: 1 },
+    });
+
+    expect(inputs).toHaveLength(3);
+    expectPrefixExtension(settled, inputs[2]!);
+  });
+
+  it('re-degrades instead of stripping when new media push an inherited degraded request over the limit', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(mediaRejectingRequester(inputs), undefined);
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    await service.request({
+      messages: [...degradedTurn, imageMessage('data:image/png;base64,FRESH', 'fresh')],
+      source: { type: 'turn', turnId: 2, step: 1 },
+    });
+
+    expect(inputs).toHaveLength(4);
+    expect(
+      inputs[3]!.messages
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url),
+    ).toEqual(['data:image/png;base64,NEWEST', 'data:image/png;base64,FRESH']);
   });
 
   it.each([
@@ -1078,7 +1117,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(policies).toEqual([
       undefined,
       { structure: 'strict' },
-      { structure: 'strict', media: 'degraded' },
+      { structure: 'strict', media: { degradeCount: expect.anything() } },
       { structure: 'strict', media: { strip: expect.anything() } },
     ]);
     await dispatcher.flush();
@@ -1118,7 +1157,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     const projector = {
       project: (messages: readonly ContextMessage[], policy: ProjectionPolicy | undefined) => {
         policies.push(policy);
-        if (policy?.media !== 'degraded') return messages;
+        if (policy?.media === undefined || !('degradeCount' in policy.media)) return messages;
         const message = messages[0]!;
         return [{ ...message, content: message.content.slice(policy.structure === 'strict' ? -1 : -2) }];
       },
@@ -1135,8 +1174,8 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(calls.value).toBe(3);
     expect(policies).toEqual([
       undefined,
-      { media: 'degraded' },
-      { structure: 'strict', media: 'degraded' },
+      { media: { degradeCount: expect.anything() } },
+      { structure: 'strict', media: { degradeCount: expect.anything() } },
     ]);
     expect(events.filter((event) => event.type === 'warning')).toEqual([
       expect.objectContaining({ type: 'warning', code: 'media-degraded' }),
