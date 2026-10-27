@@ -171,10 +171,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       readonly viaSymlink: boolean;
     }
     const rootRel = rel === '.' ? '' : rel;
-    const rootIsSymlink = await this.hostFs
-      .lstat(this.absOf(rootRel))
-      .then((st) => st.isSymbolicLink === true)
-      .catch(() => false);
+    const rootIsSymlink = await this.pathHasSymlink(this.absOf(rootRel));
     const queue: QueueEntry[] = [
       {
         relPath: rootRel,
@@ -299,6 +296,18 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       response.children_by_path = childrenByPath;
     }
     return response;
+  }
+
+  private async pathHasSymlink(absPath: string): Promise<boolean> {
+    const rel = this.path.relative(this.workDir, absPath);
+    if (rel === '' || rel.startsWith('..') || this.path.isAbsolute(rel)) return false;
+    let current = this.workDir;
+    for (const segment of rel.split(this.path.separator)) {
+      current = this.path.join(current, segment);
+      const st = await this.hostFs.lstat(current).catch(() => undefined);
+      if (st?.isSymbolicLink === true) return true;
+    }
+    return false;
   }
 
   private async symlinkDirectoryTarget(

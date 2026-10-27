@@ -1676,6 +1676,33 @@ describe('WorkspaceFsService.list', () => {
     ).toBe(9_999);
   });
 
+  it('counts symlinks in intermediate root path segments', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`real/sub/deep/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(
+      files,
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: 'link/sub',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.children_by_path?.['link/sub/deep']).toHaveLength(9_999);
+  });
+
   it('finds allowed descendants through external symlinks in ignored directories', async () => {
     const fs = makeSession(
       { '.gitignore': 'ignored/\n', '/outside/keep.txt': '' },
