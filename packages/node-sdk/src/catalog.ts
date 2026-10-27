@@ -1,21 +1,48 @@
-import type { KimiConfig, ModelAlias } from '#/config/index';
+import type { KimiConfig, ModelAlias, ProviderType } from '#/config/index';
 import {
-  catalogBaseUrl,
-  catalogProviderModels,
-  inferWireType,
-  resolveCatalogImport,
-  type Catalog,
-  type CatalogImportInvalidReason,
-  type CatalogImportResolution,
-  type CatalogModel,
-  type CatalogProviderEntry,
+  modelsDevBaseUrl,
+  modelsDevProviderModels,
+  resolveModelsDevImport,
   type ModelCapability,
-  type ProviderType,
-} from '@moonshot-ai/kosong';
+} from '@moonshot-ai/agent-core-v2';
+import type {
+  ModelsDevCatalog as Catalog,
+  ModelsDevImportInvalidReason as CatalogImportInvalidReason,
+  ModelsDevModel as CatalogModel,
+  ModelsDevProviderEntry as CatalogProviderEntry,
+} from '@moonshot-ai/agent-core-v2';
 
-export { catalogBaseUrl, catalogProviderModels, inferWireType, resolveCatalogImport };
-export type { CatalogImportInvalidReason, CatalogImportResolution };
-export type { Catalog, CatalogModel, CatalogProviderEntry };
+export { modelsDevBaseUrl as catalogBaseUrl, modelsDevProviderModels as catalogProviderModels };
+export type { Catalog, CatalogImportInvalidReason, CatalogModel, CatalogProviderEntry };
+
+export type CatalogImportResolution =
+  | {
+      readonly kind: 'ok';
+      readonly wire: ProviderType;
+      readonly guessed: boolean;
+      readonly baseUrl?: string;
+    }
+  | {
+      readonly kind: 'needs-base-url';
+      readonly wire: ProviderType;
+      readonly guessed: boolean;
+    }
+  | {
+      readonly kind: 'invalid';
+      readonly reason: CatalogImportInvalidReason;
+    };
+
+export function resolveCatalogImport(
+  entry: CatalogProviderEntry,
+  userBaseUrl?: string,
+): CatalogImportResolution {
+  return resolveModelsDevImport(entry, userBaseUrl) as CatalogImportResolution;
+}
+
+export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
+  const resolution = resolveModelsDevImport(entry);
+  return resolution.kind === 'invalid' ? undefined : (resolution.wire as ProviderType);
+}
 
 export const DEFAULT_CATALOG_URL = 'https://models.dev/api.json';
 

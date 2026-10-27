@@ -13,7 +13,6 @@
     "src/**/*.ts",
     "../agent-core-v2/src/**/*.ts",
     "../klient/src/**/*.ts",
-    "../kosong/src/**/*.ts",
     "../oauth/src/**/*.ts",
     "../protocol/src/**/*.ts"
   ],
