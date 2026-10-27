@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
@@ -1164,6 +1164,54 @@ describe('projects.json migration and patch', () => {
     } finally {
       first.dispose();
       second.dispose();
+    }
+  });
+
+  it('watches consecutive atomic projects replacements', async () => {
+    const persistence = createPersistence();
+    const id = 'wm_watch';
+    const entry: PersistedWorkspaceEntry = {
+      root: homeDir,
+      name: 'initial',
+      kind: 'managed',
+      additional_dirs: [],
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    };
+    const replace = async (name: string): Promise<void> => {
+      const temporary = join(homeDir, `projects-${name}.tmp`);
+      await fsp.writeFile(
+        temporary,
+        JSON.stringify({
+          schema_version: 2,
+          projects: { [id]: { ...entry, name } },
+          deleted_project_ids: [],
+          idempotency_keys: {},
+        }),
+        'utf8',
+      );
+      await fsp.rename(temporary, join(homeDir, 'projects.json'));
+    };
+
+    try {
+      await persistence.load();
+      let events = 0;
+      persistence.onDidChange(() => {
+        events += 1;
+      });
+      await replace('first');
+      await vi.waitFor(() => {
+        expect(events).toBeGreaterThan(0);
+      });
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      const firstEvents = events;
+
+      await replace('second');
+      await vi.waitFor(() => {
+        expect(events).toBeGreaterThan(firstEvents);
+      });
+    } finally {
+      persistence.dispose();
     }
   });
 

@@ -58,12 +58,12 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   ) {
     super();
     const catalogFile = join(this.bootstrap.homeDir, PROJECTS_KEY);
-    const handle = watch(catalogFile, { listing: false });
+    const handle = watch(catalogFile);
     this._register(handle);
     this.watchReady = handle.ready;
     this._register(
       handle.onDidChange((change) => {
-        if (normalize(change.path) !== catalogFile) return;
+        if (normalize(change.path) !== normalize(catalogFile)) return;
         this.watchDebounce.cancelAndSet(() => {
           this.changeEmitter.fire();
         }, WATCH_DEBOUNCE_MS);
