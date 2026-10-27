@@ -9,6 +9,7 @@ import {
   IAgentTowerService,
   resumeSessionById,
   towerEnterFailureMessage,
+  type IAgentScopeHandle,
   type PermissionMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -16,17 +17,10 @@ import type { SessionAgentConfigPartial } from '@moonshot-ai/agent-core-v2/app/s
 
 import { ensureMainAgent } from '../transport/mainAgent';
 
-export async function applySessionAgentConfig(
-  core: Scope,
-  sessionId: string,
+export async function applyAgentConfig(
+  agent: IAgentScopeHandle,
   agentConfig: SessionAgentConfigPartial,
 ): Promise<void> {
-  const session = await resumeSessionById(core.accessor, sessionId);
-  if (session === undefined) {
-    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
-  }
-  const agent = await ensureMainAgent(session);
-
   const profile = agent.accessor.get(IAgentProfileService);
   if (agentConfig.model !== undefined && agentConfig.model !== '') {
     await profile.setModel(agentConfig.model);
@@ -87,4 +81,17 @@ export async function applySessionAgentConfig(
         break;
     }
   }
+}
+
+export async function applySessionAgentConfig(
+  core: Scope,
+  sessionId: string,
+  agentConfig: SessionAgentConfigPartial,
+): Promise<void> {
+  const session = await resumeSessionById(core.accessor, sessionId);
+  if (session === undefined) {
+    throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
+  }
+  const agent = await ensureMainAgent(session);
+  await applyAgentConfig(agent, agentConfig);
 }

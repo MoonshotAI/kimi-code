@@ -8,11 +8,14 @@ import {
   agentRuntimeBindingKey,
   IAgentTitlePromptSource,
   IAgentContextMemoryService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
+  IAgentPlanService,
   IAgentProfileService,
   IAgentLoopService,
   IAgentStateService,
+  IAgentSwarmService,
   IAgentToolPolicyService,
   IBootstrapService,
   IConfigService,
@@ -308,6 +311,91 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(list.body.data.active.prompt_id).toBe(submitted.body.data.prompt_id);
     }
     expect(Array.isArray(list.body.data.queued)).toBe(true);
+  });
+
+  it('applies plan_mode and swarm_mode before submitting the prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const plan = agent.accessor.get(IAgentPlanService);
+    const swarm = agent.accessor.get(IAgentSwarmService);
+    const loop = agent.accessor.get(IAgentLoopService);
+    const planEnter = vi.spyOn(plan, 'enter');
+    const planExit = vi.spyOn(plan, 'exit');
+    const swarmEnter = vi.spyOn(swarm, 'enter');
+    const swarmExit = vi.spyOn(swarm, 'exit');
+    const submit = vi.spyOn(loop, 'submit');
+    const post = (planMode: boolean, swarmMode: boolean) =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+        plan_mode: planMode,
+        swarm_mode: swarmMode,
+      });
+
+    const first = await post(true, true);
+    expect(first.body.code).toBe(0);
+    expect(planEnter).toHaveBeenCalledTimes(1);
+    expect(swarmEnter).toHaveBeenCalledTimes(1);
+    expect(swarmEnter).toHaveBeenCalledWith('manual');
+    expect(planEnter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(swarmEnter.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+    expect(await plan.status()).not.toBeNull();
+    expect(swarm.isActive).toBe(true);
+
+    const repeated = await post(true, true);
+    expect(repeated.body.code).toBe(0);
+    expect(planEnter).toHaveBeenCalledTimes(1);
+    expect(swarmEnter).toHaveBeenCalledTimes(1);
+
+    const off = await post(false, false);
+    expect(off.body.code).toBe(0);
+    expect(planExit).toHaveBeenCalledTimes(1);
+    expect(swarmExit).toHaveBeenCalledTimes(1);
+    expect(planExit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+    expect(swarmExit.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+    expect(await plan.status()).toBeNull();
+    expect(swarm.isActive).toBe(false);
+  });
+
+  it('applies goal_objective and goal_control before submitting prompts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const goal = agent.accessor.get(IAgentGoalService);
+    const loop = agent.accessor.get(IAgentLoopService);
+    const create = vi.spyOn(goal, 'createGoal').mockResolvedValue({} as never);
+    const pause = vi.spyOn(goal, 'pauseGoal').mockResolvedValue({} as never);
+    const resume = vi.spyOn(goal, 'resumeGoal').mockResolvedValue({} as never);
+    const cancel = vi.spyOn(goal, 'cancelGoal').mockResolvedValue({} as never);
+    const submit = vi.spyOn(loop, 'submit');
+    const post = (goalObjective?: string, goalControl?: 'pause' | 'resume' | 'cancel') =>
+      call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'hello' }],
+        goal_objective: goalObjective,
+        goal_control: goalControl,
+      });
+
+    const created = await post('finish the migration');
+    expect(created.body.code).toBe(0);
+    expect(create).toHaveBeenCalledWith({ objective: 'finish the migration' });
+    expect(create.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[0]!);
+
+    const paused = await post(undefined, 'pause');
+    expect(paused.body.code).toBe(0);
+    expect(pause).toHaveBeenCalledWith({});
+    expect(pause.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[1]!);
+
+    const resumed = await post(undefined, 'resume');
+    expect(resumed.body.code).toBe(0);
+    expect(resume).toHaveBeenCalledWith({ continueIfPaused: true, continueIfBlocked: true });
+    expect(resume.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[2]!);
+
+    const cancelled = await post(undefined, 'cancel');
+    expect(cancelled.body.code).toBe(0);
+    expect(cancel).toHaveBeenCalledWith({});
+    expect(cancel.mock.invocationCallOrder[0]!).toBeLessThan(submit.mock.invocationCallOrder[3]!);
   });
 
   it('accepts a prompt-carried model when default_model is not configured', async () => {

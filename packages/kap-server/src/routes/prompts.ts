@@ -65,6 +65,7 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { type ActionTable, resolveActionTarget, runAction } from './action-dispatch';
+import { applyAgentConfig } from './sessionAgentConfig';
 
 interface PromptRouteHost {
   get(
@@ -112,6 +113,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
   return {
+    agent,
     prompt: agent.accessor.get(IAgentLoopService),
     skill: agent.accessor.get(IAgentSkillService),
     events: agent.accessor.get(IEventBus),
@@ -285,6 +287,12 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+          await applyAgentConfig(resolved.agent, {
+            plan_mode: req.body.plan_mode,
+            swarm_mode: req.body.swarm_mode,
+            goal_objective: req.body.goal_objective,
+            goal_control: req.body.goal_control,
+          });
           if (req.body.disabled_tools !== undefined) {
             try {
               await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
