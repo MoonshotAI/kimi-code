@@ -171,12 +171,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       readonly viaSymlink: boolean;
     }
     const rootRel = rel === '.' ? '' : rel;
+    const rootIsSymlink = await this.hostFs
+      .lstat(this.absOf(rootRel))
+      .then((st) => st.isSymbolicLink === true)
+      .catch(() => false);
     const queue: QueueEntry[] = [
       {
         relPath: rootRel,
         depthRemaining: req.depth,
         ancestors: [await this.realpathExistingPrefix(this.absOf(rootRel))],
-        viaSymlink: false,
+        viaSymlink: rootIsSymlink,
       },
     ];
 
@@ -190,6 +194,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
 
     while (queue.length > 0) {
       const entry = queue.shift()!;
+      if (budgetExhausted && entry.viaSymlink) continue;
       let names: readonly string[];
       try {
         names = (await this.hostFs.readdir(this.absOf(entry.relPath))).map((e) => e.name);
@@ -268,12 +273,17 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           const realPath =
             child.realPath ??
             (await this.realpathExistingPrefix(this.absOf(child.relPath)).catch(() => undefined));
-          if (realPath !== undefined && !entry.ancestors.includes(realPath)) {
+          const childViaSymlink = viaSymlink || child.stat.isSymbolicLink === true;
+          if (
+            realPath !== undefined &&
+            !entry.ancestors.includes(realPath) &&
+            (!budgetExhausted || !childViaSymlink)
+          ) {
             queue.push({
               relPath: child.relPath,
               depthRemaining: entry.depthRemaining - 1,
               ancestors: [...entry.ancestors, realPath],
-              viaSymlink: viaSymlink || child.stat.isSymbolicLink === true,
+              viaSymlink: childViaSymlink,
             });
           }
         }
@@ -282,7 +292,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       if (entry.depthRemaining < req.depth) {
         childrenByPath[parentKey] = bucket;
       }
-      if (budgetExhausted) break;
     }
 
     const response: FsListResponse = { items, truncated };

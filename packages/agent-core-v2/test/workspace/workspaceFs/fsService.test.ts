@@ -1656,6 +1656,24 @@ describe('WorkspaceFsService.list', () => {
       .filter(([path]) => path === 'link' || path.startsWith('link/'))
       .reduce((total, [, entries]) => total + entries.length, 0);
     expect(symlinkDescendantEntries).toBe(10_000);
+    expect(result.children_by_path?.['real/bulk']).toHaveLength(10_001);
+
+    const direct = await fs.list({
+      path: 'link',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(direct.truncated).toBe(true);
+    expect(
+      Object.values(direct.children_by_path ?? {}).reduce(
+        (total, entries) => total + entries.length,
+        0,
+      ),
+    ).toBe(9_999);
   });
 
   it('finds allowed descendants through external symlinks in ignored directories', async () => {
