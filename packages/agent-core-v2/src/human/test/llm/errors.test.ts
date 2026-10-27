@@ -280,6 +280,24 @@ describe('classifyKimiQuotaError', () => {
     }
   });
 
+  it('descends into the Anthropic quota error body', () => {
+    const classified = classifyKimiQuotaError({
+      status: 429,
+      message: 'SDK-composed fallback',
+      error: {
+        type: 'exceeded_current_quota_error',
+        error: { message: 'backend anthropic quota message' },
+      },
+      headers: new Headers(),
+    });
+
+    expect(classified).toMatchObject({
+      kind: 'quota_exhausted',
+      message: 'backend anthropic quota message',
+      statusCode: 429,
+    });
+  });
+
   it('classifies by message wording without changing the backend text', () => {
     const classified = classifyKimiQuotaError({
       status: 429,

@@ -43,7 +43,11 @@ export function classifyKimiQuotaError(error: unknown): LlmRemoteErrorMessage | 
   if (status !== 429) return undefined;
 
   const nestedError = readErrorObjectProp(error);
-  const message = nestedError === undefined ? '' : (readStringProp(nestedError, 'message') ?? '');
+  const nestedMessage = nestedError === undefined ? undefined : readStringProp(nestedError, 'message');
+  const anthropicError = nestedError === undefined ? undefined : readErrorObjectProp(nestedError);
+  const message =
+    nestedMessage ??
+    (anthropicError === undefined ? '' : (readStringProp(anthropicError, 'message') ?? ''));
   const structuredHit = collectErrorCodes(error).some((code) =>
     KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code),
   );
