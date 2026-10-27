@@ -1050,8 +1050,7 @@ describe('WorkspaceService (file-backed)', () => {
   });
 
 describe('projects.json migration and patch', () => {
-  function createPersistence(): FileWorkspacePersistence {
-    const storage = new FileStorageService(homeDir);
+  function createPersistence(storage = new FileStorageService(homeDir)): FileWorkspacePersistence {
     return new FileWorkspacePersistence(
       new JsonAtomicDocumentStore(storage),
       storage,
@@ -1276,6 +1275,27 @@ describe('projects.json migration and patch', () => {
     } finally {
       first.dispose();
       second.dispose();
+    }
+  });
+
+  it('retries migration after transient snapshot conflicts', async () => {
+    const storage = new FileStorageService(homeDir);
+    const read = storage.read.bind(storage);
+    let attempts = 0;
+    vi.spyOn(storage, 'read').mockImplementation(async (scope, key) => {
+      if (key === 'workspaces.json' && attempts < 6) {
+        attempts += 1;
+        return new TextEncoder().encode(JSON.stringify({ version: 1, workspaces: {}, attempt: attempts }));
+      }
+      return read(scope, key);
+    });
+    const persistence = createPersistence(storage);
+
+    try {
+      await expect(persistence.load()).rejects.toThrow(/changed repeatedly/);
+      expect((await persistence.load())?.workspaces).toEqual([]);
+    } finally {
+      persistence.dispose();
     }
   });
 

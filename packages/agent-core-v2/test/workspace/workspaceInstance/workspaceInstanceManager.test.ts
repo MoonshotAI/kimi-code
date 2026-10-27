@@ -352,6 +352,23 @@ describe('WorkspaceInstanceManager', () => {
       await value.dispose();
     });
 
+    it('matches exact and nested cwds under additional source roots', async () => {
+      const value = manager([
+        {
+          ...rootedWorkspace('multi', '/primary'),
+          additionalDirs: ['/extra'],
+        },
+      ]);
+      const lease = await value.acquire({ workspaceId: 'multi' });
+
+      expect(value.findContaining('/extra')?.id).toBe('multi');
+      expect(value.findContaining('/extra/nested/pkg')?.id).toBe('multi');
+      expect(value.findContaining('/extra-other')).toBeUndefined();
+      expect(value.findContaining('/outside')).toBeUndefined();
+      lease.dispose();
+      await value.dispose();
+    });
+
     it('matches across Windows spelling variants', async () => {
       const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
       const lease = await value.acquire({ workspaceId: 'win' });

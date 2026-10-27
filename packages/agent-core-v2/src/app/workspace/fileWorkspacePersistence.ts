@@ -114,7 +114,10 @@ export class FileWorkspacePersistence extends Disposable implements IWorkspacePe
   }
 
   private ensureMigrated(): Promise<void> {
-    this.migration ??= this.migrate();
+    this.migration ??= this.migrate().catch((error) => {
+      this.migration = undefined;
+      throw error;
+    });
     return this.migration;
   }
 

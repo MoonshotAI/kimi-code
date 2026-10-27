@@ -108,11 +108,13 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     const probe = canonicalWorkspaceRoot(cwd);
     let best: { readonly instance: WorkspaceInstance; readonly rootLength: number } | undefined;
     for (const instance of this.instances.values()) {
-      const root = canonicalWorkspaceRoot(instance.root);
-      const prefix = root.endsWith('/') ? root : `${root}/`;
-      if (probe !== root && !probe.startsWith(prefix)) continue;
-      if (best === undefined || root.length > best.rootLength) {
-        best = { instance, rootLength: root.length };
+      for (const dir of [instance.root, ...instance.metadata.additionalDirs]) {
+        const root = canonicalWorkspaceRoot(dir);
+        const prefix = root.endsWith('/') ? root : `${root}/`;
+        if (probe !== root && !probe.startsWith(prefix)) continue;
+        if (best === undefined || root.length > best.rootLength) {
+          best = { instance, rootLength: root.length };
+        }
       }
     }
     return best?.instance;
