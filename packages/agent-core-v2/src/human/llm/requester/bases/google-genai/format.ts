@@ -292,9 +292,17 @@ function parseUsageMetadata(response: Record<string, unknown>): TokenUsage | und
 const NETWORK_RE = /network|connection|connect|disconnect|fetch failed/i;
 const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
+interface GoogleGenAIErrorBody {
+  readonly error?: {
+    readonly message?: unknown;
+    readonly details?: unknown;
+  };
+}
+
 export function convertGoogleGenAIError(
   error: unknown,
   classifyErrorHook?: (error: unknown) => LlmRemoteErrorMessage | undefined,
+  streamError = false,
 ): LlmRemoteErrorMessage {
   if (isAbortError(error)) {
     return toLlmErrorMessage(error);
@@ -304,11 +312,20 @@ export function convertGoogleGenAIError(
     return hooked;
   }
   if (error instanceof RawGoogleGenAISDKApiError) {
-    return toLlmStatusErrorMessage({
+    const body = parseGoogleGenAIErrorBody(error.message);
+    const message = typeof body?.error?.message === 'string' ? body.error.message : '';
+    const converted = toLlmStatusErrorMessage({
       statusCode: error.status,
-      message: error.message,
-      retryAfterMs: parseRetryInfoDelayMs(error.message),
+      message,
+      retryAfterMs: parseRetryInfoDelayMs(body),
+      retryable:
+        streamError && [408, 409, 429, 500, 502, 503, 504, 529].includes(error.status)
+          ? true
+          : undefined,
     });
+    if (!streamError || !('statusCode' in converted)) return converted;
+    const { statusCode: _statusCode, ...withoutHttpStatus } = converted;
+    return withoutHttpStatus;
   }
   if (error instanceof Error) {
     const msg = error.message;
@@ -327,28 +344,32 @@ export function convertGoogleGenAIError(
   return { kind: 'unknown', message: `GoogleGenAI error: ${String(error)}` };
 }
 
-function parseRetryInfoDelayMs(message: string): number | null {
+function parseGoogleGenAIErrorBody(message: string): GoogleGenAIErrorBody | undefined {
   const jsonStart = message.indexOf('{');
-  if (jsonStart < 0) return null;
+  if (jsonStart < 0) return undefined;
   try {
     const body: unknown = JSON.parse(message.slice(jsonStart));
-    if (typeof body !== 'object' || body === null) return null;
-    const details = (body as { error?: { details?: unknown } }).error?.details;
-    if (!Array.isArray(details)) return null;
-    for (const detail of details) {
-      if (typeof detail !== 'object' || detail === null) continue;
-      const type = (detail as { '@type'?: unknown })['@type'];
-      if (typeof type !== 'string' || !type.endsWith('google.rpc.RetryInfo')) continue;
-      const retryDelay = (detail as { retryDelay?: unknown }).retryDelay;
-      if (typeof retryDelay !== 'string') continue;
-      const match = /^(\d+(?:\.\d+)?)s$/.exec(retryDelay.trim());
-      if (match?.[1] === undefined) continue;
-      const seconds = Number.parseFloat(match[1]);
-      if (!Number.isFinite(seconds) || seconds < 0) continue;
-      return Math.round(seconds * 1000);
-    }
-    return null;
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return undefined;
+    return body as GoogleGenAIErrorBody;
   } catch {
-    return null;
+    return undefined;
   }
+}
+
+function parseRetryInfoDelayMs(body: GoogleGenAIErrorBody | undefined): number | null {
+  const details = body?.error?.details;
+  if (!Array.isArray(details)) return null;
+  for (const detail of details) {
+    if (typeof detail !== 'object' || detail === null) continue;
+    const type = (detail as { '@type'?: unknown })['@type'];
+    if (typeof type !== 'string' || !type.endsWith('google.rpc.RetryInfo')) continue;
+    const retryDelay = (detail as { retryDelay?: unknown }).retryDelay;
+    if (typeof retryDelay !== 'string') continue;
+    const match = /^(\d+(?:\.\d+)?)s$/.exec(retryDelay.trim());
+    if (match?.[1] === undefined) continue;
+    const seconds = Number.parseFloat(match[1]);
+    if (!Number.isFinite(seconds) || seconds < 0) continue;
+    return Math.round(seconds * 1000);
+  }
+  return null;
 }

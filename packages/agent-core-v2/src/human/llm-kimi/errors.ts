@@ -42,11 +42,12 @@ export function classifyKimiQuotaError(error: unknown): LlmRemoteErrorMessage | 
   const status = (error as Record<string, unknown>)['status'];
   if (status !== 429) return undefined;
 
-  const message = readStringProp(error, 'message') ?? '';
+  const nestedError = readErrorObjectProp(error);
+  const message = nestedError === undefined ? '' : (readStringProp(nestedError, 'message') ?? '');
   const structuredHit = collectErrorCodes(error).some((code) =>
     KIMI_QUOTA_EXHAUSTED_ERROR_CODES.has(code),
   );
-  const lowerMessage = message.toLowerCase();
+  const lowerMessage = (readStringProp(error, 'message') ?? '').toLowerCase();
   const wordingHit = KIMI_QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) =>
     pattern.test(lowerMessage),
   );

@@ -12,8 +12,10 @@ import {
   ChatProviderError,
   classifyApiError,
   createAbortError,
+  errorFromLlmMessage,
   isAbortError,
   isRetryableGenerateError,
+  llmMessageFromError,
   normalizeAPIStatusError,
   throwIfAbortError,
 } from '#/llm-adapter/contract/errors';
@@ -180,5 +182,86 @@ describe('classifyApiError', () => {
   it('falls back to other for unknown values', () => {
     expect(classifyApiError(new Error('boom')).kind).toBe('other');
     expect(classifyApiError('boom').kind).toBe('other');
+  });
+});
+
+describe('model error HTTP status source', () => {
+  it('keeps rate-limit semantics without synthesizing HTTP 429', () => {
+    const error = errorFromLlmMessage({
+      kind: 'rate_limit',
+      message: 'backend stream rate limit',
+      requestId: 'req-stream',
+      retryAfterMs: null,
+      headers: { 'x-trace-id': 'trace-stream' },
+    });
+
+    expect(error).toBeInstanceOf(APIProviderRateLimitError);
+    expect(error).toMatchObject({
+      code: 'provider.rate_limit',
+      message: 'backend stream rate limit',
+      statusCode: undefined,
+      requestId: 'req-stream',
+    });
+    expect(isRetryableGenerateError(error)).toBe(true);
+    expect(llmMessageFromError(error)).toMatchObject({
+      kind: 'rate_limit',
+      message: 'backend stream rate limit',
+      statusCode: undefined,
+    });
+  });
+
+  it('keeps quota exhaustion non-retryable without synthesizing HTTP 429', () => {
+    const error = errorFromLlmMessage({
+      kind: 'quota_exhausted',
+      message: 'backend quota failure',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+    });
+
+    expect(error).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(error).toMatchObject({ statusCode: undefined });
+    expect(isRetryableGenerateError(error)).toBe(false);
+  });
+
+  it('preserves explicit retryability for a status-less stream failure', () => {
+    const transient = errorFromLlmMessage({
+      kind: 'status',
+      message: 'backend stream 503',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable: true,
+    });
+    const deterministic = errorFromLlmMessage({
+      kind: 'status',
+      message: 'backend stream 400',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+    });
+
+    expect(transient).toBeInstanceOf(APIStatusError);
+    expect(isRetryableGenerateError(transient)).toBe(true);
+    expect(isRetryableGenerateError(deterministic)).toBe(false);
+    expect(llmMessageFromError(transient)).toMatchObject({
+      kind: 'status',
+      statusCode: undefined,
+      retryable: true,
+    });
+  });
+
+  it('preserves a real model HTTP status', () => {
+    const error = errorFromLlmMessage({
+      kind: 'status',
+      message: 'backend HTTP 503',
+      statusCode: 503,
+      requestId: 'req-http',
+      retryAfterMs: null,
+      headers: null,
+    });
+
+    expect(error).toMatchObject({ message: 'backend HTTP 503', statusCode: 503 });
+    expect(isRetryableGenerateError(error)).toBe(true);
   });
 });
