@@ -51,6 +51,7 @@ import {
 } from '#/agent/tokenCounting/configSection';
 import '#/agent/loop/configSection';
 import {
+  LOOP_COMPACTION_TRIGGER_RATIO_ENV,
   LOOP_CONTROL_SECTION,
   LOOP_MAX_ATTEMPTS_PER_STEP_ENV,
   LOOP_MAX_RETRIES_PER_STEP_ENV,
@@ -1039,14 +1040,34 @@ describe('loopControl config section', () => {
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = 'abc';
     env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '-1';
+    env[LOOP_COMPACTION_TRIGGER_RATIO_ENV] = 'abc';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({});
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '100';
     env[LOOP_MAX_ATTEMPTS_PER_STEP_ENV] = '3';
+    env[LOOP_COMPACTION_TRIGGER_RATIO_ENV] = '0.9';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxStepsPerTurn: 100,
+      maxAttemptsPerStep: 3,
+      compactionTriggerRatio: 0.9,
+    });
+
+    env[LOOP_COMPACTION_TRIGGER_RATIO_ENV] = '1';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 100,
       maxAttemptsPerStep: 3,
     });
+
+    env[LOOP_COMPACTION_TRIGGER_RATIO_ENV] = ' ';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
+      maxStepsPerTurn: 100,
+      maxAttemptsPerStep: 3,
+    });
+
+    env[LOOP_COMPACTION_TRIGGER_RATIO_ENV] = '0.5';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).compactionTriggerRatio).toBe(0.5);
+    env[LOOP_COMPACTION_TRIGGER_RATIO_ENV] = '0.99';
+    expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).compactionTriggerRatio).toBe(0.99);
 
     env[LOOP_MAX_STEPS_PER_TURN_ENV] = '50';
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION).maxStepsPerTurn).toBe(50);
@@ -1058,6 +1079,7 @@ describe('loopControl config section', () => {
     const env: Record<string, string> = {
       [LOOP_MAX_STEPS_PER_TURN_ENV]: '7',
       [LOOP_MAX_ATTEMPTS_PER_STEP_ENV]: '2',
+      [LOOP_COMPACTION_TRIGGER_RATIO_ENV]: '0.9',
     };
     const disposables = new DisposableStore();
     const ix = disposables.add(new TestInstantiationService());
@@ -1065,7 +1087,9 @@ describe('loopControl config section', () => {
     await storage.write(
       '',
       'config.toml',
-      new TextEncoder().encode('[loop_control]\nmax_steps_per_turn = 100\n'),
+      new TextEncoder().encode(
+        '[loop_control]\nmax_steps_per_turn = 100\ncompaction_trigger_ratio = 0.7\n',
+      ),
     );
     ix.stub(ILogService, stubLog());
     ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
@@ -1080,20 +1104,24 @@ describe('loopControl config section', () => {
       maxStepsPerTurn: 7,
       maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
+      compactionTriggerRatio: 0.8,
     });
 
     expect(config.get<LoopControl>(LOOP_CONTROL_SECTION)).toEqual({
       maxStepsPerTurn: 7,
       maxAttemptsPerStep: 2,
       reservedContextSize: 5000,
+      compactionTriggerRatio: 0.9,
     });
     expect(config.inspect<LoopControl>(LOOP_CONTROL_SECTION).userValue).toEqual({
       maxStepsPerTurn: 100,
       reservedContextSize: 5000,
+      compactionTriggerRatio: 0.7,
     });
     const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
     expect(onDisk).toContain('max_steps_per_turn = 100');
     expect(onDisk).toContain('reserved_context_size = 5000');
+    expect(onDisk).toContain('compaction_trigger_ratio = 0.7');
     expect(onDisk).not.toContain('max_attempts_per_step');
 
     disposables.dispose();
