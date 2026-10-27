@@ -57,8 +57,14 @@ export const changeNotifierSnapshotKey = defineState(
 )
   .replayable({ schema: z.custom<ChangeNotifierSnapshotState>() })
   .undoable()
-  .on(ContextClear, () => ({}))
-  .on(ContextApplyCompaction, () => ({}))
+  .on(ContextClear, (s) => ({
+    workspacePrimaryByWorkspace: s.workspacePrimaryByWorkspace,
+    workspaceAdditionalDirs: s.workspaceAdditionalDirs,
+  }))
+  .on(ContextApplyCompaction, (s) => ({
+    workspacePrimaryByWorkspace: s.workspacePrimaryByWorkspace,
+    workspaceAdditionalDirs: s.workspaceAdditionalDirs,
+  }))
   .on(ChangeNotifierSnapshotEvent, (_s, e) => ({
     agentsMdHash: e.agentsMdHash ?? undefined,
     agentsMdFiles: e.agentsMdFiles ?? undefined,

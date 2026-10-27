@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, normalize, basename, dirname } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Draft } from 'immer';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -35,10 +36,13 @@ import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog
 import type { SecondaryModelConfig } from '#/session/subagent/configSection';
 import { IAgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifier';
 import { AgentChangeNotifierService } from '#/agent/changeNotifier/changeNotifierService';
+import { ContextApplyCompaction, ContextClear } from '#/agent/contextMemory/contextEvents';
 import { event2FromRecord } from '#/app/event/event2';
+import type { FoldContext } from '#/state/state';
 import {
   ChangeNotifierSnapshotEvent,
   changeNotifierSnapshotKey,
+  type ChangeNotifierSnapshotState,
 } from '#/agent/changeNotifier/changeNotifierOps';
 import { registerLogServices } from '../../_base/log/stubs';
 import { stubAgentContext } from '../agentContext/stubs';
@@ -105,6 +109,27 @@ function makeProfileData(overrides: Partial<ProfileData>): ProfileData {
     disallowedTools: [],
     ...overrides,
   } as unknown as ProfileData;
+}
+
+const contextFold: FoldContext = {
+  silent: false,
+  checkpoint() {},
+  clearCheckpoints() {},
+  undoToCheckpoint() {},
+  emit() {},
+};
+
+function foldChangeNotifierContextReset(
+  h: Harness,
+  event: ContextApplyCompaction | ContextClear,
+): void {
+  const fold = changeNotifierSnapshotKey.replayable.folds.get(
+    event instanceof ContextApplyCompaction ? ContextApplyCompaction : ContextClear,
+  )!;
+  const states = h.ix.get(IAgentStateService);
+  const current = { ...states.get(changeNotifierSnapshotKey) } as Draft<ChangeNotifierSnapshotState>;
+  const next = fold(current, event, contextFold);
+  if (next !== undefined) states.set(changeNotifierSnapshotKey, next);
 }
 
 function createHarness(options: {
@@ -1223,6 +1248,35 @@ describe('notifyWorkspaceDirsChanges', () => {
 
     await h.notifier.notifyWorkspaceDirsChanges();
     expect(h.reminders).toHaveLength(2);
+  });
+
+  it('preserves the workspace baseline across context compaction', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    foldChangeNotifierContextReset(
+      h,
+      new ContextApplyCompaction({ agentId: 'main', summary: 'summary', compactedCount: 1 }),
+    );
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
+  });
+
+  it('preserves the workspace baseline across context clear', async () => {
+    const h = createHarness({ profile: makeProfileData({ profileName: 'default' }) });
+    h.workspaceDirs.primaryByWorkspace = { wm_project: workDir };
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    foldChangeNotifierContextReset(h, new ContextClear({ agentId: 'main' }));
+    h.workspaceDirs.additionalDirs = ['/work/B'];
+    await h.notifier.notifyWorkspaceDirsChanges();
+
+    expect(h.reminders).toHaveLength(1);
+    expect(h.reminders[0]?.content).toContain('Added directories: /work/B.');
   });
 
   it('reports a primary change even when a member cwd keeps the same additional dirs', async () => {
