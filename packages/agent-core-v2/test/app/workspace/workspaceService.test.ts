@@ -720,13 +720,25 @@ describe('WorkspaceService (file-backed)', () => {
     expect(await registry.readProjectConfigDirs(homeDir)).toEqual([extra]);
   });
 
-  it('readProjectConfigDirs returns empty when local.toml is missing or invalid', async () => {
+  it('readProjectConfigDirs returns empty when local.toml is missing and rejects invalid config', async () => {
     const registry = build();
     expect(await registry.readProjectConfigDirs(homeDir)).toEqual([]);
 
     await fsp.mkdir(join(homeDir, '.kimi-code'), { recursive: true });
     await fsp.writeFile(join(homeDir, '.kimi-code', 'local.toml'), 'not toml at all = [', 'utf8');
-    expect(await registry.readProjectConfigDirs(homeDir)).toEqual([]);
+    await expect(registry.readProjectConfigDirs(homeDir)).rejects.toThrow();
+  });
+
+  it('readProjectConfigDirs rejects a configured directory that no longer exists', async () => {
+    const missing = join(homeDir, 'missing');
+    await fsp.mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await fsp.writeFile(
+      join(homeDir, '.kimi-code', 'local.toml'),
+      `[workspace]\nadditional_dir = ["${missing.replaceAll('\\', '\\\\')}"]\n`,
+      'utf8',
+    );
+
+    await expect(build().readProjectConfigDirs(homeDir)).rejects.toThrow();
   });
 
   it('setPrimary swaps root with an additional dir atomically and keeps id and bucket', async () => {
@@ -1166,6 +1178,47 @@ describe('projects.json migration and patch', () => {
     await writeWorkspacesJson({});
     await writeProjects({ schema_version: 2, projects: null, deleted_project_ids: [] });
     await expect(build().list()).rejects.toThrow(/invalid projects.json projects/);
+  });
+
+  it.each([
+    { scenario: 'a single string', dirs: '/tmp/extra' },
+    { scenario: 'a non-string array item', dirs: ['/tmp/extra', 42] },
+  ])('rejects additional_dirs as $scenario in the new projects format', async ({ dirs }) => {
+    await writeProjects({
+      schema_version: 2,
+      projects: {
+        wm_bad: {
+          root: homeDir,
+          name: 'bad',
+          kind: 'managed',
+          additional_dirs: dirs,
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      deleted_project_ids: [],
+    });
+
+    await expect(build().list()).rejects.toThrow(/invalid additional_dirs/);
+  });
+
+  it('keeps tolerant additional_dirs sanitation during legacy migration', async () => {
+    await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify({
+      version: 1,
+      workspaces: {
+        wd_legacy: {
+          root: homeDir,
+          name: 'legacy',
+          additional_dirs: '/tmp/legacy',
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    }), 'utf8');
+
+    const list = await build().list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.additionalDirs).toEqual([]);
   });
 
   it('coalesces concurrent first-load migration', async () => {

@@ -466,15 +466,8 @@ export class WorkspaceService implements IWorkspaceService {
   }
 
   private async readProjectDirs(root: string): Promise<readonly string[]> {
-    try {
-      const onDisk = await this.localConfig.readAdditionalDirs(root);
-      return onDisk.additionalDirs;
-    } catch (error) {
-      this.log.warn(`project local.toml additional_dir import skipped for ${root}`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return [];
-    }
+    const onDisk = await this.localConfig.readAdditionalDirs(root);
+    return onDisk.additionalDirs;
   }
 
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {

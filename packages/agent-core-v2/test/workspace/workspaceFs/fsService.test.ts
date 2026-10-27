@@ -1416,6 +1416,61 @@ describe('WorkspaceFsService.grep', () => {
     expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
   });
 
+  it('deduplicates primary files emitted through an overlapping ancestor root', async () => {
+    const rgFile = (path: string, text: string): string => [
+      { type: 'begin', data: { path: { text: path } } },
+      {
+        type: 'match',
+        data: {
+          path: { text: path },
+          lines: { text: `${text}\n` },
+          line_number: 1,
+          submatches: [{ start: 0, end: 5 }],
+        },
+      },
+      { type: 'end', data: { path: { text: path } } },
+    ].map((record) => JSON.stringify(record)).join('\n');
+    const fs = makeSession(
+      {},
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return { stdout: 'ripgrep 14.1.0', exitCode: 0 };
+        }
+        if (args[0] === 'rg' && args.includes('--json')) {
+          return {
+            stdout: [
+              rgFile('src/a.ts', 'hello primary'),
+              rgFile('/repo/src/a.ts', 'hello duplicate'),
+              rgFile('/other.ts', 'hello other'),
+            ].join('\n') + '\n',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 2,
+      max_matches_per_file: 50,
+      max_total_matches: 2,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/other.ts']);
+    expect(result.files_scanned).toBe(2);
+  });
+
   it('searches additional roots in the Node fallback', async () => {
     const fs = makeSession(
       { 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' },

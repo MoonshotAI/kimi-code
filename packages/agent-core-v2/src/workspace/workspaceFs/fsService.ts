@@ -973,7 +973,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
     const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
 
-    const acc = new RgJsonAccumulator(req);
+    const primary = roots.find((root) => root.primary);
+    const acc = new RgJsonAccumulator(req, (path) => {
+      if (!this.path.isAbsolute(path) || primary === undefined) return path;
+      return isInsideOrEqual(this.path, path, primary.dir)
+        ? this.toRelFrom(primary.dir, path)
+        : path;
+    });
     let killed = false;
     const kill = (): void => {
       if (killed) return;
@@ -1272,11 +1278,15 @@ class RgJsonAccumulator {
     { matches: FsGrepMatch[]; pending: string[]; lastMatchLine: number }
   >();
   private readonly files: FsGrepFileHit[] = [];
+  private readonly seenPaths = new Set<string>();
   private totalMatches = 0;
   private filesScanned = 0;
   private truncated = false;
 
-  constructor(private readonly req: FsGrepRequest) {}
+  constructor(
+    private readonly req: FsGrepRequest,
+    private readonly normalizePath: (path: string) => string = (path) => path,
+  ) {}
 
   get capped(): boolean {
     return (
@@ -1293,16 +1303,21 @@ class RgJsonAccumulator {
     }
     const t = rec.type;
     if (t === 'begin') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
+      if (this.seenPaths.has(p)) {
+        this.finalize(p);
+        return;
+      }
       if (this.filesScanned >= this.req.max_files) {
         this.truncated = true;
         return;
       }
+      this.seenPaths.add(p);
       this.fileBuf.set(p, { matches: [], pending: [], lastMatchLine: -1 });
       this.filesScanned += 1;
     } else if (t === 'context') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
       const buf = this.fileBuf.get(p);
       if (buf === undefined) return;
@@ -1311,7 +1326,7 @@ class RgJsonAccumulator {
         buf.pending.shift();
       }
     } else if (t === 'match') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
       const buf = this.fileBuf.get(p);
       if (buf === undefined) return;
@@ -1330,10 +1345,15 @@ class RgJsonAccumulator {
       this.totalMatches += 1;
       if (this.totalMatches >= this.req.max_total_matches) this.truncated = true;
     } else if (t === 'end') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
       this.finalize(p);
     }
+  }
+
+  private pathOf(rec: RgJsonRecord): string | undefined {
+    const path = rgPath(rec.data?.path);
+    return path === undefined ? undefined : this.normalizePath(path);
   }
 
   finish(aborted: boolean, elapsedMs: number): FsGrepResponse {
