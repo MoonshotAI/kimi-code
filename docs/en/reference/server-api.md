@@ -1146,6 +1146,13 @@ On success, `data` is the accepted prompt `{ prompt_id, user_message_id, status,
 - `40415`: a `skills` entry names an unknown skill
 - `40903`: `prompt_id` belongs to an already-completed prompt; `data` carries `{ aborted: false }`
 - `40912`: the skill exists but cannot be activated by the user
+- `40913`: a goal already exists and cannot be created again
+- `40914`: no current goal exists for the requested control
+- `40915`: the current goal status does not allow the requested control
+- `40916`: the current goal cannot be resumed
+- `40917`: the goal objective is empty
+- `40918`: the goal objective exceeds the length limit
+- `40920`: goals are only supported by the main agent
 - `40927`: `prompt_id` is already reserved by an in-flight prompt
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`

@@ -1146,6 +1146,13 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40415`：某个 `skills` 条目指向未知的 Skill
 - `40903`：`prompt_id` 属于已完成的提示词；`data` 携带 `{ aborted: false }`
 - `40912`：Skill 存在但无法由用户激活
+- `40913`：已有 goal，不能重复创建
+- `40914`：没有可执行当前控制的 goal
+- `40915`：当前 goal 状态不允许执行该控制
+- `40916`：当前 goal 无法恢复
+- `40917`：goal objective 为空
+- `40918`：goal objective 超过长度上限
+- `40920`：goal 仅支持 main agent
 - `40927`：`prompt_id` 已被进行中的提示词占用
 
 #### `POST /api/v1/sessions/{session_id}/prompts:steer`

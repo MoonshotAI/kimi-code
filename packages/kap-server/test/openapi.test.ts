@@ -115,6 +115,25 @@ describe('server-v2 OpenAPI', () => {
     ).toBe(true);
   });
 
+  it('documents goal errors for prompt submissions', async () => {
+    const doc = await fetchOpenApi();
+    const op = operation(doc, '/api/v1/sessions/{session_id}/prompts', 'post');
+    const responses = asRecord(op['responses']);
+    const content = asRecord(asRecord(responses['200'])['content']);
+    const schema = asRecord(asRecord(content['application/json'])['schema']);
+    const variants = schema['oneOf'];
+    expect(Array.isArray(variants)).toBe(true);
+    for (const code of [40913, 40914, 40915, 40916, 40917, 40918, 40920]) {
+      expect(
+        (variants as unknown[]).some((variant) => {
+          const properties = asRecord(asRecord(variant)['properties']);
+          const values = asRecord(properties['code'])['enum'];
+          return Array.isArray(values) && values.includes(code);
+        }),
+      ).toBe(true);
+    }
+  });
+
   it('documents session conflicts for session mutation routes', async () => {
     const doc = await fetchOpenApi();
     const paths = [
