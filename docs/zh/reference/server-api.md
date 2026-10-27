@@ -1598,7 +1598,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `GET /api/v1/workspaces/project-config-dirs`
 
-只读返回指定项目 `local.toml` 的 `workspace.additional_dir`：解析为绝对路径、去重、剔除 `root` 自身。不修改注册表，也不修改 `local.toml`；`local.toml` 缺失或损坏时返回空数组。客户端可凭此把项目旧配置并入新建或编辑工作区的表单，随保存生效。
+只读返回指定项目 `local.toml` 的 `workspace.additional_dir`：解析为绝对路径、去重、剔除 `root` 自身。不修改注册表，也不修改 `local.toml`；`local.toml` 缺失时返回空数组，TOML 损坏或配置的目录已不存在时请求失败，不会按空配置返回。客户端可凭此把项目旧配置并入新建或编辑工作区的表单，随保存生效。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |

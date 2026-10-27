@@ -227,7 +227,7 @@ function parseProjectsDocument(value: unknown): {
   const now = Date.now();
   const workspaces: Workspace[] = [];
   for (const [id, rawEntry] of Object.entries(rawProjects)) {
-    const entry = sanitizeEntry(rawEntry, true);
+    const entry = sanitizeEntry(rawEntry, version === PROJECTS_SCHEMA_VERSION);
     if (entry === null) throw projectsCorrupted(`invalid project entry ${id}`);
     workspaces.push({
       id,
@@ -317,7 +317,7 @@ function readIdempotencyKeys(value: unknown): Record<string, string> {
   return result;
 }
 
-function sanitizeEntry(value: unknown, rejectInvalidDirs = false): PersistedWorkspaceEntry | null {
+function sanitizeEntry(value: unknown, strict = false): PersistedWorkspaceEntry | null {
   if (typeof value !== 'object' || value === null) return null;
   const v = value as Partial<PersistedWorkspaceEntry>;
   if (
@@ -328,9 +328,12 @@ function sanitizeEntry(value: unknown, rejectInvalidDirs = false): PersistedWork
   ) {
     return null;
   }
+  if (strict && v.kind !== 'managed' && v.kind !== 'implicit') {
+    throw projectsCorrupted('invalid kind');
+  }
   const rawDirs = v.additional_dirs;
   if (
-    rejectInvalidDirs &&
+    strict &&
     rawDirs !== undefined &&
     (!Array.isArray(rawDirs) || rawDirs.some((dir) => typeof dir !== 'string'))
   ) {

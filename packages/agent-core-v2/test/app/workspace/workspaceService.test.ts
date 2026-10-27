@@ -353,6 +353,7 @@ describe('WorkspaceService (file-backed)', () => {
     onDisk.workspaces[encodeWorkDirKey(dirB)] = {
       root: dirB,
       name: 'dir-b',
+      kind: 'implicit',
       created_at: '2024-01-01T00:00:00.000Z',
       last_opened_at: '2024-01-01T00:00:00.000Z',
     };
@@ -668,7 +669,7 @@ describe('WorkspaceService (file-backed)', () => {
     expect(text).toContain('extra-b');
   });
 
-  it('persists kind per channel and defaults legacy entries to implicit', async () => {
+  it('persists kind per channel', async () => {
     const registry = build();
     const managed = await registry.create({ root: homeDir, name: 'proj' });
     expect(managed.kind).toBe('managed');
@@ -678,15 +679,6 @@ describe('WorkspaceService (file-backed)', () => {
     const saved = await readRegistry();
     expect(saved.workspaces[managed.id]?.kind).toBe('managed');
     expect(saved.workspaces[implicit.id]?.kind).toBe('implicit');
-
-    const raw = JSON.parse(await fsp.readFile(join(homeDir, 'projects.json'), 'utf8')) as {
-      projects: Record<string, Record<string, unknown>>;
-    };
-    delete raw.projects[implicit.id]?.['kind'];
-    await fsp.writeFile(join(homeDir, 'projects.json'), JSON.stringify(raw), 'utf8');
-
-    expect((await registry.get(implicit.id))?.kind).toBe('implicit');
-    expect((await registry.get(managed.id))?.kind).toBe('managed');
   });
 
   it('readProjectConfigDirs returns resolved local.toml dirs without mutating anything', async () => {
@@ -1200,6 +1192,48 @@ describe('projects.json migration and patch', () => {
     });
 
     await expect(build().list()).rejects.toThrow(/invalid additional_dirs/);
+  });
+
+  it.each([
+    { scenario: 'unknown', kind: 'manged' },
+    { scenario: 'missing', kind: undefined },
+  ])('rejects $scenario kind in schema-v2 projects', async ({ kind }) => {
+    await writeProjects({
+      schema_version: 2,
+      projects: {
+        wm_bad: {
+          root: homeDir,
+          name: 'bad',
+          kind,
+          additional_dirs: [],
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+        },
+      },
+      deleted_project_ids: [],
+    });
+
+    await expect(build().list()).rejects.toThrow(/invalid kind/);
+  });
+
+  it.each([undefined, 'manged'])('defaults kind %s to implicit during legacy migration', async (kind) => {
+    await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify({
+      version: 1,
+      workspaces: {
+        wd_legacy: {
+          root: homeDir,
+          name: 'legacy',
+          kind,
+          additional_dirs: [],
+          created_at: '2026-01-01T00:00:00.000Z',
+          last_opened_at: '2026-01-01T00:00:00.000Z',
+        },
+      },
+    }), 'utf8');
+
+    const list = await build().list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.kind).toBe('implicit');
   });
 
   it('keeps tolerant additional_dirs sanitation during legacy migration', async () => {

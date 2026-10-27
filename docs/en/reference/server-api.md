@@ -1598,7 +1598,7 @@ On success, `data` is [the workspace object](#the-workspace-object).
 
 #### `GET /api/v1/workspaces/project-config-dirs`
 
-Reads `workspace.additional_dir` from a project's `local.toml`, read-only: entries are resolved to absolute paths, deduplicated, and the `root` itself is dropped. Neither the registry nor `local.toml` is modified; a missing or corrupted `local.toml` yields an empty array. Clients can use this to merge legacy project config into a create/edit workspace form, taking effect on save.
+Reads `workspace.additional_dir` from a project's `local.toml`, read-only: entries are resolved to absolute paths, deduplicated, and the `root` itself is dropped. Neither the registry nor `local.toml` is modified; a missing `local.toml` yields an empty array, while malformed TOML or a configured directory that no longer exists causes the request to fail instead of returning an empty array. Clients can use this to merge legacy project config into a create/edit workspace form, taking effect on save.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
