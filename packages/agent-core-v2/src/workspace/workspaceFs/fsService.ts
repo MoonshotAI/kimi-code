@@ -160,8 +160,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const items: FsEntry[] = [];
     const childrenByPath: Record<string, FsEntry[]> = {};
     const probeBudget = { visited: 0 };
-    const outputBudget = LIST_TOTAL_ENTRY_BUDGET;
-    let emitted = 0;
+    let symlinkEntries = 0;
     let budgetExhausted = false;
     let truncated = false;
 
@@ -169,6 +168,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       readonly relPath: string;
       readonly depthRemaining: number;
       readonly ancestors: readonly string[];
+      readonly viaSymlink: boolean;
     }
     const rootRel = rel === '.' ? '' : rel;
     const queue: QueueEntry[] = [
@@ -176,6 +176,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         relPath: rootRel,
         depthRemaining: req.depth,
         ancestors: [await this.realpathExistingPrefix(this.absOf(rootRel))],
+        viaSymlink: false,
       },
     ];
 
@@ -248,7 +249,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           truncated = true;
           break;
         }
-        if (emitted >= outputBudget) {
+        const viaSymlink = entry.viaSymlink || child.stat.isSymbolicLink === true;
+        if (viaSymlink && symlinkEntries >= LIST_TOTAL_ENTRY_BUDGET) {
           truncated = true;
           budgetExhausted = true;
           break;
@@ -261,7 +263,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           items.push(fsEntry);
         }
         bucket.push(fsEntry);
-        emitted += 1;
+        if (viaSymlink) symlinkEntries += 1;
         if (child.isDirectory && entry.depthRemaining > 1) {
           const realPath =
             child.realPath ??
@@ -271,6 +273,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
               relPath: child.relPath,
               depthRemaining: entry.depthRemaining - 1,
               ancestors: [...entry.ancestors, realPath],
+              viaSymlink,
             });
           }
         }

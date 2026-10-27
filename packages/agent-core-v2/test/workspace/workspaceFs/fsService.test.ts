@@ -1584,7 +1584,7 @@ describe('WorkspaceFsService.list', () => {
     expect(result.children_by_path?.['dir']?.map((i) => i.name)).toEqual(['a.txt', 'b.txt']);
   });
 
-  it('stops recursive expansion at the request-wide output budget', async () => {
+  it('does not cap ordinary recursive directory results', async () => {
     const files: Record<string, string> = {};
     for (let index = 0; index < 10_001; index += 1) {
       files[`bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
@@ -1599,14 +1599,40 @@ describe('WorkspaceFsService.list', () => {
       sort: 'name_asc',
       include_git_status: false,
     });
+    expect(result.truncated).toBe(false);
+    expect(result.children_by_path?.['bulk']).toHaveLength(10_001);
+  });
+
+  it('stops recursive symlink expansion at the request-wide output budget', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`real/bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(
+      files,
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
     expect(result.truncated).toBe(true);
-    expect(
-      result.items.length +
-        Object.values(result.children_by_path ?? {}).reduce(
-          (total, entries) => total + entries.length,
-          0,
-        ),
-    ).toBe(10_000);
+    const symlinkSubtreeEntries =
+      result.items.filter((entry) => entry.path === 'link').length +
+      Object.entries(result.children_by_path ?? {})
+        .filter(([path]) => path === 'link' || path.startsWith('link/'))
+        .reduce((total, [, entries]) => total + entries.length, 0);
+    expect(symlinkSubtreeEntries).toBe(10_000);
   });
 
   it('finds allowed descendants through external symlinks in ignored directories', async () => {
