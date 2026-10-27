@@ -67,11 +67,14 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^0.95.2",
+    "@google/genai": "^1.49.0",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-product": "workspace:^",
     "@moonshot-ai/klient": "workspace:^",
     "@types/yazl": "^2.4.6",
-    "jimp": "^1.6.1"
+    "jimp": "^1.6.1",
+    "openai": "^6.34.0"
   }
 }

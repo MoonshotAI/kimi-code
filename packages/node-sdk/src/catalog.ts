@@ -12,8 +12,12 @@ import type {
   ModelsDevProviderEntry as CatalogProviderEntry,
 } from '@moonshot-ai/agent-core-v2';
 
-export { modelsDevBaseUrl as catalogBaseUrl, modelsDevProviderModels as catalogProviderModels };
+export { modelsDevProviderModels as catalogProviderModels };
 export type { Catalog, CatalogImportInvalidReason, CatalogModel, CatalogProviderEntry };
+
+export function catalogBaseUrl(entry: CatalogProviderEntry, wire: ProviderType): string | undefined {
+  return modelsDevBaseUrl(entry, wire);
+}
 
 export type CatalogImportResolution =
   | {

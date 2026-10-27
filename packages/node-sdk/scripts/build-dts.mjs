@@ -92,6 +92,10 @@ async function rewriteWorkspaceSpecifiers() {
           `import { Anthropic } from '${providerClientSpecifier}';`,
         )
         .replaceAll(
+          "import type Anthropic from '@anthropic-ai/sdk';",
+          `import type { Anthropic } from '${providerClientSpecifier}';`,
+        )
+        .replaceAll(
           "import OpenAI from 'openai';",
           `import { OpenAI } from '${providerClientSpecifier}';`,
         )
@@ -102,6 +106,10 @@ async function rewriteWorkspaceSpecifiers() {
         .replaceAll(
           "import { GoogleGenAI as GenAIClient } from '@google/genai';",
           `import { GoogleGenAI as GenAIClient } from '${providerClientSpecifier}';`,
+        )
+        .replaceAll(
+          "import type { GoogleGenAI as GenAIClient } from '@google/genai';",
+          `import type { GoogleGenAI as GenAIClient } from '${providerClientSpecifier}';`,
         );
       const updated = providerClientText.replaceAll(
         /(["'])(#(?:human)?\/[^"']+|@moonshot-ai\/(?:agent-core-v2|kimi-code-oauth|klient)(?:\/[^"']+)?)\1/g,
