@@ -72,8 +72,8 @@ export interface SessionEventSink {
 /**
  * The v2 approval payload (`agent-core-v2/src/agent/interaction/approval.ts` —
  * the package index exports only the service identifier, not the model). A
- * superset of v1's `ApprovalRequest`: the extra id/sessionId/agentId fields
- * are stripped when the handler is fed.
+ * superset of v1's `ApprovalRequest`: the extra id/sessionId fields are
+ * stripped when the handler is fed, while agentId remains available.
  */
 interface ApprovalInteractionPayload {
   readonly id?: string;

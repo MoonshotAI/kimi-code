@@ -19,6 +19,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'tool.call.started'>['toolCallId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['name']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
+    expectTypeOf<EventByType<'mcp.server.status'>['server']['nextRetryAt']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('exposes LLM stream timing on step completion events', () => {
@@ -59,6 +62,8 @@ describe('Event public types', () => {
   it('exposes approval and question reverse-RPC requests', () => {
     expectTypeOf<ApprovalRequest['turnId']>().toEqualTypeOf<number | undefined>();
     expectTypeOf<ApprovalRequest['toolName']>().toEqualTypeOf<string>();
+    expectTypeOf<ApprovalRequest['agentId']>().toEqualTypeOf<string | undefined>();
+    expectTypeOf<QuestionRequest['agentId']>().toEqualTypeOf<string | undefined>();
     expectTypeOf<QuestionRequest['questions'][number]['question']>().toEqualTypeOf<string>();
   });
 

@@ -13,6 +13,12 @@ import {
 const REPEAT_BREAKER_SETTLE_REASON =
   'stopped by the repeat breaker after issuing the same tool call repeatedly; its output is a handoff, not a finished result';
 
+export const PARTIAL_OUTPUT_NOTICE =
+  '[partial output] The subagent did not finish this run. Below is the text it wrote before it ended; it is incomplete and unverified.';
+
+export const NO_PARTIAL_OUTPUT =
+  '[partial output] none — the subagent wrote no text in this run before it ended.';
+
 type SubagentCompletion = {
   readonly result: string;
   readonly usage?: TokenUsage;
@@ -27,6 +33,7 @@ export type SubagentHandle = {
   readonly modelSource?: SubagentModelSource;
   readonly thinkingEffort?: string;
   readonly completion: Promise<SubagentCompletion>;
+  readonly partialOutput?: () => string;
 };
 
 export interface SubagentTaskInfo extends AgentTaskInfoBase {
@@ -100,6 +107,8 @@ export class SubagentTask implements AgentTask {
   readonly model?: string;
   readonly thinkingEffort?: string;
   private stopCode: string | undefined;
+  private sink: AgentTaskSink | undefined;
+  private outputWritten = false;
 
   constructor(
     private readonly handle: SubagentHandle,
@@ -114,6 +123,7 @@ export class SubagentTask implements AgentTask {
   }
 
   async start(sink: AgentTaskSink): Promise<void> {
+    this.sink = sink;
     const requestAbort = (): void => {
       this.abortController.abort(sink.signal.reason);
     };
@@ -126,21 +136,38 @@ export class SubagentTask implements AgentTask {
     try {
       const outcome = await this.handle.completion;
       this.stopCode = outcome.stopReason;
-      sink.appendOutput(outcome.result);
+      this.writeOutput(outcome.result);
       await sink.settle({
         status: 'completed',
         stopReason: completedSettleReason(outcome.stopReason),
       });
     } catch (error: unknown) {
       if (sink.signal.aborted && (isAbortError(error) || error === sink.signal.reason)) {
+        this.writePartialOutput();
         await sink.settle({ status: 'killed' });
         return;
       }
       this.stopCode = stopCodeOf(error);
+      this.writePartialOutput();
       await sink.settle({ status: 'failed', stopReason: errorMessage(error) });
     } finally {
       sink.signal.removeEventListener('abort', requestAbort);
     }
+  }
+
+  async forceStop(): Promise<void> {
+    this.writePartialOutput();
+  }
+
+  private writePartialOutput(): void {
+    const text = this.handle.partialOutput?.().trim() ?? '';
+    this.writeOutput(text.length === 0 ? '' : `${PARTIAL_OUTPUT_NOTICE}\n\n${text}`);
+  }
+
+  private writeOutput(text: string): void {
+    if (this.outputWritten) return;
+    this.outputWritten = true;
+    if (text.length > 0) this.sink?.appendOutput(text);
   }
 
   toInfo(base: AgentTaskInfoBase): SubagentTaskInfo {
