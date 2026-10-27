@@ -1897,6 +1897,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
 | `runtime_id` | query | string | 从哪个运行时读取。默认 `local` |
+| `allow_external_symlinks` | query | string | 传 `true` 时允许通过工作区外的软链接下载。默认 `false` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
@@ -1925,6 +1926,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 成功时 `data` 的结构与 `fs:list` 相同。
 
 - `40001`：请求体校验失败
+- `40409`：路径不存在，或路径不是目录
 - `40410`：工作区不存在，且不是可用的绝对路径
 - `41304`：路径通过软链接越出工作区，且未启用 `allow_external_symlinks`
 

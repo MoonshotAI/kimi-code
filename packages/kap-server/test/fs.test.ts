@@ -302,6 +302,13 @@ describe('server-v2 /api/v1 fs routes', () => {
       });
       expect(allowedRead.code).toBe(0);
       expect(allowedRead.data.content).toBe('');
+
+      const allowedDownload = await fetch(
+        `${base}/api/v1/sessions/${id}/fs/outside-link/secret.txt:download?runtime_id=local&allow_external_symlinks=true`,
+        { headers: authHeaders(server as RunningServer) } as never,
+      );
+      expect(allowedDownload.status).toBe(200);
+      expect(await allowedDownload.text()).toBe('');
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
@@ -623,6 +630,12 @@ describe('server-v2 /api/v1 fs routes', () => {
     });
     expect(children.code).toBe(0);
     expect(children.data.items.map((i) => i.name)).toEqual(['nested']);
+
+    const missing = await postWorkspaceList<null>({
+      workspace: work,
+      path: 'does-not-exist',
+    });
+    expect(missing.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
   });
 
   it('workspace fs:list can open external symlink directories when enabled', async () => {

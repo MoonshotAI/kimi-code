@@ -263,7 +263,7 @@ export interface IWorkspaceFsService {
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
   diff(req: FsDiffRequest): Promise<FsDiffResponse>;
   resolvePath(relPath: string): Promise<FsPathResolved>;
-  resolveDownload(relPath: string): Promise<FsDownloadResolved>;
+  resolveDownload(relPath: string, allowExternalSymlinks?: boolean): Promise<FsDownloadResolved>;
 }
 
 export const IWorkspaceFsService: ServiceIdentifier<IWorkspaceFsService> =

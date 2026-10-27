@@ -1506,6 +1506,10 @@ describe('WorkspaceFsService.list', () => {
       allow_external_symlinks: true,
     });
     expect(read.content).toBe('secret');
+
+    const download = await fs.resolveDownload('docs/secret.txt', true);
+    expect(download.absolute).toBe('/repo/docs/secret.txt');
+    expect(download.size).toBe(6);
   });
 
   it('marks symlink directories inside additional dirs as expandable', async () => {
@@ -1562,6 +1566,70 @@ describe('WorkspaceFsService.list', () => {
     expect(Object.keys(result.children_by_path ?? {}).some((key) => key.startsWith('loop/'))).toBe(
       false,
     );
+  });
+
+  it('stops recursive expansion at the request-wide output budget', async () => {
+    const fs = makeSession(
+      {
+        'real/sub/a.txt': '',
+        'real/sub/b.txt': '',
+        'real/sub/c.txt': '',
+        'real/sub/d.txt': '',
+        'real/sub/e.txt': '',
+      },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 3,
+      limit: 1,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
+    expect(result.items).toHaveLength(1);
+    expect(
+      result.items.length +
+        Object.values(result.children_by_path ?? {}).reduce(
+          (total, entries) => total + entries.length,
+          0,
+        ),
+    ).toBeLessThanOrEqual(3);
+  });
+
+  it('finds allowed descendants through external symlinks in ignored directories', async () => {
+    const fs = makeSession(
+      { '.gitignore': 'ignored/\n', '/outside/keep.txt': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { 'ignored/link': '/outside' },
+    );
+    const request = {
+      path: '.',
+      depth: 3,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: true,
+      allow_ignored_globs: ['ignored/link/keep.txt'],
+      sort: 'name_asc' as const,
+      include_git_status: false,
+    };
+    const denied = await fs.list(request);
+    expect(denied.items.map((i) => i.path)).not.toContain('ignored');
+
+    const allowed = await fs.list({ ...request, allow_external_symlinks: true });
+    expect(allowed.items.map((i) => i.path)).toContain('ignored');
+    expect(allowed.children_by_path?.['ignored/link']?.map((i) => i.name)).toEqual(['keep.txt']);
   });
 
   it('rejects paths that escape the workspace', async () => {

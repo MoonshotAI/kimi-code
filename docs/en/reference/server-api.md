@@ -1897,6 +1897,7 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
 | `runtime_id` | query | string | Runtime to read from. Default `local` |
+| `allow_external_symlinks` | query | string | `true` to download through symlinks outside the workspace. Default `false` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
@@ -1925,6 +1926,7 @@ The session-less form of `fs:list`: the workspace travels in the body instead of
 On success, `data` has the same shape as `fs:list`.
 
 - `40001`: body validation failure
+- `40409`: path not found or not a directory
 - `40410`: workspace not found and not a usable absolute path
 - `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 

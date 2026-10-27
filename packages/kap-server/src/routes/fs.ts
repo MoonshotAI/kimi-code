@@ -95,6 +95,7 @@ const sessionIdAndTailParamSchema = z.object({
 
 const fsDownloadQuerySchema = z.object({
   runtime_id: z.string().min(1).optional(),
+  allow_external_symlinks: z.enum(['true', 'false']).optional(),
 });
 
 const workspaceFsListBodySchema = fsListRequestSchema.extend({
@@ -449,6 +450,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
       },
       description:
@@ -695,7 +697,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let runtimeFs: RuntimeFsScope | undefined;
       try {
         runtimeFs = await acquireSessionFs(core, session_id, req.query.runtime_id ?? 'local', ['fs']);
-        resolved = await runtimeFs.fs.resolveDownload(relPath);
+        resolved = await runtimeFs.fs.resolveDownload(
+          relPath,
+          req.query.allow_external_symlinks === 'true',
+        );
       } catch (error) {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
         sendMappedError(reply, req, error);
@@ -947,7 +952,7 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
     );
   } catch (error) {
     requestLog(req)?.warn(
-      { session_id: sessionId, app_id: body.app_id, error },
+      { session_id: sessionId, app_id: body.app_id, err: error },
       'fs open-in launch failed',
     );
     reply.send(

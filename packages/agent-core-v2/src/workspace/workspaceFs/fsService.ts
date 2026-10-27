@@ -75,6 +75,7 @@ import {
 } from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
+const LIST_TOTAL_ENTRY_BUDGET = 10_000;
 const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
@@ -159,6 +160,9 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const items: FsEntry[] = [];
     const childrenByPath: Record<string, FsEntry[]> = {};
     const probeBudget = { visited: 0 };
+    const outputBudget = Math.min(LIST_TOTAL_ENTRY_BUDGET, req.limit * req.depth);
+    let emitted = 0;
+    let budgetExhausted = false;
     let truncated = false;
 
     interface QueueEntry {
@@ -223,7 +227,14 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         if (ancestorOfAllowed && !isDirectory) continue;
         if (
           ancestorOfAllowed &&
-          !(await this.hasAllowedDescendant(childRel, req.allow_ignored_globs!, req.exclude_globs, req.show_hidden, probeBudget))
+          !(await this.hasAllowedDescendant(
+            childRel,
+            req.allow_ignored_globs!,
+            req.exclude_globs,
+            req.show_hidden,
+            req.allow_external_symlinks === true,
+            probeBudget,
+          ))
         ) continue;
         visible.push({ name, relPath: childRel, stat: st, isDirectory, realPath });
       }
@@ -237,6 +248,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           truncated = true;
           break;
         }
+        if (emitted >= outputBudget) {
+          truncated = true;
+          budgetExhausted = true;
+          break;
+        }
         const fsEntry = buildFsEntry(child.relPath, child.name, child.stat, false);
         if (child.stat.isSymbolicLink === true && child.isDirectory) {
           fsEntry.is_directory = true;
@@ -245,6 +261,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           items.push(fsEntry);
         }
         bucket.push(fsEntry);
+        emitted += 1;
         if (child.isDirectory && entry.depthRemaining > 1) {
           const realPath =
             child.realPath ??
@@ -262,6 +279,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       if (entry.depthRemaining < req.depth) {
         childrenByPath[parentKey] = bucket;
       }
+      if (budgetExhausted) break;
     }
 
     const response: FsListResponse = { items, truncated };
@@ -296,6 +314,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     globs: readonly string[],
     excludeGlobs: readonly string[] | undefined,
     showHidden: boolean,
+    allowExternalSymlinks: boolean,
     budget: { visited: number },
   ): Promise<boolean> {
     const walk = async (rel: string, depth: number): Promise<boolean> => {
@@ -316,7 +335,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
         const isDirectory =
           st?.isSymbolicLink === true
-            ? (await this.symlinkDirectoryTarget(childRel, false)).isDirectory
+            ? (await this.symlinkDirectoryTarget(childRel, allowExternalSymlinks)).isDirectory
             : st?.isDirectory === true;
         if (isDirectory && globCanMatchBelow(childRel, globs)) {
           if (await walk(childRel, depth + 1)) return true;
@@ -517,8 +536,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return { absolute: abs, relative: rel, isDirectory: st.isDirectory };
   }
 
-  async resolveDownload(relPath: string): Promise<FsDownloadResolved> {
-    const abs = await this.resolveWithin(relPath);
+  async resolveDownload(relPath: string, allowExternalSymlinks = false): Promise<FsDownloadResolved> {
+    const abs = await this.resolveWithin(relPath, allowExternalSymlinks);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
