@@ -18,6 +18,7 @@ import {
 } from '#/llm/thinking';
 import { kimiConnection, kimiOpenAITrait } from '#/llm-kimi/trait';
 import { classifyKimiQuotaError } from '#/llm-kimi/errors';
+import { lowerMessage } from '#/llm/requester/bases/openai/lower';
 import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
 import type { LlmClientContext, LlmRequestEvent } from '#/llm/requester/requester';
 
@@ -711,8 +712,48 @@ describe('openai requester thinking', () => {
       reasoningKey: 'reasoning',
     });
     await expect(
+      collect(chatCompletionChunks([{ reasoning: 'hmm' }, { reasoning: '' }, { content: 'hi' }])),
+    ).resolves.toEqual([
+      { type: 'think', think: 'hmm', reasoningKey: 'reasoning' },
+      { type: 'text', text: 'hi' },
+    ]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          { reasoning_content: '' },
+          {
+            reasoning_content: '',
+            tool_calls: [
+              { index: 0, id: 'call_1', type: 'function', function: { name: 'f', arguments: '{}' } },
+            ],
+          },
+        ]),
+      ).then((content) => content.filter((part) => part.type === 'think')),
+    ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning_content' }]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_content: '',
+            reasoning: '',
+            tool_calls: [
+              { index: 0, id: 'call_2', type: 'function', function: { name: 'f', arguments: '' } },
+            ],
+          },
+          {
+            reasoning_content: '',
+            reasoning: '',
+            tool_calls: [{ index: 0, function: { arguments: '{}' } }],
+          },
+        ]),
+      ).then((content) => content.filter((part) => part.type === 'think')),
+    ).resolves.toEqual([
+      { type: 'think', think: '', reasoningKey: 'reasoning_content' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    await expect(
       collect(chatCompletionChunks([{ reasoning: '' }, { content: 'hi' }])),
-    ).resolves.toContainEqual({ type: 'think', think: '', reasoningKey: 'reasoning' });
+    ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning' }, { type: 'text', text: 'hi' }]);
     await expect(
       collect(
         chatCompletionChunks([
@@ -720,15 +761,30 @@ describe('openai requester thinking', () => {
           { reasoning: '', content: 'lo' },
         ]),
       ),
-    ).resolves.toEqual([
-      { type: 'think', think: '', reasoningKey: 'reasoning' },
-      { type: 'text', text: 'hello' },
-    ]);
+    ).resolves.toEqual([{ type: 'think', think: '', reasoningKey: 'reasoning' }, { type: 'text', text: 'hello' }]);
     await expect(
       collect(chatCompletionChunks([{ content: 'hi' }, { reasoning: '' }])),
+    ).resolves.toEqual([{ type: 'text', text: 'hi' }, { type: 'think', think: '', reasoningKey: 'reasoning' }]);
+    await expect(
+      collect(
+        chatCompletionChunks([
+          {
+            reasoning_content: '',
+            reasoning_details: [{ index: 0, type: 'summary', summary: 'hidden-summary' }],
+          },
+          { content: 'ok' },
+        ]),
+      ),
     ).resolves.toEqual([
-      { type: 'text', text: 'hi' },
-      { type: 'think', think: '', reasoningKey: 'reasoning' },
+      { type: 'think', think: '', reasoningKey: 'reasoning_content' },
+      {
+        type: 'think',
+        think: 'hidden-summary',
+        detailsIndex: 0,
+        hidden: true,
+        reasoningKey: 'reasoning_details',
+      },
+      { type: 'text', text: 'ok' },
     ]);
     await expect(
       collect(
@@ -890,6 +946,298 @@ describe('openai requester thinking', () => {
     ).resolves.toEqual([
       { type: 'think', think: 'We', reasoningKey: 'reasoning' },
       { type: 'text', text: 'ok' },
+    ]);
+  });
+
+  it('keeps whitespace-only reasoning deltas between non-empty chunks', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([{ reasoning: 'First' }, { reasoning: '\n\n' }, { reasoning: 'Second' }]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    expect(accumulator.finish().content).toEqual([
+      { type: 'think', think: 'First\n\nSecond', reasoningKey: 'reasoning' },
+    ]);
+  });
+
+  it('keeps an empty marker deferred by a standalone delta when a tool call repeats it', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        { content: 'hello' },
+        { reasoning: '' },
+        { content: ' world' },
+        {
+          reasoning: '',
+          tool_calls: [
+            { index: 0, id: 'call_1', type: 'function', function: { name: 'lookup', arguments: '{}' } },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+  });
+
+  it('deduplicates empty markers after a tool header flushes one', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        { content: 'hello' },
+        {
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '' },
+            },
+          ],
+        },
+        {
+          reasoning: '',
+          tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([
+      expect.objectContaining({ id: 'call_1', name: 'lookup', arguments: '{"q":"x"}' }),
+    ]);
+  });
+
+  it('keeps a replayed empty marker eligible when the same chunk only routes arguments', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        {
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '' },
+            },
+          ],
+        },
+        { content: 'hello' },
+        {
+          reasoning: '',
+          content: ' world',
+          tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }],
+        },
+        { content: '!' },
+        {
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 1,
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{}' },
+            },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world!' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([
+      expect.objectContaining({ id: 'call_1', name: 'lookup', arguments: '{"q":"x"}' }),
+      expect.objectContaining({ id: 'call_2', name: 'lookup', arguments: '{}' }),
+    ]);
+    const [wire] = lowerMessage(message, {
+      reasoningKey: 'reasoning_content',
+      preserveThinking: false,
+      toolMessageConversion: undefined,
+    });
+    expect(wire).toMatchObject({
+      role: 'assistant',
+      content: 'hello world!',
+      reasoning: '',
+    });
+  });
+
+  it('keeps an empty reasoning marker when argument deltas route to a flushed tool', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        {
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '' },
+            },
+          ],
+        },
+        {
+          content: 'hello',
+          tool_calls: [{ index: 0, function: { arguments: '{"q":"x"}' } }],
+        },
+        { reasoning: '', content: ' world' },
+        {
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 1,
+              id: 'call_2',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{}' },
+            },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([
+      expect.objectContaining({ id: 'call_1', name: 'lookup', arguments: '{"q":"x"}' }),
+      expect.objectContaining({ id: 'call_2', name: 'lookup', arguments: '{}' }),
+    ]);
+    const [wire] = lowerMessage(message, {
+      reasoningKey: 'reasoning_content',
+      preserveThinking: false,
+      toolMessageConversion: undefined,
+    });
+    expect(wire).toMatchObject({
+      role: 'assistant',
+      content: 'hello world',
+      reasoning: '',
+    });
+    expect(wire.tool_calls).toEqual([
+      expect.objectContaining({
+        id: 'call_1',
+        function: { name: 'lookup', arguments: '{"q":"x"}' },
+      }),
+      expect.objectContaining({
+        id: 'call_2',
+        function: { name: 'lookup', arguments: '{}' },
+      }),
+    ]);
+  });
+
+  it('keeps one empty reasoning marker when text clears the first and a tool call repeats it', async () => {
+    const client = stubOpenAIClient(
+      chatCompletionChunks([
+        { content: 'hello' },
+        { content: ' world', reasoning: '' },
+        {
+          reasoning: '',
+          tool_calls: [
+            {
+              index: 0,
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'lookup', arguments: '{}' },
+            },
+          ],
+        },
+      ]),
+    );
+    const requester = createOpenAIRequester({ clientFactory: client.clientFactory });
+    const accumulator = createMessageAccumulator();
+    await requester.generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.part') accumulator.push(event.part);
+        },
+      },
+    );
+    const message = accumulator.finish();
+    expect(message.content).toEqual([
+      { type: 'text', text: 'hello world' },
+      { type: 'think', think: '', reasoningKey: 'reasoning' },
+    ]);
+    expect(message.toolCalls).toEqual([
+      expect.objectContaining({ name: 'lookup', arguments: '{}' }),
+    ]);
+    const [wire] = lowerMessage(message, {
+      reasoningKey: 'reasoning_content',
+      preserveThinking: false,
+      toolMessageConversion: undefined,
+    });
+    expect(wire).toMatchObject({
+      role: 'assistant',
+      content: 'hello world',
+      reasoning: '',
+    });
+    expect(wire.tool_calls).toEqual([
+      expect.objectContaining({
+        function: { name: 'lookup', arguments: '{}' },
+      }),
     ]);
   });
 });

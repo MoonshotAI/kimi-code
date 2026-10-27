@@ -394,6 +394,10 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
     // Reasoning content: honor the explicit key when set, otherwise scan the
     // de facto field set and remember the dialect for outbound echo.
+    // Keep a single empty think part as the reasoning marker (an empty-only
+    // tool-call turn must still echo `reasoning_content` back), but drop
+    // repeated empty deltas — some gateways keep `reasoning_content: ""` on
+    // every chunk after thinking ends (see #2506).
     const reasoning = reasoningKeyDialect.observe(message);
     if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
@@ -421,6 +425,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     reasoningKeyDialect: ReasoningKeyDialect,
   ): AsyncGenerator<StreamedMessagePart> {
     const bufferedToolCalls = new Map<number | string, BufferedChatCompletionToolCall>();
+    let emittedThink = false;
 
     try {
       for await (const chunk of response) {
@@ -449,8 +454,13 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
 
         // Reasoning content: honor the explicit key when set, otherwise scan
         // the de facto field set and remember the dialect for outbound echo.
+        // Keep a single empty think part as the reasoning marker (an empty-only
+        // tool-call turn must still echo `reasoning_content` back), but drop
+        // repeated empty deltas — some gateways keep `reasoning_content: ""` on
+        // every chunk after thinking ends (see #2506).
         const reasoning = reasoningKeyDialect.observe(delta);
-        if (reasoning !== undefined) {
+        if (reasoning !== undefined && (reasoning !== '' || !emittedThink)) {
+          emittedThink = true;
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
