@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { createFeature, type Feature } from '#/app/index';
+import { createFeature, type Feature, useNow, useClock } from '#/app/index';
 import {
   createUnit,
   useChildren,
@@ -86,6 +86,8 @@ const HttpRouteUnit = createUnit<HttpRoute>('http.route', (props) => {
 export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
   return createFeature('http', {
     app() {
+      const now = useNow();
+      const clock = useClock();
       const prefix = options.prefix ?? DEFAULT_HTTP_PREFIX;
       if (
         options.server !== undefined &&
@@ -104,6 +106,7 @@ export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
       const server =
         options.server ??
         createHttpServer({
+          now: clock,
           corsOrigins: options.corsOrigins,
           authTokenService: options.authTokenService,
           disableAuth: options.disableAuth,
@@ -127,7 +130,7 @@ export function createHttp(options: CreateHttpOptions = {}): Feature<void> {
       useMetaRoutes(prefix, {
         version: options.version,
         serverId: randomUUID(),
-        startedAt: new Date().toISOString(),
+        startedAt: new Date(now()).toISOString(),
         openInApps: options.openInApps,
         dangerousBypassAuth: server.dangerousBypassAuth,
       });

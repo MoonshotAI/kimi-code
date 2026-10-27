@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { useApp } from '#/app/index';
+import { useApp, useNow } from '#/app/index';
 import { useCleanup, useOn } from '#/composition-api/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
@@ -81,6 +81,7 @@ function rawDataToString(data: RawData): string {
 
 export function useWsEndpoint(options: { http: Http; prefix: string; registry: WsRegistryStore }): void {
   const app = useApp();
+  const now = useNow();
   const http = options.http;
   const path = `${options.prefix.replace(/\/+$/, '')}/ws`;
   const wss = new WebSocketServer({ noServer: true });
@@ -254,11 +255,11 @@ export function useWsEndpoint(options: { http: Http; prefix: string; registry: W
   wss.on('connection', (socket) => {
     const connection: Connection = {
       id: randomUUID(),
-      connectedAt: new Date().toISOString(),
+      connectedAt: new Date(now()).toISOString(),
       socket,
       sessions: new Map(),
       ping: setInterval(() => {
-        send(socket, { type: 'ping', ts: Date.now() });
+        send(socket, { type: 'ping', ts: now() });
       }, WS_PING_INTERVAL_MS),
     };
     connection.ping.unref();

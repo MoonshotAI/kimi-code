@@ -60,7 +60,7 @@ const interaction = createInteraction();
 import { createMcp, McpRef } from '#/todo-features/mcp/index';
 import { createModelsDev } from '#/features/models-dev/index';
 import { createNodeOsHost, type OsHost, type OsProcess } from '#/todo-features/os/host/index';
-import { createPermission, PermissionRef } from '#/todo-features/permission/index';
+import { createPermissionMode, PermissionModeRef } from '#/todo-features/permission-mode/index';
 import { createPlan, PlanRef } from '#/features/plan/index';
 import {
   AgentModelRef,
@@ -701,7 +701,7 @@ describe('feature-http facade routes', () => {
       createConfig({ persist: fakePersist().persist }),
       providerCatalog,
       bindTestProvider(),
-      createPermission(),
+      createPermissionMode(),
       createPlan(),
       bindTestLlm(createMockRequester()),
     ]);
@@ -729,7 +729,7 @@ describe('feature-http facade routes', () => {
       agent_config: { model: 'test/m1' },
       agent_ids: [MAIN_AGENT_ID],
     });
-    expect(agentRef(env, PermissionRef, 'ses_cfg', MAIN_AGENT_ID)?.mode()).toBe('yolo');
+    expect(agentRef(env, PermissionModeRef, 'ses_cfg', MAIN_AGENT_ID)?.mode()).toBe('yolo');
     await expect(agentRef(env, PlanRef, 'ses_cfg', MAIN_AGENT_ID)?.status()).resolves.not.toBeNull();
     const binding = agentRef(env, AgentModelRef, 'ses_cfg', MAIN_AGENT_ID)?.current.value;
     expect(binding).toMatchObject({ alias: 'test/m1', thinking: 'high' });
@@ -764,7 +764,7 @@ describe('feature-http facade routes', () => {
       createConfig({ persist: fakePersist().persist }),
       providerCatalog,
       bindTestProvider(),
-      createPermission(),
+      createPermissionMode(),
       createPlan(),
       bindTestLlm(createMockRequester()),
     ]);
@@ -789,7 +789,7 @@ describe('feature-http facade routes', () => {
       agent_config: { model: 'test/m1' },
       agent_ids: [MAIN_AGENT_ID],
     });
-    expect(agentRef(env, PermissionRef, 'ses_prof', MAIN_AGENT_ID)?.mode()).toBe('auto');
+    expect(agentRef(env, PermissionModeRef, 'ses_prof', MAIN_AGENT_ID)?.mode()).toBe('auto');
     await expect(agentRef(env, PlanRef, 'ses_prof', MAIN_AGENT_ID)?.status()).resolves.not.toBeNull();
 
     const listed = ((await (await get(env, '/models')).json()).data.items as { model: string }[])

@@ -2,6 +2,7 @@ import {
   createFeature,
   useStepStarting,
   type Feature,
+  useNow,
 } from '#/app/index';
 import {
   createHistoryMessageBuilder,
@@ -10,10 +11,10 @@ import {
 } from '@moonshot-ai/agent-core/history/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 
+
 export const DATE_CHANGE_REMIND_KEY = 'date-change';
 
 export interface CreateDateChangeProps {
-  readonly now?: () => Date;
   readonly timeZone?: string;
 }
 
@@ -26,13 +27,13 @@ export function dateChangeReminder(localDate: string): string {
 }
 
 export function createDateChange(props: CreateDateChangeProps = {}): Feature<void> {
-  const now = props.now ?? (() => new Date());
   const timeZone = props.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
   return createFeature('dateChange', {
     agent() {
+      const now = useNow();
       useStepStarting(({ messages }) => {
         const disclosed = lastDisclosedDate(messages);
-        const current = localDateOf(now(), timeZone);
+        const current = localDateOf(new Date(now()), timeZone);
         if (current === disclosed) return undefined;
         const text =
           disclosed === undefined ? initialDateReminder(current) : dateChangeReminder(current);

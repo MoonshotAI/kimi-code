@@ -30,6 +30,7 @@ export interface CreateMcpAuthToolOptions {
   readonly oauthService: McpOAuthService;
   readonly reconnect: (signal?: AbortSignal) => Promise<void>;
   readonly onAuthorizationUrl: (authorizationUrl: string, expiresAt: number) => void;
+  readonly now: () => number;
   readonly deferred?: boolean;
 }
 
@@ -67,7 +68,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): ToolDefini
 
       const urlText = flow.authorizationUrl.toString();
       const waitTimeoutMs = DEFAULT_AUTH_TIMEOUT_MS;
-      onAuthorizationUrl(urlText, Date.now() + waitTimeoutMs);
+      onAuthorizationUrl(urlText, options.now() + waitTimeoutMs);
       onUpdate?.({
         key: 'status',
         text:

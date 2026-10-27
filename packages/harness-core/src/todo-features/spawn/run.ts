@@ -7,7 +7,6 @@ import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { describeUnknownError } from '#/todo-features/config/index';
 import type { OsProcessPort } from '#/todo-features/os/index';
-import { syncAgentTools } from '#/runtime/index';
 
 import { SUBAGENT_STOPPED_MESSAGE, type SubagentStopReason } from './format';
 import {
@@ -92,7 +91,7 @@ function trimSubagentTools(ensured: EnsuredAgent, allowed: (name: string) => boo
   for (const name of ensured.runtime.tools.keys()) {
     if (!allowed(name)) ensured.runtime.tools.delete(name);
   }
-  syncAgentTools(ensured.agent, ensured.runtime);
+  ensured.runtime.profileSync?.tools.refresh();
 }
 
 export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLauncher {
@@ -124,7 +123,9 @@ export function createSubagentLauncher(deps: SubagentLauncherDeps): SubagentLaun
     registry.set(resumeAgentId, record);
     let ensured: EnsuredAgent;
     try {
-      ensured = await session.ensureAgent(resumeAgentId);
+      const profile = deps.catalog.get(identity.profileName);
+      const systemPrompt = profile?.renderSystemPrompt({ cwd: deps.workDir }).text;
+      ensured = await session.ensureAgent(resumeAgentId, { systemPrompt });
     } catch (error) {
       record.running = false;
       return `Agent instance "${resumeAgentId}" could not be reopened: ${error instanceof Error ? error.message : String(error)}`;

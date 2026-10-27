@@ -52,7 +52,8 @@ import { createMcp } from '#/todo-features/mcp/index';
 import { createMedia } from '#/todo-features/media/index';
 import { createNotify } from '#/todo-features/notify/index';
 import { createNodeOsHost, createOs, type OsHost } from '#/todo-features/os/index';
-import { createPermission } from '#/todo-features/permission/index';
+import { createPermissionPolicy } from '#/todo-features/permission/index';
+import { createPermissionMode } from '#/todo-features/permission-mode/index';
 import { createPlugin } from '#/todo-features/plugin/index';
 import { createProfiles } from '#/todo-features/profiles/index';
 import { createSessionIndex } from '#/todo-features/sessionIndex/index';
@@ -136,7 +137,8 @@ export function createDefaultApp(options: CreateDefaultAppOptions = {}): Default
     }),
   );
   app.features.add(createToolDedupe());
-  app.features.add(createPermission({ workDir, homeDir: home, fs: host.fs }));
+  app.features.add(createPermissionMode());
+  app.features.add(createPermissionPolicy({ workDir, homeDir: home, fs: host.fs }));
   app.features.add(createProfiles({ workDir, host, HOME: home }));
   app.features.add(createSpawn({ host, EXPERIMENTAL_SUBAGENT_FORK: experimental('SUBAGENT_FORK') }));
   app.features.add(createEdit({ workDir }));

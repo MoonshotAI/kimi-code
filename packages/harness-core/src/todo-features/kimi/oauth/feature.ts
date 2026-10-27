@@ -1,4 +1,4 @@
-import { createFeature, type Feature, type FeatureUnits } from '#/app/index';
+import { createFeature, type Feature, type FeatureUnits, useNow } from '#/app/index';
 import { RootRef } from '#/app/units';
 import {
   createFacadeToken,
@@ -100,6 +100,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
       const catalog = useProviderCatalog();
       const configRef = useInject(ConfigRef);
       const root = useInject(RootRef);
+      const now = useNow();
       const tokens =
         home === undefined
           ? { resolve: () => undefined, manager: () => undefined }
@@ -110,7 +111,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
       let refreshOnStartPending = false;
       const setTerminal = (state: LoginFlowState, status: Exclude<OAuthFlowStatus, 'pending'>): void => {
         state.status = status;
-        state.resolvedAt = new Date().toISOString();
+        state.resolvedAt = new Date(now()).toISOString();
         const timer = setTimeout(() => {
           if (flows.get(state.provider) === state) {
             flows.delete(state.provider);
@@ -333,11 +334,11 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
             controller: new AbortController(),
             oauthRef: auth.oauthRef,
             loginBaseUrl: auth.baseUrl,
-            startedAt: Date.now(),
+            startedAt: now(),
             device: undefined,
             status: 'pending',
             tokenGranted: false,
-            expiresAt: Date.now() + LOGIN_DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
+            expiresAt: now() + LOGIN_DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
             gcTimer: undefined,
             errorMessage: undefined,
             resolvedAt: undefined,
@@ -368,7 +369,7 @@ export function createOauthSlots(props: CreateOauthProps = {}): FeatureUnits<voi
               onDeviceCode: (device) => {
                 state.device = device;
                 if (device.expiresIn !== null) {
-                  state.expiresAt = Date.now() + device.expiresIn * 1000;
+                  state.expiresAt = now() + device.expiresIn * 1000;
                 }
                 resolveDevice(device);
               },

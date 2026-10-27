@@ -34,8 +34,11 @@ import type { Event, Log } from '@moonshot-ai/agent-core/store/index';
 
 import type { App } from './app';
 import { createFeature, featureSetOf, type Feature, type FeatureEntry, type FeatureLevel, type FeatureSet } from './features';
-import type { AppSession } from './session';
-import { useSystemPrompt, useSystemPromptAssembly } from './system-prompt';
+import { bindAgentUnit, bindSessionUnit, type AppSession } from './session';
+import { toolDescription, type AgentProfileSync } from '#/runtime/agents';
+import { createSystemPromptSync, createToolsSync } from '#/runtime/profile-sync';
+
+import { SystemPromptSections, useSystemPrompt } from './system-prompt';
 
 const AppRef: CertainToken<App> = createToken('app');
 const SessionRef: CertainToken<AppSession> = createToken('session');
@@ -248,22 +251,81 @@ function useLevel(
   });
 }
 
+function useLoopProfile(agent: Agent): void {
+  const node = currentUnit();
+  const sections = useCollection(SystemPromptSections);
+  const runtime = useSession().agentRuntime(agent.id);
+  const promptSync = createSystemPromptSync(
+    agent.loop,
+    () => sections.value.map((section) => ({ id: section.id, text: section.text })),
+    (ids) => {
+      node.fire({ type: 'system_prompt.pending', ids: [...ids] });
+    },
+  );
+  const toolsSync = createToolsSync(
+    agent.loop,
+    () => {
+      const honorDeferred = runtime?.tools.has('select_tools') === true;
+      return [...(runtime?.tools.values() ?? [])]
+        .filter((tool) => tool.deferred !== true || !honorDeferred)
+        .map((tool) =>
+          honorDeferred
+            ? toolDescription(tool)
+            : { name: tool.name, description: tool.description, parameters: tool.parameters },
+        );
+    },
+    (ids) => {
+      node.fire({ type: 'tools.pending', ids: [...ids] });
+    },
+  );
+  const pair: AgentProfileSync = {
+    prompt: { ...promptSync, refresh: coalesce(() => promptSync.refresh()) },
+    tools: { ...toolsSync, refresh: coalesce(() => toolsSync.refresh()) },
+  };
+  if (runtime !== undefined) runtime.profileSync = pair;
+  watch(sections, () => pair.prompt.refresh());
+  useMounted(() => {
+    promptSync.refresh();
+    toolsSync.refresh();
+  });
+  useCleanup(() => {
+    if (runtime?.profileSync === pair) runtime.profileSync = undefined;
+    promptSync.dispose();
+    toolsSync.dispose();
+  });
+}
+
+function coalesce(refresh: () => void): () => void {
+  let queued = false;
+  return () => {
+    if (queued) return;
+    queued = true;
+    queueMicrotask(() => {
+      queued = false;
+      refresh();
+    });
+  };
+}
+
 export const AgentUnit = createUnit<{ readonly agent: Agent }>('agent', ({ agent }) => {
   const node = currentUnit();
   provide(AgentRef, agent);
+  useCleanup(bindAgentUnit(agent, node));
   useContribute(EventContext, { agentId: agent.id });
   useCleanup(() => {
     node.fire({ type: 'agent.closed' });
   });
   useForward(agent.log, agent.since, isLoopRecord);
   useLevel('agent', featureSetOf(agent), AgentFeatures, () => []);
-  useSystemPromptAssembly(agent);
+  useLoopProfile(agent);
   node.fire({ type: 'agent.opened', source: agent.source, reopened: agent.reopened });
 });
 
 export const SessionUnit = createUnit<{ readonly session: AppSession }>('session', ({ session }) => {
   const features = featureSetOf(session);
+  const node = currentUnit();
   provide(SessionRef, session);
+  useCleanup(bindSessionUnit(session, node));
   useContribute(EventContext, { sessionId: session.id });
   useForward(session.log, session.since, (event) => event.type === 'agent.registered');
   useContributeEach(AgentFeatures, () => features.entries());

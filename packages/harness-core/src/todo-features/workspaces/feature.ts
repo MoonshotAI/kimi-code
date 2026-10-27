@@ -7,6 +7,7 @@ import {
   type AppSession,
   type CreateSessionInput,
   type Feature,
+  useClock,
 } from '#/app/index';
 import {
   createFacadeToken,
@@ -161,6 +162,7 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, { 
     app() {
       const fire = useFire();
       const app = useApp();
+      const clock = useClock();
       const host = props.host;
       const now = props.now ?? Date.now;
       if (host !== undefined) {
@@ -374,7 +376,7 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, { 
                   () => fsHost.environment.homeDir,
                   async () => dedupeWorkspacesByRoot(await currentState()).map((ws) => ws.root),
                 );
-                const git = createWorkspaceGit(fsHost);
+                const git = createWorkspaceGit(fsHost, clock);
                 return {
                   host: fsHost,
                   git,
@@ -384,7 +386,7 @@ export function createWorkspaces(props: CreateWorkspacesProps): Feature<void, { 
                   read: (path, n, offset) => fsHost.fs.readBytes(path, n, offset),
                   stat: (path) => fsHost.fs.stat(path),
                   mkdir: (path) => browser.mkdir(path),
-                  view: (roots) => createWorkspaceFsView(fsHost.fs, roots, git),
+                  view: (roots) => createWorkspaceFsView(fsHost.fs, roots, git, clock),
                 };
               })(),
         list: () => dedupeWorkspacesByRoot(state.value),

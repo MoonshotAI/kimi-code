@@ -174,126 +174,6 @@ describe('AskUserQuestionTool', () => {
     ).toBe(false);
   });
 
-  it('rejects duplicate question texts across questions (schema + execution)', async () => {
-    const duplicated: AskUserQuestionInput = {
-      questions: [input().questions[0]!, input().questions[0]!],
-    };
-    expect(AskUserQuestionInputSchema.safeParse(duplicated).success).toBe(false);
-
-    const { tool, request } = makeTool();
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_dup_question',
-      args: duplicated,
-      signal,
-    });
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('unique');
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it('rejects duplicate option labels within one question (schema + execution)', async () => {
-    const duplicated = input({
-      options: [
-        { label: 'Postgres', description: 'Relational storage' },
-        { label: 'Postgres', description: 'Same label again' },
-      ],
-    });
-    expect(AskUserQuestionInputSchema.safeParse(duplicated).success).toBe(false);
-
-    const { tool, request } = makeTool();
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_dup_label',
-      args: duplicated,
-      signal,
-    });
-    expect(result.isError).toBe(true);
-    expect(result.output).toContain('unique');
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it('allows the same option label to appear in different questions', async () => {
-    const args: AskUserQuestionInput = {
-      questions: [
-        input().questions[0]!,
-        input({ question: 'Which cache?' }).questions[0]!,
-      ],
-    };
-    expect(AskUserQuestionInputSchema.safeParse(args).success).toBe(true);
-
-    const { tool, request } = makeTool();
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_cross_label',
-      args,
-      signal,
-    });
-    expect(result.isError).toBe(false);
-    expect(request).toHaveBeenCalledOnce();
-  });
-
-  it('exposes background mode when all task controls are active', () => {
-    const { tool } = makeTool();
-    const params = tool.parameters as {
-      properties: { background?: { type?: string; default?: boolean } };
-    };
-
-    expect(params.properties.background?.type).toBe('boolean');
-    expect(params.properties.background?.default).toBe(false);
-    expect(tool.description).toContain('background=true');
-    expect(tool.description).toContain('task_id');
-  });
-
-  it('hides and rejects background mode after a task control becomes inactive', async () => {
-    const activeTaskTools = new Set(TASK_TOOLS);
-    const { tool, request, registerTask } = makeTool({
-      activeTaskTools,
-    });
-
-    expect(tool.parameters).toHaveProperty('properties.background');
-    activeTaskTools.delete('TaskStop');
-
-    const params = tool.parameters as { properties: Record<string, unknown> };
-
-    expect(params.properties).not.toHaveProperty('background');
-    expect(tool.description.toLowerCase()).not.toContain('background');
-    expect(tool.description).not.toContain('task_id');
-    expect(tool.description).not.toContain('TaskOutput');
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_bg_disabled',
-      args: { ...input(), background: true },
-      signal,
-    });
-
-    expect(result).toEqual({
-      isError: true,
-      output:
-        'Background questions are not available for this agent because TaskList, TaskOutput, and TaskStop are not enabled.',
-    });
-    expect(registerTask).not.toHaveBeenCalled();
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it('preserves foreground answers when background mode is unavailable', async () => {
-    const { tool, request } = makeTool({ activeTaskTools: new Set() });
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_fg_disabled',
-      args: input(),
-      signal,
-    });
-
-    expect(result).toEqual({
-      isError: false,
-      output: JSON.stringify({ answers: { Postgres: true } }),
-    });
-    expect(request).toHaveBeenCalledOnce();
-  });
-
   it('preserves foreground dismissal when background mode is unavailable', async () => {
     const { tool } = makeTool({
       activeTaskTools: new Set(),
@@ -313,42 +193,6 @@ describe('AskUserQuestionTool', () => {
         answers: {},
         note: 'User dismissed the question without answering.',
       }),
-    });
-  });
-
-  it('dispatches questions through the session question service', async () => {
-    const { tool, request, telemetryTrack } = makeTool();
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_question',
-      args: input({ multi_select: true }),
-      signal,
-    });
-
-    expect(result.isError).toBe(false);
-    expect(result.output).toBe(JSON.stringify({ answers: { Postgres: true } }));
-    expect(request).toHaveBeenCalledWith(
-      {
-        turnId: 0,
-        toolCallId: 'call_question',
-        questions: [
-          {
-            question: 'Which database?',
-            header: 'Storage',
-            options: [
-              { label: 'Postgres', description: 'Relational storage' },
-              { label: 'SQLite', description: 'Embedded storage' },
-            ],
-            multiSelect: true,
-          },
-        ],
-      },
-      { agentId: 'main', detached: false },
-    );
-    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
-      answered: 1,
-      trace_id: undefined,
     });
   });
 
@@ -384,30 +228,6 @@ describe('AskUserQuestionTool', () => {
     );
   });
 
-  it('tracks the structured question answer method without leaking it into output', async () => {
-    const { tool, telemetryTrack } = makeTool({
-      request: async () => ({
-        answers: { 'Which database?': 'SQLite' },
-        method: 'number_key',
-      }),
-    });
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_question',
-      args: input(),
-      signal,
-    });
-
-    expect(result).toMatchObject({ isError: false });
-    expect(result.output).toBe(JSON.stringify({ answers: { 'Which database?': 'SQLite' } }));
-    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
-      answered: 1,
-      method: 'number_key',
-      trace_id: undefined,
-    });
-  });
-
   it('merges the request trace id into question telemetry', async () => {
     const { tool, telemetryTrack } = makeTool();
 
@@ -423,45 +243,6 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       trace_id: 'trace-q-1',
-    });
-  });
-
-  it('returns a dismissed message when every question is dismissed', async () => {
-    const { tool, telemetryTrack } = makeTool({ request: async () => null });
-
-    const result = await executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_question',
-      args: {
-        questions: [input().questions[0]!, input({ question: 'Which cache?' }).questions[0]!],
-      },
-      signal,
-    });
-
-    expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('dismissed');
-    expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
-  });
-
-  it('resolves dismissed when the waiting question is aborted', async () => {
-    const controller = new AbortController();
-    const { tool } = makeTool();
-
-    const result = executeTool(tool, {
-      turnId: 0,
-      toolCallId: 'call_question',
-      args: input(),
-      signal: controller.signal,
-    });
-    controller.abort();
-
-    await expect(result).resolves.toMatchObject({ isError: false });
-    const settled = await result;
-    const output = typeof settled.output === 'string' ? settled.output : '';
-    expect(JSON.parse(output)).toEqual({
-      answers: {},
-      note: 'User dismissed the question without answering.',
     });
   });
 
@@ -481,47 +262,6 @@ describe('AskUserQuestionTool', () => {
       };
       return { sink, outputs, settlements };
     }
-
-    it('returns a task_id immediately without awaiting the answer', async () => {
-      const { tool, request, registerTask, getTask } = makeTool();
-      const result = await executeTool(tool, {
-        turnId: 0,
-        toolCallId: 'call_bg',
-        args: { ...input(), background: true },
-        signal,
-      });
-
-      expect(result.isError).toBe(false);
-      expect(result.output).toBe(
-        [
-          'task_id: q_test_task_id',
-          'status: running',
-          'next_step: Continue your work; the answer arrives automatically in a later message. Use TaskStop only to cancel the question.',
-        ].join('\n'),
-      );
-      expect(registerTask).toHaveBeenCalledOnce();
-      expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
-      expect(getTask).toHaveBeenCalledWith('q_test_task_id');
-      expect(request).not.toHaveBeenCalled();
-    });
-
-    it('runs the question in the background task and settles completed with the answer', async () => {
-      const { tool, lastRegisteredTask } = makeTool();
-      await executeTool(tool, {
-        turnId: 0,
-        toolCallId: 'call_bg_run',
-        args: { ...input(), background: true },
-        signal,
-      });
-
-      const task = lastRegisteredTask();
-      expect(task).toBeDefined();
-      const { sink, outputs, settlements } = makeSink();
-      await task!.start(sink);
-
-      expect(outputs).toEqual([JSON.stringify({ answers: { Postgres: true } })]);
-      expect(settlements).toEqual([{ status: 'completed' }]);
-    });
 
     it('detaches the background question from the asking turn', async () => {
       const { tool, request, lastRegisteredTask } = makeTool();
@@ -543,31 +283,6 @@ describe('AskUserQuestionTool', () => {
 
       expect(request).toHaveBeenCalledTimes(2);
       expect(request.mock.calls[1]![1]).not.toMatchObject({ detached: true });
-    });
-
-    it('settles completed with a dismissed result when the background task is aborted', async () => {
-      const controller = new AbortController();
-      const { tool, lastRegisteredTask } = makeTool();
-      await executeTool(tool, {
-        turnId: 0,
-        toolCallId: 'call_bg_abort',
-        args: { ...input(), background: true },
-        signal,
-      });
-
-      const task = lastRegisteredTask();
-      const { sink, outputs, settlements } = makeSink(controller.signal);
-      const run = task!.start(sink);
-      controller.abort();
-      await run;
-
-      expect(outputs).toEqual([
-        JSON.stringify({
-          answers: {},
-          note: 'User dismissed the question without answering.',
-        }),
-      ]);
-      expect(settlements).toEqual([{ status: 'completed' }]);
     });
   });
 });

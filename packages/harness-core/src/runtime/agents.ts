@@ -1,12 +1,21 @@
 import { createMaxStepsHook, type HookRegistration } from '@moonshot-ai/agent-core/loop/index';
-import type { Agent, AgentCaps } from '@moonshot-ai/agent-core/session/index';
+import type { AgentCaps } from '@moonshot-ai/agent-core/session/index';
+import type { ToolDescription } from '@moonshot-ai/agent-core/llm/message';
 import { createToolExecutor, type ToolDefinition, type ToolExecutorHost } from '@moonshot-ai/agent-core/tool/index';
+
+import type { ProfileSync } from './profile-sync';
+
+export interface AgentProfileSync {
+  readonly prompt: ProfileSync;
+  readonly tools: ProfileSync;
+}
 
 export interface AgentRuntime {
   readonly agentId: string;
   readonly executor: ToolExecutorHost;
   readonly tools: Map<string, ToolDefinition>;
   hostSystemPrompt: string | undefined;
+  profileSync?: AgentProfileSync;
 }
 
 export interface EnsureAgentOptions {
@@ -36,18 +45,11 @@ export function agentCaps(runtime: AgentRuntime, options: EnsureAgentOptions = {
   };
 }
 
-export function syncAgentTools(agent: Agent, runtime: AgentRuntime): void {
-  const descriptions = [...runtime.tools.values()].map((tool) => ({
+export function toolDescription(tool: ToolDefinition): ToolDescription {
+  return {
     name: tool.name,
     description: tool.description,
     parameters: tool.parameters,
-    deferred: tool.deferred,
-  }));
-  const ack = agent.loop.setTools(descriptions);
-  if (ack?.type !== 'tools.rejected') return;
-  const unsubscribe = agent.loop.subscribe((event) => {
-    if (event.type !== 'step.ended' && event.type !== 'turn.ended') return;
-    unsubscribe();
-    queueMicrotask(() => syncAgentTools(agent, runtime));
-  });
+    ...(tool.deferred === true ? { deferred: true } : {}),
+  };
 }

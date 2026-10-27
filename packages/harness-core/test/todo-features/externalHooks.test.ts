@@ -475,11 +475,11 @@ describe('runMatchedHooks', () => {
     ];
     const results = await runMatchedHooks(host.process, indexHooks(hooks), 'PreToolUse', {
       matcherValue: 'Bash',
-    });
+    }, () => performance.now());
     expect(results).toHaveLength(1);
     const misses = await runMatchedHooks(host.process, indexHooks(hooks), 'PreToolUse', {
       matcherValue: 'Grep',
-    });
+    }, () => performance.now());
     expect(misses).toHaveLength(0);
   });
 
@@ -491,7 +491,7 @@ describe('runMatchedHooks', () => {
     ];
     const results = await runMatchedHooks(host.process, indexHooks(hooks), 'PreToolUse', {
       matcherValue: 'anything',
-    });
+    }, () => performance.now());
     expect(results).toHaveLength(1);
   });
 
@@ -504,7 +504,7 @@ describe('runMatchedHooks', () => {
         { type: 'image_url', source: { kind: 'url', url: 'file:///tmp/a.png' } },
         { type: 'text', text: 'world' },
       ],
-    });
+    }, () => performance.now());
     expect(results).toHaveLength(1);
   });
 
@@ -515,7 +515,7 @@ describe('runMatchedHooks', () => {
       { event: 'Stop', command: 'same' },
       { event: 'Stop', command: 'same', cwd: '/elsewhere' },
     ];
-    const results = await runMatchedHooks(host.process, indexHooks(hooks), 'Stop', {});
+    const results = await runMatchedHooks(host.process, indexHooks(hooks), 'Stop', {}, () => performance.now());
     expect(results).toHaveLength(2);
     expect(spawns.map((spawn) => spawn.options?.cwd)).toEqual([undefined, '/elsewhere']);
   });
@@ -528,7 +528,7 @@ describe('runMatchedHooks', () => {
       sessionId: 'ses_1',
       cwd: '/repo',
       inputData: { toolName: 'Bash', toolCallId: 'call_1', clientType: 'test_client' },
-    });
+    }, () => performance.now());
     expect(JSON.parse(spawns[0]!.stdin!)).toEqual({
       hook_event_name: 'PreToolUse',
       session_id: 'ses_1',
@@ -544,7 +544,7 @@ describe('runMatchedHooks', () => {
     const hooks: HookDef[] = [
       { event: 'Stop', command: 'noop', cwd: '/other', env: { FOO: 'bar' } },
     ];
-    await runMatchedHooks(host.process, indexHooks(hooks), 'Stop', { cwd: '/repo' });
+    await runMatchedHooks(host.process, indexHooks(hooks), 'Stop', { cwd: '/repo' }, () => performance.now());
     expect(spawns[0]?.options).toMatchObject({ cwd: '/other', env: { FOO: 'bar' } });
   });
 });
@@ -1211,11 +1211,18 @@ describe('externalHooks feature', () => {
       model: 'test-alias',
       profile: 'coder',
     });
-    const session = await t.harness.create({});
+    let opened = false;
+    const opening = t.harness.create({}).then((session) => {
+      opened = true;
+      return session;
+    });
     await waitFor(() => gated.spawns.length === 1);
     expect(gated.spawns[0]!.args[1]).toBe('rec start');
-    gated.releaseAll();
     await waitFor(() => gated.spawns[0]!.stdin !== undefined);
+    expect(opened).toBe(false);
+    gated.releaseAll();
+    const session = await opening;
+    expect(opened).toBe(true);
     expect(spawnPayload(gated.spawns[0]!)).toMatchObject({
       hook_event_name: 'SessionOpened',
       session_id: session.id,

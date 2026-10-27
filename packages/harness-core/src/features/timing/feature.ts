@@ -1,5 +1,6 @@
-import { createFeature, useLoopEvent } from '#/app/index';
+import { createFeature, useLoopEvent, useClock } from '#/app/index';
 import { createFacadeToken, shallowRef, useExpose, type Ref } from '#/composition-api/index';
+
 
 export interface LlmRequestTiming {
   readonly requestBuildMs?: number;
@@ -18,7 +19,7 @@ export const TimingRef = createFacadeToken<TimingFace>('timing');
 
 export const timing = createFeature('timing', {
   agent() {
-    const now = Date.now;
+    const now = useClock();
     const current = shallowRef<LlmRequestTiming | undefined>(undefined);
     let lastEventAt: number | undefined;
     let retryAnchor: { at: number; delayMs: number } | undefined;

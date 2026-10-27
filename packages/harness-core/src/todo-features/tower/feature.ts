@@ -1,4 +1,4 @@
-import { createFeature, useAgent, useApp, useSession, useStepStarting, useToolStarting, type Feature, useAgentTools, useFeatureStore } from '#/app/index';
+import { createFeature, useAgent, useApp, useSession, useStepStarting, useToolStarting, type Feature, useAgentTools, useFeatureStore, useNow } from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   createFacadeToken,
@@ -164,6 +164,7 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
   return createFeature<{ agent: TowerEvent }>('tower', {
     app() {
       if (!enabled()) return;
+      const now = useNow();
       const governor = new RateLimitCapacityGovernor();
       let inflight = 0;
       let blockedUntil: number | null = null;
@@ -173,14 +174,14 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
       };
       const reportRateLimited = (): void => {
         governor.noteRateLimited(inflight);
-        blockedUntil = Date.now() + TOWER_SPAWN_PAUSE_MS;
+        blockedUntil = now() + TOWER_SPAWN_PAUSE_MS;
       };
       const reportSuccess = (): void => {
         blockedUntil = null;
         governor.maybeRecover();
       };
       const acquire = (): { readonly ok: true } | { readonly ok: false; readonly reason: string } => {
-        const at = Date.now();
+        const at = now();
         if (blockedUntil !== null) {
           if (at < blockedUntil) {
             const retryAfterS = Math.ceil((blockedUntil - at) / 1000);
@@ -230,6 +231,7 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
     },
     session() {
       if (!enabled()) return;
+      const now = useNow();
       const listeners = new Set<(signal: TowerInboxSignal) => void>();
       const hub: TowerHub = {
         publish: (signal) => {
@@ -250,7 +252,7 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
         void new TowerStore(resolveTowerRepoRoot(props.workDir), {
           fs: host.fs,
           git: new Git({ process: host.process, fs: host.fs }),
-        })
+        }, now)
           .clearAgentDied(agentId)
           .then(() => undefined, () => undefined);
       });
@@ -259,6 +261,7 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
       const agent = useAgent();
       const session = useSession();
       const app = useApp();
+      const now = useNow();
       const store = useFeatureStore('agent', 'tower', towerModeProjection);
       const fire = useFire();
       const host = props.host;
@@ -272,7 +275,7 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
         return ioInstance;
       };
       const newStore = (): TowerStore =>
-        new TowerStore(resolveTowerRepoRoot(props.workDir), ioFor());
+        new TowerStore(resolveTowerRepoRoot(props.workDir), ioFor(), now);
 
       const isActive = (): boolean =>
         agent.id === MAIN_AGENT_ID && enabled() && store.state.value.active;
@@ -532,6 +535,7 @@ export function createTower(props: CreateTowerProps): Feature<void, { agent: Tow
           rateLimit,
           hub: shared.hub,
           running,
+          now,
         };
         useAgentTools(
           createTowerInitTool(deps),

@@ -19,8 +19,8 @@ export interface ServerHelloFrame {
   payload: ServerHelloPayload;
 }
 
-export function buildServerHello(payload: ServerHelloPayload): ServerHelloFrame {
-  return { type: 'server_hello', timestamp: new Date().toISOString(), payload };
+export function buildServerHello(now: number, payload: ServerHelloPayload): ServerHelloFrame {
+  return { type: 'server_hello', timestamp: new Date(now).toISOString(), payload };
 }
 
 export interface PingFrame {
@@ -29,8 +29,8 @@ export interface PingFrame {
   payload: { nonce: string };
 }
 
-export function buildPing(nonce: string): PingFrame {
-  return { type: 'ping', timestamp: new Date().toISOString(), payload: { nonce } };
+export function buildPing(now: number, nonce: string): PingFrame {
+  return { type: 'ping', timestamp: new Date(now).toISOString(), payload: { nonce } };
 }
 
 export interface AckFrame<P = unknown> {
@@ -59,6 +59,7 @@ export interface ResyncRequiredFrame {
 }
 
 export function buildResyncRequired(
+  now: number,
   sessionId: string,
   reason: ResyncReason,
   currentSeq: number,
@@ -66,7 +67,7 @@ export function buildResyncRequired(
 ): ResyncRequiredFrame {
   return {
     type: 'resync_required',
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(now).toISOString(),
     payload: {
       session_id: sessionId,
       reason,
@@ -88,10 +89,10 @@ export interface WsErrorFrame {
   };
 }
 
-export function buildError(code: number, msg: string, fatal: boolean, requestId?: string): WsErrorFrame {
+export function buildError(now: number, code: number, msg: string, fatal: boolean, requestId?: string): WsErrorFrame {
   return {
     type: 'error',
-    timestamp: new Date().toISOString(),
+    timestamp: new Date(now).toISOString(),
     payload: { code, msg, fatal, ...(requestId !== undefined ? { request_id: requestId } : {}) },
   };
 }

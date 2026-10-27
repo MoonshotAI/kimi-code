@@ -1,6 +1,6 @@
 import type { SessionMode } from '@agentclientprotocol/sdk';
 
-import type { PermissionMode } from '#/todo-features/permission/index';
+import type { PermissionMode } from '#/todo-features/permission-mode/index';
 
 export const ACP_MODES = [
   {

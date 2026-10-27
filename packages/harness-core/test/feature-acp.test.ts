@@ -16,7 +16,7 @@ import {
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createFeature, useAgent, useSession, type Feature, createApp, type App, useAgentTools } from '#/app/index';
+import { createFeature, useAgent, type Feature, createApp, type App, useAgentTools } from '#/app/index';
 import {
   useCollection,
   useInject,
@@ -48,19 +48,14 @@ import {
   KimiFileRegistryRef,
   type KimiFileRegistry,
 } from '#/todo-features/files/index';
-import {
-  INTERACTION_TAG_AGENT_ID,
-  INTERACTION_TAG_SESSION_ID,
-  INTERACTION_TAG_TOOL_CALL_ID,
-  InteractionRef,
-  createInteraction,
-} from '#/todo-features/interaction/index';
+import { createInteraction } from '#/todo-features/interaction/index';
 import { createMedia } from '#/todo-features/media/index';
 import { createMcp, McpRef, type McpFacade, type McpServerConfig } from '#/todo-features/mcp/index';
 
 const interaction = createInteraction();
 import { createNodeOsHost } from '#/todo-features/os/host/index';
-import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
+import { createPermissionPolicy } from '#/todo-features/permission/index';
+import { createPermissionMode, PermissionModeRef, type PermissionModeFace } from '#/todo-features/permission-mode/index';
 import { createMemoryPlanStorage, createPlan, PlanRef, type PlanFace } from '#/features/plan/index';
 import {
   CatalogModels,
@@ -226,35 +221,6 @@ function alwaysThinkingModel(): CatalogModelConfig {
   };
 }
 
-function bindQuestionTool(): Feature<void> {
-  return createFeature('test-question-tool', {
-    agent() {
-      const agent = useAgent();
-      const session = useSession();
-      const interactions = useInject(InteractionRef).value;
-      if (interactions === undefined) throw new Error('interaction feature is not mounted');
-      useAgentTools({
-        name: 'AskUserQuestion',
-        description: 'Ask the user a question',
-        parameters: { type: 'object', properties: {} },
-        execute: async ({ toolCall }) => {
-          const args = JSON.parse(toolCall.arguments ?? '{}') as { questions?: unknown[] };
-          const response = await interactions.request({
-            kind: 'question',
-            payload: { questions: args.questions ?? [] },
-            tags: {
-              [INTERACTION_TAG_AGENT_ID]: agent.id,
-              [INTERACTION_TAG_SESSION_ID]: session.id,
-              [INTERACTION_TAG_TOOL_CALL_ID]: toolCall.id,
-            },
-          });
-          return { content: [{ type: 'text' as const, text: JSON.stringify(response) }] };
-        },
-      });
-    },
-  });
-}
-
 function bindTestTools(terminalBash = false): Feature<void> {
   return createFeature('test-tools', {
     agent() {
@@ -331,7 +297,7 @@ interface ProbeCapture {
   config?: Readonly<ShallowRef<ConfigStore | undefined>>;
   mcp?: Readonly<ShallowRef<McpFacade | undefined>>;
   readonly planByAgent: Map<string, PlanFace>;
-  readonly permissionByAgent: Map<string, PermissionFace>;
+  readonly permissionByAgent: Map<string, PermissionModeFace>;
 }
 
 function acpTestProbe(capture: ProbeCapture): Feature<void> {
@@ -344,7 +310,7 @@ function acpTestProbe(capture: ProbeCapture): Feature<void> {
     agent() {
       const agent = useAgent();
       const plan = useInject(PlanRef);
-      const permission = useInject(PermissionRef);
+      const permission = useInject(PermissionModeRef);
       watch(
         plan,
         (value) => {
@@ -405,7 +371,6 @@ async function startAcpTest(options?: {
   withMcp?: boolean | Record<string, McpServerConfig>;
   mcpHost?: boolean;
   withTerminalBash?: boolean;
-  withQuestionTool?: boolean;
   extraModels?: CatalogModelConfig[];
   fileContent?: string;
   onSessionActive?: (connection: AcpOsConnection) => void;
@@ -442,7 +407,10 @@ async function startAcpTest(options?: {
   harness.features.add(contributeTestProvider(requester, options?.extraModels));
   harness.features.add(interaction);
   harness.features.add(usage);
-  if (options?.withPermission === true) harness.features.add(createPermission());
+  if (options?.withPermission === true) {
+      harness.features.add(createPermissionMode());
+      harness.features.add(createPermissionPolicy());
+    }
   if (options?.withPlan === true) {
     harness.features.add(createPlan({ storage: createMemoryPlanStorage() }));
   }
@@ -474,7 +442,6 @@ async function startAcpTest(options?: {
     );
   }
   harness.features.add(bindTestTools(options?.withTerminalBash));
-  if (options?.withQuestionTool === true) harness.features.add(bindQuestionTool());
   harness.features.add(acpTestProbe(probe));
   await until(() => probe.models?.value.some((binding) => binding.alias === 'test/test-model') === true);
   const updates: SessionNotification[] = [];
@@ -829,7 +796,7 @@ describe('feature-acp', () => {
   });
 
   it('degrades a question interaction to a single-select request_permission prompt', async () => {
-    env = await startAcpTest({ withQuestionTool: true });
+    env = await startAcpTest();
     queue = [
       {
         parts: [
@@ -1044,7 +1011,7 @@ describe('feature-acp', () => {
   });
 
   it('routes elicitation-form clients through elicitation/create for questions', async () => {
-    env = await startAcpTest({ capabilities: { elicitation: { form: {} } }, withQuestionTool: true });
+    env = await startAcpTest({ capabilities: { elicitation: { form: {} } } });
     queue = [
       {
         parts: [

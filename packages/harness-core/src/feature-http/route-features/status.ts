@@ -6,7 +6,7 @@ import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/ind
 import { CompactionRef } from '#/features/compaction/index';
 import { ConfigRef, DEFAULT_MODEL_CONFIG_SECTION, type ConfigStore } from '#/todo-features/config/index';
 import { InteractionRef, INTERACTION_TAG_SESSION_ID } from '#/todo-features/interaction/index';
-import { PermissionRef } from '#/todo-features/permission/index';
+import { PermissionModeRef } from '#/todo-features/permission-mode/index';
 import { PlanRef } from '#/features/plan/index';
 import {
   AgentModelRef,
@@ -100,7 +100,7 @@ export async function sessionStatusView(
     busy: sessionBusy(root, session),
     model,
     thinking_level: model === undefined ? '' : (binding?.thinking ?? 'off'),
-    permission: sessionFacade(root, PermissionRef, session.id)?.mode() ?? 'manual',
+    permission: sessionFacade(root, PermissionModeRef, session.id)?.mode() ?? 'manual',
     plan_mode: plan !== undefined ? (await plan.status()) !== null : false,
     tower_mode: agentFacade(root, TowerRef, session.id, MAIN_AGENT_ID)?.isActive() ?? false,
     context_tokens: tokens,

@@ -6,8 +6,8 @@ import {
   type UserEntry,
 } from '@moonshot-ai/agent-core/history/index';
 
-import { PermissionRef } from '#/todo-features/permission/ref';
-import type { PermissionMode } from '#/todo-features/permission/types';
+import { PermissionModeRef } from '#/todo-features/permission-mode/ref';
+import type { PermissionMode } from '#/todo-features/permission-mode/types';
 
 import AUTO_MODE_ENTER_REMINDER from './permission-mode-auto-enter-reminder.md?raw';
 import AUTO_MODE_EXIT_REMINDER from './permission-mode-auto-exit-reminder.md?raw';
@@ -46,11 +46,11 @@ function isPermissionModeReminder(entry: HistoryMessage): boolean {
 }
 
 export function useAskUserQuestionAutoMode(reminderEnabled: boolean): void {
-  const permission = useInject(PermissionRef);
+  const permissionMode = useInject(PermissionModeRef);
   if (reminderEnabled) {
     let lastMode: PermissionMode | undefined;
     useStepStarting(({ messages }) => {
-      const currentMode = permission.value?.state.value.mode;
+      const currentMode = permissionMode.value?.state.value.mode;
       const previousMode = lastMode;
       if (currentMode === previousMode) {
         if (currentMode !== 'auto') return;
@@ -67,7 +67,7 @@ export function useAskUserQuestionAutoMode(reminderEnabled: boolean): void {
     });
   }
   useToolPermitting(({ toolCall }) => {
-    if (permission.value?.state.value.mode !== 'auto') return undefined;
+    if (permissionMode.value?.state.value.mode !== 'auto') return undefined;
     if (toolCall.name !== 'AskUserQuestion') return undefined;
     return {
       blocked: { reason: 'denied', message: AUTO_MODE_ASK_USER_QUESTION_DISABLED },

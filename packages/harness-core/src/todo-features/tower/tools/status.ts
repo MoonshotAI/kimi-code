@@ -115,7 +115,7 @@ export function createTowerStatusTool(deps: TowerToolDeps): ToolDefinition {
           '',
           '## Concurrency (adaptive)',
           '',
-          renderConcurrency(deps.rateLimit.snapshot()),
+          renderConcurrency(deps.rateLimit.snapshot(), deps.now),
           '',
           '## Recent activity',
           '',
@@ -128,12 +128,12 @@ export function createTowerStatusTool(deps: TowerToolDeps): ToolDefinition {
   };
 }
 
-function renderConcurrency(snapshot: TowerRateLimitSnapshot): string {
+function renderConcurrency(snapshot: TowerRateLimitSnapshot, now: () => number): string {
   const parts = [
     `budget: ${String(snapshot.budget)} agent(s) · inflight: ${String(snapshot.inflight)}`,
   ];
   if (snapshot.blockedUntil !== null) {
-    const remainingMs = snapshot.blockedUntil - Date.now();
+    const remainingMs = snapshot.blockedUntil - now();
     parts.push(
       remainingMs > 0
         ? `spawns PAUSED for ~${String(Math.ceil(remainingMs / 1000))}s (provider rate limit — successful requests lift the pause early)`

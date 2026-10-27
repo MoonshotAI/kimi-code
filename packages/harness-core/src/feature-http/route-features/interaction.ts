@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useApp } from '#/app/index';
+import { useApp, useNow } from '#/app/index';
 
 import {
   InteractionRef,
@@ -75,6 +75,7 @@ const QUESTION_ACTIONS = ['dismiss'] as const;
 export function useInteractionRoutes(prefix: string): void {
   const app = useApp();
   const root = useRootUnit();
+  const now = useNow();
 
   const interactionFacade = async (
     request: Request,
@@ -165,7 +166,7 @@ export function useInteractionRoutes(prefix: string): void {
         feedback: body.feedback,
         selectedLabel: body.selectedLabel,
       });
-      sendOk(request, response, { resolved: true, resolved_at: new Date().toISOString() });
+      sendOk(request, response, { resolved: true, resolved_at: new Date(now()).toISOString() });
     },
   });
 
@@ -242,7 +243,7 @@ export function useInteractionRoutes(prefix: string): void {
         response.status(200).json({
           code: ErrorCode.QUESTION_DISMISSED,
           msg: `question ${questionId} dismissed`,
-          data: { dismissed: true, dismissed_at: new Date().toISOString() },
+          data: { dismissed: true, dismissed_at: new Date(now()).toISOString() },
           request_id: requestId(request),
         });
         return;
@@ -261,7 +262,7 @@ export function useInteractionRoutes(prefix: string): void {
         questionId,
         flattenAnswers(body, questionView(pending, resolved.sessionId)),
       );
-      sendOk(request, response, { resolved: true, resolved_at: new Date().toISOString() });
+      sendOk(request, response, { resolved: true, resolved_at: new Date(now()).toISOString() });
     },
   });
 }

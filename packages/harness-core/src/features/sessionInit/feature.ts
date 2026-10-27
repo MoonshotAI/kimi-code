@@ -27,7 +27,7 @@ import {
   type AgentsMdReminderFace,
 } from '#/features/agentsMdReminder/index';
 import type { OsHost } from '#/todo-features/os/host/index';
-import { PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
+import { PermissionModeRef, type PermissionModeFace } from '#/todo-features/permission-mode/index';
 import { ProfileCatalogRef } from '#/todo-features/profiles/index';
 
 import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './init';
@@ -70,7 +70,7 @@ interface SessionInitState {
 
 export function createSessionInit(props: CreateSessionInitProps): Feature<void> {
   const states = new WeakMap<Session, SessionInitState>();
-  const permissionFaces = new WeakMap<Agent, Readonly<ShallowRef<PermissionFace | undefined>>>();
+  const permissionModeFaces = new WeakMap<Agent, Readonly<ShallowRef<PermissionModeFace | undefined>>>();
   const reminderFaces = new WeakMap<Agent, Readonly<ShallowRef<AgentsMdReminderFace | undefined>>>();
   return createFeature('sessionInit', {
     session() {
@@ -106,9 +106,9 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
             init: { source: SESSION_INIT_SOURCE },
           });
           child.loop.setRequester(mainRequester);
-          const mode = permissionFaces.get(main)?.value?.mode();
+          const mode = permissionModeFaces.get(main)?.value?.mode();
           if (mode !== undefined) {
-            await permissionFaces
+            await permissionModeFaces
               .get(child)
               ?.value?.setMode(mode)
               .catch(() => {});
@@ -185,10 +185,10 @@ export function createSessionInit(props: CreateSessionInitProps): Feature<void> 
     },
     agent() {
       const agent = useAgent();
-      const permission = useInject(PermissionRef);
-      permissionFaces.set(agent, permission);
+      const permissionMode = useInject(PermissionModeRef);
+      permissionModeFaces.set(agent, permissionMode);
       useCleanup(() => {
-        if (permissionFaces.get(agent) === permission) permissionFaces.delete(agent);
+        if (permissionModeFaces.get(agent) === permissionMode) permissionModeFaces.delete(agent);
       });
       const reminder = useInject(AgentsMdReminderRef);
       reminderFaces.set(agent, reminder);

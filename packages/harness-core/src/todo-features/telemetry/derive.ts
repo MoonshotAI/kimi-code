@@ -73,13 +73,13 @@ function turnEndReason(outcome: TurnOutcome): string {
   }
 }
 
-export function deriveAgentTelemetry(agent: Agent, telemetry: TelemetryFace): void {
+export function deriveAgentTelemetry(agent: Agent, telemetry: TelemetryFace, clock: () => number): void {
   const live = agent.loop.state;
   let currentTurnId: number | undefined = live.turn?.id;
   let turnStartedAt: number | undefined;
   let atStep = live.turn?.step ?? 0;
   const tools = new Map<string, TrackedTool>(
-    live.tools.map((tool) => [tool.toolCall.id, { name: tool.toolCall.name, startedAt: Date.now() }]),
+    live.calls.map((call) => [call.toolCall.id, { name: call.toolCall.name, startedAt: clock() }]),
   );
 
   const finishTool = (
@@ -97,14 +97,14 @@ export function deriveAgentTelemetry(agent: Agent, telemetry: TelemetryFace): vo
       tool_call_id: toolCallId,
       tool_name: tool.name,
       outcome,
-      duration_ms: Date.now() - tool.startedAt,
+      duration_ms: clock() - tool.startedAt,
       error_type: errorType,
     });
   };
 
   useLoopEvent('turn.started', (event) => {
     currentTurnId = event.turnId;
-    turnStartedAt = Date.now();
+    turnStartedAt = clock();
     atStep = 0;
     telemetry.setContext({ turn_id: event.turnId });
     telemetry.track('turn_started', { turn_id: event.turnId });
@@ -123,7 +123,7 @@ export function deriveAgentTelemetry(agent: Agent, telemetry: TelemetryFace): vo
     telemetry.track('turn_ended', {
       turn_id: event.turnId,
       reason: turnEndReason(event.outcome),
-      duration_ms: turnStartedAt === undefined ? undefined : Date.now() - turnStartedAt,
+      duration_ms: turnStartedAt === undefined ? undefined : clock() - turnStartedAt,
     });
     telemetry.setContext({ turn_id: undefined });
     currentTurnId = undefined;
@@ -142,7 +142,7 @@ export function deriveAgentTelemetry(agent: Agent, telemetry: TelemetryFace): vo
     telemetry.track('cancel');
   });
   useLoopEvent('tool.started', (event) => {
-    tools.set(event.toolCall.id, { name: event.toolCall.name, startedAt: Date.now() });
+    tools.set(event.toolCall.id, { name: event.toolCall.name, startedAt: clock() });
   });
   useLoopEvent('tool.ended', (event) => {
     const { outcome, errorType } = toolCallOutcomeOf(event.outcome);

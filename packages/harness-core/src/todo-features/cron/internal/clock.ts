@@ -6,49 +6,46 @@ export interface ClockSources {
   monoNowMs(): number;
 }
 
-const systemMonoNowMs = (): number => Number(process.hrtime.bigint() / 1_000_000n);
-
-export const SYSTEM_CLOCKS: ClockSources = {
-  wallNow: () => Date.now(),
-  monoNowMs: systemMonoNowMs,
-};
-
-export function resolveClockSources(spec?: string, debug = false): ClockSources {
+export function resolveClockSources(
+  spec: string | undefined,
+  debug: boolean,
+  system: ClockSources,
+): ClockSources {
   if (spec === undefined || spec === '' || spec === 'system') {
-    return SYSTEM_CLOCKS;
+    return system;
   }
 
   if (spec.startsWith('file:')) {
     const filePath = spec.slice('file:'.length);
     if (filePath === '') {
       debugInvalidSpec(spec, 'empty file path', debug);
-      return SYSTEM_CLOCKS;
+      return system;
     }
     return {
-      wallNow: () => readFileWall(filePath),
-      monoNowMs: systemMonoNowMs,
+      wallNow: () => readFileWall(filePath, system.wallNow),
+      monoNowMs: system.monoNowMs,
     };
   }
 
   debugInvalidSpec(spec, 'unrecognised scheme', debug);
-  return SYSTEM_CLOCKS;
+  return system;
 }
 
 const MAX_CLOCK_FILE_BYTES = 64;
 
-function readFileWall(filePath: string): number {
+function readFileWall(filePath: string, fallback: () => number): number {
   let bytesRead = 0;
   const buf = Buffer.alloc(MAX_CLOCK_FILE_BYTES);
   let fd: number;
   try {
     fd = openSync(filePath, 'r');
   } catch {
-    return Date.now();
+    return fallback();
   }
   try {
     bytesRead = readSync(fd, buf, 0, MAX_CLOCK_FILE_BYTES, 0);
   } catch {
-    return Date.now();
+    return fallback();
   } finally {
     try {
       closeSync(fd);
@@ -57,9 +54,9 @@ function readFileWall(filePath: string): number {
   }
   const raw = buf.subarray(0, bytesRead).toString('utf8');
   const firstLine = raw.split('\n', 1)[0]?.trim() ?? '';
-  if (firstLine === '') return Date.now();
+  if (firstLine === '') return fallback();
   const parsed = Number(firstLine);
-  if (!Number.isFinite(parsed)) return Date.now();
+  if (!Number.isFinite(parsed)) return fallback();
   return parsed;
 }
 

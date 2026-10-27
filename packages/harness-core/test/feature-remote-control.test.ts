@@ -259,21 +259,21 @@ describe('remote-control feature', () => {
       url: 'https://rc.example.test/devices/d1/',
     };
 
-    await acquireRemoteControlLock(homeDir, details);
+    await acquireRemoteControlLock(homeDir, details, Date.now);
     expect(await inspectRemoteControlLock(homeDir)).toMatchObject({
       pid: process.pid,
       localOrigin: details.localOrigin,
       deviceId: details.deviceId,
       url: details.url,
     });
-    await expect(acquireRemoteControlLock(homeDir, details)).rejects.toBeInstanceOf(
+    await expect(acquireRemoteControlLock(homeDir, details, Date.now)).rejects.toBeInstanceOf(
       RemoteControlAlreadyRunningError,
     );
 
     expect(await releaseRemoteControlLockHeldBy(homeDir, process.pid)).toBe(true);
     expect(await inspectRemoteControlLock(homeDir)).toBeUndefined();
     expect(await releaseRemoteControlLockHeldBy(homeDir, process.pid)).toBe(false);
-    const reacquired = await acquireRemoteControlLock(homeDir, details);
+    const reacquired = await acquireRemoteControlLock(homeDir, details, Date.now);
     await reacquired.release();
   });
 

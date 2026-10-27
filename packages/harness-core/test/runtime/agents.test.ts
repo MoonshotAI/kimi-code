@@ -141,7 +141,7 @@ describe('app agent runtime', () => {
     await harness.close();
   });
 
-  it('freezes the system prompt after the create-time settle', async () => {
+  it('keeps the settled prompt byte-stable after the first request and reminds changes instead', async () => {
     const early = createFeature('early', {
       agent: () => {
         useSystemPrompt({ id: 'early', text: 'EARLY' });
@@ -156,11 +156,16 @@ describe('app agent runtime', () => {
     harness.features.add(early);
     const session = await harness.open('s1');
     const { agent } = await session.ensureAgent('main', { systemPrompt: 'HOST' });
+    setRequester(harness, 's1', 'main', echoRequester());
     await tick();
     expect(agent.loop.state.profile.systemPrompt).toBe('HOST\n\nEARLY');
+    await agent.loop.runTurn(user('hello'));
     harness.features.add(late);
     await tick();
     expect(agent.loop.state.profile.systemPrompt).toBe('HOST\n\nEARLY');
+    const notice = agent.loop.state.inbox.remind.find((entry) => entry.meta?.key === 'system-prompt-change');
+    expect(notice).toBeDefined();
+    expect(extractText(notice!.message)).toContain('LATE');
     await harness.close();
   });
 

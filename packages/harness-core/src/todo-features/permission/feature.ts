@@ -1,11 +1,5 @@
 import { createFeature, useAgent, useSession, useToolPermitting, type Feature, useFeatureStore } from '#/app/index';
-import {
-  computed,
-  useExpose,
-  useFire,
-  useInject,
-  type ComputedRef,
-} from '#/composition-api/index';
+import { useExpose, useFire, useInject } from '#/composition-api/index';
 import type { ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
@@ -13,13 +7,13 @@ import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
 import { useInteractions } from '#/todo-features/interaction/index';
 import type { OsFsPort } from '#/todo-features/os/host/index';
 import type { PathClass } from '#/todo-features/os/path-access';
+import { PermissionModeRef } from '#/todo-features/permission-mode/ref';
 
 import { formatDenyMessage, requestToolApproval } from './ask';
 import { evaluatePermissionPolicies } from './policies/chain';
-import { PermissionRef, type PermissionFace } from './ref';
+import { PermissionPolicyRef, type PermissionPolicyFace } from './ref';
 import {
   configRules,
-  defaultPermissionModeConfigSection,
   PERMISSION_CONFIG_SECTION,
   permissionConfigSection,
   type PermissionConfig,
@@ -27,20 +21,11 @@ import {
 import {
   PERMISSION_RECORD_APPROVAL_RESULT,
   PERMISSION_RULES_ADD,
-  PERMISSION_SET_MODE,
-  permissionProjection,
+  permissionPolicyProjection,
 } from './state/projection';
-import type { PermissionEvent, PermissionMode } from './types';
+import type { PermissionEvent } from './types';
 
-export function usePermissionMode(): ComputedRef<PermissionMode> {
-  const permission = useInject(PermissionRef).value;
-  if (permission === undefined) {
-    throw new Error('permission feature session slot is not installed');
-  }
-  return computed(() => permission.state.value.mode);
-}
-
-export interface CreatePermissionProps {
+export interface CreatePermissionPolicyProps {
   readonly interactive?: boolean;
   readonly workDir?: string;
   readonly additionalDirs?: readonly string[];
@@ -48,23 +33,18 @@ export interface CreatePermissionProps {
   readonly fs?: OsFsPort;
 }
 
-export function createPermission(props: CreatePermissionProps = {}): Feature<void, { agent: PermissionEvent }> {
+export function createPermissionPolicy(
+  props: CreatePermissionPolicyProps = {},
+): Feature<void, { agent: PermissionEvent }> {
   return createFeature<{ agent: PermissionEvent }>('permission', {
     app() {
       useConfigSection(permissionConfigSection);
-      useConfigSection(defaultPermissionModeConfigSection);
     },
     session() {
-      const store = useFeatureStore('session', 'permission', permissionProjection);
+      const store = useFeatureStore('session', 'permission', permissionPolicyProjection);
       const state = store.state;
-      const face: PermissionFace = {
+      const face: PermissionPolicyFace = {
         state,
-        mode: () => state.value.mode,
-        setMode: async (mode) => {
-          const current = state.value;
-          if (mode === current.mode && current.configured) return;
-          await store.dispatch([{ type: PERMISSION_SET_MODE, mode }]);
-        },
         recordApprovalResult: async (record) => {
           await store.dispatch([{ type: PERMISSION_RECORD_APPROVAL_RESULT, ...record }]);
         },
@@ -73,20 +53,24 @@ export function createPermission(props: CreatePermissionProps = {}): Feature<voi
           await store.dispatch([{ type: PERMISSION_RULES_ADD, rules: [...rules] }]);
         },
       };
-      useExpose(PermissionRef, face);
+      useExpose(PermissionPolicyRef, face);
     },
     agent() {
       const agent = useAgent();
       const session = useSession();
-      const permission = useInject(PermissionRef).value;
-      if (permission === undefined) {
-        throw new Error('permission feature session slot is not installed');
+      const policy = useInject(PermissionPolicyRef).value;
+      if (policy === undefined) {
+        throw new Error('permission policy feature session slot is not installed');
+      }
+      const permissionMode = useInject(PermissionModeRef).value;
+      if (permissionMode === undefined) {
+        throw new Error('permission policy feature requires the permission mode feature');
       }
       const fire = useFire();
       const config = useInject(ConfigRef);
       const interactions = useInteractions().value;
       if (interactions === undefined) {
-        throw new Error('permission feature requires the interaction feature');
+        throw new Error('permission policy feature requires the interaction feature');
       }
       const isMain = agent.id === MAIN_AGENT_ID;
       const pathClass: PathClass = process.platform === 'win32' ? 'win32' : 'posix';
@@ -100,9 +84,9 @@ export function createPermission(props: CreatePermissionProps = {}): Feature<voi
           toolCall,
           args,
           interactive: props.interactive ?? true,
-          mode: permission.state.value.mode,
-          rules: [...configRules(permissionConfig()), ...permission.state.value.rules],
-          sessionApprovalRulePatterns: permission.state.value.sessionApprovalRulePatterns,
+          mode: permissionMode.state.value.mode,
+          rules: [...configRules(permissionConfig()), ...policy.state.value.rules],
+          sessionApprovalRulePatterns: policy.state.value.sessionApprovalRulePatterns,
           config: permissionConfig(),
           workDir: props.workDir,
           additionalDirs: props.additionalDirs ?? [],
@@ -124,7 +108,7 @@ export function createPermission(props: CreatePermissionProps = {}): Feature<voi
           {
             interactions,
             fire,
-            recordApprovalResult: permission.recordApprovalResult,
+            recordApprovalResult: (record) => policy.recordApprovalResult(record),
             sessionId: session.id,
             agentId: agent.id,
             isMain,

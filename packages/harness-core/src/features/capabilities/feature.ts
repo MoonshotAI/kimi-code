@@ -1,4 +1,4 @@
-import { createFeature, type Feature } from '#/app/index';
+import { createFeature, type Feature, useNow } from '#/app/index';
 import {
   createFacadeToken,
   useExpose,
@@ -75,6 +75,7 @@ export function createCapabilities(props: CreateCapabilitiesProps): Feature<void
       const host = props.host;
       if (host === undefined) return;
       const fire = useFire();
+      const now = useNow();
       useReady(host.environment.ready);
 
       const setInstallProgress = (id: CapabilityId, progress: CapabilityInstallProgress): void => {
@@ -135,6 +136,7 @@ export function createCapabilities(props: CreateCapabilitiesProps): Feature<void
           plugins,
           hostProcess: host.process,
           fs: host.fs,
+          now,
           fetchImpl: props.fetchImpl,
           applicationsDir: props.applicationsDir,
           webbridgeBaseUrl: props.webbridgeBaseUrl,

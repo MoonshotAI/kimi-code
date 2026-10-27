@@ -61,14 +61,14 @@ await loop.close();
 
 ## Provide the system prompt and tools
 
-`loop.setSystemPrompt(sections)` sets the system prompt as sections (`{ id, text }`, joined in order when a request is built) and `loop.setTools(descriptions)` sets the tool descriptions. Both are accepted at any time, including mid-turn, and take effect from the next request; read them back from `loop.state.profile.systemPrompt` (sections) and `loop.state.profile.tools`. Use `requestProfileOf(profile)` when you need the assembled request shape.
+`loop.setSystemPrompt(text)` sets the system prompt as a plain string and `loop.setTools(descriptions)` sets the tool descriptions. Both are accepted at any time, including mid-turn, and take effect from the next request; read them back from `loop.state.profile.systemPrompt` and `loop.state.profile.tools`.
 
 ```ts
-loop.setSystemPrompt([{ id: 'host', text: 'You are a helpful assistant.' }]);
+loop.setSystemPrompt('You are a helpful assistant.');
 loop.setTools([weatherTool]);
 ```
 
-When sections and tools come from contributions that change at any time, use `createSystemPromptSync(loop, source)` and `createToolsSync(loop, source)` instead and call `refresh()` after each change. Each keeps its part cacheable on its own: before a request has used the current value it is simply overwritten; afterwards it stays byte-stable and the change is reminded as one system notice (updated and removed sections; removed tools — added or changed tools wait for a reload). `onPending` reports what differs, and `reload()` rewrites the value at once.
+The loop has no notion of prompt sections or contribution points — when the prompt and tools come from contributions that change at any time, the host keeps its own sync policy above these primitives (harness-core ships one that joins contributed sections into the prompt string, keeps the value byte-stable once a request has used it, and reminds later changes as keyed system notices).
 
 `system_prompt.settled` / `tools.settled` are durable records (`src/loop/record.ts`), so a restored loop keeps its profile. And because a request merges dimensions requester-first, the loop's profile overrides any `profile` layered on the requester — the persisted value always wins after a reopen.
 

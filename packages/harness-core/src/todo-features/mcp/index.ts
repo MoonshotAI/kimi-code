@@ -12,7 +12,6 @@ export * from './core/connection-manager';
 export * from './core/tool-naming';
 export * from './core/output';
 export * from './core/client-shared';
-export * from './deferred';
 export * from './oauth/service';
 export * from './oauth/store';
 export * from './tools/authenticate';

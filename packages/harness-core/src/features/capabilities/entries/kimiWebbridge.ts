@@ -252,7 +252,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
     const url = kimiCdnContentUrl(`${BINARY_CDN_PATH}/${asset}`);
     const staging = path.join(
       tmpdir(),
-      `kimi-webbridge-${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ctx.platform === 'win32' ? '.exe' : ''}`,
+      `kimi-webbridge-${ctx.now()}-${Math.random().toString(36).slice(2, 8)}${ctx.platform === 'win32' ? '.exe' : ''}`,
     );
     try {
       await downloadToFile(
@@ -266,7 +266,7 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
       await mkdir(binDir, { recursive: true });
       await rename(staging, binPath).catch(async (error: NodeJS.ErrnoException) => {
         if (error.code !== 'EXDEV') throw error;
-        await renameAcrossDevicesFallback(staging, binPath);
+        await renameAcrossDevicesFallback(staging, binPath, ctx.now);
       });
       if (ctx.platform !== 'win32') await chmod(binPath, 0o755);
     } finally {
@@ -286,9 +286,9 @@ export function createKimiWebbridgeEntry(ctx: CapabilityEntryContext): Capabilit
   };
 }
 
-async function renameAcrossDevicesFallback(from: string, to: string): Promise<void> {
+async function renameAcrossDevicesFallback(from: string, to: string, now: () => number): Promise<void> {
   const { copyFile } = await import('node:fs/promises');
-  const sibling = `${to}.${process.pid}.${Date.now()}.tmp`;
+  const sibling = `${to}.${process.pid}.${now()}.tmp`;
   try {
     await copyFile(from, sibling);
     await rename(sibling, to);

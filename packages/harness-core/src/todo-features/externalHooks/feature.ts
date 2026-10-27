@@ -1,4 +1,4 @@
-import { createFeature, useAgent, useApp, useMessageAppending, useSession, useStepStarting, useStepStopping, useToolEnding, useToolStarting, type App, type Feature, useLoopEvent } from '#/app/index';
+import { createFeature, useAgent, useApp, useMessageAppending, useSession, useStepStarting, useStepStopping, useToolEnding, useToolStarting, type App, type Feature, useLoopEvent, useNow, useClock } from '#/app/index';
 import {
   computed,
   shallowRef,
@@ -75,6 +75,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
     app() {
       useConfigSection(hooksConfigSection);
       if (props.host === undefined) return;
+      const clock = useClock();
       const config = useInject(ConfigRef);
       const configStore = shallowRef<ConfigStore | undefined>();
       watch(
@@ -143,6 +144,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
               ...args.inputData,
             },
           },
+          clock,
           {},
           props.shell,
         );
@@ -189,6 +191,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
     },
     session() {
       if (props.host === undefined) return;
+      const now = useNow();
       const app = useApp();
       const session = useSession();
       const runner = useInject(ExternalHooksRunnerRef).value;
@@ -241,7 +244,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
             .catch(() => {});
         } catch {}
       };
-      const createdAt = Date.now();
+      const createdAt = now();
       const timer = setInterval(() => {
         try {
           if (!runner.hasHooksFor('SessionHeartbeat')) return;
@@ -250,7 +253,7 @@ export function createExternalHooks(props: CreateExternalHooksProps = {}): Featu
               sessionId: session.id,
               inputData: {
                 sessionTitle: sessionTitle(),
-                uptimeMs: Date.now() - createdAt,
+                uptimeMs: now() - createdAt,
               },
             })
             .catch(() => {});

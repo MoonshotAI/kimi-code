@@ -290,7 +290,7 @@ function createMacKimiCuEntry(ctx: CapabilityEntryContext): CapabilityEntry {
     delete nextServers['kimi-cu'];
     const next = { ...legacy.value, mcpServers: nextServers };
     const mode = (await stat(userMcpConfigPath)).mode & 0o777;
-    const tempPath = `${userMcpConfigPath}.kimi-cu-migration-${process.pid}-${Date.now()}`;
+    const tempPath = `${userMcpConfigPath}.kimi-cu-migration-${process.pid}-${ctx.now()}`;
     try {
       await writeFile(tempPath, `${JSON.stringify(next, null, 2)}\n`, {
         encoding: 'utf8',

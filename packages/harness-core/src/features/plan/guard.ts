@@ -8,7 +8,7 @@ import {
   INTERACTION_TAG_TOOL_CALL_ID,
   type Interactions,
 } from '#/todo-features/interaction/index';
-import type { PermissionMode } from '#/todo-features/permission/index';
+import type { PermissionMode } from '#/todo-features/permission-mode/index';
 
 import { blockedWith, formatAutoApprovedPlanForOutput, requestExitPlanModeApproval } from './review';
 import type { PlanData } from './storage';

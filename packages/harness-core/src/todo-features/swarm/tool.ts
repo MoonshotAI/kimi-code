@@ -65,6 +65,7 @@ export interface AgentSwarmToolDeps {
   readonly workDir: string;
   readonly swarmItems: SwarmItemRegistry;
   readonly timeoutMs: () => number;
+  readonly clock: () => number;
   readonly maxConcurrency?: number;
 }
 
@@ -311,6 +312,7 @@ export function createAgentSwarmTool(deps: AgentSwarmToolDeps): ToolDefinition {
     });
     const batchAborted = (): boolean => signal.aborted;
     const batch = new AgentRunBatch(buildBatchLauncher(batchAborted, onUpdate), tasks, {
+      clock: deps.clock,
       maxConcurrency: deps.maxConcurrency,
     });
     const results = await batch.run();

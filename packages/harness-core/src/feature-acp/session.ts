@@ -23,7 +23,7 @@ import type { CompactionFace } from '#/features/compaction/index';
 import { DEFAULT_MODEL_CONFIG_SECTION, type ConfigStore } from '#/todo-features/config/index';
 import type { Interaction, Interactions } from '#/todo-features/interaction/index';
 import type { McpFacade } from '#/todo-features/mcp/index';
-import type { PermissionFace } from '#/todo-features/permission/index';
+import type { PermissionModeFace } from '#/todo-features/permission-mode/index';
 import type { PlanFace } from '#/features/plan/index';
 import type { AgentModelFace, CatalogModelBinding } from '#/features/provider-catalog/index';
 import type { SkillCatalogFace, SkillFace } from '#/todo-features/skill/index';
@@ -98,7 +98,7 @@ export interface AcpAgentSlot {
   readonly compaction: Readonly<ShallowRef<CompactionFace | undefined>>;
   readonly skill: Readonly<ShallowRef<SkillFace | undefined>>;
   readonly plan: Readonly<ShallowRef<PlanFace | undefined>>;
-  readonly permission: Readonly<ShallowRef<PermissionFace | undefined>>;
+  readonly permission: Readonly<ShallowRef<PermissionModeFace | undefined>>;
 }
 
 export interface AcpSessionSlot {

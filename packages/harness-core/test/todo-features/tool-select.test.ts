@@ -107,7 +107,7 @@ describe('tool-select feature', () => {
     const tools = seen[0] ?? [];
     const names = tools.map((tool) => tool.name);
     expect(names).toContain('select_tools');
-    expect(tools.find((tool) => tool.name === 'FakeLoadable')?.deferred).toBe(true);
+    expect(names).not.toContain('FakeLoadable');
     await harness.close();
   });
 

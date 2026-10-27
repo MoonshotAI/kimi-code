@@ -67,8 +67,8 @@ function reminderEntries(history: readonly HistoryMessage[]): readonly HistoryMe
 describe('dateChange feature', () => {
   it('injects the initial date reminder into the first request and stays silent while the date is unchanged', async () => {
     const current = new Date('2026-10-19T10:00:00Z');
-    const harness = createApp({ space: memorySessionSpace() });
-    harness.features.add(createDateChange({ now: () => current, timeZone: 'UTC' }));
+    const harness = createApp({ space: memorySessionSpace(), now: () => current.getTime() });
+    harness.features.add(createDateChange({ timeZone: 'UTC' }));
     const session = await harness.open('s1');
     const { agent } = await session.ensureAgent('main');
     const requests: Message[][] = [];
@@ -99,8 +99,8 @@ describe('dateChange feature', () => {
 
   it('injects a date-change reminder when the local date has moved on', async () => {
     let current = new Date('2026-10-19T10:00:00Z');
-    const harness = createApp({ space: memorySessionSpace() });
-    harness.features.add(createDateChange({ now: () => current, timeZone: 'UTC' }));
+    const harness = createApp({ space: memorySessionSpace(), now: () => current.getTime() });
+    harness.features.add(createDateChange({ timeZone: 'UTC' }));
     const session = await harness.open('s1');
     const { agent } = await session.ensureAgent('main');
     const requests: Message[][] = [];

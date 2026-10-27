@@ -163,7 +163,7 @@ describe('session', () => {
     expect(opened.roster.getState().agents).toEqual({ orphan: {} });
   });
 
-  it('persists the loop profile across reopen, overrides requester defaults, and replays it on undo', async () => {
+  it('persists the prompt and tools across reopen, overrides requester defaults, and replays them on undo', async () => {
     const logs = new Map<string, string[]>();
     const tool = { name: 'lookup', description: 'Find things', parameters: { type: 'object', properties: {} } };
     const seen: unknown[] = [];
@@ -171,8 +171,8 @@ describe('session', () => {
 
     const first = await testSession(logs);
     const main = await first.open('main', caps());
-    expect(main.loop.setSystemPrompt('frozen-sp')?.type).toBe('system_prompt.settled');
-    expect(main.loop.setTools([tool])?.type).toBe('tools.settled');
+    main.loop.setSystemPrompt('frozen-sp');
+    main.loop.setTools([tool]);
     await main.loop.runTurn(user('one'));
     expect(seen.at(-1)).toMatchObject({ systemPrompt: 'frozen-sp', tools: [tool] });
     await first.close();
@@ -182,27 +182,26 @@ describe('session', () => {
     expect(restored.reopened).toBe(true);
     expect(restored.loop.state.profile).toEqual({ systemPrompt: 'frozen-sp', tools: [tool] });
     expect(restored.view.getState().profile).toEqual(restored.loop.state.profile);
-    await restored.loop.runTurn(user('two'));
-    expect(seen.at(-1)).toMatchObject({ systemPrompt: 'frozen-sp', tools: [tool] });
 
     const settledCount = async () => {
       await restored.flush();
       return restored.log.replica.entries().filter((entry) => entry.event.type === 'system_prompt.settled').length;
     };
     restored.loop.setSystemPrompt('sp-v2');
+    await restored.loop.runTurn(user('two'));
+    expect(seen.at(-1)).toMatchObject({ systemPrompt: 'sp-v2', tools: [tool] });
+    const stop = restored.loop.subscribe((event) => {
+      if (event.type !== 'turn.started') return;
+      stop();
+      restored.loop.setSystemPrompt('sp-v3');
+    });
     await restored.loop.runTurn(user('three'));
-    expect(await settledCount()).toBe(2);
-    await second.undo('main', 1);
-    expect(restored.loop.state.profile.systemPrompt).toBe('sp-v2');
-    expect(await settledCount()).toBe(2);
-
-    restored.loop.setSystemPrompt('sp-v3');
-    await restored.loop.runTurn(user('four'));
-    restored.loop.setSystemPrompt('sp-v4');
-    await second.undo('main', 1);
     expect(restored.loop.state.profile.systemPrompt).toBe('sp-v3');
+    expect(await settledCount()).toBe(3);
+    await second.undo('main', 1);
+    expect(restored.loop.state.profile).toEqual({ systemPrompt: 'sp-v2', tools: [tool] });
     expect(restored.view.getState().profile).toEqual(restored.loop.state.profile);
-    expect(await settledCount()).toBe(4);
+    expect(await settledCount()).toBe(3);
     expect(texts(restored)).toEqual(['one', 'ok', 'two', 'ok']);
     await second.close();
   });

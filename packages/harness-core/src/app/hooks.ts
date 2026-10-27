@@ -9,7 +9,17 @@ import type { LoopEmitted, WaitForTasks } from '@moonshot-ai/agent-core/loop/ind
 import type { BlobStore } from '@moonshot-ai/agent-core/blob/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 
-import { syncAgentTools, type AgentRuntime } from '#/runtime/agents';
+import type { AgentRuntime } from '#/runtime/agents';
+import { now } from '@moonshot-ai/agent-core/utils/now';
+import { clock } from '@moonshot-ai/agent-core/utils/clock';
+
+export function useNow(): () => number {
+  return now;
+}
+
+export function useClock(): () => number {
+  return clock;
+}
 
 export function useAgentRuntime(): AgentRuntime {
   const agent = useAgent();
@@ -19,7 +29,6 @@ export function useAgentRuntime(): AgentRuntime {
 }
 
 export function useAgentTools(...definitions: ToolDefinition[]): void {
-  const agent = useAgent();
   const runtime = useAgentRuntime();
   for (const definition of definitions) {
     if (definition.name === '') throw new TypeError('tool name must be a non-empty string');
@@ -27,12 +36,12 @@ export function useAgentTools(...definitions: ToolDefinition[]): void {
     runtime.tools.set(definition.name, definition);
     useToolHandler(definition);
   }
-  syncAgentTools(agent, runtime);
+  runtime.profileSync?.tools.refresh();
   onScopeDispose(() => {
     for (const definition of definitions) {
       if (runtime.tools.get(definition.name) === definition) runtime.tools.delete(definition.name);
     }
-    syncAgentTools(agent, runtime);
+    runtime.profileSync?.tools.refresh();
   });
 }
 

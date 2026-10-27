@@ -25,6 +25,7 @@ export interface HttpListen {
 
 export interface CreateHttpServerOptions extends HttpAuthOptions {
   readonly corsOrigins?: readonly string[];
+  readonly now: () => number;
 }
 
 const CORS_ALLOW_METHODS = 'GET, POST, PUT, PATCH, DELETE, OPTIONS';
@@ -46,7 +47,7 @@ interface Slot {
   readonly handlers: HttpHandler[];
 }
 
-export function createHttpServer(options: CreateHttpServerOptions = {}): Http {
+export function createHttpServer(options: CreateHttpServerOptions): Http {
   const security = createHttpSecurity(options);
   const app = express();
   app.use(security.hostMiddleware);

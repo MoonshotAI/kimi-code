@@ -4,7 +4,7 @@ import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { useConfigSection } from '#/todo-features/config/index';
 import { useInteractions } from '#/todo-features/interaction/index';
-import { PermissionRef } from '#/todo-features/permission/index';
+import { PermissionModeRef } from '#/todo-features/permission-mode/index';
 
 import { defaultPlanModeSection } from './configSection';
 import { createPlanGuard } from './guard';
@@ -54,8 +54,8 @@ export function createPlan(props: CreatePlanProps = {}): Feature<void, { agent: 
       if (interactions === undefined) {
         throw new Error('plan feature requires the interaction feature');
       }
-      const permission = useInject(PermissionRef);
-      const permissionMode = computed(() => permission.value?.state.value.mode);
+      const permissionModeRef = useInject(PermissionModeRef);
+      const permissionMode = computed(() => permissionModeRef.value?.state.value.mode);
       let injection = injections.get(agent);
       if (injection === undefined) {
         injection = createPlanInjectionState();

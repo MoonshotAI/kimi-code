@@ -61,14 +61,14 @@ await loop.close();
 
 ## 提供 system prompt 和 tools
 
-`loop.setSystemPrompt(sections)` 以段落形式（`{ id, text }`，组请求时按顺序拼接）设置 system prompt，`loop.setTools(descriptions)` 设置工具描述。两者任何时候都接受（包括 turn 中途），从下一次请求起生效；当前值读 `loop.state.profile.systemPrompt`（段落）和 `loop.state.profile.tools`。需要拼好的请求形态时用 `requestProfileOf(profile)`。
+`loop.setSystemPrompt(text)` 以纯字符串设置 system prompt，`loop.setTools(descriptions)` 设置工具描述。两者任何时候都接受（包括 turn 中途），从下一次请求起生效；当前值读 `loop.state.profile.systemPrompt` 和 `loop.state.profile.tools`。
 
 ```ts
-loop.setSystemPrompt([{ id: 'host', text: 'You are a helpful assistant.' }]);
+loop.setSystemPrompt('You are a helpful assistant.');
 loop.setTools([weatherTool]);
 ```
 
-段落和工具来自随时可能变化的贡献点时，改用 `createSystemPromptSync(loop, source)` 和 `createToolsSync(loop, source)`，每次变化后调用 `refresh()`。两者各自保持自己那部分可缓存：当前值还没被任何请求用过时直接覆盖；用过之后字节不变，变化以一条 system 通告 remind 给模型（更新和移除的段落；被移除的工具——新增或修改的工具要等 reload）。`onPending` 报告哪些不一致，`reload()` 立即重写当前值。
+loop 本身没有 prompt section 或贡献点的概念——当 prompt 和工具来自随时可能变化的贡献点时，由宿主在这些原语之上自持同步策略（harness-core 自带一份：把贡献的段落拼成 prompt 字符串，值被请求用过之后保持字节不变，之后的变化以带 key 的 system 通告 remind 给模型）。
 
 `system_prompt.settled` / `tools.settled` 是耐用记录（`src/loop/record.ts`），因此按记录恢复的 loop 保留原 profile。又因为请求按 requester 优先的顺序合并维度，loop 的 profile 会覆盖叠在 requester 上的 `profile`——重开后持久化的值永远赢。
 

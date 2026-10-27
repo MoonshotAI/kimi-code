@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { createFeature, useAgent, useSession, useToolBatchStarting, type Feature, useAgentTools } from '#/app/index';
+import { createFeature, useAgent, useSession, useToolBatchStarting, type Feature, useAgentTools, useClock } from '#/app/index';
 import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/index';
 
@@ -96,6 +96,7 @@ export function createSwarm(props: CreateSwarmProps = {}): Feature<void> {
     agent() {
       const agent = useAgent();
       const session = useSession();
+      const clock = useClock();
       const shared = useInject(SwarmSessionRef).value;
       if (shared === undefined) {
         throw new Error('swarm feature session slot is not installed');
@@ -122,6 +123,7 @@ export function createSwarm(props: CreateSwarmProps = {}): Feature<void> {
           workDir,
           swarmItems: shared.items,
           timeoutMs,
+          clock,
           maxConcurrency,
         }),
       );

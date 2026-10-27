@@ -125,10 +125,12 @@ type ActiveAttempt<T> = {
 };
 
 export interface AgentRunBatchOptions {
+  readonly clock: () => number;
   readonly maxConcurrency?: number;
 }
 
 export class AgentRunBatch<T> {
+  private readonly clock: () => number;
   private readonly states: Array<TaskState<T>>;
   private readonly pending: Array<TaskState<T>>;
   private readonly results: Array<SwarmRunResult<T> | undefined>;
@@ -155,8 +157,9 @@ export class AgentRunBatch<T> {
   constructor(
     private readonly launcher: AgentRunBatchLauncher,
     tasks: readonly SwarmTask<T>[],
-    options: AgentRunBatchOptions = {},
+    options: AgentRunBatchOptions,
   ) {
+    this.clock = options.clock;
     this.maxConcurrency = options.maxConcurrency;
     this.states = tasks.map((task, index) => ({
       index,
@@ -248,7 +251,7 @@ export class AgentRunBatch<T> {
     this.clearRateLimitTimer();
     if (this.pending.length === 0) return;
 
-    const now = Date.now();
+    const now = this.clock();
     this.recoverRateLimitCapacity(now);
     if (this.active.size >= this.rateLimitCapacity) {
       this.scheduleRateLimitWakeup(this.nextRateLimitCapacityRecoveryAt(), now);
@@ -375,7 +378,7 @@ export class AgentRunBatch<T> {
 
     if (this.rateLimitMode) {
       this.globalRetryIntervalMs = RATE_LIMIT_RETRY_BASE_MS;
-      this.nextRateLimitLaunchAt = Date.now() + this.globalRetryIntervalMs;
+      this.nextRateLimitLaunchAt = this.clock() + this.globalRetryIntervalMs;
       this.schedule();
     }
   }
@@ -434,7 +437,7 @@ export class AgentRunBatch<T> {
       reason: RATE_LIMIT_SUSPENDED_REASON,
     });
 
-    const now = Date.now();
+    const now = this.clock();
     this.lastRateLimitAt = now;
     state.retryCount += 1;
     const retryDelay =

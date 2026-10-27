@@ -1,4 +1,4 @@
-import { createFeature, type Feature } from '#/app/index';
+import { createFeature, type Feature, useNow } from '#/app/index';
 import { createFacadeToken, useCleanup, useExpose } from '#/composition-api/index';
 
 import { startRemoteControl, type RemoteControlHandle, type RemoteControlOptions } from './client';
@@ -31,12 +31,14 @@ export function createRemoteControl(props: CreateRemoteControlProps): Feature<vo
   const relayOrigin = props.REMOTE_CONTROL_RELAY_URL ?? _REMOTE_CONTROL_RELAY_URL;
   return createFeature('remote-control', {
     app() {
+      const now = useNow();
       const manager = createRemoteControlManager({
         homeDir: props.homeDir,
         localOrigin: props.localOrigin,
         localServerToken: props.localServerToken,
         clientVersion: props.clientVersion,
         urlSource: props.urlSource,
+        now,
         relayOrigin,
         configuredOAuthKey: props.configuredOAuthKey,
         configuredOAuthHost: props.configuredOAuthHost,

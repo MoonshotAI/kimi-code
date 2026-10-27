@@ -33,6 +33,7 @@ export async function runMatchedHooks(
   byEvent: ReadonlyMap<string, readonly HookDef[]>,
   event: string,
   args: ExternalHooksRunnerTriggerArgs,
+  clock: () => number,
   callbacks: HookRunCallbacks = {},
   shell?: string,
 ): Promise<HookResult[]> {
@@ -60,7 +61,7 @@ export async function runMatchedHooks(
     ...args.inputData,
   });
 
-  const startedAt = Date.now();
+  const startedAt = clock();
   const results = await Promise.all(
     matched.map((hook) =>
       runHook(processPort, hook.command, inputData, {
@@ -80,7 +81,7 @@ export async function runMatchedHooks(
       matcherValue,
       decision === undefined ? 'allow' : decision.block ? 'block' : 'allow',
       decision?.reason,
-      Date.now() - startedAt,
+      clock() - startedAt,
     );
   } catch {}
 

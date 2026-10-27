@@ -41,7 +41,11 @@ export interface HttpSecurity {
   close(): void;
 }
 
-export function createHttpSecurity(options: HttpAuthOptions): HttpSecurity {
+export interface HttpSecurityOptions extends HttpAuthOptions {
+  readonly now: () => number;
+}
+
+export function createHttpSecurity(options: HttpSecurityOptions): HttpSecurity {
   let runtime: HttpSecurityRuntime | undefined;
   const apiPrefixes = (options.apiPrefixes ?? ['/api/']).map(apiPrefix);
   const healthPath = options.healthPath ?? '/api/v1/healthz';
@@ -107,7 +111,7 @@ export function createHttpSecurity(options: HttpAuthOptions): HttpSecurity {
           disable: options.DISABLE_HOST_CHECK ?? _DISABLE_HOST_CHECK,
         },
         allowedOrigins: options.corsOrigins ?? [],
-        limiter: exposureClass === 'loopback' ? undefined : createAuthFailureLimiter(),
+        limiter: exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ now: options.now }),
       };
     },
     async authorizeUpgrade(request) {

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import type { Request, Response } from 'express';
 
-import { useApp, type App } from '#/app/index';
+import { useApp, type App, useNow, useClock } from '#/app/index';
 import { useInject } from '#/composition-api/index';
 import type { UnitNode } from '#/composition-api/runtime';
 import { MAIN_AGENT_ID, type Session, type SessionTurnOutcome } from '@moonshot-ai/agent-core/session/index';
@@ -118,6 +118,8 @@ export function useV2SessionRoutes(prefix: string): void {
   const base = prefix.replace(/\/+$/, '');
   const app = useApp();
   const root = useRootUnit();
+  const now = useNow();
+  const clock = useClock();
   const sessionIndex = useInject(SessionIndexRef);
   const workspaces = useInject(WorkspaceRef);
   const config = useInject(ConfigRef);
@@ -214,7 +216,7 @@ export function useV2SessionRoutes(prefix: string): void {
         if (!query.includeGit) return undefined;
         const resolved = new Map<string, V2GitDomain>();
         if (gitPort === undefined) return resolved;
-        const now = Date.now();
+        const at = clock();
         const cwds = new Set<string>();
         for (const row of rows) {
           const cwd = cwdOf(row);
@@ -223,7 +225,7 @@ export function useV2SessionRoutes(prefix: string): void {
         const misses: string[] = [];
         for (const cwd of cwds) {
           const hit = gitDomainCache.get(cwd);
-          if (hit !== undefined && now - hit.fetchedAt < GIT_DOMAIN_TTL_MS) {
+          if (hit !== undefined && at - hit.fetchedAt < GIT_DOMAIN_TTL_MS) {
             resolved.set(cwd, hit.value);
           } else {
             misses.push(cwd);
@@ -232,7 +234,7 @@ export function useV2SessionRoutes(prefix: string): void {
         await Promise.all(
           misses.map(async (cwd) => {
             const value = await fetchGitDomain(gitPort, cwd);
-            gitDomainCache.set(cwd, { value, fetchedAt: now });
+            gitDomainCache.set(cwd, { value, fetchedAt: at });
             resolved.set(cwd, value);
           }),
         );
@@ -413,7 +415,7 @@ export function useV2SessionRoutes(prefix: string): void {
               metadata: {
                 ...record.metadata,
                 archived,
-                archived_at: archived ? new Date().toISOString() : undefined,
+                archived_at: archived ? new Date(now()).toISOString() : undefined,
               },
             });
             if (archived) await app.close(id);

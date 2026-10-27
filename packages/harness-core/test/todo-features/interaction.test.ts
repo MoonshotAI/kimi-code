@@ -31,10 +31,10 @@ import {
   type Interactions,
 } from '#/todo-features/interaction/index';
 import {
-  createPermission,
-  PermissionRef,
-  type PermissionFace,
-} from '#/todo-features/permission/index';
+  createPermissionMode,
+  PermissionModeRef,
+  type PermissionModeFace,
+} from '#/todo-features/permission-mode/index';
 import { createTask, TaskRef, type TaskFace } from '#/todo-features/task/index';
 import {
   createTelemetry,
@@ -651,11 +651,11 @@ describe('AskUserQuestion tool', () => {
   });
 });
 
-function capturePermission(): { feature: Feature; face(sessionId: string): PermissionFace } {
-  const refs = new Map<string, Readonly<ShallowRef<PermissionFace | undefined>>>();
+function capturePermission(): { feature: Feature; face(sessionId: string): PermissionModeFace } {
+  const refs = new Map<string, Readonly<ShallowRef<PermissionModeFace | undefined>>>();
   const feature = createFeature('permission-capture', {
     session: () => {
-      refs.set(useSession().id, useInject(PermissionRef));
+      refs.set(useSession().id, useInject(PermissionModeRef));
     },
   });
   return {
@@ -676,7 +676,7 @@ describe('AskUserQuestion auto permission mode', () => {
     const capture = captureInteractions();
     const permissionProbe = capturePermission();
     harness.features.add(interactionFeature);
-    harness.features.add(createPermission());
+    harness.features.add(createPermissionMode());
     harness.features.add(capture.feature);
     harness.features.add(permissionProbe.feature);
     await harness.open('s1');

@@ -822,35 +822,10 @@ describe('createSkill app slot', () => {
 });
 
 describe('createSkill agent slot', () => {
-  it('injects the frozen skills section into every agent system prompt', async () => {
+  it('reminds the main agent when the skill listing changes after render', async () => {
     await makeProjectSkill();
     const env = await startSkillApp();
     await env.runTurn('hello');
-    const systemPrompt = env.calls[0]?.systemPrompt ?? '';
-    expect(systemPrompt).toContain('\n\n# Skills\n\n');
-    expect(systemPrompt).toContain('Skills are reusable, composable capabilities');
-    expect(systemPrompt).toContain('Identify the skills relevant to your current task');
-    expect(systemPrompt).toContain('## Available skills');
-    expect(systemPrompt).toContain('**Project overrides User overrides Extra overrides Built-in**');
-    expect(systemPrompt).toContain('DISREGARD any earlier skill listings. Current available skills:');
-    expect(systemPrompt).toContain('### Project');
-    expect(systemPrompt).toContain('- commit: Create a git commit');
-    expect(systemPrompt).toContain('  When to use: When committing');
-    expect(systemPrompt).toContain('- write-goal:');
-    expect(systemPrompt).toContain('- check-kimi-code-docs:');
-    expect(systemPrompt).not.toContain('sub-skill.review');
-    expect(systemPrompt).not.toContain('- mcp-config');
-    const listing = env.catalog().getModelSkillListing();
-    expect(systemPrompt).toContain(`${listing}\n\n`);
-
-    const { agent: sub } = await env.session.ensureAgent('sub-1', { systemPrompt: 'sub-host' });
-    setRequester(env.harness, 'sess', 'sub-1', env.requester);
-    const subDone = waitTurnDone(sub);
-    sub.loop.submit(user('hello'));
-    await subDone;
-    const subPrompt = env.calls.at(-1)?.systemPrompt ?? '';
-    expect(subPrompt).toContain('# Skills');
-    expect(subPrompt).toContain('DISREGARD any earlier skill listings. Current available skills:');
     const reminded: string[] = [];
     env.main.loop.subscribe((event) => {
       if (

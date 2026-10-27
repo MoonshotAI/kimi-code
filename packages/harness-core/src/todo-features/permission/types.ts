@@ -1,7 +1,5 @@
 import type { RuntimeEvent } from '#/composition-api/index';
 
-export type PermissionMode = 'manual' | 'yolo' | 'auto';
-
 export type PermissionRuleDecision = 'allow' | 'deny' | 'ask';
 
 export type PermissionRuleScope = 'turn-override' | 'session-runtime' | 'project' | 'user';

@@ -11,7 +11,7 @@ import type {
 } from '@moonshot-ai/agent-core/loop/index';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
-import { createFeature, useAgent, useRequester, useStepStarting, useStepStopping, type Feature, useLoopEvent } from '#/app/index';
+import { createFeature, useAgent, useRequester, useStepStarting, useStepStopping, type Feature, useLoopEvent, useClock } from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -163,6 +163,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
     agent() {
       const agent = useAgent();
       const fire = useFire();
+      const clock = useClock();
       const summarize = deps.summarize ?? createSummarize({ requester: useRequester() });
       const maxAutoAttempts = deps.maxAutoAttempts ?? DEFAULT_MAX_AUTO_ATTEMPTS;
 
@@ -240,11 +241,11 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
       };
 
       const _waitForIdle = async (signal: AbortSignal): Promise<void> => {
-        const started = Date.now();
+        const started = clock();
         for (;;) {
           if (signal.aborted) throw signal.reason as unknown;
           if (agent.loop.state.turn === undefined) return;
-          if (Date.now() - started > IDLE_TIMEOUT_MS) {
+          if (clock() - started > IDLE_TIMEOUT_MS) {
             throw new CompactError('reset-timeout', 'agent did not become idle before compaction');
           }
           await new Promise((resolve) => setTimeout(resolve, 25));
@@ -274,7 +275,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
             type: 'compaction.completed',
             reason: run.reason,
             stats,
-            durationMs: Date.now() - run.startedAt,
+            durationMs: clock() - run.startedAt,
             originTurnId: run.originTurnId,
             summary: telemetry,
           });
@@ -286,7 +287,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
             reason: run.reason,
             cause,
             error: cause === 'failed' ? error : undefined,
-            durationMs: Date.now() - run.startedAt,
+            durationMs: clock() - run.startedAt,
             originTurnId: run.originTurnId,
             tokensBefore: run.tokensBefore,
           });
@@ -304,7 +305,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
         const turnId = agent.loop.state.turn?.id;
         if (turnId !== undefined) {
           const pending: PendingCompaction = {
-            startedAt: Date.now(),
+            startedAt: clock(),
             controller: new AbortController(),
           };
           shared.pending = pending;
@@ -318,7 +319,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
               reason: 'manual',
               cause,
               error: cause === 'failed' ? error : undefined,
-              durationMs: Date.now() - pending.startedAt,
+              durationMs: clock() - pending.startedAt,
             });
             throw error;
           } finally {
@@ -328,7 +329,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
         const run: ActiveRun = {
           reason: 'manual',
           phase: 'summarizing',
-          startedAt: Date.now(),
+          startedAt: clock(),
           controller: new AbortController(),
         };
         await _compact(
@@ -403,7 +404,7 @@ export function createCompaction(deps: CreateCompactionDeps): Feature<void, { ag
         const run: ActiveRun = {
           reason,
           phase: 'summarizing',
-          startedAt: Date.now(),
+          startedAt: clock(),
           controller: new AbortController(),
           originTurnId: event.turnId,
           tokensBefore: used,

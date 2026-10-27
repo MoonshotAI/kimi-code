@@ -53,6 +53,7 @@ const MAX_ACQUIRE_ATTEMPTS = 3;
 export async function acquireRemoteControlLock(
   homeDir: string,
   details: { localOrigin: string; deviceId: string; url: string },
+  now: () => number,
 ): Promise<RemoteControlLock> {
   const lockPath = remoteControlLockPath(homeDir);
   await mkdir(dirname(lockPath), { recursive: true });
@@ -62,7 +63,7 @@ export async function acquireRemoteControlLock(
     localOrigin: details.localOrigin,
     deviceId: details.deviceId,
     url: details.url,
-    startedAt: Date.now(),
+    startedAt: now(),
   };
   for (let attempt = 0; ; attempt += 1) {
     try {

@@ -7,10 +7,19 @@
 ## adapter（v2 事件/错误翻译器）
 
 - [ ] 5 个流式事件透传：`llm.streaming.headers` / `llm.streaming.part` / `llm.streaming.usage` / `llm.streaming.finish` / `llm.streaming.message_id`（同名同形；part 上的 `contentType`/`meta` 是 237 新增可选字段，v2 消费者忽略）
+
+看怎么消除 attempt 这一层
 - [ ] `attempt.sending` → `llm.sent`
 - [ ] `attempt.failed` 按 `error.kind === 'syntax'` 分流 → `llm.failed.syntax` / `llm.failed.remote`，`rawError` 透传
-- [ ] settle/run 返回 `done` outcome 时合成 `llm.done`；`failed` 不再补发；`aborted` outcome 静默（对齐 v2 actor 吞 abort 的语义，`human/llm/requester/actor.ts:90`）
+
+这个发出来也没有问题吧
 - [ ] 丢弃 `attempt.tool_call_end` / `llm.streaming.tool_call_end`（A 的 `createMessageAccumulator` 按 `_streamIndex` 自行缓冲工具调用，且 A 事件联合是封闭类型）
+
+
+这个要改什么？
+- [ ] settle/run 返回 `done` outcome 时合成 `llm.done`；`failed` 不再补发；`aborted` outcome 静默（对齐 v2 actor 吞 abort 的语义，`human/llm/requester/actor.ts:90`）
+
+
 - [ ] 丢弃 `llm.notice`（A 无对应面；如接 telemetry 另议）
 - [ ] 丢弃 `llm.started` / `llm.ended`（A 无消费者；`llm.ended` 的 outcome 仅用于驱动 adapter 终态合成）
 - [ ] 错误映射：`auth` → `status`（保留 statusCode 401/403）。映射后 B 层零改动：`codeForStatusError` 推 `provider.auth_error`、`classifyApiError` 推 `auth`（`llm-adapter/contract/errors.ts:43,397`）

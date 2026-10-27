@@ -34,6 +34,7 @@ export interface CapabilityEntryContext {
   readonly plugins: CapabilityPluginsPort;
   readonly hostProcess: OsProcessPort;
   readonly fs: OsFsPort;
+  readonly now: () => number;
   readonly fetchImpl?: typeof fetch;
   readonly applicationsDir?: string;
   readonly webbridgeBaseUrl?: string;

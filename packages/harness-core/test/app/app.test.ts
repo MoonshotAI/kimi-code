@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createApp, createFeature, useAgent, useApp, useSession, useSystemPrompt, useToolHandler, useTurnStarting } from '#/app/index';
 import { createSystemEntry } from '@moonshot-ai/agent-core/history/message';
-import { useCleanup, useFire, useOn, type RuntimeEvent } from '#/composition-api/index';
+import { createFacadeToken, useCleanup, useExpose, useFire, useOn, type RuntimeEvent } from '#/composition-api/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 import { memorySessionSpace } from '@moonshot-ai/agent-core/session/index';
 import { createToolExecutor, type ToolExecuteInput, type ToolResult } from '@moonshot-ai/agent-core/tool/index';
@@ -305,17 +305,28 @@ describe('app units', () => {
   });
 
   it('mounts the units of a feature per level, attaches them to their level, and keeps per-instance registration', async () => {
+    interface ProbeFace {
+      readonly level: 'app' | 'session' | 'agent';
+      readonly tag: string;
+    }
+    const ProbeRef = createFacadeToken<ProbeFace>('probe');
     const app = createApp();
     const session = await app.open('sess');
+    expect(session.resolve(ProbeRef)).toBeUndefined();
+    expect(app.resolve(ProbeRef)).toBeUndefined();
     const a1 = await session.open('a1', agentCaps());
     const hookIds = (agent: typeof a1) => agent.loop.hooks.list().map((hook) => hook.id);
     const mounted: string[] = [];
     const fires = new Map<string, (event: RuntimeEvent) => void>();
     const heard: Array<[unknown, unknown]> = [];
     const Probe = createFeature<{ agent: RuntimeEvent }, { readonly tag: string }>('probe', {
+      app: (props) => {
+        useExpose(ProbeRef, { level: 'app', tag: props.tag });
+      },
       session: (props) => {
         expect(() => useAgent()).toThrow("no provider for token 'agent'");
         mounted.push(`+${useSession().id}:${props.tag}`);
+        useExpose(ProbeRef, { level: 'session', tag: props.tag });
         useOn('ping', (event) => {
           heard.push([event['agentId'], event['from']]);
         });
@@ -325,6 +336,7 @@ describe('app units', () => {
         expect(useSession()).toBe(session);
         expect(useApp()).toBe(app);
         mounted.push(`+${agent.id}:${props.tag}`);
+        useExpose(ProbeRef, { level: 'agent', tag: props.tag });
         fires.set(agent.id, useFire());
         useTurnStarting(() => undefined, { id: 'probe' });
         useCleanup(() => {
@@ -334,6 +346,10 @@ describe('app units', () => {
     });
     const offApp = app.features.add(Probe, { props: { tag: 'app' } });
     expect([...mounted].sort()).toEqual(['+a1:app', '+sess:app']);
+    expect(app.resolve(ProbeRef)).toEqual({ level: 'app', tag: 'app' });
+    expect(session.resolve(ProbeRef)).toEqual({ level: 'session', tag: 'app' });
+    const ensured = await session.ensureAgent('a1');
+    expect(ensured.resolve(ProbeRef)).toEqual({ level: 'agent', tag: 'app' });
     const a2 = await session.open('a2', agentCaps());
     expect(mounted.slice(2)).toEqual(['+a2:app']);
     expect(hookIds(a2)).toEqual(['probe']);
@@ -365,7 +381,10 @@ describe('app units', () => {
     await offApp();
     expect(hookIds(a1)).toEqual([]);
     expect(mounted.slice(5).sort()).toEqual(['-a1:app', '-a2:app']);
+    expect(session.resolve(ProbeRef)).toBeUndefined();
     await app.close();
+    expect(() => session.resolve(ProbeRef)).toThrow("session 'sess' is not open");
+    expect(() => app.resolve(ProbeRef)).toThrow('app is closed');
   });
 
   it('tracks the open source of sessions across open paths and forwards session.created', async () => {
@@ -479,10 +498,12 @@ describe('app units', () => {
 });
 
 describe('system prompt sections', () => {
-  it('assembles mount-time sections once at agent create and keeps the prompt frozen afterwards', async () => {
+  it('settles sections at create and re-settles on changes until the first request', async () => {
     const app = createApp();
-    const settled: unknown[] = [];
-    app.on('system_prompt.settled', (event) => settled.push(event['systemPrompt']));
+    const settled: string[] = [];
+    app.on('system_prompt.settled', (event) => {
+      settled.push(event['systemPrompt'] as string);
+    });
     app.features.add(
       createFeature('first', {
         agent() {
@@ -513,13 +534,15 @@ describe('system prompt sections', () => {
         },
       }),
     );
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(agent.loop.state.profile.systemPrompt).toBe('EARLY-2\n\nLATE');
-    expect(settled).toEqual(['EARLY-2\n\nLATE']);
+    await vi.waitFor(() => {
+      expect(agent.loop.state.profile.systemPrompt).toBe('EARLY-2\n\nTHIRD\n\nLATE');
+    });
+    await expect.poll(() => settled.length, { timeout: 1000 }).toBe(2);
+    expect(settled).toEqual(['EARLY-2\n\nLATE', 'EARLY-2\n\nTHIRD\n\nLATE']);
     await app.close();
   });
 
-  it('does not assemble on resume and keeps the replayed prompt', async () => {
+  it('keeps the replayed prompt on resume without re-settling', async () => {
     const app = createApp({ space: memorySessionSpace() });
     app.features.add(
       createFeature('sections', {
@@ -529,16 +552,19 @@ describe('system prompt sections', () => {
       }),
     );
     const session = await app.open('sess');
-    const settled: unknown[] = [];
-    app.on('system_prompt.settled', (event) => settled.push(event['systemPrompt']));
+    const settled: string[] = [];
+    app.on('system_prompt.settled', (event) => {
+      settled.push(event['systemPrompt'] as string);
+    });
     const first = await session.open('main', agentCaps());
     await vi.waitFor(() => {
       expect(first.loop.state.profile.systemPrompt).toBe('TEXT');
     });
     await first.flush();
+    await expect.poll(() => settled.length, { timeout: 1000 }).toBe(1);
     await session.closeAgent('main');
     const second = await session.open('main', agentCaps());
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(second.loop.state.profile.systemPrompt).toBe('TEXT');
     expect(settled).toEqual(['TEXT']);
     await app.close();

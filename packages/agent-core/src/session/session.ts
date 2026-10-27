@@ -7,7 +7,6 @@ import {
   toLoopRecord,
   type CreateLoopOptions,
   type Loop,
-  type LoopProfile,
   type LoopRecord,
   type LoopRecordState,
   type TurnOutcome,
@@ -118,8 +117,11 @@ function openAgent(
   logger: Logger,
 ): Agent {
   const view = log.replica.view(loopProjection());
-  const { messages, nextTurnId, unfinished, notify, profile } = view.getState();
-  const loop = createLoop({ ...caps, input: { messages, nextTurnId, unfinished, inbox: { notify }, profile } });
+  const { profile, messages, nextTurnId, unfinished, notify } = view.getState();
+  const loop = createLoop({
+    ...caps,
+    input: { profile, messages, nextTurnId, unfinished, inbox: { notify } },
+  });
   let batch: LoopRecord[] = [];
   let tail: Promise<unknown> = Promise.resolve();
   const flush = (): Promise<void> => {
@@ -162,8 +164,8 @@ function lastTurnOf(state: LoopRecordState): LastTurn | undefined {
   return turn?.outcome === undefined ? undefined : { turnId: turn.turnId, outcome: turn.outcome.type };
 }
 
-function sameTools(a: LoopProfile, b: LoopProfile): boolean {
-  return JSON.stringify(a.tools ?? []) === JSON.stringify(b.tools ?? []);
+function same(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function sameTurn(a: LastTurn | undefined, b: LastTurn | undefined): boolean {
@@ -294,13 +296,10 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
         throw new SessionError('insufficient', `cannot undo ${turns} turn(s): not enough turns`);
       }
       await agent.log.commit({ rewind: cut.start });
-      const profile = agent.view.getState().profile;
-      if (profile.systemPrompt !== agent.loop.state.profile.systemPrompt) {
-        agent.loop.setSystemPrompt(profile.systemPrompt);
-      }
-      if (!sameTools(profile, agent.loop.state.profile)) {
-        agent.loop.setTools([...(profile.tools ?? [])]);
-      }
+      const { systemPrompt, tools } = agent.view.getState().profile;
+      const live = agent.loop.state.profile;
+      if (systemPrompt !== undefined && !same(systemPrompt, live.systemPrompt)) agent.loop.setSystemPrompt(systemPrompt);
+      if (tools !== undefined && !same(tools, live.tools)) agent.loop.setTools(tools);
       const ack = agent.loop.setContext([...agent.view.getState().messages], 'undo');
       if (ack?.type !== 'context.settled') throw new SessionError('busy', `agent '${agentId}' is running`);
       await agent.flush();
@@ -338,7 +337,7 @@ export async function createSession(options: CreateSessionOptions): Promise<Sess
       for (const agent of liveAgents.values()) {
         const state = agent.loop.state;
         const active = state.status === 'running';
-        if (active || state.tools.some((tool) => tool.detached)) busy = true;
+        if (active || state.calls.some((call) => call.detached)) busy = true;
         if (agent.id === MAIN_AGENT_ID) mainTurnActive = active;
       }
       return {

@@ -17,11 +17,11 @@ import {
   type Interactions,
 } from '#/todo-features/interaction/index';
 import {
-  createPermission,
-  PermissionRef,
-  type PermissionFace,
+  createPermissionMode,
+  PermissionModeRef,
   type PermissionMode,
-} from '#/todo-features/permission/index';
+  type PermissionModeFace,
+} from '#/todo-features/permission-mode/index';
 
 const interaction = createInteraction();
 import {
@@ -115,11 +115,11 @@ function captureInteractions(): { feature: Feature; face: () => Interactions | u
   return { feature, face: () => exposed?.value };
 }
 
-function capturePermission(): { feature: Feature; face: () => PermissionFace | undefined } {
-  let exposed: Readonly<ShallowRef<PermissionFace | undefined>> | undefined;
+function capturePermission(): { feature: Feature; face: () => PermissionModeFace | undefined } {
+  let exposed: Readonly<ShallowRef<PermissionModeFace | undefined>> | undefined;
   const feature = createFeature('permission-probe', {
     session: () => {
-      exposed = useInject(PermissionRef);
+      exposed = useInject(PermissionModeRef);
     },
   });
   return { feature, face: () => exposed?.value };
@@ -156,7 +156,7 @@ async function startPlanTest(options?: {
   const storage = createMemoryPlanStorage();
   if (options?.withConfig === true) harness.features.add(createConfig({}));
   if (options?.withInteraction !== false) harness.features.add(interaction);
-  harness.features.add(createPermission());
+  harness.features.add(createPermissionMode());
   const probe = capturePlan();
   const interactionsProbe = captureInteractions();
   const permissionProbe = capturePermission();

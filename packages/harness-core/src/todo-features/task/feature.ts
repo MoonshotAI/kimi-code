@@ -1,4 +1,4 @@
-import { createFeature, useAgent, type Feature, useAgentTools, useLoopEvent } from '#/app/index';
+import { createFeature, useAgent, type Feature, useAgentTools, useLoopEvent, useNow } from '#/app/index';
 import { extractText } from '@moonshot-ai/agent-core/llm/message';
 import {
   createFacadeToken,
@@ -80,6 +80,7 @@ export function createTask(): Feature<void, { agent: TaskEvent }> {
     agent() {
       const agent = useAgent();
       const fire = useFire();
+      const now = useNow();
       let tracker = trackers.get(agent);
       if (tracker === undefined) {
         tracker = {
@@ -102,20 +103,20 @@ export function createTask(): Feature<void, { agent: TaskEvent }> {
       });
 
       const isLiveDetached = (taskId: string): boolean =>
-        agent.loop.state.tools.some((tool) => tool.detached && tool.toolCall.id === taskId);
+        agent.loop.state.calls.some((call) => call.detached && call.toolCall.id === taskId);
 
       useLoopEvent('tool.ended', (event) => {
         if (!event.detached) return;
         const taskId = event.toolCallId;
         if (current.records.value.has(taskId)) return;
-        const call = agent.loop.state.tools.find((tool) => tool.toolCall.id === taskId)?.toolCall;
+        const call = agent.loop.state.calls.find((entry) => entry.toolCall.id === taskId)?.toolCall;
         const record: TaskRecord = {
           taskId,
           toolName: call?.name ?? 'unknown',
           description: describeToolArguments(call?.arguments ?? null),
           detachText: extractText(event.outcome.entry.message),
           status: 'running',
-          startedAt: Date.now(),
+          startedAt: now(),
         };
         setOverlay(current, record);
         fire({ type: 'task.started', record });
@@ -127,7 +128,7 @@ export function createTask(): Feature<void, { agent: TaskEvent }> {
         const record: TaskRecord = {
           ...existing,
           ...settleFromAsync(event.outcome, event.entry),
-          endedAt: Date.now(),
+          endedAt: now(),
         };
         setOverlay(current, record);
         fire({ type: 'task.settled', record });
@@ -143,7 +144,7 @@ export function createTask(): Feature<void, { agent: TaskEvent }> {
           (record) => record.status === 'running' && !isLiveDetached(record.taskId),
         );
         if (stale.length === 0) return;
-        const endedAt = Date.now();
+        const endedAt = now();
         for (const record of stale) {
           setOverlay(current, { ...record, status: 'lost', endedAt });
         }
@@ -153,12 +154,12 @@ export function createTask(): Feature<void, { agent: TaskEvent }> {
         const record = current.records.value.get(taskId);
         if (record === undefined || record.status !== 'running') return record;
         if (!isLiveDetached(taskId)) {
-          const lost: TaskRecord = { ...record, status: 'lost', endedAt: Date.now() };
+          const lost: TaskRecord = { ...record, status: 'lost', endedAt: now() };
           setOverlay(current, lost);
           return lost;
         }
         agent.loop.abortTool(taskId, reason);
-        const killed: TaskRecord = { ...record, status: 'killed', stopReason: reason, endedAt: Date.now() };
+        const killed: TaskRecord = { ...record, status: 'killed', stopReason: reason, endedAt: now() };
         setOverlay(current, killed);
         fire({ type: 'task.settled', record: killed });
         return killed;

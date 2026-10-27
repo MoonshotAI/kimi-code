@@ -16,6 +16,7 @@ import { useInject, type ShallowRef } from '#/composition-api/index';
 import {
   createAssistantMessage,
   createUserMessage,
+  extractText,
   type Message,
   type ToolCall,
   type ToolDescription,
@@ -34,7 +35,10 @@ import {
 import { createMedia } from '#/todo-features/media/index';
 import { createNodeOsHost, type OsHost } from '#/todo-features/os/host/index';
 import {
-  MCP_DYNAMIC_TOOLS_REMIND_KEY,
+  createToolSelect,
+  LOADABLE_TOOLS_REMINDER_KEY,
+} from '#/todo-features/tool-select/index';
+import {
   McpRef,
   convertMCPContentBlock,
   createMcp,
@@ -255,14 +259,6 @@ function toolNames(call: LlmCall | undefined): string[] {
   return call?.tools.map((tool) => tool.name) ?? [];
 }
 
-function dynamicToolNames(call: LlmCall | undefined): string[] {
-  return (
-    call?.messages.flatMap((message) =>
-      message.role === 'system' ? (message.tools ?? []) : [],
-    ).map((tool) => tool.name) ?? []
-  );
-}
-
 describe('mcp feature', () => {
   it('merges config layers with props.servers as the base and respects trusted', async () => {
     const home = await tmpDir('mcp-cfg-home-');
@@ -377,7 +373,7 @@ describe('mcp feature', () => {
     }
   }, 30_000);
 
-  it('keeps deferred server tools out of the frozen spec and delivers them through the dynamic channel', async () => {
+  it('registers deferred server tools inline when tool-select is not mounted', async () => {
     const started = await startApp({
       servers: { fake: stdioServer({ deferred: true }) },
       script: (call, index) => {
@@ -393,25 +389,22 @@ describe('mcp feature', () => {
         'fake server to connect',
       );
       await runTurn(started.agent, 'call the deferred tool by name');
-      for (const call of started.calls) {
-        expect(toolNames(call)).not.toContain('mcp__fake__echo');
-      }
+      expect(toolNames(started.calls[0])).toContain('mcp__fake__echo');
       const toolMessage = started.calls[1]?.messages.find((message) => message.role === 'tool');
       expect(toolMessage?.content).toEqual([{ type: 'text', text: 'hello-deferred' }]);
-      expect(dynamicToolNames(started.calls[1])).toContain('mcp__fake__echo');
       await started.agent.flush();
       const history = started.agent.view.getState().messages;
-      const reminder = history.find(
-        (entry) => entry.meta?.source === 'reminder' && entry.meta.key === MCP_DYNAMIC_TOOLS_REMIND_KEY,
-      );
-      expect(reminder?.message.role).toBe('system');
+      expect(
+        history.some((entry) => entry.meta?.source === 'reminder' && entry.meta.key === 'mcp-dynamic-tools'),
+      ).toBe(false);
     } finally {
       await started.dispose();
     }
   }, 30_000);
 
-  it('delivers late-connected tools through the dynamic channel without touching the frozen spec', async () => {
+  it('announces late-connected tools through tool-select without touching the wire tool list', async () => {
     const started = await startApp({
+      features: [createToolSelect({ loadable: () => [], enabled: () => true })],
       script: (call, index) => {
         if (index === 0) return { text: 'ok' };
         if (index === 1) {
@@ -430,12 +423,22 @@ describe('mcp feature', () => {
       await started.facade().reload();
       expect(started.facade().list().map((entry) => entry.status)).toEqual(['connected']);
       await runTurn(started.agent, 'call the late tool by name');
-      expect(dynamicToolNames(started.calls[1])).toContain('mcp__fake__echo');
       for (const call of started.calls) {
         expect(toolNames(call)).not.toContain('mcp__fake__echo');
       }
       const toolMessage = started.calls[2]?.messages.find((message) => message.role === 'tool');
       expect(toolMessage?.content).toEqual([{ type: 'text', text: 'hello-late' }]);
+      await started.agent.flush();
+      await expect
+        .poll(
+          () =>
+            started.agent.view
+              .getState()
+              .messages.filter((entry) => entry.meta?.key === LOADABLE_TOOLS_REMINDER_KEY)
+              .map((entry) => extractText(entry.message)),
+          { timeout: 5000 },
+        )
+        .toEqual([expect.stringContaining('mcp__fake__echo')]);
     } finally {
       await started.dispose();
     }
@@ -751,8 +754,7 @@ describe('mcp feature', () => {
         { name: 'fake', transport: 'stdio', status: 'connected', toolCount: 5, error: undefined },
       ]);
       await runTurn(started.agent, 'call the ephemeral tool');
-      expect(toolNames(started.calls[0])).not.toContain('mcp__fake__echo');
-      expect(dynamicToolNames(started.calls[1])).toContain('mcp__fake__echo');
+      expect(toolNames(started.calls[0])).toContain('mcp__fake__echo');
       const toolMessage = started.calls[1]?.messages.find((message) => message.role === 'tool');
       expect(toolMessage?.content).toEqual([{ type: 'text', text: 'hello-ephemeral' }]);
       await facade.disconnect('fake');
@@ -815,12 +817,11 @@ describe('mcp feature', () => {
       await facade.connect('fake', stdioServer(), { cwd: '/work/alpha' });
       expect(facade.list().map((entry) => entry.status)).toEqual(['connected']);
       await runTurn(started.agent, 'alpha turn');
-      expect(dynamicToolNames(started.calls[1])).toContain('mcp__fake__echo');
+      expect(toolNames(started.calls[0])).toContain('mcp__fake__echo');
       const toolMessage = started.calls[1]?.messages.find((message) => message.role === 'tool');
       expect(toolMessage?.content).toEqual([{ type: 'text', text: 'hello-alpha' }]);
       await runTurn(mainB, 'beta turn');
       expect(toolNames(started.calls[2])).not.toContain('mcp__fake__echo');
-      expect(dynamicToolNames(started.calls[2])).not.toContain('mcp__fake__echo');
     } finally {
       await started.dispose();
     }

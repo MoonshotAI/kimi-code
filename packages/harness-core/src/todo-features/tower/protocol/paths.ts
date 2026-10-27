@@ -18,14 +18,14 @@ export function isReservedTowerAgentName(name: string): boolean {
   return name === TOWER_NAME || name === BROADCAST_NAME;
 }
 
-export function dateStamp(now = new Date()): string {
+export function dateStamp(now: Date): string {
   const y = now.getFullYear();
   const m = String(now.getMonth() + 1).padStart(2, '0');
   const d = String(now.getDate()).padStart(2, '0');
   return `${y}${m}${d}`;
 }
 
-export function dateDash(now = new Date()): string {
+export function dateDash(now: Date): string {
   const stamp = dateStamp(now);
   return `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)}`;
 }
@@ -49,7 +49,7 @@ export function inboxFileName(input: {
   readonly from: string;
   readonly to: string;
   readonly subject: string;
-  readonly now?: Date;
+  readonly now: Date;
 }): string {
   return `${dateStamp(input.now)}-${slugify(input.from, 30)}-${slugify(input.to, 30)}-${slugify(input.subject)}.md`;
 }
@@ -58,7 +58,7 @@ export function findingFileName(input: {
   readonly agent: string;
   readonly type: string;
   readonly slug: string;
-  readonly now?: Date;
+  readonly now: Date;
 }): string {
   return `${dateStamp(input.now)}-${slugify(input.agent, 30)}-${slugify(input.type, 12)}-${slugify(input.slug)}.md`;
 }

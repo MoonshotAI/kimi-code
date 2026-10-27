@@ -35,6 +35,7 @@ import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 export interface PluginManagerOptions {
   readonly homeDir: string;
   readonly fs: OsFsPort;
+  readonly now: () => number;
   readonly discoverSkills?: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
 }
 
@@ -46,12 +47,14 @@ interface ManagedPluginCopy {
 export class PluginManager {
   private readonly homeDir: string;
   private readonly fs: OsFsPort;
+  private readonly now: () => number;
   private readonly discoverSkills: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
   private records = new Map<string, PluginRecord>();
 
   constructor(options: PluginManagerOptions) {
     this.homeDir = options.homeDir;
     this.fs = options.fs;
+    this.now = options.now;
     this.discoverSkills =
       options.discoverSkills ?? ((roots) => discoverSkills(options.fs, roots));
   }
@@ -135,7 +138,7 @@ export class PluginManager {
       const normalizedRoot = managedCopy.root;
       const managedParsed = await parseManifest(this.fs, normalizedRoot);
       const existing = this.records.get(id);
-      const now = new Date().toISOString();
+      const now = new Date(this.now()).toISOString();
       const record = await this.recordFrom({
         id,
         root: normalizedRoot,
@@ -189,7 +192,7 @@ export class PluginManager {
     if (current.enabled === enabled) return;
     const next = new Map([
       ...this.records,
-      [key, { ...current, enabled, updatedAt: new Date().toISOString() }],
+      [key, { ...current, enabled, updatedAt: new Date(this.now()).toISOString() }],
     ]);
     await this.persist(next);
     this.records = next;
@@ -221,7 +224,7 @@ export class PluginManager {
         {
           ...current,
           capabilities: nextCapabilities,
-          updatedAt: new Date().toISOString(),
+          updatedAt: new Date(this.now()).toISOString(),
         },
       ],
     ]);

@@ -144,6 +144,7 @@ export interface RemoteControlOptions {
   readonly localServerToken: string | (() => string);
   readonly clientVersion: string;
   readonly urlSource: string;
+  readonly now: () => number;
   readonly relayOrigin?: string;
   readonly configuredOAuthKey?: string;
   readonly configuredOAuthHost?: string;
@@ -362,11 +363,15 @@ export async function startRemoteControl(
   const deviceId = createKimiDeviceId(options.homeDir);
   const deviceName = hostname();
   const url = buildRemoteControlUrl(deviceId, undefined, relayOrigin, options.urlSource);
-  const lock = await acquireRemoteControlLock(options.homeDir, {
-    localOrigin: options.localOrigin.replace(/\/+$/, ''),
-    deviceId,
-    url,
-  });
+  const lock = await acquireRemoteControlLock(
+    options.homeDir,
+    {
+      localOrigin: options.localOrigin.replace(/\/+$/, ''),
+      deviceId,
+      url,
+    },
+    options.now,
+  );
   const tokenAfterLock = await storage.load(resolveKimiTokenStorageName({ oauthKey: auth.oauthKey }));
   if (tokenAfterLock?.refreshToken !== token.refreshToken) {
     await lock.release();

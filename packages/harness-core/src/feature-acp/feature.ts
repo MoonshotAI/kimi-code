@@ -37,7 +37,7 @@ import { ConfigRef } from '#/todo-features/config/index';
 import { InteractionRef, type Interaction } from '#/todo-features/interaction/index';
 import { OAuthTokensRef } from '#/todo-features/kimi/index';
 import { McpRef } from '#/todo-features/mcp/index';
-import { PermissionRef } from '#/todo-features/permission/index';
+import { PermissionModeRef } from '#/todo-features/permission-mode/index';
 import { PlanRef } from '#/features/plan/index';
 import { AgentModelRef, CatalogModels } from '#/features/provider-catalog/index';
 import { SkillCatalogRef, SkillRef } from '#/todo-features/skill/index';
@@ -157,7 +157,7 @@ export function createAcp(props: CreateAcpProps): Feature<void> {
         compaction: useInject(CompactionRef),
         skill: useInject(SkillRef),
         plan: useInject(PlanRef),
-        permission: useInject(PermissionRef),
+        permission: useInject(PermissionModeRef),
       };
       agentSlots.set(agent, slot);
       useCleanup(() => {

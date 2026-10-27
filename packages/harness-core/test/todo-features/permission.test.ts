@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createFeature, useAgent, type Feature, createApp, type App, useAgentTools, useFeatureStore } from '#/app/index';
 import { createUserEntry, type HistoryMessage } from '@moonshot-ai/agent-core/history/index';
 import type { FeatureStore } from '#/app/index';
-import { useInject, type ShallowRef } from '#/composition-api/index';
+import { computed, useInject, type ComputedRef, type ShallowRef } from '#/composition-api/index';
 import { createAssistantMessage, createUserMessage, extractText, type ToolCall } from '@moonshot-ai/agent-core/llm/message';
 import type { LlmRequest } from '@moonshot-ai/agent-core/llm/request';
 import type { LlmOutcome } from '@moonshot-ai/agent-core/llm/response';
@@ -18,17 +18,34 @@ import {
   type Interactions,
 } from '#/todo-features/interaction/index';
 import {
-  createPermission,
+  createPermissionPolicy,
   DANGEROUS_COMMAND_GUARD_ENV,
-  PermissionRef,
-  permissionProjection,
+  PermissionPolicyRef,
+  permissionPolicyProjection,
   type ApprovalResponse,
-  type CreatePermissionProps,
+  type CreatePermissionPolicyProps,
   type PermissionApprovalResolvedEvent,
-  type PermissionFace,
-  type PermissionState,
+  type PermissionApprovalResultRecord,
+  type PermissionPolicyFace,
+  type PermissionPolicyState,
+  type PermissionRule,
   type PermissionStoreEvent,
 } from '#/todo-features/permission/index';
+import {
+  createPermissionMode,
+  PermissionModeRef,
+  type PermissionMode,
+  type PermissionModeFace,
+  type PermissionModeState,
+} from '#/todo-features/permission-mode/index';
+
+interface PermissionFace {
+  readonly state: ComputedRef<PermissionModeState & PermissionPolicyState>;
+  mode(): PermissionMode;
+  setMode(mode: PermissionMode): Promise<void>;
+  recordApprovalResult(record: PermissionApprovalResultRecord): Promise<void>;
+  addRules(rules: readonly PermissionRule[]): Promise<void>;
+}
 
 const interaction = createInteraction();
 
@@ -107,14 +124,15 @@ const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0
 interface PermissionProbe {
   readonly feature: Feature;
   face(agentId: string): PermissionFace | undefined;
-  store(): FeatureStore<PermissionState, PermissionStoreEvent> | undefined;
+  store(): FeatureStore<PermissionPolicyState, PermissionStoreEvent> | undefined;
   interactions(): Interactions | undefined;
   config(): ConfigStore | undefined;
 }
 
 function capturePermission(): PermissionProbe {
-  const faces = new Map<string, Readonly<ShallowRef<PermissionFace | undefined>>>();
-  let storeRef: FeatureStore<PermissionState, PermissionStoreEvent> | undefined;
+  const policyFaces = new Map<string, Readonly<ShallowRef<PermissionPolicyFace | undefined>>>();
+  const modeFaces = new Map<string, Readonly<ShallowRef<PermissionModeFace | undefined>>>();
+  let storeRef: FeatureStore<PermissionPolicyState, PermissionStoreEvent> | undefined;
   let interactionsRef: Readonly<ShallowRef<Interactions | undefined>> | undefined;
   let configRef: Readonly<ShallowRef<ConfigStore | undefined>> | undefined;
   const feature = createFeature('permission-probe', {
@@ -123,16 +141,28 @@ function capturePermission(): PermissionProbe {
     },
     session() {
       interactionsRef = useInject(InteractionRef);
-      storeRef = useFeatureStore('session', 'permission', permissionProjection);
+      storeRef = useFeatureStore('session', 'permission', permissionPolicyProjection);
     },
     agent() {
       const id = useAgent().id;
-      faces.set(id, useInject(PermissionRef));
+      policyFaces.set(id, useInject(PermissionPolicyRef));
+      modeFaces.set(id, useInject(PermissionModeRef));
     },
   });
   return {
     feature,
-    face: (agentId) => faces.get(agentId)?.value,
+    face: (agentId) => {
+      const policy = policyFaces.get(agentId)?.value;
+      const mode = modeFaces.get(agentId)?.value;
+      if (policy === undefined || mode === undefined) return undefined;
+      return {
+        state: computed(() => ({ ...mode.state.value, ...policy.state.value })),
+        mode: mode.mode,
+        setMode: mode.setMode,
+        recordApprovalResult: policy.recordApprovalResult,
+        addRules: policy.addRules,
+      };
+    },
     store: () => storeRef,
     interactions: () => interactionsRef?.value,
     config: () => configRef?.value,
@@ -157,15 +187,16 @@ interface PermissionTestEnv {
 
 async function startPermissionTest(options?: {
   readonly configText?: string | null;
-  readonly permissionProps?: CreatePermissionProps;
+  readonly permissionProps?: CreatePermissionPolicyProps;
 }): Promise<PermissionTestEnv> {
-  const permission = createPermission(options?.permissionProps);
+  const permission = createPermissionPolicy(options?.permissionProps);
   const probe = capturePermission();
   const harness = createApp({ space: memorySessionSpace() });
   if (options?.configText !== undefined && options?.configText !== null) {
     harness.features.add(createConfig({ persist: fakePersist(options.configText) }));
   }
   harness.features.add(interaction);
+  harness.features.add(createPermissionMode());
   harness.features.add(permission);
   harness.features.add(bindTestTools());
   harness.features.add(probe.feature);

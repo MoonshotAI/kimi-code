@@ -1,14 +1,12 @@
 import { createFacadeToken, type ComputedRef } from '#/composition-api/index';
 
-import type { PermissionApprovalResultRecord, PermissionState } from './state/projection';
-import type { PermissionMode, PermissionRule } from './types';
+import type { PermissionApprovalResultRecord, PermissionPolicyState } from './state/projection';
+import type { PermissionRule } from './types';
 
-export interface PermissionFace {
-  readonly state: ComputedRef<PermissionState>;
-  mode(): PermissionMode;
-  setMode(mode: PermissionMode): Promise<void>;
+export interface PermissionPolicyFace {
+  readonly state: ComputedRef<PermissionPolicyState>;
   recordApprovalResult(record: PermissionApprovalResultRecord): Promise<void>;
   addRules(rules: readonly PermissionRule[]): Promise<void>;
 }
 
-export const PermissionRef = createFacadeToken<PermissionFace>('permission');
+export const PermissionPolicyRef = createFacadeToken<PermissionPolicyFace>('permission.policy');

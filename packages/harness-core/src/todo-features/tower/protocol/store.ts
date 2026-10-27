@@ -170,13 +170,20 @@ export async function assertLocalBaseBranch(
 export class TowerStore {
   private readonly fs: OsFsPort;
   private readonly git: Git;
+  private readonly now: () => number;
 
   constructor(
     readonly repoRoot: string,
     io: TowerIo,
+    now: () => number,
   ) {
     this.fs = io.fs;
     this.git = io.git;
+    this.now = now;
+  }
+
+  private isoNow(): string {
+    return new Date(this.now()).toISOString();
   }
 
   async isInitialized(): Promise<boolean> {
@@ -251,7 +258,7 @@ export class TowerStore {
       version: 1,
       base: resolvedBase,
       mode: 'branch',
-      createdAt: new Date().toISOString(),
+      createdAt: new Date(this.now()).toISOString(),
       sessionId,
       roster: { agents: [] },
       missions: [],
@@ -373,7 +380,7 @@ export class TowerStore {
       .filter((entry): entry is [string, string | number] => entry[1] !== undefined)
       .map(([key, value]) => `${key}=${value}`)
       .join(' ');
-    const parts = [new Date().toISOString(), actor, action];
+    const parts = [this.isoNow(), actor, action];
     if (kv.length > 0) parts.push(kv);
     if (ref !== undefined) parts.push(`ref=${ref}`);
     await this.fs.appendText(this.abs(ACTIVITY_LOG), `${parts.join(' ')}\n`);
@@ -453,7 +460,7 @@ export class TowerStore {
     if (existing.diedAt !== undefined) return existing;
     const entry: TowerRosterEntry = {
       ...existing,
-      diedAt: new Date().toISOString(),
+      diedAt: new Date(this.now()).toISOString(),
       deathStatus: status,
       deathReason: reason,
     };
@@ -734,13 +741,13 @@ export class TowerStore {
       from: callerName,
       to,
       subject: input.subject,
-      sent_at: new Date().toISOString(),
+      sent_at: new Date(this.now()).toISOString(),
       scope: input.scope,
       action: input.action,
       consent_ref: input.consentRef,
     });
     const content = `${frontmatter}\n\n${input.body.trim()}\n`;
-    const baseName = inboxFileName({ from: callerName, to, subject: input.subject });
+    const baseName = inboxFileName({ from: callerName, to, subject: input.subject, now: new Date(this.now()) });
     const rel = await this.writeUnique(join(INBOX_DIR, baseName), content);
     await this.appendLog(callerName, 'inbox.send', { to, subject: slugify(input.subject) }, rel);
     return rel;
@@ -798,7 +805,7 @@ export class TowerStore {
     const lines = [
       `# Finding: ${input.title}`,
       '',
-      `**Date**: ${dateDash().replaceAll('-', '')}`,
+      `**Date**: ${dateDash(new Date(this.now())).replaceAll('-', '')}`,
       `**Agent**: ${callerName}`,
       `**Type**: ${input.type}`,
       `**Severity**: ${input.severity ?? 'medium'}`,
@@ -832,6 +839,7 @@ export class TowerStore {
       agent: callerName,
       type: input.type,
       slug: input.title,
+      now: new Date(this.now()),
     });
     const rel = await this.writeUnique(join(FINDINGS_DIR, baseName), lines.join('\n'));
     await this.appendLog(callerName, 'finding.file', { type: input.type, slug: slugify(input.title) }, rel);
@@ -871,7 +879,7 @@ export class TowerStore {
         : callerEntry.reviewMissionId;
 
     const frontmatter = renderFrontmatter({
-      date: dateDash(),
+      date: dateDash(new Date(this.now())),
       reviewer: callerName,
       target: input.target,
       round: String(round),

@@ -80,7 +80,7 @@ const MAX_TIMER_DELAY_MS = 0x7fffffff;
 const DEFAULT_AUTH_REQUEST_TIMEOUT_MS = 30_000;
 const DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS = 30_000;
 
-const defaultScheduler: McpOAuthScheduler = {
+export const defaultMcpOAuthScheduler: McpOAuthScheduler = {
   now: () => Date.now(),
   schedule: (delayMs, task) => {
     const timer = setTimeout(() => void task(), delayMs);
@@ -107,7 +107,7 @@ export class McpOAuthService {
   constructor(options: McpOAuthServiceOptions) {
     this.store = options.store;
     this.clientLabel = options.clientLabel;
-    this.scheduler = options.scheduler ?? defaultScheduler;
+    this.scheduler = options.scheduler ?? defaultMcpOAuthScheduler;
     this.authRequestTimeoutMs = options.authRequestTimeoutMs ?? DEFAULT_AUTH_REQUEST_TIMEOUT_MS;
     this.shutdownDrainTimeoutMs = options.shutdownDrainTimeoutMs ?? DEFAULT_SHUTDOWN_DRAIN_TIMEOUT_MS;
   }

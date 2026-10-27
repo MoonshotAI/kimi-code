@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { createFeature, useAgent, useSession, type Feature } from '#/app/index';
+import { createFeature, useAgent, useSession, type Feature, useClock } from '#/app/index';
 import {
   createCollection,
   createFacadeToken,
@@ -191,9 +191,10 @@ export function createTelemetry(props?: TelemetryProps): Feature<void> {
       const parent = useInject(TelemetryRef).value as TelemetryView | undefined;
       if (parent === undefined) throw new Error("no provider for token 'telemetry'");
       const agent = useAgent();
+      const clock = useClock();
       const view = bindTelemetryView(parent, { agent_id: agent.id });
       useExpose(TelemetryRef, view);
-      deriveAgentTelemetry(agent, view);
+      deriveAgentTelemetry(agent, view, clock);
     },
   });
 }

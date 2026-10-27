@@ -25,13 +25,13 @@ interface GitRunOptions {
   readonly timeoutMs?: number;
 }
 
-export function createWorkspaceGit(host: OsHost): WorkspaceGitPort {
+export function createWorkspaceGit(host: OsHost, clock: () => number): WorkspaceGitPort {
   const processPort = host.process;
   const pullRequestCache = new Map<string, { value: FsPullRequest | null; fetchedAt: number }>();
 
   const readPullRequest = async (cwd: string): Promise<FsPullRequest | null> => {
     const cached = pullRequestCache.get(cwd);
-    const now = Date.now();
+    const now = clock();
     if (cached !== undefined && now - cached.fetchedAt < PULL_REQUEST_TTL_MS) {
       return cached.value;
     }

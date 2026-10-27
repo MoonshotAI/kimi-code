@@ -1,6 +1,6 @@
 import { onScopeDispose } from '@vue/reactivity';
 
-import { createFeature, useAgent, type Feature, useAgentTools, useFeatureStore } from '#/app/index';
+import { createFeature, useAgent, type Feature, useAgentTools, useFeatureStore, useNow, useClock } from '#/app/index';
 import { createHistoryMessageBuilder, createUserEntry } from '@moonshot-ai/agent-core/history/index';
 import {
   computed,
@@ -15,6 +15,7 @@ import {
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
+
 
 import {
   CRON_CONFIG_SECTION,
@@ -86,6 +87,8 @@ export function createCron(): Feature<void, { agent: CronFiredEvent }> {
           DEFAULT_CRON_CONFIG,
       );
       const config = (): CronConfig => section.value;
+      const wallNow = useNow();
+      const monoNowMs = useClock();
       const parsedCache = new Map<string, ParsedCronExpression>();
       const lastSeenAt = new Map<string, number>();
       const seededFromStore = new Set<string>();
@@ -96,7 +99,7 @@ export function createCron(): Feature<void, { agent: CronFiredEvent }> {
 
       const clocks = (): ClockSources => {
         const cfg = config();
-        return resolveClockSources(cfg.clock, cfg.debug);
+        return resolveClockSources(cfg.clock, cfg.debug, { wallNow, monoNowMs });
       };
 
       const isStaleAt = (task: CronTask, nowMs: number): boolean => {

@@ -21,7 +21,8 @@ import type { LoopLlmRequester } from '@moonshot-ai/agent-core/loop/index';
 import { MAIN_AGENT_ID, memorySessionSpace, type Agent } from '@moonshot-ai/agent-core/session/index';
 
 import { createInteraction } from '#/todo-features/interaction/index';
-import { createPermission, PermissionRef, type PermissionFace } from '#/todo-features/permission/index';
+import { createPermissionPolicy, PermissionPolicyRef, type PermissionPolicyFace, type PermissionRule } from '#/todo-features/permission/index';
+import { createPermissionMode, PermissionModeRef, type PermissionMode, type PermissionModeFace } from '#/todo-features/permission-mode/index';
 import { CODE_TOOL_NAME, createPtc } from '#/features/ptc/index';
 
 const interaction = createInteraction();
@@ -114,14 +115,28 @@ function bindBashTool(executed: string[]): Feature<void> {
   });
 }
 
-function capturePermission(): { feature: Feature<void>; face: () => PermissionFace | undefined } {
-  let face: PermissionFace | undefined;
+interface PtcPermissionFace {
+  mode(): PermissionMode;
+  setMode(mode: PermissionMode): Promise<void>;
+  addRules(rules: readonly PermissionRule[]): Promise<void>;
+}
+
+function capturePermission(): { feature: Feature<void>; face: () => PtcPermissionFace | undefined } {
+  let modeFace: PermissionModeFace | undefined;
+  let policyFace: PermissionPolicyFace | undefined;
   const feature = createFeature('permission-probe', {
     agent() {
-      face = useInject(PermissionRef).value;
+      modeFace = useInject(PermissionModeRef).value;
+      policyFace = useInject(PermissionPolicyRef).value;
     },
   });
-  return { feature, face: () => face };
+  return {
+    feature,
+    face: () => {
+      if (modeFace === undefined || policyFace === undefined) return undefined;
+      return { mode: modeFace.mode, setMode: modeFace.setMode, addRules: policyFace.addRules };
+    },
+  };
 }
 
 function setRequester(harness: App, sessionId: string, agentId: string, requester: LoopLlmRequester): void {
@@ -223,7 +238,8 @@ return { summary: a.split(' ')[0], count: 3 };
     expect(codeTool?.description).toContain('### Hidden');
     expect(codeTool?.description).not.toContain('### Code');
     const hidden = env.calls[0]?.tools.find((tool) => tool.name === 'Hidden');
-    expect(hidden?.deferred).toBe(true);
+    expect(hidden).toBeDefined();
+    expect(hidden?.deferred).toBeUndefined();
 
     await env.cleanup();
   });
@@ -240,7 +256,7 @@ console.log('got:', denied);
     };
     const env = await startEnv({
       script,
-      features: [interaction, createPermission(), bindBashTool(executed), permission.feature],
+      features: [interaction, createPermissionMode(), createPermissionPolicy(), bindBashTool(executed), permission.feature],
     });
     const face = permission.face();
     if (face === undefined) throw new Error('permission facade is not exposed');

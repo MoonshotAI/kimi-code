@@ -31,10 +31,11 @@ export interface TowerToolDeps {
   readonly rateLimit: TowerRateLimiter;
   readonly hub: TowerHub;
   readonly running: ReadonlySet<string>;
+  readonly now: () => number;
 }
 
-export function newTowerStore(deps: Pick<TowerToolDeps, 'io' | 'workDir'>): TowerStore {
-  return new TowerStore(resolveTowerRepoRoot(deps.workDir), deps.io);
+export function newTowerStore(deps: Pick<TowerToolDeps, 'io' | 'workDir' | 'now'>): TowerStore {
+  return new TowerStore(resolveTowerRepoRoot(deps.workDir), deps.io, deps.now);
 }
 
 export function callerName(agentId: string, store: TowerStore, state: TowerState): string {

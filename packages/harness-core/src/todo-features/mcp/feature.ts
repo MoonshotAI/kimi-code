@@ -1,4 +1,4 @@
-import { createFeature, useAgent, useApp, useSession, type Feature, useAgentRuntime, useLoopEvent } from '#/app/index';
+import { createFeature, useAgent, useApp, useSession, type Feature, useAgentRuntime, useNow } from '#/app/index';
 import {
   createFacadeToken,
   useCleanup,
@@ -9,14 +9,12 @@ import {
   useReady,
   watch,
 } from '#/composition-api/index';
-import type { Agent } from '@moonshot-ai/agent-core/session/index';
 import type { ToolDefinition } from '@moonshot-ai/agent-core/tool/index';
 import { join } from 'pathe';
 
 import { ConfigRef, useConfigSection } from '#/todo-features/config/index';
-import { KimiFileRegistryRef } from '#/todo-features/files/index';
 
-import type { AgentRuntime } from '#/runtime/index';
+import { KimiFileRegistryRef } from '#/todo-features/files/index';
 
 import { loadMcpServers, loadMcpServersDetailed, resolveMcpJsonPaths } from './config/loader';
 import { MCP_CONFIG_SECTION, mcpConfigSection, type McpSection } from './config/section';
@@ -33,7 +31,6 @@ import {
   McpConnectionManager,
   type McpServerEntry,
 } from './core/connection-manager';
-import { createMcpDeferredChannel, type McpDynamicToolEntry } from './deferred';
 import { McpManagementError } from './errors';
 import type {
   McpAuthStatusQuery,
@@ -50,6 +47,7 @@ import type {
 } from './management';
 import {
   AlreadyAuthorizedError,
+  defaultMcpOAuthScheduler,
   McpOAuthService,
   type BeginAuthorizationResult,
   type McpOAuthEvent,
@@ -65,24 +63,6 @@ import { createMcpTool, planMcpToolRegistrations, reconnectForServer } from './t
 import type { CreateMcpProps, McpEvent, McpFacade, McpMediaStore, McpOAuthAuthorizationUrlEvent } from './types';
 
 export const McpRef = createFacadeToken<McpFacade>('mcp');
-
-function syncMcpAgentTools(agent: Agent, runtime: AgentRuntime): void {
-  const descriptions = [...runtime.tools.values()].map((tool) => ({
-    name: tool.name,
-    description: tool.description,
-    parameters: tool.parameters,
-    deferred: tool.deferred,
-  }));
-  const ack = agent.loop.setTools(descriptions);
-  if (ack?.type !== 'tools.rejected') return;
-  const unsubscribe = agent.loop.subscribe((event) => {
-    if (event.type !== 'step.ended' && event.type !== 'turn.ended') return;
-    unsubscribe();
-    queueMicrotask(() => {
-      syncMcpAgentTools(agent, runtime);
-    });
-  });
-}
 
 interface McpRegistryEntry {
   readonly name: string;
@@ -251,11 +231,13 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
         config.value?.get<McpSection>(MCP_CONFIG_SECTION) ?? {};
       const workDir = props.workDir ?? process.cwd();
       const home = props.HOME ?? _HOME;
+      const now = useNow();
       const oauthService = new McpOAuthService({
         store:
           home === undefined || props.host === undefined
             ? createMemoryMcpOAuthStore()
             : createFileMcpOAuthStore(join(home, 'credentials', 'mcp'), props.host.fs),
+        scheduler: { ...defaultMcpOAuthScheduler, now },
       });
       const manager = new McpConnectionManager({
         host: props.host,
@@ -562,7 +544,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
             probe = _createProbe(workDir);
             await probe.connectAll(probeConfigs);
           }
-          const checkedAt = Date.now();
+          const checkedAt = now();
           return descriptors.map((server) => {
             const configured = configuredMcpAuthState(server);
             if (configured !== undefined) return { ...server, authStatus: configured };
@@ -837,6 +819,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
       const agent = useAgent();
       const session = useSession();
       const app = useApp();
+      const now = useNow();
       const runtime = useAgentRuntime();
       const fire = useFire();
       useReady(initialLoad);
@@ -862,22 +845,15 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
         return sessionCwd() === cwd;
       };
 
-      const channel = createMcpDeferredChannel(agent.loop);
-      const dynamic = new Map<string, McpDynamicToolEntry>();
       const registrations = new Map<string, Map<string, () => void>>();
       let initialPhase = true;
-
-      const syncDeferred = (): void => {
-        channel.sync([...dynamic.values()]);
-      };
 
       const unregisterServer = (server: string): void => {
         const owned = registrations.get(server);
         if (owned === undefined) return;
         registrations.delete(server);
         for (const unregister of owned.values()) unregister();
-        for (const name of owned.keys()) dynamic.delete(name);
-        syncMcpAgentTools(agent, runtime);
+        runtime.profileSync?.tools.refresh();
       };
 
       const ownerOf = (qualified: string): string | undefined => {
@@ -890,16 +866,11 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
       const registerDefinitions = (
         server: string,
         definitions: readonly ToolDefinition[],
-        deferred: boolean,
       ): void => {
         const owned = new Map<string, () => void>();
         registrations.set(server, owned);
         for (const definition of definitions) {
           const dispose = runtime.executor.register(definition);
-          if (deferred) {
-            owned.set(definition.name, dispose);
-            continue;
-          }
           runtime.tools.set(definition.name, definition);
           owned.set(definition.name, () => {
             dispose();
@@ -908,7 +879,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
             }
           });
         }
-        syncMcpAgentTools(agent, runtime);
+        runtime.profileSync?.tools.refresh();
       };
 
       const mirrorConnected = (entry: McpServerEntry): void => {
@@ -936,19 +907,8 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
               deferred: markDeferred,
             }),
           );
-          if (markDeferred) {
-            dynamic.set(qualified, {
-              serverName: entry.name,
-              description: {
-                name: qualified,
-                description: tool.description,
-                parameters: tool.parameters,
-              },
-            });
-          }
         }
-        registerDefinitions(entry.name, definitions, markDeferred);
-        syncDeferred();
+        registerDefinitions(entry.name, definitions);
       };
 
       const mirrorNeedsAuth = (entry: McpServerEntry): void => {
@@ -961,6 +921,7 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
           serverName: entry.name,
           serverUrl,
           oauthService,
+          now,
           reconnect: (signal) =>
             signal === undefined
               ? manager.reconnectAndJoin(entry.name)
@@ -975,25 +936,13 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
           },
           deferred: markDeferred,
         });
-        registerDefinitions(entry.name, [tool], markDeferred);
-        if (markDeferred) {
-          dynamic.set(tool.name, {
-            serverName: entry.name,
-            description: {
-              name: tool.name,
-              description: tool.description,
-              parameters: tool.parameters,
-            },
-          });
-        }
-        syncDeferred();
+        registerDefinitions(entry.name, [tool]);
       };
 
       const mirror = (entry: McpServerEntry): void => {
         if (disposed) return;
         if (!visibleToSession(entry.name)) {
           unregisterServer(entry.name);
-          syncDeferred();
           return;
         }
         if (entry.status === 'connected') {
@@ -1006,7 +955,6 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
         }
         if (entry.status === 'disabled') {
           unregisterServer(entry.name);
-          syncDeferred();
         }
       };
 
@@ -1014,7 +962,6 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
       for (const entry of manager.list()) mirror(entry);
       void initialLoad.then(() => {
         initialPhase = false;
-        syncDeferred();
       });
       if (props.sessionCwd === undefined) {
         void app.space.get(session.id).then((record) => {
@@ -1027,11 +974,6 @@ export function createMcp(props: CreateMcpProps = {}): Feature<void, { app: McpE
           }
         }, () => undefined);
       }
-      useLoopEvent('turn.started', () => {
-        queueMicrotask(() => {
-          if (!disposed) syncDeferred();
-        });
-      });
       useCleanup(() => {
         disposed = true;
         for (const server of registrations.keys()) unregisterServer(server);

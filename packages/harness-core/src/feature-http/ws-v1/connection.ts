@@ -43,6 +43,8 @@ export interface WsV1ConnectionOptions {
   readonly broadcaster: SessionBroadcaster;
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
+  readonly now: () => number;
+  readonly clock: () => number;
   readonly maxBufferSize?: number;
   readonly flushIntervalMs?: number;
   readonly maxBatchSize?: number;
@@ -58,6 +60,8 @@ export class WsV1Connection implements BroadcastTarget {
 
   private readonly socket: WebSocket;
   private readonly broadcaster: SessionBroadcaster;
+  private readonly now: () => number;
+  private readonly clock: () => number;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
@@ -75,11 +79,14 @@ export class WsV1Connection implements BroadcastTarget {
   private backpressureSince?: number;
 
   private heartbeatTimer?: ReturnType<typeof setInterval>;
-  private lastInboundAt = Date.now();
+  private lastInboundAt: number;
 
   constructor(opts: WsV1ConnectionOptions) {
     this.id = `conn_${randomUUID()}`;
-    this.connectedAt = new Date().toISOString();
+    this.now = opts.now;
+    this.clock = opts.clock;
+    this.connectedAt = new Date(opts.now()).toISOString();
+    this.lastInboundAt = this.clock();
     this.remoteAddress = opts.remoteAddress;
     this.userAgent = opts.userAgent;
     this.socket = opts.socket;
@@ -96,7 +103,7 @@ export class WsV1Connection implements BroadcastTarget {
 
     this.broadcaster.addGlobalTarget(this);
     this.sendImmediateFrame(
-      buildServerHello({
+      buildServerHello(this.now(), {
         ws_connection_id: this.id,
         protocol_version: WS_PROTOCOL_VERSION,
         heartbeat_ms: this.heartbeatIntervalMs,
@@ -145,7 +152,7 @@ export class WsV1Connection implements BroadcastTarget {
       return;
     }
     if (typeof frame?.type !== 'string') return;
-    this.lastInboundAt = Date.now();
+    this.lastInboundAt = this.clock();
 
     switch (frame.type) {
       case 'pong':
@@ -175,11 +182,11 @@ export class WsV1Connection implements BroadcastTarget {
   }
 
   private onHeartbeat(): void {
-    if (Date.now() - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
+    if (this.clock() - this.lastInboundAt >= this.heartbeatIntervalMs * HEARTBEAT_MISS_LIMIT) {
       this.close(1001, 'heartbeat timeout');
       return;
     }
-    this.sendImmediateFrame(buildPing(randomUUID()));
+    this.sendImmediateFrame(buildPing(this.now(), randomUUID()));
   }
 
   private async onClientHello(frame: InboundFrame): Promise<void> {
@@ -371,7 +378,7 @@ export class WsV1Connection implements BroadcastTarget {
     const result = await this.broadcaster.getBufferedSince(sid, cursor, filter, transcriptGrades);
     if (result.resyncRequired !== false) {
       this.sendImmediateFrame(
-        buildResyncRequired(sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
+        buildResyncRequired(this.now(), sid, result.resyncRequired as ResyncReason, result.currentSeq, result.epoch),
       );
       resyncRequired.push(sid);
     } else {
@@ -434,9 +441,9 @@ export class WsV1Connection implements BroadcastTarget {
   }
 
   private deferForBackpressure(): void {
-    const now = Date.now();
-    if (this.backpressureSince === undefined) this.backpressureSince = now;
-    if (now - this.backpressureSince >= DEFAULT_BACKPRESSURE_MAX_DELAY_MS) {
+    const at = this.clock();
+    if (this.backpressureSince === undefined) this.backpressureSince = at;
+    if (at - this.backpressureSince >= DEFAULT_BACKPRESSURE_MAX_DELAY_MS) {
       this.flush(true);
       return;
     }

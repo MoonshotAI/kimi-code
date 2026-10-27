@@ -104,7 +104,8 @@ interface SuggestRoot {
 export function createWorkspaceFsView(
   fs: OsFsPort,
   roots: WorkspaceFsRoots,
-  git?: WorkspaceGitPort,
+  git: WorkspaceGitPort | undefined,
+  clock: () => number,
 ): WorkspaceFsView {
   const workDir = resolve(roots.workDir);
   const additionalDirs = (roots.additionalDirs ?? []).map((dir) => resolve(dir));
@@ -816,7 +817,7 @@ export function createWorkspaceFsView(
         if (totalMatches === 0 && filesScanned === 0) {
           throw new WorkspaceFsError(
             'fs.grep_timeout',
-            `grep timed out after ${Date.now() - startedAt}ms`,
+            `grep timed out after ${clock() - startedAt}ms`,
           );
         }
         truncated = true;
@@ -862,11 +863,11 @@ export function createWorkspaceFsView(
       if (totalMatches >= req.max_total_matches) break;
     }
 
-    return { files, files_scanned: filesScanned, truncated, elapsed_ms: Date.now() - startedAt };
+    return { files, files_scanned: filesScanned, truncated, elapsed_ms: clock() - startedAt };
   };
 
   const grep = async (req: FsGrepRequest): Promise<FsGrepResponse> => {
-    const startedAt = Date.now();
+    const startedAt = clock();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), GREP_TIMEOUT_MS);
     timer.unref?.();

@@ -444,7 +444,7 @@ export function createTowerSpawnTool(deps: TowerSpawnToolDeps): ToolDefinition {
                 : undefined,
             worktree: mission?.worktree,
             branch: mission?.branch,
-            spawnedAt: new Date().toISOString(),
+            spawnedAt: new Date(deps.now()).toISOString(),
           });
           if (mission !== undefined) {
             await store.updateMission(

@@ -1,4 +1,4 @@
-import { createFeature, useApp, type Feature } from '#/app/index';
+import { createFeature, useApp, type Feature, useNow } from '#/app/index';
 import { createFacadeToken, useExpose } from '#/composition-api/index';
 import { SessionSpaceError } from '@moonshot-ai/agent-core/session/index';
 
@@ -29,6 +29,7 @@ export function createSessionExport(props: CreateSessionExportProps): Feature {
   return createFeature('sessionExport', {
     app() {
       const app = useApp();
+      const now = useNow();
       useExpose(SessionExportRef, {
         export: async (input) => {
           input.signal?.throwIfAborted();
@@ -53,6 +54,7 @@ export function createSessionExport(props: CreateSessionExportProps): Feature {
               version: props.version,
               wireProtocolVersion: props.wireProtocolVersion,
               journal: container.journal,
+              now,
               globalLogPath: input.includeGlobalLog === true ? props.globalLogPath : undefined,
               desktopLogPath: input.includeDesktopLog === true ? props.desktopLogPath : undefined,
             });

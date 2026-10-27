@@ -7,7 +7,7 @@ import { MAIN_AGENT_ID, type Session } from '@moonshot-ai/agent-core/session/ind
 import type { ConfigStore } from '#/todo-features/config/index';
 import { parseKimiFileUrl } from '#/todo-features/files/index';
 import { PlanRef } from '#/features/plan/index';
-import { PermissionRef } from '#/todo-features/permission/index';
+import { PermissionModeRef } from '#/todo-features/permission-mode/index';
 import {
   AgentModelRef,
   matchCatalogBinding,
@@ -200,6 +200,7 @@ export interface SessionBroadcasterOptions {
   readonly config: () => ConfigStore | undefined;
   readonly maxBufferSize: number;
   readonly inlineMediaRef?: (sessionId: string, url: string) => Promise<string | undefined>;
+  readonly now: () => number;
 }
 
 export const WsV1BroadcasterRef = createFacadeToken<SessionBroadcaster>('http.wsV1Broadcaster');
@@ -397,7 +398,7 @@ export class SessionBroadcaster {
       epoch: state.journal.epoch,
       volatile: true,
       session_id: state.sessionId,
-      timestamp: new Date().toISOString(),
+      timestamp: new Date(this.opts.now()).toISOString(),
       payload,
     });
   }
@@ -602,7 +603,7 @@ export class SessionBroadcaster {
     const transcript = new AgentTranscript(agentId);
     const stream: TranscriptStream = {
       transcript,
-      projector: new AgentTranscriptProjector(agentId, transcript),
+      projector: new AgentTranscriptProjector(agentId, transcript, this.opts.now),
       ops: new TranscriptOpsJournal(),
     };
     state.transcripts.set(agentId, stream);
@@ -1015,7 +1016,7 @@ export class SessionBroadcaster {
             scope: r?.['scope'],
             feedback: r?.['feedback'],
             selected_label: r?.['selectedLabel'],
-            resolved_at: new Date().toISOString(),
+            resolved_at: new Date(this.opts.now()).toISOString(),
           },
           false,
         );
@@ -1023,7 +1024,7 @@ export class SessionBroadcaster {
         this.dispatch(
           state,
           'event.question.dismissed',
-          { question_id: interaction.id, dismissed_at: new Date().toISOString() },
+          { question_id: interaction.id, dismissed_at: new Date(this.opts.now()).toISOString() },
           false,
         );
       } else {
@@ -1031,7 +1032,7 @@ export class SessionBroadcaster {
         this.dispatch(
           state,
           'event.question.answered',
-          { question_id: interaction.id, answers, resolved_at: new Date().toISOString() },
+          { question_id: interaction.id, answers, resolved_at: new Date(this.opts.now()).toISOString() },
           false,
         );
       }
@@ -1244,7 +1245,7 @@ export class SessionBroadcaster {
               promptId: entry.meta.promptId,
               userMessageId: entry.meta.userMessageId,
               content: projectPromptContent(entry.message.content),
-              createdAt: entry.meta.createdAt ?? new Date().toISOString(),
+              createdAt: entry.meta.createdAt ?? new Date(this.opts.now()).toISOString(),
               ...base,
             },
           },
@@ -1292,7 +1293,7 @@ export class SessionBroadcaster {
       contextTokens: agentFacade(root, TokenCountingRef, sessionId, agentId)?.statusSize(),
       maxContextTokens: catalog?.model.maxInputSize ?? catalog?.model.maxContextSize,
       planMode,
-      permission: sessionFacade(root, PermissionRef, sessionId)?.mode(),
+      permission: sessionFacade(root, PermissionModeRef, sessionId)?.mode(),
       ...base,
     };
   }
@@ -1341,7 +1342,7 @@ export class SessionBroadcaster {
           seq,
           epoch: global.journal.epoch,
           session_id: GLOBAL_SESSION_ID,
-          timestamp: new Date().toISOString(),
+          timestamp: new Date(this.opts.now()).toISOString(),
           payload: wire.payload,
         };
         global.journal.append(seq, envelope);
@@ -1371,7 +1372,7 @@ export class SessionBroadcaster {
         volatile: true,
         ...(annotation.offset !== undefined ? { offset: annotation.offset } : {}),
         session_id: state.sessionId,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(this.opts.now()).toISOString(),
         payload,
       };
     } else {
@@ -1381,7 +1382,7 @@ export class SessionBroadcaster {
         seq,
         epoch: state.journal.epoch,
         session_id: state.sessionId,
-        timestamp: new Date().toISOString(),
+        timestamp: new Date(this.opts.now()).toISOString(),
         payload,
       };
       state.journal.append(seq, envelope);

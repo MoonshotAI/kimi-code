@@ -284,6 +284,7 @@ function makeCtx(overrides: Partial<CapabilityEntryContext> = {}): CapabilityEnt
     plugins: fakePlugins([]).port,
     hostProcess: fakeProcess().port,
     fs: fakeFs(),
+    now: Date.now,
     ...overrides,
   };
 }

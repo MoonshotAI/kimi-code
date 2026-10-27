@@ -11,7 +11,7 @@ import {
   type BlobRef,
 } from '@moonshot-ai/agent-core/blob/index';
 
-import { createFeature, useApp, type App, type Feature, useBlobs, useFeatureStore } from '#/app/index';
+import { createFeature, useApp, type App, type Feature, useBlobs, useFeatureStore, useNow } from '#/app/index';
 import { createFacadeToken, useExpose, useInject } from '#/composition-api/index';
 
 import { buildKimiFileUrl, parseKimiFileUrl } from './ref';
@@ -72,7 +72,7 @@ async function collect(source: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
 
 export function createFiles(props: CreateFilesProps): Feature<void> {
   const libraries = new WeakMap<App, FilesFace>();
-  const createLibrary = (): FilesFace => {
+  const createLibrary = (now: () => number): FilesFace => {
     let index: Map<string, FileMeta> | undefined;
     let loading: Promise<void> | undefined;
     let writing: Promise<void> = Promise.resolve();
@@ -128,9 +128,9 @@ export function createFiles(props: CreateFilesProps): Feature<void> {
     const _pruneExpired = async (): Promise<void> => {
       const current = index;
       if (current === undefined) return;
-      const now = Date.now();
+      const at = now();
       const expired = [...current.values()].filter(
-        (meta) => meta.expires_at !== undefined && Date.parse(meta.expires_at) <= now,
+        (meta) => meta.expires_at !== undefined && Date.parse(meta.expires_at) <= at,
       );
       if (expired.length === 0) return;
       for (const meta of expired) {
@@ -157,17 +157,17 @@ export function createFiles(props: CreateFilesProps): Feature<void> {
         throw error;
       }
       const { size } = await stat(path);
-      const now = Date.now();
+      const at = now();
       const meta: FileMeta = {
         id,
         name: options.name ?? filename,
         media_type: options.mimeType ?? 'application/octet-stream',
         size,
-        created_at: new Date(now).toISOString(),
+        created_at: new Date(at).toISOString(),
         expires_at:
           options.expiresInSec === undefined
             ? undefined
-            : new Date(now + options.expiresInSec * 1000).toISOString(),
+            : new Date(at + options.expiresInSec * 1000).toISOString(),
       };
       index!.set(id, meta);
       await _writeIndex();
@@ -204,14 +204,16 @@ export function createFiles(props: CreateFilesProps): Feature<void> {
   return createFeature('files', {
     app() {
       const app = useApp();
+      const now = useNow();
       let face = libraries.get(app);
       if (face === undefined) {
-        face = createLibrary();
+        face = createLibrary(now);
         libraries.set(app, face);
       }
       useExpose(FilesRef, face);
     },
     session() {
+      const now = useNow();
       const files = useInject(FilesRef);
       const store = useFeatureStore('session', 'files', kimiFileProjection);
       const blobs = useBlobs();
@@ -301,7 +303,7 @@ export function createFiles(props: CreateFilesProps): Feature<void> {
             name: content.filename ?? id,
             media_type: content.mimeType ?? 'application/octet-stream',
             size: content.bytes.byteLength,
-            created_at: new Date().toISOString(),
+            created_at: new Date(now()).toISOString(),
           };
           const blobRef = (await blobs.put(content)).ref;
           await _register({ meta, blobRef });

@@ -4,7 +4,9 @@ import type { OsFsPort } from '#/todo-features/os/host/index';
 import type { PathClass } from '#/todo-features/os/path-access';
 
 import type { PermissionConfig } from '../state/configSection';
-import type { PermissionMode, PermissionRule } from '../types';
+import type { PermissionMode } from '#/todo-features/permission-mode/types';
+
+import type { PermissionRule } from '../types';
 
 import { dangerousCommandAsk } from './dangerous';
 import { defaultToolApprove, fallbackAsk, gitCwdWriteApprove } from './defaults';

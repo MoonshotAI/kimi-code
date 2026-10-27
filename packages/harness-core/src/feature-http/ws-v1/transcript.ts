@@ -731,7 +731,15 @@ export class AgentTranscriptProjector {
   private readonly subagentTaskIds = new Map<string, string>();
   private readonly shellTasks = new Map<string, string>();
 
-  constructor(readonly agentId: string, private readonly transcript: AgentTranscript) {}
+  constructor(
+    readonly agentId: string,
+    private readonly transcript: AgentTranscript,
+    private readonly now: () => number,
+  ) {}
+
+  private nowIso(): string {
+    return new Date(this.now()).toISOString();
+  }
 
   get activeTurnId(): number | undefined {
     return this.currentTurn?.ordinal;
@@ -819,7 +827,7 @@ export class AgentTranscriptProjector {
       ordinal,
       state: 'running',
       origin: { kind: 'other' },
-      startedAt: nowIso(),
+      startedAt: this.nowIso(),
     };
     this.currentStep = undefined;
     this.openText = undefined;
@@ -835,7 +843,7 @@ export class AgentTranscriptProjector {
     this.flushOpenFrames(ops);
     const turnId = `t${event['turnId'] as number}`;
     if (this.currentStep !== undefined && this.currentStep.state === 'running') {
-      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
+      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: this.nowIso() };
       this.currentStep = step;
       ops.push({ op: 'step.upsert', turnId, step });
     }
@@ -864,7 +872,7 @@ export class AgentTranscriptProjector {
       prompt: prev?.prompt,
       attachmentIds: prev?.attachmentIds,
       startedAt: prev?.startedAt,
-      endedAt: nowIso(),
+      endedAt: this.nowIso(),
       error,
       usage: this.takeTurnUsage(turnId),
     };
@@ -892,7 +900,7 @@ export class AgentTranscriptProjector {
       turnId,
       ordinal,
       state: 'running',
-      startedAt: nowIso(),
+      startedAt: this.nowIso(),
     };
     this.frameOrdinal = 0;
     this.openText = undefined;
@@ -998,7 +1006,7 @@ export class AgentTranscriptProjector {
       ordinal: step.ordinal,
       state: 'completed',
       startedAt: step.startedAt,
-      endedAt: nowIso(),
+      endedAt: this.nowIso(),
       usage:
         usage !== undefined
           ? {
@@ -1198,7 +1206,7 @@ export class AgentTranscriptProjector {
       turnId,
       ordinal,
       state: 'running',
-      startedAt: nowIso(),
+      startedAt: this.nowIso(),
     };
     ops.push({ op: 'step.upsert', turnId, step: this.currentStep });
     return this.currentStep;
@@ -1315,7 +1323,7 @@ export class AgentTranscriptProjector {
         prev !== undefined && isTerminalPromptStatus(prev.status) ? prev.status : 'running',
       userMessageId: entry.meta?.userMessageId,
       content: projectPromptContent(entry.message.content),
-      createdAt: prev?.createdAt ?? entry.meta?.createdAt ?? nowIso(),
+      createdAt: prev?.createdAt ?? entry.meta?.createdAt ?? this.nowIso(),
       finishedAt: prev?.finishedAt,
       steeredAt: prev?.steeredAt,
     };
@@ -1326,7 +1334,7 @@ export class AgentTranscriptProjector {
     const promptIds = (event['promptIds'] as string[] | undefined) ?? [];
     const entry = event['entry'] as UserEntry | undefined;
     const ops: TranscriptOperation[] = [];
-    const now = nowIso();
+    const now = this.nowIso();
     for (const promptId of promptIds) {
       const prev = this.transcript.getPrompt(promptId);
       ops.push({
@@ -1375,8 +1383,8 @@ export class AgentTranscriptProjector {
       status,
       userMessageId: prev?.userMessageId ?? entry?.meta?.userMessageId,
       content: prev?.content ?? (entry === undefined ? undefined : projectPromptContent(entry.message.content)),
-      createdAt: prev?.createdAt ?? entry?.meta?.createdAt ?? nowIso(),
-      finishedAt: finished ? nowIso() : prev?.finishedAt,
+      createdAt: prev?.createdAt ?? entry?.meta?.createdAt ?? this.nowIso(),
+      finishedAt: finished ? this.nowIso() : prev?.finishedAt,
       steeredAt: prev?.steeredAt,
     };
   }
@@ -1408,7 +1416,7 @@ export class AgentTranscriptProjector {
     if (event['type'] === 'task.started') {
       ops.push({
         op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${record.taskId}`, taskId: record.taskId, at: nowIso() },
+        item: { kind: 'taskref', refId: `ref-${record.taskId}`, taskId: record.taskId, at: this.nowIso() },
       });
     }
     return ops;
@@ -1416,7 +1424,7 @@ export class AgentTranscriptProjector {
 
   private onTodoUpdated(event: { [key: string]: unknown }): TranscriptOperation[] {
     const items = (event['todos'] as TodoItem[] | undefined) ?? [];
-    const todo: TranscriptTodo = { todoId: 'todo', items, updatedAt: nowIso() };
+    const todo: TranscriptTodo = { todoId: 'todo', items, updatedAt: this.nowIso() };
     return [{ op: 'todo.upsert', todo }];
   }
 
@@ -1488,13 +1496,13 @@ export class AgentTranscriptProjector {
       state: 'running',
       detached: false,
       outputTail: '',
-      startedAt: nowIso(),
+      startedAt: this.nowIso(),
     };
     return [
       { op: 'task.upsert', task },
       {
         op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
+        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: this.nowIso() },
       },
     ];
   }
@@ -1519,13 +1527,13 @@ export class AgentTranscriptProjector {
         state: 'running',
         detached: false,
         outputTail: '',
-        startedAt: nowIso(),
+        startedAt: this.nowIso(),
       };
       ops.push(
         { op: 'task.upsert', task },
         {
           op: 'taskref.upsert',
-          item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
+          item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: this.nowIso() },
         },
       );
     }
@@ -1543,14 +1551,14 @@ export class AgentTranscriptProjector {
       detached: prev?.detached ?? false,
       description: prev?.description,
       outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: nowIso(),
+      startedAt: prev?.startedAt ?? this.nowIso(),
+      endedAt: this.nowIso(),
     };
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     if (prev === undefined) {
       ops.push({
         op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
+        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: this.nowIso() },
       });
     }
     return ops;
@@ -1569,7 +1577,7 @@ export class AgentTranscriptProjector {
       description: (event['description'] as string | undefined) ?? prev?.description,
       agentId: subagentId,
       outputTail: prev?.outputTail ?? '',
-      startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
+      startedAt: newGeneration ? this.nowIso() : (prev?.startedAt ?? this.nowIso()),
       endedAt: newGeneration ? undefined : prev?.endedAt,
       model: (event['model'] as string | undefined) ?? prev?.model,
     };
@@ -1577,7 +1585,7 @@ export class AgentTranscriptProjector {
     if (newGeneration || prev === undefined) {
       ops.push({
         op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${taskKey}`, taskId: taskKey, at: nowIso() },
+        item: { kind: 'taskref', refId: `ref-${taskKey}`, taskId: taskKey, at: this.nowIso() },
       });
     }
     return ops;
@@ -1601,8 +1609,8 @@ export class AgentTranscriptProjector {
       description: prev?.description,
       agentId: subagentId,
       outputTail: prev?.outputTail ?? '',
-      startedAt: prev?.startedAt ?? nowIso(),
-      endedAt: terminal ? nowIso() : prev?.endedAt,
+      startedAt: prev?.startedAt ?? this.nowIso(),
+      endedAt: terminal ? this.nowIso() : prev?.endedAt,
       resultSummary: (event['summary'] as string | undefined) ?? prev?.resultSummary,
       usage: usage ?? prev?.usage,
       error: (event['error'] as string | undefined) ?? prev?.error,
@@ -1640,7 +1648,7 @@ export class AgentTranscriptProjector {
       markerId: `live-m${this.markerSeq}`,
       marker,
       payload,
-      at: nowIso(),
+      at: this.nowIso(),
     };
     return { op: 'marker.upsert', item };
   }
@@ -1652,10 +1660,6 @@ export class AgentTranscriptProjector {
   ): TranscriptOperation {
     return this.markerOp('notice', { level, message, event: eventPayload });
   }
-}
-
-function nowIso(): string {
-  return new Date().toISOString();
 }
 
 function epochMsToIso(value: number): string {

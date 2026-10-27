@@ -1,6 +1,6 @@
 import type { Request, Response } from 'express';
 
-import { useApp, type AppSession, type CreateSessionInput } from '#/app/index';
+import { useApp, type AppSession, type CreateSessionInput, useNow } from '#/app/index';
 import type { HistoryMessage, ToolMeta } from '@moonshot-ai/agent-core/history/index';
 import { useCollection, useInject } from '#/composition-api/index';
 import type { UnitNode } from '#/composition-api/runtime';
@@ -16,7 +16,7 @@ import {
 
 import { ConfigRef, type ConfigStore } from '#/todo-features/config/index';
 import { parseKimiFileUrl } from '#/todo-features/files/index';
-import { PermissionRef, type PermissionMode } from '#/todo-features/permission/index';
+import { PermissionModeRef, type PermissionMode } from '#/todo-features/permission-mode/index';
 import { PlanRef } from '#/features/plan/index';
 import {
   AgentModelRef,
@@ -94,6 +94,7 @@ export interface SessionView {
 export function useSessionRoutes(prefix: string): void {
   const app = useApp();
   const root = useRootUnit();
+  const now = useNow();
   const workspaces = useInject(WorkspaceRef);
   const config = useInject(ConfigRef);
   const bindings = useCollection(CatalogModels);
@@ -554,7 +555,7 @@ export function useSessionRoutes(prefix: string): void {
         throw new SessionSpaceError('not-found', `session ${sessionId} does not exist`);
       }
       await app.update(sessionId, {
-        metadata: { ...record.metadata, archived: true, archived_at: new Date().toISOString() },
+        metadata: { ...record.metadata, archived: true, archived_at: new Date(now()).toISOString() },
       });
       sendOk(request, response, { archived: true });
     } catch (error) {
@@ -589,7 +590,7 @@ export function useSessionRoutes(prefix: string): void {
         await sessionFacade(root, SessionModelRef, session.id)?.setThinking(config.thinking);
       }
       if (config.permissionMode !== undefined) {
-        await sessionFacade(root, PermissionRef, session.id)?.setMode(config.permissionMode);
+        await sessionFacade(root, PermissionModeRef, session.id)?.setMode(config.permissionMode);
       }
       if (config.planMode !== undefined) {
         const plan = agentFacade(root, PlanRef, session.id, MAIN_AGENT_ID);

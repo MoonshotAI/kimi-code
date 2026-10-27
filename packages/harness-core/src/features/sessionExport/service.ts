@@ -19,6 +19,7 @@ export async function exportSessionJournal(input: {
   readonly version: string;
   readonly wireProtocolVersion?: string;
   readonly journal: Journal;
+  readonly now: () => number;
   readonly globalLogPath?: string;
   readonly desktopLogPath?: string;
 }): Promise<ExportSessionResult> {
@@ -46,7 +47,7 @@ export async function exportSessionJournal(input: {
     }
 
     const sessionScan = scanSessionLogs(logs);
-    const now = new Date();
+    const now = new Date(input.now());
     const manifest = buildExportManifest({
       summary: input.summary,
       now,

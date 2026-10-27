@@ -2,9 +2,8 @@ import type { Projection } from '@moonshot-ai/agent-core/store/index';
 
 import type { FeatureEvent } from '#/app/index';
 
-import type { ApprovalResponse, PermissionMode, PermissionRule } from '../types';
+import type { ApprovalResponse, PermissionRule } from '../types';
 
-export const PERMISSION_SET_MODE = 'permission.set_mode';
 export const PERMISSION_RULES_ADD = 'permission.rules.add';
 export const PERMISSION_RECORD_APPROVAL_RESULT = 'permission.record_approval_result';
 
@@ -14,11 +13,6 @@ export interface PermissionApprovalResultRecord {
   readonly action: string;
   readonly sessionApprovalRule?: string;
   readonly result: ApprovalResponse;
-}
-
-export interface PermissionSetModeEvent extends FeatureEvent {
-  readonly type: typeof PERMISSION_SET_MODE;
-  readonly mode: PermissionMode;
 }
 
 export interface PermissionRulesAddEvent extends FeatureEvent {
@@ -35,25 +29,17 @@ export interface PermissionRecordApprovalResultEvent extends FeatureEvent {
   readonly result: ApprovalResponse;
 }
 
-export type PermissionStoreEvent =
-  | PermissionSetModeEvent
-  | PermissionRulesAddEvent
-  | PermissionRecordApprovalResultEvent;
+export type PermissionStoreEvent = PermissionRulesAddEvent | PermissionRecordApprovalResultEvent;
 
-export interface PermissionState {
-  readonly mode: PermissionMode;
-  readonly configured: boolean;
+export interface PermissionPolicyState {
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
 }
 
-export const permissionProjection: Projection<PermissionState, PermissionStoreEvent> = {
-  initial: () => ({ mode: 'manual', configured: false, rules: [], sessionApprovalRulePatterns: [] }),
+export const permissionPolicyProjection: Projection<PermissionPolicyState, PermissionStoreEvent> = {
+  initial: () => ({ rules: [], sessionApprovalRulePatterns: [] }),
   reduce: (state, entry) => {
     const event = entry.event;
-    if (event.type === PERMISSION_SET_MODE) {
-      return { ...state, mode: event.mode, configured: true };
-    }
     if (event.type === PERMISSION_RULES_ADD) {
       if (event.rules.length === 0) return state;
       return { ...state, rules: [...state.rules, ...event.rules] };

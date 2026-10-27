@@ -2,13 +2,17 @@ import { shallowReactive } from '@vue/reactivity';
 
 import {
   mountRoot,
+  type CertainToken,
   type EventHandler,
+  type FacadeToken,
   type ListenOpts,
   type MountRootOptions,
   type RuntimeEvent,
 } from '#/composition-api/index';
 import type { UnitNode } from '#/composition-api/runtime';
 import type { WaitOpts } from '@moonshot-ai/agent-core/utils/wait';
+import { setClock } from '@moonshot-ai/agent-core/utils/clock';
+import { setNow } from '@moonshot-ai/agent-core/utils/now';
 import { consoleLogWriter, createLogger, type Logger } from '@moonshot-ai/agent-core/log/index';
 import {
   memorySessionSpace,
@@ -35,6 +39,7 @@ import {
   type FeatureSet,
   type Features,
 } from './features';
+
 import { createAppSession, type AppSession } from './session';
 import { AppUnit, createHostFeature, RootRef } from './units';
 
@@ -52,12 +57,16 @@ export type AppEvent =
 export interface CreateAppOptions extends MountRootOptions {
   readonly space?: SessionSpace;
   readonly logger?: Logger;
+  readonly now?: () => number;
+  readonly clock?: () => number;
 }
 
 export interface App {
   readonly space: SessionSpace;
   readonly sessions: ReadonlyMap<string, AppSession>;
   readonly features: Features;
+  resolve<T>(token: CertainToken<T>): T;
+  resolve<T>(token: FacadeToken<T>): T | undefined;
   create(input?: CreateSessionInput): Promise<AppSession>;
   open(sessionId: string, input?: CreateSessionInput): Promise<AppSession>;
   update(sessionId: string, patch: SessionMeta): Promise<SessionRecord>;
@@ -124,6 +133,8 @@ async function containerOf(
 export function createApp(options: CreateAppOptions = {}): App {
   const space = options.space ?? memorySessionSpace();
   const logger = options.logger ?? createLogger(consoleLogWriter);
+  setNow(options.now);
+  setClock(options.clock);
   const sessions = shallowReactive(new Map<string, AppSession>());
   const creating = new Map<string, Promise<AppSession>>();
   const closingSessions = new Map<string, Promise<void>>();
@@ -177,9 +188,10 @@ export function createApp(options: CreateAppOptions = {}): App {
     });
     const heal = legacyHealOf(session.roster.getState().meta, record);
     if (heal !== undefined) await session.update(heal);
-    appSession = createAppSession(session);
+    appSession = createAppSession(session, settle);
     sessions.set(sessionId, appSession);
     if (!existed) emit({ type: 'session.created', sessionId, ...(input.from !== undefined ? { from: input.from } : {}) });
+    await settle();
     return appSession;
   };
 
@@ -264,6 +276,11 @@ export function createApp(options: CreateAppOptions = {}): App {
           .set.entries()
           .map((entry) => entry.feature),
     },
+    resolve: ((token: CertainToken<unknown> | FacadeToken<unknown>) => {
+      const node = root;
+      if (node === undefined) throw new Error('app is closed');
+      return token.kind === 'facade' ? node.resolve(token) : node.resolve(token);
+    }) as App['resolve'],
     create,
     open,
     update: async (sessionId, patch) => {

@@ -1,4 +1,4 @@
-import { createFeature, useAgent, useSession, useStepStarting, type Feature, useFeatureStore } from '#/app/index';
+import { createFeature, useAgent, useSession, useStepStarting, type Feature, useFeatureStore, useNow } from '#/app/index';
 import { shallowRef, useCleanup, useExpose, useFire, useInject } from '#/composition-api/index';
 import { MAIN_AGENT_ID } from '@moonshot-ai/agent-core/session/index';
 
@@ -47,6 +47,7 @@ export function createPlugin(props: CreatePluginProps): Feature<void, { app: Plu
       const host = props.host;
       if (host === undefined) return;
       const fire = useFire();
+      const now = useNow();
       const providerCatalog = useInject(ProviderCatalogRef);
       const changeListeners = new Set<() => void>();
       const onDidChange = (listener: () => void): (() => void) => {
@@ -58,6 +59,7 @@ export function createPlugin(props: CreatePluginProps): Feature<void, { app: Plu
       const manager = new PluginManager({
         homeDir: props.homeDir,
         fs: host.fs,
+        now,
         discoverSkills: (roots) => discoverSkills(host.fs, roots, props.onWarn),
       });
       let initialLoadPromise: Promise<void> | undefined;

@@ -1,4 +1,4 @@
-import { useApp } from '#/app/index';
+import { useApp, useNow, useClock } from '#/app/index';
 import { useCleanup, useCollection, useExpose, useInject, useOn } from '#/composition-api/index';
 
 import { WebSocketServer } from 'ws';
@@ -26,6 +26,8 @@ export interface WsV1EndpointOptions {
 
 export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
   const app = useApp();
+  const now = useNow();
+  const clock = useClock();
   const http = options.http;
   const root = useRootUnit();
   const bindings = useCollection(CatalogModels);
@@ -55,6 +57,7 @@ export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
     config: () => config.value,
     maxBufferSize: DEFAULT_MAX_BUFFER_SIZE,
     inlineMediaRef,
+    now,
   });
   useExpose(WsV1BroadcasterRef, broadcaster);
   const wss = new WebSocketServer({
@@ -73,6 +76,8 @@ export function useWsV1Endpoint(options: WsV1EndpointOptions): void {
       broadcaster,
       remoteAddress: request.socket.remoteAddress ?? null,
       userAgent: request.headers['user-agent'] ?? null,
+      now,
+      clock,
       heartbeatIntervalMs: options.heartbeatIntervalMs,
     });
     connections.set(connection.id, connection);

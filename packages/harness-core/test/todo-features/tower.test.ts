@@ -100,7 +100,7 @@ function testIo(): TowerIo {
 }
 
 function testStore(repo: string): TowerStore {
-  return new TowerStore(repo, testIo());
+  return new TowerStore(repo, testIo(), Date.now);
 }
 
 async function activityLog(repo: string): Promise<string> {

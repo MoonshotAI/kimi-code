@@ -1,4 +1,4 @@
-import { createFeature, useAgent, type Feature, useAgentTools, useMessageResolver, useLoopEvent } from '#/app/index';
+import { createFeature, useAgent, type Feature, useAgentRuntime, useAgentTools, useMessageResolver, useLoopEvent } from '#/app/index';
 import { createUserMessage } from '@moonshot-ai/agent-core/llm/message';
 import type { Agent } from '@moonshot-ai/agent-core/session/index';
 
@@ -18,8 +18,14 @@ export function createToolSelect(options: CreateToolSelectStateOptions): Feature
   return createFeature('tool-select', {
     agent() {
       const agent = useAgent();
+      const runtime = useAgentRuntime();
       const memoized = states.get(agent);
-      const state = memoized ?? createToolSelectState(options);
+      const state =
+        memoized ??
+        createToolSelectState({
+          loadable: () => [...runtime.tools.values()].filter((tool) => tool.deferred === true),
+          enabled: options.enabled,
+        });
       if (memoized === undefined) states.set(agent, state);
       if (!state.enabled()) {
         useAgentTools(...options.loadable());
