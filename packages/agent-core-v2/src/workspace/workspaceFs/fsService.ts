@@ -249,7 +249,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           truncated = true;
           break;
         }
-        const viaSymlink = entry.viaSymlink || child.stat.isSymbolicLink === true;
+        const viaSymlink = entry.viaSymlink;
         if (viaSymlink && symlinkEntries >= LIST_TOTAL_ENTRY_BUDGET) {
           truncated = true;
           budgetExhausted = true;
@@ -273,7 +273,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
               relPath: child.relPath,
               depthRemaining: entry.depthRemaining - 1,
               ancestors: [...entry.ancestors, realPath],
-              viaSymlink,
+              viaSymlink: viaSymlink || child.stat.isSymbolicLink === true,
             });
           }
         }

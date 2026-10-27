@@ -1920,7 +1920,6 @@ The session-less form of `fs:list`: the workspace travels in the body instead of
 | `allow_ignored_globs` | body | string[] | Globs to show even when gitignored |
 | `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
 | `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
-| `include_git_status` | body | boolean | Attach each entry's git status. Default `false` |
 | `runtime_id` | body | string | Runtime to list on. Default `local` |
 
 On success, `data` has the same shape as `fs:list`.

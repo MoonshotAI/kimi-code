@@ -1603,6 +1603,31 @@ describe('WorkspaceFsService.list', () => {
     expect(result.children_by_path?.['bulk']).toHaveLength(10_001);
   });
 
+  it('does not count file symlinks in ordinary directories toward the budget', async () => {
+    const symlinks = Array.from(
+      { length: 10_001 },
+      (_, index) => `bulk/link-${String(index).padStart(5, '0')}.txt`,
+    );
+    const fs = makeSession(
+      {},
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      symlinks,
+    );
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(false);
+    expect(result.children_by_path?.['bulk']).toHaveLength(10_001);
+  });
+
   it('stops recursive symlink expansion at the request-wide output budget', async () => {
     const files: Record<string, string> = {};
     for (let index = 0; index < 10_001; index += 1) {
@@ -1627,12 +1652,10 @@ describe('WorkspaceFsService.list', () => {
       include_git_status: false,
     });
     expect(result.truncated).toBe(true);
-    const symlinkSubtreeEntries =
-      result.items.filter((entry) => entry.path === 'link').length +
-      Object.entries(result.children_by_path ?? {})
-        .filter(([path]) => path === 'link' || path.startsWith('link/'))
-        .reduce((total, [, entries]) => total + entries.length, 0);
-    expect(symlinkSubtreeEntries).toBe(10_000);
+    const symlinkDescendantEntries = Object.entries(result.children_by_path ?? {})
+      .filter(([path]) => path === 'link' || path.startsWith('link/'))
+      .reduce((total, [, entries]) => total + entries.length, 0);
+    expect(symlinkDescendantEntries).toBe(10_000);
   });
 
   it('finds allowed descendants through external symlinks in ignored directories', async () => {

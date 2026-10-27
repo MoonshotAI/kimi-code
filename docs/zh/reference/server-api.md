@@ -1920,7 +1920,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob |
 | `allow_external_symlinks` | body | boolean | 展开目标位于工作区外的软链接目录。默认 `false` |
 | `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
-| `include_git_status` | body | boolean | 附带每个条目的 git 状态。默认 `false` |
 | `runtime_id` | body | string | 在哪个运行时上列举。默认 `local` |
 
 成功时 `data` 的结构与 `fs:list` 相同。

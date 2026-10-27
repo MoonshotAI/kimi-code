@@ -98,10 +98,12 @@ const fsDownloadQuerySchema = z.object({
   allow_external_symlinks: z.enum(['true', 'false']).optional(),
 });
 
-const workspaceFsListBodySchema = fsListRequestSchema.extend({
-  workspace: z.string().min(1),
-  runtime_id: z.string().min(1).optional(),
-});
+const workspaceFsListBodySchema = fsListRequestSchema
+  .omit({ include_git_status: true })
+  .extend({
+    workspace: z.string().min(1),
+    runtime_id: z.string().min(1).optional(),
+  });
 
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
