@@ -4701,6 +4701,60 @@ describe('FullCompaction pre-shrink', () => {
     expect(answerTexts.some((text) => text.includes('Full-history summary.'))).toBe(true);
   });
 
+  it('clamps the compaction completion budget to the window left by the full history', async () => {
+    const compactionHistories: string[][] = [];
+    const compactionBudgets: {
+      maxCompletionTokens?: number;
+      maxContextTokens?: number;
+      usedContextTokens?: number;
+    }[] = [];
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history, callbacks, options) => {
+      if (compactionHistories.length === 0) {
+        compactionHistories.push(history.map(messageText));
+        compactionBudgets.push({
+          maxCompletionTokens: options?.maxCompletionTokens,
+          maxContextTokens: options?.maxContextTokens,
+          usedContextTokens: options?.usedContextTokens,
+        });
+        return textResult('Clamped summary.');
+      }
+      await callbacks?.onMessagePart?.({ type: 'text', text: 'Answer after clamped compaction.' });
+      return textResult('Answer after clamped compaction.');
+    });
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    const models = (ctx as unknown as MutableKimiConfig).kimiConfig.models;
+    models![CATALOGUED_PROVIDER.model] = {
+      ...models![CATALOGUED_PROVIDER.model]!,
+      maxOutputSize: 64_000,
+    };
+    ctx.notifyModelConfigChanged();
+    for (let step = 1; step <= 4; step++) {
+      ctx.appendExchange(
+        step,
+        `user ${step}`,
+        `assistant ${step} ${'lorem ipsum '.repeat(15_000)}`,
+        step === 4 ? 200_000 : 0,
+      );
+    }
+    const previousHistory = ctx.context.get().map(messageText);
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: `large prompt ${' zz'.repeat(12_000)}` }] });
+    await ctx.untilTurnEnd();
+
+    expect(compactionHistories).toHaveLength(1);
+    expect(compactionHistories[0]!.slice(0, previousHistory.length)).toEqual(previousHistory);
+    const [budget] = compactionBudgets;
+    expect(budget!.maxCompletionTokens).toBe(64_000);
+    expect(budget!.maxContextTokens).toBe(CATALOGUED_MODEL_CAPABILITIES.max_context_tokens);
+    const remaining = budget!.maxContextTokens! - budget!.usedContextTokens!;
+    expect(remaining).toBeGreaterThan(0);
+    expect(remaining).toBeLessThan(64_000);
+  });
+
   it('does not pre-shrink when the effective context window is unknown', async () => {
     const ctx = testAgent();
     ctx.configure({

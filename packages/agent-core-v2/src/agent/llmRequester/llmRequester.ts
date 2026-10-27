@@ -44,6 +44,7 @@ export interface AgentLLMRequestOverrides {
   systemPrompt?: string;
   source?: AgentLLMRequestSource;
   maxOutputSize?: number;
+  usedContextTokens?: number;
   promptCacheProbe?: 'compaction';
   onAttemptRetry?: () => void;
 }

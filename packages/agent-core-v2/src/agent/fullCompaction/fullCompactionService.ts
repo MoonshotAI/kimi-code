@@ -76,6 +76,7 @@ import { OrderedHookSlot } from '#/hooks';
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
 const OVERFLOW_CONTEXT_SAFETY_RATIO = 0.85;
+const COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO = 0.02;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
@@ -663,6 +664,12 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
         const messagesToCompact = historyForModel;
         const messages: Message[] = [...messagesToCompact, createUserMessage(instruction)];
         const estimatedCompactionRequestTokens = this.requestTokens(messages);
+        const effectiveMaxTokens = this.getEffectiveMaxContextTokens();
+        const usedContextTokens =
+          effectiveMaxTokens > 0
+            ? estimatedCompactionRequestTokens +
+              Math.ceil(effectiveMaxTokens * COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO)
+            : undefined;
         requestAttempts += 1;
 
         try {
@@ -671,6 +678,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
               {
                 messages,
                 maxOutputSize: compactionMaxOutputSize,
+                usedContextTokens,
                 promptCacheProbe: cacheProbePending ? 'compaction' : undefined,
                 source: {
                   type: 'operation',
