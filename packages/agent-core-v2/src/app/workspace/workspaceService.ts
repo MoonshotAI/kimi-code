@@ -180,9 +180,10 @@ export class WorkspaceService implements IWorkspaceService {
     return this.runExclusive(async () => {
       await this.ensureMerged();
       let touched: Workspace | undefined;
-      await this.store.update((catalog) => {
+      await this.store.update(async (catalog) => {
         const existing = catalog.workspaces.find((ws) => ws.id === id);
         if (existing === undefined) return catalog;
+        await this.requireDirectory(existing.root);
         touched = { ...existing, lastOpenedAt: Date.now() };
         return {
           workspaces: catalog.workspaces.map((ws) => (ws.id === id ? touched! : ws)),

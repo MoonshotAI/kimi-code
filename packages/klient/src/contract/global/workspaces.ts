@@ -20,6 +20,7 @@ export const workspaceSchema = z.object({
 
 export const workspaceUpdateSchema = z.object({
   name: z.string().optional(),
+  additionalDirs: z.array(z.string()).optional(),
 });
 
 export const workspacesContract = {

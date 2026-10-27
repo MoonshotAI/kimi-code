@@ -246,13 +246,16 @@ export function registerSessionsRoutes(
           return;
         }
         workDir = workspace.root;
-        bucket = (await registry.touch(workspace.id)) ?? workspace;
+        bucket = workspace;
       } else {
         workDir = callerCwd as string;
       }
 
       try {
-        const resolved = bucket ?? (await registry.createOrTouch(workDir));
+        const resolved =
+          bucket === undefined
+            ? await registry.createOrTouch(workDir)
+            : ((await registry.touch(bucket.id)) ?? bucket);
         const handle = await core.accessor.get(ISessionManager).create({
           workspaceId: resolved.id,
           workDir,
