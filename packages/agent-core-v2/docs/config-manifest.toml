@@ -230,12 +230,16 @@ extra_skill_dirs = []
 #   env:
 #     startup_timeout_ms <- KIMI_MCP_STARTUP_TIMEOUT_MS (custom parse)
 #     tool_timeout_ms <- KIMI_MCP_TOOL_TIMEOUT_MS (custom parse)
+#     reconnect_initial_delay_ms <- KIMI_MCP_RECONNECT_INITIAL_DELAY_MS (custom parse)
+#     reconnect_max_delay_ms <- KIMI_MCP_RECONNECT_MAX_DELAY_MS (custom parse)
 # ##########################################################################
 
 [mcp]
 # startup_timeout_ms: integer
 # tool_timeout_ms: integer
 # default_deferred: boolean
+# reconnect_initial_delay_ms: integer
+# reconnect_max_delay_ms: integer
 
 # ##########################################################################
 # mergeAllAvailableSkills (config.toml: merge_all_available_skills)

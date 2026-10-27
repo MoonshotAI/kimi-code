@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { fetchLatestFromCdn, fetchLatestVersionFromCdn } from '#/cli/update/cdn';
-import { kimiCodeCdnLatestJsonUrl, kimiCodeCdnLatestUrl } from '#/constant/app';
+import { fetchChannelFeed, fetchLatestFromCdn, fetchLatestVersionFromCdn } from '#/cli/update/cdn';
+import {
+  kimiCodeCdnDevChannelUrl,
+  kimiCodeCdnLatestJsonUrl,
+  kimiCodeCdnLatestUrl,
+} from '#/constant/app';
 
 function mockFetchOk(body: string): typeof fetch {
   return vi.fn(async () => ({
@@ -257,5 +261,86 @@ describe('fetchLatestFromCdn', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+function pointerBody(version: string): string {
+  return JSON.stringify({
+    schemaVersion: 1,
+    version,
+    publishedAt: '2026-10-26T01:00:00.000Z',
+    rollout: [],
+  });
+}
+
+describe('fetchChannelFeed', () => {
+  it('reads only the stable feed on the stable channel', async () => {
+    const fetchImpl = mockRoutedFetch({
+      [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
+      [kimiCodeCdnDevChannelUrl()]: { body: pointerBody('0.0.0-dev.42') },
+    });
+
+    await expect(fetchChannelFeed('stable', fetchImpl)).resolves.toMatchObject({
+      channel: 'stable',
+      latest: '2.0.0',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodeCdnLatestJsonUrl(), expect.anything());
+  });
+
+  it('reads only dev even when stable has a higher version', async () => {
+    const fetchImpl = mockRoutedFetch({
+      [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
+      [kimiCodeCdnDevChannelUrl()]: { body: pointerBody('0.0.0-dev.42') },
+    });
+
+    await expect(fetchChannelFeed('dev', fetchImpl)).resolves.toEqual({
+      channel: 'dev',
+      latest: '0.0.0-dev.42',
+      manifest: {
+        version: '0.0.0-dev.42',
+        publishedAt: '2026-10-26T01:00:00.000Z',
+        rollout: [],
+      },
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodeCdnDevChannelUrl(), expect.anything());
+  });
+
+  it('aborts a dev response whose body stalls after headers arrive', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn(async () => ({
+        ok: true,
+        status: 200,
+        text: async () => new Promise<string>(() => {}),
+      })) as unknown as typeof fetch;
+      const result = fetchChannelFeed('dev', fetchImpl, 10);
+      const outcome = Promise.race([
+        result.then(() => 'resolved', () => 'rejected'),
+        new Promise<string>((resolve) => {
+          setTimeout(() => {
+            resolve('pending');
+          }, 50);
+        }),
+      ]);
+
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(await outcome).toBe('rejected');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails without requesting stable when the dev pointer is unavailable', async () => {
+    const fetchImpl = mockRoutedFetch({
+      [kimiCodeCdnLatestJsonUrl()]: { body: MANIFEST_BODY },
+      [kimiCodeCdnDevChannelUrl()]: { status: 503 },
+    });
+
+    await expect(fetchChannelFeed('dev', fetchImpl)).rejects.toThrow(/HTTP 503/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledWith(kimiCodeCdnDevChannelUrl(), expect.anything());
   });
 });

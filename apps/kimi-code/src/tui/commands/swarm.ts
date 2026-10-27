@@ -13,6 +13,9 @@ import { formatErrorMessage } from '../utils/event-payload';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import type { SlashCommandHost } from './dispatch';
 
+const SWARM_USAGE_NOTICE =
+  "High usage: Swarm is built for large parallel jobs and can use many times the tokens of a normal task. Start small, and run /swarm off when you're done.";
+
 export async function handleSwarmCommand(host: SlashCommandHost, args: string): Promise<void> {
   if (host.session === undefined) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
@@ -95,7 +98,7 @@ async function startSwarmTask(host: SlashCommandHost, prompt: string): Promise<v
   if (!host.state.appState.swarmMode && !(await setSwarmMode(host, true, 'task'))) {
     return;
   }
-  renderSwarmModeMarker(host, 'active');
+  renderSwarmActivated(host);
   host.sendNormalUserInput(prompt);
 }
 
@@ -118,12 +121,13 @@ async function applySwarmMode(
         return;
       }
       if (!(await setSwarmMode(host, true, 'manual'))) return;
-      renderSwarmModeMarker(host, 'active');
+      renderSwarmActivated(host);
     });
     return;
   }
   if (!(await setSwarmMode(host, enabled, 'manual'))) return;
-  renderSwarmModeMarker(host, enabled ? 'active' : 'inactive');
+  if (enabled) renderSwarmActivated(host);
+  else renderSwarmModeMarker(host, 'inactive');
 }
 
 async function setSwarmMode(
@@ -149,6 +153,11 @@ function swarmModeSubcommand(input: string): boolean | undefined {
   if (command === 'on') return true;
   if (command === 'off') return false;
   return undefined;
+}
+
+function renderSwarmActivated(host: SlashCommandHost): void {
+  renderSwarmModeMarker(host, 'active');
+  host.showStatus(SWARM_USAGE_NOTICE, 'warning');
 }
 
 function renderSwarmModeMarker(host: SlashCommandHost, state: SwarmModeMarkerState): void {
