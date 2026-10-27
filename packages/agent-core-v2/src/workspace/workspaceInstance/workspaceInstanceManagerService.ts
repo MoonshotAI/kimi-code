@@ -108,7 +108,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     const probe = canonicalWorkspaceRoot(cwd);
     let best: { readonly instance: WorkspaceInstance; readonly rootLength: number } | undefined;
     for (const instance of this.instances.values()) {
-      for (const dir of [instance.root, ...instance.metadata.additionalDirs]) {
+      for (const dir of [instance.root, ...instance.program.dirs.additionalDirs]) {
         const root = canonicalWorkspaceRoot(dir);
         const prefix = root.endsWith('/') ? root : `${root}/`;
         if (probe !== root && !probe.startsWith(prefix)) continue;

@@ -234,6 +234,31 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(entry?.additionalDirs).toEqual([dirB]);
   });
 
+  it('persists and exposes additions from a folded implicit alias', async () => {
+    const typedId = 'wd_typed_000000000001';
+    const aliasRoot = `${dirA}/`;
+    const aliasId = 'wd_alias_000000000002';
+    await persistence.update(() => ({
+      workspaces: [
+        { id: typedId, root: dirA, name: 'typed', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+        { id: aliasId, root: aliasRoot, name: 'alias', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+      ],
+      deletedIds: [],
+      idempotencyKeys: {},
+    }));
+    const visibleIds = (await workspaces.list()).map((workspace) => workspace.id);
+    const hiddenId = visibleIds.includes(typedId) ? aliasId : typedId;
+    const hiddenRoot = hiddenId === aliasId ? aliasRoot : dirA;
+    const dirs = createDirs(hiddenRoot, hiddenId);
+    await dirs.ready;
+
+    const result = await dirs.addDir({ path: dirB, persist: true });
+
+    expect(result.additionalDirs).toContain(dirB);
+    expect(dirs.additionalDirs).toContain(dirB);
+    expect((await workspaces.get(hiddenId))?.additionalDirs).toEqual([dirB]);
+  });
+
   it('keeps persist:false dirs in memory only', async () => {
     const project = await workspaces.create({ root: dirA, name: 'proj' });
     const dirs = createDirs(dirA, project.id, 'managed');

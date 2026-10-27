@@ -332,6 +332,12 @@ describe('WorkspaceInstanceManager', () => {
       return { id, root, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
     }
 
+    function stubDirs(lease: { instance: { program: object } }, additionalDirs: readonly string[]): { additionalDirs: readonly string[] } {
+      const dirs = { additionalDirs };
+      Object.defineProperty(lease.instance.program, 'dirs', { value: dirs });
+      return dirs;
+    }
+
     it('matches exact and nested cwds, preferring the longest containing root', async () => {
       const value = manager([
         rootedWorkspace('repo', '/repo'),
@@ -341,6 +347,7 @@ describe('WorkspaceInstanceManager', () => {
         await value.acquire({ workspaceId: 'repo' }),
         await value.acquire({ workspaceId: 'sub' }),
       ];
+      for (const lease of leases) stubDirs(lease, []);
 
       expect(value.findContaining('/repo')?.id).toBe('repo');
       expect(value.findContaining('/repo/sub')?.id).toBe('sub');
@@ -360,6 +367,7 @@ describe('WorkspaceInstanceManager', () => {
         },
       ]);
       const lease = await value.acquire({ workspaceId: 'multi' });
+      stubDirs(lease, ['/extra']);
 
       expect(value.findContaining('/extra')?.id).toBe('multi');
       expect(value.findContaining('/extra/nested/pkg')?.id).toBe('multi');
@@ -369,9 +377,24 @@ describe('WorkspaceInstanceManager', () => {
       await value.dispose();
     });
 
+    it('uses current program dirs instead of the instance metadata snapshot', async () => {
+      const initial = rootedWorkspace('multi', '/primary');
+      const value = manager([initial]);
+      const lease = await value.acquire({ workspaceId: 'multi' });
+      const dirs = stubDirs(lease, []);
+
+      dirs.additionalDirs = ['/extra'];
+      expect(value.findContaining('/extra/nested')?.id).toBe('multi');
+      dirs.additionalDirs = [];
+      expect(value.findContaining('/extra/nested')).toBeUndefined();
+      lease.dispose();
+      await value.dispose();
+    });
+
     it('matches across Windows spelling variants', async () => {
       const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
       const lease = await value.acquire({ workspaceId: 'win' });
+      stubDirs(lease, []);
 
       expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
       expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
@@ -389,6 +412,7 @@ describe('WorkspaceInstanceManager', () => {
         await value.acquire({ workspaceId: 'root' }),
         await value.acquire({ workspaceId: 'repo' }),
       ];
+      for (const lease of leases) stubDirs(lease, []);
 
       expect(value.findContaining('/')?.id).toBe('root');
       expect(value.findContaining('/elsewhere')?.id).toBe('root');
