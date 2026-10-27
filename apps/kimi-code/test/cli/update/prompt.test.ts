@@ -11,7 +11,10 @@ import {
 
 describe('install prompt helpers', () => {
   it('defaults the selection to "Install update now"', () => {
-    const choices = createInstallPromptChoices({ version: '0.0.2-beta.1' });
+    const choices = createInstallPromptChoices({
+      kind: 'upgrade',
+      target: { channel: 'stable', version: '0.0.2-beta.1' },
+    });
 
     expect(getDefaultInstallPromptSelection(choices)).toBe(0);
     expect(choices[0]).toEqual({
@@ -24,6 +27,19 @@ describe('install prompt helpers', () => {
     });
   });
 
+  it('offers a bidirectional channel switch without calling it a downgrade', () => {
+    const choices = createInstallPromptChoices({
+      kind: 'switch-channel',
+      sourceChannel: 'stable',
+      target: { channel: 'dev', version: '0.0.0-dev.42' },
+    });
+
+    expect(choices).toEqual([
+      { value: 'install', label: 'Switch to dev now (0.0.0-dev.42)' },
+      { value: 'skip', label: 'Stay on stable' },
+    ]);
+  });
+
   it('moves selection with arrow directions and clamps at the edges', () => {
     expect(moveInstallPromptSelection(1, 'up', 2)).toBe(0);
     expect(moveInstallPromptSelection(0, 'up', 2)).toBe(0);
@@ -33,7 +49,7 @@ describe('install prompt helpers', () => {
 });
 
 describe('promptForInstallChoice', () => {
-  it('renders changelog hyperlink in the prompt output', async () => {
+  it('renders the changelog, source channel, target channel, and versions', async () => {
     const CHANGELOG_URL = 'https://moonshotai.github.io/kimi-code/en/release-notes/changelog.html';
 
     const input = Object.assign(new EventEmitter(), {
@@ -52,21 +68,26 @@ describe('promptForInstallChoice', () => {
     } as NodeJS.WriteStream;
 
     const promptPromise = promptForInstallChoice({
-      currentVersion: '0.4.0',
-      target: { version: '0.5.0' },
-      installCommand: 'npm install -g @moonshot-ai/kimi-code@0.5.0',
+      currentVersion: '2.3.3',
+      plan: {
+        kind: 'switch-channel',
+        sourceChannel: 'stable',
+        target: { channel: 'dev', version: '0.0.0-dev.42' },
+      },
+      installCommand: 'npm install -g @moonshot-ai/kimi-code@0.0.0-dev.42',
       installSource: 'npm-global',
       input,
       output,
     });
 
-    // Emit keypress to trigger initial render then exit
     input.emit('keypress', '', { name: 'escape' });
-
     await promptPromise;
 
     const rendered = outputChunks.join('');
     expect(rendered).toContain(CHANGELOG_URL);
     expect(rendered).toContain('View changelog');
+    expect(rendered).toContain('stable -> dev');
+    expect(rendered).toContain('2.3.3');
+    expect(rendered).toContain('0.0.0-dev.42');
   });
 });

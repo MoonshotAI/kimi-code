@@ -314,7 +314,7 @@ describe('FullCompaction', () => {
         compacted_count: 6,
         retry_count: 0,
         thinking_effort: 'off',
-        input_tokens: 1192,
+        input_tokens: 1215,
         output_tokens: 8,
         input_cache_read: 0,
         input_cache_creation: 0,
@@ -1706,7 +1706,7 @@ describe('FullCompaction', () => {
         },
         {
           "role": "user",
-          "text": "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
+          "text": "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
       Compacted prefix.",
         },
         {
@@ -1945,7 +1945,7 @@ describe('FullCompaction', () => {
       call 2:
         messages:
           user: text "old user one\\n\\nold user two\\n\\nrecent user three\\n\\nAnswer after compacting"
-          user: text "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.\\nAuto compacted summary."
+          user: text "The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.\\nAuto compacted summary."
           user: text "<system-reminder>\\nContext compaction is complete — continue the work that was in progress when it began.\\n</system-reminder>"
     `);
     expect(records).toContainEqual({
@@ -2543,7 +2543,8 @@ describe('FullCompaction', () => {
       Be honest about uncertainty. If an earlier step claimed something was done but
       was never verified (tests "passing", a fix "working", a file "created"), say so
       plainly and treat it as unverified rather than fact — re-check before relying
-      on it.
+      on it. Likewise, if the code a check covers changed after it passed, mark that
+      result as unverified.
 
       Be concise, and keep the summary proportional to the task: a long multi-step
       task warrants detail, but a trivial or nearly finished exchange needs only a
@@ -2558,7 +2559,7 @@ describe('FullCompaction', () => {
           "user: old user one
 
       Retry after provider overflow",
-          "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
+          "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
       Overflow compacted summary.",
           "user: <system-reminder>
       Context compaction is complete — continue the work that was in progress when it began.
@@ -3337,7 +3338,8 @@ describe('FullCompaction', () => {
       Be honest about uncertainty. If an earlier step claimed something was done but
       was never verified (tests "passing", a fix "working", a file "created"), say so
       plainly and treat it as unverified rather than fact — re-check before relying
-      on it.
+      on it. Likewise, if the code a check covers changed after it passed, mark that
+      result as unverified.
 
       Be concise, and keep the summary proportional to the task: a long multi-step
       task warrants detail, but a trivial or nearly finished exchange needs only a
@@ -3411,7 +3413,8 @@ describe('FullCompaction', () => {
       Be honest about uncertainty. If an earlier step claimed something was done but
       was never verified (tests "passing", a fix "working", a file "created"), say so
       plainly and treat it as unverified rather than fact — re-check before relying
-      on it.
+      on it. Likewise, if the code a check covers changed after it passed, mark that
+      result as unverified.
 
       Be concise, and keep the summary proportional to the task: a long multi-step
       task warrants detail, but a trivial or nearly finished exchange needs only a
@@ -3426,7 +3429,7 @@ describe('FullCompaction', () => {
           "user: old user one
 
       xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-          "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Treat it as notes, not proof: where it says a step was done, tests passed, or a fix worked, verify that yourself before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
+          "user: The conversation so far has been compacted to free up context. What follows is your own working summary of this task — use it to continue your train of thought rather than starting over. Do not redo work it reports as done or re-run checks it reports as passed; check anything it marks as unverified before relying on it. Any user messages earlier in this context are preserved verbatim from the compacted conversation; where a system-reminder note among them marks an omitted middle section, the user messages it replaced are covered by this summary. The summary records which earlier requests were already addressed.
       Placeholder compacted summary.",
           "user: <system-reminder>
       Context compaction is complete — continue the work that was in progress when it began.
@@ -4465,23 +4468,26 @@ describe('FullCompaction pre-shrink', () => {
 describe('FullCompaction prompt-cache prefix', () => {
   const DEFERRED_TOOL = 'mcp__srv__deferred';
   const AUTO_COMPACTION_HEADROOM = 2_000;
-  const SCENARIOS = [
+  const TOOL_SELECT_SCENARIOS = [
     { label: 'tool select disabled', toolSelect: false, loadSchema: false },
     { label: 'a deferred tool announced', toolSelect: true, loadSchema: false },
     { label: 'a deferred tool schema loaded', toolSelect: true, loadSchema: true },
   ] as const;
+  const MEDIA_SCENARIOS = ['none', 'media-degraded', 'media-stripped'] as const;
   const CASES = (['manual', 'auto'] as const).flatMap((trigger) =>
-    SCENARIOS.map((scenario) => ({ trigger, ...scenario })),
+    TOOL_SELECT_SCENARIOS.flatMap((scenario) =>
+      MEDIA_SCENARIOS.map((media) => ({ trigger, ...scenario, media })),
+    ),
   );
 
   async function runFirstTurn(
     toolSelect: boolean,
     loadSchema: boolean,
-    reservedContextSize: number,
+    media: (typeof MEDIA_SCENARIOS)[number],
   ): Promise<TestAgentContext> {
     vi.stubEnv(TOOL_SELECT_FLAG_ENV, toolSelect ? '1' : '0');
     const ctx = testAgent({
-      initialConfig: { providers: {}, loopControl: { reservedContextSize } },
+      initialConfig: { providers: {}, loopControl: { reservedContextSize: 0 } },
     });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
@@ -4493,6 +4499,16 @@ describe('FullCompaction prompt-cache prefix', () => {
       mcpTool(DEFERRED_TOOL, { type: 'object', properties: { query: { type: 'string' } } }),
       { source: 'mcp', disclosure: 'deferred' },
     );
+    if (media !== 'none') {
+      ctx.appendRichToolExchange();
+      ctx.appendRichToolExchange();
+      ctx.mockNextProviderResponse({
+        error:
+          media === 'media-degraded'
+            ? new APIRequestTooLargeError(413, 'Request Entity Too Large')
+            : new APIStatusError(400, 'unsupported image format: image/avif is not supported'),
+      });
+    }
     if (loadSchema) {
       ctx.mockNextResponse({
         type: 'function',
@@ -4507,16 +4523,20 @@ describe('FullCompaction prompt-cache prefix', () => {
     return ctx;
   }
 
+  function countMedia(history: readonly Message[]): number {
+    return history.reduce(
+      (count, message) =>
+        count +
+        message.content.filter((part) => part.type === 'image_url' || part.type === 'video_url')
+          .length,
+      0,
+    );
+  }
+
   it.each(CASES)(
-    'keeps the $trigger compaction request a prefix extension of the last loop request with $label',
-    async ({ trigger, toolSelect, loadSchema }) => {
-      const ctx = await runFirstTurn(
-        toolSelect,
-        loadSchema,
-        trigger === 'auto'
-          ? CATALOGUED_MODEL_CAPABILITIES.max_context_tokens - AUTO_COMPACTION_HEADROOM
-          : 0,
-      );
+    'keeps the $trigger compaction request a prefix extension with $label and $media',
+    async ({ trigger, toolSelect, loadSchema, media }) => {
+      const ctx = await runFirstTurn(toolSelect, loadSchema, media);
       const loopCalls = ctx.llmCalls.length;
       const lastLoopCall = ctx.llmCalls.at(-1)!;
       const announced = lastLoopCall.history.some((message) =>
@@ -4524,6 +4544,11 @@ describe('FullCompaction prompt-cache prefix', () => {
       );
       expect(announced).toBe(toolSelect);
       expect(lastLoopCall.history.some((message) => message.tools !== undefined)).toBe(loadSchema);
+      expect(loopCalls).toBe((loadSchema ? 2 : 1) + (media === 'none' ? 0 : 1));
+      if (media !== 'none') {
+        expect(countMedia(ctx.llmCalls[0]!.history)).toBeGreaterThan(2);
+        expect(countMedia(lastLoopCall.history)).toBe(media === 'media-degraded' ? 2 : 0);
+      }
 
       ctx.mockNextResponse({ type: 'text', text: 'Prefix summary.' });
       if (trigger === 'manual') {
@@ -4531,6 +4556,13 @@ describe('FullCompaction prompt-cache prefix', () => {
         await ctx.rpc.beginCompaction({});
         await completed;
       } else {
+        ctx.kimiConfig = {
+          ...ctx.kimiConfig,
+          loopControl: {
+            reservedContextSize:
+              CATALOGUED_MODEL_CAPABILITIES.max_context_tokens - AUTO_COMPACTION_HEADROOM,
+          },
+        };
         const largePrompt = `large prompt ${'x'.repeat(AUTO_COMPACTION_HEADROOM * 6)}`;
         ctx.mockNextResponse({ type: 'text', text: 'Answered after compaction.' });
         await ctx.rpc.prompt({ input: [{ type: 'text', text: largePrompt }] });
