@@ -1117,6 +1117,31 @@ describe('projects.json migration and patch', () => {
     expect((await readProjects())['future_top_level']).toEqual({ nested: true });
   });
 
+  it.each([
+    { scenario: 'missing workspaces', legacy: {} },
+    { scenario: 'non-object workspaces', legacy: { version: 1, workspaces: null } },
+    {
+      scenario: 'non-array deletion tombstones',
+      legacy: { version: 1, workspaces: {}, deleted_workspace_ids: 'invalid' },
+    },
+  ])('rebuilds from the session index with $scenario', async ({ legacy }) => {
+    const workDir = join(homeDir, 'recovered');
+    const id = encodeWorkDirKey(workDir);
+    await fsp.writeFile(join(homeDir, 'workspaces.json'), JSON.stringify(legacy), 'utf8');
+    await seedSessionIndex([
+      {
+        sessionId: 's_recovered',
+        sessionDir: join(homeDir, 'sessions', id, 's_recovered'),
+        workDir,
+      },
+    ]);
+
+    expect((await build().list()).map((workspace) => workspace.id)).toEqual([id]);
+    const migrated = await readProjects();
+    expect(migrated.projects[id]?.root).toBe(workDir);
+    expect(migrated.deleted_project_ids).toEqual([]);
+  });
+
   it('initializes a fresh projects file without migration metadata', async () => {
     expect(await build().list()).toEqual([]);
     const file = await readProjects();

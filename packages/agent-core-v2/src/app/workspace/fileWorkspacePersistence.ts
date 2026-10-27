@@ -250,8 +250,9 @@ function parseProjectsDocument(value: unknown): {
 }
 
 function migrateLegacyDocument(file: PersistedWorkspaceFile, hash: string): PersistedProjectsFile {
-  const raw = asRecord(file, LEGACY_WORKSPACES_KEY);
-  const rawWorkspaces = asRecord(raw['workspaces'], `${LEGACY_WORKSPACES_KEY} workspaces`);
+  const raw = legacyRecord(file);
+  const rawWorkspaces = legacyRecord(raw['workspaces']);
+  const rawDeletedIds = raw['deleted_workspace_ids'];
   const projects: Record<string, PersistedWorkspaceEntry> = {};
   for (const [id, value] of Object.entries(rawWorkspaces)) {
     const entry = sanitizeEntry(value);
@@ -275,7 +276,9 @@ function migrateLegacyDocument(file: PersistedWorkspaceFile, hash: string): Pers
     ...extensions,
     schema_version: PROJECTS_SCHEMA_VERSION,
     projects,
-    deleted_project_ids: readStringArray(raw['deleted_workspace_ids'], 'deleted_workspace_ids'),
+    deleted_project_ids: Array.isArray(rawDeletedIds)
+      ? readStringArray(rawDeletedIds, 'deleted_workspace_ids')
+      : [],
     idempotency_keys: readIdempotencyKeys(raw['idempotency_keys']),
     migration: {
       source_file: LEGACY_WORKSPACES_KEY,
@@ -284,6 +287,11 @@ function migrateLegacyDocument(file: PersistedWorkspaceFile, hash: string): Pers
       migrated_at: new Date().toISOString(),
     },
   };
+}
+
+function legacyRecord(value: unknown): Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return {};
+  return value as Record<string, unknown>;
 }
 
 function asRecord(value: unknown, label: string): Record<string, unknown> {
