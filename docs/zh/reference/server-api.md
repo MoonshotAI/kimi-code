@@ -1118,10 +1118,10 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `model` | body | string | 要切换到的模型别名 |
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
-| `plan_mode` | body | boolean | 提交前进入或退出 Plan 模式 |
+| `plan_mode` | body | boolean | 提交前进入或退出 Plan 模式；仅适用于 main agent |
 | `swarm_mode` | body | boolean | 提交前启用或关闭 Swarm 模式 |
-| `goal_objective` | body | string | 提交前以此目标创建 goal |
-| `goal_control` | body | string | 提交前对当前 goal 执行 `pause` / `resume` / `cancel` |
+| `goal_objective` | body | string | 提交前以此目标创建 goal；仅适用于 main agent |
+| `goal_control` | body | string | 提交前对当前 goal 执行 `pause` / `resume` / `cancel`；仅适用于 main agent |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
 
 `metadata` 是随提示词保存的可选客户端元数据。每个 `content` 内容块是按 `type` 区分的对象：

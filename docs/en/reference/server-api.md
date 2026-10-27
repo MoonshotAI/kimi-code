@@ -1118,10 +1118,10 @@ Submits a user prompt to the session. Media references are validated first, then
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
-| `plan_mode` | body | boolean | Enter or exit Plan mode before submitting |
+| `plan_mode` | body | boolean | Enter or exit Plan mode before submitting; only available for the main agent |
 | `swarm_mode` | body | boolean | Enable or disable Swarm mode before submitting |
-| `goal_objective` | body | string | Create a goal with this objective before submitting |
-| `goal_control` | body | string | `pause` / `resume` / `cancel` the current goal before submitting |
+| `goal_objective` | body | string | Create a goal with this objective before submitting; only available for the main agent |
+| `goal_control` | body | string | `pause` / `resume` / `cancel` the current goal before submitting; only available for the main agent |
 | `disabled_tools` | body | array | Tool names to disable for the session |
 
 `metadata` is optional client metadata stored with the prompt. Each `content` part is an object discriminated by `type`:

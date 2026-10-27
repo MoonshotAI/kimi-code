@@ -14,6 +14,7 @@ import {
   IFileService,
   ISessionMediaStore,
   ISessionMetadata,
+  ISessionRunGate,
   ISessionSkillCatalog,
   isUserActivatableSkillType,
   promptMetadataTextFromContentParts,
@@ -247,6 +248,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             session.accessor.get(ISessionMediaStore),
           );
           resolved ??= await resolvePromptFromSession(session, req.body.agent_id);
+          if (req.body.plan_mode === true && req.body.agent_id !== undefined && req.body.agent_id !== MAIN_AGENT_ID) {
+            throw new Error2(ErrorCodes.REQUEST_INVALID, 'plan_mode is only available for the main agent');
+          }
           reservation = reservePromptId(session_id, req.body.prompt_id);
 
           const telemetry = core.accessor.get(ITelemetryService).withContext({ session_id });
@@ -287,6 +291,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+          session.accessor.get(ISessionRunGate).begin();
           await applyAgentConfig(resolved.agent, {
             plan_mode: req.body.plan_mode,
             swarm_mode: req.body.swarm_mode,

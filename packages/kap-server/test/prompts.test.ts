@@ -23,6 +23,7 @@ import {
   IFileService,
   ISessionContext,
   ISessionMetadata,
+  ISessionRunGate,
   MAX_IMAGE_DECODE_BYTES,
   Error2,
   ErrorCodes,
@@ -685,6 +686,67 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.data.prompt_id).toBe('submission-1');
     expect(submit).toHaveBeenCalledTimes(1);
     expect(getLiveSessionById(server!.core.accessor, id)).not.toBe(handle);
+  });
+
+  it('reloads a stale session before applying goal controls', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const handle = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = handle.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const runGate = handle.accessor.get(ISessionRunGate);
+    const begin = runGate.begin.bind(runGate);
+    const gate = vi
+      .spyOn(runGate, 'begin')
+      .mockImplementationOnce(() => {
+        throw new Error2(ErrorCodes.SESSION_STALE, 'stale');
+      })
+      .mockImplementation(begin);
+    const create = vi.spyOn(agent.accessor.get(IAgentGoalService), 'createGoal');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      prompt_id: 'goal-stale-1',
+      goal_objective: 'finish the migration',
+    });
+
+    expect(submitted.body.code).toBe(0);
+    expect(gate).toHaveBeenCalledTimes(1);
+    expect(create).not.toHaveBeenCalled();
+    const resumed = getLiveSessionById(server!.core.accessor, id)!;
+    expect(resumed).not.toBe(handle);
+    const goal = resumed.accessor
+      .get(IAgentLifecycleService)
+      .handleOf('main')!
+      .accessor.get(IAgentGoalService)
+      .getGoal().goal;
+    expect(goal).toMatchObject({ objective: 'finish the migration' });
+  });
+
+  it('rejects plan_mode for a non-main agent before applying config', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const main = lifecycle.handleOf('main')!;
+    const childContext = await lifecycle.fork(agentContextOf(main));
+    const child = lifecycle.handleOf(childContext.agentId)!;
+    const enter = vi.spyOn(child.accessor.get(IAgentPlanService), 'enter');
+
+    const submitted = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side question' }],
+      agent_id: childContext.agentId,
+      plan_mode: true,
+    });
+
+    expect(submitted.body.code).toBe(40001);
+    expect(submitted.body.msg).toContain('main agent');
+    expect(enter).not.toHaveBeenCalled();
+    expect(
+      child.accessor
+        .get(IAgentContextMemoryService)
+        .get()
+        .filter((message) => message.origin?.kind === 'user'),
+    ).toHaveLength(0);
   });
 
   it.each([false, true])('preserves client metadata through submission and cold resume (skills=%s)', async (withSkills) => {
