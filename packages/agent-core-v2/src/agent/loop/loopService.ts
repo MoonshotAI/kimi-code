@@ -420,6 +420,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return handle;
   }
 
+  promptHandleForTurn(turnId: number): PromptHandle | undefined {
+    const active = this.active;
+    if (active === undefined || active.id !== turnId) return undefined;
+    return this.promptHandle(active.prompt.id);
+  }
+
   private promptStateOf(id: string): PromptState {
     if (this.active?.prompt.id === id) return 'running';
     if (this.steered.has(id)) return 'steered';
@@ -1280,21 +1286,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }),
     );
     turn.state = 'running';
-    const promptText =
-      isDisplayablePromptOrigin(prompt.origin) || prompt.origin.kind === 'task'
-        ? turnPromptText(
-            prompt.message.content.filter((part) => !isUserPromptSubmitHookPart(part)),
-            prompt.origin,
-          )
-        : undefined;
     void this.dispatcher.dispatch(
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: id,
         promptId: prompt.promptId,
         origin: prompt.origin,
-        prompt: isDisplayablePromptOrigin(prompt.origin) ? promptText : undefined,
-        transcriptPrompt: prompt.origin.kind === 'task' ? promptText : undefined,
+        prompt: isDisplayablePromptOrigin(prompt.origin)
+          ? turnPromptText(
+              prompt.message.content.filter((part) => !isUserPromptSubmitHookPart(part)),
+              prompt.origin,
+            )
+          : undefined,
         promptAttachments: turnPromptAttachments(prompt.message.content, prompt.origin),
       }),
     );

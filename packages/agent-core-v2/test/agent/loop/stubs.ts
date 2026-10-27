@@ -196,6 +196,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       };
     },
     promptHandle: (id) => handles.get(id),
+    promptHandleForTurn: () => undefined,
     cancel(target, reason) { cancels.push({ turnId: target?.turnId, reason }); if (target?.promptId !== undefined) return true; if (active === undefined || (target?.turnId !== undefined && active.id !== target.turnId)) return false; active.cancel(reason); return true; },
     tryAcquireQuiescence: () => toDisposable(() => {}),
     buildAttachBundle: () => stubAttachBundle(),

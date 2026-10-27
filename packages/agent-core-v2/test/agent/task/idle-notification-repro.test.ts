@@ -68,8 +68,12 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
       const turnStarted: TurnStarted[] = [];
+      let notificationPrompt: ReturnType<IAgentLoopService['promptHandleForTurn']>;
       const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
         turnStarted.push(event);
+        if (event.origin.kind === 'task') {
+          notificationPrompt = loop.promptHandleForTurn(event.turnId);
+        }
       });
       const turnEnd = ctx.untilTurnEnd();
       const taskId = background.registerTask(agentTask(
@@ -97,10 +101,12 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(flatHistoryText).not.toContain('background agent finished its job');
       const notificationTurn = turnStarted.find((event) => event.origin?.kind === 'task');
       expect(notificationTurn?.prompt).toBeUndefined();
-      expect(notificationTurn?.transcriptPrompt).toContain('<notification');
-      expect(notificationTurn?.transcriptPrompt).toContain(taskId);
-      expect(notificationTurn?.transcriptPrompt).toContain('<output-file');
-      expect(notificationTurn?.transcriptPrompt).toContain('</notification>');
+      expect(notificationTurn?.promptId).toBeUndefined();
+      const notificationPromptText = JSON.stringify(notificationPrompt?.message.content);
+      expect(notificationPromptText).toContain('<notification');
+      expect(notificationPromptText).toContain(taskId);
+      expect(notificationPromptText).toContain('<output-file');
+      expect(notificationPromptText).toContain('</notification>');
       subscription.dispose();
     });
 

@@ -204,6 +204,8 @@ export function allocateExportTurn(
 
 export type ProjectorPromptLookup = (promptId: string) => TranscriptPrompt | undefined;
 
+export type ProjectorTurnPromptLookup = (turnId: number) => string | undefined;
+
 export type ProjectorPlanRevisionKey = (key: string) => string;
 
 export interface ProjectorLookups {
@@ -213,6 +215,7 @@ export interface ProjectorLookups {
   readonly turn?: ProjectorTurnLookup;
   readonly maxOrdinal?: ProjectorMaxOrdinalLookup;
   readonly prompt?: ProjectorPromptLookup;
+  readonly turnPrompt?: ProjectorTurnPromptLookup;
   readonly resolvePlanRevisionKey?: ProjectorPlanRevisionKey;
   readonly activitySnapshot?: () => AgentActivitySnapshot;
   readonly pendingApprovals?: () => readonly LegacyActivityApproval[];
@@ -479,7 +482,6 @@ export class AgentTranscriptProjector {
     promptId?: string;
     origin: unknown;
     prompt?: string;
-    transcriptPrompt?: string;
     promptAttachments?: readonly (
       | { kind: 'image' | 'video' | 'audio'; fileId: string; name?: string }
       | { kind: 'file'; name: string; mediaType: string; size: number; path: string }
@@ -529,14 +531,18 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
+    const origin = mapTurnOrigin(event.origin);
+    const prompt =
+      event.prompt ??
+      (origin.kind === 'task' ? this.lookups?.turnPrompt?.(event.turnId) : undefined);
     this.currentTurn = {
       kind: 'turn',
       turnId,
       triggerPromptId: event.promptId,
       ordinal,
       state: 'running',
-      origin: mapTurnOrigin(event.origin),
-      prompt: event.transcriptPrompt ?? event.prompt,
+      origin,
+      prompt,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };

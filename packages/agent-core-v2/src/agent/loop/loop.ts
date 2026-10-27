@@ -227,6 +227,8 @@ export interface IAgentLoopService {
 
   promptHandle(id: string): PromptHandle | undefined;
 
+  promptHandleForTurn(turnId: number): PromptHandle | undefined;
+
   registerLoopErrorHandler(
     handler: LoopErrorHandler,
     options?: LoopErrorHandlerRegistrationOptions,

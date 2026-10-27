@@ -411,13 +411,6 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     if (resolved.kind === 'agent' && name === 'events') {
       const bus = resolved.like.accessor.get(IEventBus);
       return bus.subscribe((event) => {
-        if (event.type === 'turn.started') {
-          const { transcriptPrompt: _internal, ...publicFields } = event as typeof event & {
-            transcriptPrompt?: unknown;
-          };
-          handler(wireClone(publicFields));
-          return;
-        }
         handler(wireClone(event));
       });
     }
