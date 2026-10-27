@@ -561,10 +561,10 @@ describe('systemPromptVars plan_mode_guidance', () => {
     const withoutPlan = renderSystemPromptResult('', {}, { skillActive: false }).text;
 
     expect(withPlan).toContain(
-      `count as part of the ask.\n\n${PLAN_MODE_GUIDANCE}\n\nBefore you call the work done`,
+      `only if the user asked for a fix.\n\n${PLAN_MODE_GUIDANCE}\n\nBefore you call a change done`,
     );
     expect(withoutPlan).not.toContain(PLAN_MODE_GUIDANCE);
-    expect(withoutPlan).toContain('count as part of the ask.\n\nBefore you call the work done');
+    expect(withoutPlan).toContain('only if the user asked for a fix.\n\nBefore you call a change done');
   });
 
   it('tells the model that only the user turns plan mode on', () => {
