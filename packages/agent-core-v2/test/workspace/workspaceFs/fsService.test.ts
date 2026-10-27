@@ -548,6 +548,27 @@ describe('WorkspaceFsService.search', () => {
     const result = await fs.search({ query: '', limit: 50, follow_gitignore: true });
     expect(result.items.map((i) => i.path)).toEqual(['kept.ts']);
   });
+
+  it('searches additional roots with absolute result paths', async () => {
+    const fs = makeSession(
+      { 'src/foo.ts': '', '/extra/lib/foo.ts': '', '/extra/top.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const matches = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
+    expect(matches.items.map((item) => item.path)).toContain('src/foo.ts');
+    expect(matches.items.map((item) => item.path)).toContain('/extra/lib/foo.ts');
+
+    const topLevel = await fs.search({ query: '', limit: 50, follow_gitignore: false });
+    expect(topLevel.items.map((item) => item.path)).toContain('src');
+    expect(topLevel.items.map((item) => item.path)).toContain('/extra/top.ts');
+  });
 });
 
 describe('WorkspaceFsService.suggest', () => {
@@ -949,6 +970,23 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.truncated).toBe(true);
   });
 
+  it('keeps valid roots available when an additional root is missing', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/missing'],
+    );
+
+    const result = await fs.suggest({ query: '', limit: 50, follow_gitignore: false, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toEqual(['src']);
+  });
+
   it('merges rg candidates across roots with relative paths for the primary root only', async () => {
     const fs = makeSession(
       {
@@ -1321,6 +1359,91 @@ describe('WorkspaceFsService.grep', () => {
     expect(result.files[0]?.matches).toHaveLength(CAP);
     expect(streaming?.wasKilled()).toBe(true);
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
+  });
+
+  it('searches additional roots with rg and preserves unambiguous paths', async () => {
+    const rgFile = (path: string, text: string): string => [
+      { type: 'begin', data: { path: { text: path } } },
+      {
+        type: 'match',
+        data: {
+          path: { text: path },
+          lines: { text: `${text}\n` },
+          line_number: 1,
+          submatches: [{ start: 0, end: 5 }],
+        },
+      },
+      { type: 'end', data: { path: { text: path } } },
+    ].map((record) => JSON.stringify(record)).join('\n');
+    const captured: string[][] = [];
+    const fs = makeSession(
+      {},
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return { stdout: 'ripgrep 14.1.0', exitCode: 0 };
+        }
+        if (args[0] === 'rg' && args.includes('--json')) {
+          captured.push([...args]);
+          return {
+            stdout: `${rgFile('src/a.ts', 'hello a')}\n${rgFile('/extra/b.ts', 'hello b')}\n`,
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toContain('.');
+    expect(captured[0]).toContain('/extra');
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
+  });
+
+  it('searches additional roots in the Node fallback', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' },
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: false,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
+    expect(result.files_scanned).toBe(2);
   });
 });
 

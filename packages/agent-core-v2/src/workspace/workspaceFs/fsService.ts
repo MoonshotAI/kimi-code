@@ -134,10 +134,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     });
   }
 
-  private absOf(rel: string): string {
-    return rel === '' || rel === '.' ? this.workDir : this.path.join(this.workDir, rel);
-  }
-
   async list(req: FsListRequest): Promise<FsListResponse> {
     const abs = await this.resolveWithin(req.path);
     const anchored = this.path.isAbsolute(req.path);
@@ -497,53 +493,78 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
+    const roots = await this.suggestRoots();
     if (req.query === '') {
-      const listed = await this.list({
-        path: '.',
-        depth: 1,
-        limit: req.limit,
-        show_hidden: false,
-        follow_gitignore: req.follow_gitignore,
-        exclude_globs: req.exclude_globs,
-        sort: 'type_first',
-        include_git_status: false,
-      });
-      const items = listed.items
-        .filter(
-          (entry) =>
-            req.include_globs === undefined || matchesAnyGlob(entry.path, req.include_globs),
-        )
-        .map((entry) => ({
-          path: entry.path,
-          name: entry.name,
-          kind: entry.kind,
-          score: 1,
-          match_positions: [],
-        }));
-      return { items, truncated: listed.truncated };
+      const items: FsSearchHit[] = [];
+      const seenPaths = new Set<string>();
+      let truncated = false;
+      for (const root of roots) {
+        let listed: FsListResponse;
+        try {
+          listed = await this.list({
+            path: root.dir,
+            depth: 1,
+            limit: req.limit,
+            show_hidden: false,
+            follow_gitignore: req.follow_gitignore,
+            exclude_globs: req.exclude_globs,
+            sort: 'type_first',
+            include_git_status: false,
+          });
+        } catch (error) {
+          if (!root.primary && isMissingPathError(error)) continue;
+          throw error;
+        }
+        truncated = truncated || listed.truncated;
+        for (const entry of listed.items) {
+          if (req.include_globs !== undefined && !matchesAnyGlob(entry.path, req.include_globs)) {
+            continue;
+          }
+          const pathKey = `${root.real}/${entry.path}`;
+          if (seenPaths.has(pathKey)) continue;
+          seenPaths.add(pathKey);
+          items.push({
+            path: this.suggestDisplayPath(root, entry.path),
+            name: entry.name,
+            kind: entry.kind,
+            score: 1,
+            match_positions: [],
+          });
+        }
+      }
+      return {
+        items: items.slice(0, req.limit),
+        truncated: truncated || items.length > req.limit,
+      };
     }
 
-    const matcher = req.follow_gitignore ? await this.matcher() : undefined;
     const candidates: FsSearchHit[] = [];
     const queryLower = req.query.toLowerCase();
-
-    await this.walk(this.workDir, '', matcher, async (relPath, name, kind) => {
-      const score = computeFuzzyScore(name, queryLower);
-      if (score <= 0) return;
-      if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
-        return;
-      }
-      if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
-        return;
-      }
-      candidates.push({
-        path: relPath,
-        name,
-        kind,
-        score,
-        match_positions: computeMatchPositions(relPath, queryLower),
+    const seenPaths = new Set<string>();
+    for (const root of roots) {
+      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
+      await this.walk(root.dir, '', matcher, async (relPath, name, kind) => {
+        const pathKey = `${root.real}/${relPath}`;
+        if (seenPaths.has(pathKey)) return;
+        seenPaths.add(pathKey);
+        const score = computeFuzzyScore(name, queryLower);
+        if (score <= 0) return;
+        if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
+          return;
+        }
+        if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
+          return;
+        }
+        const path = this.suggestDisplayPath(root, relPath);
+        candidates.push({
+          path,
+          name,
+          kind,
+          score,
+          match_positions: computeMatchPositions(path, queryLower),
+        });
       });
-    });
+    }
 
     candidates.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -654,6 +675,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       try {
         entries = await this.hostFs.readdir(root.dir);
       } catch (error) {
+        if (!root.primary && isMissingPathError(error)) continue;
         throw mapFsError(error, root.dir);
       }
       const visible: { name: string; kind: TopEntry['kind'] }[] = [];
@@ -945,7 +967,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
     args.push('--max-count', String(req.max_matches_per_file));
     args.push(req.pattern);
-    args.push('.');
+    const roots = await this.suggestRoots();
+    args.push('.', ...roots.filter((root) => !root.primary).map((root) => root.dir));
 
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
     const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
@@ -1003,7 +1026,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     signal: AbortSignal,
     startedAt: number,
   ): Promise<FsGrepResponse> {
-    const matcher = req.follow_gitignore ? await this.matcher() : undefined;
     const re = compileGrepPattern(req);
 
     const files: FsGrepFileHit[] = [];
@@ -1011,15 +1033,26 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let totalMatches = 0;
     let truncated = false;
 
-    const filePaths: string[] = [];
-    await this.walk(this.workDir, '', matcher, async (rel, _name, kind) => {
-      if (kind !== 'file') return;
-      if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
-      if (req.exclude_globs && matchesAnyGlob(rel, req.exclude_globs)) return;
-      filePaths.push(rel);
-    });
+    const filePaths: { path: string; absolute: string }[] = [];
+    const seenPaths = new Set<string>();
+    const roots = await this.suggestRoots();
+    for (const root of roots) {
+      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
+      await this.walk(root.dir, '', matcher, async (rel, _name, kind) => {
+        if (kind !== 'file') return;
+        if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
+        if (req.exclude_globs && matchesAnyGlob(rel, req.exclude_globs)) return;
+        const pathKey = `${root.real}/${rel}`;
+        if (seenPaths.has(pathKey)) return;
+        seenPaths.add(pathKey);
+        filePaths.push({
+          path: this.suggestDisplayPath(root, rel),
+          absolute: this.path.join(root.dir, rel),
+        });
+      });
+    }
 
-    for (const rel of filePaths) {
+    for (const file of filePaths) {
       if (signal.aborted) {
         if (totalMatches === 0 && filesScanned === 0) {
           throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
@@ -1034,7 +1067,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       filesScanned += 1;
       let content: string;
       try {
-        content = await this.hostFs.readText(this.absOf(rel));
+        content = await this.hostFs.readText(file.absolute);
       } catch {
         continue;
       }
@@ -1062,7 +1095,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         }
       }
       if (matches.length > 0) {
-        files.push({ path: rel, matches });
+        files.push({ path: file.path, matches });
       }
       if (totalMatches >= req.max_total_matches) break;
     }
@@ -1121,10 +1154,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
     this.gitignoreCache.set(rootDir, ig);
     return ig;
-  }
-
-  private async matcher(): Promise<Ignore | undefined> {
-    return this.matcherFor(this.workDir);
   }
 
   private async resolveRg(): Promise<RgResolution | null> {
