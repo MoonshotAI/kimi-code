@@ -638,6 +638,27 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(missing.code).toBe(ErrorCode.FS_PATH_NOT_FOUND);
   });
 
+  it('workspace fs:list maps an unknown runtime to RUNTIME_NOT_FOUND', async () => {
+    const body = await postWorkspaceList<null>({
+      workspace: work,
+      runtime_id: 'no-such-runtime',
+    });
+    expect(body.code).toBe(ErrorCode.RUNTIME_NOT_FOUND);
+  });
+
+  it('workspace fs:list maps permission errors to FS_PERMISSION_DENIED', async () => {
+    if (process.getuid?.() === 0) return;
+    const blocked = join(work!, 'blocked');
+    await mkdir(blocked);
+    await chmod(blocked, 0o000);
+    try {
+      const body = await postWorkspaceList<null>({ workspace: blocked });
+      expect(body.code).toBe(ErrorCode.FS_PERMISSION_DENIED);
+    } finally {
+      await chmod(blocked, 0o755);
+    }
+  });
+
   it('workspace fs:list can open external symlink directories when enabled', async () => {
     const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-workspace-outside-'));
     await writeFile(join(outside, 'secret.txt'), '');

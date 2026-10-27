@@ -160,7 +160,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const items: FsEntry[] = [];
     const childrenByPath: Record<string, FsEntry[]> = {};
     const probeBudget = { visited: 0 };
-    const outputBudget = Math.min(LIST_TOTAL_ENTRY_BUDGET, req.limit * req.depth);
+    const outputBudget = LIST_TOTAL_ENTRY_BUDGET;
     let emitted = 0;
     let budgetExhausted = false;
     let truncated = false;

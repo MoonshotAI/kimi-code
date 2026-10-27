@@ -1928,6 +1928,9 @@ On success, `data` has the same shape as `fs:list`.
 - `40001`: body validation failure
 - `40409`: path not found or not a directory
 - `40410`: workspace not found and not a usable absolute path
+- `40411`: permission denied by the host filesystem
+- `40420`: runtime not found
+- `40926`: runtime unavailable
 - `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 
 #### `POST /api/v1/workspace/fs:search`

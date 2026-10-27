@@ -1568,40 +1568,45 @@ describe('WorkspaceFsService.list', () => {
     );
   });
 
-  it('stops recursive expansion at the request-wide output budget', async () => {
-    const fs = makeSession(
-      {
-        'real/sub/a.txt': '',
-        'real/sub/b.txt': '',
-        'real/sub/c.txt': '',
-        'real/sub/d.txt': '',
-        'real/sub/e.txt': '',
-      },
-      emptyHandler,
-      [],
-      defaultGitStub(),
-      [],
-      undefined,
-      { link: '/repo/real' },
-    );
+  it('keeps recursive children when the top-level limit is smaller', async () => {
+    const fs = makeSession({ 'dir/a.txt': '', 'dir/b.txt': '' }, emptyHandler);
     const result = await fs.list({
       path: '.',
-      depth: 3,
+      depth: 2,
       limit: 1,
       show_hidden: false,
       follow_gitignore: false,
       sort: 'name_asc',
       include_git_status: false,
     });
-    expect(result.truncated).toBe(true);
+    expect(result.truncated).toBe(false);
     expect(result.items).toHaveLength(1);
+    expect(result.children_by_path?.['dir']?.map((i) => i.name)).toEqual(['a.txt', 'b.txt']);
+  });
+
+  it('stops recursive expansion at the request-wide output budget', async () => {
+    const files: Record<string, string> = {};
+    for (let index = 0; index < 10_001; index += 1) {
+      files[`bulk/file-${String(index).padStart(5, '0')}.txt`] = '';
+    }
+    const fs = makeSession(files, emptyHandler);
+    const result = await fs.list({
+      path: '.',
+      depth: 2,
+      limit: 1000,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.truncated).toBe(true);
     expect(
       result.items.length +
         Object.values(result.children_by_path ?? {}).reduce(
           (total, entries) => total + entries.length,
           0,
         ),
-    ).toBeLessThanOrEqual(3);
+    ).toBe(10_000);
   });
 
   it('finds allowed descendants through external symlinks in ignored directories', async () => {

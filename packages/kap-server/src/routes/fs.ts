@@ -451,7 +451,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
         [ErrorCode.WORKSPACE_NOT_FOUND]: {},
         [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_PERMISSION_DENIED]: {},
         [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
+        [ErrorCode.RUNTIME_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
       },
       description:
         'List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
@@ -476,9 +479,21 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         const data = await runtimeFs.fs.list(listRequest);
         reply.send(okEnvelope(data, req.id));
       } catch (error) {
+        if (error instanceof RuntimeError) {
+          reply.send(
+            errEnvelope(
+              error.code === 'runtime.not_found'
+                ? ErrorCode.RUNTIME_NOT_FOUND
+                : ErrorCode.RUNTIME_UNAVAILABLE,
+              error.message,
+              req.id,
+            ),
+          );
+          return;
+        }
         sendMappedError(reply, req, error);
       } finally {
-        runtimeFs?.lease.dispose();
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
     },
   );
