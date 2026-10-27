@@ -1,10 +1,11 @@
 /**
  * ACP session-mode taxonomy.
  *
- * The 4 modes (`default`, `plan`, `auto`, `yolo`) are the locked decision.
- * Every `session/new` and `session/load` response advertises {@link ACP_MODES}
- * as the mode picker plus {@link DEFAULT_MODE_ID} as `currentModeId`, so ACP
- * clients render the dropdown from a single canonical source.
+ * The 5 modes (`default`, `plan`, `swarm`, `auto`, `yolo`) are the locked
+ * decision. Every `session/new` and `session/load` response advertises
+ * {@link ACP_MODES} as the mode picker plus {@link DEFAULT_MODE_ID} as
+ * `currentModeId`, so ACP clients render the dropdown from a single canonical
+ * source.
  *
  * `session/set_mode` and the `mode` arm of `session/set_config_option` consume
  * the same source of truth: {@link isAcpModeId} narrows the wire string, and
@@ -31,6 +32,11 @@ export const ACP_MODES = [
     description: 'Read-only planning; no tool execution.',
   },
   {
+    id: 'swarm',
+    name: 'Swarm',
+    description: 'Run multiple subagents in parallel with live progress.',
+  },
+  {
     id: 'auto',
     name: 'Auto',
     description: 'Auto-approve safe operations.',
@@ -45,12 +51,18 @@ export const ACP_MODES = [
 /** Initial `currentModeId` for every freshly created ACP session. */
 export const DEFAULT_MODE_ID = 'default' as const;
 
-/** The four wire-level mode ids understood by this host. */
-export type AcpModeId = 'default' | 'plan' | 'auto' | 'yolo';
+/** The wire-level mode ids understood by this host. */
+export type AcpModeId = 'default' | 'plan' | 'swarm' | 'auto' | 'yolo';
 
 /** Narrow an unknown wire string to {@link AcpModeId}. */
 export function isAcpModeId(value: unknown): value is AcpModeId {
-  return value === 'default' || value === 'plan' || value === 'auto' || value === 'yolo';
+  return (
+    value === 'default' ||
+    value === 'plan' ||
+    value === 'swarm' ||
+    value === 'auto' ||
+    value === 'yolo'
+  );
 }
 
 /**
@@ -61,6 +73,7 @@ export function isAcpModeId(value: unknown): value is AcpModeId {
 export interface AcpModeToggles {
   readonly plan: boolean;
   readonly permission: PermissionMode;
+  readonly swarm: boolean;
 }
 
 /**
@@ -72,13 +85,15 @@ export interface AcpModeToggles {
 export function acpModeToToggles(id: AcpModeId): AcpModeToggles {
   switch (id) {
     case 'default':
-      return { plan: false, permission: 'manual' };
+      return { plan: false, permission: 'manual', swarm: false };
     case 'plan':
-      return { plan: true, permission: 'manual' };
+      return { plan: true, permission: 'manual', swarm: false };
+    case 'swarm':
+      return { plan: false, permission: 'manual', swarm: true };
     case 'auto':
-      return { plan: false, permission: 'auto' };
+      return { plan: false, permission: 'auto', swarm: false };
     case 'yolo':
-      return { plan: false, permission: 'yolo' };
+      return { plan: false, permission: 'yolo', swarm: false };
     default: {
       const _exhaustive: never = id;
       throw new Error(`Unhandled AcpModeId: ${String(_exhaustive)}`);

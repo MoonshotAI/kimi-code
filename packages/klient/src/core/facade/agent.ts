@@ -15,6 +15,7 @@ import type { IAgentRuntimeBindingService } from '@moonshot-ai/agent-core-v2/age
 
 import type { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import type { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
+import type { SwarmModeTrigger } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import type { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import type { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
 import type { IAgentSkillService } from '@moonshot-ai/agent-core-v2/features/skill/skillService';
@@ -86,6 +87,8 @@ export interface AgentFacade {
   enterPlan(): Promise<void>;
   clearPlan(): Promise<void>;
   cancelPlan(input?: { id?: string }): Promise<void>;
+  enterSwarm(input: { trigger: SwarmModeTrigger }): Promise<void>;
+  exitSwarm(): Promise<void>;
   getTasks(input?: { activeOnly?: boolean; limit?: number }): Promise<readonly AgentTaskInfo[]>;
   stopTask(input: { taskId: string; reason?: string }): Promise<void>;
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
@@ -158,6 +161,9 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     clearPlan: () => call(scope, 'agentPlanService', 'clear', []) as Promise<void>,
     cancelPlan: (input) =>
       call(scope, 'agentPlanService', 'cancel', [input?.id]) as Promise<void>,
+    enterSwarm: (input) =>
+      call(scope, 'agentSwarmService', 'enter', [input.trigger]) as Promise<void>,
+    exitSwarm: () => call(scope, 'agentSwarmService', 'exit', []) as Promise<void>,
     getTasks: (input) =>
       call(scope, 'agentTaskService', 'list', [
         input?.activeOnly ?? false,

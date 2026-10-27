@@ -9,6 +9,7 @@ import {
   getLiveSessionById,
   IAgentLifecycleService,
   IAgentPlanService,
+  IAgentSwarmService,
   IEventBus,
 } from '@moonshot-ai/agent-core-v2';
 import { ToolCallStarted } from '@moonshot-ai/agent-core-v2/agent/toolExecutor/toolExecutorEvents';
@@ -103,6 +104,7 @@ describe('acp-server config surface', () => {
       expect(modes?.availableModes.map((m) => m.id)).toEqual([
         'default',
         'plan',
+        'swarm',
         'auto',
         'yolo',
       ]);
@@ -271,6 +273,34 @@ describe('acp-server config surface', () => {
       const modeUpdate = (modeNotification.params as { update?: { currentModeId?: string } })
         .update;
       expect(modeUpdate?.currentModeId).toBe('plan');
+    },
+    30_000,
+  );
+
+  it(
+    'session/set_config_option mode=swarm toggles the engine swarm service',
+    async () => {
+      await boot();
+      const { sessionId } = await newSession();
+      const session = getLiveSessionById(client!.server.core.accessor, sessionId);
+      const agentHandle = session?.accessor.get(IAgentLifecycleService).handleOf('main');
+      expect(agentHandle).toBeDefined();
+      const swarm = agentHandle!.accessor.get(IAgentSwarmService);
+      expect(swarm.isActive).toBe(false);
+
+      await client!.send('session/set_config_option', {
+        sessionId,
+        configId: 'mode',
+        value: 'swarm',
+      });
+      expect(swarm.isActive).toBe(true);
+
+      await client!.send('session/set_config_option', {
+        sessionId,
+        configId: 'mode',
+        value: 'default',
+      });
+      expect(swarm.isActive).toBe(false);
     },
     30_000,
   );

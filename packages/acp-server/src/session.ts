@@ -1217,9 +1217,9 @@ export class AcpSession {
     return true;
   }
 
-  /** Switch the ACP mode (plan mode + permission mode). */
+  /** Switch the ACP mode (plan mode + permission mode + swarm mode). */
   async setMode(id: AcpModeId): Promise<void> {
-    const { plan, permission } = acpModeToToggles(id);
+    const { plan, permission, swarm } = acpModeToToggles(id);
     if (plan) {
       await this.agent.enterPlan();
     } else {
@@ -1230,6 +1230,11 @@ export class AcpSession {
       await this.agent.cancelPlan();
     }
     await this.agent.setPermission(permission);
+    if (swarm) {
+      await this.agent.enterSwarm({ trigger: 'manual' });
+    } else {
+      await this.agent.exitSwarm();
+    }
     this.currentModeId = id;
     // Both notifications fire: `current_mode_update` serves clients reading
     // the first-class `modes` state, `config_option_update` serves clients

@@ -101,6 +101,14 @@ export const agentPlanContract = {
   cancel: { input: z.tuple([z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
+export const agentSwarmContract = {
+  enter: {
+    input: z.tuple([z.enum(['manual', 'task', 'tool'])]),
+    output: noResult,
+  },
+  exit: { input: z.tuple([]), output: noResult },
+} satisfies ServiceContract;
+
 /** `McpServerEntry` from the engine's `mcpCore/connection-manager`. */
 export const mcpServerEntrySchema = z.object({
   name: z.string(),
