@@ -218,7 +218,11 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
   }
 
   private async reloadFromRegistry(): Promise<void> {
-    const entries = await this.workspaces.list();
+    const registered = await this.workspaces.list();
+    const entries =
+      this.workspace.meta.kind === 'managed'
+        ? registered.filter((entry) => entry.id === this.workspace.workspaceId)
+        : registered;
     const cwdKey = workspaceRootKey(this.workspace.cwd);
     const dirs: string[] = [];
     const primary: Record<string, string> = {};

@@ -120,6 +120,26 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(outsider.sessionInfo().primaryByWorkspace).toEqual({});
   });
 
+  it('keeps same-root managed workspaces scoped to their workspace id', async () => {
+    const first = await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'first' });
+    const second = await workspaces.create({ root: dirA, additionalDirs: [dirC], name: 'second' });
+    const firstDirs = createDirs(dirA, first.id, 'managed');
+    const secondDirs = createDirs(dirA, second.id, 'managed');
+    await Promise.all([firstDirs.ready, secondDirs.ready]);
+
+    expect(firstDirs.additionalDirs).toEqual([dirB]);
+    expect(firstDirs.sessionInfo().primaryByWorkspace).toEqual({ [first.id]: dirA });
+    expect(secondDirs.additionalDirs).toEqual([dirC]);
+    expect(secondDirs.sessionInfo().primaryByWorkspace).toEqual({ [second.id]: dirA });
+
+    await workspaces.update(first.id, { additionalDirs: [] });
+    await vi.waitFor(() => {
+      expect(firstDirs.additionalDirs).toEqual([]);
+    });
+    await secondDirs.reload();
+    expect(secondDirs.additionalDirs).toEqual([dirC]);
+  });
+
   it('merges registry dirs with local.toml dirs for implicit scopes', async () => {
     await workspaces.create({ root: dirA, additionalDirs: [dirB], name: 'proj' });
     await mkdir(join(dirA, '.kimi-code'), { recursive: true });

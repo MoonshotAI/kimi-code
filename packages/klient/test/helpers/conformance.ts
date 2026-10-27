@@ -67,21 +67,38 @@ export function defineKlientConformance(
     });
 
     it('workspaces round-trip through create/get/update/list/delete', async () => {
-      const workspaces = target.klient.global.workspaces;
-      const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
-      expect(created.id.length).toBeGreaterThan(0);
+      const additionalDir = await mkdtemp(join(tmpdir(), 'klient-workspace-extra-'));
+      try {
+        const workspaces = target.klient.global.workspaces;
+        const created = await workspaces.createOrTouch({ root: process.cwd(), name: 'conformance' });
+        expect(created.id.length).toBeGreaterThan(0);
 
-      const fetched = await workspaces.get(created.id);
-      expect(fetched?.name).toBe('conformance');
+        const fetched = await workspaces.get(created.id);
+        expect(fetched?.name).toBe('conformance');
 
-      const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
-      expect(updated?.name).toBe('conformance-2');
+        const updated = await workspaces.update({ id: created.id, patch: { name: 'conformance-2' } });
+        expect(updated?.name).toBe('conformance-2');
 
-      const list = await workspaces.list();
-      expect(list.some((w) => w.id === created.id)).toBe(true);
+        const withAdditionalDirs = await workspaces.update({
+          id: created.id,
+          patch: { additionalDirs: [additionalDir] },
+        });
+        expect(withAdditionalDirs?.additionalDirs).toEqual([additionalDir]);
 
-      await workspaces.delete(created.id);
-      expect(await workspaces.get(created.id)).toBeUndefined();
+        const cleared = await workspaces.update({
+          id: created.id,
+          patch: { additionalDirs: [] },
+        });
+        expect(cleared?.additionalDirs).toEqual([]);
+
+        const list = await workspaces.list();
+        expect(list.some((w) => w.id === created.id)).toBe(true);
+
+        await workspaces.delete(created.id);
+        expect(await workspaces.get(created.id)).toBeUndefined();
+      } finally {
+        await rm(additionalDir, { recursive: true, force: true });
+      }
     });
 
     it('sessions index responds with a page shape', async () => {

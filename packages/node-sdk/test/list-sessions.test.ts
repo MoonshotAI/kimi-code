@@ -152,6 +152,29 @@ describe('KimiHarness.listSessions', () => {
     }
   });
 
+  it('finds implicit sessions registered with a non-normalized root spelling', async () => {
+    const homeDir = await makeTempDir();
+    const workDir = await makeTempDir();
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const legacyWorkDir = `${workDir}/.`;
+      const workspace = await client.engineAccessor
+        .get(IWorkspaceService)
+        .createOrTouch(legacyWorkDir);
+      await client.engineAccessor.get(ISessionManager).create({
+        workspaceId: workspace.id,
+        workDir: legacyWorkDir,
+        sessionId: 'ses_non_normalized_root',
+      });
+
+      const sessions = await client.listSessions({ workDir });
+      expect(sessions.map((item) => item.id)).toEqual(['ses_non_normalized_root']);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('directory view includes sessions of workspaces holding the dir as primary or member', async () => {
     const homeDir = await makeTempDir();
     const dirA = await makeTempDir();
