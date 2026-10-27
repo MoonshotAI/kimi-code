@@ -373,7 +373,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/config`
 
-合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
+合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。`secondary_model` 域还接受 `null`：删除整个 `[secondary_model]` 节，使之后派生的 subagent 继承调用方当前的模型与思考强度。
 
 每一次配置变更——经本端点成功更新、在进程外编辑 `config.toml`，或服务端内部写入（如 OAuth 登录刷新）——都会广播全局 `event.config.changed` 事件。短时间窗内的多次变更会合并为一个事件，其 `changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（与 `GET /api/v1/config` 响应同形状）。
 
@@ -398,7 +398,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `loop_control` | body | object | Agent 循环控制参数 |
 | `background` | body | object | 后台任务运行参数 |
 | `subagent` | body | object | subagent 配置 |
-| `secondary_model` | body | object | subagent 的次级模型池 |
+| `secondary_model` | body | object 或 null | subagent 的次级模型池；`null` 删除该配置节并恢复继承调用方模型 |
 | `experimental` | body | object | 实验开关 id → 是否启用 |
 | `telemetry` | body | boolean | 是否启用匿名遥测 |
 | `auto_session_title` | body | boolean | 是否允许客户端自动生成会话标题 |
