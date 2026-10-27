@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Agent, type Dispatcher, getGlobalDispatcher, setGlobalDispatcher } from 'undici';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -35,8 +36,16 @@ describe('server-v2 session remote images', () => {
   let changed = false;
   let forwardedAuthorization: string | undefined;
   let forwardedCookie: string | undefined;
+  let directDispatcher: Dispatcher;
+  let previousDispatcher: Dispatcher;
 
   beforeAll(async () => {
+    previousDispatcher = getGlobalDispatcher();
+    directDispatcher = new Agent();
+    setGlobalDispatcher(directDispatcher);
+    for (const key of ['http_proxy', 'HTTP_PROXY', 'https_proxy', 'HTTPS_PROXY', 'all_proxy', 'ALL_PROXY', 'no_proxy', 'NO_PROXY']) {
+      vi.stubEnv(key, '');
+    }
     home = await mkdtemp(join(tmpdir(), 'kimi-session-remote-image-'));
     daemon = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -86,19 +95,25 @@ describe('server-v2 session remote images', () => {
   });
 
   afterAll(async () => {
-    await Promise.all([
-      daemon.close(),
-      new Promise<void>((resolve, reject) => {
-        imageServer.close((error) => {
-          if (error) {
-            reject(error);
-            return;
-          }
-          resolve();
-        });
-      }),
-    ]);
-    await rm(home, { recursive: true, force: true });
+    try {
+      await Promise.all([
+        daemon.close(),
+        new Promise<void>((resolve, reject) => {
+          imageServer.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        }),
+      ]);
+      await rm(home, { recursive: true, force: true });
+    } finally {
+      setGlobalDispatcher(previousDispatcher);
+      vi.unstubAllEnvs();
+      await directDispatcher.close();
+    }
   });
 
   async function post<T>(path: string, body: unknown): Promise<{ status: number; body: { code: number; data: T } }> {
