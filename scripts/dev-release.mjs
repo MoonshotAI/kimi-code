@@ -116,10 +116,19 @@ export function readDevRelease(tag, view = (releaseTag) => {
   }
 }
 
+export function listSuccessfulMainCiShas(repository, execute = execFileSync) {
+  const query = new URLSearchParams({ branch: 'main', event: 'push', status: 'success', per_page: '100' });
+  return lines(execute('gh', [
+    'api',
+    `repos/${repository}/actions/workflows/ci.yml/runs?${query}`,
+    '--jq',
+    '.workflow_runs[].head_sha',
+  ], { encoding: 'utf8' }));
+}
+
 function select() {
   const sha = env('GITHUB_SHA');
-  const query = new URLSearchParams({ branch: 'main', event: 'push', status: 'success', per_page: '100' });
-  const runs = JSON.parse(execFileSync('gh', ['api', `repos/${env('GITHUB_REPOSITORY')}/actions/workflows/ci.yml/runs?${query}`], { encoding: 'utf8' }));
+  const greenShas = listSuccessfulMainCiShas(env('GITHUB_REPOSITORY'));
   const devReleases = lines(git(['tag', '--points-at', sha, '--list', `${TAG_PREFIX}*-dev.*`]))
     .map((tag) => {
       const release = readDevRelease(tag);
@@ -128,7 +137,7 @@ function select() {
   const result = selectDevCommit({
     ref: env('GITHUB_REF'),
     sha,
-    greenShas: runs.workflow_runs.map((run) => run.head_sha),
+    greenShas,
     devReleases,
   });
   if (result.reason !== '') process.stdout.write(`::notice::skipping dev release: ${result.reason}\n`);

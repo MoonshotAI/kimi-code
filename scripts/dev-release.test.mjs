@@ -7,6 +7,7 @@ import {
   computeDevVersion,
   findNewerDevVersion,
   isCompleteDevRelease,
+  listSuccessfulMainCiShas,
   parseDevVersion,
   readDevRelease,
   requiredDevReleaseAssets,
@@ -83,6 +84,22 @@ await test('dev release accepts only the latest main commit with successful CI',
     reason: '',
   });
   assert.throws(() => selectDevCommit({ ...input, ref: 'refs/heads/release/2.4', greenShas: ['c'] }), /only from main/);
+});
+
+await test('CI selection asks gh to return only successful main head SHAs', () => {
+  let invocation;
+  const shas = listSuccessfulMainCiShas('MoonshotAI/kimi-code', (command, args, options) => {
+    invocation = { command, args, options };
+    return 'a\n\nb\n';
+  });
+  assert.deepEqual(shas, ['a', 'b']);
+  assert.equal(invocation.command, 'gh');
+  assert.equal(
+    invocation.args[1],
+    'repos/MoonshotAI/kimi-code/actions/workflows/ci.yml/runs?branch=main&event=push&status=success&per_page=100',
+  );
+  assert.deepEqual(invocation.args.slice(2), ['--jq', '.workflow_runs[].head_sha']);
+  assert.deepEqual(invocation.options, { encoding: 'utf8' });
 });
 
 await test('a new task skips a complete release but resumes a partial release', () => {
