@@ -636,7 +636,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
-| `POST /api/v1/sessions/{session_id}/media` | 从用户明确批准加载的远程图片 URL 创建会话媒体 |
+| `POST /api/v1/sessions/{session_id}/media` | 从远程图片 URL 创建会话媒体 |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
 
 #### session 对象
@@ -967,7 +967,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/media`
 
-从远程 HTTP(S) 图片创建会话内规范媒体文件。只有在用户明确批准加载图片后才应调用此端点，不要自动抓取会话内容中的任意 URL。
+从远程 HTTP(S) 图片创建会话内规范媒体文件。Web Markdown 渲染器会自动通过此端点加载远程图片，因此渲染会话可能向 daemon 可达的内网地址发起请求。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |

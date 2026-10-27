@@ -636,7 +636,7 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
 | `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
-| `POST /api/v1/sessions/{session_id}/media` | Create session media from a user-approved remote image URL |
+| `POST /api/v1/sessions/{session_id}/media` | Create session media from a remote image URL |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
 
 #### The session object
@@ -967,7 +967,7 @@ On success, `data` is `{ as_of_seq, epoch, session, messages, in_flight_turn, su
 
 #### `POST /api/v1/sessions/{session_id}/media`
 
-Creates a session-canonical media file from a remote HTTP(S) image. Call this endpoint only after the user explicitly approves loading the image; do not automatically fetch arbitrary URLs emitted in session content.
+Creates a session-canonical media file from a remote HTTP(S) image. The Web Markdown renderer automatically loads remote images through this endpoint, so rendering a session can issue requests to intranet addresses reachable by the daemon.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |

@@ -75,7 +75,7 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
         [ErrorCode.FILE_TOO_LARGE]: {},
         [ErrorCode.INTERNAL_ERROR]: {},
       },
-      description: 'Create session media from a user-approved remote image URL',
+      description: 'Create session media from a remote image URL',
       tags: ['files'],
     },
     async (req, reply) => {
