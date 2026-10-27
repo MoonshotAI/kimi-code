@@ -40,7 +40,7 @@
 ```
 
 - `code`：业务结果，`0` 表示成功；错误码分段见下文。
-- `data`：成功时的业务数据。注意部分「错误」信封也携带非空 `data`——例如重复解决审批返回 `40902` 且 `data.resolved` 为 `false`——客户端应先判 `code` 再看 `data`。
+- `data`：成功时的业务数据。部分错误信封也携带非空 `data`，客户端应先判 `code` 再看 `data`。
 - `request_id`：本次请求的 ULID；客户端可用 `X-Request-Id` 请求头指定，非法值会被服务端重新生成。
 
 HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
@@ -65,7 +65,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管 |
 | `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型未解析 |
 | `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
-| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 审批已解决、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
+| `409xx` | 状态冲突 | `40901` 会话忙、`40902` 交互已结束、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
 | `410xx` | 资源已过期 | `41001` 审批超时、`41002` 提问超时、`41003` 临时文件过期 |
 | `413xx` | 体积或边界超限 | `41302` 读取文件超 10 MB、`41304` 路径越出会话目录 |
 | `429xx` | 限流 | `42901` 鉴权失败封禁、`42902` 文件监听数超限 |
@@ -1105,7 +1105,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
+向会话提交一条用户提示词。先校验媒体引用，然后把可选的覆盖项应用到目标 Agent——`profile`（与 `model` / `thinking` 一起绑定），接着是 `model`、`thinking`、`permission_mode`、`swarm_mode` 和 `disabled_tools`——随后提示词入队；响应在提示词被接受后立即返回，不等待轮次执行。提供 `skills` 时，提示词以打包的 Skill 激活方式运行，而不是普通用户提示词。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1118,9 +1118,10 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `model` | body | string | 要切换到的模型别名 |
 | `thinking` | body | string | Thinking 强度等级 |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
+| `swarm_mode` | body | boolean | 提交前启用或关闭 Swarm 模式 |
 | `disabled_tools` | body | array | 要为会话禁用的工具名 |
 
-schema 还接受 `metadata`、`plan_mode`、`swarm_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。每个 `content` 内容块是按 `type` 区分的对象：
+schema 还接受 `plan_mode`、`goal_objective` 和 `goal_control`，但提交路由当前不会应用它们。`metadata` 是随提示词保存的可选客户端元数据。每个 `content` 内容块是按 `type` 区分的对象：
 
 | 内容块 | 字段 | 说明 |
 | --- | --- | --- |
@@ -1190,75 +1191,39 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 审批与提问
 
-审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。这些端点用于列出和答复它们；新的请求通过 WebSocket 以 `event.approval.requested` 与 `event.question.requested` 到达。
+审批与提问是会话的两类待处理交互：审批是为工具调用请求许可，提问是请求带标签选项的结构化输入。WebSocket 上的每次变化都以 `interaction` 事件到达（见[事件](#事件)），回应两类交互共用一个端点。
 
 | 方法与路径 | 说明 |
 | --- | --- |
-| `GET /api/v1/sessions/{session_id}/approvals` | 列出待处理的审批请求（必须 `status=pending`） |
-| `POST /api/v1/sessions/{session_id}/approvals/{approval_id}` | 答复审批 |
-| `GET /api/v1/sessions/{session_id}/questions` | 列出待处理的提问（必须 `status=pending`） |
-| `POST /api/v1/sessions/{session_id}/questions/{question_id}` | 回答提问 |
-| `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss` | 忽略提问 |
+| `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}` | 回应审批或提问 |
 
-#### `GET /api/v1/sessions/{session_id}/approvals`
+#### `POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`
 
-列出会话待处理的审批请求——即工具调用发起的权限提示。读取列表会在会话为冷态时将其恢复。
+回应一个待处理的审批或提问。请求体的 `kind` 必须与交互的类型一致；subagent 发起的交互由服务端交回发起它的 agent，因此不需要 `agent_id`。客户端应在收到 `status: "ended"` 的 `interaction` 事件时关闭卡片，而不是依据本接口的响应，这样所有打开该会话的客户端会一起关闭。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | **必填。** 必须为 `pending` |
+| `interaction_id` | path | string | **必填。** 事件中的 `interaction_id` |
+| `kind` | body | string | **必填。** `approval` / `question` |
 
-成功时，`data` 为 `{ items }`，每个元素为 `{ approval_id, session_id, agent_id, turn_id?, tool_call_id, tool_name, action, tool_input_display, created_at, expires_at }`：`agent_id` 是发起审批的 agent id（主 agent 为 `main`）；`tool_name` / `action` / `tool_input_display` 描述等待许可的调用，`expires_at` 为 `created_at` 之后 24 小时。
+`kind: "approval"` 时：
 
-- `40001`：`status` 缺失或不是 `pending`
-- `40401`：会话不存在
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `decision` | string | **必填。** `approved` / `rejected` / `cancelled` |
+| `scope` | string | 与 `approved` 同用时，`session`（唯一取值）会在本会话剩余时间内记住该审批规则 |
+| `feedback` | string | 交还给 agent 的自由文本反馈 |
+| `selected_label` | string | 当请求提供带标签的选项时（例如计划审阅），所选选项的标签 |
 
-#### `POST /api/v1/sessions/{session_id}/approvals/{approval_id}`
+`kind: "question"` 时，`answers` 与 `dismissed` 必须且只能传一个：
 
-答复一个待处理的审批请求，让等待中的工具调用继续执行（或不执行）。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `approval_id` | path | string | **必填。** 审批请求 id |
-| `decision` | body | string | **必填。** `approved` / `rejected` / `cancelled` |
-| `scope` | body | string | 配合 `approved` 使用，`session`（唯一取值）还会让该审批规则在会话的剩余时间内被记住 |
-| `feedback` | body | string | 回传给 Agent 的自由文本反馈 |
-| `selected_label` | body | string | 当请求提供了带标签的选项时（例如计划审阅），所选选项的标签 |
-
-成功时，`data` 为 `{ resolved: true, resolved_at }`。
-
-- `40001`：校验失败
-- `40401`：会话不存在
-- `40404`：没有该 id 的待处理审批
-- `40902`：审批已被答复；`data` 携带 `{ resolved: false }`
-
-#### `GET /api/v1/sessions/{session_id}/questions`
-
-列出会话待处理的提问。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | **必填。** 必须为 `pending` |
-
-成功时，`data` 为 `{ items }`，每个元素为 `{ question_id, session_id, agent_id?, turn_id?, tool_call_id?, questions, created_at }`。`agent_id?` 是发起提问的 agent id（已知时；主 agent 为 `main`）。`questions` 包含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }` 条目，每个条目带 2–4 个 `{ id, label, description? }` 形式的 `options`；`multi_select` 允许选择多个选项，`allow_other` 允许自由文本回答。
-
-- `40001`：`status` 缺失或不是 `pending`
-- `40401`：会话不存在
-
-#### `POST /api/v1/sessions/{session_id}/questions/{question_id}`
-
-回答一个待处理的提问。两个提问端点通过同一条路由 `POST /api/v1/sessions/{session_id}/questions/{tail}` 分发：单独的提问 id 表示回答问题，`{question_id}:dismiss` 尾部表示忽略问题，其他情况返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `question_id` | path | string | **必填。** 提问 id |
-| `answers` | body | object | **必填。** 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
-| `method` | body | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
-| `note` | body | string | 附在回答上的自由文本备注 |
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `answers` | object | 提问条目 id（`q_0`……）到答案对象的映射；变体见下 |
+| `dismissed` | `true` | 不回答，直接关闭提问 |
+| `method` | string | 答案的产生方式：`enter` / `space` / `number_key` / `click` |
+| `note` | string | 附在回答上的自由文本备注 |
 
 每个答案是按 `kind` 区分的对象：
 
@@ -1270,27 +1235,12 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `multi_with_other` | `option_ids`、`other_text` | 选项加自由文本 |
 | `skipped` | — | 跳过了该条目 |
 
-成功时，`data` 为 `{ resolved: true, resolved_at }`。
+成功时，`data` 为 `{ outcome, ended_at }`，审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed`。
 
-- `40001`：校验失败（`details` 列出每个字段）
+- `40001`：校验失败（`details` 列出每个字段），或 `kind` 与交互类型不一致
 - `40401`：会话不存在
-- `40405`：没有该 id 的待处理提问
-- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
-
-#### `POST /api/v1/sessions/{session_id}/questions/{question_id}:dismiss`
-
-忽略一个待处理的提问，不作回答。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `question_id` | path | string | **必填。** 提问 id |
-
-成功时信封的 `code` 是 `40909`（`question dismissed`）而不是 `0`，`data` 为 `{ dismissed: true, dismissed_at }`——客户端必须特殊处理该端点的成功码。
-
-- `40401`：会话不存在
-- `40405`：没有该 id 的待处理提问
-- `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
+- `40404`：会话中没有该 id 的交互
+- `40902`：交互已结束——已被其他客户端回应，或因所在轮次结束、agent 关闭而取消
 
 ### 后台任务
 
@@ -1695,6 +1645,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | 无会话的工作区目录列举 |
 | `POST /api/v1/workspace/fs:search` | 无会话的工作区搜索（body 携带工作区引用） |
 | `POST /api/v1/workspace/fs:suggest` | 无会话的文件补全候选（用于 `@` 文件提及） |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话文件（二进制，见下文） |
@@ -1717,10 +1668,11 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
 | `exclude_globs` | body | string[] | 额外要跳过的 glob |
 | `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob（如 `.tmp`）。命中项被忽略的祖先目录会自动保留以保证可达。放行点开头路径还需同时传 `show_hidden: true` |
+| `allow_external_symlinks` | body | boolean | 展开目标位于工作区外的软链接目录。默认 `false` |
 | `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | 附带每个条目的 git 状态。默认 `false` |
 
-成功时 `data` 为 `{ items, truncated }`——`depth` 大于 1 时另附 `children_by_path`（路径 → 条目的映射）。每项是一个条目对象 `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_symlink_to?, git_status?, child_count? }`，其中 `kind` 为 `file` / `directory` / `symlink`；`git_status`（仅 `include_git_status: true` 时存在）为 `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted` 之一；`truncated` 表示 `limit` 截断了列表。
+成功时 `data` 为 `{ items, truncated }`——`depth` 大于 1 时另附 `children_by_path`（路径 → 条目的映射）。每项是一个条目对象 `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_directory?, is_symlink_to?, git_status?, child_count? }`，其中 `kind` 为 `file` / `directory` / `symlink`，`is_directory` 表示该软链接的目标是目录；`git_status`（仅 `include_git_status: true` 时存在）为 `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted` 之一；`truncated` 表示 `limit` 或递归软链接预算截断了列表。每个请求通过展开软链接目录得到的条目上限为 10,000；普通目录递归不受此上限限制。
 
 - `40001`：请求体校验失败
 - `40401`：会话不存在
@@ -1738,6 +1690,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `offset` | body | integer | 起始字节偏移。默认 `0` |
 | `length` | body | integer | 读取字节数，1–10485760（10 MiB）。默认 `1048576`（1 MiB） |
 | `encoding` | body | string | `auto`（默认）/ `utf-8` / `base64` |
+| `allow_external_symlinks` | body | boolean | 允许读取目标位于工作区外的软链接。默认 `false` |
 
 成功时 `data` 为 `{ path, content, encoding, size, truncated, etag, mime, language_id?, line_count?, is_binary }`，其中 `encoding` 报告实际使用的编码（`utf-8` 或 `base64`），`size` 为文件完整大小。`encoding: "auto"` 时文本以 `utf-8` 返回（非 UTF-8 文本会被转码），二进制内容以 `base64` 返回；`encoding: "utf-8"` 强制按文本读取并拒绝二进制文件。
 
@@ -1945,11 +1898,40 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
 | `runtime_id` | query | string | 从哪个运行时读取。默认 `local` |
+| `allow_external_symlinks` | query | string | 传 `true` 时允许通过工作区外的软链接下载。默认 `false` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
 - `40409`：路径不存在
 - `41304`：路径越出会话工作区
+
+#### `POST /api/v1/workspace/fs:list`
+
+`fs:list` 的无会话形式：工作区改由请求体而非 URL 携带。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **必填。** 已注册工作区 id 或绝对根路径（当场注册） |
+| `path` | body | string | 要列出的目录，相对于工作区根目录。默认 `.` |
+| `depth` | body | integer | 递归深度，1–10。默认 `1` |
+| `limit` | body | integer | 最大条目数，1–1000。默认 `200` |
+| `show_hidden` | body | boolean | 包含点文件。默认 `false` |
+| `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
+| `exclude_globs` | body | string[] | 额外要跳过的 glob |
+| `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob |
+| `allow_external_symlinks` | body | boolean | 展开目标位于工作区外的软链接目录。默认 `false` |
+| `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+| `runtime_id` | body | string | 在哪个运行时上列举。默认 `local` |
+
+成功时 `data` 的结构与 `fs:list` 相同。
+
+- `40001`：请求体校验失败
+- `40409`：路径不存在，或路径不是目录
+- `40410`：工作区不存在，且不是可用的绝对路径
+- `40411`：宿主文件系统拒绝访问
+- `40420`：运行时不存在
+- `40926`：运行时不可用
+- `41304`：路径通过软链接越出工作区，且未启用 `allow_external_symlinks`
 
 #### `POST /api/v1/workspace/fs:search`
 
@@ -2392,7 +2374,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | 轮次 | `turn.started`、`turn.ended`、`turn.step.started` / `completed` / `interrupted` / `retrying` |
 | 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
 | 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
-| 交互 | `event.approval.requested` / `resolved`、`event.question.requested` / `answered` / `dismissed` |
+| 交互 | `interaction` |
 | subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
 | 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
 | 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
@@ -2400,6 +2382,8 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
+
+会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `seq`、`timestamp` 和 `payload` 包装——且从不写入日志、不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的为 `{ questions }`，含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`，每个带 2–4 个 `{ id, label, description? }` 形式的 `options`。服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
 
 ### 断线恢复
 

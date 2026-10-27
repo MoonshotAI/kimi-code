@@ -75,6 +75,7 @@ import {
 } from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
+const LIST_TOTAL_ENTRY_BUDGET = 10_000;
 const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
@@ -139,7 +140,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async list(req: FsListRequest): Promise<FsListResponse> {
-    const abs = await this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path, req.allow_external_symlinks === true);
     const rel = this.toRel(abs);
 
     let topStat: HostFileStat;
@@ -159,24 +160,38 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     const items: FsEntry[] = [];
     const childrenByPath: Record<string, FsEntry[]> = {};
     const probeBudget = { visited: 0 };
+    let symlinkEntries = 0;
+    let budgetExhausted = false;
     let truncated = false;
 
     interface QueueEntry {
       readonly relPath: string;
       readonly depthRemaining: number;
+      readonly ancestors: readonly string[];
+      readonly viaSymlink: boolean;
     }
+    const rootRel = rel === '.' ? '' : rel;
+    const rootIsSymlink = await this.pathHasSymlink(this.absOf(rootRel));
     const queue: QueueEntry[] = [
-      { relPath: rel === '.' ? '' : rel, depthRemaining: req.depth },
+      {
+        relPath: rootRel,
+        depthRemaining: req.depth,
+        ancestors: [await this.realpathExistingPrefix(this.absOf(rootRel))],
+        viaSymlink: rootIsSymlink,
+      },
     ];
 
     interface Child {
       readonly name: string;
       readonly relPath: string;
       readonly stat: HostFileStat;
+      readonly isDirectory: boolean;
+      readonly realPath?: string;
     }
 
     while (queue.length > 0) {
       const entry = queue.shift()!;
+      if (budgetExhausted && entry.viaSymlink) continue;
       let names: readonly string[];
       try {
         names = (await this.hostFs.readdir(this.absOf(entry.relPath))).map((e) => e.name);
@@ -201,12 +216,30 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
         const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
-        if (st === undefined || (ancestorOfAllowed && !st.isDirectory)) continue;
+        if (st === undefined) continue;
+        let isDirectory = st.isDirectory;
+        let realPath: string | undefined;
+        if (st.isSymbolicLink === true) {
+          const target = await this.symlinkDirectoryTarget(
+            childRel,
+            req.allow_external_symlinks === true,
+          );
+          isDirectory = target.isDirectory;
+          realPath = target.realPath;
+        }
+        if (ancestorOfAllowed && !isDirectory) continue;
         if (
           ancestorOfAllowed &&
-          !(await this.hasAllowedDescendant(childRel, req.allow_ignored_globs!, req.exclude_globs, req.show_hidden, probeBudget))
+          !(await this.hasAllowedDescendant(
+            childRel,
+            req.allow_ignored_globs!,
+            req.exclude_globs,
+            req.show_hidden,
+            req.allow_external_symlinks === true,
+            probeBudget,
+          ))
         ) continue;
-        visible.push({ name, relPath: childRel, stat: st });
+        visible.push({ name, relPath: childRel, stat: st, isDirectory, realPath });
       }
 
       sortChildren(visible, req.sort);
@@ -218,13 +251,38 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           truncated = true;
           break;
         }
+        const viaSymlink = entry.viaSymlink;
+        if (viaSymlink && symlinkEntries >= LIST_TOTAL_ENTRY_BUDGET) {
+          truncated = true;
+          budgetExhausted = true;
+          break;
+        }
         const fsEntry = buildFsEntry(child.relPath, child.name, child.stat, false);
+        if (child.stat.isSymbolicLink === true && child.isDirectory) {
+          fsEntry.is_directory = true;
+        }
         if (entry.depthRemaining === req.depth) {
           items.push(fsEntry);
         }
         bucket.push(fsEntry);
-        if (child.stat.isDirectory && entry.depthRemaining > 1) {
-          queue.push({ relPath: child.relPath, depthRemaining: entry.depthRemaining - 1 });
+        if (viaSymlink) symlinkEntries += 1;
+        if (child.isDirectory && entry.depthRemaining > 1) {
+          const realPath =
+            child.realPath ??
+            (await this.realpathExistingPrefix(this.absOf(child.relPath)).catch(() => undefined));
+          const childViaSymlink = viaSymlink || child.stat.isSymbolicLink === true;
+          if (
+            realPath !== undefined &&
+            !entry.ancestors.includes(realPath) &&
+            (!budgetExhausted || !childViaSymlink)
+          ) {
+            queue.push({
+              relPath: child.relPath,
+              depthRemaining: entry.depthRemaining - 1,
+              ancestors: [...entry.ancestors, realPath],
+              viaSymlink: childViaSymlink,
+            });
+          }
         }
       }
 
@@ -240,11 +298,43 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return response;
   }
 
+  private async pathHasSymlink(absPath: string): Promise<boolean> {
+    let current = absPath;
+    for (;;) {
+      const st = await this.hostFs.lstat(current).catch(() => undefined);
+      if (st?.isSymbolicLink === true) return true;
+      const parent = this.path.dirname(current);
+      if (parent === current) return false;
+      current = parent;
+    }
+  }
+
+  private async symlinkDirectoryTarget(
+    relPath: string,
+    allowExternal: boolean,
+  ): Promise<{ readonly isDirectory: boolean; readonly realPath?: string }> {
+    try {
+      const target = await this.hostFs.stat(this.absOf(relPath));
+      if (!target.isDirectory) return { isDirectory: false };
+      const realPath = await this.realpathExistingPrefix(this.absOf(relPath));
+      if (!allowExternal) {
+        const roots = await this.realRoots();
+        if (!roots.some((root) => isInsideOrEqual(this.path, realPath, root))) {
+          return { isDirectory: false };
+        }
+      }
+      return { isDirectory: true, realPath };
+    } catch {
+      return { isDirectory: false };
+    }
+  }
+
   private async hasAllowedDescendant(
     relDir: string,
     globs: readonly string[],
     excludeGlobs: readonly string[] | undefined,
     showHidden: boolean,
+    allowExternalSymlinks: boolean,
     budget: { visited: number },
   ): Promise<boolean> {
     const walk = async (rel: string, depth: number): Promise<boolean> => {
@@ -263,7 +353,11 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         if (excludeGlobs !== undefined && matchesAnyGlob(childRel, excludeGlobs)) continue;
         if (matchesAnyGlob(childRel, globs)) return true;
         const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
-        if (st?.isDirectory === true && globCanMatchBelow(childRel, globs)) {
+        const isDirectory =
+          st?.isSymbolicLink === true
+            ? (await this.symlinkDirectoryTarget(childRel, allowExternalSymlinks)).isDirectory
+            : st?.isDirectory === true;
+        if (isDirectory && globCanMatchBelow(childRel, globs)) {
           if (await walk(childRel, depth + 1)) return true;
         }
       }
@@ -273,7 +367,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async read(req: FsReadRequest): Promise<FsReadResponse> {
-    const abs = await this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path, req.allow_external_symlinks === true);
     const rel = this.toRel(abs);
 
     let st: HostFileStat;
@@ -462,8 +556,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return { absolute: abs, relative: rel, isDirectory: st.isDirectory };
   }
 
-  async resolveDownload(relPath: string): Promise<FsDownloadResolved> {
-    const abs = await this.resolveWithin(relPath);
+  async resolveDownload(relPath: string, allowExternalSymlinks = false): Promise<FsDownloadResolved> {
+    const abs = await this.resolveWithin(relPath, allowExternalSymlinks);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
@@ -1176,7 +1270,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return abs;
   }
 
-  private async resolveWithin(inputPath: string): Promise<string> {
+  private async resolveWithin(inputPath: string, allowExternalSymlinks = false): Promise<string> {
     if (inputPath === '' || inputPath === '/') {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
         details: { path: inputPath, reason: 'empty' },
@@ -1199,14 +1293,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
     }
-    const resolved = await this.realpathExistingPrefix(abs);
-    const roots = await this.realRoots();
-    if (!roots.some((root) => isInsideOrEqual(this.path, resolved, root))) {
-      throw new Error2(
-        ErrorCodes.FS_PATH_ESCAPES,
-        `path "${inputPath}" escapes workspace through a symlink`,
-        { details: { path: inputPath, reason: 'symlink_outside' } },
-      );
+    if (!allowExternalSymlinks) {
+      const resolved = await this.realpathExistingPrefix(abs);
+      const roots = await this.realRoots();
+      if (!roots.some((root) => isInsideOrEqual(this.path, resolved, root))) {
+        throw new Error2(
+          ErrorCodes.FS_PATH_ESCAPES,
+          `path "${inputPath}" escapes workspace through a symlink`,
+          { details: { path: inputPath, reason: 'symlink_outside' } },
+        );
+      }
     }
     return abs;
   }
@@ -1335,13 +1431,13 @@ function isPrematureCloseError(error: unknown): boolean {
 }
 
 function sortChildren(
-  children: { name: string; stat: HostFileStat }[],
+  children: { name: string; isDirectory: boolean }[],
   sort: FsListRequest['sort'],
 ): void {
   const cmp = {
-    type_first: (a: { name: string; stat: HostFileStat }, b: { name: string; stat: HostFileStat }) => {
-      const ad = a.stat.isDirectory ? 0 : 1;
-      const bd = b.stat.isDirectory ? 0 : 1;
+    type_first: (a: { name: string; isDirectory: boolean }, b: { name: string; isDirectory: boolean }) => {
+      const ad = a.isDirectory ? 0 : 1;
+      const bd = b.isDirectory ? 0 : 1;
       if (ad !== bd) return ad - bd;
       return a.name.localeCompare(b.name);
     },

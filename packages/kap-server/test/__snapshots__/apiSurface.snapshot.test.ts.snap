@@ -194,10 +194,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/approvals",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/children",
     ],
     [
@@ -235,10 +231,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/sessions/{session_id}/prompts",
-    ],
-    [
-      "GET",
-      "/api/v1/sessions/{session_id}/questions",
     ],
     [
       "GET",
@@ -454,15 +446,15 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/sessions/{session_id}/approvals/{approval_id}",
-    ],
-    [
-      "POST",
       "/api/v1/sessions/{session_id}/children",
     ],
     [
       "POST",
       "/api/v1/sessions/{session_id}/export",
+    ],
+    [
+      "POST",
+      "/api/v1/sessions/{session_id}/interactions/{interaction_id}",
     ],
     [
       "POST",
@@ -479,10 +471,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/sessions/{session_id}/prompts/{tail}",
-    ],
-    [
-      "POST",
-      "/api/v1/sessions/{session_id}/questions/{tail}",
     ],
     [
       "POST",
@@ -507,6 +495,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/shutdown",
+    ],
+    [
+      "POST",
+      "/api/v1/workspace/fs:list",
     ],
     [
       "POST",

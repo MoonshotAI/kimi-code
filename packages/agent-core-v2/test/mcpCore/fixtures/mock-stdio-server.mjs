@@ -9,6 +9,10 @@ if (delayMs > 0) {
   await sleep(delayMs);
 }
 
+if (process.env['KIMI_TEST_MCP_IGNORE_SIGTERM'] === '1') {
+  process.on('SIGTERM', () => {});
+}
+
 const server = new McpServer({ name: 'mock-stdio', version: '0.0.1' });
 
 server.registerTool(

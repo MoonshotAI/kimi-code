@@ -177,6 +177,8 @@ const McpTimeoutMsSchema = z.number().int().min(1).max(MAX_MCP_TIMEOUT_MS);
 export const McpConfigSchema = z.object({
   startupTimeoutMs: McpTimeoutMsSchema.optional(),
   toolTimeoutMs: McpTimeoutMsSchema.optional(),
+  reconnectInitialDelayMs: McpTimeoutMsSchema.optional(),
+  reconnectMaxDelayMs: McpTimeoutMsSchema.optional(),
 });
 
 export type McpConfig = z.infer<typeof McpConfigSchema>;

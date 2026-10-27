@@ -1,15 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentTaskService } from '#/agent/task/task';
-import { SubagentTask } from '#/agent/tools/agent/subagent-task';
+import { PARTIAL_OUTPUT_NOTICE, SubagentTask } from '#/agent/tools/agent/subagent-task';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
 function agentTask(
   completion: Promise<{ result: string }>,
   description: string,
+  partialOutput?: () => string,
 ): SubagentTask {
   return new SubagentTask(
-    { agentId: 'agent-child', profileName: 'coder', completion },
+    { agentId: 'agent-child', profileName: 'coder', completion, partialOutput },
     description,
     new AbortController(),
   );
@@ -46,6 +47,30 @@ describe('SubagentTask — timeoutMs', () => {
 
     expect(info?.status).toBe('timed_out');
     expect(info?.stopReason).toBeUndefined();
+  });
+
+  it('hands over the partial output of an agent that ignores cancellation past the grace period', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let finishLate!: (r: { result: string }) => void;
+    const lateCompletion = new Promise<{ result: string }>((resolve) => {
+      finishLate = resolve;
+    });
+    const taskId = background.registerTask(
+      agentTask(lateCompletion, 'stuck', () => 'Found the loop at src/parser.ts:42.'),
+      { timeoutMs: 2_000 },
+    );
+
+    const terminalPromise = background.wait(taskId);
+    await vi.advanceTimersByTimeAsync(7_100);
+    const info = await terminalPromise;
+    finishLate({ result: 'Late summary.' });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(info?.status).toBe('timed_out');
+    expect(background.getTask(taskId)?.status).toBe('timed_out');
+    expect(await background.readOutput(taskId)).toBe(
+      `${PARTIAL_OUTPUT_NOTICE}\n\nFound the loop at src/parser.ts:42.`,
+    );
   });
 
   it('omitting timeoutMs lets the task run to completion without a manager deadline', async () => {

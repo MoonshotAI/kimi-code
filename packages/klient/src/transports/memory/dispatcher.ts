@@ -291,11 +291,15 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
   /** Mirrors kap-server's `resolveScope`, incl. main-agent materialization. */
   async function resolveScope(scope: ScopeRef): Promise<ResolvedScope> {
     if (scope.workspaceId !== undefined) {
-      const workspace = await root.accessor
+      const lease = await root.accessor
         .get(IWorkspaceInstanceManager)
-        .getOrCreate({ workspaceId: scope.workspaceId });
-      void workspace.program;
-      return { kind: 'workspace', like: root };
+        .acquire({ workspaceId: scope.workspaceId });
+      try {
+        void lease.instance.program;
+        return { kind: 'workspace', like: root };
+      } finally {
+        lease.dispose();
+      }
     }
     if (scope.sessionId === undefined) return { kind: 'core', like: root };
     const session = root.accessor.get(ISessionManager).get(scope.sessionId) ?? getLiveSessionById(root.accessor, scope.sessionId);

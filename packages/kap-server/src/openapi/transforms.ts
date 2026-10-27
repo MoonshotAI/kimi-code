@@ -37,11 +37,6 @@ import {
   fsRevealResponseSchema,
 } from '../protocol/rest-fs';
 import {
-  questionDismissResultSchema,
-  questionResolveRequestSchema,
-  questionResolveResultSchema,
-} from '../protocol/rest-question';
-import {
   archiveSessionResponseSchema,
   takeoverSessionResponseSchema,
   deleteSessionResponseSchema,
@@ -101,13 +96,6 @@ const fsActionResponseSchema = {
   ],
 } as const;
 
-const questionResponseSchema = {
-  oneOf: [
-    openApiDocumentEnvelopeJsonSchema(questionResolveResultSchema),
-    openApiDocumentEnvelopeJsonSchema(questionDismissResultSchema),
-  ],
-} as const;
-
 export function transformOpenApiDocument(
   document: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -120,7 +108,6 @@ export function transformOpenApiDocument(
   patchSessionAction(paths);
   patchFsAction(paths);
   patchFsDownload(paths);
-  patchQuestionResolveOrDismiss(paths);
 
   return document;
 }
@@ -280,24 +267,6 @@ function patchFsDownload(paths: Record<string, unknown>): void {
     headers: {
       etag: headerString(),
     },
-  });
-}
-
-function patchQuestionResolveOrDismiss(paths: Record<string, unknown>): void {
-  const operation = getOperation(paths, '/api/v1/sessions/{session_id}/questions/{tail}', 'post');
-  if (operation === undefined) return;
-
-  operation['description'] = appendDescription(
-    operation['description'],
-    'Resolve uses the question response body; `:dismiss` sends an empty body.',
-  );
-  operation['requestBody'] = {
-    required: false,
-    content: jsonContent(openApiDocumentJsonSchema(questionResolveRequestSchema)),
-  };
-  setResponse(operation, '200', {
-    description: 'Question resolved or dismissed',
-    content: jsonContent(questionResponseSchema),
   });
 }
 

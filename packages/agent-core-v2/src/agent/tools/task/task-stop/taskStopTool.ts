@@ -6,8 +6,11 @@ import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution'
 import { IAgentTaskService } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatTaskWallTime } from '#/agent/task/wallTime';
+import { NO_PARTIAL_OUTPUT, type SubagentTaskInfo } from '#/agent/tools/agent/subagent-task';
 import { ITaskStopTool, TaskStopInputSchema, type TaskStopInput } from './task-stop';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
+
+const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 export class TaskStopTool implements ITaskStopTool {
   declare readonly _serviceBrand: undefined;
@@ -51,14 +54,16 @@ export class TaskStopTool implements ITaskStopTool {
           return { isError: true, output: `Failed to stop task: ${args.task_id}` };
         }
 
-        return {
-          output:
-            `Wall time: ${formatTaskWallTime(result)}\n` +
-            `task_id: ${result.taskId}\n` +
-            `status: ${result.status}\n` +
-            `reason: ${result.stopReason ?? reason}`,
-          isError: false,
-        };
+        const lines = [
+          `Wall time: ${formatTaskWallTime(result)}`,
+          `task_id: ${result.taskId}`,
+          `status: ${result.status}`,
+          `reason: ${result.stopReason ?? reason}`,
+        ];
+        if (result.kind === 'agent') {
+          lines.push(...(await agentOutputLines(this.tasks, result)));
+        }
+        return { output: lines.join('\n'), isError: false };
       },
     };
   }
@@ -69,4 +74,32 @@ registerAgentToolService(ITaskStopTool, TaskStopTool, { name: 'TaskStop', domain
 function terminalStopReason(reason: string | undefined): string {
   const trimmed = reason?.trim();
   return trimmed === undefined || trimmed.length === 0 ? 'Task already in terminal state' : trimmed;
+}
+
+async function agentOutputLines(
+  tasks: IAgentTaskService,
+  info: SubagentTaskInfo,
+): Promise<string[]> {
+  const output = await tasks.getOutputSnapshot(info.taskId, OUTPUT_PREVIEW_BYTES);
+  const outputPath =
+    output.fullOutputAvailable && output.outputPath !== undefined ? output.outputPath : undefined;
+  const lines: string[] = [];
+  if (info.agentId !== undefined) lines.push(`agent_id: ${info.agentId}`);
+  if (outputPath !== undefined) lines.push(`output_path: ${outputPath}`);
+  lines.push('');
+  if (output.truncated) {
+    lines.push(
+      outputPath === undefined
+        ? '[Truncated. No persisted full log is available for this task.]'
+        : `[Truncated. Full output: ${outputPath}]`,
+    );
+  }
+  lines.push(output.preview.length > 0 ? output.preview : NO_PARTIAL_OUTPUT);
+  if (info.agentId !== undefined) {
+    lines.push(
+      '',
+      `resume_hint: To continue this subagent from where it stopped, call Agent(resume="${info.agentId}", prompt="..."). Use agent_id ("${info.agentId}"), not task_id ("${info.taskId}").`,
+    );
+  }
+  return lines;
 }

@@ -11,7 +11,6 @@ import type { MetaFeature } from '../protocol/rest-meta';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import type { TranscriptService } from '../services/transcript/transcriptService';
-import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
 import { registerCapabilitiesRoutes } from './capabilities';
 import { registerClientConfigsRoutes } from './clientConfigs';
@@ -21,6 +20,7 @@ import { registerFileHistoryRoutes } from './fileHistory';
 import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
+import { registerInteractionsRoutes } from './interactions';
 import { registerMessagesRoutes } from './messages';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
@@ -29,7 +29,6 @@ import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPluginsRoutes } from './plugins';
 import { registerPromptsRoutes } from './prompts';
-import { registerQuestionsRoutes } from './questions';
 import { registerRemoteControlRoutes, type RemoteControlRouteOptions } from './remoteControl';
 import { registerRuntimeRoutes } from './runtime';
 import { registerSearchRoutes } from './search';
@@ -162,12 +161,8 @@ export async function registerApiV1Routes(
       );
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
-      registerApprovalsRoutes(
-        apiV1 as unknown as Parameters<typeof registerApprovalsRoutes>[0],
-        core,
-      );
-      registerQuestionsRoutes(
-        apiV1 as unknown as Parameters<typeof registerQuestionsRoutes>[0],
+      registerInteractionsRoutes(
+        apiV1 as unknown as Parameters<typeof registerInteractionsRoutes>[0],
         core,
       );
       registerPromptsRoutes(

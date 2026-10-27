@@ -93,14 +93,18 @@ describe('acp-server session lifecycle', () => {
     c: TestClient,
     sessionId: string,
   ): Promise<readonly { readonly name: string; readonly status: string; readonly error?: string }[]> {
-    await c.server.core.accessor
+    const lease = await c.server.core.accessor
       .get(IWorkspaceInstanceManager)
-      .getOrCreate({ root: homeDir! });
-    const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
-    expect(handle).toBeDefined();
-    const mcp = handle!.accessor.get(ISessionMcpHandle);
-    await mcp.ready;
-    return mcp.connectionManager.list();
+      .acquire({ root: homeDir! });
+    try {
+      const handle = c.server.core.accessor.get(ISessionManager).get(sessionId);
+      expect(handle).toBeDefined();
+      const mcp = handle!.accessor.get(ISessionMcpHandle);
+      await mcp.ready;
+      return mcp.connectionManager.list();
+    } finally {
+      lease.dispose();
+    }
   }
 
   it(
@@ -354,12 +358,16 @@ describe('acp-server session lifecycle', () => {
 
       // The workspace handler merges create-time dirs into its
       // (ephemeral) additional-dir set.
-      const workspace = await c.server.core.accessor
+      const lease = await c.server.core.accessor
         .get(IWorkspaceInstanceManager)
-        .getOrCreate({ root: homeDir! });
-      const dirs = workspace.program.dirs;
-      await dirs.ready;
-      expect(dirs.additionalDirs).toContain(extraDir);
+        .acquire({ root: homeDir! });
+      try {
+        const dirs = lease.instance.program.dirs;
+        await dirs.ready;
+        expect(dirs.additionalDirs).toContain(extraDir);
+      } finally {
+        lease.dispose();
+      }
     },
     30_000,
   );
