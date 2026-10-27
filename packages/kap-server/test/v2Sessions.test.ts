@@ -7,6 +7,7 @@ import {
   ErrorCodes,
   ISessionIndex,
   IEventService,
+  ISessionManager,
   IWorkspaceAliases,
   closeSessionById,
   getLiveSessionById,
@@ -1057,7 +1058,7 @@ describe('server /api/v2/sessions batch delete', () => {
   interface BatchItemWire {
     id: string;
     ok: boolean;
-    error?: { code: number; message: string };
+    error?: { code: number; message: string; details?: Record<string, unknown> };
   }
 
   interface BatchWire {
@@ -1238,6 +1239,45 @@ describe('server /api/v2/sessions batch delete', () => {
     expect(await sessionDirExists(live.workspace_id, live.id)).toBe(false);
     expect(await sessionDirExists(cold.workspace_id, cold.id)).toBe(false);
     expect(await listedIds()).toEqual([]);
+  });
+
+  it('reports a leased session as 40931 with the lock-holder details in its own item', async () => {
+    const ok = await createSession();
+    const blocked = await createSession();
+    const holder = { pid: 4242, host: 'other-box', process: 'kimi-code' };
+    const manager = core().get(ISessionManager);
+    const realDelete = manager.delete.bind(manager);
+    const spy = vi.spyOn(manager, 'delete').mockImplementation(async (sessionId: string) => {
+      if (sessionId === blocked.id) {
+        throw new Error2(ErrorCodes.SESSION_OCCUPIED, 'occupied elsewhere', {
+          details: { sessionId, holder },
+        });
+      }
+      return realDelete(sessionId);
+    });
+
+    try {
+      const body = await postBatch('/api/v2/sessions:delete', { ids: [ok.id, blocked.id] });
+      expect(body.code).toBe(0);
+      expect(body.data?.results).toEqual([
+        { id: ok.id, ok: true },
+        {
+          id: blocked.id,
+          ok: false,
+          error: {
+            code: 40931,
+            message: 'occupied elsewhere',
+            details: { sessionId: blocked.id, holder },
+          },
+        },
+      ]);
+      expect(body.data?.succeeded).toBe(1);
+      expect(body.data?.failed).toBe(1);
+      expect(await sessionDirExists(ok.workspace_id, ok.id)).toBe(false);
+      expect(await sessionDirExists(blocked.workspace_id, blocked.id)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('validates the batch body: empty, missing, over the unique cap, duplicates', async () => {

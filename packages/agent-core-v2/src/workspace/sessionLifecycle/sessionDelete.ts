@@ -5,7 +5,13 @@ import { ErrorCodes, isError2 } from '#/errors';
 
 export type SessionDeleteBatchItemOutcome =
   | { id: string; ok: true }
-  | { id: string; ok: false; reason: 'not_found' | 'error'; message: string };
+  | {
+      id: string;
+      ok: false;
+      reason: 'not_found' | 'occupied' | 'error';
+      message: string;
+      details?: unknown;
+    };
 
 export async function deleteSessionsBatch(
   accessor: ServicesAccessor,
@@ -19,6 +25,15 @@ export async function deleteSessionsBatch(
     } catch (error) {
       if (isError2(error) && error.code === ErrorCodes.SESSION_NOT_FOUND) {
         return { id, ok: false, reason: 'not_found', message: error.message };
+      }
+      if (isError2(error) && error.code === ErrorCodes.SESSION_OCCUPIED) {
+        return {
+          id,
+          ok: false,
+          reason: 'occupied',
+          message: error.message,
+          details: error.details,
+        };
       }
       return {
         id,

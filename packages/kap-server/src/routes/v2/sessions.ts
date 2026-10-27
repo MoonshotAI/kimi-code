@@ -280,7 +280,13 @@ const v2SessionsBatchResultSchema = z.object({
     z.object({
       id: z.string(),
       ok: z.boolean(),
-      error: z.object({ code: z.number().int(), message: z.string() }).optional(),
+      error: z
+        .object({
+          code: z.number().int(),
+          message: z.string(),
+          details: z.record(z.string(), z.unknown()).optional(),
+        })
+        .optional(),
     }),
   ),
   succeeded: z.number().int(),
@@ -477,7 +483,13 @@ async function runBatchDelete(
           error:
             outcome.reason === 'not_found'
               ? { code: ErrorCode.SESSION_NOT_FOUND, message: outcome.message }
-              : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
+              : outcome.reason === 'occupied'
+                ? {
+                    code: ErrorCode.SESSION_OCCUPIED,
+                    message: outcome.message,
+                    details: outcome.details,
+                  }
+                : { code: ErrorCode.INTERNAL_ERROR, message: outcome.message },
         },
   );
   await core.accessor.get(ISessionIndexMirror).drain();
@@ -812,7 +824,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
       },
       description:
-        'Batch-delete sessions by id ({ ids }, ≤5000 unique). Per-item results — a missing session folds into its own item; live sessions are closed before their session directories are removed, cold sessions are deleted on disk directly.',
+        'Batch-delete sessions by id ({ ids }, ≤5000 unique). Per-item results — a missing session folds into its own item; a session leased by another process reports 40931 with the lock-holder details in its own item; live sessions are closed before their session directories are removed, cold sessions are deleted on disk directly.',
       tags: ['v2-sessions'],
     },
     async (req, reply) => {
