@@ -7,6 +7,7 @@ import {
 } from '#human/credentials/credentials';
 import type { ProviderMediaContribution } from '#human/llm/media/upload';
 import type { LlmModel } from '#human/llm/model';
+import type { TokenUsage } from '#human/llm/usage';
 import type {
   LlmRequestConfig,
   LlmRequestContent,
@@ -267,6 +268,35 @@ describe('ModelRequesterImpl request execution', () => {
       streamDurationMs: expect.any(Number),
     });
     expect(traceIds).toEqual(['trace-1']);
+  });
+
+  it('flags whether any usage patch reported a cache-read measurement', async () => {
+    const usageEvent = async (patches: Array<Partial<TokenUsage>>) => {
+      const requester = new FakeLlmRequester();
+      requester.handler = (_i, emit) =>
+        emitAll(emit, [
+          { type: 'llm.sent' },
+          { type: 'llm.streaming.part', part: { type: 'text', text: 'hi' } },
+          ...patches.map((usage) => ({ type: 'llm.streaming.usage' as const, usage })),
+          { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+          { type: 'llm.done' },
+        ]);
+      const impl = new ModelRequesterImpl(
+        modelWith(createStaticCredentialProvider()),
+        gatewayReturning(requester),
+      );
+      const events = await collect(impl.request(INPUT));
+      return events.find((e) => e.type === 'usage');
+    };
+
+    expect(await usageEvent([{ inputOther: 10 }, { output: 7 }])).toMatchObject({
+      usage: { inputCacheRead: 0 },
+      cacheReadReported: false,
+    });
+    expect(await usageEvent([{ inputOther: 10, inputCacheRead: 0 }, { output: 7 }])).toMatchObject({
+      usage: { inputCacheRead: 0 },
+      cacheReadReported: true,
+    });
   });
 
   it('surfaces a 401 as provider.auth_error without replaying', async () => {

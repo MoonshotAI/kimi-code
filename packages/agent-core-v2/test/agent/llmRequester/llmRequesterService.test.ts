@@ -48,7 +48,7 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { emptyUsage, mergeUsagePatch, type TokenUsage } from '#human/llm/usage';
+import { emptyUsage, type TokenUsage } from '#human/llm/usage';
 import { type Message } from '#/llm-adapter/contract/message';
 import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
 import type { ThinkingEffort } from '#human/llm/thinking';
@@ -363,24 +363,24 @@ describe('AgentLLMRequesterService measured anchors', () => {
   });
 });
 
-function cacheUsage(inputCacheRead: number, raw?: Record<string, unknown>): TokenUsage {
-  return {
-    inputOther: 100,
-    output: 50,
-    inputCacheRead,
-    inputCacheCreation: 0,
-    raw: raw ?? { cache_read_input_tokens: inputCacheRead },
-  };
+function cacheUsage(inputCacheRead: number): TokenUsage {
+  return { inputOther: 100, output: 50, inputCacheRead, inputCacheCreation: 0 };
 }
 
-function createCacheRequester(usages: readonly (TokenUsage | undefined)[]): ModelRequester {
+function createCacheRequester(
+  usages: readonly (TokenUsage | 'unreported' | undefined)[],
+): ModelRequester {
   const requester = createRequester({ value: 0 }, null);
   const base = requester.request.bind(requester);
   let index = 0;
   requester.request = async function* (input, signal, options) {
     const current = index++;
     const usage = usages[current];
-    if (usage !== undefined) yield { type: 'usage', usage, model: 'wire-model' };
+    if (usage === 'unreported') {
+      yield { type: 'usage', usage: cacheUsage(0), model: 'wire-model', cacheReadReported: false };
+    } else if (usage !== undefined) {
+      yield { type: 'usage', usage, model: 'wire-model', cacheReadReported: true };
+    }
     for await (const event of base(input, signal, options)) {
       yield event.type === 'finish' ? { ...event, traceId: `trace-${current + 1}` } : event;
     }
@@ -397,20 +397,6 @@ async function requestCacheTurn(service: IAgentLLMRequesterService, turnId: numb
 }
 
 describe('AgentLLMRequesterService cache break telemetry', () => {
-  it('preserves raw usage fields while merging stream patches', () => {
-    const merged = mergeUsagePatch(
-      cacheUsage(300, { cache_read_input_tokens: 300, input_tokens: 500 }),
-      { output: 87, raw: { output_tokens: 87 } },
-    );
-
-    expect(merged.output).toBe(87);
-    expect(merged.raw).toEqual({
-      cache_read_input_tokens: 300,
-      input_tokens: 500,
-      output_tokens: 87,
-    });
-  });
-
   it('reports current and actual baseline request identifiers with both usages', async () => {
     const { service, telemetryRecords } = createService(
       createCacheRequester([cacheUsage(10000), cacheUsage(7000)]),
@@ -477,33 +463,22 @@ describe('AgentLLMRequesterService cache break telemetry', () => {
     });
   });
 
-  it('skips provider responses without a cache-read measurement across protocols', async () => {
-    const cases = [
-      ['anthropic', (read: number) => ({ cache_read_input_tokens: read })],
-      ['openai', (read: number) => ({ cached_tokens: read })],
-      ['openai_responses', (read: number) => ({ input_tokens_details: { cached_tokens: read } })],
-      ['google-genai', (read: number) => ({ cachedContentTokenCount: read })],
-    ] as const;
+  it('skips responses whose provider did not report cache reads without replacing the baseline', async () => {
+    const { service, telemetryRecords } = createService(
+      createCacheRequester([cacheUsage(10000), 'unreported', cacheUsage(5000)]),
+      undefined,
+    );
 
-    for (const [protocol, reported] of cases) {
-      const requester = createCacheRequester([
-        cacheUsage(10000, reported(10000)),
-        cacheUsage(0, {}),
-        cacheUsage(5000, reported(5000)),
-      ]);
-      Object.defineProperty(requester.model, 'protocol', { value: protocol });
-      const { service, telemetryRecords } = createService(requester, undefined);
-      for (let turnId = 1; turnId <= 3; turnId++) await requestCacheTurn(service, turnId);
+    for (let turnId = 1; turnId <= 3; turnId++) await requestCacheTurn(service, turnId);
 
-      const events = cacheBreaks(telemetryRecords);
-      expect(events).toHaveLength(1);
-      expect(events[0]?.properties).toMatchObject({
-        prev_turn_id: 1,
-        prev_input_cache_read: 10000,
-        turn_id: 3,
-        curr_input_cache_read: 5000,
-      });
-    }
+    const events = cacheBreaks(telemetryRecords);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.properties).toMatchObject({
+      prev_turn_id: 1,
+      prev_input_cache_read: 10000,
+      turn_id: 3,
+      curr_input_cache_read: 5000,
+    });
   });
 
   it('resets the baseline after a context revision change', async () => {
@@ -546,39 +521,6 @@ describe('AgentLLMRequesterService cache break telemetry', () => {
       prev_model: 'm',
       curr_model: 'other-model',
     });
-  });
-
-  it('skips comparisons when the current request overlapped the baseline request', async () => {
-    const secondGate = createControlledPromise<void>();
-    const thirdGate = createControlledPromise<void>();
-    const requester = createRequester({ value: 0 }, null);
-    const base = requester.request.bind(requester);
-    const started: number[] = [];
-    let index = 0;
-    requester.request = async function* (input, signal, options) {
-      const current = index++;
-      started.push(current);
-      if (current === 1) await secondGate;
-      if (current === 2) await thirdGate;
-      const usage = cacheUsage(current === 2 ? 0 : 10000);
-      yield { type: 'usage', usage, model: 'wire-model' };
-      yield* base(input, signal, options);
-    };
-    const { service, telemetryRecords } = createService(requester, undefined);
-
-    await requestCacheTurn(service, 1);
-    const second = requestCacheTurn(service, 2);
-    const third = requestCacheTurn(service, 3);
-    for (let i = 0; i < 20 && started.length < 3; i++) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    expect(started).toEqual([0, 1, 2]);
-    secondGate.resolve();
-    await second;
-    thirdGate.resolve();
-    await third;
-
-    expect(cacheBreaks(telemetryRecords)).toHaveLength(0);
   });
 });
 

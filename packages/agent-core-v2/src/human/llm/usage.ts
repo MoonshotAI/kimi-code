@@ -31,15 +31,10 @@ export function mergeUsagePatch(
   base: TokenUsage | undefined,
   patch: Partial<TokenUsage>,
 ): TokenUsage {
-  const raw =
-    base?.raw === undefined && patch.raw === undefined
-      ? undefined
-      : { ...base?.raw, ...patch.raw };
   return {
     inputOther: patch.inputOther ?? base?.inputOther ?? 0,
     output: patch.output ?? base?.output ?? 0,
     inputCacheRead: patch.inputCacheRead ?? base?.inputCacheRead ?? 0,
     inputCacheCreation: patch.inputCacheCreation ?? base?.inputCacheCreation ?? 0,
-    raw,
   };
 }

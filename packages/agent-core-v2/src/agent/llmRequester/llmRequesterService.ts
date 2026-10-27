@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { performance } from 'node:perf_hooks';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -451,10 +450,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.logRequest(logInput);
       const recorded = this.recordRequest(logInput);
       const startedAt = Date.now();
-      const cacheBreakStartedAt = performance.now();
 
       let message: Message | undefined;
       let usage: TokenUsage | undefined;
+      let cacheReadReported: boolean | undefined;
       let timing: ModelRequestTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
       const toolCallIds = this.toolCallIdNormalizer.beginResponse();
@@ -475,6 +474,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
               break;
             case 'usage':
               usage = event.usage;
+              cacheReadReported = event.cacheReadReported;
               break;
             case 'finish':
               finish = event;
@@ -548,7 +548,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       }
       if (request.source?.type === 'turn') {
         const finishedAt = Date.now();
-        this.trackCacheBreak(request, usage, finish.traceId, cacheBreakStartedAt, performance.now());
+        if (cacheReadReported !== false) {
+          this.trackCacheBreak(request, usage, finish.traceId, finishedAt);
+        }
         this.states.set(llmRequesterLastTurnRequestKey, {
           modelAlias: request.modelAlias,
           contextRevision: request.contextRevision,
@@ -640,12 +642,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     request: ResolvedLLMRequest,
     usage: TokenUsage | undefined,
     traceId: string | undefined,
-    startedAt: number,
     finishedAt: number,
   ): void {
     const source = request.source;
     if (source?.type !== 'turn' || usage === undefined) return;
-    if (!hasCacheReadMeasurement(request.model.protocol, usage)) return;
     if (
       usage.inputOther === 0 &&
       usage.output === 0 &&
@@ -665,13 +665,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       traceId,
       finishedAt,
     };
-    if (
-      prev === undefined ||
-      prev.contextRevision !== request.contextRevision ||
-      startedAt < prev.finishedAt
-    ) {
-      return;
-    }
+    if (prev === undefined || prev.contextRevision !== request.contextRevision) return;
     const prevRead = prev.usage.inputCacheRead;
     const currRead = usage.inputCacheRead;
     if (currRead >= prevRead * CACHE_BREAK_DROP_RATIO) return;
@@ -696,7 +690,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       prev_input_cache_creation: prev.usage.inputCacheCreation,
       curr_input_cache_creation: usage.inputCacheCreation,
       cache_read_drop_ratio: (prevRead - currRead) / prevRead,
-      interval_ms: Math.round(finishedAt - prev.finishedAt),
+      interval_ms: finishedAt - prev.finishedAt,
     };
     this.telemetry.track2('cache_break_detected', properties);
   }
@@ -1107,35 +1101,6 @@ function projectionField(fields: AgentLLMRequestLogFields): LlmRequestProjection
     default:
       return undefined;
   }
-}
-
-function hasCacheReadMeasurement(protocol: Protocol, usage: TokenUsage): boolean {
-  const raw = usage.raw;
-  if (raw === undefined) return true;
-  switch (protocol) {
-    case 'anthropic':
-      return typeof raw['cache_read_input_tokens'] === 'number';
-    case 'openai': {
-      const details = raw['prompt_tokens_details'];
-      return (
-        typeof raw['cached_tokens'] === 'number' ||
-        (typeof details === 'object' &&
-          details !== null &&
-          typeof (details as Record<string, unknown>)['cached_tokens'] === 'number')
-      );
-    }
-    case 'openai_responses': {
-      const details = raw['input_tokens_details'];
-      return (
-        typeof details === 'object' &&
-        details !== null &&
-        typeof (details as Record<string, unknown>)['cached_tokens'] === 'number'
-      );
-    }
-    case 'google-genai':
-      return typeof raw['cachedContentTokenCount'] === 'number';
-  }
-  return true;
 }
 
 function fingerprint(content: string): string {

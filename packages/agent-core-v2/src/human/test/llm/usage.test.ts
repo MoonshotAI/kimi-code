@@ -18,13 +18,20 @@ function createSink() {
 }
 
 describe('openAIFormat stream usage', () => {
-  it('emits usage from the usage chunk', () => {
+  it('leaves cache reads unset when the usage chunk does not report them', () => {
     const { sink, usages } = createSink();
     const raw = { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 };
     openAIFormat.createStreamParser()({ choices: [], usage: raw }, sink);
     expect(usages).toEqual([
-      { inputOther: 120, output: 30, inputCacheRead: 0, inputCacheCreation: 0, raw },
+      { inputOther: 120, output: 30, inputCacheRead: undefined, inputCacheCreation: 0, raw },
     ]);
+  });
+
+  it('keeps a reported zero cache read', () => {
+    const { sink, usages } = createSink();
+    const raw = { prompt_tokens: 120, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 0 } };
+    openAIFormat.createStreamParser()({ usage: raw }, sink);
+    expect(usages[0]?.inputCacheRead).toBe(0);
   });
 
   it('splits cached tokens out of the prompt total', () => {
