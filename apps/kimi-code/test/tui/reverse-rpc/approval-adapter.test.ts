@@ -199,8 +199,18 @@ describe('approval adapter', () => {
     });
 
     expect(adapted.choices).toEqual([
-      { label: 'Approach A', response: 'approved', selected_label: 'Approach A' },
-      { label: 'Approach B', response: 'approved', selected_label: 'Approach B' },
+      {
+        label: 'Approach A',
+        response: 'approved',
+        selected_label: 'Approach A',
+        description: 'Small refactor',
+      },
+      {
+        label: 'Approach B',
+        response: 'approved',
+        selected_label: 'Approach B',
+        description: 'Full refactor',
+      },
       { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
       {
         label: 'Revise',

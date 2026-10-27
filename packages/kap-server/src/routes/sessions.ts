@@ -738,24 +738,28 @@ export function registerSessionsRoutes(
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const childHandler = await programForSession(core.accessor, session_id);
-        if (childHandler === undefined) {
+        const lease = await programForSession(core.accessor, session_id);
+        if (lease === undefined) {
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${session_id} does not exist`);
         }
-        const meta = await core.accessor.get(ISessionManager).createChild({
-          sourceSessionId: session_id,
-          title: req.body.title,
-          metadata: req.body.metadata,
-        });
-        const session = toWireSession(
-          { ...meta, workspaceId: childHandler.workspaceId },
-          meta.cwd ?? '',
-          resolveSessionFacts(core, meta.id),
-        );
-        core.accessor.get(IEventService).publish(
-          new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
-        );
-        reply.send(okEnvelope(session, req.id));
+        try {
+          const meta = await core.accessor.get(ISessionManager).createChild({
+            sourceSessionId: session_id,
+            title: req.body.title,
+            metadata: req.body.metadata,
+          });
+          const session = toWireSession(
+            { ...meta, workspaceId: lease.instance.program.workspaceId },
+            meta.cwd ?? '',
+            resolveSessionFacts(core, meta.id),
+          );
+          core.accessor.get(IEventService).publish(
+            new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }),
+          );
+          reply.send(okEnvelope(session, req.id));
+        } finally {
+          lease.dispose();
+        }
       } catch (error) {
         sendMappedError(reply, req, error);
       }
@@ -913,28 +917,32 @@ async function forkSessionAction(
   ctx: SessionActionCtx<z.infer<typeof forkSessionRequestSchema>>,
 ): Promise<void> {
   const { core, req, reply, id, body } = ctx;
-  const forkHandler = await programForSession(core.accessor, id);
-  if (forkHandler === undefined) {
+  const lease = await programForSession(core.accessor, id);
+  if (lease === undefined) {
     throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${id} does not exist`);
   }
-  const meta = await core.accessor.get(ISessionManager).fork({
-    sourceSessionId: id,
-    title: body.title,
-    metadata: body.metadata,
-  });
-  const session = toWireSession(
-    { ...meta, workspaceId: forkHandler.workspaceId },
-    meta.cwd ?? '',
-    resolveSessionFacts(core, meta.id),
-  );
-  core.accessor
-    .get(IEventService)
-    .publish(new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }));
-  requestLog(req)?.info(
-    { session_id: id, action: 'fork', new_session_id: session.id },
-    'session action completed',
-  );
-  reply.send(okEnvelope(session, req.id));
+  try {
+    const meta = await core.accessor.get(ISessionManager).fork({
+      sourceSessionId: id,
+      title: body.title,
+      metadata: body.metadata,
+    });
+    const session = toWireSession(
+      { ...meta, workspaceId: lease.instance.program.workspaceId },
+      meta.cwd ?? '',
+      resolveSessionFacts(core, meta.id),
+    );
+    core.accessor
+      .get(IEventService)
+      .publish(new SessionCreated({ payload: { agentId: 'main', sessionId: session.id, session } }));
+    requestLog(req)?.info(
+      { session_id: id, action: 'fork', new_session_id: session.id },
+      'session action completed',
+    );
+    reply.send(okEnvelope(session, req.id));
+  } finally {
+    lease.dispose();
+  }
 }
 
 async function compactSessionAction(

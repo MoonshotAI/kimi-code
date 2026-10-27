@@ -1,10 +1,10 @@
-import { visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
+import { resetCapabilitiesCache, setCapabilities, visibleWidth, type TUI } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setExperimentalFeatures } from '#/tui/commands/experimental-flags';
 import { ToolCallComponent } from '#/tui/components/messages/tool-call';
-import { STATUS_BULLET } from '#/tui/constant/symbols';
+import { NOTIFY_USER_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { darkColors } from '#/tui/theme/colors';
 
 import { captureProcessWrite } from '../../../helpers/process';
@@ -408,7 +408,7 @@ describe('ToolCallComponent', () => {
     });
     const message = 'Login module is clean.\n\nThe bug must be in **session expiry**.';
 
-    it('collapses to a header with the first line and expands to the full message', () => {
+    it('collapses to the Update badge and title, then expands to the full message', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify', name: 'NotifyUser', args: { message } },
         { tool_call_id: 'call_notify', output: 'Update shown to the user.', is_error: false },
@@ -416,17 +416,29 @@ describe('ToolCallComponent', () => {
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(1);
-      expect(collapsed[0]).toContain('Sent you an update');
-      expect(collapsed[0]).toContain('Login module is clean.');
+      expect(collapsed[0]).toBe(`${NOTIFY_USER_MARK} Login module is clean.`);
+      expect(collapsed[0]).not.toContain('Sent you an update');
       expect(collapsed[0]).not.toContain('session expiry');
       expect(collapsed[0]).not.toContain('Update shown');
       expect(component.hasHiddenContent()).toBe(true);
 
       component.setExpanded(true);
       const expanded = strip(component.render(100).join('\n'));
-      expect(expanded).toContain('session expiry');
+      expect(expanded).toContain(`${NOTIFY_USER_MARK} Login module is clean.`);
+      expect(expanded).toContain('  The bug must be in session expiry.');
       expect(expanded).not.toContain('Update shown');
       expect(component.hasHiddenContent()).toBe(true);
+    });
+
+    it('renders the Update badge with a primary background and white text', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify_brand', name: 'NotifyUser', args: { message } },
+        { tool_call_id: 'call_notify_brand', output: 'Update shown to the user.', is_error: false },
+      );
+
+      const output = component.render(100).join('\n');
+      const expectedMark = chalk.bgHex(darkColors.primary)(chalk.hex('#FFFFFF')(NOTIFY_USER_MARK));
+      expect(output).toContain(expectedMark);
     });
 
     it('uses the title as the header and keeps the message behind ctrl+o', () => {
@@ -441,14 +453,259 @@ describe('ToolCallComponent', () => {
 
       const collapsed = component.render(100).map(strip).filter((line) => line.trim().length > 0);
       expect(collapsed).toHaveLength(1);
-      expect(collapsed[0]).toContain('Sent you an update');
-      expect(collapsed[0]).toContain('Root cause found');
+      expect(collapsed[0]).toBe(`${NOTIFY_USER_MARK} Root cause found`);
+      expect(collapsed[0]).not.toContain('Sent you an update');
       expect(collapsed[0]).not.toContain('Login module is clean.');
 
       component.setExpanded(true);
       const expanded = strip(component.render(100).join('\n'));
       expect(expanded).toContain('Login module is clean.');
       expect(expanded).toContain('session expiry');
+    });
+
+    it('uses the first non-empty message line as a plain-text title fallback', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_fallback',
+          name: 'NotifyUser',
+          args: { message: '\n- **Root cause found**\n\nDetails' },
+        },
+        {
+          tool_call_id: 'call_notify_fallback',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+      );
+
+      const rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause found`]);
+    });
+
+    it('wraps an expanded title using each row\'s own available width', () => {
+      const title = 'x'.repeat(114);
+      const component = new ToolCallComponent(
+        { id: 'call_notify_wrap', name: 'NotifyUser', args: { title, message: 'Body' } },
+        {
+          tool_call_id: 'call_notify_wrap',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+      );
+
+      const collapsed = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      expect(collapsed).toHaveLength(1);
+      expect(collapsed[0]).toContain('…');
+      expect(visibleWidth(collapsed[0]!)).toBeLessThanOrEqual(60);
+
+      component.setExpanded(true);
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      const titleRows = rows.filter((line) => line.includes('x'));
+      expect(titleRows).toHaveLength(3);
+      expect(titleRows[0]!.replace(`${NOTIFY_USER_MARK} `, '')).toHaveLength(51);
+      expect(titleRows[1]).toBe(`  ${'x'.repeat(58)}`);
+      expect(titleRows[2]).toBe(`  ${'x'.repeat(5)}`);
+      expect(rows.at(-1)).toBe('  Body');
+      for (const row of rows) expect(visibleWidth(row)).toBeLessThanOrEqual(60);
+    });
+
+    it('aligns Chinese title continuations and the body with tool output', () => {
+      const title = '找到登录状态在页面刷新后失效的根因，并确认 cookie 写回修复不会影响现有会话';
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_cjk',
+          name: 'NotifyUser',
+          args: { title, message: 'refreshSession() 写回 cookie。' },
+        },
+        {
+          tool_call_id: 'call_notify_cjk',
+          output: 'Update shown to the user.',
+          is_error: false,
+        },
+      );
+      component.setExpanded(true);
+
+      const rows = component.render(60).map(strip).filter((line) => line.trim().length > 0);
+      const titleStart = rows.findIndex((line) => line.includes('找到登录状态'));
+      const bodyStart = rows.findIndex((line) => line.includes('refreshSession()'));
+      expect(titleStart).toBeGreaterThanOrEqual(0);
+      expect(bodyStart).toBeGreaterThan(titleStart + 1);
+      for (const row of rows.slice(titleStart + 1, bodyStart + 1)) {
+        expect(row.search(/\S/)).toBe(2);
+      }
+      expect(rows.join('').replaceAll(/\s/g, '')).toContain(title.replaceAll(/\s/g, ''));
+      for (const width of [1, 2, 4, 10, 24, 48]) {
+        for (const row of component.render(width)) {
+          expect(visibleWidth(row)).toBeLessThanOrEqual(width);
+        }
+      }
+    });
+
+    it('renders the whole body in tool-output dim', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        const component = new ToolCallComponent(
+          {
+            id: 'call_notify_color',
+            name: 'NotifyUser',
+            args: { title: 'Root cause found', message: '`refreshSession()` returns a new token.' },
+          },
+          {
+            tool_call_id: 'call_notify_color',
+            output: 'Update shown to the user.',
+            is_error: false,
+          },
+        );
+
+        component.setExpanded(true);
+        const body = component
+          .render(100)
+          .find((line) => line.includes('refreshSession()'));
+        expect(body).toBe(chalk.dim('  refreshSession() returns a new token.'));
+      } finally {
+        chalk.level = previousLevel;
+      }
+    });
+
+    it('uses tool-output dim for the message while it streams', () => {
+      const previousLevel = chalk.level;
+      chalk.level = 3;
+      try {
+        const component = new ToolCallComponent(
+          {
+            id: 'call_notify_stream_color',
+            name: 'NotifyUser',
+            args: {},
+            streamingArguments:
+              '{"title":"Root cause found","message":"`refreshSession()` returns a new token.',
+          },
+          undefined,
+        );
+        component.setExpanded(true);
+
+        const body = component
+          .render(100)
+          .find((line) => line.includes('refreshSession()'));
+        expect(body).toBe(chalk.dim('  refreshSession() returns a new token.'));
+      } finally {
+        chalk.level = previousLevel;
+      }
+    });
+
+    it.each([false, true])('preserves Markdown link targets while dimming, streaming: %s', (streaming) => {
+      setCapabilities({ images: null, trueColor: true, hyperlinks: true });
+      try {
+        const component = new ToolCallComponent(
+          streaming
+            ? {
+                id: 'call_notify_link_stream',
+                name: 'NotifyUser',
+                args: {},
+                streamingArguments: '{"message":"[logs](https://example.test)"}',
+              }
+            : {
+                id: 'call_notify_link',
+                name: 'NotifyUser',
+                args: { message: '[logs](https://example.test)' },
+              },
+          streaming
+            ? undefined
+            : {
+                tool_call_id: 'call_notify_link',
+                output: 'Update shown to the user.',
+                is_error: false,
+              },
+        );
+        component.setExpanded(true);
+
+        const output = component.render(100).join('\n');
+        expect(output).toContain(`${ESC}]8;;https://example.test${ESC}\\`);
+        expect(output).toContain(`${ESC}]8;;${ESC}\\`);
+      } finally {
+        resetCapabilitiesCache();
+      }
+    });
+
+    it('keeps a failed delivery on the existing error card', () => {
+      const component = new ToolCallComponent(
+        { id: 'call_notify_error', name: 'NotifyUser', args: { title: 'Failed', message } },
+        { tool_call_id: 'call_notify_error', output: 'Delivery failed.', is_error: true },
+      );
+
+      const rendered = strip(component.render(100).join('\n'));
+      expect(rendered).toContain('Could not send you an update');
+      expect(rendered).toContain('Delivery failed.');
+      expect(rendered).not.toContain(`${NOTIFY_USER_MARK} `);
+    });
+
+    it('streams the collapsed title and the expanded message before delivery', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_transition',
+          name: 'NotifyUser',
+          args: {},
+          streamingArguments: '{"title":"Root c',
+        },
+        undefined,
+      );
+      let rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root c`]);
+      expect(component.hasHiddenContent()).toBe(false);
+
+      component.updateToolCall({
+        id: 'call_notify_transition',
+        name: 'NotifyUser',
+        args: { title: 'Root cause' },
+        streamingArguments: '{"title":"Root cause","message":"Login module is cl',
+      });
+      rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
+      expect(component.hasHiddenContent()).toBe(true);
+
+      component.setExpanded(true);
+      rows = component
+        .render(100)
+        .map(strip)
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.trimEnd());
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`, '  Login module is cl']);
+      expect(rows.join('\n')).not.toContain('sending');
+      component.setExpanded(false);
+
+      component.updateToolCall({
+        id: 'call_notify_transition',
+        name: 'NotifyUser',
+        args: { title: 'Root cause', message },
+        streamingArguments: undefined,
+      });
+      expect(component.hasHiddenContent()).toBe(true);
+      component.setResult({
+        tool_call_id: 'call_notify_transition',
+        output: 'Update shown to the user.',
+        is_error: false,
+      });
+      rows = component.render(100).map(strip).filter((line) => line.trim().length > 0);
+      expect(rows).toEqual([`${NOTIFY_USER_MARK} Root cause`]);
+      expect(component.hasHiddenContent()).toBe(true);
+    });
+
+    it('keeps the collapsed card to one row while a long title and message stream', () => {
+      const component = new ToolCallComponent(
+        {
+          id: 'call_notify_stream_narrow',
+          name: 'NotifyUser',
+          args: {},
+          streamingArguments: `{"title":"${'x'.repeat(100)}","message":"Streaming body`,
+        },
+        undefined,
+      );
+
+      for (const width of [20, 40, 60]) {
+        const rows = component.render(width).map(strip).filter((line) => line.trim().length > 0);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toContain(NOTIFY_USER_MARK);
+        expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(width);
+      }
     });
 
     it('renders historical calls as ordinary tool records when disabled', () => {
@@ -459,16 +716,22 @@ describe('ToolCallComponent', () => {
       );
       const output = strip(component.render(100).join('\n'));
       expect(output).toContain('Used NotifyUser');
+      expect(output).not.toContain(`${NOTIFY_USER_MARK} `);
       expect(output).not.toContain('Sent you an update');
       expect(output).toContain('Update shown to the user.');
     });
 
-    it('labels the in-flight call as sending', () => {
+    it('shows only the Update badge before streamed content is available', () => {
       const component = new ToolCallComponent(
         { id: 'call_notify_live', name: 'NotifyUser', args: {}, streamingArguments: '{"mess' },
         undefined,
       );
-      expect(strip(component.render(100).join('\n'))).toContain('Sending you an update');
+      const rows = component
+        .render(100)
+        .map(strip)
+        .filter((line) => line.trim().length > 0)
+        .map((line) => line.trimEnd());
+      expect(rows).toEqual([NOTIFY_USER_MARK.trimEnd()]);
       expect(component.hasHiddenContent()).toBe(false);
     });
 
@@ -483,6 +746,7 @@ describe('ToolCallComponent', () => {
         component.setExpanded(expanded);
         const rendered = strip(component.render(150).join('\n'));
         expect(rendered).not.toContain('Sent you an update');
+        expect(rendered).not.toContain(`${NOTIFY_USER_MARK} `);
         expect(rendered).toContain(output);
         if (enabled) expect(rendered).toContain('Update not displayed');
       }
@@ -495,6 +759,7 @@ describe('ToolCallComponent', () => {
       );
       const rendered = strip(component.render(150).join('\n'));
       expect(rendered).not.toContain('Sent you an update');
+      expect(rendered).not.toContain(`${NOTIFY_USER_MARK} `);
       expect(rendered).toContain('An unrecognized result.');
     });
 
@@ -513,6 +778,7 @@ describe('ToolCallComponent', () => {
       expect(out).toContain('Update cut off');
       expect(out).not.toContain('Sending you an update');
       expect(out).toContain('call never executed');
+      expect(out).not.toContain(`${NOTIFY_USER_MARK} `);
       expect(component.hasHiddenContent()).toBe(false);
     });
   });
@@ -547,7 +813,8 @@ describe('ToolCallComponent', () => {
       const rows = component.render(50).map(strip).filter((line) => line.trim().length > 0);
       expect(rows).toHaveLength(1);
       expect(visibleWidth(rows[0]!)).toBeLessThanOrEqual(50);
-      expect(rows[0]).toContain('Sent you an update');
+      expect(rows[0]).toContain(NOTIFY_USER_MARK);
+      expect(rows[0]).toContain('…');
       expect(component.hasHiddenContent()).toBe(true);
     });
 

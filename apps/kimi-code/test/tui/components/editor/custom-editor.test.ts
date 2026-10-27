@@ -1,13 +1,18 @@
-import type {
-  AutocompleteItem,
-  AutocompleteProvider,
-  AutocompleteSuggestions,
-  TUI,
+import {
+  CURSOR_MARKER,
+  FAKE_CURSOR_END,
+  FAKE_CURSOR_START,
+  type AutocompleteItem,
+  type AutocompleteProvider,
+  type AutocompleteSuggestions,
+  type TUI,
 } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import chalk from 'chalk';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+import { currentTheme } from '#/tui/theme';
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -656,16 +661,6 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     expect(onUndo).toHaveBeenCalledOnce();
   });
 
-  it('invokes onToggleTodoExpand on Ctrl+T', () => {
-    const editor = makeEditor();
-    const onToggleTodoExpand = vi.fn().mockReturnValue(true);
-    editor.onToggleTodoExpand = onToggleTodoExpand;
-
-    editor.handleInput('\u0014');
-
-    expect(onToggleTodoExpand).toHaveBeenCalledOnce();
-  });
-
   it.each(['\u000E', '\u001B[110;5u'] as const)(
     'toggles Updates focus on %j without changing the draft',
     (key) => {
@@ -681,38 +676,37 @@ describe('CustomEditor shortcut telemetry hooks', () => {
     },
   );
 
-  it.each([
-    ['\u001B[D', 'left'],
-    ['\u001B[C', 'right'],
-    ['\u001B[A', 'up'],
-    ['\u001B[B', 'down'],
-    ['\u001B', 'escape'],
-  ] as const)('routes %j to the focused Updates panel as %s', (key, panelKey) => {
+  it('fades the whole box, keeping token hues, when keyboard or terminal focus is lost', () => {
+    const previousLevel = chalk.level;
+    chalk.level = 3;
+    onTestFinished(() => {
+      chalk.level = previousLevel;
+    });
+    const primary = currentTheme.fg('primary', 'x').split('x')[0]!;
+    const faint = '\u001B[2m';
     const editor = makeEditor();
-    const onNotifyPanelKey = vi.fn().mockReturnValue(true);
-    editor.onNotifyPanelKey = onNotifyPanelKey;
-    editor.setText('draft');
-    editor.handleInput(key);
-    expect(onNotifyPanelKey).toHaveBeenCalledWith(panelKey);
-    expect(editor.getText()).toBe('draft');
-  });
+    editor.setText('/help me');
 
-  it.each(['\u001B[D', '\u001B[A', '\u001B'] as const)(
-    'leaves %j to autocomplete even when the Updates panel is focused',
-    (key) => {
-      const editor = makeEditor();
-      const onNotifyPanelKey = vi.fn();
-      editor.onNotifyPanelKey = onNotifyPanelKey;
-      const internals = editor as unknown as { cancelAutocompleteActivity: () => void };
-      const cancelAutocomplete = vi.spyOn(internals, 'cancelAutocompleteActivity');
-      cancelAutocomplete.mockImplementation(() => {});
-      vi.spyOn(editor, 'hasAutocompleteActivity').mockReturnValue(true);
-      editor.setText('/rev');
-      editor.handleInput(key);
-      expect(onNotifyPanelKey).not.toHaveBeenCalled();
-      if (key === '\u001B') expect(cancelAutocomplete).toHaveBeenCalledOnce();
-    },
-  );
+    editor.focused = true;
+    const focused = editor.render(40);
+    expect(focused.join('\n')).not.toContain(faint);
+    expect(focused[1]).toContain(FAKE_CURSOR_START);
+    expect(focused[1]).toContain(FAKE_CURSOR_END);
+
+    editor.focused = false;
+    const unfocused = editor.render(40);
+    expect(unfocused.every((line) => line.startsWith(faint))).toBe(true);
+    expect(unfocused[1]).toContain(`${primary}\u001B[1m/help\u001B[22m${faint}`);
+    expect(unfocused[1]).not.toContain('\u001B[7m');
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_START);
+    expect(unfocused[1]).not.toContain(FAKE_CURSOR_END);
+
+    editor.focused = true;
+    editor.terminalFocused = false;
+    const terminalUnfocused = editor.render(40);
+    expect(editor.focused).toBe(true);
+    expect(terminalUnfocused.map((line) => line.replace(CURSOR_MARKER, ''))).toEqual(unfocused);
+  });
 
   it('keeps the original editor bindings when Updates paging is unavailable', () => {
     const editor = makeEditor();

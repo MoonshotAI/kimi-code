@@ -891,6 +891,12 @@ describe('AgentSwarmTool', () => {
       isError: true,
       output: expect.stringContaining('Swarm mode is off, so AgentSwarm did not run'),
     });
+    expect(result.output).toContain(
+      'If the user asked for a swarm, tell them swarm mode is off and that they can turn it on with /swarm, or run /swarm <task>',
+    );
+    expect(result.output).toContain(
+      'Otherwise, continue without AgentSwarm and do not mention swarm mode.',
+    );
     expect(swarmMode.enter).not.toHaveBeenCalled();
     expect(host.swarmService.run).not.toHaveBeenCalled();
   });

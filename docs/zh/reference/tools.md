@@ -93,7 +93,7 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 | `NotifyUser` | 自动放行 | 在轮次进行中向用户展示一条简短的进展更新 |
 | `Skill` | 自动放行 | 调用已注册的 inline Skill |
 
-**`Agent`** 将子任务委托给 subagent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）和 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`：池中别名，或 `"primary"` 表示调用方自己运行的模型；resume 时无效）。未传入时 subagent 绑定池的 `default_model`；未配置模型池时，subagent 一律继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待 subagent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到 main agent。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个 subagent 显示运行、等待、完成或失败状态以及已耗时长。subagent 体系细节见 [Agent 与 subagent](../customization/agents.md)。
+**`Agent`** 将子任务委托给 subagent 执行。必填参数：`prompt`（完整任务描述）和 `description`（3–5 个词的简短说明）。可选参数：`subagent_type`（默认 `coder`）、`resume`（恢复已有 Agent 的 ID，与 `subagent_type` 互斥）、`run_in_background`（默认 false）和 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`：池中别名，或 `"primary"` 表示调用方自己运行的模型；resume 时无效）。未传入时 subagent 绑定池的 `default_model`；未配置模型池时，subagent 一律继承调用方模型。Agent 任务默认 2 小时超时，可通过 `config.toml` 的 `[subagent] timeout_ms`（`0` = 无超时，或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时。前台模式下父 Agent 等待 subagent 完成再继续；后台模式立即返回任务 ID，完成时通过合成 User 消息自动回到 main agent。subagent 在完成前被停止、超时或失败时，父 Agent 仍会收到它在这次运行中已写出的文字，并标注为未完成。多个前台 `Agent` 调用在同一步运行时，TUI 会合并展示，并为每个 subagent 显示运行、等待、完成或失败状态以及已耗时长。subagent 体系细节见 [Agent 与 subagent](../customization/agents.md)。
 
 **`AgentSwarm`** 可以从共享的 `prompt_template` 和 `items` 数组启动 subagent，也可以通过 `resume_agent_ids` 恢复已有 subagent，或在一次调用中同时使用两者。本工具仅在 swarm mode 开启时运行，且 swarm mode 只能由你手动开启（例如使用 `/swarm`）；swarm mode 未开启时，调用会被拒绝，不会启动任何 subagent。模板必须包含 `{{item}}` 占位符；每个 item 会替换该占位符，并启动一个新的 subagent。传入 `subagent_type` 可以指定整个 swarm 中所有新启动的 subagent 使用的 profile；省略时默认使用 `coder`。传入 `model`（在配置 [subagent 模型池](../configuration/config-files.md#subagent-模型池) 后可用——`[secondary_model.models]` 表或仅一行 `default_model`）可以让新启动的 subagent 运行在池中别名指定的模型或调用方自己的模型（`"primary"`）上。未传入时新启动的 subagent 绑定池的 `default_model`；未配置模型池时则继承调用方模型。恢复的 subagent 保持其原有模型。不传 `resume_agent_ids` 时，本工具要求至少 2 个 item；传入 `resume_agent_ids` 时，可以恢复 1 个或多个已有 subagent。本工具最多支持 128 个 subagent，会等待全部 subagent 完成，并返回聚合报告。每个 subagent 默认 2 小时超时，可通过 `config.toml` 的 [`[swarm] timeout_ms`](../configuration/config-files.md#swarm)（`0` = 无超时，或 `KIMI_CODE_SWARM_TIMEOUT_MS` 环境变量）配置，且在 print 模式（`kimi -p`）下默认无超时；超时的 subagent 会被中止，并在聚合报告中标记为失败。在 TUI 中，前台 swarm 会在输入框上方显示实时 `Agent swarm` 进度面板。若一次模型响应调用 `AgentSwarm`，该调用必须是该响应中的唯一工具调用；如需运行多个 swarm，应先调用一个 `AgentSwarm` 并等待结果，再调用下一个，若单个模板可以覆盖这些工作，也可以合并为一个 swarm。swarm mode 开启期间，`AgentSwarm` 会自动放行。权限规则只能按工具名 `AgentSwarm` 匹配，不支持 `AgentSwarm(swarm)` 这类参数模式。默认情况下，本工具会逐步提升并发且不设上限（立即启动 5 个 subagent，之后每 700 毫秒再启动 1 个）；将 `KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY` 设为正整数可限制该阶段同时运行的 subagent 数量，不设置则表示不限制。若设置为非正整数的值，本次 AgentSwarm 调用会立即失败。
 
@@ -101,7 +101,7 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 
 **`NotifyUser`** 让 main agent 和 subagent 在不结束本轮的情况下发布进展更新。每条更新包含 `title`（可选，一行简短标题，在空间有限的地方单独显示）和 `message`（用轻量 Markdown 写的详细内容）。只有工具成功返回并确认已展示后，更新才会显示；失败、中断或被关闭开关抑制的调用不会显示，对话中的工具调用记录会保留实际展示结果。重要发现仍须写入最终回复或 subagent 的最终汇报。
 
-在 TUI 中，更新显示在输入框上方的 `Updates` 面板里，每个来源一个标签页：main agent 在最前，之后是每个发布过更新的 subagent，以其 Agent 类型命名。按 `Ctrl-N` 聚焦面板，用 `←`/`→` 切换标签页，用 `↑`/`↓` 翻阅该标签页的更新，按 `Esc` 退出。未聚焦时，面板始终跟随最新一条更新。轮次结束后，面板折叠为一行摘要，显示当前更新的标题；下一次 main agent 轮次开始时清空。新会话、`/clear` 和重新打开会话时，面板从空白开始。
+在 TUI 中，更新按 Agent 分组显示在输入框上方的 `Updates` 面板里。按 `Ctrl-N`（全屏模式下也可以单击面板）浏览更新。面板在轮次结束后折叠，并在下一次 main agent 轮次开始时重置。
 
 在桌面端和 Web UI（`kimi web`）中，每条更新以进展行的形式出现在对话里，显示其标题，点击可展开阅读正文。
 
@@ -126,7 +126,7 @@ Plan 模式是一种受约束的工作状态，只能由用户打开（`Shift-Ta
 
 **`TaskOutput`** 根据 `task_id` 返回任务状态与输出。内联预览最多包含最近 32 KB 的内容；完整日志保存在磁盘上，工具会一并返回 `output_path` 并提示通过 `Read` 分页读取。该调用始终是非阻塞的——立即返回当前快照，任务完成会通过自动通知送达。
 
-**`TaskStop`** 接受 `task_id` 和可选的 `reason`（默认 `Stopped by TaskStop`）。对已处于终止状态的任务也能安全调用。
+**`TaskStop`** 接受 `task_id` 和可选的 `reason`（默认 `Stopped by TaskStop`）。对已处于终止状态的任务也能安全调用。停止的是 subagent 任务时，结果还会附上它停止前已写出的文字（标注为未完成）和它的 agent ID，可通过 `Agent` 继续这项工作。
 
 **`WaitFor`** 把当前轮次挂起，直到后台任务结束、超时或有新输入注入当前轮次。参数：`timeout`（必填，单位秒，上限 90）和可选的 `task_id`。不传 `task_id` 时，调用时刻运行中的任意一个后台任务结束即返回；当前没有运行中的后台任务时立即返回。超时不是错误——结果会列出仍在运行的任务，Agent 可以再次等待，也可以先处理其他工作。新消息会提前结束本次等待。
 
