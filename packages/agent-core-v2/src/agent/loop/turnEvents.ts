@@ -37,6 +37,7 @@ export interface TurnStartedPayload {
   readonly promptId?: string;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly transcriptPrompt?: string;
   readonly promptAttachments?: readonly TurnPromptAttachment[];
 }
 
@@ -238,7 +239,7 @@ export interface ToolCallDelta extends ToolCallDeltaPayload {}
 registerEvent2Class(TurnStepInterrupted);
 registerEvent2Class(TurnStepRetrying);
 
-export interface TurnStartedEvent extends Omit<TurnStartedPayload, 'agentId'> {
+export interface TurnStartedEvent extends Omit<TurnStartedPayload, 'agentId' | 'transcriptPrompt'> {
   readonly type: 'turn.started';
 }
 

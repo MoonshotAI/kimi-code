@@ -6,9 +6,9 @@
  * status event (mirrors kap-server's broadcaster bridge).
  * Run: pnpm exec vitest run test/session-event-wiring.test.ts
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import type { Event } from '#/index';
+import type { Event, TurnStartedEvent } from '#/index';
 import {
   IAgentLifecycleService,
   IAgentProfileService,
@@ -209,7 +209,7 @@ describe('SessionEventWiring status snapshot fold', () => {
     expect(events[0]).not.toHaveProperty('model');
   });
 
-  it('strips the internal promptAttachments field from turn.started', () => {
+  it('strips the internal prompt fields from turn.started', () => {
     const sub = new FakeAgentHandle('agent-1');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
@@ -222,6 +222,7 @@ describe('SessionEventWiring status snapshot fold', () => {
         turnId: 1,
         origin: { kind: 'user' },
         prompt: 'describe this',
+        transcriptPrompt: '<notification>internal only</notification>',
         promptAttachments: [{ kind: 'image', fileId: 'f_1' }],
       });
     } finally {
@@ -237,5 +238,7 @@ describe('SessionEventWiring status snapshot fold', () => {
       prompt: 'describe this',
     });
     expect(events[0]).not.toHaveProperty('promptAttachments');
+    expect(events[0]).not.toHaveProperty('transcriptPrompt');
+    expectTypeOf<Extract<'transcriptPrompt', keyof TurnStartedEvent>>().toEqualTypeOf<never>();
   });
 });

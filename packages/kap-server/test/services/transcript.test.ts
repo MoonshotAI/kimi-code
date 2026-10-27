@@ -1931,26 +1931,46 @@ describe('AgentTranscriptProjector', () => {
     expect(steps[1]!.frames.map((f) => f.kind === 'text' && f.taskId)).toEqual(['task_1', 'task_2']);
   });
 
-  it('drops a task notification that is the turn prompt itself', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+  for (const promptField of ['prompt', 'transcriptPrompt'] as const) {
+    it(`drops duplicate task notifications when ${promptField} is present, including after heal`, () => {
+      const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+      const tx = new AgentTranscript('main');
+      const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+      const notification = '<notification id="task:task_1:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_1">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n</notification>';
 
-    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_1' } }));
-    feed(
-      ev({
-        type: 'task.notified',
-        notificationType: 'task.completed',
-        title: 'Background agent completed',
-        body: 'inspect done.',
-        severity: 'info',
-        sourceKind: 'background_task',
-        sourceId: 'task_1',
-      }),
-    );
-    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
-    expect(turnOps('t1', tx.getItems()).steps[0]!.frames).toHaveLength(0);
-  });
+      feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'task', taskId: 'task_1' }, [promptField]: notification }));
+      feed(
+        ev({
+          type: 'task.notified',
+          notificationType: 'task.completed',
+          title: 'Background agent completed',
+          body: 'inspect done.',
+          severity: 'info',
+          sourceKind: 'background_task',
+          sourceId: 'task_1',
+        }),
+      );
+      feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+      const live = turnOps('t1', tx.getItems());
+      expect(live.prompt).toBe(notification);
+      expect(live.steps[0]!.frames).toHaveLength(0);
+
+      const coldTurn: TranscriptTurn = {
+        ...live,
+        state: 'completed',
+        steps: [{
+          ...live.steps[0]!,
+          state: 'completed',
+          frames: [{ kind: 'text', frameId: 'cold-answer', role: 'assistant', text: 'ack' }],
+        }],
+      };
+      tx.apply(healTurnOps(coldTurn, live));
+      const healed = turnOps('t1', tx.getItems());
+      expect(healed.prompt).toBe(notification);
+      expect(healed.steps[0]!.frames).toHaveLength(1);
+      expect(healed.steps[0]!.frames[0]).toMatchObject({ kind: 'text', role: 'assistant', text: 'ack' });
+    });
+  }
 
   it('keeps a different task’s notification in a task-origin turn', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);

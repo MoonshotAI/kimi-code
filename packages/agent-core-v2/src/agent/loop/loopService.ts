@@ -1280,18 +1280,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }),
     );
     turn.state = 'running';
+    const promptText =
+      isDisplayablePromptOrigin(prompt.origin) || prompt.origin.kind === 'task'
+        ? turnPromptText(
+            prompt.message.content.filter((part) => !isUserPromptSubmitHookPart(part)),
+            prompt.origin,
+          )
+        : undefined;
     void this.dispatcher.dispatch(
       new TurnStarted({
         agentId: this.scopeContext.agentId,
         turnId: id,
         promptId: prompt.promptId,
         origin: prompt.origin,
-        prompt: isDisplayablePromptOrigin(prompt.origin)
-          ? turnPromptText(
-              prompt.message.content.filter((part) => !isUserPromptSubmitHookPart(part)),
-              prompt.origin,
-            )
-          : undefined,
+        prompt: isDisplayablePromptOrigin(prompt.origin) ? promptText : undefined,
+        transcriptPrompt: prompt.origin.kind === 'task' ? promptText : undefined,
         promptAttachments: turnPromptAttachments(prompt.message.content, prompt.origin),
       }),
     );

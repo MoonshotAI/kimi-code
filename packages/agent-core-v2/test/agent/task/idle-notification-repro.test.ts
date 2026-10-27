@@ -67,6 +67,10 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(ctx.llmCalls.length).toBe(0);
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
+      const turnStarted: TurnStarted[] = [];
+      const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
+        turnStarted.push(event);
+      });
       const turnEnd = ctx.untilTurnEnd();
       const taskId = background.registerTask(agentTask(
         Promise.resolve({ result: 'background agent finished its job' }),
@@ -91,6 +95,13 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(flatHistoryText).toContain('idle-state repro completed.');
       expect(flatHistoryText).toContain('<output-file');
       expect(flatHistoryText).not.toContain('background agent finished its job');
+      const notificationTurn = turnStarted.find((event) => event.origin?.kind === 'task');
+      expect(notificationTurn?.prompt).toBeUndefined();
+      expect(notificationTurn?.transcriptPrompt).toContain('<notification');
+      expect(notificationTurn?.transcriptPrompt).toContain(taskId);
+      expect(notificationTurn?.transcriptPrompt).toContain('<output-file');
+      expect(notificationTurn?.transcriptPrompt).toContain('</notification>');
+      subscription.dispose();
     });
 
     it('BUSY: completed bg agent during an active turn is flushed into an LLM call', async () => {
