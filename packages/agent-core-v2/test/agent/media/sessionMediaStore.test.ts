@@ -17,7 +17,7 @@ import { lowerMessage as lowerOpenAI } from '#human/llm/requester/bases/openai/l
 import { lowerMessage as lowerAnthropic } from '#human/llm/requester/bases/anthropic/lower';
 import { providerImagePolicy } from '#human/llm/media/image-formats';
 import type { ToolMessage } from '#human/llm/message';
-import { degradeOlderMediaParts } from '#/agent/contextProjector/mediaProjection';
+import { degradeLeadingMediaParts } from '#/agent/contextProjector/mediaProjection';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import type { Message } from '#/llm-adapter/contract/message';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
@@ -234,7 +234,7 @@ describe('SessionMediaStoreService', () => {
         { type: 'image_url', imageUrl: { url: 'data:image/png;base64,bmV3Mg==' } },
       ] },
     ];
-    const degraded = degradeOlderMediaParts(messages, 2)[0]!;
+    const degraded = degradeLeadingMediaParts(messages, 1)[0]!;
     const text = degraded.content.map((part) => part.type === 'text' ? part.text : '').join('\n');
     expect(degraded.content.some((part) => part.type === 'image_url')).toBe(false);
     expect(text).not.toContain('Image compressed');
