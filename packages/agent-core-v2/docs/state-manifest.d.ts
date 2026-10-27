@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 7 keys · Session: 9 keys · Agent: 73 keys)
+// Index (App: 0 keys · Workspace: 7 keys · Session: 9 keys · Agent: 74 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -75,6 +75,7 @@
 //     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
+//     mcp.failures                                    src/agent/mcp/mcpFailureOps.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.budgetDropped                             src/agent/media/mediaResolverService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
@@ -1059,6 +1060,11 @@ export interface AgentStateSnapshot {
   // replayable · durable — folds: McpToolsDiscovered
   'mcp.discovery': /* McpDiscoveryState — packages/agent-core-v2/src/agent/mcp/mcpDiscoveryOps.ts */ {
     readonly seen: readonly string[];
+  };
+  // src/agent/mcp/mcpFailureOps.ts
+  // replayable · durable — folds: McpServerFailed, McpServerFailureResolved
+  'mcp.failures': /* McpFailureState — packages/agent-core-v2/src/agent/mcp/mcpFailureOps.ts */ {
+    readonly open: readonly string[];
   };
   // src/agent/mcp/mcpService.ts
   'mcp.discoveryWritesReady': boolean;

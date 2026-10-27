@@ -109,6 +109,11 @@ export function kimiCodeCdnLatestUrl(): string {
 export function kimiCodeCdnLatestJsonUrl(): string {
   return `${kimiCodeCdnBase()}/latest.json`;
 }
+// Dev channel pointer, same wire shape as `latest.json`. Only the selected
+// dev channel reads it; stable never requests it.
+export function kimiCodeCdnDevChannelUrl(): string {
+  return `${kimiCodeCdnBase()}/channels/dev.json`;
+}
 // Per-release native artifacts: `/binaries/<version>/manifest.json` +
 // `/binaries/<version>/kimi-code-<target>[.exe]` — the bare platform binary
 // (same layout install.ps1 consumes).

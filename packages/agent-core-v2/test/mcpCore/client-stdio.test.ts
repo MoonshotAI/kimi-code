@@ -263,7 +263,7 @@ describe('StdioMcpClient', () => {
     }
   }, 15000);
 
-  it('notifies an unexpected-close listener when the child exits after connect', async () => {
+  it('notifies a session-evidence listener with hard evidence when the child exits after connect', async () => {
     const banner = `kimi-test-crash-${Date.now()}`;
     const client = createClient({
       transport: 'stdio',
@@ -271,9 +271,13 @@ describe('StdioMcpClient', () => {
       args: [crashAfterConnectFixture],
       env: { KIMI_TEST_MCP_EXIT_AFTER_MS: '50', KIMI_TEST_MCP_STDERR: banner },
     });
-    const closes: Array<{ stderr?: string; error?: string }> = [];
-    client.onUnexpectedClose((reason) => {
-      closes.push({ stderr: reason.stderr, error: reason.error?.message });
+    const closes: Array<{ kind?: string; stderr?: string; error?: string }> = [];
+    client.onSessionEvidence((evidence) => {
+      closes.push({
+        kind: evidence.kind,
+        stderr: evidence.reason.stderr,
+        error: evidence.reason.error?.message,
+      });
     });
     try {
       await client.connect();
@@ -282,6 +286,7 @@ describe('StdioMcpClient', () => {
         await new Promise((r) => setTimeout(r, 25));
       }
       expect(closes).toHaveLength(1);
+      expect(closes[0]?.kind).toBe('hard');
       expect(closes[0]?.stderr ?? '').toContain(banner);
     } finally {
       await client.close();
@@ -321,27 +326,28 @@ describe('StdioMcpClient', () => {
       }
       expect(transportConfirmedDead).toBe(true);
 
-      let received: { stderr?: string } | undefined;
+      let received: { kind?: string; stderr?: string } | undefined;
       let syncedOnRegister = false;
-      client.onUnexpectedClose((reason) => {
+      client.onSessionEvidence((evidence) => {
         syncedOnRegister = true;
-        received = { stderr: reason.stderr };
+        received = { kind: evidence.kind, stderr: evidence.reason.stderr };
       });
       expect(syncedOnRegister).toBe(true);
       expect(received).toBeDefined();
+      expect(received?.kind).toBe('hard');
     } finally {
       await client.close();
     }
   }, 15000);
 
-  it('does not fire unexpected-close when the caller closes the client itself', async () => {
+  it('does not fire session evidence when the caller closes the client itself', async () => {
     const client = createClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
     });
     const closes: number[] = [];
-    client.onUnexpectedClose(() => closes.push(Date.now()));
+    client.onSessionEvidence(() => closes.push(Date.now()));
     await client.connect();
     await client.close();
     await new Promise((r) => setTimeout(r, 100));
