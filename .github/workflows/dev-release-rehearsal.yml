@@ -1,0 +1,227 @@
+name: Dev Release Rehearsal
+run-name: Dev Release Rehearsal · ${{ github.event.pull_request.head.sha }}
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Rehearse production prepare/select
+    if: github.repository == 'MoonshotAI/kimi-code'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.select.outputs.skip }}
+      sha: ${{ steps.select.outputs.sha }}
+      rehearsal_version: ${{ steps.rehearsal.outputs.version }}
+      rehearsal_tag: ${{ steps.rehearsal.outputs.tag }}
+      dev_version: ${{ steps.version.outputs.version }}
+      dev_published_at: ${{ steps.version.outputs.published_at }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Resolve current main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          main_sha="$(gh api repos/MoonshotAI/kimi-code/commits/main --jq .sha)"
+          [[ "$main_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "MAIN_SHA=$main_sha" >> "$GITHUB_ENV"
+      - name: Exercise production select against real main CI
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          GITHUB_SHA="$MAIN_SHA" \
+          GITHUB_REF=refs/heads/main \
+          GITHUB_REPOSITORY=MoonshotAI/kimi-code \
+            node scripts/dev-release.mjs select
+      - name: Assert production main selection
+        run: |
+          test "${{ steps.select.outputs.skip }}" = "false"
+          test "${{ steps.select.outputs.sha }}" = "$MAIN_SHA"
+      - name: Verify non-main refs stay rejected
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          output="$(GITHUB_SHA="$MAIN_SHA" GITHUB_REF=refs/heads/rehearsal GITHUB_REPOSITORY=MoonshotAI/kimi-code node scripts/dev-release.mjs select 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ] || [[ "$output" != *"dev releases only from main"* ]]; then
+            echo "main-only gate did not reject the rehearsal ref" >&2
+            exit 1
+          fi
+      - name: Verify a SHA without green main CI stays rejected
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          output="$(GITHUB_SHA="${{ github.event.pull_request.head.sha }}" GITHUB_REF=refs/heads/main GITHUB_REPOSITORY=MoonshotAI/kimi-code node scripts/dev-release.mjs select 2>&1)"
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$status" -eq 0 ] || [[ "$output" != *"has not passed CI"* ]]; then
+            echo "CI gate did not reject the unpublished rehearsal SHA" >&2
+            exit 1
+          fi
+      - name: Exercise production dev version computation
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          GITHUB_RUN_NUMBER="900000${GITHUB_RUN_NUMBER}" node scripts/dev-release.mjs version
+      - name: Compute non-production rehearsal version
+        id: rehearsal
+        run: |
+          version="0.0.0-rehearsal.${GITHUB_RUN_NUMBER}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=@moonshot-ai/kimi-code@$version" >> "$GITHUB_OUTPUT"
+      - name: Exercise production dev record writer
+        env:
+          DEV_VERSION: ${{ steps.version.outputs.version }}
+          DEV_PUBLISHED_AT: ${{ steps.version.outputs.published_at }}
+        run: |
+          node scripts/dev-release.mjs record "$RUNNER_TEMP/dev-record"
+          node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.version !== process.env.DEV_VERSION || r.publishedAt !== process.env.DEV_PUBLISHED_AT || r.rollout.length !== 0) process.exit(1); console.log(r)' "$RUNNER_TEMP/dev-record/dev.json"
+
+  native:
+    name: Rehearse unsigned native artifacts
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false'
+    uses: ./.github/workflows/_native-build.yml
+    with:
+      upload-artifact-prefix: kimi-code-rehearsal
+      retention-days: 1
+      sign-macos: false
+      sign-windows: false
+      sha: ${{ github.event.pull_request.head.sha }}
+      version: ${{ needs.prepare.outputs.rehearsal_version }}
+
+  verify:
+    name: Verify 38 assets without publishing
+    needs: [prepare, native]
+    if: needs.prepare.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    env:
+      REHEARSAL_VERSION: ${{ needs.prepare.outputs.rehearsal_version }}
+      REHEARSAL_TAG: ${{ needs.prepare.outputs.rehearsal_tag }}
+      DEV_VERSION: ${{ needs.prepare.outputs.dev_version }}
+      DEV_PUBLISHED_AT: ${{ needs.prepare.outputs.dev_published_at }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Download native rehearsal artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-rehearsal-*
+          path: dist-dev
+          merge-multiple: true
+      - name: Produce native manifest and compressed assets
+        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-dev "$REHEARSAL_TAG"
+      - name: Write non-production channel record
+        run: |
+          node scripts/dev-release.mjs record "$RUNNER_TEMP/dev-record"
+          node --input-type=module - "$RUNNER_TEMP/dev-record/dev.json" <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const record = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (record.version !== process.env.DEV_VERSION || record.publishedAt !== process.env.DEV_PUBLISHED_AT) {
+            throw new Error('production record writer returned unexpected fields');
+          }
+          record.version = process.env.REHEARSAL_VERSION;
+          writeFileSync('dist-dev/dev.json', `${JSON.stringify(record, null, 2)}\n`);
+          NODE
+      - name: Verify release completeness and all hashes
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { createHash } from 'node:crypto';
+          import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { tmpdir } from 'node:os';
+          import { isCompleteDevRelease, requiredDevReleaseAssets } from './scripts/dev-release.mjs';
+
+          const actual = readdirSync('dist-dev').sort();
+          const expected = requiredDevReleaseAssets().sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`asset mismatch: ${JSON.stringify({ actual, expected })}`);
+          }
+          if (!isCompleteDevRelease({ isDraft: false, assets: actual.map((name) => ({ name })) })) {
+            throw new Error('production completeness predicate rejected the rehearsal assets');
+          }
+          const sha256 = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+          for (const name of actual) {
+            if (statSync(join('dist-dev', name)).size <= 0) throw new Error(`empty asset: ${name}`);
+          }
+          const sidecars = actual.filter((name) => name.endsWith('.sha256'));
+          if (sidecars.length !== 18) throw new Error(`expected 18 sidecars, got ${sidecars.length}`);
+          for (const sidecar of sidecars) {
+            const asset = sidecar.slice(0, -'.sha256'.length);
+            const [checksum, filename] = readFileSync(join('dist-dev', sidecar), 'utf8').trim().split(/\s+/, 2);
+            if (filename !== asset || checksum !== sha256(join('dist-dev', asset))) {
+              throw new Error(`sidecar mismatch: ${sidecar}`);
+            }
+          }
+          const manifest = JSON.parse(readFileSync('dist-dev/manifest.json', 'utf8'));
+          if (manifest.version !== process.env.REHEARSAL_VERSION || manifest.tag !== process.env.REHEARSAL_TAG) {
+            throw new Error('manifest version/tag mismatch');
+          }
+          const record = JSON.parse(readFileSync('dist-dev/dev.json', 'utf8'));
+          if (record.schemaVersion !== 1 || record.version !== process.env.REHEARSAL_VERSION ||
+              record.publishedAt !== process.env.DEV_PUBLISHED_AT || record.rollout.length !== 0) {
+            throw new Error('rehearsal channel record mismatch');
+          }
+          const targets = Object.keys(manifest.platforms).sort();
+          if (targets.length !== 6) throw new Error(`expected six platforms, got ${targets}`);
+          for (const target of targets) {
+            const entry = manifest.platforms[target];
+            const compressed = entry.compressed;
+            if (compressed.checksum !== sha256(join('dist-dev', compressed.filename))) {
+              throw new Error(`manifest compressed checksum mismatch: ${target}`);
+            }
+            const unpack = mkdtempSync(join(tmpdir(), 'dev-rehearsal-'));
+            try {
+              const archive = join('dist-dev', `kimi-code-${target}.zip`);
+              execFileSync('unzip', ['-q', '-o', archive, '-d', unpack]);
+              const executable = target.startsWith('win32-') ? 'kimi.exe' : 'kimi';
+              if (entry.checksum !== sha256(join(unpack, executable))) {
+                throw new Error(`manifest bare-binary checksum mismatch: ${target}`);
+              }
+            } finally {
+              rmSync(unpack, { recursive: true, force: true });
+            }
+          }
+          console.log(JSON.stringify({
+            version: process.env.REHEARSAL_VERSION,
+            assetCount: actual.length,
+            verifiedSha256Sidecars: sidecars.length,
+            verifiedBareBinaries: targets.length,
+            productionCompletenessPredicate: true,
+          }));
+          NODE
+      - name: Retain rehearsal evidence as an Actions artifact only
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-release-rehearsal-${{ github.run_number }}
+          retention-days: 1
+          if-no-files-found: error
+          path: dist-dev/*
