@@ -172,6 +172,7 @@ describe('AgentProfileService.applyProfile', () => {
         notifyAgentsMdChanges: async () => {},
         notifySkillChanges: async () => {},
         notifySubagentChanges: async () => {},
+        notifyWorkspaceDirsChanges: async () => {},
         seedBeliefs,
         mute: () => {},
         unmute: () => {},

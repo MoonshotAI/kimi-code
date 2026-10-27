@@ -13,6 +13,8 @@ export interface ChangeNotifierSnapshotState {
   readonly skillsHash?: string;
   readonly subagentNames?: readonly string[];
   readonly modelPool?: SubagentModelPoolSnapshot;
+  readonly workspacePrimaryByWorkspace?: Readonly<Record<string, string>>;
+  readonly workspaceAdditionalDirs?: readonly string[];
 }
 
 const subagentModelPoolSchema = z.object({
@@ -27,6 +29,8 @@ const changeNotifierSnapshotSchema = z.object({
   skillsHash: z.string().nullable(),
   subagentNames: z.array(z.string()).readonly().nullable(),
   modelPool: subagentModelPoolSchema.nullable().optional(),
+  workspacePrimaryByWorkspace: z.record(z.string(), z.string()).nullable().optional(),
+  workspaceAdditionalDirs: z.array(z.string()).readonly().nullable().optional(),
 });
 
 export class ChangeNotifierSnapshotEvent extends AgentEvent2<
@@ -43,6 +47,8 @@ export interface ChangeNotifierSnapshotEvent {
   readonly skillsHash: string | null;
   readonly subagentNames: readonly string[] | null;
   readonly modelPool?: SubagentModelPoolSnapshot | null;
+  readonly workspacePrimaryByWorkspace?: Readonly<Record<string, string>> | null;
+  readonly workspaceAdditionalDirs?: readonly string[] | null;
 }
 
 export const changeNotifierSnapshotKey = defineState(
@@ -51,12 +57,20 @@ export const changeNotifierSnapshotKey = defineState(
 )
   .replayable({ schema: z.custom<ChangeNotifierSnapshotState>() })
   .undoable()
-  .on(ContextClear, () => ({}))
-  .on(ContextApplyCompaction, () => ({}))
+  .on(ContextClear, (s) => ({
+    workspacePrimaryByWorkspace: s.workspacePrimaryByWorkspace,
+    workspaceAdditionalDirs: s.workspaceAdditionalDirs,
+  }))
+  .on(ContextApplyCompaction, (s) => ({
+    workspacePrimaryByWorkspace: s.workspacePrimaryByWorkspace,
+    workspaceAdditionalDirs: s.workspaceAdditionalDirs,
+  }))
   .on(ChangeNotifierSnapshotEvent, (_s, e) => ({
     agentsMdHash: e.agentsMdHash ?? undefined,
     agentsMdFiles: e.agentsMdFiles ?? undefined,
     skillsHash: e.skillsHash ?? undefined,
     subagentNames: e.subagentNames ?? undefined,
     modelPool: e.modelPool ?? undefined,
+    workspacePrimaryByWorkspace: e.workspacePrimaryByWorkspace ?? undefined,
+    workspaceAdditionalDirs: e.workspaceAdditionalDirs ?? undefined,
   }));

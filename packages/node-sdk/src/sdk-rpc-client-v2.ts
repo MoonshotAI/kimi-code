@@ -1708,6 +1708,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
             staleNotifier.notifyAgentsMdChanges(),
             staleNotifier.notifySkillChanges(),
             staleNotifier.notifySubagentChanges({}),
+            staleNotifier.notifyWorkspaceDirsChanges(),
           ]).catch(() => undefined);
         }
         throw error;
@@ -1724,6 +1725,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
         await notifier.notifyAgentsMdChanges();
         await notifier.notifySkillChanges();
         await notifier.notifySubagentChanges({ previousSubagentNames, previousModelPool });
+        await notifier.notifyWorkspaceDirsChanges();
       }
       this.wireSession(handle);
       return this.resumedSessionSummary(handle);
@@ -1734,6 +1736,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (workspaceId === undefined) return;
     const target = this.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
     if (target === undefined) return;
+    await target.program.dirs.reload();
     await target.program.instructions.reload();
     await target.program.skills.reload();
     await target.program.agentProfiles.reload().catch(() => undefined);

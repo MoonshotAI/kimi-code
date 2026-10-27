@@ -1304,6 +1304,7 @@ export class AgentTestContext {
               _serviceBrand: undefined,
               ready: Promise.resolve(),
               additionalDirs: [],
+              primaryByWorkspace: {},
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionWorkspaceInfo);
             reg.defineInstance(
