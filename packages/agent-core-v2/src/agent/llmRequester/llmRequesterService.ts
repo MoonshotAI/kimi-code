@@ -5,9 +5,11 @@ import { defineState } from '#/state/state';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   IAgentContextProjectorService,
+  type MediaProjection,
   type MediaStripSnapshot,
   type ProjectionPolicy,
 } from '#/agent/contextProjector/contextProjector';
+import { MEDIA_DEGRADE_KEEP_RECENT } from '#/agent/contextProjector/mediaProjection';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -141,7 +143,7 @@ export const llmRequesterTurnConfigsKey = defineState<Map<number, TurnRequestCon
 interface MediaRecovery {
   readonly modelAlias: string;
   readonly contextRevision: number;
-  readonly media: 'degraded' | { readonly strip: MediaStripSnapshot };
+  readonly media: MediaProjection;
 }
 
 export const llmRequesterMediaRecoveryKey = defineState<MediaRecovery | undefined>(
@@ -354,6 +356,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       this.markMediaRecovery(request, media);
       return media;
     };
+    const captureMediaDegradePolicy = (): { readonly degradeCount: number } => {
+      const media = { degradeCount: this.projector.captureMediaDegradeCount(shaped) };
+      this.markMediaRecovery(request, media);
+      return media;
+    };
     let previousMediaCount: number | undefined;
     let previousMediaPolicy: ProjectionPolicy['media'];
     let mediaPaths: ReadonlyMap<string, string> | undefined;
@@ -516,15 +523,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       try {
         return await run(policy);
       } catch (error) {
+        const media = policy?.media;
         const canStripMedia =
           !mediaStrippedThisRequest &&
-          (typeof policy?.media !== 'object' || (previousMediaCount ?? 0) > 0);
+          (media === undefined || 'degradeCount' in media || (previousMediaCount ?? 0) > 0);
+        const canDegradeMedia =
+          media === undefined ||
+          ('degradeCount' in media && (previousMediaCount ?? 0) > MEDIA_DEGRADE_KEEP_RECENT);
         const nextPolicy = this.nextProjectionPolicyForError(
           error,
           policy,
           request,
           signal,
           canStripMedia,
+          canDegradeMedia ? captureMediaDegradePolicy : undefined,
           captureMediaStripPolicy,
         );
         if (nextPolicy !== undefined) {
@@ -568,23 +580,22 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     request: ResolvedLLMRequest,
     signal: AbortSignal | undefined,
     canStripMedia: boolean,
+    captureMediaDegradePolicy: (() => { readonly degradeCount: number }) | undefined,
     captureMediaStripPolicy: () => { readonly strip: MediaStripSnapshot },
   ): ProjectionPolicy | undefined {
     if (signal?.aborted === true) return undefined;
     const raw = unwrapErrorCause(error);
-    const media = policy?.media;
     let projection: LlmRequestProjectionFallbackEvent['projection'];
     let nextPolicy: ProjectionPolicy;
     if (raw instanceof APIRequestTooLargeError && canStripMedia) {
       signal?.throwIfAborted();
-      if (media === undefined) {
+      if (captureMediaDegradePolicy !== undefined) {
         this.log.warn('provider rejected request as too large; resending with degraded media', {
           model: request.model.name,
           ...request.logFields,
         });
-        this.markMediaRecovery(request, 'degraded');
         projection = 'media-degraded';
-        nextPolicy = { ...policy, media: 'degraded' };
+        nextPolicy = { ...policy, media: captureMediaDegradePolicy() };
       } else {
         this.log.warn(
           'provider rejected request as too large; resending with rejected media stripped',
@@ -939,15 +950,13 @@ function mediaPartCount(messages: readonly Message[]): number {
 type LlmRequestProjection = NonNullable<LlmRequestPayload['projection']>;
 
 function projectionNameOf(policy: ProjectionPolicy | undefined): LlmRequestProjection | undefined {
+  const media = policy?.media;
   if (policy?.structure === 'strict') {
-    if (policy.media === 'degraded') return 'strict-media-degraded';
-    if (typeof policy.media === 'object') return 'strict-media-stripped';
-    return 'strict';
+    if (media === undefined) return 'strict';
+    return 'degradeCount' in media ? 'strict-media-degraded' : 'strict-media-stripped';
   }
-  if (policy === undefined) return undefined;
-  if (policy.media === 'degraded') return 'media-degraded';
-  if (typeof policy.media === 'object') return 'media-stripped';
-  return undefined;
+  if (media === undefined) return undefined;
+  return 'degradeCount' in media ? 'media-degraded' : 'media-stripped';
 }
 
 function projectionField(fields: AgentLLMRequestLogFields): LlmRequestProjection | undefined {

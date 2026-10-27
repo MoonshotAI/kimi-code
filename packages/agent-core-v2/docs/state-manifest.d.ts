@@ -998,7 +998,9 @@ export interface AgentStateSnapshot {
   'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
-    readonly media: 'degraded' | {
+    readonly media: /* MediaProjection — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
+      readonly degradeCount: number;
+    } | {
       readonly strip: /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
         readonly "__@mediaStripSnapshotBrand": undefined;
       };
