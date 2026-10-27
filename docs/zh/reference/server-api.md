@@ -636,6 +636,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
 | `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
+| `POST /api/v1/sessions/{session_id}/media` | 从远程图片 URL 创建会话媒体 |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
 
 #### session 对象
@@ -963,6 +964,26 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 成功时，`data` 为 `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`：`session` 为 [session 对象](#session-对象)，`messages` 为最新 100 条消息的 `{ items, has_more }`，`in_flight_turn` 为已部分流式输出的轮次（空闲时为 `null`，已知时带 `current_prompt_id`），`subagents` 列出存活的 subagent 任务，`pending_approvals` / `pending_questions` 承载未答复的交互。
 
 - `40401`：会话不存在
+
+#### `POST /api/v1/sessions/{session_id}/media`
+
+从远程 HTTP(S) 图片创建会话内规范媒体文件。Web Markdown 渲染器会自动通过此端点加载远程图片，因此渲染会话可能向 daemon 可达的内网地址发起请求。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `session_id` | path | string | **必填。** 会话 id |
+| `url` | body | string | **必填。** 远程图片 URL，最多 4096 个字符；拒绝内嵌凭证 |
+
+服务端最多跟随 3 次重定向，并在 DNS、重定向和正文读取之间共享 10 秒总预算。响应限制为 10 MiB，按实际字节识别 PNG、JPEG、GIF、WebP 或 AVIF；不信任 `Content-Type`，拒绝 HTML、SVG 和其他格式。允许 RFC1918 地址，阻断回环、链路本地、组播和常见云元数据目标，并在每次重定向时重新校验。上游请求不转发 `Cookie` 或 `Authorization` 请求头。
+
+成功时，`data` 为已存储文件的元数据 `{ id, name, media_type, size, created_at }`。相同 URL 和图片字节会生成确定性的 id，重复加载复用媒体记录，内容变化则创建新记录。通过 `GET /api/v1/sessions/{session_id}/media/{file_id}` 下载文件。
+
+业务错误使用 HTTP 200 和标准错误信封：
+
+- `40001`：URL 无效或目标不允许、解析失败、图片内容不支持
+- `40401`：会话不存在
+- `41301`：图片超过 10 MiB
+- `50001`：上游请求、重定向或超时失败
 
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 

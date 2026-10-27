@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 
 import {
@@ -15,9 +16,11 @@ import { z } from 'zod';
 
 import { buildContentDisposition } from '../lib/contentDisposition';
 import { parseRangeHeader, pickHeader } from '../lib/httpRange';
+import { fetchRemoteImage, RemoteImageError } from '../lib/remoteImage';
 import { defineRoute } from '../middleware/defineRoute';
 import { ErrorCode } from '../protocol/error-codes';
-import { errEnvelope } from '../protocol/envelope';
+import { errEnvelope, okEnvelope } from '../protocol/envelope';
+import { uploadFileResponseSchema } from '../protocol/rest-file';
 
 interface SessionMediaRouteHost {
   get(
@@ -25,12 +28,23 @@ interface SessionMediaRouteHost {
     options: { preHandler: unknown[]; schema?: Record<string, unknown> },
     handler: (req: SessionMediaRequest, reply: SessionMediaReply) => unknown,
   ): unknown;
+  post(
+    path: string,
+    options: { preHandler: unknown[]; schema?: Record<string, unknown> },
+    handler: (req: RemoteImageRequest, reply: SessionMediaReply) => unknown,
+  ): unknown;
 }
 
 interface SessionMediaRequest {
   readonly id: string;
   readonly params: { readonly session_id: string; readonly file_id: string };
   readonly headers: Record<string, unknown>;
+}
+
+interface RemoteImageRequest {
+  readonly id: string;
+  readonly params: { readonly session_id: string };
+  readonly body: { readonly url: string };
 }
 
 interface SessionMediaReply {
@@ -44,8 +58,77 @@ const sessionMediaParamSchema = z.object({
   session_id: z.string().min(1),
   file_id: z.string().min(1),
 });
+const sessionParamSchema = z.object({ session_id: z.string().min(1) });
+const remoteImageBodySchema = z.object({ url: z.string().min(1).max(4096) });
 
 export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Scope): void {
+  const remoteRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/sessions/{session_id}/media',
+      params: sessionParamSchema,
+      body: remoteImageBodySchema,
+      success: { data: uploadFileResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: {},
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+        [ErrorCode.FILE_TOO_LARGE]: {},
+        [ErrorCode.INTERNAL_ERROR]: {},
+      },
+      description: 'Create session media from a remote image URL',
+      tags: ['files'],
+    },
+    async (req, reply) => {
+      const r = reply as unknown as SessionMediaReply;
+      const session = await resumeSessionById(core.accessor, req.params.session_id);
+      if (session === undefined) {
+        return r.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, 'session not found', req.id)) as unknown as void;
+      }
+      try {
+        const image = await fetchRemoteImage(req.body.url);
+        const size = image.bytes.length;
+        const fileId = `f_${createHash('sha256').update(req.body.url).update('\0').update(image.bytes).digest('hex').slice(0, 32)}`;
+        const name = `remote-image${image.extension}`;
+        await session.accessor.get(ISessionMediaStore).materialize({
+          fileId,
+          size,
+          name,
+          mimeType: image.mimeType,
+          stream: () => Readable.from(image.bytes),
+        });
+        const stored = await session.accessor.get(ISessionMediaStore).open(fileId);
+        return r.send(
+          okEnvelope(
+            {
+              id: fileId,
+              name,
+              media_type: image.mimeType,
+              size,
+              created_at: stored?.createdAt ?? new Date().toISOString(),
+            },
+            req.id,
+          ),
+        ) as unknown as void;
+      } catch (error) {
+        if (error instanceof RemoteImageError) {
+          if (error.kind === 'invalid') {
+            return r.send(errEnvelope(ErrorCode.VALIDATION_FAILED, error.message, req.id)) as unknown as void;
+          }
+          if (error.kind === 'too_large') {
+            return r.send(errEnvelope(ErrorCode.FILE_TOO_LARGE, error.message, req.id)) as unknown as void;
+          }
+          return r.send(errEnvelope(ErrorCode.INTERNAL_ERROR, error.message, req.id)) as unknown as void;
+        }
+        throw error;
+      }
+    },
+  );
+  app.post(
+    remoteRoute.path,
+    remoteRoute.options,
+    remoteRoute.handler as unknown as Parameters<SessionMediaRouteHost['post']>[2],
+  );
+
   const route = defineRoute(
     {
       method: 'GET',
