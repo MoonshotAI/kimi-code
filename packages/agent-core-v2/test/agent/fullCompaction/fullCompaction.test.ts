@@ -4254,6 +4254,54 @@ describe('FullCompaction cache probe', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('reports a broken history prefix when overflow shrinking drops below the baseline message count', async () => {
+    const records: TelemetryRecord[] = [];
+    const inputs: string[][] = [];
+    let attempts = 0;
+    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      inputs.push(inputHistorySnapshot(history));
+      if (attempts === 2) {
+        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-cache-probe-shrink');
+      }
+      return textResult(attempts === 1 ? 'Turn response.' : 'Compacted summary.');
+    });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: {
+        ...CATALOGUED_MODEL_CAPABILITIES,
+        max_context_tokens: 40_000,
+      },
+    });
+    ctx.appendExchange(1, 'baseline user one', 'baseline assistant one', 20);
+    ctx.appendExchange(2, 'baseline user two', 'baseline assistant two', 40);
+    ctx.appendExchange(3, 'baseline user three', 'baseline assistant three', 80);
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the conversation' }] });
+    await ctx.untilTurnEnd();
+    ctx.appendExchange(4, 'old user one', `old assistant one ${'a'.repeat(56_000)}`, 14_000);
+    ctx.appendExchange(5, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, 20_000);
+    ctx.appendExchange(6, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, 36_000);
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await completed;
+
+    expect(attempts).toBe(3);
+    expect(inputs).toHaveLength(3);
+    expect(inputs[2]!.length).toBeLessThan(inputs[0]!.length);
+    const probes = records.filter((record) => record.event === 'prompt_cache_probe');
+    expect(probes).toHaveLength(1);
+    expect(probes[0]?.properties).toMatchObject({
+      source: 'compaction',
+      model_match: true,
+      tools_match: true,
+      system_prompt_match: true,
+      history_prefix_match: false,
+    });
+    await ctx.expectResumeMatches();
+  });
+
   it('marks a model change without comparing unrelated request prefixes', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({ telemetry: recordingTelemetry(records) });

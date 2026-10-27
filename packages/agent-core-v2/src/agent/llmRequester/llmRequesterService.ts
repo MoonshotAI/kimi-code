@@ -500,12 +500,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           cacheProbeBaseline !== undefined &&
           cacheProbeBaseline.modelAlias === request.modelAlias &&
           cacheProbeBaseline.contextRevision === request.contextRevision;
-        const historyPrefixMatch =
-          compared && cacheProbeBaseline.messageCount <= input.messages.length
-            ? fingerprint(
-                JSON.stringify(input.messages.slice(0, cacheProbeBaseline.messageCount)),
-              ) === cacheProbeBaseline.historyHash
-            : undefined;
+        const historyPrefixMatch = compared
+          ? cacheProbeBaseline.messageCount <= input.messages.length &&
+            fingerprint(
+              JSON.stringify(input.messages.slice(0, cacheProbeBaseline.messageCount)),
+            ) === cacheProbeBaseline.historyHash
+          : undefined;
         this.telemetry.track2('prompt_cache_probe', {
           source: 'compaction',
           turn_id: request.source?.turnId,
