@@ -1,4 +1,4 @@
-Launch a subagent to handle a task. The subagent runs as a same-process loop instance with its own context and wire file.
+Launch a subagent to handle a task in its own context.
 
 Do not launch a subagent unless the user explicitly asks for one. Each subagent starts cold and re-derives context you already have, which costs the user time and tokens. Asking means: the user asks for a subagent, delegation, or parallel agents, or requests one of the agent types below by name (for example "use an explore agent"). Explicit instructions in AGENTS.md or a skill, and a multi-agent mode the user turned on (such as swarm or tower mode), also count. Nothing else does: a large or multi-part task, or a request for depth, thoroughness, research, or investigation, is not a request to launch — do that work yourself with your own tools. The agent type descriptions below only help you choose a type once launching is authorized; they never authorize it. Resuming a subagent to continue already-authorized work needs no new request.
 
