@@ -42,7 +42,7 @@ describe('remote image network boundaries', () => {
     expect(dispatchers[0]).not.toBeUndefined();
   });
 
-  it('uses the global proxy and only pins DNS again for NO_PROXY targets', async () => {
+  it('uses per-target proxy dispatchers and only pins DNS again for NO_PROXY targets', async () => {
     vi.stubEnv('HTTP_PROXY', 'http://proxy.example.test');
     const dispatchers: unknown[] = [];
     const options = {
@@ -55,11 +55,29 @@ describe('remote image network boundaries', () => {
     await fetchRemoteImage('http://images.example.test/pic.png', options);
 
     expect(dispatchers).toHaveLength(2);
-    expect(dispatchers[0]).toBeUndefined();
+    expect(dispatchers[0]).not.toBeUndefined();
     expect(dispatchers[1]).not.toBeUndefined();
   });
 
-  it('retains DNS pinning when the proxy does not cover the URL scheme', async () => {
+  it('pins proxied requests to validated addresses and preserves the original host', async () => {
+    vi.stubEnv('HTTPS_PROXY', 'http://proxy.example.test');
+    const calls: Array<{ input: unknown; init?: RequestInit }> = [];
+    const result = await fetchRemoteImage('https://images.example.test/pic.png', {
+      lookupImpl: async () => [{ address: '192.168.1.10', family: 4 as const }],
+      fetchImpl: async (input, init) => {
+        calls.push({ input, init });
+        return new Response(PNG, { status: 200, headers: { 'content-type': 'text/plain' } });
+      },
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0]!.input)).toBe('https://192.168.1.10/pic.png');
+    expect(calls[0]!.init?.headers).toMatchObject({ host: 'images.example.test' });
+    expect((calls[0]!.init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher).not.toBeUndefined();
+    expect(result.mimeType).toBe('image/png');
+  });
+
+  it('keeps independent dispatchers for direct and proxied schemes', async () => {
     vi.stubEnv('HTTPS_PROXY', 'http://proxy.example.test');
     const dispatchers: unknown[] = [];
     const options = {
@@ -72,7 +90,7 @@ describe('remote image network boundaries', () => {
 
     expect(dispatchers).toHaveLength(2);
     expect(dispatchers[0]).not.toBeUndefined();
-    expect(dispatchers[1]).toBeUndefined();
+    expect(dispatchers[1]).not.toBeUndefined();
   });
 
   it('retains DNS pinning when the proxy configuration is invalid', async () => {

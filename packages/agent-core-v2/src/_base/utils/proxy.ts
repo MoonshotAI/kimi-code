@@ -88,7 +88,10 @@ export function isProxyConfigured(env: Env): boolean {
 function isValidHttpProxyUrl(value: string | undefined): boolean {
   if (value === undefined) return true;
   try {
-    const protocol = new URL(value).protocol;
+    const url = new URL(value);
+    decodeURIComponent(url.username);
+    decodeURIComponent(url.password);
+    const protocol = url.protocol;
     return protocol === 'http:' || protocol === 'https:';
   } catch {
     return false;
@@ -164,14 +167,19 @@ export interface ProxyAgentFactories {
     httpProxy?: string;
     httpsProxy?: string;
     noProxy: string;
+    requestTls?: { servername?: string };
   }) => Dispatcher;
-  readonly makeSocksAgent: (options: { proxy: SocksProxyConfig; noProxy: string }) => Dispatcher;
+  readonly makeSocksAgent: (options: { proxy: SocksProxyConfig; noProxy: string; requestTls?: { servername?: string } }) => Dispatcher;
 }
 
-const defaultMakeHttpAgent: ProxyAgentFactories['makeHttpAgent'] = ({ httpProxy, httpsProxy, noProxy }) =>
-  new EnvHttpProxyAgent({ httpProxy, httpsProxy, noProxy });
+export interface ProxyRequestOptions {
+  readonly requestTls?: { servername?: string };
+}
 
-const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, noProxy }) => {
+const defaultMakeHttpAgent: ProxyAgentFactories['makeHttpAgent'] = ({ httpProxy, httpsProxy, noProxy, requestTls }) =>
+  new EnvHttpProxyAgent({ httpProxy, httpsProxy, noProxy, requestTls });
+
+const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, noProxy, requestTls }) => {
   const directConnect = buildConnector({});
   const bypass = makeNoProxyMatcher(noProxy);
   const connect: typeof directConnect = (options, callback) => {
@@ -189,7 +197,7 @@ const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, n
           destination: { host: options.hostname, port },
         });
         if (isTls) {
-          directConnect({ ...options, httpSocket: socket } as Parameters<typeof directConnect>[0], callback);
+          directConnect({ ...options, servername: requestTls?.servername ?? options.servername, httpSocket: socket } as Parameters<typeof directConnect>[0], callback);
         } else {
           socket.setNoDelay(true);
           callback(null, socket);
@@ -205,6 +213,7 @@ const defaultMakeSocksAgent: ProxyAgentFactories['makeSocksAgent'] = ({ proxy, n
 export function createProxyDispatcher(
   env: Env,
   factories: Partial<ProxyAgentFactories> = {},
+  options: ProxyRequestOptions = {},
 ): Dispatcher | undefined {
   const { makeHttpAgent = defaultMakeHttpAgent, makeSocksAgent = defaultMakeSocksAgent } = factories;
   try {
@@ -214,11 +223,12 @@ export function createProxyDispatcher(
         httpProxy: httpProxy ?? '',
         httpsProxy: httpsProxy ?? '',
         noProxy: resolveNoProxy(env),
+        requestTls: options.requestTls,
       });
     }
     const socks = resolveSocksProxy(env);
     if (socks !== undefined) {
-      return makeSocksAgent({ proxy: socks, noProxy: resolveNoProxy(env) });
+      return makeSocksAgent({ proxy: socks, noProxy: resolveNoProxy(env), requestTls: options.requestTls });
     }
     return undefined;
   } catch (error) {

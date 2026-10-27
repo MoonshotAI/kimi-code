@@ -96,6 +96,7 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
           mimeType: image.mimeType,
           stream: () => Readable.from(image.bytes),
         });
+        const stored = await session.accessor.get(ISessionMediaStore).open(fileId);
         return r.send(
           okEnvelope(
             {
@@ -103,7 +104,7 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
               name,
               media_type: image.mimeType,
               size,
-              created_at: new Date().toISOString(),
+              created_at: stored?.createdAt ?? new Date().toISOString(),
             },
             req.id,
           ),

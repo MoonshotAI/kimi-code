@@ -113,7 +113,24 @@ describe('proxy utilities', () => {
     expect(makeSocksAgent).toHaveBeenCalledWith({
       proxy: { type: 5, host: '127.0.0.1', port: 1080 },
       noProxy: 'corp,localhost,127.0.0.1,::1,[::1]',
+      requestTls: undefined,
     });
+
+    const requestTls = { servername: 'images.example.test' };
+    createProxyDispatcher({ HTTP_PROXY: 'http://p:3128' }, { makeHttpAgent }, { requestTls });
+    expect(makeHttpAgent).toHaveBeenCalledWith(expect.objectContaining({ requestTls }));
+
+    createProxyDispatcher({ ALL_PROXY: 'socks5://127.0.0.1:1080' }, { makeSocksAgent }, { requestTls });
+    expect(makeSocksAgent).toHaveBeenCalledWith({
+      proxy: { type: 5, host: '127.0.0.1', port: 1080 },
+      noProxy: 'localhost,127.0.0.1,::1,[::1]',
+      requestTls,
+    });
+  });
+
+  it('rejects malformed proxy credentials instead of treating them as proxied', () => {
+    expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'http://user:%ZZ@proxy:3128' }, 'http://example.com')).toBe(false);
+    expect(isProxyConfiguredForUrl({ HTTP_PROXY: 'http://user:p%40ss@proxy:3128' }, 'http://example.com')).toBe(true);
   });
 
   it('installs the global dispatcher only when a proxy dispatcher exists', () => {

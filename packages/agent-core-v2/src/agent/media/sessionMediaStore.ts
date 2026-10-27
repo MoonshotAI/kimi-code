@@ -19,6 +19,7 @@ export interface SessionMediaFile {
   readonly name: string;
   readonly mediaType: string;
   readonly size: number;
+  readonly createdAt?: string;
   readonly stream: (range?: SessionMediaReadRange) => AsyncIterable<Uint8Array>;
 }
 

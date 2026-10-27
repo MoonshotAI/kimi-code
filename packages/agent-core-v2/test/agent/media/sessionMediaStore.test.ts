@@ -96,6 +96,21 @@ describe('SessionMediaStoreService', () => {
     expect(await readFile(target!)).toEqual(BYTES);
   });
 
+  it('preserves createdAt across repeated materialization', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      await store.materialize(input());
+      const first = await store.open('f_1');
+      vi.setSystemTime(new Date('2027-01-01T00:00:00Z'));
+      await store.materialize(input());
+      const second = await store.open('f_1');
+      expect(second?.createdAt).toBe(first?.createdAt);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('preserves an embedded MCP PDF as bytes at the advertised session path', async () => {
     const bytes = Buffer.from('%PDF-1.4\nexample attachment\n%%EOF');
     const output = await mcpResultToExecutableOutput({

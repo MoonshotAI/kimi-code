@@ -2,7 +2,7 @@ import { lookup as callbackLookup, type LookupAddress, type LookupOptions } from
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
 
-import { isProxyConfiguredForUrl } from '@moonshot-ai/agent-core-v2/_base/utils/proxy';
+import { createProxyDispatcher, isProxyConfiguredForUrl } from '@moonshot-ai/agent-core-v2/_base/utils/proxy';
 import { Agent, type Dispatcher } from 'undici';
 
 const MAX_REMOTE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -67,11 +67,15 @@ export async function fetchRemoteImage(input: string, options: RemoteImageOption
     let current = input;
     for (let redirects = 0; ; redirects++) {
       const target = await resolveRemoteImageTarget(current, lookupImpl, deadline);
-      const response = await fetchImpl(target.url, {
-        headers: { accept: 'image/avif,image/png,image/jpeg,image/gif,image/webp' },
+      const useProxy = isProxyConfiguredForUrl(process.env, target.url);
+      const requestUrl = remoteImageRequestUrl(target, useProxy);
+      const headers: Record<string, string> = { accept: 'image/avif,image/png,image/jpeg,image/gif,image/webp' };
+      if (useProxy) headers['host'] = target.host;
+      const response = await fetchImpl(requestUrl, {
+        headers,
         redirect: 'manual',
         signal,
-        dispatcher: pinnedDispatcherFor(target, dispatchers) as unknown,
+        dispatcher: remoteImageDispatcherFor(target, useProxy, dispatchers) as unknown,
       } as RequestInit).catch((error: unknown) => {
         throw new RemoteImageError('upstream', `Remote image request failed: ${errorMessage(error)}`);
       });
@@ -152,14 +156,31 @@ function isBlockedAddress(address: string): boolean {
   return BLOCKED_ADDRESSES.check(normalized, 'ipv6');
 }
 
-function pinnedDispatcherFor(target: RemoteImageTarget & { readonly url: string }, dispatchers: Dispatcher[]): Dispatcher | undefined {
+function remoteImageDispatcherFor(
+  target: RemoteImageTarget & { readonly url: string },
+  useProxy: boolean,
+  dispatchers: Dispatcher[],
+): Dispatcher | undefined {
+  if (useProxy) {
+    const dispatcher = createProxyDispatcher(process.env, {}, { requestTls: { servername: target.host } });
+    if (dispatcher === undefined) throw new RemoteImageError('invalid', 'Remote image proxy configuration is invalid');
+    dispatchers.push(dispatcher);
+    return dispatcher;
+  }
   if (target.addresses === undefined) return undefined;
-  if (isProxyConfiguredForUrl(process.env, target.url)) return undefined;
   const dispatcher = new Agent({
     connect: { lookup: pinnedLookup(target.host, target.addresses) },
   });
   dispatchers.push(dispatcher);
   return dispatcher;
+}
+
+function remoteImageRequestUrl(target: RemoteImageTarget & { readonly url: string }, useProxy: boolean): string {
+  if (!useProxy || target.addresses === undefined || target.addresses.length === 0) return target.url;
+  const url = new URL(target.url);
+  const address = target.addresses[0]!.address;
+  url.hostname = address.includes(':') ? `[${address}]` : address;
+  return url.toString();
 }
 
 async function withRemoteImageDeadline<T>(promise: Promise<T>, deadline: number): Promise<T> {

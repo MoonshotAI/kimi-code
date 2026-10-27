@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { networkInterfaces, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
@@ -143,6 +143,23 @@ describe('server-v2 session remote images', () => {
     expect(updated.body.data.id).not.toBe(first.body.data.id);
     expect(updated.body.data.size).toBe(PNG.length + 1);
     changed = false;
+  });
+
+  it('preserves created_at across repeated media creation', async () => {
+    const sessionId = await createSession();
+    const url = `${imageOrigin}/image.png`;
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      const first = await post<{ created_at: string }>(`/api/v1/sessions/${sessionId}/media`, { url });
+      expect(first.body.code).toBe(0);
+      vi.setSystemTime(new Date('2027-01-01T00:00:00Z'));
+      const second = await post<{ created_at: string }>(`/api/v1/sessions/${sessionId}/media`, { url });
+      expect(second.body.code).toBe(0);
+      expect(second.body.data.created_at).toBe(first.body.data.created_at);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rejects non-image content, oversized bodies, invalid URLs, and redirect loops', async () => {
