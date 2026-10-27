@@ -21,7 +21,7 @@ function makeSwarmHandler() {
   const host = {
     programStatus,
     state: {
-      appState: { availableModels: {} },
+      appState: { availableModels: {}, swarmMode: true },
       ui: {
         requestRender,
         terminal: { rows: 40, columns: 120 },

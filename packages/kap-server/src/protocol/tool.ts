@@ -31,5 +31,6 @@ export const mcpServerSchema = z.object({
   status: mcpServerStatusSchema,
   last_error: z.string().optional(),
   tool_count: z.number().int().nonnegative(),
+  next_retry_at: z.number().optional(),
 });
 export type McpServer = z.infer<typeof mcpServerSchema>;

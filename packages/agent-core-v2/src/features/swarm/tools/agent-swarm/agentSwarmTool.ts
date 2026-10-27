@@ -42,7 +42,7 @@ const DEFAULT_SUBAGENT_TYPE = 'coder';
 
 const SWARM_MODE_OFF_RESULT: ExecutableToolErrorResult = {
   output:
-    'Swarm mode is off, so AgentSwarm did not run and no subagents were started. Only the user can turn swarm mode on; do not call AgentSwarm until they do.',
+    'Swarm mode is off, so AgentSwarm did not run and no subagents were started. Only the user can turn swarm mode on; do not call AgentSwarm again until they do. If the user asked for a swarm, tell them swarm mode is off and that they can turn it on with /swarm, or run /swarm <task> to start the task as a swarm. Otherwise, continue without AgentSwarm and do not mention swarm mode.',
   isError: true,
 };
 

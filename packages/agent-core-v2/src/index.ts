@@ -684,6 +684,7 @@ export * from '#/agent/interruptionReminder/interruptionReminderOps';
 export * from '#/agent/mcp/mcp';
 export * from '#/agent/mcp/mcpService';
 export * from '#/agent/mcp/mcpDiscoveryOps';
+export * from '#/agent/mcp/mcpFailureOps';
 export * from '#/mcpCore/config-schema';
 export * from '#/agent/media/mediaTools';
 export * from '#/agent/media/mediaToolsRegistrar';

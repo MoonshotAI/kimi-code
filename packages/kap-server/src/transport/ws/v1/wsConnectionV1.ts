@@ -13,10 +13,7 @@ import type { RawData, WebSocket } from 'ws';
 
 import type { CredentialValidator } from '../../../services/auth/credentials';
 import type { IConnectionRegistry } from '../connectionRegistry';
-import {
-  type EventEnvelope,
-  type JournalLogger,
-} from './sessionEventJournal';
+import { type JournalLogger } from './sessionEventJournal';
 import {
   buildAck,
   buildPing,
@@ -26,6 +23,7 @@ import {
 import {
   type AgentFilter,
   type BroadcastDelivery,
+  type BroadcastFrame,
   type BroadcastTarget,
   type ResyncReason,
   type SessionEventBroadcaster,
@@ -136,12 +134,12 @@ export class WsConnectionV1 implements BroadcastTarget {
   }
 
   get subscriptionSessionIds(): readonly string[] {
-    return Array.from(this.subscriptions.keys()).sort();
+    return Array.from(this.subscriptions.keys()).toSorted();
   }
 
-  send(envelope: EventEnvelope, delivery: BroadcastDelivery = 'subscription'): void {
-    if (delivery === 'immediate') this.sendImmediateFrame(envelope);
-    else this.sendSubscribedFrame(envelope);
+  send(frame: BroadcastFrame, delivery: BroadcastDelivery = 'subscription'): void {
+    if (delivery === 'immediate') this.sendImmediateFrame(frame);
+    else this.sendSubscribedFrame(frame);
   }
 
   private onMessage(data: RawData): void {
@@ -224,6 +222,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors: serverCursors,
       }),
     );
+    this.sendPendingInteractions(accepted);
   }
 
   private async onSubscribe(frame: InboundFrame): Promise<void> {
@@ -256,6 +255,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors: serverCursors,
       }),
     );
+    this.sendPendingInteractions(accepted);
   }
 
   private async onSubscribeV2(frame: InboundFrame): Promise<void> {
@@ -288,6 +288,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         cursors: serverCursors,
       }),
     );
+    this.sendPendingInteractions(accepted);
   }
 
   private async onUnsubscribeV2(frame: InboundFrame): Promise<void> {
@@ -332,6 +333,10 @@ export class WsConnectionV1 implements BroadcastTarget {
         resync_required: [],
       }),
     );
+  }
+
+  private sendPendingInteractions(sessionIds: readonly string[]): void {
+    for (const sid of sessionIds) this.broadcaster.sendPendingInteractions(sid, this);
   }
 
   private async attachSession(

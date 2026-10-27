@@ -417,6 +417,20 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40409);
   });
 
+  it('creates a second session via workspace_id resolved from a prior cwd create', async () => {
+    const cwd = home as string;
+    const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    expect(first.body.code).toBe(0);
+
+    const second = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: first.body.data.workspace_id,
+      metadata: { cwd },
+    });
+    expect(second.body.code).toBe(0);
+    expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
+    expect(second.body.data.id).not.toBe(first.body.data.id);
+  });
+
   it('shares one workspace until the last session closes', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-shared-workspace-'));
     let firstId: string | undefined;

@@ -59,6 +59,7 @@ function makeDriverWithTerminalProgress(): {
 
 function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarmProgressComponent {
   const handler = driver.sessionEventHandler.subAgentEventHandler;
+  state.appState = { ...state.appState, swarmMode: true };
   handler.handleAgentSwarmToolCallStarted('call_swarm', {
     description: 'Review changed files',
   });

@@ -404,7 +404,7 @@ describe('agent mcp / compaction routing', () => {
     const agent = klient.session('s1').agent('main');
 
     const entries = [
-      { name: 'mock', transport: 'stdio', status: 'pending', toolCount: 0 },
+      { name: 'mock', transport: 'stdio', status: 'failed', toolCount: 0, nextRetryAt: 123456 },
     ];
     channel.results.set('agentMcpService.list', entries);
     await expect(agent.getMcpServers()).resolves.toEqual(entries);
