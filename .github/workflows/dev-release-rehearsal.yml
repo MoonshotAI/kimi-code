@@ -94,6 +94,7 @@ jobs:
           DEV_VERSION: ${{ steps.version.outputs.version }}
           DEV_PUBLISHED_AT: ${{ steps.version.outputs.published_at }}
         run: |
+          mkdir -p "$RUNNER_TEMP/dev-record"
           node scripts/dev-release.mjs record "$RUNNER_TEMP/dev-record"
           node -e 'const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (r.version !== process.env.DEV_VERSION || r.publishedAt !== process.env.DEV_PUBLISHED_AT || r.rollout.length !== 0) process.exit(1); console.log(r)' "$RUNNER_TEMP/dev-record/dev.json"
 
@@ -140,6 +141,7 @@ jobs:
         run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-dev "$REHEARSAL_TAG"
       - name: Write non-production channel record
         run: |
+          mkdir -p "$RUNNER_TEMP/dev-record"
           node scripts/dev-release.mjs record "$RUNNER_TEMP/dev-record"
           node --input-type=module - "$RUNNER_TEMP/dev-record/dev.json" <<'NODE'
           import { readFileSync, writeFileSync } from 'node:fs';
