@@ -478,7 +478,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           );
           return;
         }
-        const data = await runtimeFs.fs.list(listRequest);
+        const data = await runtimeFs.fs.list({ ...listRequest, include_git_status: false });
         reply.send(okEnvelope(data, req.id));
       } catch (error) {
         if (error instanceof RuntimeError) {
