@@ -36,6 +36,8 @@ interface SessionWireV2 {
     created_at: number;
     updated_at: number;
     archived: boolean;
+    environment_id?: string;
+    environment_cwd?: string;
   };
   activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle'; model: string | null };
   git?: {
@@ -77,6 +79,8 @@ const SUMMARIES: SessionSummary[] = [
     id: 's2',
     workspaceId: WS_A,
     cwd: '/repo/a',
+    environmentId: 'ssh:dev',
+    environmentCwd: '/srv/project',
     title: undefined,
     lastPrompt: 'do beta',
     createdAt: 1_000,
@@ -240,6 +244,10 @@ describe('server /api/v2/sessions', () => {
 
     const second = page.items[1] as SessionWireV2;
     expect(second.meta.title).toBeNull();
+    expect(second.meta).toMatchObject({
+      environment_id: 'ssh:dev',
+      environment_cwd: '/srv/project',
+    });
     const third = page.items[2] as SessionWireV2;
     expect(third.meta.last_prompt).toBeNull();
   });

@@ -1188,6 +1188,8 @@ export interface SessionWireFields {
   readonly updatedAt: number;
   readonly archived: boolean;
   readonly archivedAt?: number;
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly custom?: Record<string, unknown>;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
@@ -1213,7 +1215,11 @@ export function toWireSession(
       facts.lastTurnReason ?? (facts.live === false ? fields.lastTurnReason : undefined),
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
-    metadata: buildWireMetadata(fields.custom, cwd),
+    metadata: {
+      ...buildWireMetadata(fields.custom, cwd),
+      environment_id: fields.environmentId,
+      environment_cwd: fields.environmentCwd,
+    },
     agent_config: { model: facts.model ?? '' },
     usage: emptySessionUsage(),
     permission_rules: [],
