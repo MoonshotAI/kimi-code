@@ -1645,6 +1645,7 @@ In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{ac
 
 | Method and path | Description |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | Session-less workspace directory listing |
 | `POST /api/v1/workspace/fs:search` | Session-less workspace search (the body carries the workspace reference) |
 | `POST /api/v1/workspace/fs:suggest` | Session-less file-completion candidates (for `@` file mentions) |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | Download a session file (binary, see below) |
@@ -1667,10 +1668,11 @@ Lists the entries of a session workspace directory, optionally recursing into su
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
 | `exclude_globs` | body | string[] | Additional globs to skip |
 | `allow_ignored_globs` | body | string[] | Globs to show even when gitignored (e.g. `.tmp`). Ignored ancestor directories of a match are kept so the match stays reachable. Allowing dot-paths also requires `show_hidden: true` |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
 | `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | Attach each entry's git status. Default `false` |
 
-On success, `data` is `{ items, truncated }` — plus `children_by_path` (a path → entries map) when `depth` is greater than 1. Each item is an entry object `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_symlink_to?, git_status?, child_count? }`, where `kind` is `file` / `directory` / `symlink` and `git_status` (present only with `include_git_status: true`) is one of `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`; `truncated` reports that `limit` cut the listing short.
+On success, `data` is `{ items, truncated }` — plus `children_by_path` (a path → entries map) when `depth` is greater than 1. Each item is an entry object `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_directory?, is_symlink_to?, git_status?, child_count? }`, where `kind` is `file` / `directory` / `symlink`, `is_directory` marks a symlink whose target is a directory, and `git_status` (present only with `include_git_status: true`) is one of `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`; `truncated` reports that `limit` or the recursive symlink budget cut the listing short. Entries reached by expanding symlinked directories are capped at 10,000 per request; ordinary directory recursion is not capped.
 
 - `40001`: body validation failure
 - `40401`: session not found
@@ -1688,6 +1690,7 @@ Reads a slice of a session file as text or base64.
 | `offset` | body | integer | Byte offset to start at. Default `0` |
 | `length` | body | integer | Bytes to read, 1–10485760 (10 MiB). Default `1048576` (1 MiB) |
 | `encoding` | body | string | `auto` (default) / `utf-8` / `base64` |
+| `allow_external_symlinks` | body | boolean | Allow reading through symlinks whose targets are outside the workspace. Default `false` |
 
 On success, `data` is `{ path, content, encoding, size, truncated, etag, mime, language_id?, line_count?, is_binary }`, where `encoding` reports the encoding actually used (`utf-8` or `base64`) and `size` is the full file size. With `encoding: "auto"`, text comes back as `utf-8` (non-UTF-8 text is transcoded) and binary content as `base64`; `encoding: "utf-8"` forces text and rejects binary files.
 
@@ -1895,11 +1898,40 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
 | `runtime_id` | query | string | Runtime to read from. Default `local` |
+| `allow_external_symlinks` | query | string | `true` to download through symlinks outside the workspace. Default `false` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
 - `40409`: path not found
 - `41304`: path escapes the session workspace
+
+#### `POST /api/v1/workspace/fs:list`
+
+The session-less form of `fs:list`: the workspace travels in the body instead of the URL.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
+| `path` | body | string | Directory to list, relative to the workspace root. Default `.` |
+| `depth` | body | integer | Recursion depth, 1–10. Default `1` |
+| `limit` | body | integer | Maximum entries, 1–1000. Default `200` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
+| `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+| `runtime_id` | body | string | Runtime to list on. Default `local` |
+
+On success, `data` has the same shape as `fs:list`.
+
+- `40001`: body validation failure
+- `40409`: path not found or not a directory
+- `40410`: workspace not found and not a usable absolute path
+- `40411`: permission denied by the host filesystem
+- `40420`: runtime not found
+- `40926`: runtime unavailable
+- `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 
 #### `POST /api/v1/workspace/fs:search`
 

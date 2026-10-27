@@ -1645,6 +1645,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | 无会话的工作区目录列举 |
 | `POST /api/v1/workspace/fs:search` | 无会话的工作区搜索（body 携带工作区引用） |
 | `POST /api/v1/workspace/fs:suggest` | 无会话的文件补全候选（用于 `@` 文件提及） |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话文件（二进制，见下文） |
@@ -1667,10 +1668,11 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
 | `exclude_globs` | body | string[] | 额外要跳过的 glob |
 | `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob（如 `.tmp`）。命中项被忽略的祖先目录会自动保留以保证可达。放行点开头路径还需同时传 `show_hidden: true` |
+| `allow_external_symlinks` | body | boolean | 展开目标位于工作区外的软链接目录。默认 `false` |
 | `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | 附带每个条目的 git 状态。默认 `false` |
 
-成功时 `data` 为 `{ items, truncated }`——`depth` 大于 1 时另附 `children_by_path`（路径 → 条目的映射）。每项是一个条目对象 `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_symlink_to?, git_status?, child_count? }`，其中 `kind` 为 `file` / `directory` / `symlink`；`git_status`（仅 `include_git_status: true` 时存在）为 `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted` 之一；`truncated` 表示 `limit` 截断了列表。
+成功时 `data` 为 `{ items, truncated }`——`depth` 大于 1 时另附 `children_by_path`（路径 → 条目的映射）。每项是一个条目对象 `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_directory?, is_symlink_to?, git_status?, child_count? }`，其中 `kind` 为 `file` / `directory` / `symlink`，`is_directory` 表示该软链接的目标是目录；`git_status`（仅 `include_git_status: true` 时存在）为 `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted` 之一；`truncated` 表示 `limit` 或递归软链接预算截断了列表。每个请求通过展开软链接目录得到的条目上限为 10,000；普通目录递归不受此上限限制。
 
 - `40001`：请求体校验失败
 - `40401`：会话不存在
@@ -1688,6 +1690,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `offset` | body | integer | 起始字节偏移。默认 `0` |
 | `length` | body | integer | 读取字节数，1–10485760（10 MiB）。默认 `1048576`（1 MiB） |
 | `encoding` | body | string | `auto`（默认）/ `utf-8` / `base64` |
+| `allow_external_symlinks` | body | boolean | 允许读取目标位于工作区外的软链接。默认 `false` |
 
 成功时 `data` 为 `{ path, content, encoding, size, truncated, etag, mime, language_id?, line_count?, is_binary }`，其中 `encoding` 报告实际使用的编码（`utf-8` 或 `base64`），`size` 为文件完整大小。`encoding: "auto"` 时文本以 `utf-8` 返回（非 UTF-8 文本会被转码），二进制内容以 `base64` 返回；`encoding: "utf-8"` 强制按文本读取并拒绝二进制文件。
 
@@ -1895,11 +1898,40 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
 | `runtime_id` | query | string | 从哪个运行时读取。默认 `local` |
+| `allow_external_symlinks` | query | string | 传 `true` 时允许通过工作区外的软链接下载。默认 `false` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
 - `40409`：路径不存在
 - `41304`：路径越出会话工作区
+
+#### `POST /api/v1/workspace/fs:list`
+
+`fs:list` 的无会话形式：工作区改由请求体而非 URL 携带。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **必填。** 已注册工作区 id 或绝对根路径（当场注册） |
+| `path` | body | string | 要列出的目录，相对于工作区根目录。默认 `.` |
+| `depth` | body | integer | 递归深度，1–10。默认 `1` |
+| `limit` | body | integer | 最大条目数，1–1000。默认 `200` |
+| `show_hidden` | body | boolean | 包含点文件。默认 `false` |
+| `follow_gitignore` | body | boolean | 跳过 gitignore 的路径。默认 `true` |
+| `exclude_globs` | body | string[] | 额外要跳过的 glob |
+| `allow_ignored_globs` | body | string[] | 即使被 gitignore 也指定放行的 glob |
+| `allow_external_symlinks` | body | boolean | 展开目标位于工作区外的软链接目录。默认 `false` |
+| `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+| `runtime_id` | body | string | 在哪个运行时上列举。默认 `local` |
+
+成功时 `data` 的结构与 `fs:list` 相同。
+
+- `40001`：请求体校验失败
+- `40409`：路径不存在，或路径不是目录
+- `40410`：工作区不存在，且不是可用的绝对路径
+- `40411`：宿主文件系统拒绝访问
+- `40420`：运行时不存在
+- `40926`：运行时不可用
+- `41304`：路径通过软链接越出工作区，且未启用 `allow_external_symlinks`
 
 #### `POST /api/v1/workspace/fs:search`
 

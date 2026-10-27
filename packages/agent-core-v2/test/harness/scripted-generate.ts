@@ -49,6 +49,8 @@ export type LegacyGenerateFn = (
     readonly sampling?: SamplingOptions;
     readonly thinking?: ThinkingRequestOptions;
     readonly maxCompletionTokens?: number;
+    readonly maxContextTokens?: number;
+    readonly usedContextTokens?: number;
   },
 ) => Promise<LegacyGenerateResult>;
 
@@ -101,6 +103,8 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
             sampling: samplingFromExtraParams(config.extraParams),
             thinking: config.thinking,
             maxCompletionTokens: config.maxCompletionTokens,
+            maxContextTokens: config.maxContextTokens,
+            usedContextTokens: content.usedContextTokens,
           },
         );
       } catch (error) {

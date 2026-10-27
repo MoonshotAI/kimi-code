@@ -498,6 +498,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
+      "/api/v1/workspace/fs:list",
+    ],
+    [
+      "POST",
       "/api/v1/workspace/fs:search",
     ],
     [

@@ -26,6 +26,7 @@ import {
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
+  fsListResponseSchema,
   fsMkdirRequestSchema,
   fsReadRequestSchema,
   fsSearchRequestSchema,
@@ -94,7 +95,15 @@ const sessionIdAndTailParamSchema = z.object({
 
 const fsDownloadQuerySchema = z.object({
   runtime_id: z.string().min(1).optional(),
+  allow_external_symlinks: z.enum(['true', 'false']).optional(),
 });
+
+const workspaceFsListBodySchema = fsListRequestSchema
+  .omit({ include_git_status: true })
+  .extend({
+    workspace: z.string().min(1),
+    runtime_id: z.string().min(1).optional(),
+  });
 
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
@@ -421,8 +430,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             await handleReveal(runtimeFs.fs, req, reply);
             return;
         }
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       } finally {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
@@ -432,6 +441,68 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.path,
     fsActionRoute.options,
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
+  const workspaceListRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspace/fs::list',
+      body: workspaceFsListBodySchema,
+      success: { data: fsListResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_PERMISSION_DENIED]: {},
+        [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
+        [ErrorCode.RUNTIME_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+      },
+      description:
+        'List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+      tags: ['fs'],
+      operationId: 'workspaceFsList',
+    },
+    async (req, reply) => {
+      const { workspace, runtime_id, ...listRequest } = req.body;
+      let runtimeFs: RuntimeFsScope | undefined;
+      try {
+        runtimeFs = await resolveWorkspaceFs(core, workspace, runtime_id ?? 'local', ['fs']);
+        if (runtimeFs === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.WORKSPACE_NOT_FOUND,
+              `workspace ${workspace} does not exist`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        const data = await runtimeFs.fs.list({ ...listRequest, include_git_status: false });
+        reply.send(okEnvelope(data, req.id));
+      } catch (error) {
+        if (error instanceof RuntimeError) {
+          reply.send(
+            errEnvelope(
+              error.code === 'runtime.not_found'
+                ? ErrorCode.RUNTIME_NOT_FOUND
+                : ErrorCode.RUNTIME_UNAVAILABLE,
+              error.message,
+              req.id,
+            ),
+          );
+          return;
+        }
+        sendMappedError(reply, req, error);
+      } finally {
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
+      }
+    },
+  );
+  app.post(
+    workspaceListRoute.path,
+    workspaceListRoute.options,
+    workspaceListRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
   const workspaceSearchRoute = defineRoute(
@@ -467,8 +538,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         }
         const data = await runtimeFs.fs.search(searchRequest);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       } finally {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
@@ -512,8 +583,8 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         }
         const data = await runtimeFs.fs.suggest(suggestRequest);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        sendMappedError(reply, req, err);
+      } catch (error) {
+        sendMappedError(reply, req, error);
       } finally {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
@@ -576,15 +647,15 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         }
         const data = await runtimeFs.fs.suggest(suggestRequest);
         reply.send(okEnvelope(data, req.id));
-      } catch (err) {
-        if (err instanceof RuntimeError) {
-          const code = err.code === 'runtime.not_found'
+      } catch (error) {
+        if (error instanceof RuntimeError) {
+          const code = error.code === 'runtime.not_found'
             ? ErrorCode.RUNTIME_NOT_FOUND
             : ErrorCode.RUNTIME_UNAVAILABLE;
-          reply.send(errEnvelope(code, err.message, req.id));
+          reply.send(errEnvelope(code, error.message, req.id));
           return;
         }
-        sendMappedError(reply, req, err);
+        sendMappedError(reply, req, error);
       } finally {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
       }
@@ -643,10 +714,13 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let runtimeFs: RuntimeFsScope | undefined;
       try {
         runtimeFs = await acquireSessionFs(core, session_id, req.query.runtime_id ?? 'local', ['fs']);
-        resolved = await runtimeFs.fs.resolveDownload(relPath);
-      } catch (err) {
+        resolved = await runtimeFs.fs.resolveDownload(
+          relPath,
+          req.query.allow_external_symlinks === 'true',
+        );
+      } catch (error) {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
-        sendMappedError(reply, req, err);
+        sendMappedError(reply, req, error);
         return;
       }
 
@@ -893,15 +967,15 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
         isDirectory: resolved.isDirectory,
       }),
     );
-  } catch (err) {
+  } catch (error) {
     requestLog(req)?.warn(
-      { session_id: sessionId, app_id: body.app_id, err },
+      { session_id: sessionId, app_id: body.app_id, err: error },
       'fs open-in launch failed',
     );
     reply.send(
       errEnvelope(
         ErrorCode.INTERNAL_ERROR,
-        `failed to open in ${body.app_id}: ${err instanceof Error ? err.message : String(err)}`,
+        `failed to open in ${body.app_id}: ${error instanceof Error ? error.message : String(error)}`,
         req.id,
       ),
     );
@@ -1003,6 +1077,6 @@ function buildValidationEnvelope(
 
 function sanitizeFilename(rel: string): string {
   const segs = rel.split('/');
-  const base = segs[segs.length - 1] ?? rel;
-  return base.replace(/"/g, '\\"');
+  const base = segs.at(-1) ?? rel;
+  return base.replaceAll('"', '\\"');
 }

@@ -5,7 +5,6 @@ import { afterEach } from 'vitest';
 
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { matchSingleMediaPathTag } from '#/agent/media/mediaRef';
 import type {
   AgentLLMRequestOverrides,
   AgentLLMRequestPartHandler,
@@ -15,12 +14,7 @@ import type {
   IAgentLLMRequesterService,
   PreparedTurnRequestConfig,
 } from '#/agent/llmRequester/llmRequester';
-import {
-  AgentLLMRequesterService,
-  llmRequesterMediaRecoveryKey,
-} from '#/agent/llmRequester/llmRequesterService';
-import { IAgentStateService } from '#/agent/state/agentState';
-import type { ContentPart, Message } from '#/llm-adapter/contract/message';
+import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import type {
   LlmCredentialProvider,
   LlmRequestConfig,
@@ -34,7 +28,6 @@ interface RequestScope {
   readonly agent: object;
   readonly source: AgentLLMRequestSource | undefined;
   readonly contextRevision: number;
-  readonly mediaDegraded: boolean;
   attempts: number;
 }
 
@@ -53,21 +46,6 @@ const PROFILE_FIELDS = [
   'toolMessageConversion',
 ] as const;
 
-const DEGRADED_PLACEHOLDERS = {
-  image_url:
-    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
-  audio_url:
-    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
-  video_url:
-    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
-} as const;
-
-const MEDIA_PATH_KIND = {
-  image_url: 'image',
-  audio_url: 'audio',
-  video_url: 'video',
-} as const;
-
 const requestScope = new AsyncLocalStorage<RequestScope>();
 const lastTurnRequests = new WeakMap<object, RecordedRequest>();
 const violations: string[] = [];
@@ -85,7 +63,6 @@ export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequester
   constructor(
     @IInstantiationService instantiation: IInstantiationService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentStateService private readonly states: IAgentStateService,
   ) {
     this.inner = instantiation.createInstance(AgentLLMRequesterService);
   }
@@ -120,12 +97,10 @@ export class PromptCacheGuardedLLMRequesterService implements IAgentLLMRequester
     signal?: AbortSignal,
   ): AgentLLMRequestTask {
     const contextRevision = this.context.prefixRevision();
-    const recovery = this.states.get(llmRequesterMediaRecoveryKey);
     const scope: RequestScope = {
       agent: this,
       source: overrides?.source,
       contextRevision,
-      mediaDegraded: recovery?.media === 'degraded' && recovery.contextRevision === contextRevision,
       attempts: 0,
     };
     return requestScope.run(scope, () => this.inner.start(overrides, onPart, signal));
@@ -166,7 +141,7 @@ function checkPrefixExtension(scope: RequestScope, request: RecordedRequest): vo
   const label = scope.attempts === 1 ? kind : `${kind} retry`;
   recordPrefixBreak(label, findStableBreak(previous, request));
   if (scope.attempts === 1) {
-    recordPrefixBreak(label, findHistoryBreak(previous, request, scope.mediaDegraded));
+    recordPrefixBreak(label, findHistoryBreak(previous, request));
   }
 }
 
@@ -200,18 +175,12 @@ function findStableBreak(previous: RecordedRequest, next: RecordedRequest): unkn
   );
 }
 
-function findHistoryBreak(
-  previous: RecordedRequest,
-  next: RecordedRequest,
-  mediaDegraded: boolean,
-): unknown {
+function findHistoryBreak(previous: RecordedRequest, next: RecordedRequest): unknown {
   return findGenerateCallPrefixBreak(
     {
       systemPrompt: next.call.systemPrompt,
       tools: next.call.tools,
-      history: mediaDegraded
-        ? alignDegradedMedia(previous.call.history, next.call.history)
-        : previous.call.history,
+      history: previous.call.history,
     },
     next.call,
   );
@@ -220,29 +189,6 @@ function findHistoryBreak(
 function sameToolNames(previous: GenerateCall, next: GenerateCall): boolean {
   const names = (call: GenerateCall) => call.tools.map((tool) => tool.name).toSorted();
   return isDeepStrictEqual(names(previous), names(next));
-}
-
-function alignDegradedMedia(previous: readonly Message[], next: readonly Message[]): Message[] {
-  return previous.map((message, index) => {
-    const counterpart = next[index];
-    if (counterpart === undefined || counterpart.content.length !== message.content.length) return message;
-    return {
-      ...message,
-      content: message.content.map((part, partIndex) => {
-        const replacement = counterpart.content[partIndex]!;
-        return isDegradedStandIn(part, replacement) ? replacement : part;
-      }),
-    };
-  });
-}
-
-function isDegradedStandIn(part: ContentPart, replacement: ContentPart): boolean {
-  if (replacement.type !== 'text') return false;
-  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
-    return false;
-  }
-  if (replacement.text === DEGRADED_PLACEHOLDERS[part.type]) return true;
-  return matchSingleMediaPathTag(replacement.text)?.kind === MEDIA_PATH_KIND[part.type];
 }
 
 function modelIdentity(config: LlmRequestConfig): string {

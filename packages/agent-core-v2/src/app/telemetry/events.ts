@@ -89,16 +89,18 @@ export interface TurnEndedEvent {
 }
 
 export interface PromptCacheProbeEvent {
-  source: 'fork';
-  turn_id: number;
+  source: 'fork' | 'compaction';
+  turn_id?: number;
   provider_type?: string;
   protocol?: string;
   input_tokens: number;
   input_cache_read: number;
   input_cache_creation: number;
   output_tokens: number;
+  model_match?: boolean;
   tools_match?: boolean;
   system_prompt_match?: boolean;
+  history_prefix_match?: boolean;
   parent_input_tokens?: number;
   parent_request_gap_ms?: number;
 }
@@ -695,24 +697,27 @@ export const telemetryEventDefinitions = {
   prompt_cache_probe: defineAgentTelemetryEvent<PromptCacheProbeEvent>({
     owner: 'kimi-code',
     comment:
-      'An agent whose first request is expected to hit the prompt cache reports that request\'s cache usage and how its prefix compares with the last turn request the parent agent completed before the fork.',
+      'A request expected to reuse an earlier prompt cache reports its cache usage and how its provider-visible prefix compares with the baseline turn request.',
     properties: {
       source: 'Why a cache hit was expected for this request',
-      turn_id: 'Per-agent turn index of the probed request',
+      turn_id: 'Per-agent turn index of the probed request; absent for manual compaction between turns',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       input_tokens: 'Total input tokens of the probed request (other + cache read + cache creation)',
       input_cache_read: 'Cache-read input tokens of the probed request',
       input_cache_creation: 'Cache-creation input tokens of the probed request',
       output_tokens: 'Output tokens of the probed request',
+      model_match: 'Whether the baseline and probed requests use the same model; absent without a baseline',
       tools_match:
-        "Whether the provider-visible tool table hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+        'Whether the provider-visible tool table hash equals the baseline request; absent without a usable baseline or when the model or context revision differs',
       system_prompt_match:
-        "Whether the system prompt hash equals the parent's; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+        'Whether the system prompt hash equals the baseline request; absent without a usable baseline or when the model or context revision differs',
+      history_prefix_match:
+        'For compaction, whether the projected messages start with the exact baseline history; absent for fork or without a usable baseline',
       parent_input_tokens:
-        "Total input tokens of the parent's last completed turn request before the fork, i.e. the prefix this request could read from the cache; absent when there is none, or the parent's context was rewritten (undo, compaction) after it",
+        'Total input tokens of the baseline turn request (the parent before fork, or the previous turn before compaction); absent without a usable baseline on the same model',
       parent_request_gap_ms:
-        "Milliseconds from the parent's last completed turn request finishing to the probed request starting; absent when the parent completed no turn request before the fork, or its context was rewritten (undo, compaction) after the last one",
+        'Milliseconds from the baseline turn request finishing to the probed request starting; absent without a usable baseline or when the model or context revision differs',
     },
   }),
   tool_call: defineAgentTelemetryEvent<ToolCallEvent>({
