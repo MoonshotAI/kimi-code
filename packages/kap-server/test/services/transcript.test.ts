@@ -14,6 +14,7 @@ import {
   IAgentTaskService,
   IEventBus,
   IFlagService,
+  IBlobStore,
   ISessionIndex,
   ISessionMetadata,
   ISessionLifecycleService,
@@ -2822,12 +2823,17 @@ describe('AgentTranscriptProjector', () => {
     try {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
       await mkdir(wireDir, { recursive: true });
+      const blobHash = 'a'.repeat(64);
+      const blobBytes = Buffer.from('cold-image-bytes');
       const records = [
         {
           type: 'context.append_message',
           message: {
             role: 'user',
-            content: [{ type: 'text', text: 'hi' }],
+            content: [
+              { type: 'text', text: 'hi' },
+              { type: 'image_url', imageUrl: { url: `blobref:image/png;${blobHash}`, name: 'cold.png' } },
+            ],
             toolCalls: [],
             origin: { kind: 'user' },
           },
@@ -2897,6 +2903,15 @@ describe('AgentTranscriptProjector', () => {
         core: {
           accessor: {
             get: (token: unknown) => {
+              if (token === IBlobStore) {
+                return {
+                  get: async (scope: string, key: string) => {
+                    expect(scope).toBe('sessions/ws/s1/agents/main/blobs');
+                    expect(key).toBe(blobHash);
+                    return blobBytes;
+                  },
+                };
+              }
               if (token === ISessionManager) return { get: () => undefined, list: () => [] };
               if (token === IWorkspaceInstanceManager) {
               return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
@@ -2909,6 +2924,15 @@ describe('AgentTranscriptProjector', () => {
       });
       const snapshot = await service.readColdSnapshot('s1', 'main');
       expect(snapshot).toBeDefined();
+      expect(snapshot!.attachments).toEqual([
+        {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'cold.png',
+          source: { kind: 'url', url: `data:image/png;base64,${blobBytes.toString('base64')}` },
+        },
+      ]);
+      expect(JSON.stringify(snapshot)).not.toContain('blobref:');
 
       expect(snapshot!.tasks).toEqual([
         {

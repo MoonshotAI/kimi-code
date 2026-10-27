@@ -106,13 +106,20 @@ describe('WireService seal', () => {
 
 describe('WireService appendRecord', () => {
   it('appends flat records without a dehydrator', async () => {
-    wire.appendRecord({ type: 'wire.test.append', value: 1, time: 10 });
-    wire.appendRecord({ type: 'wire.test.append', value: 2, time: 11 });
+    const media: ContentPart[] = [
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
+      { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+    ];
+    const records: WireRecord[] = [
+      { type: 'turn.prompt', input: media, origin: { kind: 'user' }, time: 10 },
+      { type: 'turn.steer', input: media, origin: { kind: 'user' }, time: 11 },
+      { type: 'prompt.steered', content: media, time: 12 },
+    ];
+    for (const record of records) wire.appendRecord(record);
 
-    expect(await readRecords()).toEqual([
-      { type: 'wire.test.append', value: 1, time: 10 },
-      { type: 'wire.test.append', value: 2, time: 11 },
-    ]);
+    expect(await readRecords()).toEqual(records);
+    expect((await collect(wire.read())).slice(1)).toEqual(records);
   });
 
   it('runs records through the dehydrate queue in append order', async () => {

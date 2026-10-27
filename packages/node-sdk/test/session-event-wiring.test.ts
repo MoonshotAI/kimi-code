@@ -120,6 +120,11 @@ describe('SessionEventWiring status snapshot fold', () => {
     bindStatusServices(sub, 'sub-model');
     const { sink, events } = collectingSink();
     const wiring = new SessionEventWiring(makeSession([sub]), sink);
+    const steerInput = [
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
+      { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+    ];
     try {
       // The v2 model slice rides only the subagent's bind-time emission, which
       // reaches clients before `subagent.spawned` and is dropped there; a
@@ -134,11 +139,12 @@ describe('SessionEventWiring status snapshot fold', () => {
           { type: 'custom', source: { kind: 'inline' } },
         ],
       });
+      sub.bus.emit({ type: 'turn.steer', input: steerInput });
     } finally {
       wiring.dispose();
     }
 
-    expect(events).toHaveLength(3);
+    expect(events).toHaveLength(4);
     expect(events[0]).toMatchObject({
       type: 'agent.status.updated',
       sessionId: 's1',
@@ -164,6 +170,8 @@ describe('SessionEventWiring status snapshot fold', () => {
         { type: 'custom', source: { kind: 'inline' } },
       ],
     });
+    expect(events[3]).toMatchObject({ type: 'turn.steer', input: steerInput });
+    expect(JSON.stringify(events[3])).not.toContain('"source"');
   });
 
   it('forwards prompt.completed so gate-blocked prompts can settle clients', () => {
