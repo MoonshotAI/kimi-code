@@ -3537,8 +3537,8 @@ describe('SessionTasks', () => {
       { type: 'turn.prompt', turnId: 1, origin: { kind: 'user' }, time: 5_000 },
       spawned('child-c', { parentToolCallId: 'swarm-c', swarmIndex: 0, time: 5_100 }),
     ];
-    const statuses = async (running: readonly string[]) => {
-      const { tasks } = sessionTasks({ records, running });
+    const statuses = async (running: readonly string[], history = records) => {
+      const { tasks } = sessionTasks({ records: history, running });
       await tasks.whenLoaded('main');
       return Object.fromEntries(
         tasks.list('main').map((entry) => [entry.task_id, entry.outcome ?? entry.status]),
@@ -3558,6 +3558,11 @@ describe('SessionTasks', () => {
       'child-c': 'running',
     });
     expect(await statuses(['main', 'child-b'])).toMatchObject({ 'child-b': 'running', 'child-c': 'running' });
+    const afterCrash: SourceFields[] = [
+      ...records,
+      { type: 'turn.prompt', turnId: 2, origin: { kind: 'user' }, time: 6_000 },
+    ];
+    expect(await statuses(['main'], afterCrash)).toMatchObject({ 'child-c': 'lost' });
   });
 
   it('applies events that arrive while loading after the wire records', async () => {

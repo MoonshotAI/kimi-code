@@ -83,9 +83,9 @@ export class SessionTasks {
   private async load(agentId: string, state: AgentTasks): Promise<void> {
     const records = await this.host.readRecords(agentId);
     const spawnedAt = new Map<string, number>();
-    let lastTurnEnd = -1;
+    let turnStart = -1;
     records.forEach((record, index) => {
-      if (record.type === 'turn.ended') lastTurnEnd = index;
+      if (record.type === 'turn.prompt') turnStart = index;
       for (const task of foldTaskEvent(agentId, state, record)) {
         if (record.type === 'subagent.spawned') spawnedAt.set(task.task_id, index);
       }
@@ -94,7 +94,7 @@ export class SessionTasks {
     for (const task of state.tasks.values()) {
       if (task.kind !== 'subagent' || task.detached || task.status !== 'running') continue;
       if (task.child_agent_id !== undefined && this.host.isRunning(task.child_agent_id)) continue;
-      if (parentRunning && (spawnedAt.get(task.task_id) ?? -1) > lastTurnEnd) continue;
+      if (parentRunning && (spawnedAt.get(task.task_id) ?? -1) > turnStart) continue;
       state.tasks.set(task.task_id, { ...task, status: 'ended', outcome: 'lost' });
     }
     const pending = state.pending ?? [];
