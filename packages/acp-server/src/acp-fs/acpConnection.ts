@@ -79,7 +79,7 @@ export interface AcpTerminalCreatedEvent {
   readonly sessionId: string;
   /**
    * The full shell invocation string (the `-c` payload of the exec call,
-   * `cd <cwd> && <command>`), used to match the tool call whose
+   * `cd <cwd> || exit 1\n<command>`), used to match the tool call whose
    * `args.command` it ends with.
    */
   readonly shellCommand: string;
