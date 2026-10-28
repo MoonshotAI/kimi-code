@@ -121,6 +121,33 @@ export interface LlmStatusErrorInput {
   readonly retryable?: boolean;
 }
 
+const STREAM_RETRYABLE_ERROR_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
+
+export function toLlmStreamErrorMessage(
+  input: Omit<LlmStatusErrorInput, 'statusCode'> & { readonly businessCode?: number },
+): LlmRemoteErrorMessage {
+  const info = {
+    requestId: input.requestId ?? null,
+    retryAfterMs: input.retryAfterMs ?? null,
+    headers: input.headers ?? null,
+  };
+  if (input.businessCode === 429) {
+    return { kind: 'rate_limit', message: input.message, ...info };
+  }
+  if (input.businessCode === 529) {
+    return { kind: 'overloaded', message: input.message, ...info };
+  }
+  if (input.businessCode === 413) {
+    return { kind: 'request_too_large', message: input.message, ...info };
+  }
+  return {
+    kind: 'status',
+    message: input.message,
+    retryable: input.businessCode === undefined || STREAM_RETRYABLE_ERROR_CODES.has(input.businessCode),
+    ...info,
+  };
+}
+
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
   const statusInfo: LlmStatusErrorInfo =
     input.statusCode === undefined

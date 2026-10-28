@@ -234,7 +234,7 @@ export function isImageFormatError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     if (error instanceof APIContextOverflowError) return false;
     if (error instanceof APIRequestTooLargeError) return false;
-    return isImageFormatStatusError(error.statusCode, error.message);
+    return error.statusCode !== undefined && isImageFormatStatusError(error.statusCode, error.message);
   }
   if (error instanceof ChatProviderError) {
     const lowerMessage = error.message.toLowerCase();
@@ -345,13 +345,19 @@ export function traceIdFromHeadersRecord(headers: Record<string, string> | null)
 export function isToolExchangeAdjacencyError(error: unknown): boolean {
   if (!(error instanceof APIStatusError)) return false;
   if (error instanceof APIContextOverflowError) return false;
-  return isToolExchangeAdjacencyStatusError(error.statusCode, error.message);
+  return (
+    error.statusCode !== undefined &&
+    isToolExchangeAdjacencyStatusError(error.statusCode, error.message)
+  );
 }
 
 export function isRecoverableRequestStructureError(error: unknown): boolean {
   if (!(error instanceof APIStatusError)) return false;
   if (error instanceof APIContextOverflowError) return false;
-  return isRequestStructureStatusError(error.statusCode, error.message);
+  return (
+    error.statusCode !== undefined &&
+    isRequestStructureStatusError(error.statusCode, error.message)
+  );
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {

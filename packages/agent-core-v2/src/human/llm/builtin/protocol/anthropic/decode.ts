@@ -5,7 +5,11 @@ import {
 } from '@anthropic-ai/sdk';
 
 import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
-import { toLlmStatusErrorMessage, toLlmTransportErrorMessage } from '#/llm/protocol/rules/status';
+import {
+  toLlmStatusErrorMessage,
+  toLlmStreamErrorMessage,
+  toLlmTransportErrorMessage,
+} from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
@@ -235,7 +239,7 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       | undefined;
     const message = typeof body?.error?.message === 'string' ? body.error.message : '';
     const type =
-      error.type ?? (typeof body?.error?.type === 'string' ? body.error.type : undefined);
+      (typeof body?.error?.type === 'string' ? body.error.type : undefined) ?? error.type;
     const statusCode = source === 'stream' ? undefined : error.status;
     const statusInfo = {
       requestId: error.requestID ?? null,
@@ -259,10 +263,10 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
     }
     if (body !== undefined) {
-      return { kind: 'provider', message };
+      return toLlmStreamErrorMessage({ businessCode: error.status, message, ...statusInfo });
     }
     if (source === 'stream') {
-      return { kind: 'provider', message: '' };
+      return toLlmStreamErrorMessage({ businessCode: error.status, message: '', ...statusInfo });
     }
   }
   if (error instanceof Error) {

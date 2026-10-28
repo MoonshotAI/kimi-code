@@ -1,6 +1,6 @@
 import { ApiError as RawGoogleGenAISDKApiError } from '@google/genai';
 
-import { toLlmStatusErrorMessage } from '#/llm/protocol/rules/status';
+import { toLlmStatusErrorMessage, toLlmStreamErrorMessage } from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { NO_FINISH, type FinishInfo, type FinishReason } from '#/llm/response';
 import type { StreamedMessagePart, ThinkPart, ToolCall } from '#/llm/message';
@@ -153,7 +153,6 @@ function parseUsage(response: Record<string, unknown>): TokenUsage | undefined {
 
 const NETWORK_RE = /network|connection|connect|disconnect|fetch failed/i;
 const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
-const RETRYABLE_ERROR_CODES = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
 interface GoogleGenAIErrorBody {
   readonly error?: {
@@ -171,8 +170,6 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     const code = body?.error?.code;
     const status = body?.error?.status;
     const statusCode = source === 'stream' ? undefined : error.status;
-    const retryable =
-      source === 'stream' && RETRYABLE_ERROR_CODES.has(error.status) ? true : undefined;
     const retryAfterMs = parseRetryInfoDelayMs(body);
     if (code === 429 || status === 'RESOURCE_EXHAUSTED') {
       return {
@@ -194,7 +191,14 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
         headers: null,
       };
     }
-    return toLlmStatusErrorMessage({ statusCode, message, retryAfterMs, retryable });
+    if (source === 'stream') {
+      return toLlmStreamErrorMessage({
+        businessCode: typeof code === 'number' ? code : error.status,
+        message,
+        retryAfterMs,
+      });
+    }
+    return toLlmStatusErrorMessage({ statusCode: error.status, message, retryAfterMs });
   }
   if (error instanceof Error) {
     const msg = error.message;
@@ -206,11 +210,10 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     }
     const code = (error as { code?: number }).code;
     if (typeof code === 'number') {
-      return toLlmStatusErrorMessage({
-        statusCode: source === 'stream' ? undefined : code,
-        message: msg,
-        retryable: source === 'stream' && RETRYABLE_ERROR_CODES.has(code) ? true : undefined,
-      });
+      if (source === 'stream') {
+        return toLlmStreamErrorMessage({ businessCode: code, message: msg });
+      }
+      return toLlmStatusErrorMessage({ statusCode: code, message: msg });
     }
     return { kind: 'provider', message: `GoogleGenAI error: ${msg}` };
   }

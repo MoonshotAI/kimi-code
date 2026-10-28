@@ -105,9 +105,22 @@ function readErrorCause(error: unknown): unknown {
 export const toKimiErrorPayload = toErrorPayload;
 
 export function fromErrorPayload(payload: ErrorPayload): Error2 {
-  return new Error2(payload.code, payload.message, {
+  const error = new Error2(payload.code, payload.message, {
     name: payload.name,
     details: payload.details,
     cause: payload.cause === undefined ? undefined : fromErrorPayload(payload.cause),
   });
+  const statusCode = payload.details?.['statusCode'];
+  if (
+    typeof statusCode === 'number' &&
+    (payload.name === 'APIStatusError' ||
+      payload.name === 'APIContextOverflowError' ||
+      payload.name === 'APIRequestTooLargeError' ||
+      payload.name === 'APIProviderRateLimitError' ||
+      payload.name === 'APIProviderQuotaExhaustedError' ||
+      payload.name === 'APIProviderOverloadedError')
+  ) {
+    return Object.assign(error, { statusCode });
+  }
+  return error;
 }

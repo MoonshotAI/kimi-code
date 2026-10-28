@@ -9,6 +9,7 @@ import { headersToRecord, parseRetryAfterMs } from '#/llm/protocol/kit/http';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import {
   toLlmStatusErrorMessage,
+  toLlmStreamErrorMessage,
   toLlmTransportErrorMessage,
 } from '#/llm/protocol/rules/status';
 import type { LlmRemoteErrorMessage } from '#/llm/response';
@@ -420,10 +421,10 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
       if (isOpenAIRateLimitErrorCode(code) || isOpenAIRateLimitErrorCode(type)) {
         return { kind: 'rate_limit', message, ...statusInfo };
       }
-      return { kind: 'provider', message };
+      return toLlmStreamErrorMessage({ businessCode: error.status, message, ...statusInfo });
     }
     if (source === 'stream') {
-      return { kind: 'provider', message: '' };
+      return toLlmStreamErrorMessage({ businessCode: error.status, message: '', ...statusInfo });
     }
   }
   if (

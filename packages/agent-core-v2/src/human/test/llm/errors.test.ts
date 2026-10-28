@@ -15,11 +15,15 @@ import type { LlmRemoteErrorMessage } from '#/llm/response';
 import { classifyKimiQuotaError } from '#/llm/builtin/provider/kimi/errors';
 import { decodeError as convertAnthropicError } from '#/llm/builtin/protocol/anthropic/decode';
 import { decodeError as convertGoogleGenAIError } from '#/llm/builtin/protocol/google-genai/decode';
-import { convertOpenAIError } from '#/llm/builtin/protocol/openai/decode';
+import {
+  convertOpenAIError,
+  decodeError as decodeOpenAIError,
+} from '#/llm/builtin/protocol/openai/decode';
 import { createDecoder as createOpenAIResponsesDecoder } from '#/llm/builtin/protocol/openai-responses/decode';
 import {
   createAnthropicRequester,
   createGoogleGenAIRequester,
+  createKimiAnthropicRequester,
   createKimiOpenAIRequester,
   createOpenAIRequester,
   createOpenAIResponsesRequester,
@@ -139,6 +143,38 @@ describe('convertOpenAIError', () => {
     const message = '<title>reasoning_effort is unsupported</title>';
     const raw = new RawOpenAISDKAPIError(400, { message }, 'SDK-composed fallback', new Headers());
     expect(convertOpenAIError(raw)).toMatchObject({ kind: 'status', message, statusCode: 400 });
+  });
+
+  it('uses numeric stream business codes only for classification', () => {
+    const invalid = decodeOpenAIError(
+      new RawOpenAISDKAPIError(
+        400,
+        { message: 'unsupported image format', code: 'invalid_request_error' },
+        'SDK-composed fallback',
+        new Headers(),
+      ),
+      'stream',
+    );
+    expect(invalid).toMatchObject({
+      kind: 'status',
+      message: 'unsupported image format',
+      retryable: false,
+    });
+    expect(invalid).not.toHaveProperty('statusCode');
+    expect(isRetryableError(invalid)).toBe(false);
+
+    const tooLarge = decodeOpenAIError(
+      new RawOpenAISDKAPIError(
+        413,
+        { message: 'request too large', code: 'request_too_large' },
+        'SDK-composed fallback',
+        new Headers(),
+      ),
+      'stream',
+    );
+    expect(tooLarge).toMatchObject({ kind: 'request_too_large', message: 'request too large' });
+    expect(tooLarge).not.toHaveProperty('statusCode');
+    expect(isRetryableError(tooLarge)).toBe(false);
   });
 
   it('maps 400 request-structure rejections to request_structure', () => {
@@ -445,6 +481,102 @@ describe('requester error conversion', () => {
     expect(failure).not.toHaveProperty('error.statusCode');
   });
 
+  it('does not restore a stream status through Kimi Anthropic classification', async () => {
+    const raw = new RawAnthropicSDKAPIError(
+      429,
+      {
+        type: 'error',
+        error: {
+          type: 'exceeded_current_quota_error',
+          message: 'backend anthropic stream quota',
+        },
+      },
+      'SDK-composed fallback',
+      new Headers(),
+      'error',
+    );
+    const requester = createKimiAnthropicRequester({
+      endpoint: kimiEndpoint,
+      betaApi: false,
+      classifyError: classifyKimiQuotaError,
+      clientFactory: () =>
+        ({
+          messages: {
+            create: () => ({
+              withResponse: async () => ({
+                data: {
+                  async *[Symbol.asyncIterator]() {
+                    yield {};
+                    throw raw;
+                  },
+                },
+                response: new Response(null, {
+                  status: 200,
+                  headers: { 'x-trace-id': 'req-kimi-anthropic-stream', 'retry-after': '6' },
+                }),
+              }),
+            }),
+          },
+        }) as never,
+    });
+    const events = await generateEvents(requester);
+    const failure = events.at(-1);
+    expect(failure).toMatchObject({
+      type: 'llm.failed.remote',
+      error: {
+        kind: 'quota_exhausted',
+        message: 'backend anthropic stream quota',
+        requestId: 'req-kimi-anthropic-stream',
+        retryAfterMs: 6000,
+      },
+    });
+    expect(failure).not.toHaveProperty('error.statusCode');
+  });
+
+  it('preserves diagnostics for an unknown OpenAI stream business code', async () => {
+    const raw = new RawOpenAISDKAPIError(
+      429,
+      { message: 'backend unknown stream failure', code: 'unlisted_business_error' },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    const requester = createOpenAIRequester({
+      clientFactory: () =>
+        ({
+          chat: {
+            completions: {
+              create: () => ({
+                withResponse: async () => ({
+                  data: {
+                    async *[Symbol.asyncIterator]() {
+                      yield {};
+                      throw raw;
+                    },
+                  },
+                  response: new Response(null, {
+                    status: 200,
+                    headers: { 'x-request-id': 'req-openai-unknown', 'retry-after': '7' },
+                  }),
+                }),
+              }),
+            },
+          },
+        }) as never,
+    });
+    const events = await generateEvents(requester);
+    const failure = events.at(-1);
+    expect(failure).toMatchObject({
+      type: 'llm.failed.remote',
+      error: {
+        kind: 'rate_limit',
+        message: 'backend unknown stream failure',
+        requestId: 'req-openai-unknown',
+        retryAfterMs: 7000,
+      },
+    });
+    expect(failure).not.toHaveProperty('error.statusCode');
+  });
+
   it('converts an OpenAI Responses stream error without inventing HTTP facts', async () => {
     const client = new OpenAI({
       apiKey: 'test-key',
@@ -614,6 +746,22 @@ describe('Anthropic error decoding', () => {
     });
   });
 
+  it('preserves diagnostics for an unknown stream business code', () => {
+    const raw = new RawAnthropicSDKAPIError(
+      429,
+      { error: { type: 'unlisted_business_error', message: 'backend unknown failure' } },
+      'SDK-composed fallback',
+      new Headers({ 'retry-after': '2' }),
+    );
+    const converted = convertAnthropicError(raw, 'stream');
+    expect(converted).toMatchObject({
+      kind: 'rate_limit',
+      message: 'backend unknown failure',
+      retryAfterMs: 2000,
+    });
+    expect(converted).not.toHaveProperty('statusCode');
+  });
+
   it('does not fall back to the SDK message when the backend message is missing', () => {
     const raw = new RawAnthropicSDKAPIError(
       500,
@@ -685,7 +833,12 @@ describe('OpenAI Responses stream errors', () => {
       code: null,
       message: 'upstream status_code: 429',
     });
-    expect(failure).toEqual({ kind: 'provider', message: 'upstream status_code: 429' });
+    expect(failure).toMatchObject({
+      kind: 'status',
+      message: 'upstream status_code: 429',
+      retryable: true,
+    });
+    expect(failure).not.toHaveProperty('statusCode');
   });
 
   it('uses only the response.failed backend error message', () => {

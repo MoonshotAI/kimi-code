@@ -3,6 +3,7 @@ import { NO_FINISH, type FinishInfo } from '#/llm/response';
 import type { StreamedMessagePart } from '#/llm/message';
 import type { DecodeSink, Decoder } from '#/llm/protocol/protocol';
 import type { TokenUsage } from '#/llm/response';
+import { toLlmStreamErrorMessage } from '#/llm/protocol/rules/status';
 
 import {
   isContextOverflowErrorCode,
@@ -183,7 +184,7 @@ function errorFromOpenAIResponsesEvent(
   if (isOpenAIOverloadedErrorCode(code)) {
     return { kind: 'overloaded', message, ...statusInfo };
   }
-  return { kind: 'provider', message };
+  return toLlmStreamErrorMessage({ message, ...statusInfo });
 }
 
 function parseNestedGatewayStreamError(message: string):

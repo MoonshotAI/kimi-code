@@ -14,6 +14,8 @@ import {
   createAbortError,
   errorFromLlmMessage,
   isAbortError,
+  isImageFormatError,
+  isRecoverableRequestStructureError,
   isRetryableGenerateError,
   llmMessageFromError,
   normalizeAPIStatusError,
@@ -263,5 +265,13 @@ describe('model error HTTP status source', () => {
 
     expect(error).toMatchObject({ message: 'backend HTTP 503', statusCode: 503 });
     expect(isRetryableGenerateError(error)).toBe(true);
+  });
+
+  it('does not apply message recovery patterns without a real HTTP status', () => {
+    const structural = new APIStatusError(undefined, 'tool_use followed by tool_result');
+    const image = new APIStatusError(undefined, 'unsupported image format');
+
+    expect(isRecoverableRequestStructureError(structural)).toBe(false);
+    expect(isImageFormatError(image)).toBe(false);
   });
 });

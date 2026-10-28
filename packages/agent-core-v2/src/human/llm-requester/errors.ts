@@ -305,27 +305,21 @@ export function isRequestTooLargeStatusError(statusCode: number, message: string
   return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
-export function isToolExchangeAdjacencyStatusError(
-  statusCode: number | undefined,
-  message: string,
-): boolean {
-  if (statusCode !== undefined && statusCode !== 400 && statusCode !== 422) return false;
+export function isToolExchangeAdjacencyStatusError(statusCode: number, message: string): boolean {
+  if (statusCode !== 400 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
-export function isRequestStructureStatusError(
-  statusCode: number | undefined,
-  message: string,
-): boolean {
-  if (statusCode !== undefined && statusCode !== 400 && statusCode !== 422) return false;
+export function isRequestStructureStatusError(statusCode: number, message: string): boolean {
+  if (statusCode !== 400 && statusCode !== 422) return false;
   if (isToolExchangeAdjacencyStatusError(statusCode, message)) return true;
   const lowerMessage = message.toLowerCase();
   return STRUCTURAL_REQUEST_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
-export function isImageFormatStatusError(statusCode: number | undefined, message: string): boolean {
-  if (statusCode !== undefined && statusCode !== 400) return false;
+export function isImageFormatStatusError(statusCode: number, message: string): boolean {
+  if (statusCode !== 400) return false;
   const lowerMessage = message.toLowerCase();
   return (
     IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage)) ||

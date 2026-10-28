@@ -106,4 +106,31 @@ describe('fromErrorPayload', () => {
     expect(revived.cause).toBeInstanceOf(Error2);
     expect((revived.cause as Error2).code).toBe('provider.connection_error');
   });
+
+  it('preserves a verified model HTTP status across repeated serialization', () => {
+    const original = Object.assign(
+      new Error2('provider.api_error', 'model failure', {
+        name: 'APIStatusError',
+        details: { statusCode: 503, requestId: 'req-model' },
+      }),
+      { statusCode: 503 },
+    );
+    const revived = fromErrorPayload(toErrorPayload(original));
+    expect(revived).toMatchObject({ statusCode: 503 });
+    expect(toErrorPayload(revived).details).toMatchObject({
+      statusCode: 503,
+      requestId: 'req-model',
+    });
+  });
+
+  it('does not promote KAP details into a direct model HTTP status', () => {
+    const revived = fromErrorPayload({
+      code: 'internal',
+      message: 'KAP failure',
+      name: 'Error2',
+      details: { statusCode: 503 },
+      retryable: false,
+    });
+    expect(revived).not.toHaveProperty('statusCode');
+  });
 });
