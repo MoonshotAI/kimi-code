@@ -722,7 +722,6 @@ interface TaskTerminatedPayload {
   agentId: string;
   /** AgentTaskInfo */
   info: AgentTaskInfoByKind[AgentTaskKind];
-  outputTail?: string;
 }
 
 /**

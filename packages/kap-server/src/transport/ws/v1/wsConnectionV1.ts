@@ -19,7 +19,6 @@ import type {
 import {
   isTaskOutputMessageType,
   TaskOutputAttachments,
-  type TaskOutputFrame,
   type TaskOutputSource,
 } from './taskOutputStream';
 
@@ -97,7 +96,7 @@ export class WsConnectionV1 implements BroadcastTarget {
         respond: (frame) => {
           this.sendImmediateFrame(frame);
         },
-        output: (frame: TaskOutputFrame) => {
+        output: (frame) => {
           this.sendSubscribedFrame(frame);
         },
         rejectUnreadable: () => {

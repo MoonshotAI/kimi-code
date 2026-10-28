@@ -2,13 +2,12 @@ import type {
   AgentId,
   FrameId,
   StepId,
-  TaskId,
   TurnId,
 } from '../model/ids';
 import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
-import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
+import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
 import type { TranscriptTask } from '../model/task';
@@ -42,9 +41,12 @@ export interface FrameUpsertOp {
   readonly frame: TranscriptFrame;
 }
 
-export type AppendTarget =
-  | { readonly type: 'frame'; readonly turnId: TurnId; readonly stepId: StepId; readonly frameId: FrameId }
-  | { readonly type: 'task'; readonly taskId: TaskId };
+export interface AppendTarget {
+  readonly type: 'frame';
+  readonly turnId: TurnId;
+  readonly stepId: StepId;
+  readonly frameId: FrameId;
+}
 
 export interface AppendOp {
   readonly op: 'append';
@@ -56,12 +58,6 @@ export interface AppendOp {
 export interface MarkerUpsertOp {
   readonly op: 'marker.upsert';
   readonly item: TranscriptMarker;
-  readonly beforeTurn?: number;
-}
-
-export interface TaskRefUpsertOp {
-  readonly op: 'taskref.upsert';
-  readonly item: TranscriptTaskRef;
   readonly beforeTurn?: number;
 }
 
@@ -107,7 +103,6 @@ export type TranscriptOperation =
   | FrameUpsertOp
   | AppendOp
   | MarkerUpsertOp
-  | TaskRefUpsertOp
   | TaskUpsertOp
   | InteractionUpsertOp
   | AttachmentUpsertOp

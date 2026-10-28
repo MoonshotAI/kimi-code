@@ -155,8 +155,6 @@ interface ManagedTask {
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 
-const TERMINAL_OUTPUT_TAIL_BYTES = 4 * 1024;
-
 const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 function outputLimitReason(): string {
@@ -1120,14 +1118,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     void this.notifyAgentTask(info).catch((error) => {
       this.log.error('task notification delivery failed', { taskId: info.taskId, error });
     });
-    this.recordTaskTerminated(info, this.retainedOutputTail(entry));
-  }
-
-  private retainedOutputTail(entry: ManagedTask): string | undefined {
-    if (entry.outputChunks.length === 0) return undefined;
-    const retained = Buffer.from(entry.outputChunks.join(''), 'utf-8');
-    const offset = Math.max(0, retained.byteLength - TERMINAL_OUTPUT_TAIL_BYTES);
-    return retained.subarray(offset).toString('utf-8');
+    this.recordTaskTerminated(info);
   }
 
   private recordTaskStarted(info: AgentTaskInfo): void {
@@ -1142,10 +1133,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
-  private recordTaskTerminated(info: AgentTaskInfo, outputTail?: string): void {
+  private recordTaskTerminated(info: AgentTaskInfo): void {
     if (this.lifecycleActive()) {
       void this.dispatcher.dispatch(
-        new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
+        new TaskTerminated({ agentId: this.scopeContext.agentId, info }),
       );
     } else {
       this.log.warn('task terminal event dropped: agent lifecycle inactive', {

@@ -5,14 +5,17 @@
  * (`applyOperation` on an `AgentState`) — the reducer is NOT re-implemented
  * here. State arrives through exactly two channels:
  *
- *  - REST pages (`applyPage`): the only source of FULL state. A `replace`
- *    page (initial load / full refresh) is the newest slice and replaces
- *    local state wholesale, globals included; a non-replace page is an older
- *    slice fetched with `before_turn` and prepended ahead of the loaded
- *    window (items only — globals stay with the fresher live state).
- *  - WS delta ops (`applyOps`): incremental `transcript.ops` only. Ops are
- *    idempotent upserts plus offset-placed appends, so ops buffered while a
- *    REST refresh is in flight converge when flushed onto the fresh pages.
+ *  - REST pages (`applyPage`): the only source of FULL transcript state. A
+ *    `replace` page (initial load / full refresh) is the newest slice and
+ *    replaces local state wholesale, globals included except tasks; a
+ *    non-replace page is an older slice fetched with `before_turn` and
+ *    prepended ahead of the loaded window (items only — globals stay with the
+ *    fresher live state).
+ *  - WS delta ops (`applyOps`): incremental `transcript.ops`, plus each WS
+ *    `task` event as a `task.upsert` (tasks are not part of the transcript, so
+ *    they only ever arrive this way). Ops are idempotent upserts plus
+ *    offset-placed appends, so ops buffered while a REST refresh is in flight
+ *    converge when flushed onto the fresh pages.
  *
  * `onGap` surfaces `append` placement gaps so the caller can trigger a full
  * REST refresh (the WS channel carries no snapshots to fall back on).
@@ -119,15 +122,15 @@ export class TranscriptChatStore {
 
   /**
    * Merge one REST page. With `replace`, the page is the newest slice and
-   * becomes the whole state (initial load / full refresh); otherwise it is an
-   * older slice prepended ahead of the window (deduped by item id), updating
-   * only `items` and `hasMoreOlder`.
+   * becomes the whole state except tasks (initial load / full refresh);
+   * otherwise it is an older slice prepended ahead of the window (deduped by
+   * item id), updating only `items` and `hasMoreOlder`.
    */
   applyPage(page: TranscriptPage, opts?: { replace?: boolean }): void {
     if (opts?.replace === true) {
       this.state = {
         items: page.items,
-        tasks: new Map(page.tasks.map((task) => [task.taskId, task])),
+        tasks: this.state.tasks,
         interactions: new Map(
           page.interactions.map((interaction) => [interaction.interactionId, interaction]),
         ),

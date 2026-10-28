@@ -39,7 +39,6 @@ import {
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptTask,
-  type TranscriptTaskRef,
   type TranscriptTurn,
   type TranscriptUsage,
   type TurnOrigin,
@@ -306,6 +305,11 @@ function useTranscriptChannel(
           store.applyOps(ops);
           trail.recordOps(ops, 'live', meta?.at, store.getState());
           noteSeq(meta?.seq);
+        },
+        onTask: (aid, task) => {
+          if (aid !== agentId) return;
+          store.applyOps([{ op: 'task.upsert', task }]);
+          trail.recordEvent('task', `${task.taskId} ${task.state}`, store.getState());
         },
         onReset: (_aid, snapshot, hasMoreOlder, meta) => {
           trail.recordReset(snapshot, hasMoreOlder, meta?.at, store.getState());
@@ -734,8 +738,6 @@ function ItemView({
       );
     case 'marker':
       return <MarkerView marker={item} />;
-    case 'taskref':
-      return <TaskRefView item={item} task={tasks.get(item.taskId)} />;
   }
 }
 
@@ -868,39 +870,6 @@ function MarkerView({ marker }: { marker: TranscriptMarker }) {
         <div className="h-px flex-1 bg-neutral-800" />
       </div>
       {marker.payload !== undefined ? <JsonView data={marker.payload} /> : null}
-    </div>
-  );
-}
-
-function TaskRefView({
-  item,
-  task,
-}: {
-  item: TranscriptTaskRef;
-  task: TranscriptTask | undefined;
-}) {
-  const failed =
-    task !== undefined &&
-    (task.state === 'failed' || task.state === 'timed_out' || task.state === 'lost');
-  return (
-    <div className="mb-3 rounded-lg border border-neutral-800 bg-neutral-900/40 px-3 py-2 text-[11px]">
-      <div className="flex items-center gap-2">
-        <Badge tone={task?.state === 'running' ? 'amber' : failed ? 'red' : 'neutral'}>
-          task{task !== undefined ? `: ${task.kind}` : ''}
-        </Badge>
-        <span className="text-neutral-300">{task?.description ?? item.taskId}</span>
-        {task !== undefined ? (
-          <span className="text-neutral-600">
-            {task.state}
-            {task.detached ? ' (detached)' : ''}
-          </span>
-        ) : null}
-      </div>
-      {task !== undefined && task.outputTail !== '' ? (
-        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-neutral-500">
-          {task.outputTail}
-        </pre>
-      ) : null}
     </div>
   );
 }
@@ -1110,10 +1079,6 @@ function ToolFrameView({
         ) : (
           <JsonView data={frame.output} />
         )
-      ) : task !== undefined && task.outputTail !== '' ? (
-        <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-neutral-400">
-          {task.outputTail}
-        </pre>
       ) : null}
       {frame.error !== undefined && frame.error !== frame.output ? (
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-red-400">{frame.error}</pre>

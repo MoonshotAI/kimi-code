@@ -60,8 +60,6 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
       return applyAppend(state, op);
     case 'marker.upsert':
       return applyItemUpsert(state, op.item, op.item.markerId, op.beforeTurn);
-    case 'taskref.upsert':
-      return applyItemUpsert(state, op.item, op.item.refId, op.beforeTurn);
     case 'task.upsert':
       return applyTaskUpsert(state, op.task);
     case 'interaction.upsert':
@@ -301,7 +299,6 @@ function frameEquals(a: TranscriptFrame, b: TranscriptFrame): boolean {
 }
 
 function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
-  if (op.target.type === 'task') return applyTaskAppend(state, op);
   const { turnId, stepId, frameId } = op.target;
   const turn = getTurn(state, turnId);
   const step = turn?.steps.find((entry) => entry.stepId === stepId);
@@ -325,22 +322,6 @@ function applyAppend(state: AgentState, op: AppendOp): ApplyResult {
     state: { ...state, items: replaceTurn(state.items, turnId, () => nextTurn) },
     changed: true,
   };
-}
-
-function applyTaskAppend(state: AgentState, op: AppendOp): ApplyResult {
-  if (op.target.type !== 'task') throw new Error('unreachable');
-  const taskId = op.target.taskId;
-  const task = state.tasks.get(taskId);
-  const current = task?.outputTail ?? '';
-  const merged = appendAtOffset(current, op.offset, op.text);
-  if (merged.gap) return { state, changed: false, gap: merged.gap };
-  if (!merged.changed) return { state, changed: false };
-  const nextTask: TranscriptTask = task
-    ? { ...task, outputTail: merged.text }
-    : { taskId, kind: 'other', state: 'running', detached: false, outputTail: merged.text };
-  const tasks = new Map(state.tasks);
-  tasks.set(taskId, nextTask);
-  return { state: { ...state, tasks }, changed: true };
 }
 
 export function appendAtOffset(
@@ -401,8 +382,6 @@ function itemIdOf(item: TranscriptItem): string {
       return item.turnId;
     case 'marker':
       return item.markerId;
-    case 'taskref':
-      return item.refId;
   }
 }
 
@@ -542,7 +521,6 @@ function taskEquals(a: TranscriptTask, b: TranscriptTask): boolean {
     a.detached === b.detached &&
     a.description === b.description &&
     a.agentId === b.agentId &&
-    a.outputTail === b.outputTail &&
     a.startedAt === b.startedAt &&
     a.endedAt === b.endedAt &&
     a.resultSummary === b.resultSummary &&

@@ -203,17 +203,9 @@ export const transcriptMarkerSchema = z.object({
   at: z.string().optional(),
 });
 
-export const transcriptTaskRefSchema = z.object({
-  kind: z.literal('taskref'),
-  refId: z.string(),
-  taskId: taskIdSchema,
-  at: z.string().optional(),
-});
-
 export const transcriptItemSchema = z.discriminatedUnion('kind', [
   transcriptTurnSchema,
   transcriptMarkerSchema,
-  transcriptTaskRefSchema,
 ]);
 
 export const transcriptTaskSchema = z.object({
@@ -223,7 +215,6 @@ export const transcriptTaskSchema = z.object({
   detached: z.boolean(),
   description: z.string().optional(),
   agentId: agentIdSchema.optional(),
-  outputTail: z.string(),
   startedAt: z.string().optional(),
   endedAt: z.string().optional(),
   resultSummary: z.string().optional(),
@@ -391,15 +382,12 @@ export const agentTranscriptSnapshotSchema = z.object({
 export const turnHeaderSchema = transcriptTurnSchema.omit({ steps: true });
 export const stepHeaderSchema = transcriptStepSchema.omit({ frames: true });
 
-export const appendTargetSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('frame'),
-    turnId: turnIdSchema,
-    stepId: stepIdSchema,
-    frameId: frameIdSchema,
-  }),
-  z.object({ type: z.literal('task'), taskId: taskIdSchema }),
-]);
+export const appendTargetSchema = z.object({
+  type: z.literal('frame'),
+  turnId: turnIdSchema,
+  stepId: stepIdSchema,
+  frameId: frameIdSchema,
+});
 
 export const transcriptOperationSchema = z.discriminatedUnion('op', [
   z.object({ op: z.literal('reset'), agentId: agentIdSchema, snapshot: agentTranscriptSnapshotSchema }),
@@ -420,11 +408,6 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('marker.upsert'),
     item: transcriptMarkerSchema,
-    beforeTurn: z.number().int().optional(),
-  }),
-  z.object({
-    op: z.literal('taskref.upsert'),
-    item: transcriptTaskRefSchema,
     beforeTurn: z.number().int().optional(),
   }),
   z.object({ op: z.literal('task.upsert'), task: transcriptTaskSchema }),

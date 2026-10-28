@@ -42,7 +42,6 @@ import {
   type TranscriptMarker,
   type TranscriptOperation,
   type TranscriptTask,
-  type TranscriptTaskRef,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
@@ -91,12 +90,19 @@ export interface TranscriptOpsCatchup {
   readonly complete: boolean;
 }
 
+export interface TranscriptTasksEvent {
+  readonly agentId: string;
+  readonly tasks: readonly TranscriptTask[];
+}
+
+export interface SessionTranscriptListener {
+  ops(event: TranscriptChangeEvent, seq: number): void;
+  tasks(event: TranscriptTasksEvent): void;
+}
+
 export class TranscriptService {
   private readonly live = new Map<string, LiveEntry>();
-  private readonly opsListeners = new Map<
-    string,
-    Set<(event: TranscriptChangeEvent, seq: number) => void>
-  >();
+  private readonly listeners = new Map<string, Set<SessionTranscriptListener>>();
   private readonly healTimers = new Map<string, { ordinals: Set<number>; timer: NodeJS.Timeout }>();
   private readonly wireCache = new WireRecordCache();
 
@@ -232,34 +238,34 @@ export class TranscriptService {
     }
   }
 
-  onSessionOps(
-    sessionId: string,
-    listener: (event: TranscriptChangeEvent, seq: number) => void,
-  ): IDisposable | undefined {
+  onSessionChange(sessionId: string, listener: SessionTranscriptListener): IDisposable | undefined {
     if (this.forSessionLive(sessionId) === undefined) return undefined;
-    let listeners = this.opsListeners.get(sessionId);
+    let listeners = this.listeners.get(sessionId);
     if (listeners === undefined) {
       listeners = new Set();
-      this.opsListeners.set(sessionId, listeners);
+      this.listeners.set(sessionId, listeners);
     }
     listeners.add(listener);
     return {
       dispose: () => {
-        const entry = this.opsListeners.get(sessionId);
+        const entry = this.listeners.get(sessionId);
         if (entry === undefined) return;
         entry.delete(listener);
-        if (entry.size === 0) this.opsListeners.delete(sessionId);
+        if (entry.size === 0) this.listeners.delete(sessionId);
       },
     };
   }
 
   private dispatchOps(sessionId: string, event: TranscriptChangeEvent): void {
-    const seq = this.journalOps(sessionId, event);
-    const listeners = this.opsListeners.get(sessionId);
+    const { agentId } = event;
+    const { ops, tasks } = splitTaskOps(event.ops);
+    const seq = ops.length > 0 ? this.journalOps(sessionId, { agentId, ops }) : undefined;
+    const listeners = this.listeners.get(sessionId);
     if (listeners === undefined) return;
     for (const listener of listeners) {
       try {
-        listener(event, seq);
+        if (seq !== undefined) listener.ops({ agentId, ops }, seq);
+        if (tasks.length > 0) listener.tasks({ agentId, tasks });
       } catch {
       }
     }
@@ -721,7 +727,7 @@ export class TranscriptService {
   }
 
   dropSession(sessionId: string): void {
-    this.opsListeners.delete(sessionId);
+    this.listeners.delete(sessionId);
     for (const [key, pending] of this.healTimers) {
       if (key.startsWith(`${sessionId}:`)) {
         clearTimeout(pending.timer);
@@ -740,16 +746,10 @@ export function snapshotToOps(
   turnOps: (turn: TranscriptTurn) => TranscriptOperation[] = snapshotTurnOps,
 ): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
-  const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
+  const pending: TranscriptMarker[] = [];
   let lastTurnOrdinal: number | undefined;
   const flushPending = (beforeTurn?: number): void => {
-    for (const item of pending) {
-      ops.push(
-        item.kind === 'marker'
-          ? { op: 'marker.upsert', item, beforeTurn }
-          : { op: 'taskref.upsert', item, beforeTurn },
-      );
-    }
+    for (const item of pending) ops.push({ op: 'marker.upsert', item, beforeTurn });
     pending.length = 0;
   };
   for (const item of snapshot.items) {
@@ -784,6 +784,25 @@ export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
     }
   }
   return ops;
+}
+
+function splitTaskOps(ops: readonly TranscriptOperation[]): {
+  ops: TranscriptOperation[];
+  tasks: TranscriptTask[];
+} {
+  const rest: TranscriptOperation[] = [];
+  const tasks: TranscriptTask[] = [];
+  for (const op of ops) {
+    if (op.op === 'task.upsert') {
+      tasks.push(op.task);
+    } else if (op.op === 'reset') {
+      tasks.push(...op.snapshot.tasks);
+      rest.push({ ...op, snapshot: { ...op.snapshot, tasks: [] } });
+    } else {
+      rest.push(op);
+    }
+  }
+  return { ops: rest, tasks };
 }
 
 const TURN_HEAL_DEBOUNCE_MS = 250;

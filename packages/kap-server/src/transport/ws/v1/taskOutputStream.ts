@@ -6,44 +6,20 @@ import {
   type IDisposable,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { z } from 'zod';
 
 import { ErrorCode } from '../../../protocol/error-codes';
+import {
+  taskAttachMessageSchema,
+  taskDetachMessageSchema,
+  type TaskAttachMessage,
+  type TaskOutputMessage,
+  type TaskResponseMessage,
+} from '../../../protocol/ws-task';
 import { ensureMainAgent } from '../../mainAgent';
 
 export const TASK_OUTPUT_TAIL_BYTES = 4096;
 
 const CODE_OK = 0;
-
-const taskAttachSchema = z.object({
-  type: z.literal('task.attach'),
-  request_id: z.string(),
-  session_id: z.string().min(1),
-  task_id: z.string().min(1),
-  since_offset: z.number().int().nonnegative().optional(),
-});
-
-const taskDetachSchema = z.object({
-  type: z.literal('task.detach'),
-  request_id: z.string(),
-  session_id: z.string().min(1),
-  task_id: z.string().min(1),
-});
-
-export interface TaskOutputFrame {
-  readonly type: 'task.output';
-  readonly session_id: string;
-  readonly task_id: string;
-  readonly offset: number;
-  readonly text: string;
-}
-
-export interface TaskOutputResponseFrame {
-  readonly type: 'response';
-  readonly request_id: string;
-  readonly code: number;
-  readonly msg?: string;
-}
 
 export type TaskOutputSourceResult =
   | { readonly kind: 'session_not_found' }
@@ -64,8 +40,8 @@ export function createTaskOutputSource(core: Scope): TaskOutputSource {
 }
 
 export interface TaskOutputSink {
-  respond(frame: TaskOutputResponseFrame): void;
-  output(frame: TaskOutputFrame): void;
+  respond(frame: TaskResponseMessage): void;
+  output(frame: TaskOutputMessage): void;
   rejectUnreadable(): void;
 }
 
@@ -89,12 +65,12 @@ export class TaskOutputAttachments {
   ) {}
 
   async handle(frame: unknown): Promise<void> {
-    const attach = taskAttachSchema.safeParse(frame);
+    const attach = taskAttachMessageSchema.safeParse(frame);
     if (attach.success) {
       await this.attach(attach.data);
       return;
     }
-    const detach = taskDetachSchema.safeParse(frame);
+    const detach = taskDetachMessageSchema.safeParse(frame);
     if (detach.success) {
       this.detach(detach.data.session_id, detach.data.task_id);
       this.sink.respond({ type: 'response', request_id: detach.data.request_id, code: CODE_OK });
@@ -119,7 +95,7 @@ export class TaskOutputAttachments {
     this.attachments.clear();
   }
 
-  private async attach(request: z.infer<typeof taskAttachSchema>): Promise<void> {
+  private async attach(request: TaskAttachMessage): Promise<void> {
     const { request_id: requestId, session_id: sessionId, task_id: taskId } = request;
     const key = attachmentKey(sessionId, taskId);
     this.detach(sessionId, taskId);

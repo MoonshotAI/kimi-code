@@ -13,9 +13,7 @@ import type { TranscriptInteraction } from '#/model/interaction';
 import type { TranscriptItem } from '#/model/item';
 
 function itemLabel(item: TranscriptItem): string {
-  if (item.kind === 'turn') return item.turnId;
-  if (item.kind === 'marker') return item.markerId;
-  return item.refId;
+  return item.kind === 'turn' ? item.turnId : item.markerId;
 }
 
 const turn1: TurnUpsertOp = {
@@ -306,13 +304,13 @@ describe('AgentTranscript', () => {
   it('task upserts carry resultSummary/error/stateReason/usage', () => {
     const tx = new AgentTranscript('main');
     tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'subagent', state: 'running', detached: false, outputTail: '' } },
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'subagent', state: 'running', detached: false } },
     ]);
     const done = tx.apply([
       {
         op: 'task.upsert',
         task: {
-          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
+          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false,
           resultSummary: 'scanned 12 files',
           usage: { inputOther: 100, output: 40, inputCacheRead: 10, inputCacheCreation: 5 },
         },
@@ -389,16 +387,13 @@ describe('AgentTranscript', () => {
     expect(seen).toEqual(['turn.upsert']);
   });
 
-  it('task upsert + append keeps output tail globally, detached flips freely', () => {
+  it('task upserts flip detached freely', () => {
     const tx = new AgentTranscript('main');
     tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
-      { op: 'append', target: { type: 'task', taskId: 'task1' }, offset: 0, text: 'line1\n' },
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: true, outputTail: 'line1\n' } },
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false } },
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: true } },
     ]);
-    const task = tx.getTask('task1');
-    expect(task?.detached).toBe(true);
-    expect(task?.outputTail).toBe('line1\n');
+    expect(tx.getTask('task1')?.detached).toBe(true);
   });
 
   it('meta.merge merges goal/modes shallowly', () => {
@@ -477,12 +472,12 @@ describe('AgentTranscript', () => {
         turn: { kind: 'turn', turnId: 't1', ordinal: 1, state: 'completed', origin: { kind: 'user' } },
       },
       {
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+        op: 'marker.upsert',
+        item: { kind: 'marker', markerId: 'm2', marker: 'notice' },
         beforeTurn: 2,
       },
     ]);
-    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'm2', 't2']);
   });
 
   it('anchors a standalone item before the very first turn; re-applies stay in place', () => {

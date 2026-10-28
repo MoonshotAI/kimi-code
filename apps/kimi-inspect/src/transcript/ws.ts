@@ -10,7 +10,9 @@
  * `subscriptions`, then a `subscribe_v2` frame carrying the opt-in
  * `transcript` grade map (plus the `transcript_since` cursor when a
  * watermark is known), and forwards every `transcript.ops` frame to the
- * consumer. Full state never comes from here:
+ * consumer, plus every `task` frame (task state is not part of the
+ * transcript: the server sends each task of the agent after a reset and again
+ * on every change). Full transcript state never comes from here:
  * `transcript.reset` snapshots are ignored by the store (they are surfaced
  * through the optional `onReset` handler for observers like the audit panel),
  * because complete data (initial load and any refresh) is read back from the
@@ -33,6 +35,7 @@ import {
   transcriptResetEventSchema,
   type AgentTranscriptSnapshot,
   type TranscriptOperation,
+  type TranscriptTask,
 } from '@moonshot-ai/transcript';
 
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
@@ -59,6 +62,8 @@ export interface TranscriptWsHandlers {
     hasMoreOlder: boolean,
     meta?: TranscriptFrameMeta,
   ) => void;
+  /** Full state of one task of the agent, mapped onto the transcript task shape. */
+  onTask?: (agentId: string, task: TranscriptTask) => void;
   /** Server signalled desync for our session — consumer should REST-refresh. */
   onResyncRequired: () => void;
   /** Socket re-established after a drop — volatile ops were missed meanwhile. */
@@ -90,6 +95,31 @@ interface ServerFrame {
   readonly code?: number;
   readonly timestamp?: string;
   readonly payload?: unknown;
+}
+
+/** The flat server `task` frame (snake_case wire fields). */
+interface TaskFrame {
+  readonly agent_id: string;
+  readonly task_id: string;
+  readonly kind: TranscriptTask['kind'];
+  readonly status: 'running' | 'ended';
+  readonly outcome?: Exclude<TranscriptTask['state'], 'running'>;
+  readonly detached: boolean;
+  readonly description?: string;
+  readonly child_agent_id?: string;
+  readonly started_at?: string;
+  readonly ended_at?: string;
+  readonly result_summary?: string;
+  readonly error?: string;
+  readonly state_reason?: string;
+  readonly usage?: {
+    readonly input_other: number;
+    readonly output: number;
+    readonly input_cache_read: number;
+    readonly input_cache_creation: number;
+  };
+  readonly model?: string;
+  readonly thinking?: string;
 }
 
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
@@ -238,6 +268,12 @@ export class TranscriptWs {
         );
         return;
       }
+      case 'task': {
+        const task = frame as unknown as TaskFrame;
+        if (typeof task.agent_id !== 'string' || typeof task.task_id !== 'string') return;
+        this.handlers.onTask?.(task.agent_id, toTranscriptTask(task));
+        return;
+      }
       case 'ping': {
         const nonce = (frame.payload as { nonce?: unknown } | undefined)?.nonce;
         this.send({ type: 'pong', payload: { nonce } });
@@ -274,6 +310,33 @@ export class TranscriptWs {
       // best-effort; the close handler handles teardown
     }
   }
+}
+
+function toTranscriptTask(task: TaskFrame): TranscriptTask {
+  return {
+    taskId: task.task_id,
+    kind: task.kind,
+    state: task.status === 'running' ? 'running' : (task.outcome ?? 'lost'),
+    detached: task.detached,
+    description: task.description,
+    agentId: task.child_agent_id,
+    startedAt: task.started_at,
+    endedAt: task.ended_at,
+    resultSummary: task.result_summary,
+    error: task.error,
+    stateReason: task.state_reason,
+    usage:
+      task.usage === undefined
+        ? undefined
+        : {
+            inputOther: task.usage.input_other,
+            output: task.usage.output,
+            inputCacheRead: task.usage.input_cache_read,
+            inputCacheCreation: task.usage.input_cache_creation,
+          },
+    model: task.model,
+    thinkingEffort: task.thinking,
+  };
 }
 
 /** Derive the `/api/v1/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */

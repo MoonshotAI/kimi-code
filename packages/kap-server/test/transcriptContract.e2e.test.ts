@@ -196,6 +196,7 @@ async function until(label: string, fn: () => Promise<boolean> | boolean, timeou
 interface TranscriptChannel {
   readonly frames: any[];
   readonly ops: any[];
+  readonly tasks: any[];
   reset(): any;
   close(): void;
 }
@@ -211,6 +212,7 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
   const frames: any[] = [];
   const ops: any[] = [];
+  const tasks: any[] = [];
   let resetFrame: any;
   ws.on('message', (data) => {
     let frame: any;
@@ -225,6 +227,7 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
       resetFrame = frame;
     }
     if (frame.type === 'transcript.ops' && payload?.agent_id === 'main') ops.push(...(payload.ops ?? []));
+    if (frame.type === 'task') tasks.push(frame);
   });
   await new Promise<void>((resolve, reject) => {
     ws.once('open', () => {
@@ -237,6 +240,7 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   return {
     frames,
     ops,
+    tasks,
     reset: () => resetFrame?.payload,
     close: () => ws.close(),
   };
@@ -564,7 +568,7 @@ describe('transcript contract e2e', () => {
     expect(String(toolFrame.output)).toContain(output);
   });
 
-  it('S4: a background subagent produces task entities and a task-origin notification turn', async () => {
+  it('S4: a background subagent streams task events and a task-origin notification turn', async () => {
     await boot([
       {
         match: (body) => body.includes('spawn-bg') && !body.includes('"role":"tool"'),
@@ -575,32 +579,27 @@ describe('transcript contract e2e', () => {
     ]);
     const sid = await createSession(server!, base);
     await submitPrompt(server!, base, sid, 'spawn-bg one background agent');
+    const channel = await subscribeTranscript(server!, sid);
 
-    await until('background task running', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.tasks.some((t: any) => t.kind === 'subagent' && t.state === 'running');
+    await until('background task running', () =>
+      channel.tasks.some((t) => t.kind === 'subagent' && t.status === 'running'),
+    );
+    const task = channel.tasks.find((t) => t.kind === 'subagent');
+    expect(task).toMatchObject({
+      session_id: sid,
+      agent_id: MAIN_AGENT_ID,
+      status: 'running',
+      phase: 'working',
+      detached: true,
     });
-    const mid = await getTranscript(server!, base, sid);
-    const task = mid.tasks.find((t: any) => t.kind === 'subagent');
-    expect(task).toMatchObject({ state: 'running', detached: true });
-    expect(typeof task.agentId).toBe('string');
+    expect(typeof task.child_agent_id).toBe('string');
 
-    await until('task completed', async () => {
-      const tx = await getTranscript(server!, base, sid);
-      return tx.tasks.some((t: any) => t.taskId === task.taskId && t.state === 'completed');
-    }, 45000).catch(async (error) => {
-      const tx = await getTranscript(server!, base, sid);
-      const opsData = await rest<{ batches: { seq: number; ops: any[] }[] }>(
-        server!,
-        base,
-        `/api/v1/sessions/${encodeURIComponent(sid)}/transcript/ops?agent_id=main&since_seq=0`,
-      );
-      const taskOps = opsData.batches.flatMap((b) =>
-        b.ops
-          .filter((o: any) => o.op === 'task.upsert')
-          .map((o: any) => `${b.seq}:${o.task.taskId}:${o.task.state}`),
-      );
-      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(tx.tasks)}\ntaskOps: ${JSON.stringify(taskOps)}`, { cause: error });
+    await until(
+      'task completed',
+      () => channel.tasks.some((t) => t.task_id === task.task_id && t.outcome === 'completed'),
+      45000,
+    ).catch((error: unknown) => {
+      throw new Error(`${(error as Error).message}\ntasks: ${JSON.stringify(channel.tasks)}`, { cause: error });
     });
     await until('notification turn exists', async () => {
       const tx = await getTranscript(server!, base, sid);
@@ -611,8 +610,11 @@ describe('transcript contract e2e', () => {
     const taskTurn = end.items.find((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
     expect(taskTurn).toBeDefined();
     expect(JSON.stringify(taskTurn)).toContain('notification');
+    expect(end.tasks).toEqual([]);
+    expect(channel.ops.some((op) => op.op === 'task.upsert')).toBe(false);
     await idleOrDump(server!, base, sid);
     expect((await getTranscript(server!, base, sid)).meta.activity).toBe('idle');
+    channel.close();
   });
 
   it('S5: late attach backfills liveness and the prompt queue from the live loop', async () => {
@@ -646,11 +648,10 @@ describe('transcript contract e2e', () => {
     const reset = channel.reset().snapshot;
 
     expect(reset.meta).toEqual(snapshot.meta);
+    expect(reset.tasks).toEqual([]);
+    expect(snapshot.tasks).toEqual([]);
     const byId = (xs: any[], key: string): Record<string, unknown> =>
       Object.fromEntries(xs.map((x) => [x[key], x]));
-    expect(Object.keys(byId(reset.tasks ?? [], 'taskId')).toSorted()).toEqual(
-      Object.keys(byId(snapshot.tasks, 'taskId')).toSorted(),
-    );
     expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).toSorted()).toEqual(
       Object.keys(byId(snapshot.interactions, 'interactionId')).toSorted(),
     );

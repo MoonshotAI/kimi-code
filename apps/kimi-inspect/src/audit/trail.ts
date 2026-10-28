@@ -55,7 +55,7 @@ export interface ResetAuditEntry extends AuditEntryBase {
 
 export interface EventAuditEntry extends AuditEntryBase {
   readonly kind: 'event';
-  readonly event: 'ack-refresh' | 'resync' | 'gap' | 'prompt' | 'cancel';
+  readonly event: 'ack-refresh' | 'resync' | 'gap' | 'prompt' | 'cancel' | 'task';
   readonly detail?: string | undefined;
 }
 
@@ -152,7 +152,9 @@ export class AuditTrail {
             ? 'append gap → REST refresh'
             : event === 'prompt'
               ? 'prompt sent'
-              : 'cancel sent';
+              : event === 'task'
+                ? 'task event'
+                : 'cancel sent';
     this.push({
       kind: 'event',
       event,

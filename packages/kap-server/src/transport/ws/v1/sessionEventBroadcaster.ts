@@ -58,8 +58,10 @@ import {
   interactionOutcome,
 } from '../../../protocol/interaction-wire';
 import { toWireQuestion } from '../../../protocol/question-wire';
+import type { TaskEventMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
+import { taskEventMessages } from './taskEvents';
 
 export interface EventEnvelope {
   readonly type: string;
@@ -75,7 +77,7 @@ export interface BroadcastLogger {
 
 export type BroadcastDelivery = 'subscription' | 'immediate';
 
-export type BroadcastFrame = EventEnvelope | InteractionEventMessage;
+export type BroadcastFrame = EventEnvelope | InteractionEventMessage | TaskEventMessage;
 
 export interface BroadcastTarget {
   send(frame: BroadcastFrame, delivery?: BroadcastDelivery): void;
@@ -272,11 +274,13 @@ export class SessionEventBroadcaster {
         const catchup = service.getOpsSince(state.sessionId, descriptor.agentId, since);
         if (catchup !== undefined && catchup.complete) {
           this.replayTranscriptOps(state, target, descriptor.agentId, grade, catchup.batches);
+          this.sendTasks(state, target, transcript);
           continue;
         }
       }
       if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
       this.sendTranscriptReset(state, target, transcript, grade);
+      this.sendTasks(state, target, transcript);
     }
   }
 
@@ -313,24 +317,38 @@ export class SessionEventBroadcaster {
     };
     state.transcriptStream = stream;
 
-    const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }, seq) => {
-      for (const [target, spec] of state.targets) {
-        if (!state.transcriptSeeded.has(target)) continue;
-        const filtered = filterOpsForGrade(gradeFor(spec, agentId), ops);
-        if (filtered.length === 0) continue;
-        try {
-          target.send(
-            buildTranscriptEnvelope(state.sessionId, 'transcript.ops', {
-              agent_id: agentId,
-              ops: filtered,
-              seq,
-            }),
-          );
-        } catch {
+    const changeDisposable = service.onSessionChange(state.sessionId, {
+      ops: ({ agentId, ops }, seq) => {
+        for (const [target, spec] of state.targets) {
+          if (!state.transcriptSeeded.has(target)) continue;
+          const filtered = filterOpsForGrade(gradeFor(spec, agentId), ops);
+          if (filtered.length === 0) continue;
+          try {
+            target.send(
+              buildTranscriptEnvelope(state.sessionId, 'transcript.ops', {
+                agent_id: agentId,
+                ops: filtered,
+                seq,
+              }),
+            );
+          } catch {
+          }
         }
-      }
+      },
+      tasks: ({ agentId, tasks }) => {
+        const messages = taskEventMessages(this.opts.core, state.sessionId, agentId, tasks);
+        for (const [target, spec] of state.targets) {
+          if (!state.transcriptSeeded.has(target) || gradeFor(spec, agentId) === 'off') continue;
+          for (const message of messages) {
+            try {
+              target.send(message);
+            } catch {
+            }
+          }
+        }
+      },
     });
-    if (opsDisposable !== undefined) state.lifecycleDisposables.push(opsDisposable);
+    if (changeDisposable !== undefined) state.lifecycleDisposables.push(changeDisposable);
 
     state.lifecycleDisposables.push(
       store.onRosterChange((agents) => {
@@ -345,6 +363,7 @@ export class SessionEventBroadcaster {
             if (grade === 'off') continue;
             try {
               this.sendTranscriptReset(state, target, transcript, grade);
+              this.sendTasks(state, target, transcript);
             } catch {
             }
           }
@@ -359,10 +378,10 @@ export class SessionEventBroadcaster {
     transcript: AgentTranscript,
     grade: TranscriptGrade,
   ): void {
-    const snapshot = redactSnapshotForGrade(
-      grade,
-      transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
-    );
+    const snapshot = redactSnapshotForGrade(grade, {
+      ...transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
+      tasks: [],
+    });
     target.send(
       buildTranscriptEnvelope(state.sessionId, 'transcript.reset', {
         agent_id: transcript.agentId,
@@ -371,6 +390,13 @@ export class SessionEventBroadcaster {
         seq: this.opts.transcriptService?.getSeqWatermark(state.sessionId, transcript.agentId),
       }),
     );
+  }
+
+  private sendTasks(state: SessionState, target: BroadcastTarget, transcript: AgentTranscript): void {
+    const tasks = transcript.getTasks().values();
+    for (const message of taskEventMessages(this.opts.core, state.sessionId, transcript.agentId, tasks)) {
+      target.send(message);
+    }
   }
 
   async close(): Promise<void> {

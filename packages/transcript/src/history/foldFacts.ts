@@ -1,6 +1,6 @@
 import type { AgentRef } from '../model/frame';
 import type { TranscriptInteraction } from '../model/interaction';
-import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
+import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import { turnId as exportTurnKey } from '../model/ids';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
 import type { TranscriptTask } from '../model/task';
@@ -292,14 +292,10 @@ export function foldWireRecordFacts(
   const appended: TranscriptItem[] = [];
   const activeCancelTurnIds = new Set<number>();
   let markerSeq = 0;
-  const usedRefIds = new Set<string>();
   for (const item of base.items) {
-    if (item.kind === 'marker') {
-      const match = /^m(\d+)$/.exec(item.markerId);
-      if (match !== null) markerSeq = Math.max(markerSeq, Number(match[1]));
-    } else if (item.kind === 'taskref') {
-      usedRefIds.add(item.refId);
-    }
+    if (item.kind !== 'marker') continue;
+    const match = /^m(\d+)$/.exec(item.markerId);
+    if (match !== null) markerSeq = Math.max(markerSeq, Number(match[1]));
   }
   const pushMarker = (marker: string, record: HistoryWireRecord): void => {
     markerSeq += 1;
@@ -349,27 +345,10 @@ export function foldWireRecordFacts(
       detached: typeof info.detached === 'boolean' ? info.detached : (prev?.detached ?? true),
       description: typeof info.description === 'string' ? info.description : prev?.description,
       agentId: typeof info.agentId === 'string' ? info.agentId : prev?.agentId,
-      outputTail:
-        typeof record['outputTail'] === 'string'
-          ? record['outputTail']
-          : (prev?.outputTail ?? ''),
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: epochMsToIso(info.endedAt) ?? prev?.endedAt,
     };
     tasks.set(taskId, task);
-    if (record.type === 'task.started') {
-      const refId = `ref-${taskId}`;
-      if (!usedRefIds.has(refId)) {
-        usedRefIds.add(refId);
-        const ref: TranscriptTaskRef = {
-          kind: 'taskref',
-          refId,
-          taskId,
-          at: recordTimeIso(record),
-        };
-        appended.push(ref);
-      }
-    }
   };
 
   for (const record of records) {
@@ -395,7 +374,6 @@ export function foldWireRecordFacts(
           model: typeof record['model'] === 'string' ? record['model'] : undefined,
           thinkingEffort: typeof record['thinkingEffort'] === 'string' ? record['thinkingEffort'] : undefined,
           startedAt: recordTimeIso(record),
-          outputTail: '',
         });
         break;
       }

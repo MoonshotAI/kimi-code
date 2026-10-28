@@ -271,7 +271,6 @@ export class AgentTranscriptProjector {
       detached: info.detached,
       description: info.description,
       agentId: info.agentId,
-      outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: prev?.endedAt,
     }));
@@ -1110,7 +1109,6 @@ export class AgentTranscriptProjector {
       detached: info.detached ?? prev?.detached ?? true,
       description: info.description,
       agentId: info.agentId ?? prev?.agentId,
-      outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? epochMsToIso(info.startedAt),
       endedAt: info.endedAt === null ? prev?.endedAt : epochMsToIso(info.endedAt),
       resultSummary: prev?.resultSummary,
@@ -1120,17 +1118,15 @@ export class AgentTranscriptProjector {
       model: prev?.model,
       thinkingEffort: prev?.thinkingEffort,
     }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (event.type === 'task.started') {
-      if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
-        this.subagentTaskIds.set(info.agentId, info.taskId);
-      }
-      ops.push({
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${info.taskId}`, taskId: info.taskId, at: nowIso() },
-      });
+    if (
+      event.type === 'task.started' &&
+      info.kind === 'agent' &&
+      typeof info.agentId === 'string' &&
+      info.agentId.length > 0
+    ) {
+      this.subagentTaskIds.set(info.agentId, info.taskId);
     }
-    return ops;
+    return [{ op: 'task.upsert', task }];
   }
 
   private onShellStarted(event: { commandId: string; taskId: string }): TranscriptOperation[] {
@@ -1142,17 +1138,10 @@ export class AgentTranscriptProjector {
       detached: prev?.detached ?? false,
       description: prev?.description,
       agentId: prev?.agentId,
-      outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? nowIso(),
       endedAt: prev?.endedAt,
     }));
-    return [
-      { op: 'task.upsert', task },
-      {
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${event.taskId}`, taskId: event.taskId, at: nowIso() },
-      },
-    ];
+    return [{ op: 'task.upsert', task }];
   }
 
   private shellTaskId(event: { commandId: string; taskId?: string }): string {
@@ -1168,33 +1157,15 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const taskId = this.shellTaskId(event);
     const text = event.update.text;
-    if (typeof text !== 'string' || text.length === 0) return [];
-    const ops: TranscriptOperation[] = [];
-    let task = this.tasks.get(taskId);
-    if (task === undefined) {
-      task = this.upsertTask(taskId, (prev) => ({
-        taskId,
-        kind: 'shell',
-        state: 'running',
-        detached: prev?.detached ?? false,
-        description: prev?.description,
-        agentId: prev?.agentId,
-        outputTail: prev?.outputTail ?? '',
-        startedAt: prev?.startedAt ?? nowIso(),
-        endedAt: prev?.endedAt,
-      }));
-      ops.push(
-        { op: 'task.upsert', task },
-        {
-          op: 'taskref.upsert',
-          item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
-        },
-      );
-    }
-    const offset = task.outputTail.length;
-    this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
-    ops.push({ op: 'append', target: { type: 'task', taskId }, offset, text });
-    return ops;
+    if (typeof text !== 'string' || text.length === 0 || this.tasks.has(taskId)) return [];
+    const task = this.upsertTask(taskId, () => ({
+      taskId,
+      kind: 'shell',
+      state: 'running',
+      detached: false,
+      startedAt: nowIso(),
+    }));
+    return [{ op: 'task.upsert', task }];
   }
 
   private onShellCompleted(event: {
@@ -1203,7 +1174,6 @@ export class AgentTranscriptProjector {
     isError: boolean;
   }): TranscriptOperation[] {
     const taskId = this.shellTaskId(event);
-    const hadTask = this.tasks.has(taskId);
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
       kind: prev?.kind ?? 'shell',
@@ -1211,18 +1181,10 @@ export class AgentTranscriptProjector {
       detached: prev?.detached ?? false,
       description: prev?.description,
       agentId: prev?.agentId,
-      outputTail: prev?.outputTail ?? '',
       startedAt: prev?.startedAt ?? nowIso(),
       endedAt: nowIso(),
     }));
-    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
-    if (!hadTask) {
-      ops.push({
-        op: 'taskref.upsert',
-        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
-      });
-    }
-    return ops;
+    return [{ op: 'task.upsert', task }];
   }
 
   private upsertTask(
@@ -1260,7 +1222,6 @@ export class AgentTranscriptProjector {
         detached: event.runInBackground,
         description: event.description ?? prev?.description,
         agentId: event.subagentId,
-        outputTail: prev?.outputTail ?? '',
         startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
         endedAt: newGeneration ? undefined : prev?.endedAt,
         model: event.model ?? prev?.model,
@@ -1314,7 +1275,6 @@ export class AgentTranscriptProjector {
         detached: prev?.detached ?? true,
         description: prev?.description,
         agentId: event.subagentId,
-        outputTail: prev?.outputTail ?? '',
         startedAt: newGeneration ? nowIso() : (prev?.startedAt ?? nowIso()),
         endedAt: terminal ? nowIso() : newGeneration ? undefined : prev?.endedAt,
         resultSummary: newGeneration ? undefined : (event.resultSummary ?? prev?.resultSummary),

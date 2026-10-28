@@ -648,14 +648,16 @@ describe('AgentTranscriptProjector', () => {
           prompt: 'two',
           steps: [],
         },
-        { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+        { kind: 'marker', markerId: 'm2', marker: 'notice' },
       ],
       tasks: [],
       meta: {},
     };
     const ops = snapshotToOps(snapshot);
-    expect(ops.find((op) => op.op === 'marker.upsert')).toMatchObject({ beforeTurn: 1 });
-    expect(ops.find((op) => op.op === 'taskref.upsert')).toMatchObject({ beforeTurn: 2 });
+    expect(ops.filter((op) => op.op === 'marker.upsert')).toMatchObject([
+      { beforeTurn: 1 },
+      { beforeTurn: 2 },
+    ]);
 
     const tx = new AgentTranscript('main');
     tx.apply([
@@ -666,12 +668,8 @@ describe('AgentTranscriptProjector', () => {
     ]);
     tx.apply(ops);
     expect(
-      tx.getItems().map((item) => {
-        if (item.kind === 'turn') return item.turnId;
-        if (item.kind === 'marker') return item.markerId;
-        return item.refId;
-      }),
-    ).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+      tx.getItems().map((item) => (item.kind === 'turn' ? item.turnId : item.markerId)),
+    ).toEqual(['t0', 'm1', 't1', 'm2', 't2']);
   });
 
   it('snapshotToOps flattens attachment entities so backfilled attachmentIds never dangle', () => {
@@ -1068,7 +1066,7 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
-  it('projects process tasks as shell tasks with streaming output', () => {
+  it('projects process tasks as shell tasks without carrying their output', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
     const ops: TranscriptOperation[] = [];
@@ -1098,39 +1096,18 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
 
-    expect(ops.some((op) => op.op === 'taskref.upsert' && op.item.taskId === 'bash-1')).toBe(true);
-    const appends = ops.filter((op): op is AppendOp => op.op === 'append');
-    expect(appends.map((op) => [op.offset, op.text])).toEqual([
-      [0, 'a\n'],
-      [2, 'b\n'],
-    ]);
-
-    const task = tx.getTask('bash-1');
-    expect(task).toMatchObject({
+    expect(ops.map((op) => op.op)).toEqual(['task.upsert', 'task.upsert', 'task.upsert']);
+    expect(tx.getTask('bash-1')).toMatchObject({
       kind: 'shell',
       state: 'completed',
       detached: false,
       description: 'ls -la',
-      outputTail: 'a\nb\n',
     });
     expect(
       projector.map(
         ev({ type: 'shell.output', commandId: 'cmd-1', update: { kind: 'progress', percent: 50 } }),
       ),
     ).toEqual([]);
-  });
-
-  it('fills the shell task output from late stderr chunks before completing', () => {
-    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
-    const tx = new AgentTranscript('main');
-
-    tx.apply(projector.map(ev({ type: 'shell.started', commandId: 'c1', taskId: 'task-1' })));
-    tx.apply(
-      projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
-    );
-    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: true })));
-
-    expect(tx.getTask('task-1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
   });
 
   it('routes shell output/completion via the event taskId when shell.started was missed', () => {
@@ -1142,21 +1119,20 @@ describe('AgentTranscriptProjector', () => {
         ev({ type: 'shell.output', commandId: 'c1', taskId: 'task-1', update: { kind: 'stdout', text: 'hello' } }),
       ),
     );
-    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'hello' });
-    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
+    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'running' });
 
     tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: false })));
-    expect(tx.getTask('task-1')).toMatchObject({ state: 'completed', outputTail: 'hello' });
+    expect(tx.getTask('task-1')).toMatchObject({ state: 'completed' });
+    expect(tx.getItems()).toEqual([]);
   });
 
-  it('emits a taskref when only shell.completed arrives for a command', () => {
+  it('creates the task when only shell.completed arrives for a command', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
 
     tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: true })));
 
     expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'failed' });
-    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
   });
 
   it('projects no-taskId shell failures under a synthetic per-command task id', () => {
@@ -1166,11 +1142,10 @@ describe('AgentTranscriptProjector', () => {
     tx.apply(
       projector.map(ev({ type: 'shell.output', commandId: 'c1', update: { kind: 'stderr', text: 'boom' } })),
     );
-    expect(tx.getTask('shell-c1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'boom' });
+    expect(tx.getTask('shell-c1')).toMatchObject({ kind: 'shell', state: 'running' });
 
     tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', isError: true })));
-    expect(tx.getTask('shell-c1')).toMatchObject({ state: 'failed', outputTail: 'boom' });
-    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'shell-c1' }));
+    expect(tx.getTask('shell-c1')).toMatchObject({ state: 'failed' });
   });
 
   it('marks a foreground shell task terminal on shell.completed', () => {
@@ -2908,7 +2883,6 @@ describe('AgentTranscriptProjector', () => {
           detached: true,
           description: 'pnpm test',
           agentId: undefined,
-          outputTail: '42 passed',
           startedAt: new Date(6000).toISOString(),
           endedAt: new Date(9000).toISOString(),
         },
@@ -2937,7 +2911,6 @@ describe('AgentTranscriptProjector', () => {
       expect(standalone).toEqual([
         expect.objectContaining({ kind: 'marker', marker: 'goal', markerId: 'm1' }),
         expect.objectContaining({ kind: 'marker', marker: 'plan.enter', markerId: 'm2' }),
-        expect.objectContaining({ kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1' }),
       ]);
       service.dropSession('s1');
     } finally {
@@ -4523,8 +4496,11 @@ describe('bindSessionTranscript', () => {
       });
       const store = service.forSessionLive('s1');
       const batches: TranscriptOperation[][] = [];
-      service.onSessionOps('s1', (event) => {
-        if (event.agentId === 'main') batches.push([...event.ops]);
+      service.onSessionChange('s1', {
+        ops: (event) => {
+          if (event.agentId === 'main') batches.push([...event.ops]);
+        },
+        tasks: () => {},
       });
       const bus = agents.byId('main')!.bus;
       bus.emit(
@@ -4631,7 +4607,7 @@ describe('bindSessionTranscript', () => {
       const base = service.getSeqWatermark('s1', 'main');
 
       const seen: number[] = [];
-      service.onSessionOps('s1', (_event, seq) => seen.push(seq));
+      service.onSessionChange('s1', { ops: (_event, seq) => seen.push(seq), tasks: () => {} });
       main.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } }));
       main.bus.emit(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
 
@@ -4657,6 +4633,44 @@ describe('bindSessionTranscript', () => {
 
       expect(service.getSeqWatermark('s1', 'nope')).toBe(0);
       expect(service.getOpsSince('nope-session', 'main', 0)).toBeUndefined();
+      service.dropSession('s1');
+    });
+
+    it('hands task upserts to the task listener without journaling them', async () => {
+      const agents = new FakeAgents();
+      const main = agents.add('main');
+      const service = new TranscriptService({
+        homeDir: '/nonexistent-home',
+        core: fakeCoreWithAgents(agents),
+      });
+      service.forSessionLive('s1');
+      await service.whenReady('s1');
+      const base = service.getSeqWatermark('s1', 'main');
+
+      const ops: string[] = [];
+      const tasks: string[] = [];
+      service.onSessionChange('s1', {
+        ops: (event) => ops.push(...event.ops.map((op) => op.op)),
+        tasks: (event) => tasks.push(...event.tasks.map((task) => `${event.agentId}:${task.taskId}`)),
+      });
+      main.bus.emit(
+        ev({
+          type: 'task.started',
+          info: {
+            taskId: 'bash-1',
+            kind: 'process',
+            description: 'sleep 60',
+            status: 'running',
+            detached: true,
+            startedAt: 1_700_000_000_000,
+            endedAt: null,
+          },
+        }),
+      );
+
+      expect(tasks).toEqual(['main:bash-1']);
+      expect(ops).toEqual([]);
+      expect(service.getSeqWatermark('s1', 'main')).toBe(base);
       service.dropSession('s1');
     });
 

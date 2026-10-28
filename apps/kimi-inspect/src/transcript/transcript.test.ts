@@ -8,6 +8,7 @@ import {
   itemId,
   type StepHeader,
   type TranscriptOperation,
+  type TranscriptTask,
   type TranscriptTurn,
   type TurnHeader,
   type TurnState,
@@ -184,6 +185,7 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
       seq?: number;
     }[],
     resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
+    tasks: [] as { agentId: string; task: TranscriptTask }[],
     resyncs: 0,
     reconnects: 0,
   };
@@ -201,6 +203,9 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
       onReset: (agentId, _snapshot, hasMoreOlder, meta) => {
         seen.resets.push({ agentId, hasMoreOlder, at: meta?.at, seq: meta?.seq });
         handlers.onReset?.(agentId, _snapshot, hasMoreOlder, meta);
+      },
+      onTask: (agentId, task) => {
+        seen.tasks.push({ agentId, task });
       },
       onResyncRequired: () => {
         seen.resyncs += 1;
@@ -222,9 +227,7 @@ describe('fetchTranscriptPage', () => {
     agent_id: 'main',
     items: [turnItem(1)],
     has_more: true,
-    tasks: [
-      { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: 'x' },
-    ],
+    tasks: [],
     interactions: [],
     attachments: [],
     todos: [],
@@ -252,7 +255,6 @@ describe('fetchTranscriptPage', () => {
     expect(calls[0]!.init?.headers).toEqual({ authorization: 'Bearer tok' });
     expect(page.hasMoreOlder).toBe(true);
     expect(page.items.map((item) => itemId(item))).toEqual(['t1']);
-    expect(page.tasks.map((task) => task.taskId)).toEqual(['bash-1']);
     expect(page.meta.activity).toBe('turn');
     expect(page.pendingInteractions).toEqual(['apr-1']);
     expect(page.seq).toBe(42);
@@ -498,6 +500,46 @@ describe('TranscriptWs', () => {
     expect(seen.ops[0]!.ops[0]).toMatchObject({ op: 'meta.merge' });
   });
 
+  it('maps task frames onto the transcript task shape', () => {
+    FakeWs.reset();
+    const { seen } = makeWs();
+    const sock = FakeWs.instances[0]!;
+    sock.open();
+    sock.serverFrame({
+      type: 'task',
+      session_id: 's1',
+      agent_id: 'main',
+      event_created_at: '2026-01-01T00:00:02Z',
+      task_id: 'agent-1',
+      kind: 'subagent',
+      status: 'ended',
+      outcome: 'completed',
+      detached: true,
+      child_agent_id: 'sub-1',
+      started_at: '2026-01-01T00:00:00Z',
+      ended_at: '2026-01-01T00:00:02Z',
+      usage: { input_other: 1, output: 2, input_cache_read: 3, input_cache_creation: 4 },
+      thinking: 'high',
+    });
+    expect(seen.ops).toHaveLength(0);
+    expect(seen.tasks).toEqual([
+      {
+        agentId: 'main',
+        task: {
+          taskId: 'agent-1',
+          kind: 'subagent',
+          state: 'completed',
+          detached: true,
+          agentId: 'sub-1',
+          startedAt: '2026-01-01T00:00:00Z',
+          endedAt: '2026-01-01T00:00:02Z',
+          usage: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 },
+          thinkingEffort: 'high',
+        },
+      },
+    ]);
+  });
+
   it('sends a clean client_hello and carries grades/transcript_since on subscribe_v2', async () => {
     FakeWs.reset();
     let watermark: number | undefined;
@@ -641,17 +683,20 @@ describe('TranscriptWs', () => {
 // ---------------------------------------------------------------- store
 
 describe('TranscriptChatStore', () => {
-  it('applyPage(replace) installs the newest slice wholesale (items + globals)', () => {
+  it('applyPage(replace) installs the newest slice wholesale (items + globals, tasks kept)', () => {
     const store = new TranscriptChatStore();
-    store.applyOps([{ op: 'turn.upsert', turn: turnHeader(9, 'running') }]);
+    store.applyOps([
+      { op: 'turn.upsert', turn: turnHeader(9, 'running') },
+      {
+        op: 'task.upsert',
+        task: { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false },
+      },
+    ]);
     store.applyPage(
       {
         ...emptyPage,
         items: [turnItem(1), turnItem(2)],
         hasMoreOlder: true,
-        tasks: [
-          { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false, outputTail: '' },
-        ],
         meta: { activity: 'idle' },
         pendingInteractions: ['apr-1'],
       },

@@ -18,6 +18,7 @@ import {
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
+  IAgentTaskService,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -47,6 +48,7 @@ import {
   type InteractionEventMessage,
 } from '../src/protocol/interaction';
 import { sessionEventMessageSchema } from '../src/protocol/ws-control';
+import type { TaskEventMessage } from '../src/protocol/ws-task';
 import {
   type BroadcastDelivery,
   type BroadcastTarget,
@@ -1640,6 +1642,73 @@ describe('SessionEventBroadcaster', () => {
       const ops = transcriptEnvelopes(view.envelopes).at(-1)!;
       expect(ops.type).toBe('transcript.ops');
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
+    });
+
+    it('sends tasks as task events after the reset and on every change, never inside the transcript', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      main.set(IAgentTaskService, {
+        list: () => [],
+        getTask: (taskId: string) =>
+          taskId === 'bash-1'
+            ? { kind: 'process', command: 'sleep 60', parentToolCallId: 'call-bash' }
+            : undefined,
+      });
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+      const started = {
+        taskId: 'bash-1',
+        kind: 'process',
+        description: 'sleep',
+        status: 'running',
+        detached: true,
+        startedAt: 1_700_000_000_000,
+        endedAt: null,
+      };
+
+      const early = collectingTarget();
+      await bc.subscribe('s1', early.target, { '*': 'turn' });
+      main.bus.emit(agentEvent('task.started', { info: started }));
+      const late = collectingTarget();
+      const offView = collectingTarget();
+      await bc.subscribe('s1', late.target, { '*': 'turn' });
+      await bc.subscribe('s1', offView.target, { '*': 'off' });
+      main.bus.emit(
+        agentEvent('task.terminated', {
+          info: { ...started, status: 'completed', endedAt: 1_700_000_005_000 },
+        }),
+      );
+
+      const taskEvents = (view: ReturnType<typeof collectingTarget>): TaskEventMessage[] =>
+        view.envelopes.filter((frame) => frame.type === 'task') as unknown as TaskEventMessage[];
+      for (const view of [early, late]) {
+        expect(taskEvents(view).map((task) => [task.task_id, task.status])).toEqual([
+          ['bash-1', 'running'],
+          ['bash-1', 'ended'],
+        ]);
+        const frames = transcriptEnvelopes(view.envelopes);
+        expect(frames[0]).toMatchObject({ type: 'transcript.reset', payload: { snapshot: { tasks: [] } } });
+        expect(
+          frames.flatMap((frame) => (frame.payload as Partial<OpsPayload>).ops ?? []).map((op) => op.op),
+        ).not.toContain('task.upsert');
+      }
+      expect(taskEvents(late)[1]).toEqual({
+        type: 'task',
+        session_id: 's1',
+        agent_id: 'main',
+        event_created_at: expect.any(String),
+        task_id: 'bash-1',
+        kind: 'shell',
+        status: 'ended',
+        outcome: 'completed',
+        detached: true,
+        description: 'sleep',
+        parent_tool_call_id: 'call-bash',
+        command: 'sleep 60',
+        started_at: new Date(1_700_000_000_000).toISOString(),
+        ended_at: new Date(1_700_000_005_000).toISOString(),
+      });
+      expect(taskEvents(offView)).toEqual([]);
     });
 
     it('streams for a client subscribed before any agent exists', async () => {

@@ -5,6 +5,13 @@ import { transcriptGradeSpecSchema, transcriptSeqSchema } from '@moonshot-ai/tra
 
 import { pushEventSchema } from './events-zod';
 import { interactionEventMessageSchema } from './interaction';
+import {
+  taskAttachMessageSchema,
+  taskDetachMessageSchema,
+  taskEventMessageSchema,
+  taskOutputMessageSchema,
+  taskResponseMessageSchema,
+} from './ws-task';
 
 export const WS_PROTOCOL_VERSION = 2;
 
@@ -229,6 +236,23 @@ export const clientControlOperations = [
     description: 'Abort a running prompt in a session.',
   },
   {
+    type: 'task.attach',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: taskAttachMessageSchema,
+    ackSchema: taskResponseMessageSchema,
+    description:
+      "Stream one task's output to this connection without a session subscription; since_offset resumes after output the client already has.",
+  },
+  {
+    type: 'task.detach',
+    direction: 'client_to_server',
+    kind: 'control',
+    messageSchema: taskDetachMessageSchema,
+    ackSchema: taskResponseMessageSchema,
+    description: "Stop streaming one task's output to this connection.",
+  },
+  {
     type: 'pong',
     direction: 'client_to_server',
     kind: 'control',
@@ -279,11 +303,31 @@ export const interactionEventOperation = {
     'Flat, unsequenced approval or question state for a subscribed session; pending interactions are re-sent after every accepted subscription.',
 } as const satisfies WsOperationDefinition;
 
+export const taskEventOperation = {
+  type: 'task',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: taskEventMessageSchema,
+  description:
+    'Full state of one task of a subscribed agent; every task of the agent is sent after each transcript reset or catch-up, then the changed task on every change.',
+} as const satisfies WsOperationDefinition;
+
+export const taskOutputEventOperation = {
+  type: 'task.output',
+  direction: 'server_to_client',
+  kind: 'event',
+  messageSchema: taskOutputMessageSchema,
+  description:
+    'Task output starting at a UTF-8 byte offset, sent only to connections attached to the task.',
+} as const satisfies WsOperationDefinition;
+
 export const wsOperations = [
   ...clientControlOperations,
   ...serverSystemOperations,
   sessionEventOperation,
   interactionEventOperation,
+  taskEventOperation,
+  taskOutputEventOperation,
 ] as const satisfies readonly WsOperationDefinition[];
 
 export function getClientControlOperation(

@@ -133,14 +133,8 @@ describe('serializeState', () => {
     const state: AgentState = {
       ...EMPTY_AGENT_STATE,
       tasks: new Map([
-        [
-          'b-task',
-          { taskId: 'b-task', kind: 'shell', state: 'running', detached: false, outputTail: '' },
-        ],
-        [
-          'a-task',
-          { taskId: 'a-task', kind: 'tool', state: 'completed', detached: false, outputTail: '' },
-        ],
+        ['b-task', { taskId: 'b-task', kind: 'shell', state: 'running', detached: false }],
+        ['a-task', { taskId: 'a-task', kind: 'tool', state: 'completed', detached: false }],
       ]),
       pendingInteractions: new Set(['z', 'a']),
     };

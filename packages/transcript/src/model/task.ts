@@ -18,7 +18,6 @@ export interface TranscriptTask {
   readonly detached: boolean;
   readonly description?: string;
   readonly agentId?: AgentId;
-  readonly outputTail: string;
   readonly startedAt?: string;
   readonly endedAt?: string;
   readonly resultSummary?: string;

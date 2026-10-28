@@ -1,4 +1,4 @@
-import type { MarkerId, TaskId, TaskRefId } from './ids';
+import type { MarkerId } from './ids';
 import type { TranscriptTurn } from './turn';
 
 export type MarkerKey = string;
@@ -27,14 +27,7 @@ export interface TranscriptMarker {
   readonly at?: string;
 }
 
-export interface TranscriptTaskRef {
-  readonly kind: 'taskref';
-  readonly refId: TaskRefId;
-  readonly taskId: TaskId;
-  readonly at?: string;
-}
-
-export type TranscriptItem = TranscriptTurn | TranscriptMarker | TranscriptTaskRef;
+export type TranscriptItem = TranscriptTurn | TranscriptMarker;
 
 export function itemId(item: TranscriptItem): string {
   switch (item.kind) {
@@ -42,7 +35,5 @@ export function itemId(item: TranscriptItem): string {
       return item.turnId;
     case 'marker':
       return item.markerId;
-    case 'taskref':
-      return item.refId;
   }
 }

@@ -17,8 +17,7 @@ import {
 import type { TranscriptItem } from '#/model/item';
 import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
-const idLabel = (i: TranscriptItem): string =>
-  i.kind === 'turn' ? i.turnId : i.kind === 'marker' ? i.markerId : i.refId;
+const idLabel = (i: TranscriptItem): string => (i.kind === 'turn' ? i.turnId : i.markerId);
 
 describe('client metadata in transcript user origins', () => {
   it('retains user-invoked single skill frame metadata without exposing model-triggered activations as user input', () => {
@@ -317,8 +316,7 @@ describe('contract schemas', () => {
       frameOp,
       appendOp,
       { op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'goal' } },
-      { op: 'taskref.upsert', item: { kind: 'taskref', refId: 'r1', taskId: 'task1' } },
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false, outputTail: '' } },
+      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false } },
       {
         op: 'interaction.upsert',
         interaction: { interactionId: 'appr-1', interactionKind: 'approval', toolCallId: 'c1', state: 'pending' },
@@ -417,7 +415,7 @@ describe('contract schemas', () => {
       {
         op: 'task.upsert',
         task: {
-          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false, outputTail: '',
+          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false,
           resultSummary: 'scanned 12 files',
           error: 'partial failure',
           stateReason: 'waiting for input',
@@ -1897,7 +1895,7 @@ describe('foldWireRecordFacts (cold facts)', () => {
     ]);
   });
 
-  it('folds task records into task entities and timeline taskrefs', () => {
+  it('folds task records into task entities without timeline items', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(
       [
@@ -1937,7 +1935,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
             startedAt: 1000,
             endedAt: 5000,
           },
-          outputTail: '42 passed',
           time: 5000,
         },
       ],
@@ -1952,7 +1949,6 @@ describe('foldWireRecordFacts (cold facts)', () => {
         detached: true,
         description: 'pnpm test',
         agentId: undefined,
-        outputTail: '42 passed',
         startedAt: new Date(1000).toISOString(),
         endedAt: new Date(5000).toISOString(),
       },
@@ -1963,16 +1959,11 @@ describe('foldWireRecordFacts (cold facts)', () => {
         detached: false,
         description: 'scan the repo',
         agentId: 'sub-1',
-        outputTail: '',
         startedAt: new Date(2000).toISOString(),
         endedAt: undefined,
       },
     ]);
-    const refs = folded.items.filter((item) => item.kind === 'taskref');
-    expect(refs).toEqual([
-      { kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1', at: new Date(1000).toISOString() },
-      { kind: 'taskref', refId: 'ref-task_2', taskId: 'task_2', at: new Date(2000).toISOString() },
-    ]);
+    expect(folded.items).toEqual(base.items);
   });
 
   it('maps unknown task kinds to other and survives malformed task records', () => {
