@@ -2,12 +2,13 @@ import { mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   IAgentTaskService,
   type AgentTaskInfo,
 } from '#/agent/task/task';
+import { pidAlive } from '#/agent/task/pidAlive';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
@@ -19,6 +20,10 @@ import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
 } from './stubs';
+
+vi.mock('#/agent/task/pidAlive', () => ({
+  pidAlive: vi.fn(() => false),
+}));
 
 let sessionDir: string;
 let persistence: ReturnType<typeof createAgentTaskPersistence>;
@@ -41,6 +46,7 @@ function persistedProcess(
 }
 
 beforeEach(async () => {
+  vi.mocked(pidAlive).mockReturnValue(false);
   sessionDir = join(
     tmpdir(),
     `kimi-bg-reconcile-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -261,6 +267,63 @@ describe('AgentTaskService — loadFromDisk + reconcile', () => {
           (event) => (event as { type?: string }).type === 'task.terminated',
         ),
       ).toHaveLength(1);
+    });
+
+    it('keeps a ghost running when its process is still alive', async () => {
+      vi.mocked(pidAlive).mockReturnValue(true);
+      await persistence.writeTask(
+        persistedProcess({
+          taskId: 'bash-alive000',
+          command: 'sleep 9999',
+          description: 'still running elsewhere',
+          pid: 4242,
+        }),
+      );
+
+      await background.loadFromDisk();
+      await background.reconcile();
+
+      expect(pidAlive).toHaveBeenCalledWith(4242);
+      expect(background.getTask('bash-alive000')).toMatchObject({
+        taskId: 'bash-alive000',
+        status: 'running',
+      });
+      expect(await persistence.readTask('bash-alive000')).toMatchObject({
+        taskId: 'bash-alive000',
+        status: 'running',
+      });
+      expect(
+        emittedEvents.filter(
+          (event) => (event as { type?: string }).type === 'task.terminated',
+        ),
+      ).toEqual([]);
+    });
+
+    it('marks only the dead process lost when a live one shares the session', async () => {
+      vi.mocked(pidAlive).mockImplementation((pid: number) => pid === 4242);
+      await persistence.writeTask(
+        persistedProcess({ taskId: 'bash-alive001', pid: 4242 }),
+      );
+      await persistence.writeTask(
+        persistedProcess({ taskId: 'bash-dead0001', pid: 99999 }),
+      );
+
+      await background.loadFromDisk();
+      await background.reconcile();
+
+      expect(await persistence.readTask('bash-alive001')).toMatchObject({
+        status: 'running',
+      });
+      expect(await persistence.readTask('bash-dead0001')).toMatchObject({
+        status: 'lost',
+      });
+      const terminationEvents = emittedEvents.filter(
+        (event) => (event as { type?: string }).type === 'task.terminated',
+      );
+      expect(terminationEvents).toHaveLength(1);
+      expect(terminationEvents[0]).toMatchObject({
+        info: { taskId: 'bash-dead0001', status: 'lost' },
+      });
     });
 
     it('restores terminal ghost notifications into context', async () => {
