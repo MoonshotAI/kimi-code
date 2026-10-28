@@ -242,10 +242,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/snapshot",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/status",
     ],
     [
@@ -499,6 +495,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "POST",
       "/api/v1/shutdown",
+    ],
+    [
+      "POST",
+      "/api/v1/workspace/fs:list",
     ],
     [
       "POST",

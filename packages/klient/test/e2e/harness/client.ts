@@ -5,9 +5,9 @@
  * into a single, typed object that scenarios can drive. Handles:
  *   - Envelope unwrap + typed REST helpers
  *   - WS `server_hello` → `client_hello` → ack handshake
- *   - `subscribe` / `unsubscribe` ack correlation
+ *   - `subscribe_v2` / `unsubscribe_v2` ack correlation
  *   - Approval + question reverse-RPC auto-resolve via per-event handlers
- *   - `waitForFrame` / `waitForSessionBusy` convenience waits
+ *   - `waitForFrame` / `waitForSessionBusy` / `runUntilIdle` convenience waits
  *
  * **What it is NOT**: a server bootstrap helper. Connect to a server process
  * that's already running at `baseUrl` (default `http://127.0.0.1:58627`).
@@ -84,10 +84,15 @@ export interface DaemonClientOptions {
 }
 
 export interface SubmitAndWaitOptions {
-  /** Default `prompt.completed`. */
-  waitFor?: 'prompt.completed' | 'turn.ended';
   /** Default 60s. */
   timeoutMs?: number;
+}
+
+export interface SubmitAndWaitResult {
+  prompt_id: string;
+  user_message_id: string;
+  /** The `event.session.work_changed` frame that reported the session idle again. */
+  finalFrame: AnyFrame;
 }
 
 type UploadFileData = Blob | ArrayBuffer | Uint8Array | string;
@@ -300,8 +305,9 @@ export class DaemonClient {
   // ── WS lifecycle ────────────────────────────────────────────────────────
   /**
    * Open the WS socket, wait for `server_hello`, send `client_hello`, await
-   * the ack. Returns the server's hello payload (buffer sizes, capabilities,
-   * etc.).
+   * the ack. Returns the server's hello payload (connection id, heartbeat).
+   * Every connection receives the global events, including
+   * `event.session.work_changed`, without subscribing.
    */
   async connect(): Promise<ServerHelloMessage['payload']> {
     if (this._serverHello) return this._serverHello;
@@ -327,7 +333,7 @@ export class DaemonClient {
       {
         type: 'client_hello',
         id: helloId,
-        payload: { client_id: this.clientId, subscriptions: [] },
+        payload: { client_id: this.clientId },
       },
       this._controlAckTimeoutMs,
     );
@@ -341,28 +347,35 @@ export class DaemonClient {
     return helloPayload;
   }
 
-  /** Send `subscribe` and await its ack. Tracks the session for `close()`. */
+  /**
+   * Send `subscribe_v2` for the session's transcript stream and await its
+   * ack. Throws when the server reports the session as not found.
+   */
   async subscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (this._subscribed.has(sid)) return;
     const id = `sub-${ulid()}`;
     const ack = await ws.sendAndAwaitAck(
-      { type: 'subscribe', id, payload: { session_ids: [sid] } },
+      { type: 'subscribe_v2', id, payload: { session_id: sid, transcript: { '*': 'turn' } } },
       this._controlAckTimeoutMs,
     );
     if (ack.code !== 0) {
       throw new Error(`subscribe rejected (code=${ack.code}): ${ack.msg ?? 'no message'}`);
     }
+    const accepted = (ack.payload as { accepted?: string[] } | undefined)?.accepted ?? [];
+    if (!accepted.includes(sid)) {
+      throw new Error(`subscribe rejected: session ${sid} not found`);
+    }
     this._subscribed.add(sid);
   }
 
-  /** Send `unsubscribe` and await its ack. */
+  /** Send `unsubscribe_v2` and await its ack. */
   async unsubscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (!this._subscribed.has(sid)) return;
     const id = `unsub-${ulid()}`;
     const ack = await ws.sendAndAwaitAck(
-      { type: 'unsubscribe', id, payload: { session_ids: [sid] } },
+      { type: 'unsubscribe_v2', id, payload: { session_id: sid } },
       this._controlAckTimeoutMs,
     );
     if (ack.code !== 0) {
@@ -416,58 +429,79 @@ export class DaemonClient {
 
   // ── High-level convenience ──────────────────────────────────────────────
   /**
-   * Submit a prompt and wait for its terminal event. `waitFor` defaults to
-   * the synthesized `prompt.completed` event (broadcast after `turn.ended`
-   * lands for the same prompt). Returns `prompt_id` and the matching frame.
+   * Run `action` and wait until the session goes busy and then idle again,
+   * as reported by `event.session.work_changed`. The frame listener is
+   * attached before `action` runs, so a fast turn cannot slip past it.
+   */
+  async runUntilIdle<T>(
+    sid: string,
+    action: () => Promise<T>,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<{ result: T; finalFrame: AnyFrame }> {
+    const ws = this._requireWs();
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
+    let dispose = (): void => {};
+    const idle = new Promise<AnyFrame>((resolve, reject) => {
+      let sawBusy = false;
+      const timer = setTimeout(() => {
+        dispose();
+        reject(new Error(`session ${sid} did not return to idle within ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
+      const off = ws.onFrame((frame) => {
+        if (frame.type !== 'event.session.work_changed' || frame.session_id !== sid) return;
+        const busy = (frame.payload as { busy?: boolean } | undefined)?.busy;
+        if (busy === true) {
+          sawBusy = true;
+        } else if (busy === false && sawBusy) {
+          dispose();
+          resolve(frame);
+        }
+      });
+      dispose = () => {
+        clearTimeout(timer);
+        off();
+      };
+    });
+    try {
+      const result = await action();
+      return { result, finalFrame: await idle };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+
+  /**
+   * Submit a prompt and wait for the session to finish the resulting work.
+   * The final frame's `last_turn_reason` tells how the turn ended.
    */
   async submitAndWait(
     sid: string,
     input: PromptSubmitInput,
     opts: SubmitAndWaitOptions = {},
-  ): Promise<{ prompt_id: string; user_message_id: string; finalFrame: AnyFrame }> {
-    const ws = this._requireWs();
-    const waitFor = opts.waitFor ?? 'prompt.completed';
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
-
-    // POST the prompt FIRST — without `prompt_id` we have nothing to match on.
-    // The WS layer queues every frame from the moment we open, so any events
-    // that arrive between this POST and the `waitForFrame` below are still
-    // there to be matched (they're drained from the queue, not dropped).
-    const submit = await this.http.submitPrompt(sid, fillPromptDefaults(input));
-
-    const finalFrame = await ws.waitForFrame((f) => {
-      if (f.type !== waitFor) return false;
-      const payload = (f.payload as { promptId?: string; prompt_id?: string } | undefined) ?? {};
-      const pid = payload.promptId ?? payload.prompt_id;
-      return pid === submit.prompt_id;
-    }, timeoutMs);
-
-    return { prompt_id: submit.prompt_id, user_message_id: submit.user_message_id, finalFrame };
+  ): Promise<SubmitAndWaitResult> {
+    return this.submitAndWaitStateful(sid, fillPromptDefaults(input), opts);
   }
 
   /**
    * Stateful-session companion to `submitAndWait` — POSTs `body` verbatim
-   * (NO default controls injected), then waits for the terminal event for
-   * the resulting `prompt_id`. Use after `updateSession(sid, {agent_config:
-   * {...}})` to verify the session's shadow drives the next prompt without
-   * the body needing to redeclare any controls.
+   * (NO default controls injected), then waits for the session to go idle.
+   * Use after `updateSession(sid, {agent_config: {...}})` to verify the
+   * session's shadow drives the next prompt without the body needing to
+   * redeclare any controls.
    */
   async submitAndWaitStateful(
     sid: string,
     body: PromptSubmission,
     opts: SubmitAndWaitOptions = {},
-  ): Promise<{ prompt_id: string; user_message_id: string; finalFrame: AnyFrame }> {
-    const ws = this._requireWs();
-    const waitFor = opts.waitFor ?? 'prompt.completed';
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
-    const submit = await this.http.submitPrompt(sid, body);
-    const finalFrame = await ws.waitForFrame((f) => {
-      if (f.type !== waitFor) return false;
-      const payload = (f.payload as { promptId?: string; prompt_id?: string } | undefined) ?? {};
-      const pid = payload.promptId ?? payload.prompt_id;
-      return pid === submit.prompt_id;
-    }, timeoutMs);
-    return { prompt_id: submit.prompt_id, user_message_id: submit.user_message_id, finalFrame };
+  ): Promise<SubmitAndWaitResult> {
+    const { result, finalFrame } = await this.runUntilIdle(
+      sid,
+      () => this.http.submitPrompt(sid, body),
+      opts,
+    );
+    return { prompt_id: result.prompt_id, user_message_id: result.user_message_id, finalFrame };
   }
 
   // ── internals ───────────────────────────────────────────────────────────

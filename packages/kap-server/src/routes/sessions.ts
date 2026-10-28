@@ -179,15 +179,7 @@ const sessionActionRequestSchema = z.preprocess(
 
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export interface SessionsRoutesDeps {
-  readonly sessionEventCursor: (sessionId: string) => Promise<{ seq: number; epoch: string }>;
-}
-
-export function registerSessionsRoutes(
-  app: SessionRouteHost,
-  core: Scope,
-  deps: SessionsRoutesDeps,
-): void {
+export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -429,7 +421,6 @@ export function registerSessionsRoutes(
     },
     async (req, reply) => {
       const { session_id } = req.params;
-      const cursor = await deps.sessionEventCursor(session_id);
       const summary = await core.accessor.get(ISessionIndex).get(session_id);
       if (summary === undefined) {
         reply.send(
@@ -450,10 +441,7 @@ export function registerSessionsRoutes(
         return;
       }
       reply.send(
-        okEnvelope(
-          toWireSession(summary, cwd, resolveSessionFacts(core, session_id), cursor.seq),
-          req.id,
-        ),
+        okEnvelope(toWireSession(summary, cwd, resolveSessionFacts(core, session_id)), req.id),
       );
     },
   );
@@ -1195,7 +1183,6 @@ export function toWireSession(
   fields: SessionWireFields,
   cwd: string,
   facts: SessionFacts,
-  lastSeq?: number,
 ): Session {
   return {
     id: fields.id,
@@ -1217,7 +1204,6 @@ export function toWireSession(
     usage: emptySessionUsage(),
     permission_rules: [],
     message_count: 0,
-    last_seq: lastSeq ?? 0,
   };
 }
 

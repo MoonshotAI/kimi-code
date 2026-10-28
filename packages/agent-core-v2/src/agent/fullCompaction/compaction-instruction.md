@@ -59,7 +59,8 @@ record that instead.
 Be honest about uncertainty. If an earlier step claimed something was done but
 was never verified (tests "passing", a fix "working", a file "created"), say so
 plainly and treat it as unverified rather than fact — re-check before relying
-on it.
+on it. Likewise, if the code a check covers changed after it passed, mark that
+result as unverified.
 
 Be concise, and keep the summary proportional to the task: a long multi-step
 task warrants detail, but a trivial or nearly finished exchange needs only a

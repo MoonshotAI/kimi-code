@@ -115,9 +115,9 @@ ws.onmessage = (e) => console.log(e.data);
 ws.onopen = () =>
   ws.send(
     JSON.stringify({
-      type: 'subscribe',
+      type: 'subscribe_v2',
       id: '1',
-      payload: { session_ids: [process.argv[2]] },
+      payload: { session_id: process.argv[2], transcript: { '*': 'block' } },
     }),
   );
 ```
@@ -131,7 +131,7 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
   -d '{"content": [{"type": "text", "text": "Introduce this repository in one sentence"}]}'
 ```
 
-The subscriber sees, in order: `turn.started` (turn begins) → `assistant.delta` (streaming text increments) → `tool.call.started` / `tool.result` when tool calls happen → `turn.ended` (turn finishes).
+The subscriber first receives `transcript.reset` (the transcript baseline), then `transcript.ops` batches as the turn streams in, including tool calls. `event.session.work_changed` reports `busy: true` when the turn starts and `busy: false` with `last_turn_reason` when it finishes.
 
 5. Read history back over REST at any time:
 
@@ -635,7 +635,6 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
-| `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
 
 #### The session object
@@ -656,11 +655,10 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
-| `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
+| `agent_config` | object | Projected as `{ model }`; `model` is the live model while the session is loaded, `""` otherwise |
+| `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; currently all zeros |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
-| `last_seq` | integer | Last event sequence number; currently always `0` |
 
 #### `POST /api/v1/sessions`
 
@@ -952,18 +950,6 @@ Exports the session together with diagnostic logs as a zip attachment (`kimi-ses
 | `web_log` | body | string | Client log text to include in the archive, at most 256 KB UTF-8 |
 | `desktop` | body | boolean | Also include the desktop host's log. Default `false` |
 
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-Assembles an atomic snapshot for rebuilding a client after a resync: the session, recent messages, the in-flight turn, live subagents, and pending interactions, all stamped with the `as_of_seq` watermark and `epoch` used to resubscribe — see [Reconnect and recovery](#reconnect-and-recovery). Unlike the plain session endpoints, the embedded session carries the live `agent_config.model` and real `usage` totals.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`: `session` is [the session object](#the-session-object), `messages` is the newest 100 messages as `{ items, has_more }`, `in_flight_turn` is the partially streamed turn (`null` when idle, with `current_prompt_id` when known), `subagents` lists live subagent tasks, and `pending_approvals` / `pending_questions` carry the unanswered interactions.
-
-- `40401`: session not found
-
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
 Downloads a prompt media file (an image or other attachment referenced by the session's prompts) by file id; an id not yet committed to the session falls back to the staged uploads. The response is binary with `Range` support (206 on ranged requests) — see [Binary and streaming endpoints](#binary-and-streaming-endpoints) for the shared conventions; unlike the enveloped endpoints there, a missing session or file answers with a real 404 status carrying an envelope body.
@@ -988,7 +974,7 @@ The `messages` endpoints page the main agent's flattened message history, while 
 
 #### `GET /api/v1/sessions/{session_id}/messages`
 
-Pages the main agent's message history — the flattened context transcript shared with the session snapshot — newest first. Cursor pagination follows [Pagination](#pagination); reading the history resumes the session when it is cold.
+Pages the main agent's message history — the flattened context transcript — newest first. Cursor pagination follows [Pagination](#pagination); reading the history resumes the session when it is cold.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1105,7 +1091,7 @@ On success, `data` is `{ active, queued }`: `active` is the running prompt (`nul
 
 #### `POST /api/v1/sessions/{session_id}/prompts`
 
-Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
+Submits a user prompt to the session. Media references are validated first, then the optional overrides are applied to the target agent — `profile` (bound together with `model` / `thinking`), then `model`, `thinking`, `permission_mode`, `swarm_mode`, and `disabled_tools` — and the prompt is enqueued; the response returns as soon as the prompt is accepted, without waiting for the turn. With `skills`, the prompt runs as a bundled skill activation instead of a plain user prompt.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1118,9 +1104,10 @@ Submits a user prompt to the session. Media references are validated first, then
 | `model` | body | string | Model alias to switch the agent to |
 | `thinking` | body | string | Thinking-mode effort level |
 | `permission_mode` | body | string | `manual` / `yolo` / `auto` |
+| `swarm_mode` | body | boolean | Enable or disable Swarm mode before submitting |
 | `disabled_tools` | body | array | Tool names to disable for the session |
 
-The schema also accepts `metadata`, `plan_mode`, `swarm_mode`, `goal_objective`, and `goal_control`, but the submit route currently does not apply them. Each `content` part is an object discriminated by `type`:
+The schema also accepts `plan_mode`, `goal_objective`, and `goal_control`, but the submit route currently does not apply them. `metadata` is optional client metadata stored with the prompt. Each `content` part is an object discriminated by `type`:
 
 | Part | Fields | Description |
 | --- | --- | --- |
@@ -1662,6 +1649,7 @@ In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{ac
 
 | Method and path | Description |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | Session-less workspace directory listing |
 | `POST /api/v1/workspace/fs:search` | Session-less workspace search (the body carries the workspace reference) |
 | `POST /api/v1/workspace/fs:suggest` | Session-less file-completion candidates (for `@` file mentions) |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | Download a session file (binary, see below) |
@@ -1684,10 +1672,11 @@ Lists the entries of a session workspace directory, optionally recursing into su
 | `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
 | `exclude_globs` | body | string[] | Additional globs to skip |
 | `allow_ignored_globs` | body | string[] | Globs to show even when gitignored (e.g. `.tmp`). Ignored ancestor directories of a match are kept so the match stays reachable. Allowing dot-paths also requires `show_hidden: true` |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
 | `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
 | `include_git_status` | body | boolean | Attach each entry's git status. Default `false` |
 
-On success, `data` is `{ items, truncated }` — plus `children_by_path` (a path → entries map) when `depth` is greater than 1. Each item is an entry object `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_symlink_to?, git_status?, child_count? }`, where `kind` is `file` / `directory` / `symlink` and `git_status` (present only with `include_git_status: true`) is one of `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`; `truncated` reports that `limit` cut the listing short.
+On success, `data` is `{ items, truncated }` — plus `children_by_path` (a path → entries map) when `depth` is greater than 1. Each item is an entry object `{ path, name, kind, size?, modified_at, etag?, mime?, language_id?, is_binary?, is_directory?, is_symlink_to?, git_status?, child_count? }`, where `kind` is `file` / `directory` / `symlink`, `is_directory` marks a symlink whose target is a directory, and `git_status` (present only with `include_git_status: true`) is one of `clean` / `modified` / `added` / `deleted` / `renamed` / `untracked` / `ignored` / `conflicted`; `truncated` reports that `limit` or the recursive symlink budget cut the listing short. Entries reached by expanding symlinked directories are capped at 10,000 per request; ordinary directory recursion is not capped.
 
 - `40001`: body validation failure
 - `40401`: session not found
@@ -1705,6 +1694,7 @@ Reads a slice of a session file as text or base64.
 | `offset` | body | integer | Byte offset to start at. Default `0` |
 | `length` | body | integer | Bytes to read, 1–10485760 (10 MiB). Default `1048576` (1 MiB) |
 | `encoding` | body | string | `auto` (default) / `utf-8` / `base64` |
+| `allow_external_symlinks` | body | boolean | Allow reading through symlinks whose targets are outside the workspace. Default `false` |
 
 On success, `data` is `{ path, content, encoding, size, truncated, etag, mime, language_id?, line_count?, is_binary }`, where `encoding` reports the encoding actually used (`utf-8` or `base64`) and `size` is the full file size. With `encoding: "auto"`, text comes back as `utf-8` (non-UTF-8 text is transcoded) and binary content as `base64`; `encoding: "utf-8"` forces text and rejects binary files.
 
@@ -1912,11 +1902,40 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
 | `runtime_id` | query | string | Runtime to read from. Default `local` |
+| `allow_external_symlinks` | query | string | `true` to download through symlinks outside the workspace. Default `false` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
 - `40409`: path not found
 - `41304`: path escapes the session workspace
+
+#### `POST /api/v1/workspace/fs:list`
+
+The session-less form of `fs:list`: the workspace travels in the body instead of the URL.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
+| `path` | body | string | Directory to list, relative to the workspace root. Default `.` |
+| `depth` | body | integer | Recursion depth, 1–10. Default `1` |
+| `limit` | body | integer | Maximum entries, 1–1000. Default `200` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
+| `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+| `runtime_id` | body | string | Runtime to list on. Default `local` |
+
+On success, `data` has the same shape as `fs:list`.
+
+- `40001`: body validation failure
+- `40409`: path not found or not a directory
+- `40410`: workspace not found and not a usable absolute path
+- `40411`: permission denied by the host filesystem
+- `40420`: runtime not found
+- `40926`: runtime unavailable
+- `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 
 #### `POST /api/v1/workspace/fs:search`
 
@@ -2327,7 +2346,6 @@ The only endpoint is `ws://<host>:<port>/api/v1/ws`; authentication happens at t
   "payload": {
     "ws_connection_id": "conn_01JZX4...",
     "protocol_version": 2,
-    "max_event_buffer_size": 1000,
     "capabilities": { "event_batching": false, "compression": false }
   }
 }
@@ -2341,42 +2359,30 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | Subscribe to session events; with `cursors` (per-session `{seq, epoch}`) the server replays missed durable events |
-| `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
+| `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
 
 ### Events
 
-Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
+Event frames look like `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)) and `interaction`.
 
-| Family | Main events |
-| --- | --- |
-| Turns | `turn.started`, `turn.ended`, `turn.step.started` / `completed` / `interrupted` / `retrying` |
-| Streaming text | `assistant.delta`, `thinking.delta` (carry `offset` for alignment) |
-| Tool calls | `tool.call.started`, `tool.call.delta`, `tool.progress`, `tool.result` |
-| Interactions | `interaction` |
-| Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
-| Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
-| Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
+`event.session.work_changed` is how clients follow a session's activity without subscribing to it: its payload is `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`, carrying the same live facts as [the session object](#the-session-object).
 
 Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
-Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
-
-Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `seq`, `timestamp`, or `payload` wrapper — and it is never journaled or replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `client_hello` / `subscribe` / `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
+Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `timestamp` or `payload` wrapper — and it is never replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
 
 ### Reconnect and recovery
 
-After reconnecting, pass each session's last applied `{seq, epoch}` in `subscribe`'s `cursors`; the server replays the gap. If you fall more than the buffer (1000 events) behind, or the cursor is no longer valid, you get `resync_required` instead. In that case, call `GET /api/v1/sessions/{session_id}/snapshot` for a full snapshot (with `as_of_seq` and `epoch`), then subscribe again with the fresh cursor.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 
-`subscribe_v2`'s `transcript` field sets a per-agent grade: `off` / `turn` / `block` / `delta` (the `"*"` key sets the default grade), with higher grades pushing finer detail. An agent with a non-`off` grade receives two frame types: `transcript.reset` (a baseline snapshot; history pages in over REST) and `transcript.ops` (incremental op batches with a per-agent strictly increasing `seq`). The agent's legacy events are suppressed on that connection and carried by transcript frames instead. After a disconnect, resume with `transcript_since`; when the server's op journal cannot cover the gap (REST catch-up returns `complete: false`), do a full refresh. The REST counterparts are `GET .../transcript` (turn-paged) and `GET .../transcript/ops?since_seq=` (op-batch catch-up).
+`subscribe_v2`'s `transcript` field sets a per-agent grade: `off` / `turn` / `block` / `delta` (the `"*"` key sets the default grade), with higher grades pushing finer detail. An agent with a non-`off` grade receives two frame types: `transcript.reset` (a baseline snapshot; history pages in over REST) and `transcript.ops` (incremental op batches with a per-agent strictly increasing `seq`). After a disconnect, resume with `transcript_since`; when the server's op journal cannot cover the gap (REST catch-up returns `complete: false`), do a full refresh. The REST counterparts are `GET .../transcript` (turn-paged) and `GET .../transcript/ops?since_seq=` (op-batch catch-up).
 
 ## Binary and streaming endpoints
 

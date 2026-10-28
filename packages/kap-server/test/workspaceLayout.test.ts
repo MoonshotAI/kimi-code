@@ -60,7 +60,7 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     return (await res.json()) as Envelope<T>;
   }
 
-  it('persists the session layout and serves it through the snapshot reader', async () => {
+  it('persists the pre-refactor layout byte-for-byte and serves it through the session reader', async () => {
     const created = await postJson<{ id: string; workspace_id: string }>('/api/v1/sessions', {
       metadata: { cwd: workDir },
     });
@@ -105,12 +105,12 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     };
     expect(metaWithAgent.agents['main']?.homedir).toBe(join(sessionDir, 'agents', 'main'));
 
-    const snapshot = await fetch(`${base}/api/v1/sessions/${sessionId}/snapshot`, {
+    const read = await fetch(`${base}/api/v1/sessions/${sessionId}`, {
       headers: authHeaders(server!),
     });
-    const snapshotBody = (await snapshot.json()) as Envelope<{ session: { id: string } }>;
-    expect(snapshotBody.code).toBe(0);
-    expect(snapshotBody.data.session.id).toBe(sessionId);
+    const sessionBody = (await read.json()) as Envelope<{ id: string }>;
+    expect(sessionBody.code).toBe(0);
+    expect(sessionBody.data.id).toBe(sessionId);
 
     const second = await postJson<{ id: string; workspace_id: string }>('/api/v1/sessions', {
       metadata: { cwd: workDir },

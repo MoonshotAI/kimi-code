@@ -26,6 +26,7 @@ import {
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
+  fsListResponseSchema,
   fsMkdirRequestSchema,
   fsReadRequestSchema,
   fsSearchRequestSchema,
@@ -94,7 +95,15 @@ const sessionIdAndTailParamSchema = z.object({
 
 const fsDownloadQuerySchema = z.object({
   runtime_id: z.string().min(1).optional(),
+  allow_external_symlinks: z.enum(['true', 'false']).optional(),
 });
+
+const workspaceFsListBodySchema = fsListRequestSchema
+  .omit({ include_git_status: true })
+  .extend({
+    workspace: z.string().min(1),
+    runtime_id: z.string().min(1).optional(),
+  });
 
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
@@ -435,6 +444,68 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
+  const workspaceListRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspace/fs::list',
+      body: workspaceFsListBodySchema,
+      success: { data: fsListResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_PERMISSION_DENIED]: {},
+        [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
+        [ErrorCode.RUNTIME_NOT_FOUND]: {},
+        [ErrorCode.RUNTIME_UNAVAILABLE]: {},
+      },
+      description:
+        'List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+      tags: ['fs'],
+      operationId: 'workspaceFsList',
+    },
+    async (req, reply) => {
+      const { workspace, runtime_id, ...listRequest } = req.body;
+      let runtimeFs: RuntimeFsScope | undefined;
+      try {
+        runtimeFs = await resolveWorkspaceFs(core, workspace, runtime_id ?? 'local', ['fs']);
+        if (runtimeFs === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.WORKSPACE_NOT_FOUND,
+              `workspace ${workspace} does not exist`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        const data = await runtimeFs.fs.list({ ...listRequest, include_git_status: false });
+        reply.send(okEnvelope(data, req.id));
+      } catch (error) {
+        if (error instanceof RuntimeError) {
+          reply.send(
+            errEnvelope(
+              error.code === 'runtime.not_found'
+                ? ErrorCode.RUNTIME_NOT_FOUND
+                : ErrorCode.RUNTIME_UNAVAILABLE,
+              error.message,
+              req.id,
+            ),
+          );
+          return;
+        }
+        sendMappedError(reply, req, error);
+      } finally {
+        if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
+      }
+    },
+  );
+  app.post(
+    workspaceListRoute.path,
+    workspaceListRoute.options,
+    workspaceListRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
   const workspaceSearchRoute = defineRoute(
     {
       method: 'POST',
@@ -644,7 +715,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let runtimeFs: RuntimeFsScope | undefined;
       try {
         runtimeFs = await acquireSessionFs(core, session_id, req.query.runtime_id ?? 'local', ['fs']);
-        resolved = await runtimeFs.fs.resolveDownload(relPath);
+        resolved = await runtimeFs.fs.resolveDownload(
+          relPath,
+          req.query.allow_external_symlinks === 'true',
+        );
       } catch (error) {
         if (runtimeFs !== undefined) releaseRuntimeFs(runtimeFs);
         sendMappedError(reply, req, error);
@@ -896,7 +970,7 @@ async function handleOpenIn(fs: IWorkspaceFsService, sessionId: string, req: Req
     );
   } catch (error) {
     requestLog(req)?.warn(
-      { session_id: sessionId, app_id: body.app_id, error },
+      { session_id: sessionId, app_id: body.app_id, err: error },
       'fs open-in launch failed',
     );
     reply.send(

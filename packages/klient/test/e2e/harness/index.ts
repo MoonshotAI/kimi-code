@@ -20,6 +20,7 @@ export { DaemonClient } from './client.js';
 export type {
   DaemonClientOptions,
   SubmitAndWaitOptions,
+  SubmitAndWaitResult,
 } from './client.js';
 
 export { HttpClient } from './http.js';
