@@ -371,6 +371,29 @@ describe('WorkspaceDirsService (registry source)', () => {
     expect(fired).toBe(1);
   });
 
+  it('waits for a pending registry reload during dispose', async () => {
+    let resolveList!: () => void;
+    const pending = new Promise<never[]>((resolve) => {
+      resolveList = () => resolve([]);
+    });
+    const list = vi.spyOn(workspaces, 'list').mockImplementationOnce(() => pending);
+    const dirs = createDirs(dirA, encodeWorkDirKey(dirA));
+    let settled = false;
+    const disposal = dirs.dispose().then(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => {
+      expect(list).toHaveBeenCalled();
+    });
+    expect(settled).toBe(false);
+    resolveList();
+    await disposal;
+    expect(settled).toBe(true);
+    await dirs.ready;
+    list.mockRestore();
+  });
+
   it('drops a deleted project from the primary snapshot without substituting cwd', async () => {
     const project = await workspaces.create({
       root: dirA,

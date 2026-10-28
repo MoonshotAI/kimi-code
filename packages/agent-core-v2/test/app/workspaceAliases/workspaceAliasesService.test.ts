@@ -177,6 +177,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       [typedId]: {
         root: typedRoot,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -221,12 +222,14 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       [hashId]: {
         root,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
       [projectId]: {
         root,
         name: 'proj project',
+        kind: 'managed',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -244,6 +247,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       [id]: {
         root,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -266,6 +270,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       [id]: {
         root,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -483,8 +488,8 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
 
     await writeProjectsJson({
-      [typedId]: entry(typedRoot),
-      [legacyId]: entry('c:\\users\\foo\\proj'),
+      [typedId]: { ...entry(typedRoot), kind: 'implicit' },
+      [legacyId]: { ...entry('c:\\users\\foo\\proj'), kind: 'implicit' },
     });
     await vi.waitFor(
       async () => {

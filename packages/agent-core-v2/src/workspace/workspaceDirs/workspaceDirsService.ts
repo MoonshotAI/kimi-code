@@ -1,4 +1,4 @@
-import { Disposable } from '#/_base/di/lifecycle';
+import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
@@ -38,9 +38,10 @@ export const workspaceDirsPrimaryByWorkspaceKey = defineState<Readonly<Record<st
   () => ({}),
 );
 
-export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
+export class WorkspaceDirsService implements IWorkspaceDirs {
   declare readonly _serviceBrand: undefined;
 
+  private readonly disposables = new DisposableStore();
   private projectRoot: string;
   private configPath: string;
   private readonly legacyProjectConfig: boolean;
@@ -60,7 +61,6 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     @ILogService private readonly log: ILogService,
     @IWorkspaceStateService private readonly states: IWorkspaceStateService,
   ) {
-    super();
     this.states.contributeState(workspaceDirsFileDirsKey);
     this.states.contributeState(workspaceDirsEphemeralDirsKey);
     this.states.contributeState(workspaceDirsRegistryDirsKey);
@@ -298,6 +298,19 @@ export class WorkspaceDirsService extends Disposable implements IWorkspaceDirs {
     } catch (error) {
       this.log.warn(`cannot watch project-local config ${this.configPath}: ${String(error)}`);
     }
+  }
+
+  private _register<T extends IDisposable>(disposable: T): T {
+    return this.disposables.add(disposable);
+  }
+
+  async dispose(): Promise<void> {
+    this.disposables.dispose();
+    let pending: Promise<void>;
+    do {
+      pending = this.mutationTail;
+      await pending;
+    } while (pending !== this.mutationTail);
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {

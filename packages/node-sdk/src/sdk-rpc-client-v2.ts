@@ -539,6 +539,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     await this.app.accessor.get(IMcpOAuthService).shutdown();
     const appendLogStore = this.app.accessor.get(IAppendLogStore);
     this.app.dispose();
+    await this.app.instantiation.disposeAsync();
     await appendLogStore.drainRetirements();
     await drainSessionIndexMirror();
     await drainQueryStoreDisposals();
