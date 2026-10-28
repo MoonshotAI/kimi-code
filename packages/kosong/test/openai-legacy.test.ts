@@ -903,7 +903,7 @@ describe('OpenAILegacyChatProvider', () => {
       expect(body['max_tokens']).toBe(1024);
     });
 
-    it.each(['gpt-5', 'gpt-5-codex', 'o3'])(
+    it.each(['gpt-5', 'gpt-5-codex', 'gpt-6', 'gpt-6.1-example', 'gpt-10', 'o3'])(
       'withMaxCompletionTokens sets max_completion_tokens for %s',
       async (model) => {
         const provider = createProvider({ model }).withMaxCompletionTokens(1024);
@@ -917,18 +917,31 @@ describe('OpenAILegacyChatProvider', () => {
       },
     );
 
-    it('keeps max_tokens for OpenAI-compatible non-OpenAI reasoning models', async () => {
-      const provider = createProvider({ model: 'deepseek-reasoner' }).withMaxCompletionTokens(
-        1024,
-      );
-      const history: Message[] = [
-        { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
-      ];
-      const body = await captureRequestBody(provider, '', [], history);
+    it.each(['deepseek-reasoner', 'gpt-4o', 'gpt-35-turbo', 'GPT-35-TURBO-0613'])(
+      'keeps max_tokens for %s',
+      async (model) => {
+        const provider = createProvider({ model }).withMaxCompletionTokens(1024);
+        const history: Message[] = [
+          { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+        ];
+        const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['max_tokens']).toBe(1024);
-      expect(body['max_completion_tokens']).toBeUndefined();
-    });
+        expect(body['max_tokens']).toBe(1024);
+        expect(body['max_completion_tokens']).toBeUndefined();
+      },
+    );
+
+    it.each(['gpt-35-turbo', 'gpt-35-turbo-0613'])(
+      'preserves explicit max_tokens for %s',
+      async (model) => {
+        const provider = createProvider({ model }).withGenerationKwargs({ max_tokens: 1024 });
+        const body = await captureRequestBody(provider, '', [], [
+          { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
+        ]);
+        expect(body['max_tokens']).toBe(1024);
+        expect(body['max_completion_tokens']).toBeUndefined();
+      },
+    );
 
     it('withMaxCompletionTokens clamps to the 128k ceiling', async () => {
       const provider = createProvider().withMaxCompletionTokens(1000000, {
