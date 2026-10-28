@@ -127,18 +127,21 @@ export function stripMediaPartsBySnapshot(
   return changed ? result : messages;
 }
 
-export function degradeOlderMediaParts(
-  messages: readonly Message[],
-  keepRecent: number,
-  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
-  mediaPaths?: ReadonlyMap<string, string>,
-): readonly Message[] {
-  const mediaCount = messages.reduce(
+export function countMediaParts(messages: readonly Message[]): number {
+  return messages.reduce(
     (count, message) => count + message.content.filter(isDegradableMediaPart).length,
     0,
   );
-  let toDegrade = Math.max(0, mediaCount - keepRecent);
-  if (toDegrade === 0) return messages;
+}
+
+export function degradeLeadingMediaParts(
+  messages: readonly Message[],
+  count: number,
+  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
+  mediaPaths?: ReadonlyMap<string, string>,
+): readonly Message[] {
+  let toDegrade = count;
+  if (toDegrade <= 0) return messages;
 
   return messages.map((message) => {
     if (toDegrade === 0 || !message.content.some(isDegradableMediaPart)) return message;

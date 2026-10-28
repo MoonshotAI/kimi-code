@@ -9,11 +9,15 @@ import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
   IAgentPlanService,
+  IAgentTaskService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
+  interactions,
   resumeSessionById,
+  type AgentTask,
+  type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -238,6 +242,49 @@ async function subscribeTranscript(server: RunningServer, sid: string): Promise<
   };
 }
 
+interface FrameSocket {
+  send(frame: unknown): void;
+  next(match: (frame: any) => boolean): Promise<any>;
+  close(): Promise<void>;
+}
+
+async function openFrameSocket(server: RunningServer): Promise<FrameSocket> {
+  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/api/v1/ws`, [`kimi-code.bearer.${bearerToken(server)}`]);
+  const frames: any[] = [];
+  ws.on('message', (data) => {
+    try {
+      frames.push(JSON.parse(rawToString(data)));
+    } catch {
+    }
+  });
+  const closed = new Promise<void>((resolve) => {
+    ws.once('close', () => resolve());
+  });
+  await new Promise<void>((resolve, reject) => {
+    ws.once('open', () => {
+      resolve();
+    });
+    ws.once('error', reject);
+  });
+  return {
+    send: (frame) => ws.send(JSON.stringify(frame)),
+    next: async (match) => {
+      let found: any;
+      await until('ws frame', () => {
+        const index = frames.findIndex(match);
+        if (index < 0) return false;
+        found = frames.splice(index, 1)[0];
+        return true;
+      }, 10000, 20);
+      return found;
+    },
+    close: async () => {
+      ws.close();
+      await closed;
+    },
+  };
+}
+
 
 describe('transcript contract e2e', () => {
   let home: string | undefined;
@@ -438,9 +485,9 @@ describe('transcript contract e2e', () => {
     expect((approval.request as any)?.toolName).toBe('Bash');
     expect(mid.meta.agent).toBeDefined();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approval.interactionId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.interactionId)}`, {
       method: 'POST',
-      body: { decision: 'approved' },
+      body: { kind: 'approval', decision: 'approved' },
     });
     await idle(server!, base, sid);
 
@@ -483,15 +530,14 @@ describe('transcript contract e2e', () => {
 
     await submitPrompt(server!, base, sid, 'Plan the greeting change', 'auto');
 
-    let approvalId = '';
-    await until('plan review pending', async () => {
-      const { items } = await rest<{ items: any[] }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals?status=pending`);
-      const review = items.find((item) => item.tool_name === 'ExitPlanMode');
-      approvalId = review?.approval_id ?? '';
-      return review !== undefined;
-    });
-    const { items } = await rest<{ items: any[] }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals?status=pending`);
-    expect(items.find((item) => item.approval_id === approvalId)?.tool_input_display).toMatchObject({
+    const pendingReview = () =>
+      interactions
+        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
+        .find((item) => (item.payload as ApprovalRequest).toolName === 'ExitPlanMode');
+    await until('plan review pending', async () => pendingReview() !== undefined);
+    const review = pendingReview()!;
+    const approvalId = review.id;
+    expect((review.payload as ApprovalRequest).display).toMatchObject({
       kind: 'plan_review',
       plan: '# Plan\n\n- Change the greeting\n- Add a test',
       path: planPath,
@@ -501,9 +547,9 @@ describe('transcript contract e2e', () => {
     expect(mid.interactions.some((x: any) => x.interactionId === approvalId && x.state === 'pending')).toBe(true);
     expect(await planService.status()).not.toBeNull();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approvalId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approvalId)}`, {
       method: 'POST',
-      body: response,
+      body: { kind: 'approval', ...response },
     });
     await idleOrDump(server!, base, sid);
 
@@ -615,6 +661,45 @@ describe('transcript contract e2e', () => {
       Object.keys(byId(snapshot.todos, 'todoId')).toSorted(),
     );
     channel.close();
+  });
+
+  it('S9: task.attach streams a running task output and resumes from since_offset', async () => {
+    const sid = await createSession(server!, base);
+    const agents = getLiveSessionById(server!.core.accessor, sid)!.accessor.get(IAgentLifecycleService);
+    if (agents.handleOf(MAIN_AGENT_ID) === undefined) await agents.create({ agentId: MAIN_AGENT_ID });
+    let sink: Parameters<AgentTask['start']>[0] | undefined;
+    const taskId = agents.handleOf(MAIN_AGENT_ID)!.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'npm run dev',
+      start: (s) => {
+        sink = s;
+        s.appendOutput('  VITE ready\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'npm run dev', pid: 0, exitCode: null }),
+    });
+    const isOutput = (frame: any): boolean => frame.type === 'task.output';
+
+    const first = await openFrameSocket(server!);
+    first.send({ type: 'task.attach', request_id: 'r1', session_id: sid, task_id: taskId });
+    expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
+    expect(await first.next(isOutput)).toMatchObject({ task_id: taskId, offset: 0, text: '  VITE ready\n' });
+    sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
+    expect(await first.next(isOutput)).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
+    await first.close();
+
+    sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
+    const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
+    const second = await openFrameSocket(server!);
+    second.send({ type: 'task.attach', request_id: 'r2', session_id: sid, task_id: taskId, since_offset: since });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r2', code: 0 });
+    expect(await second.next(isOutput)).toMatchObject({
+      offset: since,
+      text: '4:42:10 PM [vite] hmr update /src/App.vue\n',
+    });
+    second.send({ type: 'task.attach', request_id: 'r3', session_id: sid, task_id: 'bash-00000000' });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
+    await second.close();
   });
 
   it('S7: a foreground subagent resumes with its prior context after a server restart', async () => {

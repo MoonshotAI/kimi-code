@@ -9,6 +9,7 @@ import {
   IAgentRuntimeBindingService,
   IAgentToolPolicyService,
   IAgentSkillService,
+  IAgentSwarmService,
   IEventBus,
   IEventService,
   IFileService,
@@ -119,6 +120,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
     binding: agent.accessor.get(IAgentRuntimeBindingService),
+    swarm: agent.accessor.get(IAgentSwarmService),
   };
 }
 
@@ -285,6 +287,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
+          if (req.body.swarm_mode !== undefined && resolved.swarm.isActive !== req.body.swarm_mode) {
+            if (req.body.swarm_mode) resolved.swarm.enter('manual');
+            else resolved.swarm.exit();
+          }
           if (req.body.disabled_tools !== undefined) {
             try {
               await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);

@@ -664,8 +664,43 @@ describe('projector tool-exchange normalization', () => {
       };
     }
 
-    it('keeps the two most recent media parts and replaces older ones with markers', () => {
+    function projectDegraded(
+      history: readonly ContextMessage[],
+      mediaPaths?: ReadonlyMap<string, string>,
+    ): readonly Message[] {
+      return projector.project(
+        history,
+        { media: { degradeCount: projector.captureMediaDegradeCount(history) } },
+        mediaPaths,
+      );
+    }
+
+    it('keeps media degraded by an earlier snapshot unchanged when newer media are appended', () => {
+      const history = [
+        imageMessage('data:image/png;base64,OLD'),
+        imageMessage('data:image/png;base64,MID'),
+        imageMessage('data:image/png;base64,NEW'),
+      ];
+      const degradeCount = projector.captureMediaDegradeCount(history);
+
       const projected = projector.project(
+        [...history, imageMessage('data:image/png;base64,FRESH')],
+        { media: { degradeCount } },
+      );
+
+      const urls = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url);
+      expect(urls).toEqual([
+        'data:image/png;base64,MID',
+        'data:image/png;base64,NEW',
+        'data:image/png;base64,FRESH',
+      ]);
+    });
+
+    it('keeps the two most recent media parts and replaces older ones with markers', () => {
+      const projected = projectDegraded(
         [
           imageMessage('data:image/png;base64,OLD1'),
           user('middle'),
@@ -673,7 +708,6 @@ describe('projector tool-exchange normalization', () => {
           imageMessage('data:image/png;base64,KEEP1'),
           imageMessage('data:image/png;base64,KEEP2'),
         ],
-        { media: 'degraded' },
       );
 
       const urls = projected
@@ -691,23 +725,21 @@ describe('projector tool-exchange normalization', () => {
     });
 
     it('returns the projected messages untouched when media fits within keep-recent', () => {
-      const projected = projector.project(
+      const projected = projectDegraded(
         [user('text'), imageMessage('data:image/png;base64,AAAA')],
-        { media: 'degraded' },
       );
       const allParts = projected.flatMap((message) => message.content);
       expect(allParts.some((part) => part.type === 'image_url')).toBe(true);
     });
 
     it('replaces older media with path tags when display paths are provided', () => {
-      const projected = projector.project(
+      const projected = projectDegraded(
         [
           imageMessage('kimi-file://f_old1'),
           imageMessage('kimi-file://f_old2'),
           imageMessage('kimi-file://f_keep1'),
           imageMessage('kimi-file://f_keep2'),
         ],
-        { media: 'degraded' },
         new Map([
           ['kimi-file://f_old1', '/session/media/f_old1.png'],
           ['kimi-file://f_old2', '/session/media/f_old2.png'],
@@ -728,14 +760,13 @@ describe('projector tool-exchange normalization', () => {
     });
 
     it('falls back to the sentence marker for media without a display path', () => {
-      const projected = projector.project(
+      const projected = projectDegraded(
         [
           imageMessage('kimi-file://f_old1'),
           imageMessage('kimi-file://f_old2'),
           imageMessage('kimi-file://f_keep1'),
           imageMessage('kimi-file://f_keep2'),
         ],
-        { media: 'degraded' },
         new Map([['kimi-file://f_old1', '/session/media/f_old1.png']]),
       );
 

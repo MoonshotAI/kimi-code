@@ -49,7 +49,6 @@ import {
   argsRecord,
   formatErrorPayload,
   formatErrorMessage,
-  isTodoItemShape,
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
@@ -77,6 +76,7 @@ import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import { isPluginMcpToolName, PluginUpdateNotifier } from './plugin-update-notifier';
 import type { StreamingUIController } from './streaming-ui';
+import type { ProgramStatusController } from './program-status';
 import type { SurveyController } from './survey-controller';
 import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
@@ -99,6 +99,7 @@ export interface SessionEventHost {
   aborted: boolean;
   sessionEventUnsubscribe: (() => void) | undefined;
   readonly streamingUI: StreamingUIController;
+  readonly programStatus?: ProgramStatusController;
 
   requireSession(): Session;
   setAppState(patch: Partial<AppState>): void;
@@ -112,6 +113,8 @@ export interface SessionEventHost {
   recordSessionActivity(): void;
   noteStepUsage(usage: TokenUsage | undefined): void;
   noteCompactionFinished(): void;
+  handleCompactionCancelled?(): void;
+  handleBackgroundTaskStatus?(info: BackgroundTaskInfo): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -178,6 +181,7 @@ export class SessionEventHandler {
   private pluginCommandTurns: Map<string, string> = new Map();
   private pluginMcpToolsUsedInTurn: Set<string> = new Set();
   private pendingModelBlockedFallback: GoalChange | undefined;
+  private compactionFailed = false;
   private queuedGoalPromotionPending = false;
   private queuedGoalPromotionInFlight = false;
   private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
@@ -199,6 +203,7 @@ export class SessionEventHandler {
     this.pluginCommandTurns.clear();
     this.pluginMcpToolsUsedInTurn.clear();
     this.pendingModelBlockedFallback = undefined;
+    this.compactionFailed = false;
     this.queuedGoalPromotionPending = false;
     this.queuedGoalPromotionInFlight = false;
     this.clearQueuedGoalPromotionTimer();
@@ -275,6 +280,9 @@ export class SessionEventHandler {
 
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
     this.notifications.handleEvent(event);
+    if (event.type === 'background.task.started' || event.type === 'background.task.terminated') {
+      this.host.handleBackgroundTaskStatus?.(event.info);
+    }
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
@@ -284,6 +292,7 @@ export class SessionEventHandler {
     switch (event.type) {
       case 'turn.started': this.handleTurnBegin(event); break;
       case 'turn.ended': this.handleTurnEnd(event, sendQueued); break;
+      case 'prompt.completed': this.handlePromptCompleted(event, sendQueued); break;
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
@@ -379,6 +388,15 @@ export class SessionEventHandler {
     });
   }
 
+  private handlePromptCompleted(
+    event: Extract<Event, { type: 'prompt.completed' }>,
+    sendQueued: (item: QueuedMessage) => void,
+  ): void {
+    if (event.reason !== 'blocked') return;
+    this.host.programStatus?.failRequest('Turn blocked by a prompt hook');
+    this.host.streamingUI.finalizeTurn(sendQueued);
+  }
+
   private handleTurnEnd(event: TurnEndedEvent, sendQueued: (item: QueuedMessage) => void): void {
     this.host.handleTurnEnded?.(event);
     this.host.streamingUI.flushNow();
@@ -395,10 +413,6 @@ export class SessionEventHandler {
     }
     if (event.reason === 'blocked') {
       this.host.showStatus('Turn stopped: prompt hook blocked the request.', 'error');
-    }
-    const todos = this.host.state.todoPanel.getTodos();
-    if (todos.length > 0 && todos.every((t) => t.status === 'done')) {
-      this.host.streamingUI.setTodoList([]);
     }
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeTurn(sendQueued);
@@ -720,17 +734,6 @@ export class SessionEventHandler {
       resultData,
       event.isError === true,
     );
-    if (matchedCall !== undefined && matchedCall.name === 'TodoList' && !event.isError) {
-      const rawTodos = (matchedCall.args as { todos?: unknown }).todos;
-      if (Array.isArray(rawTodos)) {
-        const sanitized = rawTodos
-          .filter((todo): todo is { title: string; status: 'pending' | 'in_progress' | 'done' } =>
-            isTodoItemShape(todo),
-          )
-          .map((t) => ({ title: t.title, status: t.status }));
-        streamingUI.setTodoList(sanitized);
-      }
-    }
     this.host.patchLivePane({ mode: 'waiting' });
   }
 
@@ -1014,7 +1017,13 @@ export class SessionEventHandler {
     this.host.streamingUI.flushNow();
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
+    if (event.code === 'compaction.failed') {
+      this.compactionFailed = true;
+      this.host.setAppState({ isCompacting: false });
+      this.host.programStatus?.failRequest(formatErrorPayload(event));
+    }
     if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
+      this.host.programStatus?.setAuthRequired(true);
       this.host.showError(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
       return;
     }
@@ -1148,6 +1157,7 @@ export class SessionEventHandler {
   }
 
   private handleCompactionBegin(event: CompactionStartedEvent): void {
+    this.compactionFailed = false;
     this.host.lastCompactionTrigger = event.trigger;
     this.host.streamingUI.finalizeLiveTextBuffers('waiting');
     this.host.setAppState({
@@ -1175,7 +1185,7 @@ export class SessionEventHandler {
     // pre-compaction timestamp, and reset the cache-break baseline (the drop
     // is expected). Cancellations do neither: the context was not cut.
     this.host.recordSessionActivity();
-    this.host.noteCompactionFinished();
+    if (!this.compactionFailed) this.host.noteCompactionFinished();
     this.host.surveyController.notifyCompactionFinished();
     this.finishCompaction(sendQueued);
   }
@@ -1185,6 +1195,7 @@ export class SessionEventHandler {
     sendQueued: (item: QueuedMessage) => void,
   ): void {
     this.host.streamingUI.cancelCompaction();
+    if (!this.compactionFailed) this.host.handleCompactionCancelled?.();
     this.finishCompaction(sendQueued);
   }
 

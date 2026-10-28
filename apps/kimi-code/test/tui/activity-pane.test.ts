@@ -59,6 +59,7 @@ function makeDriverWithTerminalProgress(): {
 
 function startSwarmProgress(driver: ActivityDriver, state: TUIState): AgentSwarmProgressComponent {
   const handler = driver.sessionEventHandler.subAgentEventHandler;
+  state.appState = { ...state.appState, swarmMode: true };
   handler.handleAgentSwarmToolCallStarted('call_swarm', {
     description: 'Review changed files',
   });
@@ -125,23 +126,84 @@ describe('updateActivityPane terminal progress', () => {
     }
   });
 
-  it('keeps compaction visible as terminal progress even though the pane is hidden', () => {
-    const { driver, state, setProgress } = makeDriverWithTerminalProgress();
-    state.appState.isCompacting = true;
-    state.appState.streamingPhase = 'waiting';
+  it('shows compacting activity and terminal progress until compaction ends', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state, setProgress } = makeDriverWithTerminalProgress();
+      state.appState.streamingPhase = 'thinking';
 
-    driver.updateActivityPane();
-    driver.updateActivityPane();
+      driver.updateActivityPane();
 
-    expect(setProgress).toHaveBeenCalledTimes(1);
-    expect(setProgress).toHaveBeenLastCalledWith(true);
+      const workingOutput = state.activityContainer
+        .render(200)
+        .map((line) => line.trimEnd())
+        .join('\n');
+      expect(workingOutput).toContain('Working… · Tip: ');
 
-    state.appState.isCompacting = false;
-    state.appState.streamingPhase = 'idle';
-    driver.updateActivityPane();
+      state.appState.isCompacting = true;
+      state.appState.streamingPhase = 'waiting';
+      driver.updateActivityPane();
 
-    expect(setProgress).toHaveBeenCalledTimes(2);
-    expect(setProgress).toHaveBeenLastCalledWith(false);
+      const output = state.activityContainer
+        .render(200)
+        .map((line) => line.trimEnd())
+        .join('\n');
+      expect(output).toBe(workingOutput.replace('Working…', 'Compacting…'));
+
+      driver.updateActivityPane();
+
+      const refreshedOutput = state.activityContainer
+        .render(200)
+        .map((line) => line.trimEnd())
+        .join('\n');
+      expect(refreshedOutput).toBe(output);
+      expect(setProgress).toHaveBeenCalledTimes(1);
+      expect(setProgress).toHaveBeenLastCalledWith(true);
+
+      state.appState.isCompacting = false;
+      state.appState.streamingPhase = 'idle';
+      driver.updateActivityPane();
+
+      const idleOutput = strip(state.activityContainer.render(80).join('\n'));
+      expect(idleOutput).not.toContain('Compacting…');
+      expect(setProgress).toHaveBeenCalledTimes(2);
+      expect(setProgress).toHaveBeenLastCalledWith(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps question dialogs ahead of compacting activity', () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, state, setProgress } = makeDriverWithTerminalProgress();
+      state.appState.isCompacting = true;
+      state.appState.streamingPhase = 'waiting';
+      state.livePane = {
+        ...state.livePane,
+        pendingQuestion: {
+          data: { id: 'question-1', tool_call_id: 'call-1', questions: [] },
+        },
+      };
+
+      driver.updateActivityPane();
+
+      expect(state.activityContainer.render(80)).toEqual([]);
+      expect(setProgress).toHaveBeenCalledTimes(1);
+      expect(setProgress).toHaveBeenLastCalledWith(true);
+
+      state.livePane = { ...state.livePane, pendingQuestion: null };
+      driver.updateActivityPane();
+
+      const output = strip(state.activityContainer.render(80).join('\n'));
+      expect(output).toContain('⠋ Compacting…');
+
+      state.appState.isCompacting = false;
+      state.appState.streamingPhase = 'idle';
+      driver.updateActivityPane();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps terminal progress active while showing the thinking spinner', () => {

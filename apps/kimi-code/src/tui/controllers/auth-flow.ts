@@ -12,6 +12,9 @@ import {
 } from '../commands/config';
 import type { SlashCommandHost } from '../commands/dispatch';
 import { OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE } from '../constant/kimi-tui';
+import { refreshEffortSwitchConfig } from '#/utils/effort-switch-config';
+import { refreshModelSwitchConfirmConfig } from '#/utils/model-switch-confirm-config';
+import { lazyModelSelection } from '../utils/model-switch';
 import { thinkingEffortFromConfig } from '../utils/thinking-config';
 import type { AppState, KimiTUIOptions } from '../types';
 
@@ -23,8 +26,9 @@ export interface AuthFlowHost {
   setAppState(patch: Partial<AppState>): void;
   setStartupReady(): void;
   resetSessionRuntime(): void;
+  setAuthRequired(required: boolean): void;
   appendStartupNotice(extra: string): void;
-  hydrateLazyConfigDefaults(): Promise<void>;
+  hydrateLazyConfigDefaults(includeModel?: boolean): Promise<void>;
 }
 
 export class AuthFlowController {
@@ -49,6 +53,7 @@ export class AuthFlowController {
       contextUsage: 0,
       sessionTitle: null,
     });
+    this.host.setAuthRequired(true);
     this.host.appendStartupNotice(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
     this.host.setStartupReady();
   }
@@ -72,6 +77,7 @@ export class AuthFlowController {
       if (effort !== undefined) {
         await session.setThinking(effort);
       }
+      host.setAuthRequired(false);
       return modelChanged;
     }
 
@@ -85,6 +91,7 @@ export class AuthFlowController {
       patch.lazySessionThinking = effort as ThinkingEffort;
     }
     host.setAppState(patch);
+    host.setAuthRequired(false);
     return false;
   }
 
@@ -103,6 +110,13 @@ export class AuthFlowController {
     const availableProviders = config.providers ?? {};
     const defaultModel = host.options.startup.model ?? config.defaultModel;
     const selected = defaultModel !== undefined ? availableModels[defaultModel] : undefined;
+    try {
+      const accessToken = await host.harness.auth.getCachedAccessToken();
+      await Promise.all([
+        refreshModelSwitchConfirmConfig({ accessToken }),
+        refreshEffortSwitchConfig({ accessToken }),
+      ]);
+    } catch {}
 
     if (defaultModel === undefined || selected === undefined) {
       if (host.session === undefined) {
@@ -114,7 +128,7 @@ export class AuthFlowController {
       return false;
     }
 
-    const effort = thinkingEffortFromConfig(config.thinking);
+    const configuredEffort = thinkingEffortFromConfig(config.thinking);
     const slashHost = this.host as unknown as SlashCommandHost;
     host.setAppState({ availableModels, availableProviders });
     if (matchedModelSwitchRule(slashHost, defaultModel) !== undefined) {
@@ -124,16 +138,19 @@ export class AuthFlowController {
       // force the model patch over the user's choice. The catalog refresh must
       // land BEFORE the match above, or an alias introduced by this login is
       // invisible to the matcher and the gate never fires.
+      if (host.session === undefined) await host.hydrateLazyConfigDefaults(false);
+      const targetDefaultEffort =
+        host.session === undefined ? lazyModelSelection(config, defaultModel).thinkingEffort : undefined;
       confirmThenPerformModelSwitch(
         slashHost,
         defaultModel,
-        effortOverride ?? effort ?? slashHost.state.appState.thinkingEffort,
+        effortOverride ?? configuredEffort ?? targetDefaultEffort ?? slashHost.state.appState.thinkingEffort,
         'session',
       );
       return 'gated';
     }
 
-    const activated = await this.activateModelAfterLogin(defaultModel, effort);
+    const activated = await this.activateModelAfterLogin(defaultModel, configuredEffort);
     if (host.session === undefined) {
       // Session-less v2: also hydrate permission/plan defaults from the
       // refreshed config, same as startup.

@@ -68,13 +68,13 @@
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.lastTurnRequest                    src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaDegradedTurns                 src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaStrippedTurns                 src/agent/llmRequester/llmRequesterService.ts
+//     llmRequester.mediaRecovery                      src/agent/llmRequester/llmRequesterService.ts
 //     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
 //     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
 //     mcp.discoveryWritesReady                        src/agent/mcp/mcpService.ts
+//     mcp.failures                                    src/agent/mcp/mcpFailureOps.ts
 //     mcp.mcpToolsByServer                            src/agent/mcp/mcpService.ts
 //     media.budgetDropped                             src/agent/media/mediaResolverService.ts
 //     media.registeredKey                             src/agent/media/mediaToolsRegistrar.ts
@@ -991,14 +991,23 @@ export interface AgentStateSnapshot {
     readonly contextRevision: number;
     readonly toolsHash: string;
     readonly systemPromptHash: string;
+    readonly messageCount: number;
+    readonly historyHash: string;
     readonly inputTokens?: number;
     readonly startedAt: number;
     readonly finishedAt: number;
   } | undefined;
-  'llmRequester.mediaDegradedTurns': Set<number>;
-  'llmRequester.mediaStrippedTurns': Map<number, /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-    readonly "__@mediaStripSnapshotBrand": undefined;
-  }>;
+  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+    readonly modelAlias: string;
+    readonly contextRevision: number;
+    readonly media: /* MediaProjection — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
+      readonly degradeCount: number;
+    } | {
+      readonly strip: /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
+        readonly "__@mediaStripSnapshotBrand": undefined;
+      };
+    };
+  } | undefined;
   'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
       readonly modelAlias: string;
@@ -1053,6 +1062,11 @@ export interface AgentStateSnapshot {
   // replayable · durable — folds: McpToolsDiscovered
   'mcp.discovery': /* McpDiscoveryState — packages/agent-core-v2/src/agent/mcp/mcpDiscoveryOps.ts */ {
     readonly seen: readonly string[];
+  };
+  // src/agent/mcp/mcpFailureOps.ts
+  // replayable · durable — folds: McpServerFailed, McpServerFailureResolved
+  'mcp.failures': /* McpFailureState — packages/agent-core-v2/src/agent/mcp/mcpFailureOps.ts */ {
+    readonly open: readonly string[];
   };
   // src/agent/mcp/mcpService.ts
   'mcp.discoveryWritesReady': boolean;

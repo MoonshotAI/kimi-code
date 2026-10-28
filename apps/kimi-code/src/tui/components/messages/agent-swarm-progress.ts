@@ -295,6 +295,10 @@ export class AgentSwarmProgressComponent implements Component {
     return !this.inputComplete;
   }
 
+  hasSubagents(): boolean {
+    return this.membersByAgentId.size > 0;
+  }
+
   updateArgs(
     args: Record<string, unknown>,
     options: { readonly streamingArguments?: string | undefined } = {},
@@ -1190,6 +1194,20 @@ export function agentSwarmResultSummaryFromOutput(output: string): AgentSwarmRes
     aborted,
     parsed: statuses.length > 0,
   };
+}
+
+/**
+ * Whether the output of a failed AgentSwarm call is a rejection that ended the
+ * call before any subagent started, such as a call made while swarm mode is
+ * off or one that failed input validation. The rejection is addressed to the
+ * model, so the transcript shows no swarm for it. Cancellations keep their
+ * aborted rendering.
+ */
+export function isAgentSwarmRejection(output: string): boolean {
+  return (
+    !/\b(?:aborted|cancelled|interrupted)\b/i.test(output) &&
+    !agentSwarmResultSummaryFromOutput(output).parsed
+  );
 }
 
 function parseAgentSwarmResultStatuses(output: string): AgentSwarmResultStatus[] {

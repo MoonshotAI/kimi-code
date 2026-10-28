@@ -11,7 +11,6 @@
  *   - `WsClient`               — raw WS wrapper (queue + waiters + acks)
  *   - `EnvelopeError`          — thrown on `code !== 0`
  *   - `fetchWithReport` / `writeHtmlReport` — report capture + rendering
- *   - `installReverseRpcHandler` — uniform helper for approval/question
  *   - `waitForFrame` / `waitForSessionBusy` — standalone wait helpers
  *
  * Wire DTO types are NOT re-exported here — scenarios import them from
@@ -21,6 +20,7 @@ export { DaemonClient } from './client.js';
 export type {
   DaemonClientOptions,
   SubmitAndWaitOptions,
+  SubmitAndWaitResult,
 } from './client.js';
 
 export { HttpClient } from './http.js';
@@ -55,9 +55,6 @@ export type {
   WsDirection,
   WsReportEvent,
 } from './report.js';
-
-export { installReverseRpcHandler } from './reverse-rpc.js';
-export type { ReverseRpcOptions } from './reverse-rpc.js';
 
 export { DEFAULT_FRAME_TIMEOUT_MS, waitForFrame, waitForSessionBusy } from './wait.js';
 

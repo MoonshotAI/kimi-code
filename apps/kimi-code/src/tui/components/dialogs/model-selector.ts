@@ -83,6 +83,7 @@ export interface ModelSelectorOptions {
   /** Set to false to hide the Thinking footer and disable ←/→ effort
    * switching — for pickers whose selection carries no thinking level. */
   readonly thinkingControl?: boolean;
+  readonly effortDescriptions?: Readonly<Record<string, string>>;
   readonly onSelect: (selection: ModelSelection) => void;
   /** When provided, Alt+S invokes this instead of onSelect — used to apply the
    * choice to the current session only, without persisting it as the default. */
@@ -363,6 +364,11 @@ export class ModelSelectorComponent extends Container implements Focusable {
       const thinkingHeader = canSwitch ? ' Thinking  (←→ to switch)' : ' Thinking';
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
+      const description =
+        selected.model.provider === DEFAULT_OAUTH_PROVIDER_NAME
+          ? this.opts.effortDescriptions?.[this.effectiveEffort(selected)]
+          : undefined;
+      if (description !== undefined) lines.push(currentTheme.fg('textMuted', ` ${description}`));
       lines.push('');
     }
     lines.push(currentTheme.fg('primary', '─'.repeat(width)));

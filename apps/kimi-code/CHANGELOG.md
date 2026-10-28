@@ -1,5 +1,27 @@
 # @moonshot-ai/kimi-code
 
+## 2.3.3
+
+### Patch Changes
+
+- [#4414](https://github.com/MoonshotAI/kimi-code/pull/4414) [`f36c127`](https://github.com/MoonshotAI/kimi-code/commit/f36c127ae10feb9cfd4cd2a44ddd9ddf585f9775) Thanks [@RealKai42](https://github.com/RealKai42)! - Stop showing a failed swarm for `AgentSwarm` calls rejected before any subagent starts, such as while swarm mode is off; after such a rejection, the agent points you to `/swarm` if you asked for a swarm.
+
+- [#4424](https://github.com/MoonshotAI/kimi-code/pull/4424) [`f895f30`](https://github.com/MoonshotAI/kimi-code/commit/f895f305cf05d371c73b93a7d5f1f55d05762013) Thanks [@liruifengv](https://github.com/liruifengv)! - Update model switch confirmation prompts.
+
+- [#4423](https://github.com/MoonshotAI/kimi-code/pull/4423) [`07a34fe`](https://github.com/MoonshotAI/kimi-code/commit/07a34fe92664c77fb5f3e17757f0e7e00e9a03d4) Thanks [@RealKai42](https://github.com/RealKai42)! - Show a high-usage warning when you turn on swarm mode with `/swarm`.
+
+- [#4432](https://github.com/MoonshotAI/kimi-code/pull/4432) [`be427e0`](https://github.com/MoonshotAI/kimi-code/commit/be427e0b2ab338b33f925b52e80e73696c397db4) Thanks [@RealKai42](https://github.com/RealKai42)! - Merge the two repeated permission-mode notice lines in the swarm and goal start confirmation prompts into one sentence each.
+
+- [#4443](https://github.com/MoonshotAI/kimi-code/pull/4443) [`60c888f`](https://github.com/MoonshotAI/kimi-code/commit/60c888f300ab02cbd2cc08a3f6769ca23712cb12) Thanks [@kimi-agent-bot](https://github.com/kimi-agent-bot)! - web: Improved interactions and fixed known bugs.
+
+## 2.3.2
+
+### Patch Changes
+
+- [#4386](https://github.com/MoonshotAI/kimi-code/pull/4386) [`fd2e2c7`](https://github.com/MoonshotAI/kimi-code/commit/fd2e2c7e2a3672dda91365d66b2ba74a1630521e) Thanks [@RealKai42](https://github.com/RealKai42)! - Handle tasks directly by default instead of proactively launching subagents; request delegation explicitly in your message, AGENTS.md, a skill, or an enabled multi-agent mode.
+
+- [#4384](https://github.com/MoonshotAI/kimi-code/pull/4384) [`c9a4836`](https://github.com/MoonshotAI/kimi-code/commit/c9a48369843fdee1b494b9d49b1f4b3aeee73497) Thanks [@RealKai42](https://github.com/RealKai42)! - Agent swarms now start only when you turn on swarm mode: the agent can no longer launch `AgentSwarm` by itself, so swarms are no longer available in `kimi -p` or ACP clients such as Zed.
+
 ## 2.3.1
 
 ### Patch Changes

@@ -20,7 +20,6 @@ function makeStreamingUIStub() {
     setTurnId: vi.fn(),
     setStep: vi.fn(),
     flushNow: vi.fn(),
-    setTodoList: vi.fn(),
     resetToolUi: vi.fn(),
     clearNotifyPanel: vi.fn(),
     markNotifyPanelEnded: vi.fn(),
@@ -197,7 +196,6 @@ function makeSessionEventHost() {
       queuedMessageDispatchPending: false,
       theme: { palette: getBuiltInPalette('dark') },
       toolOutputExpanded: false,
-      todoPanel: { getTodos: vi.fn(() => []) },
       transcriptContainer: { addChild: vi.fn() },
       transcriptEntries,
       tasksBrowser: undefined,
@@ -220,6 +218,7 @@ function makeSessionEventHost() {
     updateActivityPane: vi.fn(),
     noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
+    handleBackgroundTaskStatus: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
     restoreInputText: vi.fn(),
@@ -256,6 +255,31 @@ describe('SessionEventHandler — background.task.terminated', () => {
       },
     } as unknown as Event;
   }
+
+  it('forwards nested background task events before child-agent routing', () => {
+    const host = makeSessionEventHost() as ConstructorParameters<typeof SessionEventHandler>[0] & {
+      handleBackgroundTaskStatus: ReturnType<typeof vi.fn>;
+    };
+    const handler = new SessionEventHandler(host);
+    const info = {
+      taskId: 'task-nested',
+      kind: 'agent',
+      agentId: 'agent-child',
+      description: 'nested task',
+      status: 'running',
+      startedAt: 0,
+      endedAt: null,
+    };
+    const event = {
+      sessionId: 's1',
+      agentId: 'agent-parent',
+      type: 'background.task.started',
+      info,
+    } as unknown as Event;
+
+    handler.handleEvent(event, vi.fn());
+    expect(host.handleBackgroundTaskStatus).toHaveBeenCalledWith(info);
+  });
 
   it('marks a still-running record failed when an agent is stopped without subagent.failed', () => {
     const handler = new SessionEventHandler(makeSessionEventHost());

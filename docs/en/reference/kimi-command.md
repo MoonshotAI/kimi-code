@@ -135,7 +135,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `import-sessions` (import Claude Code and Codex sessions), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -285,6 +285,20 @@ kimi migrate
 ```
 
 For full migration instructions, see [Migrating from kimi-cli](../guides/migration.md).
+
+### `kimi import-sessions`
+
+Import recent Claude Code and Codex sessions as regular Kimi Code sessions. The command opens an interactive page: choose the last 15 days (the default) or the last 30 days, then follow the progress and the summary. Inside the TUI, `/import-sessions` opens the same page.
+
+```sh
+kimi import-sessions
+```
+
+- Each run imports at most the newest 100 sessions; sessions imported before are skipped.
+- Sessions without a prompt, subagent sessions, and non-interactive runs such as `codex exec` are not listed. Sessions whose project folder no longer exists, sessions still being written, and Codex sessions that were forked or restarted from an earlier message are skipped and reported.
+- Sessions are read from `~/.claude` and `~/.codex`; set `CLAUDE_CONFIG_DIR` or `CODEX_HOME` to read them from other locations. The original session files are not changed.
+
+See [Importing sessions from Claude Code and Codex](../guides/sessions.md#importing-sessions-from-claude-code-and-codex) for what an imported session contains.
 
 ### `kimi upgrade`
 

@@ -1,3 +1,4 @@
+import { sliceOnCodePointBoundary } from '#/_base/text/code-points';
 import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
@@ -18,6 +19,7 @@ export class ToolOutputAccumulator {
   private readonly buffer: string[] = [];
   private retainedChars = 0;
   private totalCharsValue = 0;
+  private saturated = false;
 
   get nChars(): number {
     return this.retainedChars;
@@ -29,9 +31,13 @@ export class ToolOutputAccumulator {
 
   write(text: string): void {
     this.totalCharsValue += text.length;
-    if (this.retainedChars >= DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS) return;
+    if (this.saturated) return;
     const remainingRetention = DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS - this.retainedChars;
-    const kept = text.length <= remainingRetention ? text : text.slice(0, remainingRetention);
+    const kept =
+      text.length <= remainingRetention
+        ? text
+        : sliceOnCodePointBoundary(text, remainingRetention);
+    if (kept.length !== text.length) this.saturated = true;
     this.buffer.push(kept);
     this.retainedChars += kept.length;
   }
