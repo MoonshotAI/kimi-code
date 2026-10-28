@@ -5,6 +5,7 @@ import { Command, InvalidArgumentError, Option } from 'commander';
 
 import { EXEC_SERVER_COMMAND } from './exec-server';
 import type { CLIOptions } from './options';
+import type { InstallIntent, UpdateChannel } from './update/types';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
@@ -21,7 +22,12 @@ export type MainCommandHandler = (opts: CLIOptions) => void;
 export type MigrateCommandHandler = (options: MigrateCommandOptions) => void;
 export type PluginNodeRunnerHandler = (entry: string, args: readonly string[]) => void;
 export type UpgradeCommandHandler = (yes: boolean) => void | Promise<void>;
-export type UpdateDownloadHandler = (version: string, manual: boolean) => void;
+export type UpdateDownloadHandler = (
+  version: string,
+  manual: boolean,
+  intent: InstallIntent,
+  channel: UpdateChannel,
+) => void;
 export type ExecServerCommandHandler = (listen: string) => void;
 
 export function createProgram(
@@ -174,8 +180,15 @@ export function createProgram(
     .command('__update_download', { hidden: true })
     .argument('<version>')
     .option('--manual', 'the stage answers an explicit user-initiated upgrade')
-    .action((targetVersion: string, options: { manual?: boolean }) => {
-      onUpdateDownload(targetVersion, options.manual === true);
+    .option('--switch-channel', 'the stage changes the selected update channel')
+    .option('--channel <channel>', 'the selected update channel')
+    .action((targetVersion: string, options: { manual?: boolean; switchChannel?: boolean; channel?: UpdateChannel }) => {
+      onUpdateDownload(
+        targetVersion,
+        options.manual === true,
+        options.switchChannel === true ? 'switch-channel' : 'upgrade',
+        options.channel ?? 'stable',
+      );
     });
 
   // Remote-executor entry (remote-environment spec §6). The exact argv shapes

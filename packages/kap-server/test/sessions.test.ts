@@ -42,7 +42,6 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
 import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
-import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -78,7 +77,6 @@ interface SessionWire {
   usage: { input_tokens: number };
   permission_rules: unknown[];
   message_count: number;
-  last_seq: number;
 }
 
 interface PageWire {
@@ -381,7 +379,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data.agent_config).toEqual({ model: '' });
     expect(body.data.permission_rules).toEqual([]);
     expect(body.data.message_count).toBe(0);
-    expect(body.data.last_seq).toBe(0);
+    expect(body.data).not.toHaveProperty('last_seq');
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
   });
 
@@ -413,6 +411,20 @@ describe('server-v2 /api/v1/sessions', () => {
     await writeFile(file, 'hi', 'utf8');
     const { body } = await postJson<null>('/api/v1/sessions', { metadata: { cwd: file } });
     expect(body.code).toBe(40409);
+  });
+
+  it('creates a second session via workspace_id resolved from a prior cwd create', async () => {
+    const cwd = home as string;
+    const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    expect(first.body.code).toBe(0);
+
+    const second = await postJson<SessionWire>('/api/v1/sessions', {
+      workspace_id: first.body.data.workspace_id,
+      metadata: { cwd },
+    });
+    expect(second.body.code).toBe(0);
+    expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
+    expect(second.body.data.id).not.toBe(first.body.data.id);
   });
 
   it('shares one workspace until the last session closes', async () => {
@@ -514,23 +526,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.data.agent_config).toEqual({ model: 'stub' });
-  });
-
-  it('reports the journaled event watermark as last_seq', async () => {
-    const cwd = home as string;
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const id = created.body.data.id;
-
-    const initial = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    const baseline = initial.body.data.last_seq;
-
-    const renamed = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
-      title: 'watermark probe',
-    });
-    expect(renamed.body.code).toBe(0);
-
-    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    expect(got.body.data.last_seq).toBeGreaterThan(baseline);
   });
 
   it('supports exclude_empty when listing sessions', async () => {
@@ -1147,7 +1142,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
       const got = await getJson<null>(`/api/v1/sessions/${id}`);
       expect(got.body.code).toBe(40401);
-      await expect(readFile(join(home!, 'server', 'events', `${id}.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' });
 
       expect(
         events
@@ -1330,38 +1324,10 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('keeps failed journal cleanup retriable without publishing deletion', async () => {
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
-    const id = created.body.data.id;
-    const journalPath = join(home!, 'server', 'events', `${id}.jsonl`);
-    await vi.waitFor(async () => expect(await readFile(journalPath, 'utf8')).toContain('journal_header'));
-    await closeSessionById(server!.core.accessor, id);
-    await rm(journalPath);
-    await mkdir(journalPath);
-    const events: Event2<any>[] = [];
-    const sub = server!.core.accessor.get(IEventService).subscribe((event) => events.push(event));
-    try {
-      const failed = await postJson(`/api/v1/sessions/${id}:delete`);
-      expect(failed.body.code).not.toBe(0);
-      expect(await server!.core.accessor.get(ISessionManager).status(id)).toBeDefined();
-      expect(events.filter((event) => event.type === 'event.session.deleted')).toEqual([]);
-      await rm(journalPath, { recursive: true });
-      const retried = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
-      expect(retried.body.data).toEqual({ deleted: true });
-      expect(events.filter((event) => event.type === 'event.session.deleted')).toHaveLength(1);
-      await expect(readFile(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      sub.dispose();
-    }
-  });
-
   it.each(['closing', 'cleanup'] as const)('waits for %s before recreating an explicit session id', async (phase) => {
     const manager = server!.core.accessor.get(ISessionManager);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
-    const journalPath = join(home!, 'server', 'events', `${id}.jsonl`);
-    await vi.waitFor(async () => expect(await readFile(journalPath, 'utf8')).toContain('journal_header'));
-    const oldJournal = await readFile(journalPath, 'utf8');
     let enter!: () => void;
     let release!: () => void;
     const entered = new Promise<void>((resolve) => { enter = resolve; });
@@ -1385,14 +1351,6 @@ describe('server-v2 /api/v1/sessions', () => {
       release();
       await deletion;
       await creation;
-      server!.core.accessor.get(IEventService).publish(new SessionMetaUpdated({
-        payload: { sessionId: id, agentId: 'main', patch: { title: 'Recreated session' } },
-      }));
-      await vi.waitFor(async () => {
-        const journal = await readFile(journalPath, 'utf8');
-        expect(journal).toContain('journal_header');
-        expect(JSON.parse(journal.split('\n')[0]!).epoch).not.toBe(JSON.parse(oldJournal.split('\n')[0]!).epoch);
-      });
       expect(manager.get(id)).toBeDefined();
     } finally {
       release();

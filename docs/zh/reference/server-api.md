@@ -1693,6 +1693,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | 无会话的工作区目录列举 |
 | `POST /api/v1/workspace/fs:search` | 无会话的工作区搜索（body 携带工作区引用） |
 | `POST /api/v1/workspace/fs:suggest` | 无会话的文件补全候选（用于 `@` 文件提及） |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | 下载会话文件（二进制，见下文） |
@@ -1942,11 +1943,37 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `session_id` | path | string | **必填。** 会话 id |
 | `path` | path | string | **必填。** 相对于工作区的文件路径，加 `:download` 后缀 |
+| `allow_external_symlinks` | query | string | 传 `true` 时允许通过工作区外的软链接下载。默认 `false` |
 
 - `40001`：路径缺失或为空
 - `40401`：会话不存在
 - `40409`：路径不存在
 - `41304`：路径越出会话工作区
+
+#### `POST /api/v1/workspace/fs:list`
+
+`fs:list` 的无会话形式：工作区改由请求体而非 URL 携带。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **必填。** 已注册工作区 id 或绝对根路径（当场注册） |
+| `path` | body | string | 要列举的目录，相对于工作区根。默认 `.` |
+| `depth` | body | integer | 递归深度，1–10。默认 `1` |
+| `limit` | body | integer | 最大条目数，1–1000。默认 `200` |
+| `show_hidden` | body | boolean | 是否包含点文件。默认 `false` |
+| `follow_gitignore` | body | boolean | 是否跳过 gitignore 路径。默认 `true` |
+| `exclude_globs` | body | string[] | 额外要跳过的 glob |
+| `allow_ignored_globs` | body | string[] | 即使被 gitignore 也要显示的 glob |
+| `allow_external_symlinks` | body | boolean | 是否跟随目标在工作区外的软链接目录。默认 `false` |
+| `sort` | body | string | `type_first`（默认）/ `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+
+成功时 `data` 与 `fs:list` 形状相同。
+
+- `40001`：请求体校验失败
+- `40409`：路径不存在或不是目录
+- `40410`：工作区不存在，且不是可用的绝对路径
+- `40411`：宿主文件系统拒绝访问
+- `41304`：路径通过软链接越出工作区，且未启用 `allow_external_symlinks`
 
 #### `POST /api/v1/workspace/fs:search`
 

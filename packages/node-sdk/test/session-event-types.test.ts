@@ -19,6 +19,9 @@ describe('Event public types', () => {
     expectTypeOf<EventByType<'tool.call.started'>['toolCallId']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['name']>().toEqualTypeOf<string>();
     expectTypeOf<EventByType<'tool.call.started'>['args']>().toEqualTypeOf<unknown>();
+    expectTypeOf<EventByType<'mcp.server.status'>['server']['nextRetryAt']>().toEqualTypeOf<
+      number | undefined
+    >();
   });
 
   it('exposes LLM stream timing on step completion events', () => {

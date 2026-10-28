@@ -27,6 +27,7 @@ import {
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
+  fsListResponseSchema,
   fsMkdirRequestSchema,
   fsReadRequestSchema,
   fsSearchRequestSchema,
@@ -87,6 +88,16 @@ const sessionIdAndTailParamSchema = z.object({
   session_id: z.string().min(1),
   tail: z.string().min(1),
 });
+
+const fsDownloadQuerySchema = z.object({
+  allow_external_symlinks: z.enum(['true', 'false']).optional(),
+});
+
+const workspaceFsListBodySchema = fsListRequestSchema
+  .omit({ include_git_status: true })
+  .extend({
+    workspace: z.string().min(1),
+  });
 
 const workspaceFsSearchBodySchema = fsSearchRequestSchema.extend({
   workspace: z.string().min(1),
@@ -292,6 +303,56 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     fsActionRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
   );
 
+  const workspaceListRoute = defineRoute(
+    {
+      method: 'POST',
+      path: '/workspace/fs::list',
+      body: workspaceFsListBodySchema,
+      success: { data: fsListResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.WORKSPACE_NOT_FOUND]: {},
+        [ErrorCode.FS_PATH_NOT_FOUND]: {},
+        [ErrorCode.FS_PERMISSION_DENIED]: {},
+        [ErrorCode.FS_PATH_ESCAPES_SESSION]: {},
+        [ErrorCode.ENVIRONMENT_NOT_FOUND]: {},
+        [ErrorCode.ENVIRONMENT_UNAVAILABLE]: {},
+      },
+      description:
+        'List files and directories in a workspace without a session. `workspace` accepts a registered workspace id or an absolute root (registered on the spot).',
+      tags: ['fs'],
+      operationId: 'workspaceFsList',
+    },
+    async (req, reply) => {
+      const { workspace, ...listRequest } = req.body;
+      let environmentFs: FsScope | undefined;
+      try {
+        environmentFs = await resolveWorkspaceFs(core, workspace, ['fs']);
+        if (environmentFs === undefined) {
+          reply.send(
+            errEnvelope(
+              ErrorCode.WORKSPACE_NOT_FOUND,
+              `workspace ${workspace} does not exist`,
+              req.id,
+            ),
+          );
+          return;
+        }
+        const data = await environmentFs.fs.list({ ...listRequest, include_git_status: false });
+        reply.send(okEnvelope(data, req.id));
+      } catch (error) {
+        sendMappedError(reply, req, error);
+      } finally {
+        environmentFs?.lease.dispose();
+      }
+    },
+  );
+  app.post(
+    workspaceListRoute.path,
+    workspaceListRoute.options,
+    workspaceListRoute.handler as unknown as Parameters<FsRouteHost['post']>[2],
+  );
+
   const workspaceSearchRoute = defineRoute(
     {
       method: 'POST',
@@ -452,6 +513,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
     {
       method: 'GET',
       path: '/sessions/{session_id}/fs/*',
+      querystring: fsDownloadQuerySchema,
       rawResponse: {
         200: { type: 'string', format: 'binary' },
       },
@@ -496,7 +558,10 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       let environmentFs: FsScope | undefined;
       try {
         environmentFs = acquireSessionFs(core, session_id, ['fs']);
-        resolved = await environmentFs.fs.resolveDownload(relPath);
+        resolved = await environmentFs.fs.resolveDownload(
+          relPath,
+          req.query.allow_external_symlinks === 'true',
+        );
       } catch (error) {
         environmentFs?.lease.dispose();
         sendMappedError(reply, req, error);

@@ -65,12 +65,18 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       stdioCwd: this.stdioCwd,
       environmentResolver: this.environmentResolver,
       environmentId: 'local',
+      reconnectRetryEnabled: true,
       resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
     this._register(
       this.mcpConfig.onDidChange((change) => {
         change.waitUntil(this.scheduleApply(change));
+      }),
+    );
+    this._register(
+      this.mcpConfig.onDidChangeTunables(() => {
+        this.manager.rescheduleRetries();
       }),
     );
     this._register({ dispose: this.oauthEventSubscription(this.manager) });
@@ -152,6 +158,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       environmentResolver: this.environmentResolver,
       environmentId: 'local',
       requireStdioEnvironmentId: true,
+      reconnectRetryEnabled: true,
       sessionId: opts?.sessionId,
       resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   IAgentLifecycleService,
+  IAgentMcpService,
   IAgentToolRegistryService,
   getLiveSessionById,
   ISessionToolPolicy,
@@ -14,7 +15,7 @@ import {
   listMcpServersResponseSchema,
   listToolsResponseSchema,
 } from '../src/protocol/rest-tool';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -224,12 +225,28 @@ describe('server-v2 /api/v1 tools + mcp', () => {
       expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
     });
 
-    it('returns a parseable servers list once the main agent exists', async () => {
+    it('returns a parseable servers list with retry timing once the main agent exists', async () => {
       const id = await createSession();
-      await ensureMainAgent(id);
-      const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
-      expect(body.code).toBe(0);
-      expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([]);
+      const agent = await ensureMainAgent(id);
+      const list = vi.spyOn(agent.accessor.get(IAgentMcpService), 'list').mockReturnValue([
+        { name: 'retry', transport: 'http', status: 'failed', toolCount: 0, nextRetryAt: 123456 },
+      ]);
+      try {
+        const { body } = await getJson<{ servers: unknown[] }>('/api/v1/mcp/servers');
+        expect(body.code).toBe(0);
+        expect(listMcpServersResponseSchema.parse(body.data).servers).toEqual([
+          {
+            id: 'retry',
+            name: 'retry',
+            transport: 'http',
+            status: 'error',
+            tool_count: 0,
+            next_retry_at: 123456,
+          },
+        ]);
+      } finally {
+        list.mockRestore();
+      }
     });
   });
 

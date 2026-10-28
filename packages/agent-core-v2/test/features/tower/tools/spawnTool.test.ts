@@ -278,9 +278,10 @@ describe('TowerSpawnTool', () => {
     expect(properties()).not.toHaveProperty('model');
     expect(tool.description).not.toContain('Available models');
 
-    secondaryModel = { model: 'cheap/fast', force: true };
-    expect(properties()).not.toHaveProperty('model');
-    expect(tool.description).not.toContain('Available models');
+    secondaryModel = { model: 'cheap/fast' };
+    expect(properties()['model']?.type).toBe('string');
+    expect(tool.description).toContain('- cheap/fast [default]');
+    expect(tool.description).toContain('- primary (= kimi-code): your current model and thinking level');
   });
 
   it('refuses when tower mode is not active', async () => {
@@ -674,36 +675,6 @@ describe('TowerSpawnTool', () => {
     });
   });
 
-  it('binds workers to the forced secondary model when it is configured', async () => {
-    secondaryModel = { model: 'cheap/fast', force: true };
-
-    const result = await execute(WORKER_ARGS);
-
-    expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: cheap/fast');
-    expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
-      labels: { parentAgentId: 'main' },
-    });
-  });
-
-  it('binds reviewers to the forced secondary model when it is configured', async () => {
-    secondaryModel = { model: 'cheap/fast', force: true };
-
-    const result = await execute({
-      name: 'reviewer-a',
-      kind: 'reviewer',
-      review_target: 'feat/build-gemm',
-    });
-
-    expect(result.isError).toBeUndefined();
-    expect(result.output).toContain('model: cheap/fast');
-    expect(createAgent).toHaveBeenCalledWith({
-      binding: { profile: 'tower-worker', model: 'cheap/fast', thinking: undefined },
-      labels: { parentAgentId: 'main' },
-    });
-  });
-
   it('accepts an explicit primary choice without a secondary pool', async () => {
     const result = await execute({ ...WORKER_ARGS, model: 'primary' });
 
@@ -734,22 +705,21 @@ describe('TowerSpawnTool', () => {
     const result = await execute({ ...WORKER_ARGS, model: 'cheap/fast' });
 
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('no [secondary_model.models] pool is configured');
+    expect(result.output).toContain('no [secondary_model] pool is configured');
     await expectNoWorkerSpawnSideEffects();
   });
 
-  it.each(['cheap/fast', 'primary'])(
-    'rejects explicit model %s when force is set before any spawn side effect',
-    async (model) => {
-      secondaryModel = { model: 'cheap/fast', force: true };
+  it('accepts an explicit primary choice for workers when a secondary model is configured', async () => {
+    secondaryModel = { model: 'cheap/fast' };
 
-      const result = await execute({ ...WORKER_ARGS, model });
+    const result = await execute({ ...WORKER_ARGS, model: 'primary' });
 
-      expect(result.isError).toBe(true);
-      expect(result.output).toContain('[secondary_model].force is set');
-      await expectNoWorkerSpawnSideEffects();
-    },
-  );
+    expect(result.isError).toBeUndefined();
+    expect(createAgent).toHaveBeenCalledWith({
+      binding: { profile: 'tower-worker', model: 'kimi-code', thinking: 'off' },
+      labels: { parentAgentId: 'main' },
+    });
+  });
 
   it('rejects an explicit model when the caller has no model alias instead of ignoring it', async () => {
     callerModelAlias = undefined;

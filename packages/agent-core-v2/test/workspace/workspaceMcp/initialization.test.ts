@@ -88,6 +88,7 @@ describe('Workspace MCP initialization', () => {
         reg.definePartialInstance(IEnvironmentService, { _serviceBrand: undefined, inspect: () => environment, acquire: () => ({ environment, track: (resource) => resource, dispose: () => {} }), acquireWhenReady: async () => ({ environment, track: (resource) => resource, dispose: () => {} }) });
         reg.definePartialInstance(IConfigService, {
           ready,
+          onDidSectionChange: Event.None as IConfigService['onDidSectionChange'],
           get: (<T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T),
         });

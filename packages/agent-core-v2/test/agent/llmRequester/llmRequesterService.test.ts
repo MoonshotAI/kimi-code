@@ -127,8 +127,7 @@ const history: Message[] = [
 type ProjectionKind = 'normal' | 'strict' | 'degraded' | 'stripped';
 
 function classifyProjectionPolicy(policy: ProjectionPolicy | undefined): ProjectionKind {
-  if (typeof policy?.media === 'object') return 'stripped';
-  if (policy?.media === 'degraded') return 'degraded';
+  if (policy?.media !== undefined) return 'degradeCount' in policy.media ? 'degraded' : 'stripped';
   if (policy?.structure === 'strict') return 'strict';
   return 'normal';
 }
@@ -208,13 +207,15 @@ function createService(
   requester: ModelRequester,
   projector:
     | (Pick<IAgentContextProjectorService, 'project'> &
-        Partial<Pick<IAgentContextProjectorService, 'captureMediaStripSnapshot'>>)
+        Partial<Pick<IAgentContextProjectorService, 'captureMediaStripSnapshot' | 'captureMediaDegradeCount'>>)
     | undefined,
   options: {
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
     readonly contextMessages?: Message[];
     readonly env?: Record<string, string>;
+    readonly modelAlias?: () => string;
+    readonly prefixRevision?: () => number;
   } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -223,7 +224,7 @@ function createService(
   const profile: Partial<IAgentProfileService> = {
     hasProvider: () => true,
     resolveModelContext: () => ({
-      modelAlias: 'm',
+      modelAlias: options.modelAlias?.() ?? 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
@@ -257,7 +258,7 @@ function createService(
   const usage = { record: () => Promise.resolve(), status: () => ({}) };
   const context = {
     get: () => options.contextMessages ?? history,
-    prefixRevision: () => 0,
+    prefixRevision: options.prefixRevision ?? (() => 0),
   };
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
@@ -293,6 +294,7 @@ function createService(
   } else {
     ix.stub(IAgentContextProjectorService, {
       captureMediaStripSnapshot: () => testSnapshot,
+      captureMediaDegradeCount: () => 0,
       ...projector,
     });
   }
@@ -804,11 +806,11 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
   it('warns for each escalation when the degraded resend is also rejected as too large', async () => {
     const calls = { value: 0 };
     const projection = recordProjectionCalls((messages, policy) => {
-      if (policy?.media === 'degraded') {
+      if (policy?.media !== undefined && 'degradeCount' in policy.media) {
         const message = messages[0]!;
         return [{ ...message, content: message.content.slice(-2) }];
       }
-      return typeof policy?.media === 'object' ? history : messages;
+      return policy?.media !== undefined ? history : messages;
     });
     const contextMessages: Message[] = [
       {
@@ -834,6 +836,252 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       expect.objectContaining({ type: 'warning', code: 'media-stripped' }),
     ]);
   });
+});
+
+describe('AgentLLMRequesterService media recovery prefix parity', () => {
+  const BODY_TOO_LARGE_413 = new APIRequestTooLargeError(413, 'Request Entity Too Large');
+  const IMAGE_FORMAT_400 = new APIStatusError(
+    400,
+    'unsupported image format: image/avif is not supported',
+  );
+  const REJECTED_FORMAT_URL = 'data:image/avif;base64,REJECTED';
+  const COMPACTION_INSTRUCTION = 'Summarize the conversation.';
+
+  function imageMessage(url: string, id: string): Message {
+    return { role: 'user', content: [{ type: 'image_url', imageUrl: { url, id } }], toolCalls: [] };
+  }
+
+  function textMessage(text: string): Message {
+    return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
+  }
+
+  function mediaRejectingRequester(inputs: ModelRequestInput[]): ModelRequester {
+    const accepting = createRequester({ value: 0 }, null);
+    return {
+      model: accepting.model,
+      request: async function* (input, signal, params) {
+        inputs.push(input);
+        const images = input.messages
+          .flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url');
+        if (images.some((part) => part.imageUrl.url === REJECTED_FORMAT_URL)) throw IMAGE_FORMAT_400;
+        if (images.length > 2) throw BODY_TOO_LARGE_413;
+        yield* accepting.request(input, signal, params);
+      },
+    };
+  }
+
+  function expectPrefixExtension(previous: ModelRequestInput, next: ModelRequestInput): void {
+    expect(next.systemPrompt).toBe(previous.systemPrompt);
+    expect(next.tools).toEqual(previous.tools);
+    expect(next.messages.slice(0, previous.messages.length)).toEqual(previous.messages);
+  }
+
+  const degradedTurn = [
+    imageMessage('data:image/png;base64,OLDEST', 'oldest'),
+    imageMessage('data:image/png;base64,MIDDLE', 'middle'),
+    imageMessage('data:image/png;base64,NEWEST', 'newest'),
+  ];
+
+  it('starts the next turn on the media-degraded projection the previous turn settled on', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(mediaRejectingRequester(inputs), undefined);
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(inputs).toHaveLength(2);
+    const settled = inputs[1]!;
+
+    await service.request({
+      messages: [...degradedTurn, textMessage('next turn')],
+      source: { type: 'turn', turnId: 2, step: 1 },
+    });
+
+    expectPrefixExtension(settled, inputs[2]!);
+    expect(inputs).toHaveLength(3);
+  });
+
+  it('keeps the media-degraded prefix when a later turn adds new media', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(
+      createRequester({ value: 0 }, BODY_TOO_LARGE_413, [], inputs),
+      undefined,
+    );
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(inputs).toHaveLength(2);
+    const settled = inputs[1]!;
+
+    await service.request({
+      messages: [...degradedTurn, imageMessage('data:image/png;base64,FRESH', 'fresh')],
+      source: { type: 'turn', turnId: 2, step: 1 },
+    });
+
+    expect(inputs).toHaveLength(3);
+    expectPrefixExtension(settled, inputs[2]!);
+  });
+
+  it('re-degrades instead of stripping when new media push an inherited degraded request over the limit', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(mediaRejectingRequester(inputs), undefined);
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    await service.request({
+      messages: [...degradedTurn, imageMessage('data:image/png;base64,FRESH', 'fresh')],
+      source: { type: 'turn', turnId: 2, step: 1 },
+    });
+
+    expect(inputs).toHaveLength(4);
+    expect(
+      inputs[3]!.messages
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url),
+    ).toEqual(['data:image/png;base64,NEWEST', 'data:image/png;base64,FRESH']);
+  });
+
+  it.each([
+    { rejection: 'image-format', added: [imageMessage(REJECTED_FORMAT_URL, 'new-rejected')] },
+    { rejection: '413', added: degradedTurn },
+  ])('recovers newly added media rejected with $rejection after a strip', async ({ added }) => {
+    for (const source of [
+      { type: 'turn', turnId: 2, step: 1 },
+      { type: 'operation', turnId: 1, requestKind: 'full_compaction' },
+      { type: 'operation', turnId: undefined, requestKind: 'full_compaction' },
+    ] as const) {
+      const inputs: ModelRequestInput[] = [];
+      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+      const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
+
+      await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
+      expect(inputs).toHaveLength(2);
+
+      await service.request({ messages: [rejected, ...added], source });
+
+      expect(inputs).toHaveLength(4);
+      expect(inputs[2]!.messages[0]).toEqual(inputs[1]!.messages[0]);
+      expect(
+        inputs[2]!.messages.flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url'),
+      ).toEqual(added.flatMap((message) => message.content));
+      expect(
+        inputs[3]!.messages.flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url'),
+      ).toEqual([]);
+
+      await service.request({
+        messages: [rejected, ...added, textMessage('next turn')],
+        source: { type: 'turn', turnId: 3, step: 1 },
+      });
+
+      expect(inputs).toHaveLength(source.type === 'turn' ? 5 : 6);
+      expect(
+        inputs[4]!.messages.flatMap((message) => message.content)
+          .filter((part) => part.type === 'image_url'),
+      ).toEqual(source.type === 'turn' ? [] : added.flatMap((message) => message.content));
+      expectPrefixExtension(inputs[3]!, inputs.at(-1)!);
+    }
+  });
+
+  it.each([
+    { rejection: 'image-format', error: IMAGE_FORMAT_400 },
+    { rejection: '413', error: BODY_TOO_LARGE_413 },
+  ])('bounds $rejection recovery after inheriting a strip snapshot', async ({ error }) => {
+    for (const hasNewMedia of [false, true]) {
+      const inputs: ModelRequestInput[] = [];
+      const requester = mediaRejectingRequester(inputs);
+      const { service } = createService(requester, undefined);
+      const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
+      await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
+
+      requester.request = createRequester({ value: 0 }, error, [error], inputs).request;
+      const messages = hasNewMedia
+        ? [rejected, imageMessage('data:image/png;base64,FRESH', 'fresh')]
+        : [rejected];
+      await expect(
+        service.request({ messages, source: { type: 'turn', turnId: 2, step: 1 } }),
+      ).rejects.toBe(error);
+
+      expect(inputs).toHaveLength(hasNewMedia ? 4 : 3);
+    }
+  });
+
+  it.each([
+    { change: 'the history prefix is rewritten', bump: 'revision' },
+    { change: 'the model changes', bump: 'model' },
+  ] as const)('retries full media on the next turn after $change', async ({ bump }) => {
+    let revision = 0;
+    let modelAlias = 'm';
+    const inputs: ModelRequestInput[] = [];
+    const { service } = createService(mediaRejectingRequester(inputs), undefined, {
+      modelAlias: () => modelAlias,
+      prefixRevision: () => revision,
+    });
+
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(inputs).toHaveLength(2);
+
+    if (bump === 'revision') revision += 1;
+    else modelAlias = 'other';
+    await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 2, step: 1 } });
+
+    expect(inputs).toHaveLength(4);
+    expect(inputs[2]!.messages).toEqual(degradedTurn);
+  });
+
+  it.each([
+    { trigger: 'auto', turnId: 1 },
+    { trigger: 'manual', turnId: undefined },
+  ])(
+    'starts a $trigger compaction request on the media-degraded projection of the last turn',
+    async ({ turnId }) => {
+      const inputs: ModelRequestInput[] = [];
+      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+
+      await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
+      expect(inputs).toHaveLength(2);
+      const settled = inputs[1]!;
+
+      await service.request({
+        messages: [...degradedTurn, textMessage(COMPACTION_INSTRUCTION)],
+        source: { type: 'operation', turnId, requestKind: 'full_compaction' },
+      });
+
+      expectPrefixExtension(settled, inputs[2]!);
+      expect(inputs).toHaveLength(3);
+    },
+  );
+
+  it.each([
+    { trigger: 'auto', turnId: 1 },
+    { trigger: 'manual', turnId: undefined },
+  ])(
+    'keeps media added after the strip snapshot visible in a $trigger compaction request',
+    async ({ turnId }) => {
+      const inputs: ModelRequestInput[] = [];
+      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+      const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
+      const fresh = imageMessage('data:image/png;base64,FRESH', 'fresh');
+
+      await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
+      await service.request({
+        messages: [rejected, fresh],
+        source: { type: 'turn', turnId: 1, step: 2 },
+      });
+      expect(inputs).toHaveLength(3);
+      const lastLoop = inputs[2]!;
+      expect(
+        lastLoop.messages.flatMap((message) => message.content).filter((part) => part.type === 'image_url'),
+      ).toEqual(fresh.content);
+
+      await service.request({
+        messages: [rejected, fresh, textMessage(COMPACTION_INSTRUCTION)],
+        source: { type: 'operation', turnId, requestKind: 'full_compaction' },
+      });
+
+      expectPrefixExtension(lastLoop, inputs[3]!);
+      expect(inputs).toHaveLength(4);
+    },
+  );
 });
 
 describe('AgentLLMRequesterService combined recovery projections', () => {
@@ -869,7 +1117,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(policies).toEqual([
       undefined,
       { structure: 'strict' },
-      { structure: 'strict', media: 'degraded' },
+      { structure: 'strict', media: { degradeCount: expect.anything() } },
       { structure: 'strict', media: { strip: expect.anything() } },
     ]);
     await dispatcher.flush();
@@ -909,7 +1157,7 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     const projector = {
       project: (messages: readonly ContextMessage[], policy: ProjectionPolicy | undefined) => {
         policies.push(policy);
-        if (policy?.media !== 'degraded') return messages;
+        if (policy?.media === undefined || !('degradeCount' in policy.media)) return messages;
         const message = messages[0]!;
         return [{ ...message, content: message.content.slice(policy.structure === 'strict' ? -1 : -2) }];
       },
@@ -926,8 +1174,8 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
     expect(calls.value).toBe(3);
     expect(policies).toEqual([
       undefined,
-      { media: 'degraded' },
-      { structure: 'strict', media: 'degraded' },
+      { media: { degradeCount: expect.anything() } },
+      { structure: 'strict', media: { degradeCount: expect.anything() } },
     ]);
     expect(events.filter((event) => event.type === 'warning')).toEqual([
       expect.objectContaining({ type: 'warning', code: 'media-degraded' }),

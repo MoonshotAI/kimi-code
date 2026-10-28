@@ -103,16 +103,16 @@ kimi-code 重启后，如果改由另一个会话接管当前项目，原会话�
 
 Tower 与 Goal、Plan 和 swarm 模式互斥。进入 Tower 会退出 Plan 或 swarm，并暂停正在运行的 goal；启用 goal、Plan 或 swarm 也会退出 Tower。Tower 的状态会保留在磁盘上，之后可以用 `/tower on` 返回。
 
-worker 和 reviewer 的默认模型选择规则不同。未配置 `[secondary_model]` 时，二者都使用 Tower 当前的主模型。配置后，新派生的 worker 使用 `default_model`，**reviewer 仍使用主模型**；但如果 `[secondary_model].force = true`，reviewer 也会改用 `default_model`。因此，池默认值是 worker 的默认值，而不是 reviewer 的默认值。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
+worker 和 reviewer 的默认模型选择规则不同。未配置 `[secondary_model]` 时，二者都使用 Tower 当前的主模型。配置后，新派生的 worker 使用 `default_model`，**reviewer 仍使用主模型**。因此，池默认值是 worker 的默认值，而不是 reviewer 的默认值。配置方式见 [subagent 模型池](../configuration/config-files.md#subagent-模型池)。
 
 你也可以通过普通消息为某次新派生明确指定模型。例如，假设 `smart/slow` 已在池内配置：
 
 - "让 worker agent-docs 使用 smart/slow。"
 - "让审查 feat/build-gemm 的 reviewer 使用 primary。"
 
-可选值仅限 `primary`（Tower 当前的主模型）和 `[secondary_model.models]` 中配置的别名；只存在于 `[models]` 而不在池内的别名不能被接受。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。`[secondary_model].force = true` 时，强制模型仍是配置级硬约束，Tower 会拒绝包括 `primary` 在内的所有显式选择，而不是静默覆盖它。
+可选值仅限 `primary`（Tower 当前的主模型）和池中别名（`[secondary_model.models]` 的 key，或单独一行的 `default_model`）；只存在于 `[models]` 而不在池内的别名不能被接受。选择只作用于本次新派生的 Agent：不会修改正在运行或已恢复的 Agent，也不会保存给后续派生。
 
-如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。未设置 `force = true` 时，reviewer 默认保持 primary model（主模型），以保留独立审查的预算。
+如果希望控制 token 开支，可以让 worker 使用成本较低的 secondary model。reviewer 默认保持 primary model（主模型），以保留独立审查的预算；如需让 reviewer 使用更便宜的模型，可以显式指定池中别名。
 
 ## 安全边界与资源开销
 

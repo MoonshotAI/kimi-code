@@ -1,36 +1,6 @@
-import type { z } from 'zod';
-
-import type { agentEventSchema } from '../../../protocol/events-zod';
-import type { MessageContent } from '../../../protocol/message';
-import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
-import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
 import type { Workspace } from '../../../protocol/workspace';
-
-export interface AgentStatusUpdatedEvent {
-  readonly type: 'agent.status.updated';
-  readonly model?: string;
-  readonly thinkingEffort?: string;
-  readonly contextTokens?: number;
-  readonly maxContextTokens?: number;
-  readonly contextUsage?: number;
-  readonly planMode?: boolean;
-  readonly swarmMode?: boolean;
-  readonly towerMode?: boolean;
-  readonly permission?: PermissionMode;
-  readonly usage?: UsageStatus;
-  readonly phase?: AgentPhase;
-}
-
-export interface AgentCreatedEvent {
-  readonly type: 'agent.created';
-}
-
-export interface AgentDisposedEvent {
-  readonly type: 'agent.disposed';
-}
 
 export interface SessionMetaUpdatedEvent {
   readonly type: 'session.meta.updated';
@@ -75,20 +45,6 @@ export interface SessionWorkChangedEvent {
   readonly main_turn_active?: boolean;
   readonly pending_interaction?: SessionPendingInteraction;
   readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
-}
-
-type LegacySessionStatus =
-  | 'idle'
-  | 'running'
-  | 'awaiting_approval'
-  | 'awaiting_question'
-  | 'aborted';
-
-export interface SessionStatusChangedEvent {
-  readonly type: 'event.session.status_changed';
-  readonly status: LegacySessionStatus;
-  readonly previous_status: LegacySessionStatus;
-  readonly current_prompt_id?: string;
 }
 
 export interface ConfigChangedEvent {
@@ -157,76 +113,7 @@ export interface DiUnitChangedEvent {
   readonly error?: string;
 }
 
-export interface PromptSubmittedEvent {
-  readonly type: 'prompt.submitted';
-  readonly promptId: string;
-  readonly userMessageId: string;
-  readonly status: 'running' | 'queued' | 'blocked';
-  readonly content: readonly MessageContent[];
-  readonly createdAt: string;
-}
-
-export type TaskLifecycleStatus =
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'timed_out'
-  | 'killed'
-  | 'lost';
-
-export interface TaskInfoBase {
-  readonly taskId: string;
-  readonly description: string;
-  readonly status: TaskLifecycleStatus;
-  readonly detached?: boolean;
-  readonly startedAt: number;
-  readonly endedAt: number | null;
-  readonly stopReason?: string;
-  readonly terminalNotificationSuppressed?: boolean;
-  readonly timeoutMs?: number;
-}
-
-export interface ProcessTaskInfo extends TaskInfoBase {
-  readonly kind: 'process';
-  readonly command: string;
-  readonly pid: number;
-  readonly exitCode: number | null;
-}
-
-export interface AgentTaskInfo extends TaskInfoBase {
-  readonly kind: 'agent';
-  readonly agentId?: string;
-  readonly subagentType?: string;
-}
-
-export interface QuestionTaskInfo extends TaskInfoBase {
-  readonly kind: 'question';
-  readonly questionCount: number;
-  readonly toolCallId?: string;
-}
-
-export type TaskInfo =
-  | ProcessTaskInfo
-  | AgentTaskInfo
-  | QuestionTaskInfo;
-
-export interface BackgroundTaskStartedEvent {
-  readonly type: 'background.task.started';
-  readonly info: TaskInfo;
-}
-
-export interface BackgroundTaskTerminatedEvent {
-  readonly type: 'background.task.terminated';
-  readonly info: TaskInfo;
-}
-
-type CoreStreamEvent = z.infer<typeof agentEventSchema>;
-
-export type AgentEvent =
-  | CoreStreamEvent
-  | AgentStatusUpdatedEvent
-  | AgentCreatedEvent
-  | AgentDisposedEvent
+export type PushEvent =
   | SessionMetaUpdatedEvent
   | SessionCreatedEvent
   | SessionArchivedEvent
@@ -235,36 +122,11 @@ export type AgentEvent =
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
   | SessionWorkChangedEvent
-  | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
   | ModelCatalogChangedEvent
   | PluginChangedEvent
   | CapabilityChangedEvent
-  | DiUnitChangedEvent
-  | PromptSubmittedEvent
-  | BackgroundTaskStartedEvent
-  | BackgroundTaskTerminatedEvent;
+  | DiUnitChangedEvent;
 
-export type Event = AgentEvent & { agentId: string; sessionId: string; readonly time?: number };
-
-export const VOLATILE_EVENT_TYPES = [
-  'assistant.delta',
-  'thinking.delta',
-  'tool.call.delta',
-  'tool.progress',
-  'shell.output',
-  'shell.started',
-  'shell.completed',
-  'agent.status.updated',
-  'event.di.unit_changed',
-  'event.capability.changed',
-] as const;
-
-export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
-
-const volatileEventTypeSet: ReadonlySet<string> = new Set(VOLATILE_EVENT_TYPES);
-
-export function isVolatileEventType(type: string): type is VolatileEventType {
-  return volatileEventTypeSet.has(type);
-}
+export type Event = PushEvent & { agentId: string; sessionId: string; readonly time?: number };
