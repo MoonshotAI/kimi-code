@@ -1172,7 +1172,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       message: {
         role: 'user',
         content: [...context.content],
-        toolCalls: [],
         origin: context.origin,
       },
       turnScoped: false,
@@ -1295,7 +1294,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.context.append({
       role: 'user',
       content: [...context.content],
-      toolCalls: [],
       origin: context.origin,
     });
     this.fireNotificationHook(context.notification);

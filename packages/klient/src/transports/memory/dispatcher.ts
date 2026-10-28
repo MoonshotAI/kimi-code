@@ -33,7 +33,14 @@ import {
   type InteractionRequest,
 } from '@moonshot-ai/agent-core-v2/human/interaction/interaction';
 import { interactions } from '@moonshot-ai/agent-core-v2/human/interaction/facade';
-import { IAgentLoopService } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentLoopService, type PromptPayload, type SteerPayload } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import { IAgentPromptChannel } from '@moonshot-ai/agent-core-v2/agent/loop/promptChannel';
+import {
+  fromCorePart,
+  toCorePart,
+  type ContentPart as LegacyContentPart,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import type { ContentPart as CoreContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import type { SkillActivationOrigin } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
 import { ITelemetryService } from '@moonshot-ai/agent-core-v2/app/telemetry/telemetry';
 import type {
@@ -67,6 +74,43 @@ export interface ScopeLike {
 export function wireClone<T>(value: T): T {
   if (value === undefined) return value;
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function isCoreMediaPart(
+  part: unknown,
+): part is Extract<CoreContentPart, { type: 'image_url' | 'audio_url' | 'video_url' }> {
+  if (typeof part !== 'object' || part === null || !('type' in part) || !('source' in part)) {
+    return false;
+  }
+  if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+    return false;
+  }
+  const source = part.source;
+  if (typeof source !== 'object' || source === null || !('kind' in source)) return false;
+  return (
+    source.kind === 'url' ||
+    source.kind === 'inline' ||
+    source.kind === 'file' ||
+    source.kind === 'store'
+  );
+}
+
+function projectToolResultOutput(output: unknown): unknown {
+  if (!Array.isArray(output)) return output;
+  return output.map((part) => (isCoreMediaPart(part) ? fromCorePart(part) : part));
+}
+
+function projectAgentEvent(event: unknown): unknown {
+  if (
+    typeof event !== 'object' ||
+    event === null ||
+    !('type' in event) ||
+    event.type !== 'tool.result' ||
+    !('output' in event)
+  ) {
+    return event;
+  }
+  return { ...event, output: projectToolResultOutput(event.output) };
 }
 
 /**
@@ -178,11 +222,32 @@ function questionServiceView(sessionId: string): Record<string, unknown> {
  * kernel into a per-agent DI service: the view forwards to the agent's
  * `IAgentSkillService` resolved straight from the agent scope handle.
  */
+type LegacyPromptPayload = Omit<PromptPayload, 'input'> & {
+  readonly input: readonly LegacyContentPart[];
+};
+type LegacySteerPayload = Omit<SteerPayload, 'input'> & {
+  readonly input: readonly LegacyContentPart[];
+};
+type LegacyPromptWithSkillsInput = Omit<PromptWithSkillsInput, 'input'> & {
+  readonly input: readonly LegacyContentPart[];
+};
+
+function agentPromptServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
+  const prompt = agent.accessor.get(IAgentPromptChannel);
+  return {
+    submit: (input: LegacyPromptPayload) =>
+      prompt.submit({ ...input, input: input.input.map(toCorePart) }),
+    submitSteer: (input: LegacySteerPayload) =>
+      prompt.submitSteer({ ...input, input: input.input.map(toCorePart) }),
+  };
+}
+
 function agentSkillServiceView(agent: IAgentScopeHandle): Record<string, unknown> {
   const skill = agent.accessor.get(IAgentSkillService);
   return {
     activate: (input: SkillActivationInput) => skill.activate(input),
-    promptWithSkills: (input: PromptWithSkillsInput) => skill.promptWithSkills(input),
+    promptWithSkills: (input: LegacyPromptWithSkillsInput) =>
+      skill.promptWithSkills({ ...input, input: input.input.map(toCorePart) }),
     recordModelToolActivation: (origin: SkillActivationOrigin) => {
       skill.recordModelToolActivation(origin);
     },
@@ -348,6 +413,12 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
       }
       return view;
     }
+    if (service === 'agentPromptService') {
+      if (resolved.kind !== 'agent') {
+        throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
+      }
+      return agentPromptServiceView(resolved.like as IAgentScopeHandle);
+    }
     if (service === 'agentSkillService') {
       if (resolved.kind !== 'agent') {
         throw new RPCError(REQUEST_INVALID, `service not available in ${resolved.kind} scope: ${service}`);
@@ -411,7 +482,7 @@ export function createMemoryDispatcher(root: ScopeLike): MemoryDispatcher {
     if (resolved.kind === 'agent' && name === 'events') {
       const bus = resolved.like.accessor.get(IEventBus);
       return bus.subscribe((event) => {
-        handler(wireClone(event));
+        handler(wireClone(projectAgentEvent(event)));
       });
     }
     throw new RPCError(REQUEST_INVALID, `unknown event stream: ${name} (${resolved.kind})`);

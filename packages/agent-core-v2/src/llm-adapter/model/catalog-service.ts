@@ -9,15 +9,15 @@ import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Error2 } from '#/_base/errors/errors';
 
-import type { CatalogModel, CatalogProviderInfo } from '#human/llm/provider-catalog';
+import type { CatalogModel, CatalogProviderInfo } from '#human/provider-catalog/catalog';
 import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ModelCapability } from '../contract/capability';
 import { CONFIG_INVALID_ERROR_CODE } from '../contract/errors';
-import type { TokenUsage } from '#human/llm/usage';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import {
   IProtocolAdapterRegistry,
   type Protocol,
@@ -172,7 +172,7 @@ export class ModelCatalog extends Disposable implements IModelCatalog {
           {
             systemPrompt: 'You are a connectivity probe. Answer with the single word "pong".',
             tools: [],
-            messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }], toolCalls: [] }],
+            messages: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }],
           },
           undefined,
           { maxCompletionTokens: 512 },

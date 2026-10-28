@@ -2,7 +2,7 @@
 import { z } from 'zod';
 
 import { AgentEvent2 } from '#/app/event/event2';
-import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import { defineState } from '#/state/state';
 
 export interface LlmRequestToolSchema {

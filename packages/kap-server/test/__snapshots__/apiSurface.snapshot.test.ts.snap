@@ -290,6 +290,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
+      "/api/v1/workspaces/project-config-dirs",
+    ],
+    [
+      "GET",
       "/api/v2/mcp/auth-statuses",
     ],
     [
@@ -510,7 +514,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/workspaces/{workspace_id}/add-dir",
+      "/api/v1/workspaces/{workspace_id}/primary",
     ],
     [
       "POST",

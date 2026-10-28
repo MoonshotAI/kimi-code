@@ -21,6 +21,7 @@ export interface IAgentChangeNotifierService {
   notifyAgentsMdChanges(): Promise<void>;
   notifySkillChanges(): Promise<void>;
   notifySubagentChanges(input?: SubagentChangesInput): Promise<void>;
+  notifyWorkspaceDirsChanges(): Promise<void>;
   seedBeliefs(seed: BeliefsSeed): Promise<void>;
   mute(): void;
   unmute(): void;

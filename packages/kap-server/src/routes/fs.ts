@@ -232,6 +232,7 @@ function buildRuntimeFsScope(
       id: workspaceId,
       root: mapped.workDir,
       name: workspaceId,
+      kind: 'implicit',
       createdAt: 0,
       lastOpenedAt: 0,
     },

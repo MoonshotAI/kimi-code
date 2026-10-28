@@ -19,7 +19,7 @@ import type {
   LlmRequestContent,
   LlmRequestControl,
   LlmRequester,
-} from '#human/llm/requester/requester';
+} from '#human/llm-requester/requester';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
@@ -33,7 +33,7 @@ import type {
 } from '#/runtime/runtime';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
-import { inputTotal } from '#human/llm/usage';
+import { inputTotal } from '#human/llm-requester/usage';
 import { IAgentRuntimeBindingSeed } from '#/agent/runtimeBinding/runtimeBinding';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
@@ -279,10 +279,15 @@ describe('subagent task reminders and fork request parity', () => {
 
     const tail = childReq.history.slice(parentReq.history.length);
     expect(tail.map((message) => message.role)).toEqual(['assistant', 'tool', 'user', 'user']);
-    expect(tail[0]?.toolCalls.map((call) => call.name)).toEqual(['Agent']);
-    expect(tail[0]?.partial).toBeUndefined();
-    expect(tail[1]?.toolCallId).toBe('call_fork');
-    expect(tail[1]?.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
+    const assistant = tail[0];
+    const toolResult = tail[1];
+    if (assistant?.role !== 'assistant' || toolResult?.role !== 'tool') {
+      throw new Error('expected inherited assistant tool exchange');
+    }
+    expect(assistant.toolCalls.map((call) => call.name)).toEqual(['Agent']);
+    expect('partial' in assistant ? assistant.partial : undefined).toBeUndefined();
+    expect(toolResult.toolCallId).toBe('call_fork');
+    expect(toolResult.content).toEqual([{ type: 'text', text: INHERITED_IN_FLIGHT_TOOL_OUTPUT }]);
     const notice = tail[2]?.content[0];
     expect(notice?.type).toBe('text');
     expect(notice?.type === 'text' && notice.text).toBe(wrapSystemReminder(FORK_CONTEXT_NOTICE));
@@ -526,7 +531,6 @@ describe('subagent task reminders and fork request parity', () => {
       original.accessor.get(IAgentContextMemoryService).append({
         role: 'user',
         content: [{ type: 'text', text: 'task from the previous session' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       });
       if (hasReminder) {

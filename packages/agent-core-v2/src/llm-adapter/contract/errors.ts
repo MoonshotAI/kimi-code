@@ -12,14 +12,14 @@ import {
   sanitizeStatusErrorMessage,
   type LlmErrorMessage,
   type LlmRemoteErrorMessage,
-} from '#human/llm/errors';
-import type { FinishReason } from '#human/llm/finish-reason';
+} from '#human/llm-requester/errors';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
 
 export {
   isAbortError,
   parseRetryAfterMs,
   sanitizeStatusErrorMessage,
-} from '#human/llm/errors';
+} from '#human/llm-requester/errors';
 
 export const CONFIG_INVALID_ERROR_CODE = 'config.invalid';
 

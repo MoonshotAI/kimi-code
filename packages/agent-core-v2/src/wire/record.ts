@@ -1,4 +1,21 @@
+import type { Message } from '#/llm-adapter/contract/message';
+import type { ContextMessageTiming, PromptOrigin } from '#/agent/contextMemory/types';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { TokenUsage } from '#human/llm-requester/usage';
+
 import { WIRE_PROTOCOL_VERSION } from './migration/migration';
+
+export type PersistentContextMessage = Message & {
+  readonly id?: string;
+  readonly providerMessageId?: string;
+  readonly origin?: PromptOrigin | undefined;
+  readonly isError?: boolean;
+  readonly toolCallDisplays?: Record<string, ToolInputDisplay>;
+  readonly note?: string;
+  readonly usage?: TokenUsage;
+  readonly llmTiming?: ContextMessageTiming;
+  readonly durationMs?: number;
+};
 
 export const AGENT_WIRE_RECORD_KEY = 'wire.jsonl';
 

@@ -4,6 +4,8 @@ import { foldWireRecords } from '#/agent/replayBuilder/fold';
 import type { AgentReplayRecord } from '#/agent/replayBuilder/types';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { WireRecord } from '#/wire/record';
+import { fromCoreMessage } from '#human/message';
+import { fromLlmMessage } from '#/llm-adapter/contract/message';
 
 const METADATA: WireRecord = { type: 'metadata', protocol_version: '1.5', created_at: 0 };
 
@@ -15,7 +17,6 @@ function userMessage(text: string, origin?: ContextMessage['origin']): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin,
   };
 }
@@ -72,6 +73,7 @@ describe('foldWireRecords', () => {
     expect(assistant).toMatchObject({ type: 'message', time: 10 });
     if (assistant?.type !== 'message') throw new Error('expected message record');
     expect(assistant.message.role).toBe('assistant');
+    if (assistant.message.role !== 'assistant') throw new Error('expected assistant message');
     expect(assistant.message.content).toEqual([{ type: 'text', text: 'working' }]);
     expect(assistant.message.toolCalls).toEqual([
       { type: 'function', id: 'tc1', name: 'Shell', arguments: '{"command":"ls"}', extras: undefined },
@@ -388,11 +390,38 @@ describe('foldWireRecords', () => {
   it('migrates older protocol journals before folding', () => {
     const legacy: WireRecord[] = [
       { type: 'metadata', protocol_version: '1.0', created_at: 0 },
-      appendMessage(userMessage('hi'), 3),
+      {
+        type: 'context.append_message',
+        message: fromLlmMessage(fromCoreMessage(userMessage('hi'))),
+        time: 3,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_legacy',
+              function: { name: 'Bash', arguments: '{}' },
+            },
+          ],
+        },
+        time: 4,
+      },
     ];
-    const folded = foldWireRecords(legacy);
-    expect(folded.replay).toHaveLength(1);
+    const decoded: WireRecord[] = [];
+    const folded = foldWireRecords(legacy, (record) => {
+      decoded.push(record);
+      return record;
+    });
+    expect(folded.replay).toHaveLength(2);
     expect(folded.replay[0]).toMatchObject({ type: 'message', time: 3 });
+    expect(decoded).toHaveLength(3);
+    expect(decoded[2]?.['message']).toMatchObject({
+      toolCalls: [{ id: 'call_legacy', name: 'Bash', arguments: '{}' }],
+    });
   });
 
   it('clears replay-visible state on context.clear without touching earlier replay records', () => {

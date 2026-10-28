@@ -292,7 +292,7 @@ export class Program {
     try {
       const state = own(new WorkspaceStateService(this.dependencies.appState));
       const localConfig = new FileProjectLocalConfigService(this.dependencies.bootstrap, runtime.fs!);
-      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.log, state));
+      const dirs = own(new WorkspaceDirsService(this.context, localConfig, this.dependencies.workspaces, this.dependencies.workspaceStore, this.dependencies.log, state));
       const git = new WorkspaceGitService(this.context, this.dependencies.git);
       const fs = new WorkspaceFsService(this.context, dirs, runtime.fs!, this.resolver, this.dependencies.telemetry, git);
       const instructions = own(new WorkspaceInstructionsService(this.context, runtime.fs!, runtime.environment, this.dependencies.bootstrap, this.dependencies.log, state));

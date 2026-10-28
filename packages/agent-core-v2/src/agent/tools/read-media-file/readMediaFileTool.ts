@@ -1,4 +1,4 @@
-import type { ModelCapability } from '#human/llm/capability';
+import type { ModelCapability } from '#human/llm-requester/capability';
 import type { ContentPart } from '#human/llm/message';
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { inlineVideoPart, isMediaUploadAuthError } from '#/agent/media/videoUpload';
@@ -37,7 +37,7 @@ import {
   buildOversizedImageConversionGuidance,
   isModelAcceptedImageMime,
 } from '#/agent/media/image-format-policy';
-import { providerImagePolicy } from '#human/llm/media/image-formats';
+import { providerImagePolicy } from '#human/llm/protocol/kit/media';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';

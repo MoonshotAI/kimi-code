@@ -46,7 +46,7 @@ import type {
   BeforeExecuteDecision,
   ResolvedToolExecutionHookContext,
 } from '#/agent/toolExecutor/toolHooks';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { ExecutableToolContext } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -96,7 +96,6 @@ function swarmReminder(
   return {
     role: 'user',
     content: [{ type: 'text', text: wrapSystemReminder(content) }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'swarm_mode', disclosure },
   };
 }
@@ -334,7 +333,6 @@ describe('AgentSwarmService', () => {
           context.append({
             role: 'user',
             content: [{ type: 'text', text: wrapSystemReminder(result.content) }],
-            toolCalls: [],
             origin: { kind: 'injection', variant: 'swarm_mode', disclosure: result.disclosure },
           });
         }
@@ -458,7 +456,6 @@ describe('AgentSwarmService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'later prompt' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     swarm.exit();

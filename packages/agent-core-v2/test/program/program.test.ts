@@ -40,6 +40,7 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
         id: 'workspace',
         name: 'workspace',
         root: '/workspace',
+        kind: 'implicit',
         createdAt: 0,
         lastOpenedAt: 0,
       },

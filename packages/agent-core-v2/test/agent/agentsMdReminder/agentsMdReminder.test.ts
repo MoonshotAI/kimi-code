@@ -10,7 +10,7 @@ import { Emitter } from '#/_base/event';
 import { IBashParserService } from '#/app/bashParser/bashParser';
 import { BashParserService } from '#/app/bashParser/bashParserService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
@@ -559,7 +559,6 @@ describe('agentsMdReminder re-injection after context loss', () => {
     h.context.append({
       role: 'user',
       content: [{ type: 'text', text: 'prompt' }],
-      toolCalls: [],
     });
     await fire(h, didCtx('Read', { path: join(subDir, 'index.ts') }));
     expect(agentsMdMessages(h)).toHaveLength(1);

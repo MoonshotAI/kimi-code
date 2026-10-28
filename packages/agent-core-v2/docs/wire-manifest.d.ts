@@ -105,6 +105,8 @@ interface ChangeNotifierSnapshotPayload {
   skillsHash: string | null;
   subagentNames: string[] | null;
   modelPool?: object | null;
+  workspacePrimaryByWorkspace?: Record<string, string> | null;
+  workspaceAdditionalDirs?: string[] | null;
 }
 
 /**

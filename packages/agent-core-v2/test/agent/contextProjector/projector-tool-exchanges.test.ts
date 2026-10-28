@@ -10,7 +10,8 @@ import { AgentContextProjectorService } from '#/agent/contextProjector/contextPr
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
@@ -49,14 +50,13 @@ function repairPayloads(warnings: WarningCall[]): Record<string, unknown>[] {
 const INTERRUPTED = 'Tool result is not available in the current context';
 
 function user(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } };
+  return { role: 'user', content: [{ type: 'text', text }], origin: { kind: 'user' } };
 }
 
 function reminder(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: `<system-reminder>\n${text}\n</system-reminder>` }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: 'host' },
   };
 }
@@ -70,14 +70,13 @@ function assistant(text: string, toolCallIds: readonly string[] = []): ContextMe
 }
 
 function toolResult(toolCallId: string, text: string): ContextMessage {
-  return { role: 'tool', content: [{ type: 'text', text }], toolCalls: [], toolCallId };
+  return { role: 'tool', content: [{ type: 'text', text }], toolCallId };
 }
 
 function schemaMessage(name: string): ContextMessage {
   return {
     role: 'system',
     content: [],
-    toolCalls: [],
     tools: [
       {
         name,
@@ -124,6 +123,10 @@ describe('projector tool-exchange normalization', () => {
     return project(history).map((message) =>
       message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
     );
+  }
+
+  function toolCalls(message: Message | undefined) {
+    return message?.role === 'assistant' ? message.toolCalls : [];
   }
 
   function projectStrict(history: readonly ContextMessage[]): readonly Message[] {
@@ -270,7 +273,7 @@ describe('projector tool-exchange normalization', () => {
     const message: ContextMessage = {
       role: 'tool',
       content: [{ type: 'text', text: 'tool-like output' }],
-      toolCalls: [],
+      toolCallId: '',
     };
     expect(project([message])).toHaveLength(1);
   });
@@ -281,19 +284,11 @@ describe('projector tool-exchange normalization', () => {
     expect(projected).toEqual([
       {
         role: 'user',
-        name: undefined,
         content: [{ type: 'text', text: 'load it' }],
-        toolCalls: [],
-        toolCallId: undefined,
-        partial: undefined,
       },
       {
         role: 'system',
-        name: undefined,
         content: [],
-        toolCalls: [],
-        toolCallId: undefined,
-        partial: undefined,
         tools: [
           {
             name: 'mcp__srv__query',
@@ -313,7 +308,6 @@ describe('projector tool-exchange normalization', () => {
     const result: ContextMessage = {
       role: 'tool',
       content: [{ type: 'text', text: 'image result' }],
-      toolCalls: [],
       toolCallId: 'call_image',
       note,
     };
@@ -331,15 +325,13 @@ describe('projector tool-exchange normalization', () => {
       {
         role: 'tool',
         content: [{ type: 'text', text: '<system>ERROR: remote failed</system>' }],
-        toolCalls: [],
-        toolCallId: 'call_error',
+          toolCallId: 'call_error',
         isError: true,
       },
       {
         role: 'tool',
         content: [{ type: 'text', text: '   ' }],
-        toolCalls: [],
-        toolCallId: 'call_empty',
+          toolCallId: 'call_empty',
       },
     ] satisfies ContextMessage[];
 
@@ -373,7 +365,7 @@ describe('projector tool-exchange normalization', () => {
       'tool:dup',
       'assistant',
     ]);
-    expect(projected[1]?.toolCalls.map((call) => call.id)).toEqual(['dup']);
+    expect(toolCalls(projected[1]).map((call) => call.id)).toEqual(['dup']);
     expect(projected.filter((message) => message.role === 'tool')).toHaveLength(1);
   });
 
@@ -391,7 +383,7 @@ describe('projector tool-exchange normalization', () => {
         message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
       ),
     ).toEqual(['user', 'assistant', 'tool:dup', 'assistant', 'user']);
-    expect(projected[1]?.toolCalls.map((call) => call.id)).toEqual(['dup']);
+    expect(toolCalls(projected[1]).map((call) => call.id)).toEqual(['dup']);
     expect((projected[2]?.content[0] as { text: string }).text).toBe('late result');
   });
 
@@ -445,7 +437,7 @@ describe('projector tool-exchange normalization', () => {
         message.role === 'tool' ? `tool:${message.toolCallId}` : message.role,
       ),
     ).toEqual(['user', 'assistant', 'tool:dup', 'assistant', 'user']);
-    expect(projected[3]?.toolCalls).toEqual([]);
+    expect(toolCalls(projected[3])).toEqual([]);
     expect(projected[3]?.content).toEqual([
       { type: 'think', think: '' },
       { type: 'text', text: 'second' },
@@ -659,7 +651,6 @@ describe('projector tool-exchange normalization', () => {
       return {
         role: 'user',
         content: [{ type: 'image_url', imageUrl: { url } }],
-        toolCalls: [],
         origin: { kind: 'user' },
       };
     }
@@ -713,7 +704,7 @@ describe('projector tool-exchange normalization', () => {
       const urls = projected
         .flatMap((message) => message.content)
         .filter((part) => part.type === 'image_url')
-        .map((part) => part.imageUrl.url);
+        .map((part) => mediaUrlOf(part));
       expect(urls).toEqual(['data:image/png;base64,KEEP1', 'data:image/png;base64,KEEP2']);
       const markers = projected
         .flatMap((message) => message.content)
@@ -749,7 +740,7 @@ describe('projector tool-exchange normalization', () => {
       const parts = projected.flatMap((message) => message.content);
       const urls = parts
         .filter((part) => part.type === 'image_url')
-        .map((part) => part.imageUrl.url);
+        .map((part) => mediaUrlOf(part));
       expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
       const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
       expect(texts).toContain('<image path="/session/media/f_old1.png"></image>');
@@ -785,8 +776,12 @@ describe('projector tool-exchange normalization', () => {
     function imageMessage(url: string, id?: string): ContextMessage {
       return {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url, id } }],
-        toolCalls: [],
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: id === undefined ? { url } : { url, id },
+          },
+        ],
         origin: { kind: 'user' },
       };
     }
@@ -806,16 +801,22 @@ describe('projector tool-exchange normalization', () => {
           role: 'tool',
           content: [
             { type: 'text', text: '<image path="/tmp/shot.png">' },
-            { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,BBBB' } },
+            {
+              type: 'image_url',
+              imageUrl: { url: 'data:image/avif;base64,BBBB' },
+            },
             { type: 'text', text: '</image>' },
           ],
-          toolCalls: [],
           toolCallId: 'c1',
         },
         {
           role: 'user',
-          content: [{ type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,CCCC' } }],
-          toolCalls: [],
+          content: [
+            {
+              type: 'video_url',
+              videoUrl: { url: 'data:video/mp4;base64,CCCC' },
+            },
+          ],
           origin: { kind: 'user' },
         },
       ]);
@@ -865,7 +866,7 @@ describe('projector tool-exchange normalization', () => {
       const urls = projected
         .flatMap((message) => message.content)
         .filter((part) => part.type === 'image_url')
-        .map((part) => part.imageUrl.url);
+        .map((part) => mediaUrlOf(part));
       expect(urls).toEqual(['data:image/png;base64,NEW']);
     });
 
@@ -873,8 +874,12 @@ describe('projector tool-exchange normalization', () => {
       const url = 'data:image/png;base64,ORPHAN';
       const orphan: ContextMessage = {
         role: 'tool',
-        content: [{ type: 'image_url', imageUrl: { url, id: 'orphan-id' } }],
-        toolCalls: [],
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: { url, id: 'orphan-id' },
+          },
+        ],
         toolCallId: 'ghost',
       };
       const snapshot = projector.captureMediaStripSnapshot([
@@ -924,7 +929,10 @@ describe('projector tool-exchange normalization', () => {
       const image = projected
         .flatMap((message) => message.content)
         .find((part) => part.type === 'image_url');
-      expect(image).toMatchObject({ imageUrl: { url, id: 'new-id' } });
+      expect(image).toMatchObject({
+        type: 'image_url',
+        imageUrl: { url, id: 'new-id' },
+      });
     });
   });
 });

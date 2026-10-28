@@ -39,16 +39,20 @@ export const workspaceTrustResponseSchema = z.object({
 });
 export type WorkspaceTrustResponse = z.infer<typeof workspaceTrustResponseSchema>;
 
-export const addDirRequestSchema = z.object({
+export const setPrimaryRequestSchema = z.object({
   path: z.string().min(1),
-  persist: z.boolean().optional(),
 });
-export type AddDirRequest = z.infer<typeof addDirRequestSchema>;
+export type SetPrimaryRequest = z.infer<typeof setPrimaryRequestSchema>;
 
-export const addDirResponseSchema = z.object({
-  project_root: z.string(),
-  config_path: z.string(),
-  additional_dirs: z.array(z.string()),
-  persisted: z.boolean(),
+export const setPrimaryResponseSchema = workspaceSchema;
+export type SetPrimaryResponse = z.infer<typeof setPrimaryResponseSchema>;
+
+export const projectConfigDirsQuerySchema = z.object({
+  root: z.string().min(1),
 });
-export type AddDirResponse = z.infer<typeof addDirResponseSchema>;
+export type ProjectConfigDirsQuery = z.infer<typeof projectConfigDirsQuerySchema>;
+
+export const projectConfigDirsResponseSchema = z.object({
+  additional_dirs: z.array(z.string()),
+});
+export type ProjectConfigDirsResponse = z.infer<typeof projectConfigDirsResponseSchema>;

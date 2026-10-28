@@ -69,18 +69,18 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     const workspaceId = created.data.workspace_id;
     const sessionDir = join(home!, 'sessions', workspaceId, sessionId);
 
-    const workspacesFile = JSON.parse(await readFile(join(home!, 'workspaces.json'), 'utf8')) as {
-      version: number;
-      workspaces: Record<
+    const projectsFile = JSON.parse(await readFile(join(home!, 'projects.json'), 'utf8')) as {
+      schema_version: number;
+      projects: Record<
         string,
         { root: string; name: string; created_at: string; last_opened_at: string }
       >;
-      deleted_workspace_ids: string[];
+      deleted_project_ids: string[];
     };
-    expect(workspacesFile.version).toBe(1);
-    expect(Object.keys(workspacesFile.workspaces)).toEqual([workspaceId]);
-    expect(workspacesFile.workspaces[workspaceId]).toMatchObject({ root: workDir });
-    expect(workspacesFile.deleted_workspace_ids).toEqual([]);
+    expect(projectsFile.schema_version).toBe(2);
+    expect(Object.keys(projectsFile.projects)).toEqual([workspaceId]);
+    expect(projectsFile.projects[workspaceId]).toMatchObject({ root: workDir });
+    expect(projectsFile.deleted_project_ids).toEqual([]);
 
     const indexLines = (await readFile(join(home!, 'session_index.jsonl'), 'utf8'))
       .trim()
@@ -117,10 +117,10 @@ describe('local/local on-disk layout (byte compatibility)', () => {
     });
     expect(second.code).toBe(0);
     expect(second.data.workspace_id).toBe(workspaceId);
-    const workspacesAfter = JSON.parse(
-      await readFile(join(home!, 'workspaces.json'), 'utf8'),
-    ) as { workspaces: Record<string, unknown> };
-    expect(Object.keys(workspacesAfter.workspaces)).toEqual([workspaceId]);
+    const projectsAfter = JSON.parse(await readFile(join(home!, 'projects.json'), 'utf8')) as {
+      projects: Record<string, unknown>;
+    };
+    expect(Object.keys(projectsAfter.projects)).toEqual([workspaceId]);
     const indexAfter = (await readFile(join(home!, 'session_index.jsonl'), 'utf8'))
       .trim()
       .split('\n')

@@ -23,7 +23,7 @@ function deferred(): { readonly promise: Promise<void>; resolve(): void } {
 }
 
 function workspace(id: string): Workspace {
-  return { id, root: `/${id}`, name: id, createdAt: 0, lastOpenedAt: 0 };
+  return { id, root: `/${id}`, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
 }
 
 function runtime(workspaceId: string, runtimeId: string, status: Runtime['status'] = 'connecting'): FakeRuntime {
@@ -126,12 +126,20 @@ function manager(
     _serviceBrand: undefined,
     list: async () => values,
     get: vi.fn(async (id: string) => byId.get(id)),
+    create: vi.fn(async (input: { root: string }) => {
+      const value = values.find((entry) => entry.root === input.root);
+      if (value === undefined) throw new Error(`unknown root ${input.root}`);
+      return value;
+    }),
     createOrTouch: vi.fn(async (root: string) => {
       const value = values.find((entry) => entry.root === root);
       if (value === undefined) throw new Error(`unknown root ${root}`);
       return value;
     }),
+    touch: vi.fn(async (id: string) => byId.get(id)),
     update: async () => undefined,
+    setPrimary: async () => undefined,
+    readProjectConfigDirs: async () => [],
     delete: async () => {},
   };
   const args: unknown[] = [
@@ -139,7 +147,7 @@ function manager(
     { scope: () => 'sessions' },
     workspaces,
     { ready },
-    ...Array.from({ length: 25 }, () => undefined),
+    ...Array.from({ length: 26 }, () => undefined),
     new TestRuntimeUnitHostFactory(),
   ];
   args[18] = { entries: () => [] };
@@ -199,6 +207,30 @@ describe('WorkspaceInstanceManager', () => {
       'attach:local:one',
       'detach:local:one',
     ]);
+  });
+
+  it('replaces the instance when the registry root changes', async () => {
+    const events: string[] = [];
+    const initial = workspace('one');
+    const value = manager([initial], Promise.resolve(), events);
+    const first = await value.acquire({ workspaceId: 'one' });
+    const updated = { ...initial, root: '/new-one' };
+    const registry = (value as unknown as { workspaces: { get: (id: string) => Promise<Workspace | undefined> } }).workspaces;
+    const originalGet = registry.get;
+    registry.get = async (id: string) => (id === 'one' ? updated : originalGet(id));
+
+    const second = await value.acquire({ workspaceId: 'one' });
+
+    expect(second.instance).not.toBe(first.instance);
+    expect(second.instance.root).toBe('/new-one');
+    expect(events).toEqual([
+      'attach:local:one',
+      'detach:local:one',
+      'attach:local:one',
+    ]);
+    first.dispose();
+    second.dispose();
+    await value.dispose();
   });
 
   it('keeps runtime registries and provider attachments isolated across workspaces', async () => {
@@ -297,7 +329,13 @@ describe('WorkspaceInstanceManager', () => {
 
   describe('findContaining', () => {
     function rootedWorkspace(id: string, root: string): Workspace {
-      return { id, root, name: id, createdAt: 0, lastOpenedAt: 0 };
+      return { id, root, name: id, kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 };
+    }
+
+    function stubDirs(lease: { instance: { program: object } }, additionalDirs: readonly string[]): { additionalDirs: readonly string[] } {
+      const dirs = { additionalDirs };
+      Object.defineProperty(lease.instance.program, 'dirs', { value: dirs });
+      return dirs;
     }
 
     it('matches exact and nested cwds, preferring the longest containing root', async () => {
@@ -309,6 +347,7 @@ describe('WorkspaceInstanceManager', () => {
         await value.acquire({ workspaceId: 'repo' }),
         await value.acquire({ workspaceId: 'sub' }),
       ];
+      for (const lease of leases) stubDirs(lease, []);
 
       expect(value.findContaining('/repo')?.id).toBe('repo');
       expect(value.findContaining('/repo/sub')?.id).toBe('sub');
@@ -320,9 +359,42 @@ describe('WorkspaceInstanceManager', () => {
       await value.dispose();
     });
 
+    it('matches exact and nested cwds under additional source roots', async () => {
+      const value = manager([
+        {
+          ...rootedWorkspace('multi', '/primary'),
+          additionalDirs: ['/extra'],
+        },
+      ]);
+      const lease = await value.acquire({ workspaceId: 'multi' });
+      stubDirs(lease, ['/extra']);
+
+      expect(value.findContaining('/extra')?.id).toBe('multi');
+      expect(value.findContaining('/extra/nested/pkg')?.id).toBe('multi');
+      expect(value.findContaining('/extra-other')).toBeUndefined();
+      expect(value.findContaining('/outside')).toBeUndefined();
+      lease.dispose();
+      await value.dispose();
+    });
+
+    it('uses current program dirs instead of the instance metadata snapshot', async () => {
+      const initial = rootedWorkspace('multi', '/primary');
+      const value = manager([initial]);
+      const lease = await value.acquire({ workspaceId: 'multi' });
+      const dirs = stubDirs(lease, []);
+
+      dirs.additionalDirs = ['/extra'];
+      expect(value.findContaining('/extra/nested')?.id).toBe('multi');
+      dirs.additionalDirs = [];
+      expect(value.findContaining('/extra/nested')).toBeUndefined();
+      lease.dispose();
+      await value.dispose();
+    });
+
     it('matches across Windows spelling variants', async () => {
       const value = manager([rootedWorkspace('win', 'C:\\Users\\Foo\\Repo')]);
       const lease = await value.acquire({ workspaceId: 'win' });
+      stubDirs(lease, []);
 
       expect(value.findContaining('c:/users/foo/repo')?.id).toBe('win');
       expect(value.findContaining('C:/Users/Foo/Repo/sub')?.id).toBe('win');
@@ -340,6 +412,7 @@ describe('WorkspaceInstanceManager', () => {
         await value.acquire({ workspaceId: 'root' }),
         await value.acquire({ workspaceId: 'repo' }),
       ];
+      for (const lease of leases) stubDirs(lease, []);
 
       expect(value.findContaining('/')?.id).toBe('root');
       expect(value.findContaining('/elsewhere')?.id).toBe('root');

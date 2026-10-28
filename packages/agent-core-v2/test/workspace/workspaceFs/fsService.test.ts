@@ -31,7 +31,7 @@ function stubWorkspaceContext(): IWorkspaceContext {
     workspaceId: 'w',
     cwd: WORK_DIR,
     source: 'local',
-    meta: { id: 'w', root: WORK_DIR, name: 'proj', createdAt: 1, lastOpenedAt: 1 },
+    meta: { id: 'w', root: WORK_DIR, name: 'proj', kind: 'implicit', createdAt: 1, lastOpenedAt: 1 },
     persistenceScope: 'sessions/w',
   };
 }
@@ -44,6 +44,7 @@ function stubWorkspaceDirs(additionalDirs: readonly string[] = []): IWorkspaceDi
     onDidChange: () => ({ dispose: () => {} }),
     addDir: () => Promise.reject(new Error('not supported in tests')),
     mergeAdditionalDirs: () => Promise.resolve(),
+    reload: () => Promise.resolve(),
     sessionInfo: () => {
       throw new Error('not supported in tests');
     },
@@ -565,6 +566,27 @@ describe('WorkspaceFsService.search', () => {
     const result = await fs.search({ query: '', limit: 50, follow_gitignore: true });
     expect(result.items.map((i) => i.path)).toEqual(['kept.ts']);
   });
+
+  it('searches additional roots with absolute result paths', async () => {
+    const fs = makeSession(
+      { 'src/foo.ts': '', '/extra/lib/foo.ts': '', '/extra/top.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const matches = await fs.search({ query: 'foo', limit: 50, follow_gitignore: false });
+    expect(matches.items.map((item) => item.path)).toContain('src/foo.ts');
+    expect(matches.items.map((item) => item.path)).toContain('/extra/lib/foo.ts');
+
+    const topLevel = await fs.search({ query: '', limit: 50, follow_gitignore: false });
+    expect(topLevel.items.map((item) => item.path)).toContain('src');
+    expect(topLevel.items.map((item) => item.path)).toContain('/extra/top.ts');
+  });
 });
 
 describe('WorkspaceFsService.suggest', () => {
@@ -966,6 +988,23 @@ describe('WorkspaceFsService.suggest', () => {
     expect(result.truncated).toBe(true);
   });
 
+  it('keeps valid roots available when an additional root is missing', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/missing'],
+    );
+
+    const result = await fs.suggest({ query: '', limit: 50, follow_gitignore: false, show_hidden: false });
+
+    expect(result.items.map((item) => item.path)).toEqual(['src']);
+  });
+
   it('merges rg candidates across roots with relative paths for the primary root only', async () => {
     const fs = makeSession(
       {
@@ -1338,6 +1377,146 @@ describe('WorkspaceFsService.grep', () => {
     expect(result.files[0]?.matches).toHaveLength(CAP);
     expect(streaming?.wasKilled()).toBe(true);
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
+  });
+
+  it('searches additional roots with rg and preserves unambiguous paths', async () => {
+    const rgFile = (path: string, text: string): string => [
+      { type: 'begin', data: { path: { text: path } } },
+      {
+        type: 'match',
+        data: {
+          path: { text: path },
+          lines: { text: `${text}\n` },
+          line_number: 1,
+          submatches: [{ start: 0, end: 5 }],
+        },
+      },
+      { type: 'end', data: { path: { text: path } } },
+    ].map((record) => JSON.stringify(record)).join('\n');
+    const captured: string[][] = [];
+    const fs = makeSession(
+      {},
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return { stdout: 'ripgrep 14.1.0', exitCode: 0 };
+        }
+        if (args[0] === 'rg' && args.includes('--json')) {
+          captured.push([...args]);
+          return {
+            stdout: `${rgFile('src/a.ts', 'hello a')}\n${rgFile('/extra/b.ts', 'hello b')}\n`,
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toContain('.');
+    expect(captured[0]).toContain('/extra');
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
+  });
+
+  it('deduplicates primary files emitted through an overlapping ancestor root', async () => {
+    const rgFile = (path: string, text: string): string => [
+      { type: 'begin', data: { path: { text: path } } },
+      {
+        type: 'match',
+        data: {
+          path: { text: path },
+          lines: { text: `${text}\n` },
+          line_number: 1,
+          submatches: [{ start: 0, end: 5 }],
+        },
+      },
+      { type: 'end', data: { path: { text: path } } },
+    ].map((record) => JSON.stringify(record)).join('\n');
+    const fs = makeSession(
+      {},
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') {
+          return { stdout: 'ripgrep 14.1.0', exitCode: 0 };
+        }
+        if (args[0] === 'rg' && args.includes('--json')) {
+          return {
+            stdout: [
+              rgFile('src/a.ts', 'hello primary'),
+              rgFile('/repo/src/a.ts', 'hello duplicate'),
+              rgFile('/other.ts', 'hello other'),
+            ].join('\n') + '\n',
+            exitCode: 0,
+          };
+        }
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: true,
+      max_files: 2,
+      max_matches_per_file: 50,
+      max_total_matches: 2,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/other.ts']);
+    expect(result.files_scanned).toBe(2);
+  });
+
+  it('searches additional roots in the Node fallback', async () => {
+    const fs = makeSession(
+      { 'src/a.ts': 'hello primary\n', '/extra/b.ts': 'hello extra\n' },
+      (args) => {
+        if (args[0] === 'rg' && args[1] === '--version') return { stdout: '', exitCode: 1 };
+        return { stdout: '', exitCode: 0 };
+      },
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+
+    const result = await fs.grep({
+      pattern: 'hello',
+      regex: false,
+      case_sensitive: true,
+      follow_gitignore: false,
+      max_files: 200,
+      max_matches_per_file: 50,
+      max_total_matches: 5000,
+      context_lines: 0,
+    });
+
+    expect(result.files.map((file) => file.path)).toEqual(['src/a.ts', '/extra/b.ts']);
+    expect(result.files_scanned).toBe(2);
   });
 });
 
@@ -1771,6 +1950,123 @@ describe('WorkspaceFsService.list', () => {
         include_git_status: false,
       }),
     ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('lists an additional workspace root by absolute path with request-anchored keys', async () => {
+    const fs = makeSession(
+      { '/extra/notes.md': '', '/extra/sub/more.ts': '', 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.list({
+      path: '/extra',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.map((i) => i.path).toSorted()).toEqual(['notes.md', 'sub']);
+    expect(result.children_by_path?.['sub']?.map((i) => i.path)).toEqual(['sub/more.ts']);
+
+    const sub = await fs.list({
+      path: '/extra/sub',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(sub.items.map((i) => i.path)).toEqual(['sub/more.ts']);
+  });
+
+  it('expands a symlink directory under an additional root with request-anchored paths', async () => {
+    const fs = makeSession(
+      { '/extra/real/a.txt': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { '../extra/link': '/extra/real' },
+      ['/extra'],
+    );
+
+    const result = await fs.list({
+      path: '/extra',
+      depth: 2,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+
+    expect(result.items.find((item) => item.path === 'link')).toMatchObject({
+      kind: 'symlink',
+      is_directory: true,
+    });
+    expect(result.children_by_path?.['link']?.map((item) => item.path)).toEqual(['link/a.txt']);
+  });
+
+  it('anchors at an additional root whose path length ties with the workdir', async () => {
+    const fs = makeSession(
+      { '/repa/notes.md': '', 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/repa'],
+    );
+    const result = await fs.list({
+      path: '/repa',
+      depth: 1,
+      limit: 200,
+      show_hidden: false,
+      follow_gitignore: false,
+      sort: 'name_asc',
+      include_git_status: false,
+    });
+    expect(result.items.map((i) => i.path)).toEqual(['notes.md']);
+  });
+
+  it('rejects absolute paths outside the workspace dir set', async () => {
+    const fs = makeSession({}, emptyHandler);
+    await expect(
+      fs.list({
+        path: '/etc',
+        depth: 1,
+        limit: 200,
+        show_hidden: false,
+        follow_gitignore: false,
+        sort: 'name_asc',
+        include_git_status: false,
+      }),
+    ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('reads a file under an additional workspace root by absolute path', async () => {
+    const fs = makeSession(
+      { '/extra/notes.md': 'hello\n' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      {},
+      ['/extra'],
+    );
+    const result = await fs.stat({ path: '/extra/notes.md' });
+    expect(result.name).toBe('notes.md');
   });
 });
 

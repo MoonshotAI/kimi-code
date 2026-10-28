@@ -1,7 +1,7 @@
 import type { Message, ThinkPart } from '#/llm/message';
 
-import { convertToolResultToPlainText } from '../requester/bases/tool-result-text';
-import type { Pattern } from './rewrite';
+import { convertToolResultToPlainText } from '../builtin/protocol/tool-result-text';
+import type { Pattern } from './pattern';
 
 export interface MergeUsersPolicy<T> {
   readonly isUser: (message: T) => boolean;

@@ -968,10 +968,15 @@ function workspaceLifecyclePayload(payload: unknown): Workspace | undefined {
   if (typeof ws.root !== 'string' || ws.root.length === 0) return undefined;
   if (typeof ws.name !== 'string') return undefined;
   if (typeof ws.createdAt !== 'number' || typeof ws.lastOpenedAt !== 'number') return undefined;
+  const additionalDirs = Array.isArray(ws.additionalDirs)
+    ? ws.additionalDirs.filter((dir): dir is string => typeof dir === 'string')
+    : [];
   return {
     id: ws.id,
     root: ws.root,
     name: ws.name,
+    kind: ws.kind === 'managed' ? 'managed' : 'implicit',
+    additionalDirs,
     createdAt: ws.createdAt,
     lastOpenedAt: ws.lastOpenedAt,
   };

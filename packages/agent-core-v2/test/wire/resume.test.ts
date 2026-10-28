@@ -594,7 +594,9 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    const toolCall = ctx.context.get()[0]?.toolCalls[0] as
+    const message = ctx.context.get()[0];
+    if (message?.role !== 'assistant') throw new Error('expected assistant message');
+    const toolCall = message.toolCalls[0] as
       | { name?: string; arguments?: string | null; function?: unknown }
       | undefined;
     expect(toolCall).toMatchObject({

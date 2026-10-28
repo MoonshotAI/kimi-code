@@ -110,6 +110,7 @@ function getTodoListReminderStepCounts(
 }
 
 function hasTodoListWrite(message: ContextMessage): boolean {
+  if (message.role !== 'assistant') return false;
   return message.toolCalls.some((toolCall) => {
     if (toolCall.name !== TODO_LIST_TOOL_NAME) return false;
     if (typeof toolCall.arguments !== 'string') return false;

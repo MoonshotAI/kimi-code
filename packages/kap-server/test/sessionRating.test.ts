@@ -516,7 +516,6 @@ describe('session rating lifecycle', () => {
         message: {
           role: 'user',
           content: [{ type: 'text', text: 'Please review this answer.' }],
-          toolCalls: [],
           origin: { kind: 'user' },
         },
       }),

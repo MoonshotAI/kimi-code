@@ -45,6 +45,7 @@ import {
   IAgentIdentity,
   IAgentTodoService,
   IAgentLifecycleService,
+  IAgentContextMemoryService,
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
@@ -61,6 +62,7 @@ import {
   IMcpManagementService,
   IMcpOAuthService,
   ISessionManager,
+  IWorkspaceInstanceManager,
   MAIN_AGENT_ID,
   OsProcessErrors,
 } from '@moonshot-ai/agent-core-v2';
@@ -991,6 +993,11 @@ key = "${titleOAuthRef.key}"
       expect(limitedMain?.toolStore).toEqual(expectedLimited.toolStore);
       expect(JSON.stringify(limitedMain?.replay)).toContain('second imported turn');
       expect(JSON.stringify(limitedMain?.replay)).not.toContain('first imported turn');
+      expect(
+        limitedMain?.replay.flatMap((record) =>
+          record.type === 'message' ? [record.message] : [],
+        ),
+      ).toEqual([expect.objectContaining({ role: 'user', toolCalls: [] })]);
       expect(Object.keys(limited.agents)).toEqual([MAIN_AGENT_ID]);
 
       // A live re-resume serves the same fold off the live scope.
@@ -1003,6 +1010,14 @@ key = "${titleOAuthRef.key}"
       const expectedFull = await foldAgentWireReplay(wirePath);
       expect(full.agents[MAIN_AGENT_ID]?.replay).toEqual(expectedFull.replay);
       expect(JSON.stringify(full.agents[MAIN_AGENT_ID]?.replay)).toContain('first imported turn');
+      expect(
+        full.agents[MAIN_AGENT_ID]?.replay.flatMap((record) =>
+          record.type === 'message' ? [record.message] : [],
+        ),
+      ).toEqual([
+        expect.objectContaining({ role: 'user', toolCalls: [] }),
+        expect.objectContaining({ role: 'user', toolCalls: [] }),
+      ]);
     } finally {
       await client.close();
     }
@@ -1591,6 +1606,97 @@ key = "${titleOAuthRef.key}"
     30_000,
   );
 
+  it('reloads workspace dirs without duplicating agent reminders', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));
+    const extraDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-extra-'));
+    const failureDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-failure-'));
+    tempDirs.push(homeDir, workDir, extraDir, failureDir);
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    try {
+      await client.setConfig({
+        providers: {
+          stub: {
+            type: 'openai',
+            baseUrl: 'https://model.example.test/v1',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: { stub: { provider: 'stub', model: 'stub', maxContextSize: 32000 } },
+        defaultModel: 'stub',
+      });
+      await client.createSession({ id: 'ses_dirs_reload', workDir });
+      await client.getStatus({ sessionId: 'ses_dirs_reload' });
+      const before = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
+      const workspaceId = before.accessor.get(ISessionContext).workspaceId;
+      const currentProgram = () => {
+        const current = client.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
+        if (current === undefined) throw new Error('expected the current workspace program');
+        return current.program;
+      };
+      const reloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      const projectsPath = join(homeDir, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const project = Object.values(projects.projects).find((entry) => entry.root === workDir);
+      if (project === undefined) throw new Error('expected the session project');
+      project.additional_dirs = [extraDir];
+      await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(reloadDirs).toHaveBeenCalledTimes(1);
+      const context = () =>
+        getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!
+          .accessor.get(IAgentLifecycleService)
+          .handleOf('main')!
+          .accessor.get(IAgentContextMemoryService)
+          .get();
+      const dirsReminders = () =>
+        context().filter(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'workspace_dirs_change',
+        );
+      expect(dirsReminders()).toHaveLength(1);
+      expect(JSON.stringify(dirsReminders()[0])).toContain(`Added directories: ${extraDir}.`);
+
+      const secondReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(secondReloadDirs).toHaveBeenCalledTimes(1);
+      expect(dirsReminders()).toHaveLength(1);
+
+      const beforeFailure = getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')!;
+      const latestProjects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const latestProject = Object.values(latestProjects.projects).find(
+        (entry) => entry.root === workDir,
+      );
+      if (latestProject === undefined) throw new Error('expected the latest session project');
+      latestProject.additional_dirs = [extraDir, failureDir];
+      await writeFile(projectsPath, JSON.stringify(latestProjects), 'utf8');
+      const failureReloadDirs = vi.spyOn(currentProgram().dirs, 'reload');
+      vi.spyOn(currentProgram().instructions, 'reload').mockRejectedValueOnce(
+        new Error('instructions reload failed'),
+      );
+      await expect(client.reloadSession({ sessionId: 'ses_dirs_reload' })).rejects.toThrow(
+        'instructions reload failed',
+      );
+      expect(getLiveSessionById(client.engineAccessor, 'ses_dirs_reload')).toBe(beforeFailure);
+      expect(failureReloadDirs).toHaveBeenCalledTimes(1);
+      expect(dirsReminders()).toHaveLength(2);
+      expect(JSON.stringify(dirsReminders().at(-1))).toContain(
+        `Added directories: ${failureDir}.`,
+      );
+
+      await client.reloadSession({ sessionId: 'ses_dirs_reload' });
+      expect(dirsReminders()).toHaveLength(2);
+    } finally {
+      await client.close();
+    }
+  }, 15_000);
+
   it('serves getTodos from the live session todo state', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-'));
     tempDirs.push(homeDir);
@@ -2056,41 +2162,161 @@ describe('foldAgentWireReplay', () => {
     const dir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-fold-'));
     tempDirs.push(dir);
     const wirePath = join(dir, 'wire.jsonl');
+    const toolCalls = [
+      { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ls"}' },
+    ];
     const records = [
       { type: 'metadata', protocol_version: '1.5', created_at: 1000 },
       {
         type: 'context.append_message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+          ],
+        },
         time: 1001,
       },
-      { type: 'permission.set_mode', mode: 'auto', time: 1002 },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'running' },
+            { type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,BBB' } },
+          ],
+          toolCalls,
+        },
+        time: 1002,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'tool',
+          content: [
+            { type: 'text', text: 'ok' },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/result.mp4' } },
+          ],
+          toolCalls: [],
+          toolCallId: 'call_1',
+        },
+        time: 1003,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'context summary' }],
+          origin: { kind: 'compaction_summary' },
+        },
+        time: 1004,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'goal fork cleared' }],
+          origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+        },
+        time: 1005,
+      },
+      {
+        type: 'context.apply_compaction',
+        summary: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'legacy compaction' },
+            { type: 'image_url', imageUrl: { url: 'media://media_legacy' } },
+          ],
+        },
+        compactedCount: 1,
+        tokensAfter: 10,
+        keptUserMessageCount: 1,
+        time: 1006,
+      },
+      { type: 'permission.set_mode', mode: 'auto', time: 1007 },
       {
         type: 'tools.update_store',
         key: 'todo',
         value: [{ title: 'old', status: 'done' }],
-        time: 1003,
+        time: 1008,
       },
       {
         type: 'tools.update_store',
         key: 'todo',
         value: [{ title: 'new', status: 'pending' }],
-        time: 1004,
+        time: 1009,
       },
       // A v2-only op the v1 restore switch does not know: ignored.
-      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1005 },
+      { type: 'profile.bind', profileName: 'agent', systemPrompt: 'x', thinkingEffort: 'off', disallowedTools: [], time: 1010 },
     ];
     await writeFile(wirePath, records.map((record) => JSON.stringify(record)).join('\n') + '\n', 'utf-8');
-    const folded = await foldAgentWireReplay(wirePath);
-    expect(folded.replay).toEqual([
-      {
-        type: 'message',
-        message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
-        time: 1001,
-      },
-      { type: 'permission_updated', mode: 'auto', time: 1002 },
-    ]);
-    // Last write wins per store key.
-    expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+    for (const turnLimit of [undefined, 1]) {
+      const folded = await foldAgentWireReplay(wirePath, turnLimit);
+      expect(folded.replay).toEqual([
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'hello' },
+              { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+            ],
+            toolCalls: [],
+          },
+          time: 1001,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'running' },
+              { type: 'audio_url', audioUrl: { url: 'data:audio/mpeg;base64,BBB' } },
+            ],
+            toolCalls,
+          },
+          time: 1002,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'tool',
+            content: [
+              { type: 'text', text: 'ok' },
+              { type: 'video_url', videoUrl: { url: 'https://example.com/result.mp4' } },
+            ],
+            toolCallId: 'call_1',
+            toolCalls: [],
+          },
+          time: 1003,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'context summary' }],
+            toolCalls: [],
+            origin: { kind: 'compaction_summary' },
+          },
+          time: 1004,
+        },
+        {
+          type: 'message',
+          message: {
+            role: 'user',
+            content: [{ type: 'text', text: 'goal fork cleared' }],
+            toolCalls: [],
+            origin: { kind: 'system_trigger', name: 'goal_fork_cleared' },
+          },
+          time: 1005,
+        },
+        { type: 'permission_updated', mode: 'auto', time: 1007 },
+      ]);
+      // Last write wins per store key.
+      expect(folded.toolStore).toEqual({ todo: [{ title: 'new', status: 'pending' }] });
+    }
   });
 
   it('degrades to an empty fold on a missing or corrupt journal', async () => {

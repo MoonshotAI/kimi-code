@@ -1,4 +1,4 @@
-import { createToolMessage } from '#/llm-adapter/contract/message';
+import { createToolMessage } from '#human/llm/message';
 
 import type { ContextMessage } from './types';
 
@@ -20,8 +20,8 @@ export function closeTrailingOpenToolExchange(
   const answeredToolCallIds = new Set(
     history
       .slice(lastNonToolIndex + 1)
-      .map((message) => message.toolCallId)
-      .filter((toolCallId): toolCallId is string => typeof toolCallId === 'string'),
+      .filter((message) => message.role === 'tool')
+      .map((message) => message.toolCallId),
   );
   const openCalls = assistant.toolCalls.filter(
     (toolCall) => !answeredToolCallIds.has(toolCall.id),
