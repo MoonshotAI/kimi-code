@@ -22,6 +22,7 @@ export {
 export type { MediaRequirements } from "shared/model-resolution";
 
 let settingsSaveRevision = 0;
+let pendingRollbackModel: string | undefined;
 const MANAGED_KIMI_CODE_PROVIDER = "managed:kimi-code";
 
 function saveConfigWithRollback(
@@ -30,11 +31,15 @@ function saveConfigWithRollback(
   set: (state: Partial<SettingsState>) => void,
 ): void {
   const revision = ++settingsSaveRevision;
-  void bridge.saveConfig(config).catch((error: unknown) => {
+  pendingRollbackModel = rollback.currentModel;
+  void bridge.saveConfig(config).then(() => {
+    if (revision === settingsSaveRevision) pendingRollbackModel = undefined;
+  }).catch((error: unknown) => {
     // A later selection supersedes this request; rolling an older request back
     // would overwrite the user's latest choice.
     if (revision !== settingsSaveRevision) return;
     set(rollback);
+    pendingRollbackModel = undefined;
     toast.error(`Failed to save model settings: ${error instanceof Error ? error.message : String(error)}`);
   });
 }
@@ -281,6 +286,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   initModels: (models, defaultModel, defaultThinking, defaultThinkingEffort) => {
     settingsSaveRevision += 1;
+    pendingRollbackModel = undefined;
     const initialModel = defaultModel ?? "";
     const model = getModelById(models, initialModel);
 
@@ -298,6 +304,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   syncModels: (models, defaultModel, defaultThinking, defaultThinkingEffort, retiredDefault) => {
+    if (pendingRollbackModel !== undefined && getModelById(models, pendingRollbackModel) === undefined) {
+      settingsSaveRevision += 1;
+      pendingRollbackModel = undefined;
+    }
     const state = get();
     const hasSelection = state.modelsLoaded && state.currentModel.length > 0;
     const selectionMissing = hasSelection && getModelById(models, state.currentModel) === undefined;

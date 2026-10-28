@@ -78,20 +78,28 @@ function rollbackRequestKey(content: readonly ContentPart[]): string {
 export function mergePendingDraftMedia(
   existing: readonly PendingDraftMedia[],
   content: string | ContentPart[],
+  originalDraftMedia?: readonly PendingDraftMedia[],
 ): PendingDraftMedia[] {
-  if (!Array.isArray(content)) return [...existing];
-  const requestKey = rollbackRequestKey(content);
+  const requested = originalDraftMedia === undefined ? [] : [...originalDraftMedia];
+  if (originalDraftMedia === undefined && Array.isArray(content)) {
+    const requestKey = rollbackRequestKey(content);
+    for (const [index, part] of content.entries()) {
+      if (part.type !== "image_url" && part.type !== "video_url") continue;
+      requested.push({
+        id: (part.type === "image_url" ? part.image_url.id : part.video_url.id) || `pending:${requestKey}:${index}`,
+        dataUri: part.type === "image_url" ? part.image_url.url : part.video_url.url,
+      });
+    }
+  }
+
   const remaining = [...existing];
   const restored: PendingDraftMedia[] = [];
-  for (const [index, part] of content.entries()) {
-    if (part.type !== "image_url" && part.type !== "video_url") continue;
-    const dataUri = part.type === "image_url" ? part.image_url.url : part.video_url.url;
-    const id = (part.type === "image_url" ? part.image_url.id : part.video_url.id) || `pending:${requestKey}:${index}`;
-    const existingIndex = remaining.findIndex((item) => item.id === id);
+  for (const item of requested) {
+    const existingIndex = remaining.findIndex((candidate) => candidate.id === item.id);
     if (existingIndex >= 0) {
       restored.push(...remaining.splice(existingIndex, 1));
     } else {
-      restored.push({ id, dataUri });
+      restored.push(item);
     }
   }
   return restored.length === 0 ? [...existing] : [...restored, ...remaining];

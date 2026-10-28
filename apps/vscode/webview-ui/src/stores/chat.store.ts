@@ -83,12 +83,16 @@ export interface PendingInput {
   model: string;
   /** Present only while the blocked item is still at the head of the queue. */
   queueId?: string;
+  /** Webview-only rollback metadata; never sent to the provider. */
+  draftMedia?: DraftMediaItem[];
 }
 
 export interface QueuedItem {
   id: string;
   content: string | ContentPart[];
   model: string;
+  /** Webview-only rollback metadata; never sent to the provider. */
+  draftMedia?: DraftMediaItem[];
 }
 
 export interface ChatState {
@@ -121,7 +125,7 @@ export interface ChatState {
   rollbackInput: (content: string | ContentPart[]) => void;
   respondQuestion: (answers: Record<string, string>) => Promise<void>;
 
-  enqueue: (content: string | ContentPart[], model: string) => void;
+  enqueue: (content: string | ContentPart[], model: string, draftMedia?: DraftMediaItem[]) => void;
   removeFromQueue: (id: string) => void;
   editQueueItem: (id: string, content: string | ContentPart[]) => void;
   moveQueueItemUp: (id: string) => void;
@@ -272,7 +276,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentModel } = useSettingsStore.getState();
 
     const readyMedia = draftMedia.filter((m) => m.dataUri).map((m) => ({ id: m.id, dataUri: m.dataUri! }));
-    const content = readyMedia.length > 0 ? Content.build(text, readyMedia) : text;
+    const content = readyMedia.length > 0 ? Content.build(text, readyMedia.map((item) => item.dataUri)) : text;
     const pendingQueueId = previousPendingInput && isSameSendContent(previousPendingInput.content, content)
       ? previousPendingInput.queueId
       : undefined;
@@ -283,7 +287,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     // If streaming, enqueue instead of sending
     if (isStreaming) {
-      get().enqueue(content, currentModel);
+      get().enqueue(content, currentModel, readyMedia);
       set({ draftMedia: [] });
       return;
     }
@@ -298,6 +302,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draft.pendingInput = {
           content,
           model: currentModel,
+          draftMedia: readyMedia,
           ...(pendingQueueId === undefined ? {} : { queueId: pendingQueueId }),
         };
       }),
@@ -527,9 +532,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ pendingQuestion: null });
   },
 
-  enqueue: (content, model) => {
+  enqueue: (content, model, draftMedia) => {
     set((s) => ({
-      queue: [...s.queue, { id: crypto.randomUUID(), content, model }],
+      queue: [...s.queue, { id: crypto.randomUUID(), content, model, ...(draftMedia === undefined ? {} : { draftMedia }) }],
     }));
   },
 
@@ -539,7 +544,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   editQueueItem: (id, content) => {
     set((s) => ({
-      queue: s.queue.map((q) => (q.id === id ? { ...q, content } : q)),
+      queue: s.queue.map((q) => (q.id === id ? { ...q, content, draftMedia: undefined } : q)),
     }));
   },
 
@@ -575,8 +580,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       toast.error(noValidModelMessage(next.content));
       set((state) => ({
         isStreaming: false,
-        pendingInput: { content: next.content, model: next.model, queueId: next.id },
-        draftMedia: mergePendingDraftMedia(state.draftMedia, next.content),
+        pendingInput: { content: next.content, model: next.model, queueId: next.id, draftMedia: next.draftMedia },
+        draftMedia: mergePendingDraftMedia(state.draftMedia, next.content, next.draftMedia),
       }));
       return;
     }
@@ -587,7 +592,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draft.queue = rest;
         draft.isStreaming = true;
         draft.handshakeReceived = false;
-        draft.pendingInput = { content: next.content, model: next.model };
+        draft.pendingInput = { content: next.content, model: next.model, draftMedia: next.draftMedia };
         draft.draftMedia = [];
       }),
     );

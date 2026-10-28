@@ -248,7 +248,7 @@ function isTaskToolResult(steps: UIStep[] | undefined, toolCallId: string): bool
 function restorePendingDraftMedia(draft: ChatState): void {
   const content = draft.pendingInput?.content;
   if (content === undefined) return;
-  draft.draftMedia = mergePendingDraftMedia(draft.draftMedia, content);
+  draft.draftMedia = mergePendingDraftMedia(draft.draftMedia, content, draft.pendingInput?.draftMedia);
 }
 
 function isSameMessageContent(left: ChatMessage["content"], right: ChatMessage["content"]): boolean {
@@ -317,7 +317,13 @@ const eventHandlers: Record<string, EventHandler> = {
   },
 
   context_cleared: (draft) => {
-    draft.messages = [];
+    draft.messages = [{
+      id: crypto.randomUUID(),
+      role: "assistant",
+      content: "",
+      timestamp: Date.now(),
+      steps: [{ n: 1, items: [] }],
+    }];
     draft.pendingInput = null;
   },
 

@@ -360,6 +360,27 @@ describe("Webview background model catalog synchronization", () => {
     expect(boundary.toastError).not.toHaveBeenCalled();
   });
 
+  it("cancels a stale rollback when its captured model disappears", async () => {
+    let rejectSave!: (error: Error) => void;
+    const models = [
+      { id: "plain", name: "Plain", provider: "managed:kimi-code", capabilities: [] },
+      { id: "removed", name: "Removed", provider: "managed:kimi-code", capabilities: [] },
+      { id: "current", name: "Current", provider: "managed:kimi-code", capabilities: [] },
+    ];
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().initModels(models, "plain", false);
+    useSettingsStore.getState().updateModel("removed");
+    useSettingsStore.getState().updateModel("current");
+    useSettingsStore.getState().syncModels([models[0], models[2]], "current", false);
+
+    rejectSave(new Error("stale save failed"));
+    await Promise.resolve();
+
+    expect(useSettingsStore.getState().currentModel).toBe("current");
+  });
+
   it("does not cancel a pending save rollback when the selection is preserved", async () => {
     let rejectSave!: (error: Error) => void;
     boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
@@ -532,7 +553,7 @@ describe("Webview model resolution before sending", () => {
 
     expect(boundary.streamChat).not.toHaveBeenCalled();
     expect(useChatStore.getState().messages).toHaveLength(1);
-    expect(useChatStore.getState().pendingInput).toEqual({ content: "direct follow-up", model: "vision" });
+    expect(useChatStore.getState().pendingInput).toEqual({ content: "direct follow-up", model: "vision", draftMedia: [] });
   });
 
   it("allows model-free slash commands on an active session with incompatible history", () => {
@@ -600,7 +621,7 @@ describe("Webview model resolution before sending", () => {
 
     useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
 
-    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().messages).toHaveLength(1);
     expect(useChatStore.getState().draftMedia).toEqual([]);
     useChatStore.getState().sendMessage("follow-up");
     expect(boundary.streamChat).toHaveBeenCalledWith(
@@ -619,7 +640,7 @@ describe("Webview model resolution before sending", () => {
 
     useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
 
-    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().messages).toHaveLength(1);
     expect(useChatStore.getState().draftMedia).toEqual([{ id: "next-image", dataUri: image }]);
   });
 
@@ -829,6 +850,29 @@ describe("Webview MCP update bridge", () => {
 });
 
 describe("Webview chat error recovery", () => {
+  it("keeps local attachment ids out of outgoing provider content", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    const image = "data:image/png;base64,AA";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("local-uuid", image);
+
+    useChatStore.getState().sendMessage("image");
+
+    const content = boundary.streamChat.mock.calls[0]?.[0] as Array<{ type: string; image_url: { url: string; id?: string } }>;
+    expect(content.find((part) => part.type === "image_url")?.image_url).toEqual({ url: image });
+    expect(useChatStore.getState().pendingInput?.draftMedia).toEqual([{ id: "local-uuid", dataUri: image }]);
+  });
+
+  it("recreates the clear confirmation after resetting messages", () => {
+    useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
+    useChatStore.getState().processEvent({ type: "ContentPart", payload: { type: "text", text: "The context has been cleared." } });
+
+    expect(useChatStore.getState().messages.at(-1)?.steps?.[0]?.items).toContainEqual({
+      type: "text",
+      content: "The context has been cleared.",
+    });
+  });
+
   it("restores media in its original order and multiplicity after preflight failure", () => {
     const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in", "video_in"] };
     const image = "data:image/png;base64,AA";
