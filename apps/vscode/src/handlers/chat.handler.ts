@@ -110,9 +110,10 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
   try {
     // The host catalog may be newer than the queued Webview event. Resolve the
     // alias and effort again immediately before touching the session.
-    const config = toWebviewConfig(await ctx.harness.getConfig({ reload: true }));
+    const rawConfig = await ctx.harness.getConfig({ reload: true });
+    const config = toWebviewConfig(rawConfig);
     const mediaRequirements = sendMediaRequirements(params);
-    const sendModel = resolveSendModel(config.models, model, config.defaultModel, mediaRequirements);
+    const sendModel = resolveSendModel(config.models, model, rawConfig.defaultModel ?? null, mediaRequirements);
     if (sendModel === undefined) {
       const message = mediaRequirements.image || mediaRequirements.video
         ? "The selected model does not support these attachments. Choose another model before sending."

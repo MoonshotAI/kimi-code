@@ -314,6 +314,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     );
 
+    // Keep the failed input in pendingInput and the rest in the queue. Sending
+    // the next item would overwrite the failed one when the model must be fixed first.
+    if (
+      event.type === "error"
+      && "phase" in event
+      && event.phase === "preflight"
+      && "code" in event
+      && event.code === "model.not_configured"
+    ) {
+      return;
+    }
+
     // Auto-send next queued item when streaming ends (complete or error)
     if (event.type === "stream_complete" || event.type === "error") {
       const { queue, isStreaming: stillStreaming } = get();

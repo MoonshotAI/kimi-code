@@ -109,4 +109,42 @@ describe("Extension-host model validation before sending", () => {
       "view-1",
     );
   });
+
+  it("does not synthesize a fallback when the fresh config has no default", async () => {
+    const getOrCreateSession = vi.fn();
+    const broadcast = vi.fn();
+    const ctx = {
+      webviewId: "view-1",
+      workDir: "/workspace",
+      harness: {
+        getConfig: vi.fn().mockResolvedValue({
+          models: {
+            "other-model": { provider: "other", model: "other-model", capabilities: [] },
+          },
+        }),
+      },
+      getOrCreateSession,
+      saveAllDirty: vi.fn(),
+      broadcast,
+      logError: vi.fn(),
+    } as unknown as HandlerContext;
+
+    const result = await chatHandlers[Methods.StreamChat]!(
+      { content: "hi", model: "removed-model", effort: "off" },
+      ctx,
+    );
+
+    expect(result).toEqual({ done: false });
+    expect(getOrCreateSession).not.toHaveBeenCalled();
+    expect(broadcast).toHaveBeenCalledWith(
+      "streamEvent",
+      {
+        type: "error",
+        code: "model.not_configured",
+        message: "The selected model is no longer available. Choose another model before sending.",
+        phase: "preflight",
+      },
+      "view-1",
+    );
+  });
 });

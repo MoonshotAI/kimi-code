@@ -584,6 +584,18 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     } as never);
   }
 
+  it("rejects a selection that disappeared before the config save", async () => {
+    mockConfig();
+
+    const result = await bridge.handle(
+      { id: "rpc-stale", method: Methods.SaveConfig, params: { model: "removed-model", thinking: true, effort: "high" } },
+      "view-1",
+    );
+
+    expect(result).toMatchObject({ id: "rpc-stale", error: expect.stringContaining("no longer available") });
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
+  });
+
   it("persists a non-top effort as the global default", async () => {
     mockConfig();
 
@@ -650,7 +662,10 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
   });
 
   it("persists the concrete effort when the model's levels are unknown", async () => {
-    host.harness.getConfig.mockResolvedValue({ defaultModel: "other/model", models: {} });
+    host.harness.getConfig.mockResolvedValue({
+      defaultModel: "other/model",
+      models: { "custom/model": { provider: "custom", model: "model" } },
+    });
 
     await bridge.handle(
       { id: "rpc-1", method: Methods.SaveConfig, params: { model: "custom/model", thinking: true, effort: "max" } },
