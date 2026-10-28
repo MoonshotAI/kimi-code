@@ -103,6 +103,7 @@ function defaultEffortForModel(model: ModelConfig, defaultThinking: boolean, con
 }
 
 function supportsThinkingEffort(model: ModelConfig, effort: string): boolean {
+  if (model.strict_thinking_validation !== true) return true;
   const mode = getModelThinkingMode(model);
   if (mode === "none") return effort === "off";
   if (mode === "switch") return effort === "off" || effort === "on";

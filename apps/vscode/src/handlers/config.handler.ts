@@ -158,6 +158,8 @@ function toWebviewModel(id: string, model: ModelAlias, providerType?: ProviderTy
     support_efforts:
       effective.supportEfforts === undefined ? undefined : [...effective.supportEfforts],
     default_effort: effective.defaultEffort,
+    // The core currently enables strictThinkingValidation only for the Kimi trait.
+    strict_thinking_validation: providerType === "kimi",
   };
 }
 

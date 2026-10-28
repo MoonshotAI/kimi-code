@@ -47,6 +47,7 @@ const MODELS = [
     capabilities: ["thinking"],
     support_efforts: ["low", "high"],
     default_effort: "high",
+    strict_thinking_validation: true,
   },
   { id: "always", name: "Always", provider: "managed:kimi-code", capabilities: ["always_thinking"] },
 ];
@@ -240,6 +241,7 @@ describe("Webview background model catalog synchronization", () => {
       id: "successor",
       name: "Successor",
       provider: "managed:kimi-code",
+      strict_thinking_validation: true,
       capabilities: ["thinking"],
       support_efforts: ["low", "high"],
       default_effort: "low",
@@ -277,6 +279,29 @@ describe("Webview background model catalog synchronization", () => {
     expect(boundary.saveConfig).not.toHaveBeenCalled();
   });
 
+  it("preserves an unlisted session effort for a permissive provider", () => {
+    const permissive = {
+      id: "permissive",
+      name: "Permissive",
+      provider: "openai",
+      capabilities: ["thinking"],
+      support_efforts: ["low", "high"],
+      default_effort: "low",
+      strict_thinking_validation: false,
+    };
+    useSettingsStore.getState().initModels([permissive], "permissive", true, "low");
+    useSettingsStore.getState().setThinkingEffort("max");
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().syncModels([permissive], "permissive", true, "low");
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "permissive",
+      thinkingEffort: "max",
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
   it("normalizes effort when a retirement successor cannot use it", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
     boundary.saveConfig.mockClear();
@@ -284,6 +309,7 @@ describe("Webview background model catalog synchronization", () => {
       id: "successor",
       name: "Successor",
       provider: "managed:kimi-code",
+      strict_thinking_validation: true,
       capabilities: [],
     };
 

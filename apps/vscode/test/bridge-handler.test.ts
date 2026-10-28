@@ -147,7 +147,7 @@ describe("Model catalog auto-refresh", () => {
   it("broadcasts refreshed public model config", async () => {
     vi.stubEnv("KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS", "0");
     host.harness.getConfig.mockResolvedValue({
-      providers: {},
+      providers: { "managed:kimi-code": { type: "kimi" } },
       defaultModel: "new-model",
       models: {
         "new-model": {
@@ -171,7 +171,11 @@ describe("Model catalog auto-refresh", () => {
       expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {
         config: expect.objectContaining({
           defaultModel: "new-model",
-          models: [expect.objectContaining({ id: "new-model", name: "New Model" })],
+          models: [expect.objectContaining({
+            id: "new-model",
+            name: "New Model",
+            strict_thinking_validation: true,
+          })],
         }),
         retiredDefault: { from: "old-model", to: "new-model", from_display_name: "Old Model" },
       });
@@ -315,6 +319,7 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
           name: "claude-sonnet",
           provider: "anthropic",
           adaptive_thinking: true,
+          strict_thinking_validation: false,
         }],
       },
     });
