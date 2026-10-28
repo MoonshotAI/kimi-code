@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import type * as vscode from "vscode";
 
-import { Methods } from "../shared/bridge";
+import { Events, Methods } from "../shared/bridge";
 import { BridgeHandler } from "../src/bridge-handler";
 
 const host = vi.hoisted(() => {
@@ -25,6 +25,7 @@ const host = vi.hoisted(() => {
     homeDir: "/tmp/kimi-code-test-home",
     close: vi.fn(async () => undefined),
     getConfig: vi.fn(),
+    refreshProviderModels: vi.fn(),
     setConfig: vi.fn(async () => undefined),
     listSessions: vi.fn(async () => []),
     resumeSession: vi.fn(),
@@ -86,6 +87,7 @@ let bridge: BridgeHandler;
 let root: string;
 let showLogs: Mock<() => void>;
 let writeLog: Mock<(message: string) => void>;
+let broadcast: Mock<(event: string, data: unknown, webviewId?: string) => void>;
 let workspaceState: { get: ReturnType<typeof vi.fn>; update: ReturnType<typeof vi.fn> };
 
 beforeEach(async () => {
@@ -93,15 +95,18 @@ beforeEach(async () => {
   host.workspaceFolders.splice(0, host.workspaceFolders.length, { uri: new host.Uri(root) });
   showLogs = vi.fn();
   writeLog = vi.fn();
+  broadcast = vi.fn();
   host.harness.resumeSession.mockReset();
   host.harness.getConfig.mockReset();
   host.harness.getConfig.mockResolvedValue({ models: {} });
+  host.harness.refreshProviderModels.mockReset();
+  host.harness.refreshProviderModels.mockResolvedValue({ changed: [], unchanged: [], failed: [] });
   host.createKimiHarness.mockImplementation(() => host.harness);
   host.showWarningMessage.mockReset();
   host.showWarningMessage.mockResolvedValue(undefined);
   workspaceState = { get: vi.fn((_key, fallback) => fallback), update: vi.fn() };
   bridge = new BridgeHandler(
-    vi.fn(),
+    broadcast,
     workspaceState as unknown as vscode.Memento,
     join(root, "global-storage"),
     vi.fn(),
@@ -135,6 +140,44 @@ describe("Engine startup", () => {
     });
 
     expect(constructBridge).toThrow(/^Failed to start the Kimi engine: engine boom\.$/);
+  });
+});
+
+describe("Model catalog auto-refresh", () => {
+  it("broadcasts refreshed public model config", async () => {
+    vi.stubEnv("KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS", "0");
+    host.harness.getConfig.mockResolvedValue({
+      providers: {},
+      defaultModel: "new-model",
+      models: {
+        "new-model": {
+          provider: "managed:kimi-code",
+          model: "new-model",
+          displayName: "New Model",
+          maxContextSize: 128_000,
+        },
+      },
+    });
+
+    host.harness.refreshProviderModels.mockResolvedValue({
+      changed: [],
+      unchanged: [],
+      failed: [],
+      retired_default: { from: "old-model", to: "new-model", from_display_name: "Old Model" },
+    });
+    await bridge.startModelCatalogRefresh();
+
+    await vi.waitFor(() => {
+      expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {
+        config: expect.objectContaining({
+          defaultModel: "new-model",
+          models: [expect.objectContaining({ id: "new-model", name: "New Model" })],
+        }),
+        retiredDefault: { from: "old-model", to: "new-model", from_display_name: "Old Model" },
+      });
+    });
+    expect(host.harness.refreshProviderModels).toHaveBeenCalledWith({ scope: "all" });
+    expect(host.harness.setConfig).not.toHaveBeenCalled();
   });
 });
 

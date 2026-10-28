@@ -178,6 +178,11 @@ export interface KimiConfig {
   models: ModelConfig[];
 }
 
+export interface ModelCatalogChangedEvent {
+  config: KimiConfig;
+  retiredDefault?: { from: string; to: string; from_display_name: string };
+}
+
 /** Placeholder returned to the Webview instead of a stored MCP credential. */
 export const MCP_SECRET_MASK = '••••••••';
 

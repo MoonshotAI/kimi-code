@@ -48,6 +48,10 @@ export class KimiWebviewProvider implements vscode.WebviewViewProvider {
     return this.bridgeHandler.runtime.harness;
   }
 
+  startModelCatalogRefresh(): Promise<void> {
+    return this.bridgeHandler.startModelCatalogRefresh();
+  }
+
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     const webviewId = `sidebar_${crypto.randomUUID()}`;
     this.setupWebview(webviewId, webviewView.webview);

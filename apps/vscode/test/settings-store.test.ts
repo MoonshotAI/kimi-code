@@ -197,6 +197,88 @@ describe("Webview model metadata", () => {
   });
 });
 
+describe("Webview background model catalog synchronization", () => {
+  it("adds new models without changing the current model or thinking effort", () => {
+    useSettingsStore.getState().initModels(MODELS, "plain", false);
+    useSettingsStore.setState({ currentModel: "reasoning", thinkingEffort: "low" });
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().syncModels([
+      ...MODELS,
+      { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+    ], "plain", false);
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      defaultModel: "plain",
+      modelsLoaded: true,
+    });
+    expect(useSettingsStore.getState().models.map((model) => model.id)).toContain("new-model");
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("keeps a removed current model when no retirement replacement is declared", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "high",
+      defaultModel: "always",
+    });
+    expect(useSettingsStore.getState().models.map((model) => model.id)).toEqual(["always", "reasoning"]);
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("follows a declared retirement replacement without resetting thinking effort", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+    const successor = {
+      id: "successor",
+      name: "Successor",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+      support_efforts: ["low", "high"],
+      default_effort: "low",
+    };
+
+    useSettingsStore.getState().syncModels(
+      [successor],
+      "successor",
+      false,
+      undefined,
+      { from: "reasoning", to: "successor" },
+    );
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "successor",
+      thinkingEffort: "high",
+      defaultModel: "successor",
+      models: [successor],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not cancel a pending save rollback when the selection is preserved", async () => {
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().updateModel("reasoning");
+    expect(useSettingsStore.getState().currentModel).toBe("reasoning");
+
+    useSettingsStore.getState().syncModels(MODELS, "plain", false);
+    rejectSave(new Error("config.toml is read-only"));
+
+    await vi.waitFor(() => {
+      expect(useSettingsStore.getState().currentModel).toBe("plain");
+    });
+  });
+});
+
 describe("Webview MCP update bridge", () => {
   it("sends a lossless structured MCP edit request to the extension host", async () => {
     const posted: unknown[] = [];

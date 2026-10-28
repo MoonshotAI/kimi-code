@@ -184,6 +184,13 @@ interface SettingsState {
   setCurrentWorkDir: (workDir: string | null) => void;
   setWorkspaceRoot: (root: string | null) => void;
   initModels: (models: ModelConfig[], defaultModel: string | null, defaultThinking: boolean, defaultThinkingEffort?: string) => void;
+  syncModels: (
+    models: ModelConfig[],
+    defaultModel: string | null,
+    defaultThinking: boolean,
+    defaultThinkingEffort?: string,
+    retiredDefault?: { from: string; to: string },
+  ) => void;
   setWireSlashCommands: (commands: SlashCommandInfo[]) => void;
   setIsLoggedIn: (loggedIn: boolean) => void;
   getCurrentThinkingMode: () => ThinkingMode;
@@ -327,6 +334,37 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       defaultThinkingEffort,
       modelsLoaded: true,
       currentModel: initialModel,
+      thinkingEffort,
+    });
+  },
+
+  syncModels: (models, defaultModel, defaultThinking, defaultThinkingEffort, retiredDefault) => {
+    const state = get();
+    const hasSelection = state.modelsLoaded && state.currentModel.length > 0;
+    const selectionMissing = hasSelection && getModelById(models, state.currentModel) === undefined;
+    const replacement = selectionMissing && retiredDefault?.from === state.currentModel
+      ? getModelById(models, retiredDefault.to)?.id
+      : undefined;
+    const currentModel = hasSelection
+      ? replacement ?? state.currentModel
+      : getModelById(models, defaultModel ?? "")?.id ?? models[0]?.id ?? "";
+    const previousModel = hasSelection ? getModelById(state.models, state.currentModel) : undefined;
+    const nextModels = selectionMissing && replacement === undefined && previousModel !== undefined
+      ? [...models, previousModel]
+      : models;
+    const model = getModelById(nextModels, currentModel);
+    const thinkingEffort = hasSelection
+      ? state.thinkingEffort
+      : model ? defaultEffortForModel(model, defaultThinking, defaultThinkingEffort) : "off";
+    if (replacement !== undefined) settingsSaveRevision += 1;
+
+    set({
+      models: nextModels,
+      defaultModel,
+      defaultThinking,
+      defaultThinkingEffort,
+      modelsLoaded: true,
+      currentModel,
       thinkingEffort,
     });
   },

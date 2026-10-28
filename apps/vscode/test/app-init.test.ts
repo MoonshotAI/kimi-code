@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 /**
  * Scenario: App-level view routing after init, across login state transitions.
  * Responsibilities: the sign-in screen must stay reachable from every state — in
@@ -8,17 +9,67 @@
  * Wiring: resolveAppView is pure; the bridge and toast boundaries are mocked away.
  * Run: pnpm exec vitest run --config apps/vscode/vitest.config.ts test/app-init.test.ts
  */
-import { describe, expect, it, vi } from "vitest";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const boundary = vi.hoisted(() => ({
+  listeners: new Map<string, (data: unknown) => void>(),
+  on: vi.fn(),
+  checkWorkspace: vi.fn(),
+  getExtensionConfig: vi.fn(),
+  getSlashCommands: vi.fn(),
+  checkLoginStatus: vi.fn(),
+  getModels: vi.fn(),
+}));
 
 vi.mock("@/services", () => ({
-  bridge: {},
-  Events: {},
+  bridge: {
+    on: boundary.on,
+    checkWorkspace: boundary.checkWorkspace,
+    getExtensionConfig: boundary.getExtensionConfig,
+    getSlashCommands: boundary.getSlashCommands,
+    checkLoginStatus: boundary.checkLoginStatus,
+    getModels: boundary.getModels,
+  },
+  Events: {
+    ExtensionConfigChanged: "extensionConfigChanged",
+    ModelCatalogChanged: "modelCatalogChanged",
+  },
 }));
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: vi.fn(), warning: vi.fn() },
 }));
 
-import { resolveAppView, type AppStatus } from "../webview-ui/src/hooks/useAppInit";
+import {
+  resolveAppView,
+  useAppInit,
+  type AppStatus,
+} from "../webview-ui/src/hooks/useAppInit";
+
+const { useSettingsStore } = await import("../webview-ui/src/stores/settings.store");
+
+beforeEach(() => {
+  boundary.listeners.clear();
+  boundary.on.mockReset().mockImplementation((event: string, handler: (data: unknown) => void) => {
+    boundary.listeners.set(event, handler);
+    return () => boundary.listeners.delete(event);
+  });
+  boundary.checkWorkspace.mockReset().mockResolvedValue({ hasWorkspace: true, workspaceRoot: "/workspace" });
+  boundary.getExtensionConfig.mockReset().mockResolvedValue({});
+  boundary.getSlashCommands.mockReset().mockResolvedValue([]);
+  boundary.checkLoginStatus.mockReset().mockResolvedValue({ loggedIn: true });
+  boundary.getModels.mockReset().mockResolvedValue({
+    defaultModel: null,
+    defaultThinking: false,
+    models: [],
+  });
+  useSettingsStore.getState().initModels([], null, false);
+  useSettingsStore.getState().setIsLoggedIn(false);
+});
+
+afterEach(() => {
+  cleanup();
+});
 
 function resolve(
   status: AppStatus,
@@ -82,5 +133,63 @@ describe("resolveAppView", () => {
     for (const status of ["loading", "no-workspace", "runtime-error"] as const) {
       expect(resolve(status)).toEqual({ view: "status", status, canGoToLogin: false });
     }
+  });
+});
+
+describe("useAppInit model catalog events", () => {
+  it("enters the ready state when a background refresh provides the first models", async () => {
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("no-models");
+    });
+
+    const config = {
+      defaultModel: "new-model",
+      defaultThinking: false,
+      models: [
+        { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+      ],
+    };
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({ config }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "new-model",
+      thinkingEffort: "off",
+    });
+  });
+
+  it("keeps the current selection visible when its catalog entry disappears without replacement", async () => {
+    const initialModel = {
+      id: "current-model",
+      name: "Current Model",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+    };
+    boundary.getModels.mockResolvedValue({
+      defaultModel: initialModel.id,
+      defaultThinking: true,
+      models: [initialModel],
+    });
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({
+      config: { defaultModel: null, defaultThinking: false, models: [] },
+      retiredDefault: undefined,
+    }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: initialModel.id,
+      thinkingEffort: "on",
+      models: [initialModel],
+    });
   });
 });
