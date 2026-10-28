@@ -9,7 +9,6 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -18,7 +17,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
-import { createVideoUploader, registerMediaTools } from './registerMediaTools';
+import { registerMediaTools } from './registerMediaTools';
 import { ISessionMediaStore } from './sessionMediaStore';
 
 export const mediaRegisteredKeyKey = defineState<string | undefined>(
@@ -35,15 +34,14 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
-    @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher dispatcher: IEventDispatcher,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @ISessionMediaStore private readonly attachmentStore: ISessionMediaStore,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
-    @ISessionMediaStore private readonly attachmentStore?: ISessionMediaStore,
   ) {
     super();
     this.states.contributeState(mediaRegisteredKeyKey);
@@ -117,19 +115,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     const skillCatalog = this.skillCatalog;
     const environment = this.environment;
     const pathClass = inspected?.host?.pathClass;
-    const uploader = createVideoUploader(
-      model === undefined
-        ? undefined
-        : this.loopService.requester.uploadVideo?.bind(this.loopService.requester),
-      {
-        client: this.telemetry,
-        props: {
-          model: modelAlias,
-          provider_type: model?.providerType ?? model?.protocol,
-          protocol: model?.protocol,
-        },
-      },
-    );
     this.registration = registerMediaTools(this.toolRegistry, {
       attachmentStore: this.attachmentStore,
       environment,
@@ -146,8 +131,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         },
       },
       capabilities,
-      videoUploader: uploader,
-      inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       providerType: model?.providerType,
       telemetry: this.telemetry,
     });

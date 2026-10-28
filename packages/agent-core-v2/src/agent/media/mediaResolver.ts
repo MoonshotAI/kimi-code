@@ -3,17 +3,13 @@ import type { Message } from '#human/llm/message';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 
-export interface AgentMediaResolution {
-  readonly model: Model;
-  readonly requester: InitializedLlmRequester;
-}
-
 export interface IAgentMediaResolverService {
   readonly _serviceBrand: undefined;
 
   resolve(
     messages: readonly Message[],
-    resolution: AgentMediaResolution,
+    model: Model,
+    requester: InitializedLlmRequester,
     signal?: AbortSignal,
   ): Promise<readonly Message[]>;
   displayPaths(messages: readonly Message[]): Promise<ReadonlyMap<string, string>>;

@@ -1,7 +1,5 @@
 import type { ModelCapability } from '#human/llm-requester/capability';
 import type { ContentPart } from '#human/llm/message';
-import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import { inlineVideoPart, isMediaUploadAuthError } from '#/agent/media/videoUpload';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { isDaemonFileUrl } from '#/agent/media/mediaRef';
@@ -46,7 +44,6 @@ import {
   MAX_MEDIA_MEGABYTES,
   ReadMediaFileInputSchema,
   type ReadMediaFileInput,
-  type VideoUploader,
 } from './read-media-file';
 import readMediaDescriptionHead from './read-media.md?raw';
 
@@ -174,57 +171,26 @@ function buildFullResolutionLimitError(
   );
 }
 
-function shouldSurfaceVideoUploadError(error: unknown, inlineVideoSupported: boolean): boolean {
-  if (error instanceof VideoUploadUnsupportedError) return !inlineVideoSupported;
-  return isMediaUploadAuthError(error);
-}
-
 export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   declare readonly _serviceBrand: undefined;
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly telemetry: ITelemetryService | undefined;
-  private readonly inlineVideoSupported: boolean;
   private readonly providerType: string | undefined;
   private readonly inlineImageByteBudget: number;
   constructor(
     private readonly environment: IAgentEnvironmentService,
     private readonly workspace: WorkspaceConfig,
     private readonly capabilities: ModelCapability,
-    private readonly videoUploader?: VideoUploader,
+    private readonly attachmentStore: ISessionMediaStore,
     telemetry?: ITelemetryService,
-    inlineVideoSupported?: boolean,
     providerType?: string,
-    private readonly attachmentStore?: ISessionMediaStore,
   ) {
     this.description = buildDescription(capabilities);
     this.telemetry = telemetry;
-    this.inlineVideoSupported = inlineVideoSupported ?? false;
     this.providerType = providerType;
     this.inlineImageByteBudget = providerImagePolicy(providerType).inlineByteBudget;
-  }
-
-  private async videoContentPart(
-    data: Buffer,
-    mimeType: string,
-    safePath: string,
-    signal?: AbortSignal,
-  ): Promise<ContentPart> {
-    signal?.throwIfAborted();
-    if (this.videoUploader !== undefined) {
-      try {
-        return await this.videoUploader({
-          data,
-          mimeType,
-          filename: safePath.split(/[\\/]/).at(-1),
-        }, { signal });
-      } catch (error) {
-        if (signal?.aborted) throw error;
-        if (shouldSurfaceVideoUploadError(error, this.inlineVideoSupported)) throw error;
-      }
-    }
-    return inlineVideoPart(data, mimeType);
   }
 
   async resolveExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
@@ -413,7 +379,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
 
       const data = Buffer.from(await source.readBytes());
       let dimensions = fileType.kind === 'image' ? sniffImageDimensions(data) : null;
-      let mediaPart: ContentPart;
+      let mediaBytes: Uint8Array;
+      let mediaMimeType: string;
       let delivery: ImageDelivery | undefined;
       if (fileType.kind === 'image') {
         if (args.region !== undefined) {
@@ -425,11 +392,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           if (!outcome.ok) {
             return { isError: true, output: `Cannot read region from "${args.path}": ${outcome.error}` };
           }
-          const base64 = Buffer.from(outcome.data).toString('base64');
-          mediaPart = {
-            type: 'image_url',
-            imageUrl: { url: `data:${outcome.mimeType};base64,${base64}` },
-          };
+          mediaBytes = outcome.data;
+          mediaMimeType = outcome.mimeType;
           delivery = {
             kind: 'crop',
             width: outcome.width,
@@ -451,11 +415,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
               ),
             };
           }
-          const base64 = data.toString('base64');
-          mediaPart = {
-            type: 'image_url',
-            imageUrl: { url: `data:${fileType.mimeType};base64,${base64}` },
-          };
+          mediaBytes = data;
+          mediaMimeType = fileType.mimeType;
           delivery = {
             kind: 'full',
             width: dimensions?.width ?? 0,
@@ -499,11 +460,8 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
               }),
             };
           }
-          const base64 = Buffer.from(compressed.data).toString('base64');
-          mediaPart = {
-            type: 'image_url',
-            imageUrl: { url: `data:${compressed.mimeType};base64,${base64}` },
-          };
+          mediaBytes = compressed.data;
+          mediaMimeType = compressed.mimeType;
           delivery = {
             kind: compressed.changed ? 'downsampled' : 'untouched',
             width: compressed.width,
@@ -516,9 +474,20 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           }
         }
       } else {
-        mediaPart = await this.videoContentPart(data, fileType.mimeType, safePath, signal);
+        mediaBytes = data;
+        mediaMimeType = fileType.mimeType;
       }
 
+      const reference = await this.attachmentStore.put({
+        bytes: mediaBytes,
+        mimeType: mediaMimeType,
+        filename: safePath.split(/[\\/]/).at(-1) ?? safePath,
+        signal,
+      });
+      const mediaPart: ContentPart =
+        fileType.kind === 'image'
+          ? { type: 'image_url', imageUrl: { url: reference } }
+          : { type: 'video_url', videoUrl: { url: reference } };
       const tag = fileType.kind === 'image' ? 'image' : 'video';
       const tagPath = isDaemonFileUrl(args.path) ? args.path : safePath;
       const openText = `<${tag} path="${tagPath}">`;

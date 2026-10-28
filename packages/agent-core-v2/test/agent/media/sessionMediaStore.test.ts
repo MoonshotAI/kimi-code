@@ -370,12 +370,18 @@ describe('SessionMediaStoreService', () => {
     );
   });
 
-  it('reads canonical bytes independently from the daemon file store', async () => {
-    await store.materialize(input());
-    await expect(store.read('f_1')).resolves.toEqual({
-      data: BYTES,
-      name: 'f_1.mp4',
+  it('puts and gets canonical media with its metadata', async () => {
+    const reference = await store.put({
+      bytes: BYTES,
+      mimeType: 'video/mp4',
+      filename: 'clip.mp4',
     });
+
+    expect(reference).toMatch(/^kimi-file:\/\/f_/);
+    const stored = await store.get(reference);
+    expect(stored?.mimeType).toBe('video/mp4');
+    expect(stored?.filename).toBe('clip.mp4');
+    expect(Buffer.from(stored!.bytes)).toEqual(BYTES);
   });
 
   it('opens canonical media with its persisted download metadata', async () => {

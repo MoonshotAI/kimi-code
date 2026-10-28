@@ -18,8 +18,6 @@ import type {
   LlmRequestConfig,
   LlmRequester,
 } from '#human/llm-requester/requester';
-import type { VideoUploadInput } from '#human/media/upload';
-import type { VideoURLPart } from '#human/llm/message';
 
 import { generateCallOf } from './scripted-generate';
 import { findGenerateCallPrefixBreak, type GenerateCall } from './snapshots';
@@ -75,14 +73,6 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
 
   lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined {
     return this.inner.lastTurnRequest();
-  }
-
-  uploadVideo(
-    input: VideoUploadInput,
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<VideoURLPart> {
-    if (this.inner.uploadVideo === undefined) throw new Error('video upload is unavailable');
-    return this.inner.uploadVideo(input, options);
   }
 
   request(

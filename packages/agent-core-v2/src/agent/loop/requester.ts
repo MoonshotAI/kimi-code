@@ -1,23 +1,17 @@
 import { createHash } from 'node:crypto';
 import { defineState } from '#/state/state';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import {
-  countMediaParts,
-  createMediaDegradeRecovery,
-} from '#human/llm/builtin/policy/media-degrade';
+import { countMediaParts } from '#human/llm/builtin/policy/media-degrade';
 import {
   createRecoveryLedger,
   type LlmRecoveryLedger,
   type LlmRecoveryRecord,
 } from '#human/llm/policy/recovery';
-import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import { withProtocolCapabilities } from '#human/llm/protocol/rules/model';
-import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
-import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -28,8 +22,7 @@ import {
 } from '#/llm-adapter/contract/errors';
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
-import { type Message, type ToolDescription as Tool, type VideoURLPart } from '#human/llm/message';
-import type { VideoUploadInput } from '#human/media/upload';
+import { type Message, type ToolDescription as Tool } from '#human/llm/message';
 import { emptyUsage, inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
@@ -42,7 +35,6 @@ import {
   type ModelRequestParams,
   type ModelRequestTiming,
 } from '#/llm-adapter/model/generate';
-import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
 import type { ModelOverrides } from '#/llm-adapter/model/model.types';
 import { IModelService } from '#/llm-adapter/model/model';
 import { completionBudgetParams, resolveCompletionBudget } from '#/llm-adapter/model/completion-budget';
@@ -81,7 +73,7 @@ import {
   hasStrictStructureRecovery,
 } from './projectionPolicy';
 import { createToolSelectResolver } from './toolSelectPolicy';
-import { uploadVideo as uploadCoreVideo } from '#/llm-adapter/model/media';
+import type { AgentMediaPolicyFactory } from './mediaPolicy';
 import { isAbortError } from '#/_base/utils/abort';
 import { parseBooleanEnv } from '#/_base/utils/env';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
@@ -163,12 +155,12 @@ export const llmRequesterLastTurnRequestKey = defineState<AgentLLMTurnRequestSna
 
 export class AgentLoopRequester implements LoopRequester {
   private readonly projector: AgentLoopProjector;
+  private mediaPolicyFactory: AgentMediaPolicyFactory | undefined;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
-    @IAgentMediaResolverService private readonly mediaResolver: IAgentMediaResolverService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionUsageService private readonly usage: ISessionUsageService,
     @IConfigService private readonly config: IConfigService,
@@ -189,6 +181,10 @@ export class AgentLoopRequester implements LoopRequester {
     this.states.contributeState(llmRequesterMediaRecoveryKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
     this.states.contributeState(llmRequesterLastTurnRequestKey);
+  }
+
+  registerMediaPolicy(factory: AgentMediaPolicyFactory): void {
+    this.mediaPolicyFactory = factory;
   }
 
   private get lastConfigLogSignature(): string | undefined {
@@ -226,19 +222,6 @@ export class AgentLoopRequester implements LoopRequester {
 
   lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined {
     return this.states.get(llmRequesterLastTurnRequestKey);
-  }
-
-  uploadVideo(
-    input: VideoUploadInput,
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<VideoURLPart> {
-    const model = this.modelCatalog.get(this.profile.resolveModelContext().modelAlias);
-    const request = this.protocolRegistry.request(model);
-    return runWithCredentialRecovery(
-      model.credentialProvider,
-      () => uploadCoreVideo(model, request, input, options?.signal),
-      options?.signal,
-    );
   }
 
   async request(
@@ -368,8 +351,7 @@ export class AgentLoopRequester implements LoopRequester {
     const toolSelectResolver = createToolSelectResolver(this.toolSelect);
     const structureResolver = createStructureResolver(this.projector);
     const structureRecovery = createStructureRecovery(this.projector);
-    const mediaPaths =
-      countMediaParts(request.messages) === 0 ? new Map<string, string>() : await this.mediaResolver.displayPaths(request.messages);
+    const mediaPolicy = this.mediaPolicyFactory?.(request.model, request.request);
     let previousMediaCount: number | undefined;
     let previousMediaRecovery: LlmRecoveryRecord | undefined;
     const run = async (): Promise<AgentLLMRequestFinish> => {
@@ -401,22 +383,14 @@ export class AgentLoopRequester implements LoopRequester {
         {
           recoveries: [
             structureRecovery,
-            createMediaDegradeRecovery((part) => {
-              const path = mediaPaths.get(mediaUrlOf(part));
-              if (path === undefined) return undefined;
-              const kind = mediaKindOfPart(part);
-              if (kind === undefined) return undefined;
-              return { type: 'text', text: buildMediaPathTag(kind, path) };
-            }),
+            ...(mediaPolicy === undefined ? [] : [mediaPolicy.recovery]),
           ],
-          resolvers: [toolSelectResolver, structureResolver],
+          resolvers: [
+            toolSelectResolver,
+            structureResolver,
+            ...(mediaPolicy === undefined ? [] : [mediaPolicy.resolver]),
+          ],
           recoveryLedger,
-          resolveMessages: (messages, resolveSignal) =>
-            this.mediaResolver.resolve(
-              messages,
-              { model: request.model, requester: request.request },
-              resolveSignal,
-            ),
           onAttempt: (attemptInput, attemptRequest) => {
             input = attemptInput;
             onRequestTrace(undefined);

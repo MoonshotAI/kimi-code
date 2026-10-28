@@ -14,7 +14,9 @@ import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { retryErrorFields } from '#/_base/utils/retry';
 import { AgentLoopRequester } from './requester';
+import { createAgentMediaPolicy } from './mediaPolicy';
 import type { LoopRequester } from './requesterContract';
+import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
@@ -179,9 +181,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IPluginService private readonly plugins: IPluginService,
     @ISessionRunGate private readonly runGate: ISessionRunGate,
     @ILogService private readonly logger: ILogService,
+    @IAgentMediaResolverService mediaResolver: IAgentMediaResolverService,
   ) {
     super();
-    this.requester = instantiation.createInstance(AgentLoopRequester);
+    const requester = instantiation.createInstance(AgentLoopRequester);
+    requester.registerMediaPolicy((model, request) =>
+      createAgentMediaPolicy(mediaResolver, model, request),
+    );
+    this.requester = requester;
     this.states.contributeState(turnKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
@@ -214,12 +221,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       currentCredentialProvider: () => this.requester.currentCredentialProvider(),
       credentialProviderForTurn: (turnId) => this.requester.credentialProviderForTurn(turnId),
       lastTurnRequest: () => this.requester.lastTurnRequest(),
-      uploadVideo: (input, options) => {
-        if (this.requester.uploadVideo === undefined) {
-          return Promise.reject(new Error('video upload is unavailable'));
-        }
-        return this.requester.uploadVideo(input, options);
-      },
       request: (overrides, onPart, signal) => this.requester.request(overrides, onPart, signal),
       start: (overrides, onPart, signal) => this.requester.start(overrides, onPart, signal),
     };

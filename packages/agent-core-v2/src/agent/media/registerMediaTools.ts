@@ -8,16 +8,14 @@ import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ReadMediaFileTool } from '#/agent/tools/read-media-file/readMediaFileTool';
-import type { VideoUploader } from '#/agent/tools/read-media-file/read-media-file';
+import type { VideoUploader } from '#/llm-adapter/model/media';
 
 export interface RegisterMediaToolsDeps {
-  readonly attachmentStore?: ISessionMediaStore;
+  readonly attachmentStore: ISessionMediaStore;
   readonly environment: IAgentEnvironmentService;
   readonly workspace: WorkspaceConfig;
   readonly capabilities: ModelCapability;
-  readonly videoUploader?: VideoUploader;
   readonly telemetry?: ITelemetryService;
-  readonly inlineVideoSupported?: boolean;
   readonly providerType?: string;
 }
 
@@ -25,10 +23,7 @@ export function registerMediaTools(
   toolRegistry: IAgentToolRegistryService,
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
-  if (
-    (!deps.environment.isAvailable(['fs']) && deps.attachmentStore === undefined) ||
-    (!deps.capabilities.image_in && !deps.capabilities.video_in)
-  ) {
+  if (!deps.capabilities.image_in && !deps.capabilities.video_in) {
     return toDisposable(() => {});
   }
   return toolRegistry.register(
@@ -36,11 +31,9 @@ export function registerMediaTools(
       deps.environment,
       deps.workspace,
       deps.capabilities,
-      deps.videoUploader,
-      deps.telemetry,
-      deps.inlineVideoSupported,
-      deps.providerType,
       deps.attachmentStore,
+      deps.telemetry,
+      deps.providerType,
     ),
   );
 }

@@ -225,6 +225,8 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
           if (credential === undefined && apiKey === undefined) return undefined;
           return { ...credential, apiKey };
         },
+        canRecover: (error) => model.credentialProvider?.canRecover?.(error) === true,
+        invalidate: () => model.credentialProvider?.invalidate?.(),
       },
       fetch:
         protocolBase.usesEndpointFetch === false

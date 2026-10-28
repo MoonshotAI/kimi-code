@@ -1,6 +1,4 @@
 import type { FinishReason } from '#human/llm-requester/finish-reason';
-import type { VideoUploadInput } from '#human/media/upload';
-import type { VideoURLPart } from '#human/llm/message';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type {
@@ -83,11 +81,6 @@ export interface LoopRequester {
   credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
 
   lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined;
-
-  uploadVideo?(
-    input: VideoUploadInput,
-    options?: { readonly signal?: AbortSignal },
-  ): Promise<VideoURLPart>;
 
   request(
     overrides?: AgentLLMRequestOverrides,

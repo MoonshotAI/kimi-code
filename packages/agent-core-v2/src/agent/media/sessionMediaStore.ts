@@ -22,8 +22,25 @@ export interface SessionMediaFile {
   readonly stream: (range?: SessionMediaReadRange) => AsyncIterable<Uint8Array>;
 }
 
+export interface SessionMediaPutInput {
+  readonly bytes: Uint8Array;
+  readonly mimeType: string;
+  readonly filename: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface SessionMediaContent {
+  readonly bytes: Uint8Array;
+  readonly mimeType: string;
+  readonly filename: string;
+}
+
 export interface ISessionMediaStore {
   readonly _serviceBrand: undefined;
+
+  put(input: SessionMediaPutInput): Promise<string>;
+
+  get(reference: string, signal?: AbortSignal): Promise<SessionMediaContent | undefined>;
 
   pathFor(fileId: string, ext: string): string | undefined;
 

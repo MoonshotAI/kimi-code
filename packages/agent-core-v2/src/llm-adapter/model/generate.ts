@@ -70,10 +70,6 @@ export interface ModelRequestPolicy {
   readonly recoveries: readonly LlmRecovery[];
   readonly resolvers?: readonly LlmResolver[];
   readonly recoveryLedger?: LlmRecoveryLedger;
-  readonly resolveMessages?: (
-    messages: readonly Message[],
-    signal: AbortSignal,
-  ) => Promise<readonly Message[]>;
   readonly onAttempt?: (input: ModelRequestInput, request: LlmRequest) => void;
   readonly onRecovery?: (
     event: Extract<LlmRunEvent, { readonly reason: 'recovery' }>,
@@ -121,20 +117,6 @@ async function runModel(
 ): Promise<void> {
   let traceId: string | null | undefined;
   try {
-    const resolveMessages = policy?.resolveMessages;
-    const resolvers: LlmResolver[] = [...(policy?.resolvers ?? [])];
-    if (resolveMessages !== undefined) {
-      resolvers.push({
-        id: 'model-media',
-        resolve: async (request, control) => ({
-          ...request,
-          content: {
-            ...request.content,
-            messages: await resolveMessages(request.content.messages, control.signal),
-          },
-        }),
-      });
-    }
     const requester = initial.with({
       model: { responseFormat: input.responseFormat },
       profile: {
@@ -145,7 +127,7 @@ async function runModel(
       policy: {
         retry: { maxAttemptsPerStep: 1 },
         recoveries: policy?.recoveries ?? [],
-        resolvers,
+        resolvers: policy?.resolvers ?? [],
       },
     });
     const outcome = await requester.generate(

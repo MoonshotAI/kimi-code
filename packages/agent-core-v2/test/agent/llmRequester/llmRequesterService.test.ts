@@ -7,6 +7,7 @@ import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopRequester, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/loop/requester';
+import { createAgentMediaPolicy } from '#/agent/loop/mediaPolicy';
 import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
@@ -252,13 +253,15 @@ function createService(
     subscribe: () => toDisposable(() => {}),
   };
 
-  ix.stub(IAgentContextMemoryService, context);
-  ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentMediaResolverService, {
+  const mediaResolver: IAgentMediaResolverService = {
+    _serviceBrand: undefined,
     resolve: async (messages) => messages,
     displayPaths: async () => new Map(),
     ...options.mediaResolver,
-  });
+  };
+  ix.stub(IAgentContextMemoryService, context);
+  ix.stub(IAgentToolSelectService, toolSelect);
+  ix.stub(IAgentMediaResolverService, mediaResolver);
   ix.stub(ISessionTokenCountingService, tokenCounting);
   ix.stub(IAgentProfileService, profile);
   ix.stub(ISessionUsageService, usage);
@@ -292,6 +295,9 @@ function createService(
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
   const service = ix.createInstance(AgentLoopRequester);
+  service.registerMediaPolicy((model, request) =>
+    createAgentMediaPolicy(mediaResolver, model, request),
+  );
 
   return {
     service,
@@ -1417,7 +1423,7 @@ describe('AgentLoopRequester media resolver wiring', () => {
     expect(toolSelectCalls).toBe(1);
     expect(resolve).toHaveBeenCalledTimes(1);
     expect(resolve.mock.calls[0]?.[0].map((message) => message.role)).toEqual(['user']);
-    expect(resolve.mock.calls[0]?.[1]).toMatchObject({ model: requester.model });
+    expect(resolve.mock.calls[0]?.[1]).toMatchObject(requester.model);
     expect(inputs[0]?.tools).toEqual([resolvedTool]);
     const snapshot = records.find((record) => record.type === 'llm.tools_snapshot');
     const requestRecord = records.find((record) => record.type === 'llm.request');

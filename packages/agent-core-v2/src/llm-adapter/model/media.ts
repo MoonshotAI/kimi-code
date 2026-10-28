@@ -1,6 +1,14 @@
 import { resolveEndpoint } from '#human/llm/endpoint';
-import type { ImageURLPart, MediaKind, VideoURLPart } from '#human/llm/message';
+import type { ContentPart, ImageURLPart, MediaKind, VideoURLPart } from '#human/llm/message';
 import type { ImageUploadInput, VideoUploadInput } from '#human/media/upload';
+import {
+  acceptsMime,
+  acceptsSource,
+  mediaSupportAt,
+  type MediaKindSupport,
+  type MediaPosition,
+} from '#human/llm/protocol/rules/media';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { contentsOf } from '#human/llm/requester';
 import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
@@ -74,4 +82,34 @@ export async function uploadVideo(
     { endpoint: await resolveEndpoint(contentsOf(request).endpoint), signal: signal ?? new AbortController().signal },
   );
   return { type: 'video_url', videoUrl: { url: uploaded.url, id: uploaded.id } };
+}
+
+
+export type { MediaKindSupport, MediaPosition } from '#human/llm/protocol/rules/media';
+
+export function mediaSupportForRequest(
+  request: InitializedLlmRequester,
+  kind: MediaKind,
+  position: MediaPosition,
+): MediaKindSupport | undefined {
+  const protocol = contentsOf(request).protocol?.base;
+  return protocol === undefined ? undefined : mediaSupportAt(protocol.media, kind, position);
+}
+
+export function mediaAcceptsMime(support: MediaKindSupport, mimeType: string): boolean {
+  return acceptsMime(support, mimeType);
+}
+
+export function mediaAcceptsSource(
+  support: MediaKindSupport,
+  part: ContentPart,
+): boolean {
+  if (part.type !== 'image_url' && part.type !== 'video_url') return false;
+  return acceptsSource(support, part);
+}
+
+export function mediaCredentialProvider(
+  request: InitializedLlmRequester,
+): LlmCredentialProvider | undefined {
+  return contentsOf(request).endpoint?.credentials;
 }
