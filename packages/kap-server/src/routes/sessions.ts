@@ -25,6 +25,7 @@ import {
   ISessionManager,
   IWorkspaceInstanceManager,
   IWorkspaceService,
+  remoteBindingKey,
   closeSessionById,
   getLiveSessionById,
   programForSession,
@@ -124,6 +125,8 @@ const sessionsListQueryCoercion = z
     exclude_empty: booleanQueryParam,
     archived_only: booleanQueryParam,
     workspace_id: workspaceIdSchema.optional(),
+    environment_id: z.string().min(1).optional(),
+    environment_cwd: z.string().min(1).optional(),
   })
   .superRefine((value, ctx) => {
     if (value.before_id !== undefined && value.after_id !== undefined) {
@@ -139,6 +142,16 @@ const sessionsListQueryCoercion = z
         code: 'custom',
         message: 'archived_only and include_archive are mutually exclusive',
         path: ['archived_only'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+    const hasEnvironmentId = value.environment_id !== undefined;
+    const hasEnvironmentCwd = value.environment_cwd !== undefined;
+    if (hasEnvironmentId !== hasEnvironmentCwd) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'environment_id and environment_cwd must be set together',
+        path: [hasEnvironmentId ? 'environment_cwd' : 'environment_id'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }
@@ -323,6 +336,23 @@ export function registerSessionsRoutes(
         raw.workspace_id === undefined
           ? undefined
           : await core.accessor.get(IWorkspaceAliases).resolveAliasIds(raw.workspace_id);
+      const bindingKey =
+        raw.environment_id === undefined
+          ? undefined
+          : remoteBindingKey(raw.environment_id, raw.environment_cwd);
+      if (raw.environment_id !== undefined && bindingKey === undefined) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.VALIDATION_FAILED,
+            'environment_cwd must be an absolute POSIX path',
+            req.id,
+          ),
+        );
+        return;
+      }
+      const matchesBinding = (summary: SessionSummary): boolean =>
+        bindingKey === undefined ||
+        remoteBindingKey(summary.environmentId, summary.environmentCwd) === bindingKey;
       const index = core.accessor.get(ISessionIndex);
       const includeArchived = archivedOnly ? true : raw.include_archive;
 
@@ -359,6 +389,7 @@ export function registerSessionsRoutes(
             }
             const cwd = summary.cwd ?? roots.get(summary.workspaceId);
             if (cwd === undefined) continue;
+            if (!matchesBinding(summary)) continue;
             if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
             if (archivedOnly) {
               if (!summary.archived) continue;
@@ -386,6 +417,7 @@ export function registerSessionsRoutes(
         for (const summary of page.items) {
           const cwd = summary.cwd ?? roots.get(summary.workspaceId);
           if (cwd === undefined) continue;
+          if (!matchesBinding(summary)) continue;
           if (raw.exclude_empty === true && (summary.lastPrompt ?? '').length === 0) continue;
           eligible.push({ summary, cwd });
         }

@@ -638,6 +638,33 @@ describe('server /api/v2/sessions', () => {
     expect('git' in first).toBe(false);
   });
 
+  it('splits a remote binding out of its backing workspace group', async () => {
+    const page = await getGroupData('?view=by_binding');
+    const ids = page.groups.map((group) => group.workspace.id);
+    expect(ids).toContain(WS_A);
+    expect(ids).toContain(WS_B);
+    expect(ids).toContain(`remote:${encodeURIComponent('ssh:dev')}:${encodeURIComponent('/srv/project')}`);
+
+    const local = page.groups.find((group) => group.workspace.id === WS_A);
+    const remote = page.groups.find((group) => group.workspace.id.startsWith('remote:'));
+    expect(local?.sessions.map((item) => item.id)).toEqual(['s1']);
+    expect(local?.total).toBe(1);
+    expect(remote?.sessions.map((item) => item.id)).toEqual(['s2']);
+    expect(remote?.total).toBe(1);
+  });
+
+  it('rejects an environment filter whose cwd is not absolute POSIX', async () => {
+    const error = await getError('?meta.environment_id=ssh:dev&meta.environment_cwd=relative');
+    expect(error.code).toBe(40001);
+  });
+
+  it('filters a flat page by the normalized environment binding', async () => {
+    const page = await getData(
+      '?meta.environment_id=ssh:dev&meta.environment_cwd=/srv/foo/../project',
+    );
+    expect(page.items.map((item) => item.id)).toEqual(['s2']);
+  });
+
   it('caps each group at group.page_size while total keeps the full matching count', async () => {
     const page = await getGroupData('?view=by_workspace&group.page_size=1');
     const [a, b] = page.groups as [GroupWireV2, GroupWireV2];

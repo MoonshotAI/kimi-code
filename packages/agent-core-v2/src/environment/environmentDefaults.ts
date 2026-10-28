@@ -12,6 +12,25 @@ export function normalizeRemoteCwd(cwd: string): string {
   return posixPath.resolve(cwd);
 }
 
+export function remoteBindingKey(
+  environmentId: string | undefined,
+  environmentCwd: string | undefined,
+): string | undefined {
+  if (
+    environmentId === undefined ||
+    environmentId === '' ||
+    environmentId === 'local' ||
+    environmentCwd === undefined
+  ) {
+    return undefined;
+  }
+  try {
+    return `${environmentId}\0${normalizeRemoteCwd(environmentCwd)}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export const DEFAULT_ENVIRONMENT_HOST: HostEnvironmentInfo = {
   osKind: 'unknown',
   osArch: 'unknown',

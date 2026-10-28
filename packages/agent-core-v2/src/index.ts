@@ -729,6 +729,7 @@ export * from '#/agent/prompt/promptMetadataText';
 export * from '#/agent/replayBuilder/types';
 export * from '#/agent/replayBuilder/fold';
 export { type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+export { normalizeRemoteCwd, remoteBindingKey } from '#/environment/environmentDefaults';
 export * from '#/agent/undo/undo';
 export * from '#/agent/undo/undoService';
 export * from '#/agent/shellCommand/shellCommand';
