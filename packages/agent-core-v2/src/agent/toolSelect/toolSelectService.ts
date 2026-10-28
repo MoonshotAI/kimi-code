@@ -29,6 +29,7 @@ import {
   SELECT_TOOLS_TOOL_NAME,
   type LoadToolsResult,
   type ShapedToolEntry,
+  type ToolSelectCapabilities,
 } from './toolSelect';
 
 export const toolSelectPendingLoadedKey = defineState<Set<string>>(
@@ -37,6 +38,10 @@ export const toolSelectPendingLoadedKey = defineState<Set<string>>(
 );
 
 const STOP_RETRY_THRESHOLD = 2;
+const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
+  type: 'object',
+  properties: {},
+};
 
 export class AgentToolSelectService extends Service implements IAgentToolSelectService {
   declare readonly _serviceBrand: undefined;
@@ -84,17 +89,45 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     }
   }
 
-  enabled(): boolean {
-    const capabilities = this.profile.getModelCapabilities();
+  enabled(capabilities: ToolSelectCapabilities = this.profile.getModelCapabilities()): boolean {
     return (
       capabilities.dynamically_loaded_tools === true &&
-      capabilities.tool_use &&
+      capabilities.tool_use === true &&
       this.flags.enabled(TOOL_SELECT_FLAG_ID)
     );
   }
 
-  shapeTools(entries: readonly ToolInfo[]): readonly ShapedToolEntry[] {
-    const disclosure = this.enabled();
+  defaultTools(disclosure = this.enabled()): readonly Tool[] {
+    return this.defaultToolsForDisclosure(disclosure);
+  }
+
+  shapeTools(
+    entries: readonly ToolInfo[],
+    disclosure = this.enabled(),
+  ): readonly ShapedToolEntry[] {
+    return this.shapeToolsForDisclosure(entries, disclosure);
+  }
+
+  shapeHistory(
+    messages: readonly ContextMessage[],
+    disclosure = this.enabled(),
+  ): readonly ContextMessage[] {
+    return this.shapeHistoryForDisclosure(messages, disclosure);
+  }
+
+  private defaultToolsForDisclosure(disclosure: boolean): readonly Tool[] {
+    return this.shapeToolsForDisclosure(this.toolRegistry.list(), disclosure).map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
+      deferred: tool.deferred,
+    }));
+  }
+
+  private shapeToolsForDisclosure(
+    entries: readonly ToolInfo[],
+    disclosure: boolean,
+  ): readonly ShapedToolEntry[] {
     const activeEntries = this.activeEntries(entries, disclosure);
     if (!disclosure) return activeEntries;
     const loaded = this.loadedToolNames();
@@ -114,8 +147,11 @@ export class AgentToolSelectService extends Service implements IAgentToolSelectS
     return shaped;
   }
 
-  shapeHistory(messages: readonly ContextMessage[]): readonly ContextMessage[] {
-    if (this.enabled()) return this.shapeActiveHistory(messages);
+  private shapeHistoryForDisclosure(
+    messages: readonly ContextMessage[],
+    disclosure: boolean,
+  ): readonly ContextMessage[] {
+    if (disclosure) return this.shapeActiveHistory(messages);
     return stripDynamicToolContext(messages);
   }
 

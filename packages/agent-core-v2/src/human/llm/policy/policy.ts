@@ -121,7 +121,6 @@ export async function runLlmRequest(
   control: LlmRunControl,
   settle: typeof settleLlmRequest = settleLlmRequest,
 ): Promise<LlmOutcome> {
-  control.onEvent?.(llmStartedEvent(request));
   let outcome: LlmOutcome;
   try {
     outcome = await runAttempts(request, control, settle);
@@ -144,23 +143,47 @@ async function runAttempts(
   const policy = request.policy ?? {};
   const ledger = control.recoveries ?? createRecoveryLedger();
   let attempt = 1;
+  let started = false;
+  const pendingNotices: LlmRunEvent[] = [];
   const maxAttempts = resolveMaxAttempts(policy.retry);
+  const start = (resolvedRequest: LlmRequest): void => {
+    if (started) return;
+    started = true;
+    onEvent?.(llmStartedEvent(resolvedRequest));
+    for (const event of pendingNotices) onEvent?.(event);
+    pendingNotices.length = 0;
+  };
 
   while (!signal.aborted) {
     const recoveredRequest = ledger.apply(request);
     let resolvedRequest = recoveredRequest;
-    for (const resolver of listOf(policy.resolvers)) {
-      resolvedRequest = await resolver.resolve(resolvedRequest, {
-        signal,
-        appliedRecoveries: ledger.applied,
-        report: (notice) =>
-          onEvent?.({ type: 'llm.notice', notice: { ...notice, source: resolver.id } }),
-      });
-      if (signal.aborted) {
-        return { type: 'aborted', message: null, usage: undefined };
+    let recoveryRequest = recoveredRequest;
+    try {
+      for (const resolver of listOf(policy.resolvers)) {
+        resolvedRequest = await resolver.resolve(resolvedRequest, {
+          signal,
+          appliedRecoveries: ledger.applied,
+          report: (notice) => {
+            const event: LlmRunEvent = {
+              type: 'llm.notice',
+              notice: { ...notice, source: resolver.id },
+            };
+            if (started) onEvent?.(event);
+            else pendingNotices.push(event);
+          },
+        });
+        if (resolver.recoveryRequest === 'resolved') recoveryRequest = resolvedRequest;
+        if (signal.aborted) {
+          start(recoveredRequest);
+          return { type: 'aborted', message: null, usage: undefined };
+        }
       }
+    } catch (error) {
+      start(recoveredRequest);
+      throw error;
     }
 
+    start(resolvedRequest);
     control.onAttempt?.(resolvedRequest);
     const result = await settle(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
@@ -171,9 +194,9 @@ async function runAttempts(
     if (remote !== undefined) {
       const proposal = proposeFirst(listOf(policy.recoveries), {
         error: remote,
-        request: recoveredRequest,
+        request: recoveryRequest,
         appliedRecoveries: ledger.applied,
-        endpoint: recoveredRequest.endpoint,
+        endpoint: recoveryRequest.endpoint,
       });
       if (proposal !== undefined) {
         proposal.beforeNextAttempt?.();

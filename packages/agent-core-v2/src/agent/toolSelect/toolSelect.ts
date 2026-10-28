@@ -5,6 +5,11 @@ import type { ToolInfo } from '#/tool/toolContract';
 
 export const SELECT_TOOLS_TOOL_NAME = 'select_tools';
 
+export interface ToolSelectCapabilities {
+  readonly dynamically_loaded_tools?: boolean;
+  readonly tool_use?: boolean;
+}
+
 export interface ShapedToolEntry extends ToolInfo {
   readonly deferred?: true;
 }
@@ -25,11 +30,16 @@ export interface LoadToolsResult {
 export interface IAgentToolSelectService {
   readonly _serviceBrand: undefined;
 
-  enabled(): boolean;
+  enabled(capabilities?: ToolSelectCapabilities): boolean;
 
-  shapeTools(entries: readonly ToolInfo[]): readonly ShapedToolEntry[];
+  defaultTools(disclosure?: boolean): readonly Tool[];
 
-  shapeHistory(messages: readonly ContextMessage[]): readonly ContextMessage[];
+  shapeTools(entries: readonly ToolInfo[], disclosure?: boolean): readonly ShapedToolEntry[];
+
+  shapeHistory(
+    messages: readonly ContextMessage[],
+    disclosure?: boolean,
+  ): readonly ContextMessage[];
 
   load(names: readonly string[]): LoadToolsResult;
 

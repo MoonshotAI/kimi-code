@@ -7,7 +7,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { Message, ToolCall } from '#human/llm/message';
+import type { Message, ToolCall, ToolDescription as Tool } from '#human/llm/message';
+import type { LlmRequest } from '#human/llm/request';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
@@ -26,6 +27,7 @@ import {
   type PromptSubmitContext,
   type Turn,
 } from '#/agent/loop/loop';
+import { createToolSelectResolver } from '#/agent/loop/toolSelectPolicy';
 import { TurnStarted } from '#/agent/loop/turnEvents';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
@@ -415,6 +417,34 @@ function createHarness(): Harness {
   };
 }
 
+function resolveWith(
+  h: Harness,
+  input: {
+    readonly messages: readonly ContextMessage[];
+    readonly tools?: readonly Tool[];
+    readonly capabilities?: ModelCapability;
+    readonly inferredCapabilities?: ModelCapability;
+  },
+): Promise<LlmRequest> {
+  const request: LlmRequest = {
+    protocol: {
+      base: {
+        capability: () => input.inferredCapabilities,
+      } as unknown as LlmRequest['protocol']['base'],
+    },
+    model: {
+      spec: { provider: 'test', name: 'test-model', capability: input.capabilities },
+    },
+    profile: { tools: input.tools },
+    content: { messages: input.messages },
+  };
+  return createToolSelectResolver(h.sut).resolve(request, {
+    signal: new AbortController().signal,
+    appliedRecoveries: [],
+    report: () => {},
+  });
+}
+
 interface ExecutorHarness extends Harness {
   readonly executor: IAgentToolExecutorService;
 }
@@ -632,12 +662,21 @@ describe('AgentToolSelectService S0 baseline (gate closed)', () => {
     });
   });
 
-  it('shapeHistory strips dynamic-tool protocol context without touching the canonical history', () => {
+  it('resolver preserves explicit tools while stripping dynamic-tool protocol context', async () => {
     const h = createHarness();
     h.contextMemory.landAnnouncement('<tools_added>\nt\n</tools_added>');
     h.contextMemory.history.push(schemaMessage('t'), userMessage('keep'));
-    const shaped = h.sut.shapeHistory(h.contextMemory.get());
-    expect(shaped.map((message) => message.role)).toEqual(['user']);
+    const explicitTools: Tool[] = [
+      { name: 'explicit', description: 'explicit tool', parameters: {}, deferred: true },
+    ];
+
+    const resolved = await resolveWith(h, {
+      messages: h.contextMemory.get(),
+      tools: explicitTools,
+    });
+
+    expect(resolved.profile?.tools).toBe(explicitTools);
+    expect(resolved.content.messages.map((message) => message.role)).toEqual(['user']);
     expect(h.contextMemory.get()).toHaveLength(3);
   });
 
@@ -655,7 +694,8 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     flagEnabled = true;
   });
 
-  it('hides unloaded MCP tools, marks loaded MCP tools deferred, keeps builtins and select_tools', () => {
+  it('resolver shapes defaults and history with protocol-inferred capabilities', async () => {
+    capabilities = makeCapabilities({ tool_use: false, dynamically_loaded_tools: false });
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
@@ -663,13 +703,20 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     const selectTools = h.ix.createInstance(SelectToolsTool);
     disposables.add(h.registry.register(selectTools, { source: 'builtin' }));
     h.contextMemory.history.push(schemaMessage(MCP_ALPHA));
+    const messages = h.contextMemory.get();
 
-    const shaped = h.sut.shapeTools(h.registry.list());
+    const resolved = await resolveWith(h, {
+      messages,
+      inferredCapabilities: makeCapabilities({ tool_use: true, dynamically_loaded_tools: true }),
+    });
+
+    const shaped = resolved.profile?.tools ?? [];
     expect(shaped.map((entry) => entry.name)).toEqual(['Echo', MCP_ALPHA, SELECT_TOOLS_TOOL_NAME]);
     const byName = new Map(shaped.map((entry) => [entry.name, entry]));
     expect(byName.get(MCP_ALPHA)?.deferred).toBe(true);
     expect(byName.get('Echo')?.deferred).toBeUndefined();
     expect(byName.get(SELECT_TOOLS_TOOL_NAME)?.deferred).toBeUndefined();
+    expect(resolved.content.messages).toBe(messages);
   });
 
   it('keeps inline-disclosed MCP tools visible and out of the loadable manifest', () => {

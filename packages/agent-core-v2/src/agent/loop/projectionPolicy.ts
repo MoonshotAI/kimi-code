@@ -41,13 +41,21 @@ export function createStructureResolver(projector: AgentLoopProjector): LlmResol
 
 export function createStructureRecovery(projector: AgentLoopProjector): LlmRecovery {
   return {
-    propose: ({ error, appliedRecoveries }) => {
+    propose: ({ error, request: recoveryRequest, appliedRecoveries }) => {
       if (error.kind !== 'request_structure') return undefined;
       if (hasStrictStructureRecovery(appliedRecoveries)) return undefined;
       return {
         strategy: STRUCTURE_RECOVERY_STRATEGY,
         action: 'strict',
-        rewrite: (request) => projectRequest(request, projector, true),
+        rewrite: (request) =>
+          projectRequest(
+            {
+              ...request,
+              content: { ...request.content, messages: recoveryRequest.content.messages },
+            },
+            projector,
+            true,
+          ),
       };
     },
   };

@@ -419,7 +419,7 @@ async function runLegacyRequester(
       apiKey: endpoint.apiKey,
     },
     systemPrompt: request.profile?.systemPrompt,
-    tools: request.profile?.tools,
+    tools: request.profile?.tools?.filter((tool) => tool.deferred !== true),
     cacheKey: request.model.cacheKey,
     thinking: request.model.thinking,
     responseFormat: request.model.responseFormat,

@@ -11,11 +11,11 @@ import {
   type LlmRecoveryRecord,
 } from '#human/llm/policy/recovery';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import { withProtocolCapabilities } from '#human/llm/protocol/rules/model';
 import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
@@ -80,6 +80,7 @@ import {
   createStructureResolver,
   hasStrictStructureRecovery,
 } from './projectionPolicy';
+import { createToolSelectResolver } from './toolSelectPolicy';
 import { uploadVideo as uploadCoreVideo } from '#/llm-adapter/model/media';
 import { isAbortError } from '#/_base/utils/abort';
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -92,11 +93,6 @@ import {
 } from '#/_base/utils/retry';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 
-const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
-  type: 'object',
-  properties: {},
-};
-
 const noopOnPart: AgentLLMRequestPartHandler = () => {};
 
 export const KIMI_CODE_INFINITE_RETRY_ENV = 'KIMI_CODE_INFINITE_RETRY';
@@ -108,7 +104,7 @@ interface ResolvedLLMRequest {
   readonly modelAlias: string;
   readonly thinkingEffort: ThinkingEffort;
   readonly systemPrompt: string;
-  readonly tools: readonly Tool[];
+  readonly tools?: readonly Tool[];
   readonly messages: Message[];
   readonly contextRevision: number;
   readonly promptCacheProbe:
@@ -127,6 +123,7 @@ interface LLMRequestLogInput {
   readonly maxTokens?: number;
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
+  readonly toolSelect: boolean;
   readonly messages: readonly Message[];
   readonly fields?: AgentLLMRequestLogFields;
 }
@@ -170,7 +167,6 @@ export class AgentLoopRequester implements LoopRequester {
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentToolRegistryService private readonly tools: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentMediaResolverService private readonly mediaResolver: IAgentMediaResolverService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -368,12 +364,12 @@ export class AgentLoopRequester implements LoopRequester {
   ): Promise<AgentLLMRequestFinish> {
     const cacheProbeBaseline = request.promptCacheProbe?.baseline;
     let cacheProbeReported = false;
-    const shaped = this.toolSelect.shapeHistory(request.messages);
     const recoveryLedger = this.recoveredMedia(request)?.fork() ?? createRecoveryLedger();
+    const toolSelectResolver = createToolSelectResolver(this.toolSelect);
     const structureResolver = createStructureResolver(this.projector);
     const structureRecovery = createStructureRecovery(this.projector);
     const mediaPaths =
-      countMediaParts(shaped) === 0 ? new Map<string, string>() : await this.mediaResolver.displayPaths(shaped);
+      countMediaParts(request.messages) === 0 ? new Map<string, string>() : await this.mediaResolver.displayPaths(request.messages);
     let previousMediaCount: number | undefined;
     let previousMediaRecovery: LlmRecoveryRecord | undefined;
     const run = async (): Promise<AgentLLMRequestFinish> => {
@@ -395,7 +391,7 @@ export class AgentLoopRequester implements LoopRequester {
         {
           systemPrompt: request.systemPrompt,
           tools: request.tools,
-          messages: shaped,
+          messages: request.messages,
         },
         signal,
         {
@@ -413,7 +409,7 @@ export class AgentLoopRequester implements LoopRequester {
               return { type: 'text', text: buildMediaPathTag(kind, path) };
             }),
           ],
-          resolvers: [structureResolver],
+          resolvers: [toolSelectResolver, structureResolver],
           recoveryLedger,
           resolveMessages: (messages, resolveSignal) =>
             this.mediaResolver.resolve(
@@ -421,7 +417,7 @@ export class AgentLoopRequester implements LoopRequester {
               { model: request.model, requester: request.request },
               resolveSignal,
             ),
-          onAttempt: (attemptInput) => {
+          onAttempt: (attemptInput, attemptRequest) => {
             input = attemptInput;
             onRequestTrace(undefined);
             const mediaRecovery = latestMediaRecovery(recoveryLedger.applied);
@@ -467,7 +463,11 @@ export class AgentLoopRequester implements LoopRequester {
               thinkingEffort: request.thinkingEffort,
               maxTokens: effectiveMaxCompletionTokens(request.params),
               systemPrompt: attemptInput.systemPrompt,
-              tools: attemptInput.tools,
+              tools: attemptInput.tools ?? [],
+              toolSelect: this.toolSelect.enabled(
+                withProtocolCapabilities(attemptRequest.model.spec, attemptRequest.protocol.base)
+                  .capability ?? {},
+              ),
               messages: attemptInput.messages,
               fields,
             };
@@ -755,7 +755,7 @@ export class AgentLoopRequester implements LoopRequester {
       modelAlias: resolved.modelAlias,
       thinkingEffort: resolved.thinkingLevel,
       systemPrompt: overrides.systemPrompt ?? turnConfig?.systemPrompt ?? this.profile.getSystemPrompt(),
-      tools: [...(overrides.tools ?? this.defaultTools())],
+      tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
       contextRevision: this.context.prefixRevision(),
       promptCacheProbe,
@@ -846,7 +846,7 @@ export class AgentLoopRequester implements LoopRequester {
       topP: overrides?.topP,
       maxTokens: input.maxTokens,
       betaApi: modelConfig?.betaApi,
-      toolSelect: this.toolSelect.enabled(),
+      toolSelect: input.toolSelect,
       systemPromptHash,
       systemPrompt:
         input.systemPrompt === this.profile.data().systemPrompt
@@ -883,17 +883,6 @@ export class AgentLoopRequester implements LoopRequester {
     if (timing.clientConsumeMs !== undefined) payload['clientConsumeMs'] = timing.clientConsumeMs;
     if (timing.clientBlockedMs !== undefined) payload['clientBlockedMs'] = timing.clientBlockedMs;
     this.log.info('llm response', payload);
-  }
-
-  private defaultTools(): readonly Tool[] {
-    return this.toolSelect
-      .shapeTools(this.tools.list())
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
-        deferred: tool.deferred,
-      }));
   }
 }
 

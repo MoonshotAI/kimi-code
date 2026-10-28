@@ -28,6 +28,7 @@ import {
   type ModelRequestEvent,
   type ModelRequestInput,
   type ModelRequestParams,
+  type ModelRequestPolicy,
 } from '#/llm-adapter/model/generate';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -57,7 +58,11 @@ class FakeLlmRequester implements LlmRequester {
   }
 }
 
-function modelEventRequester(model: Model, requester: LlmRequester) {
+function modelEventRequester(
+  model: Model,
+  requester: LlmRequester,
+  policy?: ModelRequestPolicy,
+) {
   return {
     request: (input: ModelRequestInput, signal?: AbortSignal, params?: ModelRequestParams) =>
       generateModel(
@@ -72,6 +77,7 @@ function modelEventRequester(model: Model, requester: LlmRequester) {
         input,
         signal,
         params,
+        policy,
       ),
   };
 }
@@ -124,9 +130,16 @@ describe('generateModel request execution', () => {
   it('maps ModelRequestParams onto LlmRequestConfig, content and control', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
+    const attempts: ModelRequestInput[] = [];
     const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider('sk-1')),
       requester,
+      {
+        recoveries: [],
+        onAttempt: (input) => {
+          attempts.push(input);
+        },
+      },
     );
     const signal = AbortSignal.timeout(1000);
     const messages: Message[] = [
@@ -173,6 +186,10 @@ describe('generateModel request execution', () => {
     const call = requester.calls[0]!;
     expect(call.config.systemPrompt).toBe('sys');
     expect(call.config.tools).toEqual([{ name: 'a', description: 'da', parameters: {} }]);
+    expect(attempts[0]?.tools).toEqual([
+      { name: 'a', description: 'da', parameters: {} },
+      { name: 'b', description: 'db', parameters: {}, deferred: true },
+    ]);
     expect(call.config.cacheKey).toBe('session-1');
     expect(call.config.thinking).toEqual({ effort: 'high', keep: 'all' });
     expect(call.config.responseFormat).toEqual({ type: 'json_object' });

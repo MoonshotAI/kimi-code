@@ -1,5 +1,5 @@
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
-import type { LlmRequestModel, LlmProtocolBinding, LlmEndpoint, LlmSampling } from '#human/llm/request';
+import type { LlmRequest, LlmRequestModel, LlmProtocolBinding, LlmEndpoint, LlmSampling } from '#human/llm/request';
 import { contentsOf, type LlmRequester } from '#human/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#human/llm/response';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
@@ -26,7 +26,7 @@ export type SamplingOptions = LlmSampling;
 
 export interface ModelRequestInput {
   readonly systemPrompt: string;
-  readonly tools: readonly Tool[];
+  readonly tools?: readonly Tool[];
   readonly messages: readonly Message[];
   readonly responseFormat?: ResponseFormat;
 }
@@ -74,7 +74,7 @@ export interface ModelRequestPolicy {
     messages: readonly Message[],
     signal: AbortSignal,
   ) => Promise<readonly Message[]>;
-  readonly onAttempt?: (input: ModelRequestInput) => void;
+  readonly onAttempt?: (input: ModelRequestInput, request: LlmRequest) => void;
   readonly onRecovery?: (
     event: Extract<LlmRunEvent, { readonly reason: 'recovery' }>,
   ) => void;
@@ -139,7 +139,7 @@ async function runModel(
       model: { responseFormat: input.responseFormat },
       profile: {
         systemPrompt: input.systemPrompt,
-        tools: input.tools.filter((tool) => tool.deferred !== true),
+        tools: input.tools,
       },
       content: { messages: input.messages, usedTokens: params?.usedContextTokens },
       policy: {
@@ -154,7 +154,15 @@ async function runModel(
         signal: signal ?? new AbortController().signal,
         recoveries: policy?.recoveryLedger,
         onAttempt: (request) =>
-          policy?.onAttempt?.({ ...input, messages: request.content.messages }),
+          policy?.onAttempt?.(
+            {
+              ...input,
+              systemPrompt: request.profile?.systemPrompt ?? input.systemPrompt,
+              tools: request.profile?.tools ?? input.tools,
+              messages: request.content.messages,
+            },
+            request,
+          ),
         onEvent: (event) => {
           switch (event.type) {
             case 'llm.streaming.headers': {

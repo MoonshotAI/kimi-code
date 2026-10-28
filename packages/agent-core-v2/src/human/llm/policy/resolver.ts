@@ -10,5 +10,6 @@ export interface LlmResolveControl {
 
 export interface LlmResolver {
   readonly id: string;
+  readonly recoveryRequest?: 'resolved';
   resolve(request: LlmRequest, ctl: LlmResolveControl): Promise<LlmRequest>;
 }

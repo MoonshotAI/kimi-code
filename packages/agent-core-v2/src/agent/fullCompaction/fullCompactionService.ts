@@ -22,7 +22,6 @@ import {
   IAgentScopeContext,
 } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentTodoService } from '#/features/todo/todoService';
 import { renderTodoList } from '#/features/todo/todoItem';
@@ -35,11 +34,7 @@ import {
   APIStatusError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
-import {
-  createUserMessage,
-  type Message,
-  type ToolDescription as Tool,
-} from '#human/llm/message';
+import { createUserMessage, type Message } from '#human/llm/message';
 import { inputTotal, type TokenUsage } from '#human/llm-requester/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
@@ -83,10 +78,6 @@ const COMPLETION_BUDGET_ESTIMATE_MARGIN_RATIO = 0.02;
 const OVERFLOW_STATUS_RECOVERY_RATIO = 0.5;
 const MAX_COMPACTION_OVERFLOW_SHRINK_ATTEMPTS = 3;
 const COMPACTION_OVERFLOW_SHRINK_RATIOS = [0.7, 0.5, 0.35] as const;
-const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
-  type: 'object',
-  properties: {},
-};
 
 type CompactionTelemetryProperties = Pick<
   CompactionFinishedEvent,
@@ -149,7 +140,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IAgentScopeContext private readonly agent: IAgentScopeContext,
     @IAgentTodoService private readonly todo: IAgentTodoService,
@@ -290,20 +280,9 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   private requestTokens(messages: readonly Message[]): number {
     return this.tokenCounting.requestSize({
       systemPrompt: this.profile.getSystemPrompt(),
-      tools: this.defaultTools().filter((tool) => tool.deferred !== true),
+      tools: this.toolSelect.defaultTools().filter((tool) => tool.deferred !== true),
       messages,
     });
-  }
-
-  private defaultTools(): readonly Tool[] {
-    return this.toolSelect
-      .shapeTools(this.toolRegistry.list())
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
-        deferred: tool.deferred,
-      }));
   }
 
   private shouldRecoverFromContextOverflow(

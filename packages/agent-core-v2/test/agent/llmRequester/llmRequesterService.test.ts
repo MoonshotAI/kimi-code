@@ -5,6 +5,7 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentLoopRequester, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/loop/requester';
 import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -24,8 +25,8 @@ import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTok
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
-import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
+import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
 import { IConfigService } from '#/app/config/config';
@@ -183,7 +184,8 @@ function createService(
   options: {
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
-    readonly contextMessages?: Message[];
+    readonly toolSelect?: Partial<IAgentToolSelectService>;
+    readonly contextMessages?: ContextMessage[];
     readonly env?: Record<string, string>;
     readonly modelAlias?: () => string;
     readonly prefixRevision?: () => number;
@@ -231,7 +233,6 @@ function createService(
     get: () => options.contextMessages ?? history,
     prefixRevision: options.prefixRevision ?? (() => 0),
   };
-  const tools = { list: () => [] };
   const config: Partial<IConfigService> = {
     get: (() => undefined) as IConfigService['get'],
   };
@@ -240,8 +241,9 @@ function createService(
   const telemetry = recordingTelemetry(telemetryRecords);
   const toolSelect: Partial<IAgentToolSelectService> = {
     enabled: () => false,
-    shapeTools: (entries) => entries,
+    defaultTools: () => [],
     shapeHistory: (messages) => messages,
+    ...options.toolSelect,
   };
   const events: Event2[] = [];
   const eventBus: IEventBus = {
@@ -258,7 +260,6 @@ function createService(
     ...options.mediaResolver,
   });
   ix.stub(ISessionTokenCountingService, tokenCounting);
-  ix.stub(IAgentToolRegistryService, tools);
   ix.stub(IAgentProfileService, profile);
   ix.stub(ISessionUsageService, usage);
   ix.stub(IConfigService, config);
@@ -358,12 +359,21 @@ describe('AgentLoopRequester strict resend', () => {
   it('resends once with strict projection after a recoverable structural 400', async () => {
     const calls = { value: 0 };
     const inputs: ModelRequestInput[] = [];
-    const contextMessages: Message[] = [
+    const contextMessages: ContextMessage[] = [
       { role: 'assistant', content: [{ type: 'text', text: 'stale' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: '<tools_added>\nalpha\n</tools_added>' }],
+        origin: { kind: 'system_trigger', name: 'loadable-tools' },
+      },
       { role: 'user', content: [{ type: 'text', text: 'hello' }] },
     ];
     const { service } = createService(createRequester(calls, undefined, [], inputs), {
       contextMessages,
+      toolSelect: {
+        defaultTools: () => [],
+        shapeHistory: (messages) => stripDynamicToolContext(messages),
+      },
     });
 
     const result = await service.request();
@@ -1374,22 +1384,45 @@ describe('AgentLoopRequester trace id', () => {
 });
 
 describe('AgentLoopRequester media resolver wiring', () => {
-  it('resolves the projected messages through the DI-injected media resolver', async () => {
-    const requester = createRequester({ value: 0 }, null);
+  it('runs ToolSelect before projection and records the resolved tools', async () => {
+    const inputs: ModelRequestInput[] = [];
+    const requester = createRequester({ value: 0 }, null, [], inputs);
+    const resolvedTool = { name: 'resolved', description: 'resolved tool', parameters: {} };
+    let toolSelectCalls = 0;
     const resolve = vi.fn(
       async (
         messages: readonly Message[],
         _resolution: Parameters<IAgentMediaResolverService['resolve']>[1],
       ) => messages,
     );
-    const { service } = createService(requester, {
+    const { service, dispatcher, records } = createService(requester, {
+      contextMessages: [
+        { role: 'assistant', content: [{ type: 'text', text: 'stale' }], toolCalls: [], partial: true },
+        { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+      ],
+      toolSelect: {
+        defaultTools: () => [resolvedTool],
+        shapeHistory: (messages) => {
+          toolSelectCalls += 1;
+          expect(messages.map((message) => message.role)).toEqual(['assistant', 'user']);
+          return messages;
+        },
+      },
       mediaResolver: { resolve },
     });
 
     await service.request();
+    await dispatcher.flush();
 
+    expect(toolSelectCalls).toBe(1);
     expect(resolve).toHaveBeenCalledTimes(1);
+    expect(resolve.mock.calls[0]?.[0].map((message) => message.role)).toEqual(['user']);
     expect(resolve.mock.calls[0]?.[1]).toMatchObject({ model: requester.model });
+    expect(inputs[0]?.tools).toEqual([resolvedTool]);
+    const snapshot = records.find((record) => record.type === 'llm.tools_snapshot');
+    const requestRecord = records.find((record) => record.type === 'llm.request');
+    expect(snapshot?.['tools']).toEqual([resolvedTool]);
+    expect(requestRecord?.['toolsHash']).toBe(snapshot?.['hash']);
   });
 });
 
