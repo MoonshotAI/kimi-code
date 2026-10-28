@@ -8,6 +8,7 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import type { CronConfig } from '#/features/cron/configSection';
 import { IAgentCronService } from '#/features/cron/cronService';
+import { IAgentGoalService } from '#/features/goal/goalService';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
@@ -80,5 +81,29 @@ describe('cron-fired steer turn context', () => {
       .flatMap((m) => m.content)
       .map((part) => (part.type === 'text' ? part.text : ''));
     expect(requestToolTexts.some((text) => text.includes(`id: ${jobId!}`))).toBe(true);
+  });
+
+  it('keeps a due cron queued while the goal is paused', async () => {
+    const goals = ctx.get(IAgentGoalService);
+    const cron = ctx.get(IAgentCronService);
+    const loop = ctx.get(IAgentLoopService);
+    await goals.createGoal({ objective: 'ship it' });
+    await goals.pauseGoal();
+    const task = cron.addTask({ cron: '* * * * *', prompt: 'fire me', recurring: true });
+    ctx.mockNextResponse({ type: 'text', text: 'cron turn done' });
+
+    writeFileSync(clockFile, String(Date.now() + 120_000));
+    await cron.tick();
+    await loop.settled();
+
+    expect(ctx.llmCalls).toHaveLength(0);
+    expect(cron.getTask(task.id)?.lastFiredAt).toBeUndefined();
+
+    await goals.resumeGoal();
+    await cron.tick();
+    await loop.settled();
+
+    expect(ctx.llmCalls).toHaveLength(1);
+    expect(cron.getTask(task.id)?.lastFiredAt).toBeDefined();
   });
 });

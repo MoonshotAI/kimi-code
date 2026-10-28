@@ -658,7 +658,9 @@ async function runNativeTurn(
           warn: (message) => stderr.write(`Warning: ${message}\n`),
           now: () => Date.now(),
           goalActive: () => goalService.getGoal().goal?.status === 'active',
-          cronNextFireAt: () => cronService.getNextFireTime(),
+          // A paused goal suppresses cron ticks, so a pending fire can never steer a turn.
+          cronNextFireAt: () =>
+            goalService.getGoal().goal?.status === 'paused' ? null : cronService.getNextFireTime(),
           turnActive: () => loop.snapshot().state === 'running',
         });
       } catch (error) {
