@@ -51,13 +51,13 @@ export const SubagentToolInputSchema = z.preprocess(
       .boolean()
       .optional()
       .describe(
-        'Fork the current context: the subagent starts with a snapshot of this agent\'s completed conversation history instead of zero context, inheriting this agent\'s agent type, tool set, and model. A non-empty resume is rejected. If subagent_type is provided, it must match this agent\'s type; if model is provided, it must be this agent\'s model or "primary". Different types and model overrides are rejected.',
+        'Start with a snapshot of your completed conversation history, inheriting your current agent type, model, and tool set.',
       ),
     model: z
       .string()
       .optional()
       .describe(
-        'Which model to run the subagent on: one of the aliases listed under "Available models" in this tool description, or "primary" for your current model and thinking level. When omitted, the configured default model is used. Ignored when resuming — resumed subagents keep their own model.',
+        'Which model to run the subagent on: one of the aliases listed under "Available models" in this tool description. When omitted, the configured default model is used. Ignored when resuming — resumed subagents keep their own model.',
       ),
   }),
 );

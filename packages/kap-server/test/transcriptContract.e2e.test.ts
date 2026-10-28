@@ -13,7 +13,9 @@ import {
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
+  interactions,
   resumeSessionById,
+  type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -438,9 +440,9 @@ describe('transcript contract e2e', () => {
     expect((approval.request as any)?.toolName).toBe('Bash');
     expect(mid.meta.agent).toBeDefined();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approval.interactionId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.interactionId)}`, {
       method: 'POST',
-      body: { decision: 'approved' },
+      body: { kind: 'approval', decision: 'approved' },
     });
     await idle(server!, base, sid);
 
@@ -483,15 +485,14 @@ describe('transcript contract e2e', () => {
 
     await submitPrompt(server!, base, sid, 'Plan the greeting change', 'auto');
 
-    let approvalId = '';
-    await until('plan review pending', async () => {
-      const { items } = await rest<{ items: any[] }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals?status=pending`);
-      const review = items.find((item) => item.tool_name === 'ExitPlanMode');
-      approvalId = review?.approval_id ?? '';
-      return review !== undefined;
-    });
-    const { items } = await rest<{ items: any[] }>(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals?status=pending`);
-    expect(items.find((item) => item.approval_id === approvalId)?.tool_input_display).toMatchObject({
+    const pendingReview = () =>
+      interactions
+        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
+        .find((item) => (item.payload as ApprovalRequest).toolName === 'ExitPlanMode');
+    await until('plan review pending', async () => pendingReview() !== undefined);
+    const review = pendingReview()!;
+    const approvalId = review.id;
+    expect((review.payload as ApprovalRequest).display).toMatchObject({
       kind: 'plan_review',
       plan: '# Plan\n\n- Change the greeting\n- Add a test',
       path: planPath,
@@ -501,9 +502,9 @@ describe('transcript contract e2e', () => {
     expect(mid.interactions.some((x: any) => x.interactionId === approvalId && x.state === 'pending')).toBe(true);
     expect(await planService.status()).not.toBeNull();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approvalId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approvalId)}`, {
       method: 'POST',
-      body: response,
+      body: { kind: 'approval', ...response },
     });
     await idleOrDump(server!, base, sid);
 

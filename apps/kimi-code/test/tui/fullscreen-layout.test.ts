@@ -1106,7 +1106,7 @@ describe('fullscreen layout', () => {
     expect(secondChoice).toBeGreaterThan(0);
     expect(rows.join('\n')).toContain('Start in Always Ask');
     expect(rows.join('\n')).toContain('Do not start');
-    expect(rows.join('\n')).toContain('Esc cancel · shift+↑/↓ scroll');
+    expect(rows.join('\n')).toContain('↑↓ navigate · Enter select · Esc cancel');
     expect(rows.join('\n')).toContain('Best if you want Kimi Code to keep working while you are away');
     expect(rows.join('\n')).not.toContain('Tools are approved automatically. Kimi Code may still ask you questions.');
 

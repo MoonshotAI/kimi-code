@@ -49,6 +49,8 @@ export type LegacyGenerateFn = (
     readonly sampling?: SamplingOptions;
     readonly thinking?: ThinkingRequestOptions;
     readonly maxCompletionTokens?: number;
+    readonly maxContextTokens?: number;
+    readonly usedContextTokens?: number;
   },
 ) => Promise<LegacyGenerateResult>;
 
@@ -63,6 +65,18 @@ function samplingFromExtraParams(extra: ExtraParams | undefined): SamplingOption
     extra.openai?.top_p ?? extra.responses?.top_p ?? extra.anthropic?.top_p ?? extra.googleGenai?.topP;
   if (temperature === undefined && topP === undefined) return undefined;
   return { temperature, topP };
+}
+
+export function generateCallOf(config: LlmRequestConfig, content: LlmRequestContent): GenerateCall {
+  return normalizeGenerateInput({
+    systemPrompt: config.systemPrompt ?? '',
+    tools: (config.tools ?? []).map(({ name, description, parameters }) => ({
+      name,
+      description,
+      parameters,
+    })),
+    history: structuredClone(content.messages.map(fromLlmMessage)),
+  });
 }
 
 export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
@@ -89,6 +103,8 @@ export function requesterFromGenerateFn(fn: LegacyGenerateFn): LlmRequester {
             sampling: samplingFromExtraParams(config.extraParams),
             thinking: config.thinking,
             maxCompletionTokens: config.maxCompletionTokens,
+            maxContextTokens: config.maxContextTokens,
+            usedContextTokens: content.usedContextTokens,
           },
         );
       } catch (error) {
@@ -174,16 +190,7 @@ export function createScriptedGenerate() {
       throw new Error(`Unexpected generate call #${String(calls.length + 1)}`);
     }
 
-    const history = content.messages.map(fromLlmMessage);
-    const input = normalizeGenerateInput({
-      systemPrompt: config.systemPrompt ?? '',
-      tools: (config.tools ?? []).map(({ name, description, parameters }) => ({
-        name,
-        description,
-        parameters,
-      })),
-      history: structuredClone(history),
-    });
+    const input = generateCallOf(config, content);
     calls.push(input);
 
     const emit = control.onEvent;
@@ -223,7 +230,7 @@ export function createScriptedGenerate() {
     emit?.({
       type: 'llm.streaming.usage',
       usage: {
-        inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(history)),
+        inputOther: estimateTokensForMessages(normalizeMessagesForTokenEstimates(input.history)),
         output: estimateTokensForMessages(normalizeMessagesForTokenEstimates([message])),
         inputCacheRead: 0,
         inputCacheCreation: 0,

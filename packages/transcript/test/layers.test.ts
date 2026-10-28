@@ -2019,6 +2019,32 @@ describe('foldWireRecordFacts (cold facts)', () => {
           time: 3000,
         },
         { type: 'interaction.resolved', id: 'q-1', response: null, time: 4000 },
+        {
+          type: 'interaction.request',
+          id: 'q-2',
+          kind: 'question',
+          request: { questions: [] },
+          time: 5000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'q-2',
+          response: { cancelled: true, reason: 'turn_ended' },
+          time: 6000,
+        },
+        {
+          type: 'interaction.request',
+          id: 'q-3',
+          kind: 'question',
+          request: { questions: [] },
+          time: 7000,
+        },
+        {
+          type: 'interaction.resolved',
+          id: 'q-3',
+          response: { cancelled: true },
+          time: 8000,
+        },
       ],
       base,
     );
@@ -2038,6 +2064,22 @@ describe('foldWireRecordFacts (cold facts)', () => {
         state: 'dismissed',
         request: { questions: [] },
         response: null,
+      },
+      {
+        interactionId: 'q-2',
+        interactionKind: 'question',
+        toolCallId: undefined,
+        state: 'cancelled',
+        request: { questions: [] },
+        response: { cancelled: true, reason: 'turn_ended' },
+      },
+      {
+        interactionId: 'q-3',
+        interactionKind: 'question',
+        toolCallId: undefined,
+        state: 'answered',
+        request: { questions: [] },
+        response: { cancelled: true },
       },
     ]);
   });

@@ -86,7 +86,9 @@ import {
   resolveSubagentBinding,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
+  SECONDARY_MODEL_FORCE_REMOVED_MESSAGE,
   SECONDARY_MODEL_SECTION,
+  secondaryModelRemovedKeysMessage,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SecondaryModelConfig,
@@ -2057,7 +2059,7 @@ describe('subagent config section', () => {
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
-    return { config, disposables };
+    return { config, disposables, storage };
   }
 
   it('defaults to two hours and honours the env override', async () => {
@@ -2131,7 +2133,7 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('resolves the spawn binding: pool default, explicit alias, primary opt-in, inherit without pool', async () => {
+  it('resolves the spawn binding: pool default, explicit alias, inherit without pool', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
     const noPool = await createConfig({});
@@ -2140,11 +2142,9 @@ describe('subagent config section', () => {
       thinking: 'medium',
       modelSource: 'inherited',
     });
-    expect(resolveSubagentBinding(noPool.config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
+    expect(() => resolveSubagentBinding(noPool.config, own, 'primary')).toThrow(
+      /Invalid model "primary": no \[secondary_model\] pool is configured/,
+    );
     noPool.disposables.dispose();
 
     const pool = await createConfig(
@@ -2161,11 +2161,9 @@ describe('subagent config section', () => {
       thinking: undefined,
       modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(pool.config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
+    expect(() => resolveSubagentBinding(pool.config, own, 'primary')).toThrow(
+      'Invalid model "primary". Available models: provider/fast, provider/smart.',
+    );
     pool.disposables.dispose();
   });
 
@@ -2181,13 +2179,11 @@ describe('subagent config section', () => {
       thinking: undefined,
       modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
+    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
+      'Invalid model "primary". Available models: provider/fast.',
+    );
     expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
-      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+      'Invalid model "provider/smart". Available models: provider/fast.',
     );
 
     disposables.dispose();
@@ -2214,7 +2210,7 @@ describe('subagent config section', () => {
       modelSource: 'secondary_pool',
     });
     expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
-      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+      'Invalid model "provider/smart". Available models: provider/fast.',
     );
 
     disposables.dispose();
@@ -2250,45 +2246,26 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('lets force pin the legacy model fallback when no default_model is set', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
+  it('ignores legacy recipe patch fields with a warning and keeps them on disk', async () => {
+    const { config, disposables, storage } = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
-    );
-
-    expect(resolveSubagentBinding(config, own)).toEqual({
-      model: 'provider/fast',
-      thinking: undefined,
-      modelSource: 'forced',
-    });
-    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
-      /Invalid model "primary": \[secondary_model\]\.force is set/,
-    );
-
-    disposables.dispose();
-  });
-
-  it('round-trips legacy recipe patch fields the pool resolution ignores', async () => {
-    const { config, disposables } = await createConfig(
-      {},
-      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\ncapabilities = ["image_in"]\n',
     );
 
     expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       model: 'provider/fast',
       defaultEffort: 'low',
-      maxOutputSize: 8192,
     });
-    expect(resolveSubagentModelPool(config)).toEqual({
-      defaultModel: 'provider/fast',
-      models: { 'provider/fast': '' },
+    expect(config.diagnostics()).toContainEqual({
+      domain: SECONDARY_MODEL_SECTION,
+      severity: 'warning',
+      message: secondaryModelRemovedKeysMessage(['max_output_size', 'capabilities']),
     });
 
     await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
-    const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
-    expect(after?.defaultEffort).toBe('low');
-    expect(after?.maxOutputSize).toBe(8192);
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)?.defaultEffort).toBe('low');
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_output_size = 8192');
 
     disposables.dispose();
   });
@@ -2305,50 +2282,39 @@ describe('subagent config section', () => {
       thinking: 'max',
       modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
 
     disposables.dispose();
   });
 
-  it('binds every spawn to the forced default_model, rejecting even "primary"', async () => {
+  it('ignores the removed force key with a warning, keeping the pool semantics', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
-      {},
-      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n',
-    );
+    const lone = await createConfig({}, '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n');
 
-    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+    expect(lone.config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       defaultModel: 'provider/fast',
-      force: true,
     });
-    expect(resolveSubagentBinding(config, own)).toEqual({
+    expect(lone.config.diagnostics()).toContainEqual({
+      domain: SECONDARY_MODEL_SECTION,
+      severity: 'warning',
+      message: SECONDARY_MODEL_FORCE_REMOVED_MESSAGE,
+    });
+    expect(resolveSubagentBinding(lone.config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
-      modelSource: 'forced',
+      modelSource: 'secondary_pool',
     });
-    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
-      /Invalid model "primary": \[secondary_model\]\.force is set/,
-    );
+    lone.disposables.dispose();
 
-    disposables.dispose();
-  });
-
-  it('rejects force combined with a models table at spawn resolution, matching startup validation', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
+    const table = await createConfig(
       {},
-      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = ""\n',
     );
-
-    expect(() => resolveSubagentBinding(config, own)).toThrow(
-      /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
-    );
-
-    disposables.dispose();
+    expect(resolveSubagentBinding(table.config, own, 'provider/smart')).toEqual({
+      model: 'provider/smart',
+      thinking: undefined,
+      modelSource: 'secondary_pool',
+    });
+    table.disposables.dispose();
   });
 
   it('rejects an alias outside the pool, listing the available models', async () => {
@@ -2367,7 +2333,7 @@ describe('subagent config section', () => {
     expect(isError2(caught)).toBe(true);
     expect((caught as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((caught as Error2).message).toBe(
-      'Invalid model "provider/typo". Available models: provider/fast, provider/smart, primary.',
+      'Invalid model "provider/typo". Available models: provider/fast, provider/smart.',
     );
 
     disposables.dispose();
@@ -2378,7 +2344,7 @@ describe('subagent config section', () => {
     const { config, disposables } = await createConfig({});
 
     expect(() => resolveSubagentBinding(config, own, 'provider/fast')).toThrow(
-      /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
+      /Invalid model "provider\/fast": no \[secondary_model\] pool is configured/,
     );
 
     disposables.dispose();

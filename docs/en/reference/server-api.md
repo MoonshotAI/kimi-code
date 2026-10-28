@@ -1693,6 +1693,7 @@ In-session file operations go through `POST /api/v1/sessions/{session_id}/fs:{ac
 
 | Method and path | Description |
 | --- | --- |
+| `POST /api/v1/workspace/fs:list` | Session-less workspace directory listing |
 | `POST /api/v1/workspace/fs:search` | Session-less workspace search (the body carries the workspace reference) |
 | `POST /api/v1/workspace/fs:suggest` | Session-less file-completion candidates (for `@` file mentions) |
 | `GET /api/v1/sessions/{session_id}/fs/{path}:download` | Download a session file (binary, see below) |
@@ -1942,11 +1943,37 @@ Downloads a file from the session workspace; `{path}` is the workspace-relative 
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `path` | path | string | **Required.** Workspace-relative file path plus the `:download` suffix |
+| `allow_external_symlinks` | query | string | `true` to download through symlinks outside the workspace. Default `false` |
 
 - `40001`: missing or empty path
 - `40401`: session not found
 - `40409`: path not found
 - `41304`: path escapes the session workspace
+
+#### `POST /api/v1/workspace/fs:list`
+
+The session-less form of `fs:list`: the workspace travels in the body instead of the URL.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace` | body | string | **Required.** Registered workspace id or absolute root (registered on the spot) |
+| `path` | body | string | Directory to list, relative to the workspace root. Default `.` |
+| `depth` | body | integer | Recursion depth, 1–10. Default `1` |
+| `limit` | body | integer | Maximum entries, 1–1000. Default `200` |
+| `show_hidden` | body | boolean | Include dotfiles. Default `false` |
+| `follow_gitignore` | body | boolean | Skip gitignored paths. Default `true` |
+| `exclude_globs` | body | string[] | Additional globs to skip |
+| `allow_ignored_globs` | body | string[] | Globs to show even when gitignored |
+| `allow_external_symlinks` | body | boolean | Follow symlinked directories whose targets are outside the workspace. Default `false` |
+| `sort` | body | string | `type_first` (default) / `name_asc` / `name_desc` / `mtime_desc` / `size_desc` |
+
+On success, `data` has the same shape as `fs:list`.
+
+- `40001`: body validation failure
+- `40409`: path not found or not a directory
+- `40410`: workspace not found and not a usable absolute path
+- `40411`: permission denied by the host filesystem
+- `41304`: path escapes the workspace through a symlink and `allow_external_symlinks` is not enabled
 
 #### `POST /api/v1/workspace/fs:search`
 

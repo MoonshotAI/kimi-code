@@ -13,14 +13,12 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { ApprovalResponse } from '@moonshot-ai/kap-server/protocol/approval';
 import type { Envelope } from '@moonshot-ai/kap-server/protocol/envelope';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
-import type { QuestionResponse } from '@moonshot-ai/kap-server/protocol/question';
 import type {
-  ApprovalResolveResult,
-  ListPendingApprovalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-approval';
+  InteractionRespondRequest,
+  InteractionRespondResult,
+} from '@moonshot-ai/kap-server/protocol/interaction';
 import type {
   ListModelsResponse,
   ListProvidersResponse,
@@ -32,10 +30,6 @@ import type {
   PromptSteerResult,
   PromptSubmitResult,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
-import type {
-  ListPendingQuestionsResponse,
-  QuestionResolveResult,
-} from '@moonshot-ai/kap-server/protocol/rest-question';
 import type {
   CompactSessionRequest,
   CompactSessionResponse,
@@ -370,50 +364,15 @@ export class HttpClient {
   }
 
   // ── Approvals / Questions (reverse-RPC resolves) ────────────────────────
-  resolveApproval(
+  respondInteraction(
     sid: string,
-    aid: string,
-    body: ApprovalResponse,
-  ): Promise<ApprovalResolveResult> {
+    interactionId: string,
+    body: InteractionRespondRequest,
+  ): Promise<InteractionRespondResult> {
     return this.request(
       'POST',
-      `/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(aid)}`,
+      `/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(interactionId)}`,
       body,
-    );
-  }
-  listPendingApprovals(sid: string): Promise<ListPendingApprovalsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/approvals?status=pending`,
-      undefined,
-    );
-  }
-  resolveQuestion(
-    sid: string,
-    qid: string,
-    body: QuestionResponse,
-  ): Promise<QuestionResolveResult> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/questions/${encodeURIComponent(qid)}`,
-      body,
-    );
-  }
-  listPendingQuestions(sid: string): Promise<ListPendingQuestionsResponse> {
-    return this.request(
-      'GET',
-      `/sessions/${encodeURIComponent(sid)}/questions?status=pending`,
-      undefined,
-    );
-  }
-  dismissQuestion(
-    sid: string,
-    qid: string,
-  ): Promise<{ dismissed: true; dismissed_at: string }> {
-    return this.request(
-      'POST',
-      `/sessions/${encodeURIComponent(sid)}/questions/${encodeURIComponent(qid)}:dismiss`,
-      {},
     );
   }
 }

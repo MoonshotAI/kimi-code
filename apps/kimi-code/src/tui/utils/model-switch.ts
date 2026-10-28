@@ -14,14 +14,14 @@ import { thinkingEffortFromConfig, thinkingEffortToConfig } from './thinking-con
 export const MODEL_SWITCH_CACHE_WARNING =
   'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 
-/** True once the conversation has at least one user message: a switch from
- * then on resends the accumulated context, losing the cache. Shell-command
- * echoes are also 'user' transcript entries but carry an empty `bullet`, so
- * they're excluded. */
+/** True once the conversation has at least one user message. Resumed sessions
+ * can use their turn count before replay hydration finishes. Shell-command
+ * echoes carry an empty `bullet`, so they're excluded. */
 export function hasConversationHistory(host: SlashCommandHost): boolean {
-  return host.state.transcriptEntries.some(
-    (entry) => entry.kind === 'user' && entry.bullet !== '',
-  );
+  if (host.state.transcriptEntries.some((entry) => entry.kind === 'user' && entry.bullet !== '')) {
+    return true;
+  }
+  return (host.session?.getResumeState()?.agents['main']?.userTurnCount ?? 0) > 0;
 }
 
 export function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {

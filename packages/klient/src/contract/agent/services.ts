@@ -106,6 +106,7 @@ export const mcpServerEntrySchema = z.object({
   status: z.enum(['pending', 'connected', 'failed', 'disabled', 'needs-auth', 'removed']),
   toolCount: z.number(),
   error: z.string().optional(),
+  nextRetryAt: z.number().optional(),
 });
 
 export const agentMcpContract = {

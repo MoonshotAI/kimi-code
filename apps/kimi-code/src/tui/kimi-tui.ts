@@ -2823,11 +2823,12 @@ export class KimiTUI {
    * Seed appState with the config defaults the v2 engine would apply at
    * createSession time (model, permission, plan mode, thinking effort,
    * context cap), so the footer and the lazy create path reflect them while
-   * no session exists. Runs at session-less startup and again on /reload
-   * while still session-less, so externally edited defaults take effect
-   * before the first lazy-created session.
+   * no session exists. Runs at session-less startup and after auth/config
+   * refreshes, so externally edited defaults take effect before the first
+   * lazy-created session. `includeModel: false` leaves the pending model,
+   * effort, and context cap untouched while hydrating the other defaults.
    */
-  async hydrateLazyConfigDefaults(): Promise<void> {
+  async hydrateLazyConfigDefaults(includeModel = true): Promise<void> {
     const { startup } = this.options;
     const config = await this.harness.getConfig({ reload: true });
     this.creationEnvironment = await this.harness.resolveSessionEnvironment({
@@ -2836,10 +2837,9 @@ export class KimiTUI {
       environmentCwd: startup.environmentCwd,
     });
     this.refreshSlashCommandAutocomplete();
-    const patch: Partial<AppState> = lazyModelSelection(
-      config,
-      startup.model ?? config.defaultModel,
-    );
+    const patch: Partial<AppState> = includeModel
+      ? lazyModelSelection(config, startup.model ?? config.defaultModel)
+      : {};
     // CLI --auto/--yolo/--plan win over config defaults; the flags are
     // re-applied by applyStartupPermissionAndPlanToAppState at startup.
     if (!startup.auto && !startup.yolo) {
