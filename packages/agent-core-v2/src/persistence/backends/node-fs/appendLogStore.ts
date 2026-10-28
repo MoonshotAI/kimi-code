@@ -404,6 +404,7 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       const encoded = encodeBatch(batch);
+      const lengthBefore = this.diskLength(scope, key);
       try {
         state.inFlightBytes = encoded.length;
         await this.storage.append(scope, key, encoded, { durable: true });
@@ -413,11 +414,15 @@ export class AppendLogStore extends Disposable implements IAppendLogStore {
         if (wroteBox !== undefined) wroteBox.value = true;
       } catch (error) {
         state.inFlightBytes = 0;
-        if (state.storageFailure === undefined) {
-          state.storageFailure = { error };
-          state.failureWarned = false;
+        const lengthAfter = this.diskLength(scope, key);
+        if (lengthBefore === undefined || lengthAfter !== lengthBefore) {
+          if (state.storageFailure === undefined) {
+            state.storageFailure = { error };
+            state.failureWarned = false;
+          }
+          throw state.storageFailure.error;
         }
-        throw state.storageFailure.error;
+        throw error;
       }
       if (state.cutoverEpoch !== cutoverEpoch) return wrote;
       state.pending.splice(0, batch.length);

@@ -234,17 +234,18 @@ describe('AppendLogStore', () => {
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
   });
 
-  it('keeps a sticky failure until every acquired owner releases it', async () => {
-    const failure = new Error('shared append failed');
+  it('retries a no-write disk-full failure until storage recovers without releasing owners', async () => {
+    const failure = Object.assign(new Error('no space left on device'), { code: 'ENOSPC' });
     let reportFailure!: (error: unknown) => void;
     const reportedFailure = new Promise<unknown>((resolve) => {
       reportFailure = resolve;
     });
+    let diskFull = true;
     let appendAttempts = 0;
     const originalAppend = storage.append.bind(storage);
     storage.append = async (...args) => {
       appendAttempts++;
-      if (appendAttempts === 1) throw failure;
+      if (diskFull) throw failure;
       return originalAppend(...args);
     };
 
@@ -255,13 +256,15 @@ describe('AppendLogStore', () => {
 
     firstOwner.dispose();
     await expect(record.flush()).rejects.toBe(failure);
+    expect(appendAttempts).toBe(2);
 
-    finalOwner.dispose();
-    const replacementOwner = record.acquire(SCOPE, KEY);
+    diskFull = false;
     record.append(SCOPE, KEY, { n: 2 });
     await record.flush();
-    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
-    replacementOwner.dispose();
+
+    expect(appendAttempts).toBe(3);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }, { n: 2 }]);
+    finalOwner.dispose();
   });
 
   it('rewrite atomically replaces the whole log', async () => {
@@ -481,7 +484,7 @@ describe('AppendLogStore', () => {
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
   });
 
-  it('close waits for every key before reporting the first sticky failure', async () => {
+  it('close waits for every key before reporting the first append failure', async () => {
     const failedScope = 'agents/a';
     const pendingScope = 'agents/b';
     const failure = new Error('first key failed');
