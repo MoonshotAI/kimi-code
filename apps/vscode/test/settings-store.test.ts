@@ -262,6 +262,72 @@ describe("Webview background model catalog synchronization", () => {
     expect(boundary.saveConfig).not.toHaveBeenCalled();
   });
 
+  it("normalizes an effort removed from the selected model's refreshed metadata", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+    const refreshed = { ...MODELS[1], support_efforts: ["low"], default_effort: "low" };
+
+    useSettingsStore.getState().syncModels([refreshed], "reasoning", true, "low");
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+      models: [refreshed],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("normalizes effort when a retirement successor cannot use it", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    boundary.saveConfig.mockClear();
+    const successor = {
+      id: "successor",
+      name: "Successor",
+      provider: "managed:kimi-code",
+      capabilities: [],
+    };
+
+    useSettingsStore.getState().syncModels(
+      [successor],
+      "successor",
+      false,
+      undefined,
+      { from: "reasoning", to: "successor" },
+    );
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "successor",
+      thinkingEffort: "off",
+      models: [successor],
+    });
+    expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+
+  it("does not let a pending save rollback restore an unsupported effort", async () => {
+    let rejectSave!: (error: Error) => void;
+    boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {
+      rejectSave = reject;
+    }));
+    useSettingsStore.getState().initModels(MODELS, "plain", true);
+    useSettingsStore.getState().updateModel("reasoning");
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "high",
+    });
+    const refreshed = { ...MODELS[1], support_efforts: ["low"], default_effort: "low" };
+    useSettingsStore.getState().syncModels([refreshed], "reasoning", true, "low");
+    expect(useSettingsStore.getState().thinkingEffort).toBe("low");
+
+    rejectSave(new Error("stale save failed"));
+    await Promise.resolve();
+
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "reasoning",
+      thinkingEffort: "low",
+    });
+    expect(boundary.toastError).not.toHaveBeenCalled();
+  });
+
   it("does not cancel a pending save rollback when the selection is preserved", async () => {
     let rejectSave!: (error: Error) => void;
     boundary.saveConfig.mockReturnValue(new Promise((_resolve, reject) => {

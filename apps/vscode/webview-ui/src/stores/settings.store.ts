@@ -102,6 +102,15 @@ function defaultEffortForModel(model: ModelConfig, defaultThinking: boolean, con
   return defaultThinking ? "on" : "off";
 }
 
+function supportsThinkingEffort(model: ModelConfig, effort: string): boolean {
+  const mode = getModelThinkingMode(model);
+  if (mode === "none") return effort === "off";
+  if (mode === "switch") return effort === "off" || effort === "on";
+  if (mode === "always") return effort === "on";
+  if (effort === "off") return !model.capabilities.includes("always_thinking");
+  return effort !== "on" && (model.support_efforts ?? []).includes(effort);
+}
+
 /**
  * Whether picking `effort` persists it as the global default — mirrors the
  * extension host's thinkingConfig gate: a pick above the model's effective
@@ -353,10 +362,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       ? [...models, previousModel]
       : models;
     const model = getModelById(nextModels, currentModel);
-    const thinkingEffort = hasSelection
+    const preserveThinkingEffort = hasSelection && model !== undefined
+      && supportsThinkingEffort(model, state.thinkingEffort);
+    const thinkingEffort = preserveThinkingEffort
       ? state.thinkingEffort
       : model ? defaultEffortForModel(model, defaultThinking, defaultThinkingEffort) : "off";
-    if (replacement !== undefined) settingsSaveRevision += 1;
+    if (replacement !== undefined || (hasSelection && thinkingEffort !== state.thinkingEffort)) {
+      settingsSaveRevision += 1;
+    }
 
     set({
       models: nextModels,
