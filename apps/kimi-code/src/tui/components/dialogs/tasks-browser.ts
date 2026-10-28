@@ -44,6 +44,7 @@ export interface TasksBrowserProps {
   readonly selectedTaskId: string | undefined;
   readonly tailOutput: string | undefined;
   readonly tailLoading: boolean;
+  readonly tailError: string | undefined;
   readonly flashMessage: string | undefined;
   /** Model catalog from the app config, used to resolve task model aliases
    *  to display names (same mapping as the other subagent surfaces). */
@@ -637,6 +638,20 @@ export class TasksBrowserApp extends Container implements Focusable {
       const lines: string[] = [currentTheme.fg('textMuted', 'No task selected.')];
       while (lines.length < innerHeight) lines.push('');
       return this.renderFrame('Preview Output', lines, width, height);
+    }
+
+    if (this.props.tailError !== undefined && !this.props.tailLoading) {
+      const errorLines = sanitizeShellOutput(
+        `Cannot load preview: ${this.props.tailError}`,
+      ).split('\n');
+      const styled = errorLines
+        .slice(0, Math.max(1, innerHeight - 1))
+        .map((line) => currentTheme.fg('error', line));
+      if (styled.length < innerHeight) {
+        styled.push(currentTheme.fg('textMuted', 'Press R to retry.'));
+      }
+      while (styled.length < innerHeight) styled.push('');
+      return this.renderFrame('Preview Output', styled, width, height);
     }
 
     let body: string;
