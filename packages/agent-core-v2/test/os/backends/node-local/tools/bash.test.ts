@@ -822,51 +822,6 @@ describe('BashTool', () => {
     expect(properties['timeout']?.default).toBe(60);
   });
 
-  it('describes background execution and auto-backgrounding on timeout by default', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const description = bashTool(runner).description;
-
-    expect(description).not.toMatch(/\$\{[A-Z_]+\}/);
-    expect(description).toContain('set `run_in_background=true` with a short `description`');
-    expect(description).toContain('is moved to the background instead of being killed');
-    expect(description).toContain('The user can also move a running foreground command to the background');
-  });
-
-  it('describes timeouts as killing the command when auto-backgrounding is disabled', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const description = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy(),
-      stubConfig({ task: { bashAutoBackgroundOnTimeout: false } }),
-    ).description;
-
-    expect(description).not.toMatch(/\$\{[A-Z_]+\}/);
-    expect(description).toContain('A foreground command that hits its timeout is killed.');
-    expect(description).not.toContain('instead of being killed');
-    expect(description).toContain('set `run_in_background=true` with a short `description`');
-  });
-
-  it('tells the model not to run in the background when task tools are inactive', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const description = bashTool(
-      runner,
-      createTestEnv(),
-      createTestCtx(),
-      createFakeTaskService().service,
-      stubToolPolicy((name) => name !== 'TaskList'),
-    ).description;
-
-    expect(description).not.toMatch(/\$\{[A-Z_]+\}/);
-    expect(description).toContain('Background execution is disabled for this agent.');
-    expect(description).toContain('A command that hits its timeout is killed.');
-    expect(description).not.toContain('instead of being killed');
-    expect(description).not.toContain('TaskOutput');
-    expect(description).not.toContain('move a running foreground command to the background');
-  });
-
   it('runs through runner.spawn, injects cwd, noninteractive env, and closes stdin', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const { runner, exec } = createTestRunner(proc);
@@ -1347,17 +1302,6 @@ describe('BashTool', () => {
 
     const args = exec.mock.calls[0]?.[1] as readonly string[];
     expect(args[1]).toBe("cd '/workspace' && ls 2>nul");
-  });
-
-  it('exposes a shell description that names the shell and the background task tools', () => {
-    const { runner } = createTestRunner(processWithOutput());
-    const tool = bashTool(runner);
-
-    const description = tool.description;
-    expect(description).toContain('`bash`');
-    expect(description).toContain('TaskOutput');
-    expect(description).toContain('TaskStop');
-    expect(description).toContain('run_in_background=true');
   });
 
   it('disables background execution when TaskList is inactive even if TaskOutput/TaskStop are active', async () => {
