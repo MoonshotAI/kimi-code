@@ -2,7 +2,11 @@ import { Agent, EnvHttpProxyAgent, type Dispatcher } from 'undici';
 
 export const LLM_HEADERS_TIMEOUT_ENV = 'KIMI_CODE_LLM_HEADERS_TIMEOUT_MS';
 
-const MAX_HEADERS_TIMEOUT_MS = 2 ** 31 - 1;
+export const LLM_STREAM_IDLE_TIMEOUT_ENV = 'KIMI_CODE_LLM_STREAM_IDLE_TIMEOUT_MS';
+
+export const DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS = 90_000;
+
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -10,12 +14,25 @@ export function resolveLlmHeadersTimeoutMs(env: Env = process.env): number | und
   const raw = env[LLM_HEADERS_TIMEOUT_ENV];
   if (raw === undefined || raw.trim() === '') return undefined;
   const value = Number(raw);
-  if (!Number.isInteger(value) || value <= 0 || value > MAX_HEADERS_TIMEOUT_MS) {
+  if (!Number.isInteger(value) || value <= 0 || value > MAX_TIMEOUT_MS) {
     throw new Error(
-      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_HEADERS_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
+      `${LLM_HEADERS_TIMEOUT_ENV} must be a positive integer no greater than ${MAX_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
     );
   }
   return value;
+}
+
+export function resolveLlmStreamIdleTimeoutMs(env: Env = process.env): number | undefined {
+  const raw = env[LLM_STREAM_IDLE_TIMEOUT_ENV];
+  if (raw === undefined || raw.trim() === '') return DEFAULT_LLM_STREAM_IDLE_TIMEOUT_MS;
+  if (raw.trim().toLowerCase() === 'off') return undefined;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0 || value > MAX_TIMEOUT_MS) {
+    throw new Error(
+      `${LLM_STREAM_IDLE_TIMEOUT_ENV} must be a non-negative integer no greater than ${MAX_TIMEOUT_MS}, got ${JSON.stringify(raw)}.`,
+    );
+  }
+  return value === 0 ? undefined : value;
 }
 
 const SOCKS_SCHEMES = new Set(['socks', 'socks4', 'socks4a', 'socks5', 'socks5h']);

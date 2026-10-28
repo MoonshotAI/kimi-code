@@ -18,6 +18,8 @@ import {
   type LlmRequestEvent,
   type LlmRequester,
 } from '#human/llm/requester/requester';
+import { createStreamIdleWatchdog } from '#human/llm/requester/streamIdleWatchdog';
+import { resolveLlmStreamIdleTimeoutMs } from '#human/llm/requester/timeout';
 import type { TokenUsage } from '#human/llm/usage';
 
 import {
@@ -176,13 +178,32 @@ export class ModelRequesterImpl implements ModelRequester {
     };
 
     const credential = await this.model.credentialProvider?.resolve();
-    await requester.generate(
-      { ...config, model: applyCredential(resolved.model, credential) },
-      content,
-      {
-        signal: signal ?? new AbortController().signal,
-        onEvent: (event: LlmRequestEvent) => {
-          switch (event.type) {
+    const requestSignal = signal ?? new AbortController().signal;
+    const idleTimeoutMs = resolveLlmStreamIdleTimeoutMs();
+    let idleFailure: LlmErrorMessage | undefined;
+    const watchdog =
+      idleTimeoutMs === undefined
+        ? undefined
+        : createStreamIdleWatchdog({
+            idleTimeoutMs,
+            upstream: requestSignal,
+            onIdle: () => {
+              idleFailure = {
+                kind: 'timeout',
+                message: `LLM request stalled: no stream events for ${idleTimeoutMs}ms; aborted the stalled attempt`,
+              };
+            },
+          });
+    try {
+      await requester.generate(
+        { ...config, model: applyCredential(resolved.model, credential) },
+        content,
+        {
+          signal: watchdog?.signal ?? requestSignal,
+          onEvent: (event: LlmRequestEvent) => {
+            if (idleFailure !== undefined) return;
+            watchdog?.reset();
+            switch (event.type) {
             case 'llm.sent': {
               const now = Date.now();
               if (requestSentAt !== undefined) {
@@ -248,10 +269,17 @@ export class ModelRequesterImpl implements ModelRequester {
               }
               return;
             }
-          }
+            }
+          },
         },
-      },
-    );
+      );
+    } finally {
+      watchdog?.cancel();
+    }
+
+    if (idleFailure !== undefined && failed === undefined) {
+      failed = idleFailure;
+    }
 
     if (failed !== undefined) {
       throw errorFromLlmMessage(failed);
