@@ -534,7 +534,7 @@ export function groupMessagesIntoSnapshot(
 
   flushSteeredLeftovers();
 
-  return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
+  return { items, interactions: [], attachments, todos: [], prompts: [], meta: {} };
 }
 
 function notificationFrameText(text: string): string {

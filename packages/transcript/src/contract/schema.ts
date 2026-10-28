@@ -208,23 +208,6 @@ export const transcriptItemSchema = z.discriminatedUnion('kind', [
   transcriptMarkerSchema,
 ]);
 
-export const transcriptTaskSchema = z.object({
-  taskId: taskIdSchema,
-  kind: z.enum(['shell', 'subagent', 'tool', 'other']),
-  state: z.enum(['running', 'completed', 'failed', 'timed_out', 'killed', 'lost']),
-  detached: z.boolean(),
-  description: z.string().optional(),
-  agentId: agentIdSchema.optional(),
-  startedAt: z.string().optional(),
-  endedAt: z.string().optional(),
-  resultSummary: z.string().optional(),
-  error: z.string().optional(),
-  stateReason: z.string().optional(),
-  usage: stepUsageSchema.optional(),
-  model: z.string().optional(),
-  thinkingEffort: z.string().optional(),
-});
-
 export const goalMetaSchema = z.object({
   objective: z.string(),
   status: z.enum(['active', 'paused', 'blocked', 'complete']),
@@ -370,7 +353,6 @@ export const transcriptPromptSchema = z.object({
 
 export const agentTranscriptSnapshotSchema = z.object({
   items: z.array(transcriptItemSchema),
-  tasks: z.array(transcriptTaskSchema),
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),
@@ -410,7 +392,6 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
     item: transcriptMarkerSchema,
     beforeTurn: z.number().int().optional(),
   }),
-  z.object({ op: z.literal('task.upsert'), task: transcriptTaskSchema }),
   z.object({ op: z.literal('interaction.upsert'), interaction: interactionSchema }),
   z.object({ op: z.literal('attachment.upsert'), attachment: attachmentSchema }),
   z.object({ op: z.literal('todo.upsert'), todo: todoSchema }),
@@ -475,7 +456,6 @@ export const transcriptResponseSchema = z.object({
   agent_id: agentIdSchema,
   items: z.array(transcriptItemSchema),
   has_more: z.boolean(),
-  tasks: z.array(transcriptTaskSchema),
   interactions: z.array(interactionSchema).default([]),
   attachments: z.array(attachmentSchema).default([]),
   todos: z.array(todoSchema).default([]),

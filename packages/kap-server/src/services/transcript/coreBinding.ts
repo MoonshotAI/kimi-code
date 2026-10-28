@@ -3,7 +3,6 @@ import {
   IAgentConversationUndoParticipantRegistry,
   IAgentLoopService,
   IAgentScopeContext,
-  IAgentTaskService,
   IEventBus,
   INTERACTION_TAG_AGENT_ID,
   INTERACTION_TAG_SESSION_ID,
@@ -41,6 +40,7 @@ export function bindSessionTranscript(
   logger?: TranscriptBindingLogger,
   onOps?: (event: TranscriptChangeEvent) => void,
   reconcileAfterUndo?: (agentId: string) => Promise<void>,
+  onBusEvent?: (agentId: string, event: { readonly type: string }) => void,
 ): TranscriptBinding {
   const agents = session.accessor.get(IAgentLifecycleService);
   const pendingInteractions = (): readonly Interaction[] =>
@@ -118,25 +118,6 @@ export function bindSessionTranscript(
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });
-      const agentHandle = agents.handleOf(agentId);
-      if (agentHandle !== undefined) {
-        const tasks = agentHandle.accessor.get(IAgentTaskService)?.list() ?? [];
-        for (const info of tasks) {
-          if (info.kind === 'agent' && typeof info.agentId === 'string' && info.agentId.length > 0) {
-            applyOps(
-              agentId,
-              projector.seedSubagentTask({
-                taskId: info.taskId,
-                agentId: info.agentId,
-                description: info.description,
-                status: info.status,
-                detached: info.detached ?? false,
-                startedAt: info.startedAt,
-              }),
-            );
-          }
-        }
-      }
       projectors.set(agentId, projector);
     }
     return projector;
@@ -148,9 +129,10 @@ export function bindSessionTranscript(
     const projector = projectorFor(handle.id);
     store.ensureAgent(handle.id, { agentId: handle.id });
     const bus = handle.accessor.get(IEventBus);
-    const busD = bus.subscribe((event) =>
-      applyOps(handle.id, projectorFor(handle.id).map(event as ProjectorBusEvent)),
-    );
+    const busD = bus.subscribe((event) => {
+      applyOps(handle.id, projectorFor(handle.id).map(event as ProjectorBusEvent));
+      onBusEvent?.(handle.id, event);
+    });
     const loopStatus = handle.accessor.get(IAgentLoopService)?.snapshot();
     if (loopStatus?.state === 'running' && loopStatus.activeTurnId !== undefined) {
       const promptId = loopStatus.activePromptId;

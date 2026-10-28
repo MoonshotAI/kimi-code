@@ -10,7 +10,6 @@ import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TranscriptMeta, TranscriptMetaMerge } from '../model/meta';
 import type { TranscriptPrompt } from '../model/prompt';
-import type { TranscriptTask } from '../model/task';
 import type { TranscriptTodo } from '../model/todo';
 import type { TranscriptStep, TranscriptTurn } from '../model/turn';
 
@@ -61,11 +60,6 @@ export interface MarkerUpsertOp {
   readonly beforeTurn?: number;
 }
 
-export interface TaskUpsertOp {
-  readonly op: 'task.upsert';
-  readonly task: TranscriptTask;
-}
-
 export interface InteractionUpsertOp {
   readonly op: 'interaction.upsert';
   readonly interaction: TranscriptInteraction;
@@ -103,7 +97,6 @@ export type TranscriptOperation =
   | FrameUpsertOp
   | AppendOp
   | MarkerUpsertOp
-  | TaskUpsertOp
   | InteractionUpsertOp
   | AttachmentUpsertOp
   | TodoUpsertOp
@@ -118,7 +111,6 @@ export interface TranscriptOpBatch {
 
 export interface AgentTranscriptSnapshot {
   readonly items: readonly TranscriptItem[];
-  readonly tasks: readonly TranscriptTask[];
   readonly interactions: readonly TranscriptInteraction[];
   readonly attachments: readonly TranscriptAttachment[];
   readonly todos: readonly TranscriptTodo[];

@@ -27,9 +27,7 @@ import {
   type QuestionRequest,
 } from '@moonshot-ai/agent-core-v2/agent/interaction/question';
 import {
-  EMPTY_AGENT_STATE,
   itemId,
-  type AgentState,
   type NoticeFrame,
   type ToolCallFrame,
   type TranscriptAttachment,
@@ -38,7 +36,6 @@ import {
   type TranscriptItem,
   type TranscriptMarker,
   type TranscriptOperation,
-  type TranscriptTask,
   type TranscriptTurn,
   type TranscriptUsage,
   type TurnOrigin,
@@ -72,12 +69,14 @@ import {
 } from '../transcript/api';
 import {
   createCoalescedRunner,
+  EMPTY_CHAT_STATE,
   hasTurnId,
   oldestTurnId,
   recoverLoadedWindow,
   TranscriptChatStore,
+  type ChatState,
 } from '../transcript/store';
-import { TranscriptWs } from '../transcript/ws';
+import { TranscriptWs, type TaskFrame } from '../transcript/ws';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
 import { ChatSearchBar } from './ChatSearchBar';
 
@@ -103,7 +102,7 @@ export interface ChatJump {
 interface TranscriptChannel {
   /** Null until the effect has created the store (pre-ready / no session). */
   readonly store: TranscriptChatStore | null;
-  readonly state: AgentState;
+  readonly state: ChatState;
   /** Records every step that built the store (audit panel data source). */
   readonly trail: AuditTrail | null;
   /** True once the initial REST page load succeeded. */
@@ -308,8 +307,8 @@ function useTranscriptChannel(
         },
         onTask: (aid, task) => {
           if (aid !== agentId) return;
-          store.applyOps([{ op: 'task.upsert', task }]);
-          trail.recordEvent('task', `${task.taskId} ${task.state}`, store.getState());
+          store.applyTask(task);
+          trail.recordEvent('task', `${task.task_id} ${taskState(task)}`, store.getState());
         },
         onReset: (_aid, snapshot, hasMoreOlder, meta) => {
           trail.recordReset(snapshot, hasMoreOlder, meta?.at, store.getState());
@@ -347,7 +346,7 @@ function useTranscriptChannel(
 
   const state = useSyncExternalStore(
     channel?.store.subscribe ?? noopSubscribe,
-    () => channel?.store.getState() ?? EMPTY_AGENT_STATE,
+    () => channel?.store.getState() ?? EMPTY_CHAT_STATE,
   );
   return { store: channel?.store ?? null, state, trail: channel?.trail ?? null, loaded, loadError };
 }
@@ -719,7 +718,7 @@ function ItemView({
   flash,
 }: {
   item: TranscriptItem;
-  tasks: ReadonlyMap<string, TranscriptTask>;
+  tasks: ReadonlyMap<string, TaskFrame>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
   /** The jump target being flashed, if any. */
@@ -767,6 +766,11 @@ function turnStateTone(state: TurnState): 'neutral' | 'green' | 'amber' | 'red' 
   }
 }
 
+/** `running`, or the outcome of an ended task. */
+function taskState(task: TaskFrame): string {
+  return task.outcome ?? task.status;
+}
+
 function usageText(usage: TranscriptUsage): string {
   const parts: string[] = [];
   if (usage.inputTokens !== undefined) parts.push(`in ${usage.inputTokens}`);
@@ -784,7 +788,7 @@ function TurnView({
   flash,
 }: {
   turn: TranscriptTurn;
-  tasks: ReadonlyMap<string, TranscriptTask>;
+  tasks: ReadonlyMap<string, TaskFrame>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
   /** The jump target being flashed, if any. */
@@ -967,7 +971,7 @@ function FrameView({
   attachments,
 }: {
   frame: TranscriptFrame;
-  tasks: ReadonlyMap<string, TranscriptTask>;
+  tasks: ReadonlyMap<string, TaskFrame>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
 }) {
@@ -977,12 +981,13 @@ function FrameView({
         frame.attachmentIds !== undefined && frame.attachmentIds.length > 0 ? (
           <AttachmentChips ids={frame.attachmentIds} attachments={attachments} />
         ) : null;
+      const frameTask = frame.taskId !== undefined ? tasks.get(frame.taskId) : undefined;
       const taskBadge =
         frame.taskId !== undefined ? (
           <div className="mb-1">
-            <Badge tone={tasks.get(frame.taskId)?.state === 'running' ? 'amber' : 'neutral'}>
+            <Badge tone={frameTask?.status === 'running' ? 'amber' : 'neutral'}>
               task: {frame.taskId}
-              {tasks.get(frame.taskId) !== undefined ? ` (${tasks.get(frame.taskId)!.state})` : ''}
+              {frameTask !== undefined ? ` (${taskState(frameTask)})` : ''}
             </Badge>
           </div>
         ) : null;
@@ -1025,7 +1030,7 @@ function ToolFrameView({
   interactions,
 }: {
   frame: ToolCallFrame;
-  tasks: ReadonlyMap<string, TranscriptTask>;
+  tasks: ReadonlyMap<string, TaskFrame>;
   interactions: ReadonlyMap<string, TranscriptInteraction>;
 }) {
   const task = frame.taskId !== undefined ? tasks.get(frame.taskId) : undefined;
@@ -1053,7 +1058,7 @@ function ToolFrameView({
             agent: {ref.agentId}
           </Badge>
         ))}
-        {task !== undefined ? <span className="text-neutral-600">task: {task.state}</span> : null}
+        {task !== undefined ? <span className="text-neutral-600">task: {taskState(task)}</span> : null}
         {frame.todoId !== undefined ? (
           <span className="text-neutral-600">todo: {frame.todoId}</span>
         ) : null}

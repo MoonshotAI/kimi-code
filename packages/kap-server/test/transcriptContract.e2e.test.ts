@@ -610,7 +610,7 @@ describe('transcript contract e2e', () => {
     const taskTurn = end.items.find((i: any) => i.kind === 'turn' && i.origin?.kind === 'task');
     expect(taskTurn).toBeDefined();
     expect(JSON.stringify(taskTurn)).toContain('notification');
-    expect(end.tasks).toEqual([]);
+    expect(end).not.toHaveProperty('tasks');
     expect(channel.ops.some((op) => op.op === 'task.upsert')).toBe(false);
     await idleOrDump(server!, base, sid);
     expect((await getTranscript(server!, base, sid)).meta.activity).toBe('idle');
@@ -648,8 +648,8 @@ describe('transcript contract e2e', () => {
     const reset = channel.reset().snapshot;
 
     expect(reset.meta).toEqual(snapshot.meta);
-    expect(reset.tasks).toEqual([]);
-    expect(snapshot.tasks).toEqual([]);
+    expect(reset).not.toHaveProperty('tasks');
+    expect(snapshot).not.toHaveProperty('tasks');
     const byId = (xs: any[], key: string): Record<string, unknown> =>
       Object.fromEntries(xs.map((x) => [x[key], x]));
     expect(Object.keys(byId(reset.interactions ?? [], 'interactionId')).toSorted()).toEqual(

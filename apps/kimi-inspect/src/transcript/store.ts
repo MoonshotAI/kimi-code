@@ -11,11 +11,12 @@
  *    non-replace page is an older slice fetched with `before_turn` and
  *    prepended ahead of the loaded window (items only — globals stay with the
  *    fresher live state).
- *  - WS delta ops (`applyOps`): incremental `transcript.ops`, plus each WS
- *    `task` event as a `task.upsert` (tasks are not part of the transcript, so
- *    they only ever arrive this way). Ops are idempotent upserts plus
- *    offset-placed appends, so ops buffered while a REST refresh is in flight
- *    converge when flushed onto the fresh pages.
+ *  - WS delta ops (`applyOps`): incremental `transcript.ops`. Ops are
+ *    idempotent upserts plus offset-placed appends, so ops buffered while a
+ *    REST refresh is in flight converge when flushed onto the fresh pages.
+ *
+ * Tasks are not part of the transcript: each WS `task` frame carries the
+ * task's full state and replaces the previous one (`applyTask`).
  *
  * `onGap` surfaces `append` placement gaps so the caller can trigger a full
  * REST refresh (the WS channel carries no snapshots to fall back on).
@@ -31,6 +32,14 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { TranscriptPage } from './api';
+import type { TaskFrame } from './ws';
+
+/** The transcript reducer state plus the agent's tasks, keyed by task id. */
+export interface ChatState extends AgentState {
+  readonly tasks: ReadonlyMap<string, TaskFrame>;
+}
+
+export const EMPTY_CHAT_STATE: ChatState = { ...EMPTY_AGENT_STATE, tasks: new Map() };
 
 export function countTurns(items: readonly TranscriptItem[]): number {
   let count = 0;
@@ -102,13 +111,13 @@ export function createCoalescedRunner(run: () => Promise<void>): () => void {
 }
 
 export class TranscriptChatStore {
-  private state: AgentState = EMPTY_AGENT_STATE;
+  private state: ChatState = EMPTY_CHAT_STATE;
   private readonly listeners = new Set<() => void>();
 
   /** Called when an `append` op could not be placed — the caller should refresh. */
   onGap: (() => void) | undefined;
 
-  getState(): AgentState {
+  getState(): ChatState {
     return this.state;
   }
 
@@ -166,10 +175,16 @@ export class TranscriptChatStore {
       const result = applyOperation(this.state, op);
       if (result.gap !== undefined) this.onGap?.();
       if (!result.changed) continue;
-      this.state = result.state;
+      this.state = { ...result.state, tasks: this.state.tasks };
       changed = true;
     }
     if (changed) this.notify();
+  }
+
+  /** Replace one task with the full state carried by a WS `task` frame. */
+  applyTask(task: TaskFrame): void {
+    this.state = { ...this.state, tasks: new Map(this.state.tasks).set(task.task_id, task) };
+    this.notify();
   }
 
   private notify(): void {

@@ -35,7 +35,6 @@ import {
   transcriptResetEventSchema,
   type AgentTranscriptSnapshot,
   type TranscriptOperation,
-  type TranscriptTask,
 } from '@moonshot-ai/transcript';
 
 import type { WsLike, WsLikeCtor } from '../channel/wsLike';
@@ -62,8 +61,8 @@ export interface TranscriptWsHandlers {
     hasMoreOlder: boolean,
     meta?: TranscriptFrameMeta,
   ) => void;
-  /** Full state of one task of the agent, mapped onto the transcript task shape. */
-  onTask?: (agentId: string, task: TranscriptTask) => void;
+  /** Full state of one task of the agent, as the server `task` frame. */
+  onTask?: (agentId: string, task: TaskFrame) => void;
   /** Server signalled desync for our session — consumer should REST-refresh. */
   onResyncRequired: () => void;
   /** Socket re-established after a drop — volatile ops were missed meanwhile. */
@@ -98,15 +97,18 @@ interface ServerFrame {
 }
 
 /** The flat server `task` frame (snake_case wire fields). */
-interface TaskFrame {
+export interface TaskFrame {
   readonly agent_id: string;
   readonly task_id: string;
-  readonly kind: TranscriptTask['kind'];
+  readonly kind: 'shell' | 'subagent' | 'tool' | 'other';
   readonly status: 'running' | 'ended';
-  readonly outcome?: Exclude<TranscriptTask['state'], 'running'>;
+  readonly outcome?: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
+  readonly phase?: 'working' | 'suspended';
   readonly detached: boolean;
   readonly description?: string;
   readonly child_agent_id?: string;
+  readonly parent_tool_call_id?: string;
+  readonly command?: string;
   readonly started_at?: string;
   readonly ended_at?: string;
   readonly result_summary?: string;
@@ -271,7 +273,7 @@ export class TranscriptWs {
       case 'task': {
         const task = frame as unknown as TaskFrame;
         if (typeof task.agent_id !== 'string' || typeof task.task_id !== 'string') return;
-        this.handlers.onTask?.(task.agent_id, toTranscriptTask(task));
+        this.handlers.onTask?.(task.agent_id, task);
         return;
       }
       case 'ping': {
@@ -310,33 +312,6 @@ export class TranscriptWs {
       // best-effort; the close handler handles teardown
     }
   }
-}
-
-function toTranscriptTask(task: TaskFrame): TranscriptTask {
-  return {
-    taskId: task.task_id,
-    kind: task.kind,
-    state: task.status === 'running' ? 'running' : (task.outcome ?? 'lost'),
-    detached: task.detached,
-    description: task.description,
-    agentId: task.child_agent_id,
-    startedAt: task.started_at,
-    endedAt: task.ended_at,
-    resultSummary: task.result_summary,
-    error: task.error,
-    stateReason: task.state_reason,
-    usage:
-      task.usage === undefined
-        ? undefined
-        : {
-            inputOther: task.usage.input_other,
-            output: task.usage.output,
-            inputCacheRead: task.usage.input_cache_read,
-            inputCacheCreation: task.usage.input_cache_creation,
-          },
-    model: task.model,
-    thinkingEffort: task.thinking,
-  };
 }
 
 /** Derive the `/api/v1/ws` WebSocket URL from a server base URL (or pass a full ws URL through). */

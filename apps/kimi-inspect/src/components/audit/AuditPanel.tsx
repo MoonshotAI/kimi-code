@@ -13,13 +13,13 @@
  *    raw REST request/response or WS payload).
  */
 
-import { EMPTY_AGENT_STATE } from '@moonshot-ai/transcript';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 import { diffValue, type DiffNode } from '../../audit/diff';
 import { serializeState } from '../../audit/serialize';
 import type { AuditEntry, AuditTrail } from '../../audit/trail';
 import { tailTrunc } from '../../audit/truncate';
+import { EMPTY_CHAT_STATE } from '../../transcript/store';
 import { Badge } from '../../ui';
 import { plainNode, StateTree } from './StateTree';
 
@@ -89,7 +89,7 @@ export function AuditPanel({ trail }: { trail: AuditTrail }) {
     if (current === undefined || tab === 'event') return null;
     if (tab === 'state') return plainNode(serializeState(current.state));
     const prevState =
-      currentPos > 0 ? (entries[currentPos - 1]?.state ?? EMPTY_AGENT_STATE) : EMPTY_AGENT_STATE;
+      currentPos > 0 ? (entries[currentPos - 1]?.state ?? EMPTY_CHAT_STATE) : EMPTY_CHAT_STATE;
     return diffValue(serializeState(prevState), serializeState(current.state));
   }, [current, currentPos, entries, tab]);
 

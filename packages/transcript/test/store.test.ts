@@ -301,27 +301,6 @@ describe('AgentTranscript', () => {
     expect(frame?.kind === 'tool' && frame.progress).toEqual({ kind: 'progress', percent: 50 });
   });
 
-  it('task upserts carry resultSummary/error/stateReason/usage', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'subagent', state: 'running', detached: false } },
-    ]);
-    const done = tx.apply([
-      {
-        op: 'task.upsert',
-        task: {
-          taskId: 'task1', kind: 'subagent', state: 'completed', detached: false,
-          resultSummary: 'scanned 12 files',
-          usage: { inputOther: 100, output: 40, inputCacheRead: 10, inputCacheCreation: 5 },
-        },
-      },
-    ]);
-    expect(done.accepted).toHaveLength(1);
-    const task = tx.getTask('task1');
-    expect(task?.resultSummary).toBe('scanned 12 files');
-    expect(task?.usage?.inputOther).toBe(100);
-  });
-
   it('items.remove clears anchored interactions and their pending entries', () => {
     const tx = new AgentTranscript('main');
     tx.apply([
@@ -385,15 +364,6 @@ describe('AgentTranscript', () => {
     });
     tx.apply([turn1, turn1]);
     expect(seen).toEqual(['turn.upsert']);
-  });
-
-  it('task upserts flip detached freely', () => {
-    const tx = new AgentTranscript('main');
-    tx.apply([
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: false } },
-      { op: 'task.upsert', task: { taskId: 'task1', kind: 'shell', state: 'running', detached: true } },
-    ]);
-    expect(tx.getTask('task1')?.detached).toBe(true);
   });
 
   it('meta.merge merges goal/modes shallowly', () => {

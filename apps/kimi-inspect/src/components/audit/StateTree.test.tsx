@@ -7,12 +7,13 @@
  *  2. Whole-subtree adds expand into fully fielded, indented tree rows.
  */
 
-import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
+import type { TranscriptTurn } from '@moonshot-ai/transcript';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 
 import { diffValue } from '../../audit/diff';
 import { serializeState } from '../../audit/serialize';
+import { EMPTY_CHAT_STATE, type ChatState } from '../../transcript/store';
 import { plainNode, StateTree } from './StateTree';
 
 function turn(n: number, prompt: string): TranscriptTurn {
@@ -27,15 +28,15 @@ function turn(n: number, prompt: string): TranscriptTurn {
   };
 }
 
-function stateWith(items: readonly TranscriptTurn[]): AgentState {
-  return { ...EMPTY_AGENT_STATE, items };
+function stateWith(items: readonly TranscriptTurn[]): ChatState {
+  return { ...EMPTY_CHAT_STATE, items };
 }
 
 describe('StateTree', () => {
   it('collapses unchanged subtrees instead of dumping compact JSON', () => {
     const t0 = turn(0, 'PROMPT_ZERO');
     const prev = stateWith([t0, turn(1, 'PROMPT_ONE')]);
-    const next: AgentState = { ...prev, items: [t0, turn(1, 'PROMPT_ONE_V2')] };
+    const next: ChatState = { ...prev, items: [t0, turn(1, 'PROMPT_ONE_V2')] };
     const html = renderToStaticMarkup(
       <StateTree root={diffValue(serializeState(prev), serializeState(next))} />,
     );
@@ -51,7 +52,7 @@ describe('StateTree', () => {
 
   it('expands whole-subtree adds into full field rows (all keys, no JSON dump)', () => {
     const root = diffValue(
-      serializeState(EMPTY_AGENT_STATE),
+      serializeState(EMPTY_CHAT_STATE),
       serializeState(stateWith([turn(0, 'HELLO')])),
     );
     const html = renderToStaticMarkup(<StateTree root={root} />);
@@ -78,7 +79,7 @@ describe('StateTree', () => {
     };
     const html = renderToStaticMarkup(
       <StateTree
-        root={diffValue(serializeState(EMPTY_AGENT_STATE), serializeState(stateWith([withSteps])))}
+        root={diffValue(serializeState(EMPTY_CHAT_STATE), serializeState(stateWith([withSteps])))}
       />,
     );
     // Array children are keyed by their ids, not #indices.

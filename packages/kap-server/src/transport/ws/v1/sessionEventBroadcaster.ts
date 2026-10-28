@@ -61,7 +61,6 @@ import { toWireQuestion } from '../../../protocol/question-wire';
 import type { TaskEventMessage } from '../../../protocol/ws-task';
 import { toWireWorkspace } from '../../../routes/workspaces';
 import type { TranscriptService } from '../../../services/transcript/transcriptService';
-import { taskEventMessages } from './taskEvents';
 
 export interface EventEnvelope {
   readonly type: string;
@@ -274,13 +273,13 @@ export class SessionEventBroadcaster {
         const catchup = service.getOpsSince(state.sessionId, descriptor.agentId, since);
         if (catchup !== undefined && catchup.complete) {
           this.replayTranscriptOps(state, target, descriptor.agentId, grade, catchup.batches);
-          this.sendTasks(state, target, transcript);
+          this.sendTasks(state, target, descriptor.agentId);
           continue;
         }
       }
       if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
       this.sendTranscriptReset(state, target, transcript, grade);
-      this.sendTasks(state, target, transcript);
+      this.sendTasks(state, target, descriptor.agentId);
     }
   }
 
@@ -335,15 +334,12 @@ export class SessionEventBroadcaster {
           }
         }
       },
-      tasks: ({ agentId, tasks }) => {
-        const messages = taskEventMessages(this.opts.core, state.sessionId, agentId, tasks);
+      task: (message) => {
         for (const [target, spec] of state.targets) {
-          if (!state.transcriptSeeded.has(target) || gradeFor(spec, agentId) === 'off') continue;
-          for (const message of messages) {
-            try {
-              target.send(message);
-            } catch {
-            }
+          if (!state.transcriptSeeded.has(target) || gradeFor(spec, message.agent_id) === 'off') continue;
+          try {
+            target.send(message);
+          } catch {
           }
         }
       },
@@ -363,7 +359,7 @@ export class SessionEventBroadcaster {
             if (grade === 'off') continue;
             try {
               this.sendTranscriptReset(state, target, transcript, grade);
-              this.sendTasks(state, target, transcript);
+              this.sendTasks(state, target, descriptor.agentId);
             } catch {
             }
           }
@@ -378,10 +374,10 @@ export class SessionEventBroadcaster {
     transcript: AgentTranscript,
     grade: TranscriptGrade,
   ): void {
-    const snapshot = redactSnapshotForGrade(grade, {
-      ...transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
-      tasks: [],
-    });
+    const snapshot = redactSnapshotForGrade(
+      grade,
+      transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
+    );
     target.send(
       buildTranscriptEnvelope(state.sessionId, 'transcript.reset', {
         agent_id: transcript.agentId,
@@ -392,9 +388,8 @@ export class SessionEventBroadcaster {
     );
   }
 
-  private sendTasks(state: SessionState, target: BroadcastTarget, transcript: AgentTranscript): void {
-    const tasks = transcript.getTasks().values();
-    for (const message of taskEventMessages(this.opts.core, state.sessionId, transcript.agentId, tasks)) {
+  private sendTasks(state: SessionState, target: BroadcastTarget, agentId: string): void {
+    for (const message of this.opts.transcriptService?.listTasks(state.sessionId, agentId) ?? []) {
       target.send(message);
     }
   }

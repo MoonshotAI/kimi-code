@@ -8,7 +8,6 @@ import {
   itemId,
   type StepHeader,
   type TranscriptOperation,
-  type TranscriptTask,
   type TranscriptTurn,
   type TurnHeader,
   type TurnState,
@@ -31,7 +30,7 @@ import {
   recoverLoadedWindow,
   TranscriptChatStore,
 } from './store';
-import { TranscriptWs } from './ws';
+import { TranscriptWs, type TaskFrame } from './ws';
 
 // ---------------------------------------------------------------- fixtures
 
@@ -106,7 +105,6 @@ const frameAppend = (
 });
 
 const emptyPage = {
-  tasks: [],
   interactions: [],
   attachments: [],
   todos: [],
@@ -185,7 +183,7 @@ function makeWs(handlers: Partial<ConstructorParameters<typeof TranscriptWs>[0][
       seq?: number;
     }[],
     resets: [] as { agentId: string; hasMoreOlder: boolean; at?: string; seq?: number }[],
-    tasks: [] as { agentId: string; task: TranscriptTask }[],
+    tasks: [] as { agentId: string; task: TaskFrame }[],
     resyncs: 0,
     reconnects: 0,
   };
@@ -227,7 +225,6 @@ describe('fetchTranscriptPage', () => {
     agent_id: 'main',
     items: [turnItem(1)],
     has_more: true,
-    tasks: [],
     interactions: [],
     attachments: [],
     todos: [],
@@ -471,7 +468,7 @@ describe('TranscriptWs', () => {
       payload: {
         type: 'transcript.reset',
         agent_id: 'main',
-        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
+        snapshot: { items: [], interactions: [], meta: {} },
         has_more_older: true,
         seq: 41,
       },
@@ -500,12 +497,12 @@ describe('TranscriptWs', () => {
     expect(seen.ops[0]!.ops[0]).toMatchObject({ op: 'meta.merge' });
   });
 
-  it('maps task frames onto the transcript task shape', () => {
+  it('forwards task frames as the full task state', () => {
     FakeWs.reset();
     const { seen } = makeWs();
     const sock = FakeWs.instances[0]!;
     sock.open();
-    sock.serverFrame({
+    const frame = {
       type: 'task',
       session_id: 's1',
       agent_id: 'main',
@@ -520,24 +517,11 @@ describe('TranscriptWs', () => {
       ended_at: '2026-01-01T00:00:02Z',
       usage: { input_other: 1, output: 2, input_cache_read: 3, input_cache_creation: 4 },
       thinking: 'high',
-    });
+    };
+    sock.serverFrame(frame);
+    sock.serverFrame({ ...frame, task_id: undefined });
     expect(seen.ops).toHaveLength(0);
-    expect(seen.tasks).toEqual([
-      {
-        agentId: 'main',
-        task: {
-          taskId: 'agent-1',
-          kind: 'subagent',
-          state: 'completed',
-          detached: true,
-          agentId: 'sub-1',
-          startedAt: '2026-01-01T00:00:00Z',
-          endedAt: '2026-01-01T00:00:02Z',
-          usage: { inputOther: 1, output: 2, inputCacheRead: 3, inputCacheCreation: 4 },
-          thinkingEffort: 'high',
-        },
-      },
-    ]);
+    expect(seen.tasks).toEqual([{ agentId: 'main', task: frame }]);
   });
 
   it('sends a clean client_hello and carries grades/transcript_since on subscribe_v2', async () => {
@@ -603,7 +587,7 @@ describe('TranscriptWs', () => {
       payload: {
         type: 'transcript.reset',
         agent_id: 'main',
-        snapshot: { items: [], tasks: [], interactions: [], meta: {} },
+        snapshot: { items: [], interactions: [], meta: {} },
         has_more_older: false,
       },
     });
@@ -685,13 +669,8 @@ describe('TranscriptWs', () => {
 describe('TranscriptChatStore', () => {
   it('applyPage(replace) installs the newest slice wholesale (items + globals, tasks kept)', () => {
     const store = new TranscriptChatStore();
-    store.applyOps([
-      { op: 'turn.upsert', turn: turnHeader(9, 'running') },
-      {
-        op: 'task.upsert',
-        task: { taskId: 'bash-1', kind: 'shell', state: 'running', detached: false },
-      },
-    ]);
+    store.applyOps([{ op: 'turn.upsert', turn: turnHeader(9, 'running') }]);
+    store.applyTask({ agent_id: 'main', task_id: 'bash-1', kind: 'shell', status: 'running', detached: false });
     store.applyPage(
       {
         ...emptyPage,
@@ -708,6 +687,11 @@ describe('TranscriptChatStore', () => {
     expect(state.tasks.get('bash-1')?.kind).toBe('shell');
     expect(state.meta.activity).toBe('idle');
     expect([...state.pendingInteractions]).toEqual(['apr-1']);
+
+    store.applyOps([{ op: 'meta.merge', meta: { activity: 'turn' } }]);
+    store.applyTask({ agent_id: 'main', task_id: 'bash-1', kind: 'shell', status: 'ended', outcome: 'killed', detached: false });
+    expect(store.getState().meta.activity).toBe('turn');
+    expect(store.getState().tasks.get('bash-1')).toMatchObject({ status: 'ended', outcome: 'killed' });
   });
 
   it('prepends older pages ahead of the window, dedupes, keeps live globals', () => {

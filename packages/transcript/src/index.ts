@@ -5,7 +5,6 @@ export * from './model/interaction';
 export * from './model/attachment';
 export * from './model/todo';
 export * from './model/item';
-export * from './model/task';
 export * from './model/meta';
 export * from './model/prompt';
 export * from './ops/operation';

@@ -44,12 +44,12 @@ import {
   type TranscriptChangeEvent,
   type TranscriptMarker,
   type TranscriptOperation,
-  type TranscriptTask,
   type TranscriptTurn,
 } from '@moonshot-ai/transcript';
 
 import { WireRecordCache, type ContextRecord } from './wireCache';
 import { toWireQuestion } from '../../protocol/question-wire';
+import type { TaskEventMessage } from '../../protocol/ws-task';
 import { projectPromptContentParts } from '../messages/messageProjection';
 import {
   bindSessionTranscript,
@@ -58,6 +58,7 @@ import {
   type TranscriptBindingLogger,
 } from './coreBinding';
 import { allocateExportTurn } from './coreEventMap';
+import { SessionTasks } from './sessionTasks';
 
 const SESSIONS_ROOT = 'sessions';
 const AGENTS_DIR = 'agents';
@@ -73,6 +74,7 @@ export interface TranscriptServiceDeps {
 
 interface LiveEntry {
   readonly store: TranscriptStore;
+  readonly tasks: SessionTasks;
   readonly binding: TranscriptBinding;
   readonly ready: Promise<void>;
   readonly agentBackfills: Map<string, Promise<void>>;
@@ -93,14 +95,9 @@ export interface TranscriptOpsCatchup {
   readonly complete: boolean;
 }
 
-export interface TranscriptTasksEvent {
-  readonly agentId: string;
-  readonly tasks: readonly TranscriptTask[];
-}
-
 export interface SessionTranscriptListener {
   ops(event: TranscriptChangeEvent, seq: number): void;
-  tasks(event: TranscriptTasksEvent): void;
+  task(message: TaskEventMessage): void;
 }
 
 export class TranscriptService {
@@ -134,6 +131,13 @@ export class TranscriptService {
     const session = getLiveSessionById(this.deps.core.accessor, sessionId);
     if (session === undefined) return undefined;
     const store = new TranscriptStore(sessionId);
+    const tasks: SessionTasks = new SessionTasks(sessionId, {
+      readRecords: (agentId) => this.readTaskRecords(sessionId, agentId),
+      isRunning: (agentId) => this.isAgentRunning(sessionId, agentId),
+      onChange: (message) => {
+        if (this.live.get(sessionId)?.tasks === tasks) this.dispatchTask(sessionId, message);
+      },
+    });
     let binding: TranscriptBinding;
     try {
       binding = bindSessionTranscript(
@@ -142,6 +146,7 @@ export class TranscriptService {
         this.deps.logger,
         (event) => this.handleLiveOps(sessionId, event),
         (agentId) => this.rebuildAfterUndo(sessionId, agentId),
+        (agentId, event) => tasks.apply(agentId, event),
       );
     } catch (error) {
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
@@ -151,9 +156,10 @@ export class TranscriptService {
     }
     this.live.set(sessionId, {
       store,
+      tasks,
       binding,
       ready: (async () => {
-        await this.backfillMain(sessionId, store);
+        await Promise.all([this.backfillMain(sessionId, store), tasks.whenLoaded(MAIN_AGENT_ID)]);
         if (this.live.get(sessionId)?.store === store) {
           binding.seedPendingInteractions(MAIN_AGENT_ID);
         }
@@ -179,7 +185,7 @@ export class TranscriptService {
       backfill = this.backfillAgent(sessionId, entry.store, agentId);
       entry.agentBackfills.set(agentId, backfill);
     }
-    await backfill;
+    await Promise.all([backfill, entry.tasks.whenLoaded(agentId)]);
     if (this.live.get(sessionId)?.store === entry.store) {
       entry.binding.seedPendingInteractions(agentId);
     }
@@ -228,8 +234,7 @@ export class TranscriptService {
       this.live.get(sessionId)?.binding.syncFromStore(agentId);
     }
     const existing = store.agents().find((d) => d.agentId === agentId);
-    const hasContent =
-      snapshot !== undefined && (snapshot.items.length > 0 || snapshot.tasks.length > 0);
+    const hasContent = snapshot !== undefined && snapshot.items.length > 0;
     if (existing !== undefined || hasContent) {
       store.describeAgent({
         agentId,
@@ -260,18 +265,30 @@ export class TranscriptService {
   }
 
   private dispatchOps(sessionId: string, event: TranscriptChangeEvent): void {
-    const { agentId } = event;
-    const { ops, tasks } = splitTaskOps(event.ops);
-    const seq = ops.length > 0 ? this.journalOps(sessionId, { agentId, ops }) : undefined;
+    const seq = this.journalOps(sessionId, event);
     const listeners = this.listeners.get(sessionId);
     if (listeners === undefined) return;
     for (const listener of listeners) {
       try {
-        if (seq !== undefined) listener.ops({ agentId, ops }, seq);
-        if (tasks.length > 0) listener.tasks({ agentId, tasks });
+        listener.ops(event, seq);
       } catch {
       }
     }
+  }
+
+  private dispatchTask(sessionId: string, message: TaskEventMessage): void {
+    const listeners = this.listeners.get(sessionId);
+    if (listeners === undefined) return;
+    for (const listener of listeners) {
+      try {
+        listener.task(message);
+      } catch {
+      }
+    }
+  }
+
+  listTasks(sessionId: string, agentId: string): readonly TaskEventMessage[] {
+    return this.live.get(sessionId)?.tasks.list(agentId) ?? [];
   }
 
   private journalOps(sessionId: string, event: TranscriptChangeEvent): number {
@@ -558,27 +575,10 @@ export class TranscriptService {
     if (!isPlainAgentId(agentId)) {
       return groupMessagesIntoSnapshot([]);
     }
-    const wirePath = join(
-      this.deps.homeDir,
-      SESSIONS_ROOT,
-      summary.workspaceId,
-      sessionId,
-      AGENTS_DIR,
-      agentId,
-      WIRE_FILE,
-    );
     const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
       ?.accessor.get(IAgentLifecycleService);
-    await this.drainLiveWire(liveAgents, sessionId, agentId);
-    let records: ContextRecord[];
-    try {
-      records = flattenChain(await this.wireCache.read(wirePath));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return groupMessagesIntoSnapshot([]);
-      }
-      throw error;
-    }
+    const records = await this.readWireRecords(summary.workspaceId, sessionId, agentId, liveAgents);
+    if (records === undefined) return groupMessagesIntoSnapshot([]);
     const agentScope = `${SESSIONS_ROOT}/${summary.workspaceId}/${sessionId}/${AGENTS_DIR}/${agentId}`;
     const blobs = new AgentBlobServiceImpl(
       this.deps.core.accessor.get(IBlobStore),
@@ -689,14 +689,7 @@ export class TranscriptService {
       activeWireTurnId: status?.state === 'running' ? status.activeTurnId : undefined,
     });
     const activity: ActivityMeta = status?.state === 'running' ? 'turn' : 'idle';
-    const snapshot = {
-      ...folded,
-      tasks: markLostSubagentTasks(folded, activity, (memberId) =>
-        liveAgents?.handleOf(memberId)?.accessor.get(IAgentLoopService).snapshot().state ===
-        'running',
-      ),
-      meta: { ...folded.meta, activity },
-    };
+    const snapshot = { ...folded, meta: { ...folded.meta, activity } };
     if (snapshot.meta.modes?.tower === undefined) return snapshot;
     const flags = this.deps.core.accessor.get(IFlagService);
     if (
@@ -710,6 +703,60 @@ export class TranscriptService {
     const modes = { ...snapshot.meta.modes, tower: undefined };
     const cleared = modes.plan === undefined && modes.swarm === undefined && modes.tower === undefined;
     return { ...snapshot, meta: { ...snapshot.meta, modes: cleared ? undefined : modes } };
+  }
+
+  private async readTaskRecords(sessionId: string, agentId: string): Promise<readonly ContextRecord[]> {
+    try {
+      const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
+      if (summary === undefined || !isPlainAgentId(agentId)) return [];
+      const liveAgents = getLiveSessionById(this.deps.core.accessor, sessionId)
+        ?.accessor.get(IAgentLifecycleService);
+      return (await this.readWireRecords(summary.workspaceId, sessionId, agentId, liveAgents)) ?? [];
+    } catch (error) {
+      this.deps.logger?.warn(
+        { sessionId, agentId, err: error instanceof Error ? error.message : error },
+        'transcript: task history read failed, continuing without it',
+      );
+      return [];
+    }
+  }
+
+  private isAgentRunning(sessionId: string, agentId: string): boolean {
+    try {
+      return (
+        getLiveSessionById(this.deps.core.accessor, sessionId)
+          ?.accessor.get(IAgentLifecycleService)
+          .handleOf(agentId)
+          ?.accessor.get(IAgentLoopService)
+          .snapshot().state === 'running'
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  private async readWireRecords(
+    workspaceId: string,
+    sessionId: string,
+    agentId: string,
+    liveAgents: IAgentLifecycleService | undefined,
+  ): Promise<ContextRecord[] | undefined> {
+    await this.drainLiveWire(liveAgents, sessionId, agentId);
+    const wirePath = join(
+      this.deps.homeDir,
+      SESSIONS_ROOT,
+      workspaceId,
+      sessionId,
+      AGENTS_DIR,
+      agentId,
+      WIRE_FILE,
+    );
+    try {
+      return flattenChain(await this.wireCache.read(wirePath));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
   }
 
   private async drainLiveWire(
@@ -777,9 +824,6 @@ export function snapshotToOps(
   for (const attachment of snapshot.attachments) {
     ops.push({ op: 'attachment.upsert', attachment });
   }
-  for (const task of snapshot.tasks) {
-    ops.push({ op: 'task.upsert', task });
-  }
   ops.push({ op: 'meta.merge', meta: snapshot.meta });
   return ops;
 }
@@ -798,73 +842,12 @@ export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
   return ops;
 }
 
-function splitTaskOps(ops: readonly TranscriptOperation[]): {
-  ops: TranscriptOperation[];
-  tasks: TranscriptTask[];
-} {
-  const rest: TranscriptOperation[] = [];
-  const tasks: TranscriptTask[] = [];
-  for (const op of ops) {
-    if (op.op === 'task.upsert') {
-      tasks.push(op.task);
-    } else if (op.op === 'reset') {
-      tasks.push(...op.snapshot.tasks);
-      rest.push({ ...op, snapshot: { ...op.snapshot, tasks: [] } });
-    } else {
-      rest.push(op);
-    }
-  }
-  return { ops: rest, tasks };
-}
-
 const TURN_HEAL_DEBOUNCE_MS = 250;
 const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'completed',
   'failed',
   'cancelled',
 ]);
-
-function memberTurnOrdinals(snapshot: AgentTranscriptSnapshot): ReadonlyMap<string, number> {
-  const ordinals = new Map<string, number>();
-  for (const item of snapshot.items) {
-    if (item.kind !== 'turn') continue;
-    for (const step of item.steps) {
-      for (const frame of step.frames) {
-        if (frame.kind !== 'tool') continue;
-        for (const ref of frame.agentRefs ?? []) ordinals.set(ref.agentId, item.ordinal);
-      }
-    }
-  }
-  return ordinals;
-}
-
-function latestTurnOrdinal(snapshot: AgentTranscriptSnapshot): number | undefined {
-  let latest: number | undefined;
-  for (const item of snapshot.items) {
-    if (item.kind !== 'turn') continue;
-    if (latest === undefined || item.ordinal > latest) latest = item.ordinal;
-  }
-  return latest;
-}
-
-function markLostSubagentTasks(
-  snapshot: AgentTranscriptSnapshot,
-  activity: ActivityMeta,
-  isMemberRunning: (memberId: string) => boolean,
-): readonly TranscriptTask[] {
-  const ordinals = memberTurnOrdinals(snapshot);
-  const latest = latestTurnOrdinal(snapshot);
-  const interrupted = (task: TranscriptTask): boolean => {
-    if (task.kind !== 'subagent' || task.detached || task.state !== 'running') return false;
-    if (task.agentId !== undefined && isMemberRunning(task.agentId)) return false;
-    if (activity !== 'turn') return true;
-    const owner = task.agentId === undefined ? undefined : ordinals.get(task.agentId);
-    return owner !== undefined && owner !== latest;
-  };
-  return snapshot.tasks.map((task) =>
-    interrupted(task) ? { ...task, state: 'lost' as const } : task,
-  );
-}
 
 function projectQuestionInteractionRecords(
   records: readonly ContextRecord[],

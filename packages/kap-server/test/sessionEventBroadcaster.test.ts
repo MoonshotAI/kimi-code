@@ -18,7 +18,6 @@ import {
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
-  IAgentTaskService,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -1647,19 +1646,14 @@ describe('SessionEventBroadcaster', () => {
     it('sends tasks as task events after the reset and on every change, never inside the transcript', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');
-      main.set(IAgentTaskService, {
-        list: () => [],
-        getTask: (taskId: string) =>
-          taskId === 'bash-1'
-            ? { kind: 'process', command: 'sleep 60', parentToolCallId: 'call-bash' }
-            : undefined,
-      });
       sessions.set('s1', lc);
       bc = makeBroadcasterWithTranscript();
       const started = {
         taskId: 'bash-1',
         kind: 'process',
         description: 'sleep',
+        command: 'sleep 60',
+        parentToolCallId: 'call-bash',
         status: 'running',
         detached: true,
         startedAt: 1_700_000_000_000,
@@ -1687,7 +1681,8 @@ describe('SessionEventBroadcaster', () => {
           ['bash-1', 'ended'],
         ]);
         const frames = transcriptEnvelopes(view.envelopes);
-        expect(frames[0]).toMatchObject({ type: 'transcript.reset', payload: { snapshot: { tasks: [] } } });
+        expect(frames[0]?.type).toBe('transcript.reset');
+        expect((frames[0]?.payload as { snapshot: object }).snapshot).not.toHaveProperty('tasks');
         expect(
           frames.flatMap((frame) => (frame.payload as Partial<OpsPayload>).ops ?? []).map((op) => op.op),
         ).not.toContain('task.upsert');
@@ -1876,7 +1871,6 @@ describe('SessionEventBroadcaster', () => {
       const payload = resets[0]!.payload as {
         snapshot: {
           items: unknown[];
-          tasks: unknown[];
           interactions: unknown[];
           attachments: unknown[];
           todos: unknown[];
@@ -1889,7 +1883,6 @@ describe('SessionEventBroadcaster', () => {
       expect(payload.has_more_older).toBe(true);
       expect(payload.seq).toBeTypeOf('number');
       expect(payload.snapshot).toMatchObject({
-        tasks: [],
         interactions: [],
         attachments: [],
         todos: [],
