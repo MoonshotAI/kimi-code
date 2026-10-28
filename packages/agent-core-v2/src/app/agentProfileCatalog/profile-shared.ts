@@ -117,9 +117,6 @@ export const NOTIFY_USER_GUIDANCE =
 export const TODO_LIST_GUIDANCE =
   'When you track work in `TodoList`, keep it in step with what you have actually done: mark an item done as soon as it is finished, before you start the next one, and make sure the list matches what you did before you write your final message.';
 
-export const PLAN_MODE_GUIDANCE =
-  'Plan mode is a read-only planning state that only the user can turn on, from the app (for example with Shift-Tab or `/plan` in the terminal); you cannot enter it yourself. If the user asks for plan mode, tell them how to turn it on. When they ask you to plan first, wait for their go-ahead before changing code.';
-
 export function renderAgentProfilePrompt(
   profile: AgentProfile,
   context: AgentProfileContext,
@@ -153,13 +150,11 @@ export function systemPromptVars(
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
   const agentsMd = context.agentsMd ?? '';
   const todoListGuidance = context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '';
-  const planModeGuidance = context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '';
   const deliveringWorkSection =
     options.readOnly === true
       ? READ_ONLY_DELIVERING_WORK_SECTION
       : renderPrompt(DELIVERING_WORK_SECTION, {
           todo_list_guidance: todoListGuidance,
-          plan_mode_guidance: planModeGuidance,
         });
   return {
     role_additional: '',
@@ -167,7 +162,6 @@ export function systemPromptVars(
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
     notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
     todo_list_guidance: todoListGuidance,
-    plan_mode_guidance: planModeGuidance,
     coding_section: options.readOnly === true ? '' : `${CODING_SECTION}\n`,
     delivering_work_section: `${deliveringWorkSection}\n`,
     os: context.osKind ?? '',
