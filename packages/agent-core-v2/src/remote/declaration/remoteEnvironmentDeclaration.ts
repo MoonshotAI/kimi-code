@@ -1,5 +1,8 @@
 import { z } from 'zod';
 
+import { LOCAL_ENVIRONMENT_ID, type EnvironmentCapability, type EnvironmentStatus } from '#/environment/environment';
+import type { EnvironmentGenerationSnapshot } from '#/environment/environmentRegistry';
+
 export const ENVIRONMENT_ID_MAX_LENGTH = 64;
 export const RESERVED_ENVIRONMENT_IDS = ['local', 'default'] as const;
 
@@ -106,4 +109,34 @@ export function sectionEntries(
   return Object.entries(section)
     .filter(([id]) => id !== 'default')
     .map(([id, entry]) => ({ id, entry: entry as RemoteEnvironmentEntry }));
+}
+
+export type EnvironmentEntryType = 'local' | 'ssh' | 'docker' | 'command';
+
+export interface EnvironmentEntryInfo {
+  readonly environmentId: string;
+  readonly type: EnvironmentEntryType;
+  readonly status: EnvironmentStatus;
+  readonly generation: string;
+  readonly capabilities: readonly EnvironmentCapability[];
+  readonly defaultCwd?: string;
+  readonly connectError?: string;
+}
+
+export function environmentEntryInfo(
+  environment: EnvironmentGenerationSnapshot,
+  entry: RemoteEnvironmentEntry | undefined,
+): EnvironmentEntryInfo {
+  return {
+    environmentId: environment.environmentId,
+    type:
+      environment.environmentId === LOCAL_ENVIRONMENT_ID ? 'local'
+        : entry === undefined || 'command' in entry ? 'command'
+          : entry.type,
+    status: environment.status,
+    generation: environment.generation,
+    capabilities: [...environment.capabilities],
+    defaultCwd: entry?.defaultCwd,
+    connectError: environment.connectError,
+  };
 }

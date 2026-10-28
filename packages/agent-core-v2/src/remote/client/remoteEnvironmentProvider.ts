@@ -4,11 +4,10 @@ import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
-import { declarationFingerprint, toLauncherSpec } from '#/environment/environmentDeclarations';
 import type {
   RemoteEnvironmentDeclaration,
   EnvironmentDeclarationSet,
-} from '#/environment/remoteEnvironmentDeclaration';
+} from '#/remote/declaration/remoteEnvironmentDeclaration';
 import type {
   Environment,
   EnvironmentCapability,
@@ -27,10 +26,8 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
 import { HandshakeError } from './connection';
-import type { LauncherSpec } from './launchers';
+import { declarationFingerprint, toLauncherSpec, type LauncherSpec } from './launchers';
 import { RemoteSession, type RemoteSessionOptions } from './remoteSession';
-
-export { toLauncherSpec } from '#/environment/environmentDeclarations';
 
 const EMPTY_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set();
 const REMOTE_CAPABILITIES: ReadonlySet<EnvironmentCapability> = new Set(['fs', 'process']);

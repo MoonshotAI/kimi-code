@@ -15,7 +15,7 @@
 #   database                 src/persistence/configSection.ts
 #   defaultPermissionMode    src/agent/permissionMode/configSection.ts
 #   defaultPlanMode          src/features/plan/configSection.ts
-#   environments             src/environment/configSection.ts
+#   environments             src/remote/declaration/configSection.ts
 #   experimental             src/app/flag/flag.ts
 #   extraAgentDirs           src/workspace/workspaceAgentProfileLoader/configSection.ts
 #   extraSkillDirs           src/features/skill/catalog/configSection.ts
@@ -136,7 +136,7 @@ default_plan_mode = false
 
 # ##########################################################################
 # environments
-#   owner: src/environment/configSection.ts
+#   owner: src/remote/declaration/configSection.ts
 #   scope: core
 # ##########################################################################
 

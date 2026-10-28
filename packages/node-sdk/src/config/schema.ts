@@ -1,5 +1,5 @@
 import { parsePattern } from '@moonshot-ai/agent-core-v2/agent/permissionRules/matchesRule';
-import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/environment/remoteEnvironmentDeclaration';
+import { EnvironmentsSectionSchema } from '@moonshot-ai/agent-core-v2/remote/declaration/remoteEnvironmentDeclaration';
 import { z } from 'zod';
 
 import { ErrorCodes, KimiError } from '#/errors';

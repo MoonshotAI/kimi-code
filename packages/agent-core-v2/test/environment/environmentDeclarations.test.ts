@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { IConfigService } from '#/app/config/config';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import { Emitter } from '#/_base/event';
-import type { EnvironmentsSection, EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
+import type { EnvironmentsSection, EnvironmentDeclarationSet } from '#/remote/declaration/remoteEnvironmentDeclaration';
 
 function fakeConfig(initial: EnvironmentsSection | undefined) {
   let section = initial;

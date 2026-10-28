@@ -1,5 +1,5 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
+import type { EnvironmentDeclarationSet } from '#/remote/declaration/remoteEnvironmentDeclaration';
 import type { Event, IWaitUntil } from '#/_base/event';
 
 export interface IEnvironmentDeclarationService {

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   EnvironmentsSectionSchema,
   environmentIdProblem,
-} from '#/environment/remoteEnvironmentDeclaration';
+} from '#/remote/declaration/remoteEnvironmentDeclaration';
 
 function parse(value: unknown) {
   return EnvironmentsSectionSchema.safeParse(value);

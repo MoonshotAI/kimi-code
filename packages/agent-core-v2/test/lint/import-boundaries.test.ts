@@ -189,4 +189,31 @@ describe('check-import-boundaries', () => {
     );
     expect(violations).toHaveLength(0);
   });
+
+  it('flags the environment layer importing the remote stack', () => {
+    const violations = checkSource(
+      `import { DEFAULT_REMOTE_BIN } from '#/remote/client/launchers';
+import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironmentDeclaration';`,
+      at('environment', 'environmentRegistry.ts'),
+    );
+    expect(violations).toHaveLength(2);
+    expect(violations[0]?.message).toMatch(/environment layer never imports the remote stack/);
+  });
+
+  it('flags remote declarations importing the remote client', () => {
+    const violations = checkSource(
+      `import type { LauncherSpec } from '../client/launchers';`,
+      at('remote/declaration', 'remoteEnvironmentDeclaration.ts'),
+    );
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.message).toMatch(/declarations stay transport-free/);
+  });
+
+  it('allows the remote stack to import the environment layer', () => {
+    const violations = checkSource(
+      `import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';`,
+      at('remote/declaration', 'remoteEnvironmentDeclaration.ts'),
+    );
+    expect(violations).toHaveLength(0);
+  });
 });

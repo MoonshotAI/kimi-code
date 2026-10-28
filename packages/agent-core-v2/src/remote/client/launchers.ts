@@ -1,4 +1,5 @@
 import { resolveProgramPath } from '#/environment/programPath';
+import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironmentDeclaration';
 
 export const DEFAULT_REMOTE_BIN = '~/.kimi-code/bin/kimi';
 export const EXEC_SERVER_SUBCOMMAND = 'exec-server';
@@ -38,6 +39,22 @@ export type LauncherSpec =
       readonly env?: Record<string, string>;
       readonly remoteBin?: string;
     };
+
+export function toLauncherSpec(entry: RemoteEnvironmentEntry): LauncherSpec {
+  if ('command' in entry) {
+    return { type: 'command', program: entry.command, args: entry.args, env: entry.env, remoteBin: entry.remoteBin };
+  }
+  return entry.type === 'ssh'
+    ? { type: 'ssh', host: entry.host, remoteBin: entry.remoteBin }
+    : { type: 'docker', container: entry.container, context: entry.context, remoteBin: entry.remoteBin };
+}
+
+export function declarationFingerprint(entry: RemoteEnvironmentEntry): string {
+  const launcher = { ...toLauncherSpec(entry), remoteBin: entry.remoteBin ?? DEFAULT_REMOTE_BIN };
+  return JSON.stringify(launcher.type === 'command'
+    ? { ...launcher, args: launcher.args ?? [], env: Object.fromEntries(Object.entries(launcher.env ?? {}).toSorted(([a], [b]) => a.localeCompare(b))) }
+    : launcher);
+}
 
 export interface ResolvedLauncher {
   readonly program: string;

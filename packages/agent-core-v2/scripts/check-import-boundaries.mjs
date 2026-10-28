@@ -14,6 +14,10 @@ const REMOTE_SERVER_ROOT = join(SRC_ROOT, 'remote/server');
 const REMOTE_SERVER_ALLOWED_RE =
   /^#\/(?:remote\/protocol|os\/interface|_base\/execEnv)(?:\/|$)/;
 const REMOTE_SERVER_MODULE_RE = /\/remote\/server(?:\/|$)/;
+const ENVIRONMENT_ROOT = join(SRC_ROOT, 'environment');
+const REMOTE_ROOT = join(SRC_ROOT, 'remote');
+const REMOTE_DECLARATION_ROOT = join(SRC_ROOT, 'remote/declaration');
+const REMOTE_CLIENT_ROOT = join(SRC_ROOT, 'remote/client');
 
 const SELF_PACKAGE_PREFIX = '@moonshot-ai/agent-core-v2/';
 const KOSONG_PATH_RE = /(?:^|\/)kosong(?:\/|$)/;
@@ -60,6 +64,19 @@ function remoteServerConsumerViolation(absFile, specifier) {
     return undefined;
   }
   return `engine code never imports the remote executor ('${specifier}') — only tests and the CLI exec-server entry may touch src/remote/server; engine code speaks the client side (#/remote)`;
+}
+
+function environmentLayerViolation(absFile, targetAbs, specifier) {
+  if (isInside(ENVIRONMENT_ROOT, absFile) && isInside(REMOTE_ROOT, targetAbs)) {
+    return `the environment layer never imports the remote stack ('${specifier}') — src/environment holds the target-neutral Environment contract and registry; ssh/docker/command declarations and launchers live under src/remote`;
+  }
+  if (
+    isInside(REMOTE_DECLARATION_ROOT, absFile) &&
+    (isInside(REMOTE_CLIENT_ROOT, targetAbs) || isInside(REMOTE_SERVER_ROOT, targetAbs))
+  ) {
+    return `remote environment declarations stay transport-free ('${specifier}') — the main entry loads src/remote/declaration, so it never imports the remote client or executor`;
+  }
+  return undefined;
 }
 
 const HUMAN_VOCABULARY = new Set([
@@ -185,6 +202,10 @@ export function checkSource(source, absFile) {
       const basesInternal = basesInternalViolation(absFile, stripTs(targetAbs), specifier);
       if (basesInternal !== undefined) {
         violations.push({ file: absFile, line, message: basesInternal });
+      }
+      const environmentLayer = environmentLayerViolation(absFile, targetAbs, specifier);
+      if (environmentLayer !== undefined) {
+        violations.push({ file: absFile, line, message: environmentLayer });
       }
     }
 

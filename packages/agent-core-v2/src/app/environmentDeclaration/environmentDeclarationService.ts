@@ -4,9 +4,8 @@ import { AsyncEmitter, type IWaitUntil } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
 import { LifecycleScope } from '#/app/scopes';
-import { ENVIRONMENTS_SECTION } from '#/environment/configSection';
-import { resolveWorkspaceEnvironmentDeclarations } from '#/environment/environmentDeclarations';
-import type { EnvironmentDeclarationSet } from '#/environment/remoteEnvironmentDeclaration';
+import { ENVIRONMENTS_SECTION, resolveWorkspaceEnvironmentDeclarations } from '#/remote/declaration/configSection';
+import type { EnvironmentDeclarationSet } from '#/remote/declaration/remoteEnvironmentDeclaration';
 import { Error2, ErrorCodes } from '#/errors';
 
 import { IEnvironmentDeclarationService } from './environmentDeclaration';
