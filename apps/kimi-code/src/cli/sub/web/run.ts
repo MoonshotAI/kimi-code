@@ -25,6 +25,7 @@ import { persistedKimiOAuthRef } from '#/utils/region';
 import { generateRemoteControlQr } from '#/utils/remote-control-qr';
 
 import { initializeServerTelemetry } from '../../telemetry';
+import { createTelemetryShutdownDeadline } from '../../telemetry-shutdown';
 import {
   createKimiCodeHostIdentity,
   getHostPackageRoot,
@@ -68,7 +69,7 @@ const WEB_ASSETS_DIR = 'dist-web';
 interface RoutedServer {
   readonly address: string;
   readonly logger: ServerLogger;
-  close(): Promise<void>;
+  close(options?: { readonly telemetryDeadlineMs?: number }): Promise<void>;
 }
 
 export interface WebCliOptions extends ServerCliOptions {
@@ -352,16 +353,38 @@ async function runServerInProcess(
         'foreground shutdown hook error',
       );
     }
+    await closeServerUnderSharedDeadline(running);
+    process.exit(0);
+  }
+
+  // Close the server and flush host telemetry under one shared shutdown budget:
+  // the engine telemetry (owned by `close`) and the host client split a single
+  // absolute deadline, so a stalled pipeline can never push total shutdown past
+  // CLI_SHUTDOWN_TIMEOUT_MS. A server-close failure stays a distinct error
+  // boundary from telemetry and never blocks the host flush.
+  async function closeServerUnderSharedDeadline(server: RoutedServer | undefined): Promise<void> {
+    const telemetryDeadline = createTelemetryShutdownDeadline(
+      CLI_SHUTDOWN_TIMEOUT_MS,
+      (error) => {
+        server?.logger.error(
+          { err: error instanceof Error ? error : new Error(String(error)) },
+          'telemetry shutdown error',
+        );
+      },
+    );
     try {
-      await running?.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
+      await server?.close({
+        telemetryDeadlineMs: telemetryDeadline.expiresAtMs,
+      });
     } catch (error) {
-      running?.logger.error(
+      server?.logger.error(
         { err: error instanceof Error ? error : new Error(String(error)) },
         'server shutdown error',
       );
     }
-    process.exit(0);
+    await telemetryDeadline.run((remainingMs) =>
+      shutdownTelemetry({ timeoutMs: remainingMs }),
+    );
   }
 
   // kap-server (the DI × Scope engine server) is the only server flavor. Its
@@ -408,7 +431,7 @@ async function runServerInProcess(
   running = {
     address: `http://${v2.host}:${v2.port}`,
     logger,
-    close: () => v2.close(),
+    close: (closeOptions) => v2.close(closeOptions),
   };
 
   track('server_started', { daemon: false });
@@ -430,8 +453,7 @@ async function runServerInProcess(
     try {
       await hooks.onShutdown?.('startup_failed');
     } finally {
-      await running.close();
-      await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS }).catch(() => {});
+      await closeServerUnderSharedDeadline(running);
     }
     throw error;
   }
