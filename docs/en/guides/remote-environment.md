@@ -91,7 +91,11 @@ Every connect attempt is bounded to 10 seconds: a target that never answers the 
 
 ## SSH authentication
 
-SSH connections are non-interactive. The launcher spawns the system `ssh` with `-T` (no terminal allocated) and `-o BatchMode=yes`. BatchMode disables every interactive prompt — password, key passphrase, host-key confirmation — because the connection's input and output streams carry the protocol traffic, leaving no terminal to answer a prompt on. A host that requires any of these fails fast with an error like `Permission denied (publickey,password)`, surfaced as a connection failure during creation or the next tool call, instead of hanging on a prompt nobody can see.
+By default, SSH connections are non-interactive. The launcher spawns the system `ssh` with `-T` (no terminal allocated) and `-o BatchMode=yes`. BatchMode disables every interactive prompt — password, key passphrase, host-key confirmation — because the connection's input and output streams carry the protocol traffic, leaving no terminal to answer a prompt on. A host that requires any of these fails fast with an error like `Permission denied (publickey,password)`, surfaced as a connection failure during creation or the next tool call, instead of hanging on a prompt nobody can see.
+
+In the interactive TUI, if authentication fails and the server offers `password` or `keyboard-interactive`, Kimi Code CLI also prompts for the SSH password and retries through OpenSSH Askpass (a helper that supplies credentials without a terminal). The password is kept only in process memory for reconnects and is never written to config or a credential store. Changing the environment or exiting Kimi Code CLI discards it.
+
+This fallback requires OpenSSH 8.4 or later and covers passwords and same-password keyboard-interactive authentication, not independent OTP/MFA challenges or private-key passphrase prompts. `kimi -p` and other clients without an interactive password callback keep the fail-fast behavior.
 
 Every non-interactive method the system `ssh` supports works unchanged, configured through `~/.ssh/config` and your shell environment:
 

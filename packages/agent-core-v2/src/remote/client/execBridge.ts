@@ -13,7 +13,7 @@ export interface BytePipe {
 export interface ExecBridgeOptions {
   readonly program: string;
   readonly args?: readonly string[];
-  readonly env?: Record<string, string>;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export interface ExecBridgeExit {

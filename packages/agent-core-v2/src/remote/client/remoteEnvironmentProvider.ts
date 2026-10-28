@@ -26,6 +26,7 @@ import { POSIX_ENVIRONMENT_PATH, POSIX_ENVIRONMENT_WORKSPACE } from '#/environme
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostProcessService } from '#/os/interface/hostProcess';
 import { classifyHandshakeFailure, connectWithGuidance } from './connectGuidance';
+import { HandshakeError } from './connection';
 import type { LauncherSpec } from './launchers';
 import { RemoteSession, type RemoteSessionOptions } from './remoteSession';
 
@@ -225,6 +226,11 @@ class DeclaredRemoteEnvironment implements Environment {
 export interface RemoteEnvironmentProviderFactoryOptions {
   readonly clientVersion?: string;
   readonly connect?: (options: RemoteSessionOptions) => Promise<RemoteSession>;
+  readonly onSshPasswordRequired?: (environmentId: string) => Promise<string | undefined>;
+  readonly sshAskpass?: {
+    readonly binary: string;
+    readonly command?: readonly string[];
+  };
 }
 
 interface DeclaredEnvironmentRecord {
@@ -236,6 +242,7 @@ interface DeclaredEnvironmentRecord {
 
 export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFactory {
   readonly id = 'remote-exec';
+  private readonly sshPasswords = new Map<string, { readonly launcher: LauncherSpec; readonly password: string }>();
 
   constructor(private readonly options: RemoteEnvironmentProviderFactoryOptions = {}) {}
 
@@ -266,6 +273,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         const next = new Map(resolved.entries.map((declaration) => [declaration.id, declaration]));
         for (const [id, record] of records) {
           if (next.has(id)) continue;
+          this.sshPasswords.delete(id);
           records.delete(id);
           declarations.reportRegistration(id);
           try {
@@ -294,6 +302,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
           }
           record.declaration = declaration;
           record.fingerprint = fingerprint;
+          this.sshPasswords.delete(declaration.id);
           record.environment.applyLauncher(toLauncherSpec(declaration.entry), fingerprint);
         }
         if (failures.length > 0) throw new AggregateError(failures, 'remote environment declarations failed to reconcile');
@@ -308,6 +317,7 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
         disposed = true;
         configListener.dispose();
         await tail.catch(() => {});
+        this.sshPasswords.clear();
         records.clear();
       },
     };
@@ -332,11 +342,44 @@ export class RemoteEnvironmentProviderFactory implements EnvironmentProviderFact
   private open(environmentId: string, launcher: LauncherSpec): Promise<RemoteSession> {
     const connect = this.options.connect ?? ((options: RemoteSessionOptions) => RemoteSession.connect(options));
     return connectWithGuidance(
-      (spec) => connect({
-        environmentId,
-        launcher: spec,
-        clientVersion: this.options.clientVersion,
-      }),
+      async (spec) => {
+        const connectWithPassword = (password: string | undefined) => connect({
+          environmentId,
+          launcher: spec,
+          clientVersion: this.options.clientVersion,
+          sshAuth: password === undefined ? undefined : {
+            password,
+            binary: this.options.sshAskpass?.binary ?? process.execPath,
+            command: this.options.sshAskpass?.command ??
+              (process.argv[1] === undefined ? undefined : [process.execPath, ...process.execArgv, process.argv[1]]),
+          },
+        });
+        const cached = this.sshPasswords.get(environmentId);
+        try {
+          return await connectWithPassword(cached?.launcher === launcher ? cached.password : undefined);
+        } catch (error) {
+          if (
+            spec.type !== 'ssh' ||
+            !(error instanceof HandshakeError) ||
+            error.kind !== 'authentication' ||
+            this.options.onSshPasswordRequired === undefined
+          ) {
+            throw error;
+          }
+          this.sshPasswords.delete(environmentId);
+          const password = await this.options.onSshPasswordRequired(environmentId);
+          if (password === undefined) throw error;
+          this.sshPasswords.set(environmentId, { launcher, password });
+          try {
+            return await connectWithPassword(password);
+          } catch (retryError) {
+            if (retryError instanceof HandshakeError && retryError.kind === 'authentication') {
+              this.sshPasswords.delete(environmentId);
+            }
+            throw retryError;
+          }
+        }
+      },
       { launcher },
     );
   }

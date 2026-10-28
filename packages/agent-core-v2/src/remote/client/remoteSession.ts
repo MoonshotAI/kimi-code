@@ -9,6 +9,7 @@ import { HandshakeError, RemoteExecConnection } from './connection';
 import { resolveLauncher, type LauncherSpec } from './launchers';
 import { RemoteFileSystem } from './remoteFileSystem';
 import { RemoteProcessService } from './remoteProcess';
+import { createSshAskpass, type SshAuthOptions } from './sshAskpass';
 
 export interface RemoteEnvironmentProbe extends HostEnvironmentInfo {
   readonly cwd: string;
@@ -21,6 +22,7 @@ export interface RemoteSessionOptions {
   readonly clientVersion?: string;
   readonly minExecutorVersion?: string;
   readonly initializeTimeoutMs?: number;
+  readonly sshAuth?: SshAuthOptions;
 }
 
 export class RemoteSession {
@@ -31,54 +33,61 @@ export class RemoteSession {
   private disposed = false;
 
   static async connect(options: RemoteSessionOptions): Promise<RemoteSession> {
-    const resolved = resolveLauncher(options.launcher);
-    const bridge = ExecBridge.spawn({
-      program: resolved.program,
-      args: resolved.args,
-      env: resolved.env,
-    });
-    let exitInfo: ExecBridgeExit | undefined;
-    const exitWatch = bridge.exited.then((exit: ExecBridgeExit) => {
-      exitInfo = exit;
-    });
-    let connection: RemoteExecConnection;
+    const askpass = options.sshAuth === undefined ? undefined : await createSshAskpass(options.sshAuth);
     try {
-      connection = await RemoteExecConnection.connect(bridge, {
-        clientName: 'kimi-code',
-        clientVersion: options.clientVersion ?? '0.0.0',
-        minExecutorVersion: options.minExecutorVersion,
-        initializeTimeoutMs: options.initializeTimeoutMs,
+      const resolved = resolveLauncher(options.launcher, options.sshAuth !== undefined);
+      const bridge = ExecBridge.spawn({
+        program: resolved.program,
+        args: resolved.args,
+        env: askpass === undefined ? resolved.env : { ...process.env, ...resolved.env, ...askpass.env },
       });
-    } catch (error) {
-      bridge.close();
-      const exit = await Promise.race([
-        exitWatch.then(() => exitInfo),
-        new Promise<undefined>((resolve) => {
-          setTimeout(() => {
-            resolve(undefined);
-          }, 100);
-        }),
-      ]);
-      if (exit !== undefined && !(error instanceof HandshakeError)) {
-        const stderr = bridge.getStderrTail().trim();
-        const detail = stderr.length > 0 ? stderr : exit.error?.message;
-        throw new HandshakeError(
-          `executor process exited before the handshake completed (code ${exit.code ?? 'null'}, signal ${exit.signal ?? 'null'})${detail !== undefined && detail.length > 0 ? `: ${detail}` : ''}`,
-          { kind: 'executor-exit', exitCode: exit.code, cause: error },
-        );
-      }
-      if (error instanceof HandshakeError && error.kind === 'timeout') {
-        const stderr = bridge.getStderrTail().trim();
-        if (stderr.length > 0) {
-          throw new HandshakeError(`${error.message}; executor stderr: ${stderr}`, {
-            kind: 'timeout',
-            cause: error,
-          });
+      let exitInfo: ExecBridgeExit | undefined;
+      const exitWatch = bridge.exited.then((exit: ExecBridgeExit) => {
+        exitInfo = exit;
+      });
+      let connection: RemoteExecConnection;
+      try {
+        connection = await RemoteExecConnection.connect(bridge, {
+          clientName: 'kimi-code',
+          clientVersion: options.clientVersion ?? '0.0.0',
+          minExecutorVersion: options.minExecutorVersion,
+          initializeTimeoutMs: options.initializeTimeoutMs,
+        });
+      } catch (error) {
+        bridge.close();
+        const exit = await Promise.race([
+          exitWatch.then(() => exitInfo),
+          new Promise<undefined>((resolve) => {
+            setTimeout(() => {
+              resolve(undefined);
+            }, 100);
+          }),
+        ]);
+        if (exit !== undefined && !(error instanceof HandshakeError)) {
+          const stderr = bridge.getStderrTail().trim();
+          const detail = stderr.length > 0 ? stderr : exit.error?.message;
+          const authenticationFailed = options.launcher.type === 'ssh' && exit.code === 255 &&
+            /Permission denied \([^)]*(?:password|keyboard-interactive)[^)]*\)/i.test(stderr);
+          throw new HandshakeError(
+            `executor process exited before the handshake completed (code ${exit.code ?? 'null'}, signal ${exit.signal ?? 'null'})${detail !== undefined && detail.length > 0 ? `: ${detail}` : ''}`,
+            { kind: authenticationFailed ? 'authentication' : 'executor-exit', exitCode: exit.code, cause: error },
+          );
         }
+        if (error instanceof HandshakeError && error.kind === 'timeout') {
+          const stderr = bridge.getStderrTail().trim();
+          if (stderr.length > 0) {
+            throw new HandshakeError(`${error.message}; executor stderr: ${stderr}`, {
+              kind: 'timeout',
+              cause: error,
+            });
+          }
+        }
+        throw error;
       }
-      throw error;
+      return new RemoteSession(bridge, connection);
+    } finally {
+      await askpass?.close();
     }
-    return new RemoteSession(bridge, connection);
   }
 
   private constructor(

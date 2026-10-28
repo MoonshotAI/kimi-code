@@ -110,6 +110,7 @@ describe('light entry import graph', () => {
       'cli/build-info.ts',
       'cli/exec-server.ts',
       'cli/host-package.ts',
+      'cli/ssh-askpass.ts',
       'main.ts',
     ]);
   });

@@ -91,7 +91,11 @@ kimi --environment dev-box --environment-cwd /home/me/projects -p "Run the test 
 
 ## SSH 认证
 
-SSH 连接是非交互式的。启动器以 `-T`（不分配终端）和 `-o BatchMode=yes` 调用系统 `ssh`。BatchMode 会禁用所有交互提示——密码、密钥口令（passphrase）、主机密钥确认——因为连接的输入输出流承载着协议流量，没有终端可以回答提示。需要这些提示的主机会立即失败，报出 `Permission denied (publickey,password)` 之类的错误，并在创建会话或下一次工具调用时表现为连接失败，而不是挂在一个无人可见的提示上。
+默认情况下，SSH 连接是非交互式的。启动器以 `-T`（不分配终端）和 `-o BatchMode=yes` 调用系统 `ssh`。BatchMode 会禁用所有交互提示——密码、密钥口令（passphrase）、主机密钥确认——因为连接的输入输出流承载着协议流量，没有终端可以回答提示。需要这些提示的主机会立即失败，报出 `Permission denied (publickey,password)` 之类的错误，并在创建会话或下一次工具调用时表现为连接失败，而不是挂在一个无人可见的提示上。
+
+在交互式 TUI 中，如果认证失败且服务端提供 `password` 或 `keyboard-interactive`，Kimi Code CLI 还会提示你输入 SSH 密码，并通过 OpenSSH Askpass（在无终端时提供凭据的辅助程序）重试。密码只保存在当前进程内存中供重连使用，不会写入配置或凭据存储；修改环境或退出 Kimi Code CLI 后会丢弃。
+
+该兜底需要 OpenSSH 8.4 或更高版本，仅覆盖密码及使用同一密码的 keyboard-interactive，不支持独立 OTP/MFA 或私钥口令提示。`kimi -p` 等没有交互密码回调的客户端仍按上述方式直接失败。
 
 系统 `ssh` 支持的所有非交互认证方式都照常生效，通过 `~/.ssh/config` 和你的 shell 环境配置：
 

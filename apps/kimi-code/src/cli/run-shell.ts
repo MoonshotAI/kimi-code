@@ -62,6 +62,7 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
+  let tui!: KimiTUI;
   const harnessOptions: KimiHarnessOptions = {
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
@@ -80,6 +81,7 @@ export async function runShell(
         reason: outcome.reason,
       });
     },
+    onSshPasswordRequired: (environmentId) => tui.promptSshPassword(environmentId),
     sessionStartedProperties: { yolo: opts.yolo, auto: opts.auto, plan: opts.plan, afk: false },
   };
   const harness = createKimiHarness(harnessOptions);
@@ -124,7 +126,7 @@ export async function runShell(
   // Resolve --agent/--agent-file once for the startup session; validateOptions
   // has already rejected them alongside --session/--continue.
   const agentProfile = await resolveAgentProfileSelection(opts, workDir);
-  const tui = new KimiTUI(harness, {
+  tui = new KimiTUI(harness, {
     cliOptions: opts,
     agentProfile,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,

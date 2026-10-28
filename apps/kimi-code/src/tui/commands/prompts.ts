@@ -137,6 +137,28 @@ export function promptApiKey(
   }).finally(releaseAuthBlock);
 }
 
+export function promptSshPassword(host: SlashCommandHost, environmentId: string): Promise<string | undefined> {
+  const releaseAuthBlock = host.beginAuthBlock();
+  return new Promise<string | undefined>((resolve) => {
+    const dialog = new ApiKeyInputDialogComponent(
+      environmentId,
+      ['The password is used only in this process and is never saved.'],
+      (result: ApiKeyInputResult) => {
+        host.restoreEditor();
+        resolve(result.kind === 'ok' ? result.value : undefined);
+      },
+      {
+        title: `Enter SSH password for ${environmentId}`,
+        emptyHint: 'SSH password cannot be empty.',
+        trimValue: false,
+      },
+    );
+    host.mountEditorReplacement(dialog, undefined, () => {
+      resolve(undefined);
+    });
+  }).finally(releaseAuthBlock);
+}
+
 /**
  * Asks for the provider endpoint the catalog did not declare (or declared
  * only as an env placeholder) — required for catalog imports whose protocol

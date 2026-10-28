@@ -329,6 +329,75 @@ describe('declaration watch', () => {
   });
 });
 
+describe('SSH password fallback', () => {
+  it('prompts after authentication failure, reuses memory, and clears it on config changes', async () => {
+    const config = watchableConfigService({
+      'dev-box': { type: 'ssh', host: 'dev-box', defaultCwd: '/home/me' },
+    });
+    const registry = new EnvironmentRegistry();
+    let attempt = 0;
+    const produced: FakeSession[] = [];
+    const connect = vi.fn(async (options: RemoteSessionOptions) => {
+      attempt += 1;
+      if (attempt === 1) throw new HandshakeError('Permission denied (publickey,password)', { kind: 'authentication' });
+      const session = connectedSession();
+      produced.push(session);
+      return session;
+    });
+    const prompt = vi.fn(async () => 'secret');
+    const factory = new RemoteEnvironmentProviderFactory({
+      connect,
+      onSshPasswordRequired: prompt,
+      sshAskpass: { binary: '/bin/kimi', command: ['/bin/kimi'] },
+    });
+    const attachment = await factory.attach(fakeHost(baseServices(registry, { config: config.service }), registry));
+    const target = registry.current('dev-box')!;
+
+    await target.connect!();
+    expect(prompt).toHaveBeenCalledExactlyOnceWith('dev-box');
+    expect(connect).toHaveBeenCalledTimes(2);
+    expect(connect.mock.calls[0]![0].sshAuth).toBeUndefined();
+    expect(connect.mock.calls[1]![0].sshAuth).toEqual({
+      password: 'secret', binary: '/bin/kimi', command: ['/bin/kimi'],
+    });
+
+    produced[0]!.close({ reason: 'offline' });
+    await target.connect!();
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(connect.mock.calls[2]![0].sshAuth?.password).toBe('secret');
+
+    const generation = target.identity.generation;
+    config.setSection({ 'dev-box': { type: 'ssh', host: 'renamed-box', defaultCwd: '/home/me' } });
+    await vi.waitFor(() => {
+      expect(target.identity.generation).not.toBe(generation);
+    });
+    await target.connect!();
+    expect(connect.mock.calls[3]![0].sshAuth).toBeUndefined();
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+
+  it('keeps the original authentication error when prompting is cancelled', async () => {
+    const registry = new EnvironmentRegistry();
+    const failure = new HandshakeError('Permission denied (publickey,password)', { kind: 'authentication' });
+    const connect = vi.fn(async () => {
+      throw failure;
+    });
+    const factory = new RemoteEnvironmentProviderFactory({
+      connect,
+      onSshPasswordRequired: async () => undefined,
+    });
+    const attachment = await factory.attach(fakeHost(baseServices(registry), registry));
+
+    await expect(registry.current('dev-box')!.connect!()).rejects.toBe(failure);
+    expect(connect).toHaveBeenCalledTimes(1);
+
+    await attachment.dispose();
+    await registry.dispose();
+  });
+});
+
 describe('connection telemetry', () => {
   it('reports physical attempts once, initial failures separately from reconnects, and never sends raw identifiers', async () => {
     const telemetry = new TelemetryService();

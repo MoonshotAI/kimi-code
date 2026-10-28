@@ -30,6 +30,27 @@ describe('launcher lowering', () => {
       ],
     });
   });
+
+  it('enables one password prompt only for the interactive retry', () => {
+    const resolved = resolveLauncher({ type: 'ssh', host: 'dev-box' }, true);
+    expect(resolved.args).toEqual([
+      '-T',
+      '-o',
+      'BatchMode=no',
+      '-o',
+      'NumberOfPasswordPrompts=1',
+      '-o',
+      'ConnectTimeout=10',
+      '-o',
+      'ServerAliveInterval=15',
+      '-o',
+      'ServerAliveCountMax=3',
+      '-o',
+      'StrictHostKeyChecking=accept-new',
+      'dev-box',
+      `"$HOME"'/.kimi-code/bin/kimi' 'exec-server' '--listen' 'stdio'`,
+    ]);
+  });
 });
 
 describe('launcher operand validation', () => {

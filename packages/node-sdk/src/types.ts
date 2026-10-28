@@ -260,6 +260,7 @@ export interface KimiHarnessOptions {
   readonly uiCapabilities?: readonly HostUiCapability[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly onOAuthRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
+  readonly onSshPasswordRequired?: (environmentId: string) => Promise<string | undefined>;
   readonly sessionStartedProperties?: TelemetryProperties;
 }
 

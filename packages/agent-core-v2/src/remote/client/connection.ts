@@ -48,7 +48,7 @@ export class ConnectionClosedError extends Error {
   }
 }
 
-export type HandshakeErrorKind = 'timeout' | 'executor-exit' | 'incompatible';
+export type HandshakeErrorKind = 'timeout' | 'executor-exit' | 'incompatible' | 'authentication';
 
 export interface HandshakeErrorDetails {
   readonly kind?: HandshakeErrorKind;

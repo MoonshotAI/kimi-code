@@ -68,6 +68,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
+import { promptSshPassword } from './commands/prompts';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
@@ -2944,6 +2945,10 @@ export class KimiTUI {
       options.environmentCwd = inherited.environmentCwd;
     }
     return this.harness.createSession(options);
+  }
+
+  promptSshPassword(environmentId: string): Promise<string | undefined> {
+    return promptSshPassword(this, environmentId);
   }
 
   /**

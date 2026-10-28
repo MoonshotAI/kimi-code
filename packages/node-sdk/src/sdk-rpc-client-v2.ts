@@ -388,6 +388,7 @@ export interface SDKRpcClientV2Options {
   readonly nonInteractive?: boolean;
   readonly telemetry?: TelemetryClient;
   readonly onOAuthRefresh?: (outcome: OAuthRefreshOutcome) => void;
+  readonly onSshPasswordRequired?: (environmentId: string) => Promise<string | undefined>;
   readonly uiMode?: string;
   /** UI surfaces this host renders; forwarded as `BootstrapInput.args.uiCapabilities`. */
   readonly uiCapabilities?: readonly HostUiCapability[];
@@ -510,6 +511,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
       .addProvider(
         new RemoteEnvironmentProviderFactory({
           clientVersion: identity.version,
+          onSshPasswordRequired: options.onSshPasswordRequired,
         }),
       )
       .catch((error) => {

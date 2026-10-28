@@ -118,14 +118,18 @@ export function commandLauncherEnv(
   return env;
 }
 
-export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
+export function resolveLauncher(spec: LauncherSpec, interactiveSshAuth = false): ResolvedLauncher {
   switch (spec.type) {
-    case 'ssh':
+    case 'ssh': {
       assertLauncherOperand('ssh host', spec.host);
+      const authOptions = interactiveSshAuth
+        ? ['-o', 'BatchMode=no', '-o', 'NumberOfPasswordPrompts=1']
+        : ['-o', 'BatchMode=yes'];
       return {
         program: 'ssh',
-        args: ['-T', ...SSH_CONFIG_OPTIONS, spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
+        args: ['-T', ...authOptions, ...SSH_CONFIG_OPTIONS.slice(2), spec.host, execServerShellCommand(spec.remoteBin ?? DEFAULT_REMOTE_BIN)],
       };
+    }
     case 'docker':
       assertLauncherOperand('docker container', spec.container);
       return {
