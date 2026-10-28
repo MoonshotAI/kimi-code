@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -491,6 +492,66 @@ describe('process protocol semantics', () => {
       if (isAlive(childPid)) process.kill(childPid, 'SIGKILL');
     }
   }, 15_000);
+});
+
+describe('shutdown of a process that is still starting', () => {
+  it('kills a spawn that finishes after shutdown begins', async () => {
+    const manager = new ProcessManager(() => {});
+    const script = join(tmpdir(), `remote-exec-starting-${process.pid}.mjs`);
+    await writeFile(script, 'setTimeout(() => {}, 30_000);\n');
+    const child = spawn(process.execPath, [script], {
+      cwd: tmpdir(),
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    const pid = child.pid ?? -1;
+    await new Promise<void>((resolve, reject) => {
+      child.once('spawn', () => {
+        resolve();
+      });
+      child.once('error', reject);
+    });
+    let releaseSpawn: (() => void) | undefined;
+    const held = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const internals = manager as unknown as {
+      startPipe(entry: { child?: typeof child; pid: number }, argv: string[], cwd: string, env: unknown): Promise<void>;
+    };
+    vi.spyOn(internals, 'startPipe').mockImplementation(async (entry) => {
+      entry.child = child;
+      entry.pid = -1;
+      await held;
+      entry.pid = pid;
+    });
+    try {
+      const starting = manager.start({
+        processId: 'late',
+        argv: [process.execPath, script],
+        cwd: tmpdir(),
+      });
+      await vi.waitFor(() => {
+        expect(internals.startPipe).toHaveBeenCalled();
+      });
+      const terminating = manager.terminateAll();
+      releaseSpawn!();
+      await expect(starting).rejects.toThrow(/shutting down/);
+      await terminating;
+      await waitForDeath(pid, 2_000);
+    } finally {
+      vi.restoreAllMocks();
+      if (isAlive(pid)) {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
+          child.kill('SIGKILL');
+        }
+      }
+      manager.dispose();
+      await rm(script, { force: true });
+    }
+  });
 });
 
 describe('finished process-group ownership', () => {

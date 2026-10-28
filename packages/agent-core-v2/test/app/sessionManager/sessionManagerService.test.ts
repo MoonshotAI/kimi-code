@@ -932,7 +932,7 @@ describe('SessionManager controller retirement', () => {
 
     manager.dispose();
     expect(controllers[0]!.dispose).toHaveBeenCalledTimes(1);
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 });
@@ -1040,7 +1040,13 @@ describe('SessionManager creation environment', () => {
     expect(options).toHaveLength(0);
 
     await manager.create({ workDir: '/workspace', environmentId: 'local' });
+    await manager.create({ workDir: '/workspace', environmentId: 'local', environmentCwd: '/tmp/proj-a' });
     expect(options[0]).toMatchObject({ workDir: '/workspace', environmentId: 'local' });
+    expect(options[1]).toMatchObject({
+      workDir: '/workspace',
+      environmentId: 'local',
+      environmentCwd: '/tmp/proj-a',
+    });
   });
 
   it('normalizes a declared remote cwd before handing it to the controller', async () => {

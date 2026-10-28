@@ -206,6 +206,24 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     }
   });
 
+  it('keeps an explicit local cwd on the session the next session inherits', async () => {
+    const { harness } = await makeHarness();
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-cwd-work-'));
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-cwd-session-'));
+    tempDirs.push(workDir, sessionDir);
+    const session = await harness.createSession({
+      id: 'ses_local_cwd',
+      workDir,
+      environmentId: 'local',
+      environmentCwd: sessionDir,
+    });
+    try {
+      expect(await session.getEnvironment()).toEqual({ environmentId: 'local', cwd: sessionDir });
+    } finally {
+      await harness.close();
+    }
+  });
+
   function runtimeConfigToml(defaultCwd: string): string {
     return [
       'default_model = "stub"',
@@ -320,6 +338,11 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       await client.engineAccessor.get(IConfigService).set('environments', { default: 'fake-box' });
       expect(await harness.resolveSessionEnvironment({ workDir })).toEqual({ environmentId: 'fake-box', cwd: remoteDir });
       expect(await harness.resolveSessionEnvironment({ workDir, environmentId: 'local' })).toEqual({ environmentId: 'local', cwd: undefined });
+      expect(await harness.resolveSessionEnvironment({
+        workDir,
+        environmentId: 'local',
+        environmentCwd: workDir,
+      })).toEqual({ environmentId: 'local', cwd: workDir });
       expect(client.engineAccessor.get(ISessionManager).list()).toHaveLength(0);
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
@@ -416,6 +439,25 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(getLiveSessionById(client.engineAccessor, session.id)).toBeUndefined();
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('resumes an explicit local cwd from session metadata', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-resume-work-'));
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-local-resume-cwd-'));
+    tempDirs.push(workDir, sessionDir);
+    const { harness } = await makeHarness();
+    const created = await harness.createSession({
+      workDir,
+      environmentId: 'local',
+      environmentCwd: sessionDir,
+    });
+    try {
+      await created.close();
+      const restored = await harness.resumeSession({ id: created.id });
+      expect(await restored.getEnvironment()).toEqual({ environmentId: 'local', cwd: sessionDir });
+    } finally {
+      await harness.close();
     }
   });
 

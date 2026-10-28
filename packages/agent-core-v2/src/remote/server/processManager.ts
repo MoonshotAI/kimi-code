@@ -50,11 +50,15 @@ export class ProcessManager {
   private readonly terminatedIds = new Set<string>();
   private readonly exitedGroups = new Map<string, ExitedProcessGroup>();
   private outputPaused = false;
+  private shuttingDown = false;
   private disposed = false;
 
   constructor(private readonly notify: (method: string, params: unknown) => void) {}
 
   async start(rawParams: unknown): Promise<ProcessStartResult> {
+    if (this.disposed || this.shuttingDown) {
+      throw new RpcError(RpcErrorCode.InternalError, 'server is shutting down');
+    }
     const params = requireParams(rawParams);
     const processId = requireString(params, 'processId');
     if (processId.length > 128) {
@@ -125,8 +129,7 @@ export class ProcessManager {
         : { ...(process.env as Record<string, string>), ...(env as Record<string, string>) };
 
     await this.startPipe(entry, argv as string[], cwd, spawnEnv);
-    if (this.disposed) {
-
+    if (this.disposed || this.shuttingDown || entry.terminateAfterStart) {
       this.processes.delete(processId);
       this.killGroup(entry, 'SIGKILL');
       throw new RpcError(RpcErrorCode.InternalError, 'server is shutting down');
@@ -425,8 +428,12 @@ export class ProcessManager {
   }
 
   async terminateAll(): Promise<void> {
-    if (this.disposed) return;
-    const entries = [...this.processes.values()].filter((entry) => entry.state === 'running');
+    if (this.disposed || this.shuttingDown) return;
+    this.shuttingDown = true;
+    const entries = [...this.processes.values()];
+    for (const entry of entries) {
+      if (entry.state === 'starting') entry.terminateAfterStart = true;
+    }
     for (const entry of entries) {
       try {
         this.killGroup(entry, 'SIGTERM');

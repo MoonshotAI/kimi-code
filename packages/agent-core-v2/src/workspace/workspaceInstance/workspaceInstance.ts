@@ -48,13 +48,14 @@ export class WorkspaceInstance {
   async dispose(): Promise<void> {
     if (this.lifecycle === 'disposed') return;
     this.lifecycle = 'closing';
-    let failure: unknown;
+    const errors: unknown[] = [];
     try {
       await this.program.dispose();
     } catch (error) {
-      failure = error;
+      errors.push(error);
     }
     this.lifecycle = 'disposed';
-    if (failure !== undefined) throw failure;
+    if (errors.length === 1) throw errors[0];
+    if (errors.length > 1) throw new AggregateError(errors, `workspace ${this.id} disposal failed`);
   }
 }

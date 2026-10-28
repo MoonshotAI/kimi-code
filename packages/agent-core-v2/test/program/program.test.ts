@@ -291,7 +291,7 @@ describe('Program', () => {
     await remote.remove();
     expect(create).toHaveBeenCalledTimes(1);
     expect(program.sessionControllerGeneration).toBe('one');
-    program.dispose();
+    await program.dispose();
     await registry.dispose();
   });
 });
@@ -547,7 +547,7 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       await Promise.allSettled([awaitLocality(local()), ...workdirs.map((created) => awaitWorkdir(created))]);
       for (const created of workdirs) created.dispose();
       controller?.dispose();
-      program.dispose();
+      await program.dispose();
       userSkills.dispose();
       profileContainer.dispose();
       trustStore.dispose();

@@ -96,6 +96,22 @@ describe('ssh remote command tilde expansion through a local shell', () => {
 });
 
 describe('command launcher environment', () => {
+  it('resolves a bare command against the configured PATH', async () => {
+    const sandbox = await mkdtemp(join(tmpdir(), 'remote-exec-configured-path-'));
+    try {
+      await writeFile(join(sandbox, 'sandbox'), '#!/bin/sh\nexit 0\n');
+      await chmod(join(sandbox, 'sandbox'), 0o755);
+      const resolved = resolveLauncher({
+        type: 'command',
+        program: 'sandbox',
+        env: { PATH: sandbox },
+      });
+      expect(resolved.program).toBe(join(sandbox, 'sandbox'));
+    } finally {
+      await rm(sandbox, { recursive: true, force: true });
+    }
+  });
+
   it('drops host secrets from the resolved command launcher env', () => {
     vi.stubEnv('REMOTE_EXEC_TEST_LLM_KEY', 'secret');
     try {

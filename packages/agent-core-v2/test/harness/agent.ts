@@ -155,6 +155,7 @@ import {
   IHostProcessService,
   ISessionBtwService,
   ISessionContext,
+  ISessionWorkdir,
   IAgentScopeContext,
   makeAgentScopeContext,
   IAgentShellCommandService,
@@ -1308,6 +1309,12 @@ export class AgentTestContext {
               additionalDirs: [],
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionWorkspaceInfo);
+            reg.defineInstance(ISessionWorkdir, {
+              _serviceBrand: undefined,
+              environmentId: 'local',
+              cwd: this.cwd,
+              fs: undefined as never,
+            });
             reg.defineInstance(
               IWorkspaceStateService,
               new WorkspaceStateService(this.root.accessor.get(IAppStateService)),

@@ -841,12 +841,35 @@ describe('BashTool', () => {
     expect(execOptions?.env).toMatchObject({
       NO_COLOR: '1',
       TERM: 'dumb',
+      GIT_TERMINAL_PROMPT: process.env['GIT_TERMINAL_PROMPT'] ?? '0',
     });
     expect(proc.stdin.end).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       output: 'ok\n',
       isError: false,
     });
+  });
+
+  it('keeps an explicit GIT_TERMINAL_PROMPT and defaults an unset one to 0', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'ok\n' }));
+    const tool = bashTool(runner);
+    vi.stubEnv('GIT_TERMINAL_PROMPT', '1');
+    try {
+      await executeTool(tool, context({ command: 'git status', timeout: 60 }));
+      expect(exec.mock.calls[0]?.[2]?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '1' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    exec.mockClear();
+    const previous = process.env['GIT_TERMINAL_PROMPT'];
+    delete process.env['GIT_TERMINAL_PROMPT'];
+    try {
+      await executeTool(tool, context({ command: 'git status', timeout: 60 }));
+      expect(exec.mock.calls[0]?.[2]?.env).toMatchObject({ GIT_TERMINAL_PROMPT: '0' });
+    } finally {
+      if (previous === undefined) delete process.env['GIT_TERMINAL_PROMPT'];
+      else process.env['GIT_TERMINAL_PROMPT'] = previous;
+    }
   });
 
   it('uses args.cwd when provided', async () => {

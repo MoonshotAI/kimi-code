@@ -566,7 +566,9 @@ export class FooterComponent implements Component {
     const state = this.state;
     return {
       model: modelDisplayName(state),
-      cwd: state.workDir,
+      cwd: isRemoteEnvironment(state.environment) && state.environment.cwd !== undefined
+        ? state.environment.cwd
+        : state.workDir,
       gitBranch: isRemoteEnvironment(state.environment) ? null : (this.gitCache.getStatus()?.branch ?? null),
       permissionMode: state.permissionMode,
       planMode: state.planMode,

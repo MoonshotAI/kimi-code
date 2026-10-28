@@ -138,7 +138,9 @@ function sessionEnvironment(
   environmentId: string | undefined,
   cwd: string | undefined,
 ): (EnvironmentBinding & { readonly cwd: string }) | undefined {
-  if (environmentId === undefined || environmentId === LOCAL_ENVIRONMENT_ID) return undefined;
+  if (environmentId === undefined || environmentId === LOCAL_ENVIRONMENT_ID) {
+    return cwd === undefined ? undefined : { environmentId: LOCAL_ENVIRONMENT_ID, cwd };
+  }
   if (cwd === undefined) {
     throw new EnvironmentError('environment.invalid_cwd', `environment ${environmentId} requires a cwd`);
   }
@@ -238,7 +240,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       if (environment !== undefined) {
         await handle.accessor.get(ISessionMetadata).update(
-          { environmentId: environment.environmentId, environmentCwd: environment.cwd },
+          environment.environmentId === LOCAL_ENVIRONMENT_ID
+            ? { environmentCwd: environment.cwd }
+            : { environmentId: environment.environmentId, environmentCwd: environment.cwd },
           { touchUpdatedAt: false },
         );
       }
@@ -282,7 +286,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const sessionDir = sessionDirOf(this.bootstrap.homeDir, this.handlerScope, opts.sessionId);
     const metaScope = sessionScope;
     await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
-    const workdir = environment === undefined
+    const workdir = environment === undefined || environment.environmentId === LOCAL_ENVIRONMENT_ID
       ? this.localWorkdir()
       : await this.openWorkdir(opts.sessionId, environment);
     const dirs = workdir.dirs;
@@ -299,7 +303,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workspaceId,
       sessionDir,
       metaScope,
-      cwd: opts.workDir,
+      cwd: environment?.environmentId === LOCAL_ENVIRONMENT_ID ? environment.cwd : opts.workDir,
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
@@ -320,7 +324,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
               workspaceKey: workspaceId,
-              contextKey: environment === undefined ? undefined : opts.sessionId,
+              contextKey: environment === undefined || environment.environmentId === LOCAL_ENVIRONMENT_ID
+                ? undefined
+                : opts.sessionId,
             }),
             [ISessionSkillCatalogData, workdir.skills.sessionData()],
             [ISessionInstructionsProvider, workdir.instructions.sessionProvider()],

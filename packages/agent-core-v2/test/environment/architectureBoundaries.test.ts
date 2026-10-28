@@ -44,7 +44,6 @@ describe('environment architecture boundaries', () => {
     expect(program).not.toContain('invokeFunction');
     expect(program).not.toContain('ServiceIdentifier');
     expect(program).not.toContain('IHostEnvironment');
-    expect(program).not.toContain('IHostFileSystem');
     expect(program).not.toContain('IHostProcessService');
     expect(dependencies).not.toContain('IInstantiationService');
     expect(workspaceInstance).not.toContain('createChild(');

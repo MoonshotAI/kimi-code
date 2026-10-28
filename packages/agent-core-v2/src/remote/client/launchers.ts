@@ -144,7 +144,7 @@ export function resolveLauncher(spec: LauncherSpec): ResolvedLauncher {
       const remoteBin = launcherRemoteBin(spec);
       if (remoteBin !== undefined) assertLauncherOperand('remote bin', remoteBin);
       return {
-        program: resolveProgramPath(spec.program),
+        program: resolveProgramPath(spec.program, { pathEnv: spec.env?.['PATH'] }),
         args: remoteBin === undefined
           ? [...(spec.args ?? [])]
           : [...(spec.args ?? []), remoteBin, EXEC_SERVER_SUBCOMMAND],
