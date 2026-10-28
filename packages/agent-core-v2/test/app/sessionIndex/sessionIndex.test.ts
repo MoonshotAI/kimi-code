@@ -165,6 +165,21 @@ describe('FileSessionIndex (legacy)', () => {
     expect((await store.get('none'))?.cwd).toBeUndefined();
   });
 
+  it('recovers the environment binding independently of the workspace cwd', async () => {
+    await seedSession('remote', {
+      cwd: '/local/workspace',
+      environmentId: 'ssh:dev',
+      environmentCwd: '/srv/project',
+    });
+
+    const store = build();
+    expect(await store.get('remote')).toMatchObject({
+      cwd: '/local/workspace',
+      environmentId: 'ssh:dev',
+      environmentCwd: '/srv/project',
+    });
+  });
+
   it('listRecent filters by sessionId without enumerating all sessions', async () => {
     await seedSession('active', { title: 'hello' });
     await seedSession('archived', { archived: true });
@@ -1578,7 +1593,7 @@ describe('FileSessionIndex (read model)', () => {
       items: [{ id: 'a' }, { id: 'c' }, { id: 'b' }],
     });
     const refreshed = await queryStore.getCheckpoint(SESSION_INDEX_MANIFEST);
-    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 2 });
+    expect(refreshed).toMatchObject({ seq: 1, sourceSessionCount: 3, schemaVersion: 3 });
     expect(await fsp.readdir(join(sessionsDir, '.index-dirty'))).toEqual([]);
   });
 

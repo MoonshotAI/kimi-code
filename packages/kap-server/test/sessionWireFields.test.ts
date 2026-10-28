@@ -50,3 +50,18 @@ describe('toWireSession last_turn_reason', () => {
     expect(wire.last_turn_reason).toBeUndefined();
   });
 });
+
+describe('toWireSession environment binding', () => {
+  it('keeps the persisted binding separate from the local workspace cwd', () => {
+    const wire = toWireSession(
+      { ...fields, environmentId: 'ssh:dev', environmentCwd: '/srv/project' },
+      '/tmp/ws',
+      coldFacts,
+    );
+    expect(wire.metadata).toMatchObject({
+      cwd: '/tmp/ws',
+      environment_id: 'ssh:dev',
+      environment_cwd: '/srv/project',
+    });
+  });
+});

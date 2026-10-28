@@ -36,6 +36,8 @@ interface SessionWireV2 {
     created_at: number;
     updated_at: number;
     archived: boolean;
+    environment_id?: string;
+    environment_cwd?: string;
   };
   activity: { status: 'running' | 'approval' | 'question' | 'failed' | 'idle'; model: string | null };
   git?: {
@@ -77,6 +79,8 @@ const SUMMARIES: SessionSummary[] = [
     id: 's2',
     workspaceId: WS_A,
     cwd: '/repo/a',
+    environmentId: 'ssh:dev',
+    environmentCwd: '/srv/project',
     title: undefined,
     lastPrompt: 'do beta',
     createdAt: 1_000,
@@ -240,6 +244,10 @@ describe('server /api/v2/sessions', () => {
 
     const second = page.items[1] as SessionWireV2;
     expect(second.meta.title).toBeNull();
+    expect(second.meta).toMatchObject({
+      environment_id: 'ssh:dev',
+      environment_cwd: '/srv/project',
+    });
     const third = page.items[2] as SessionWireV2;
     expect(third.meta.last_prompt).toBeNull();
   });
@@ -628,6 +636,33 @@ describe('server /api/v2/sessions', () => {
     expect(first.meta.last_prompt).toBe('do alpha');
     expect(first.activity).toEqual({ status: 'idle', model: null });
     expect('git' in first).toBe(false);
+  });
+
+  it('splits a remote binding out of its backing workspace group', async () => {
+    const page = await getGroupData('?view=by_binding');
+    const ids = page.groups.map((group) => group.workspace.id);
+    expect(ids).toContain(WS_A);
+    expect(ids).toContain(WS_B);
+    expect(ids).toContain(`remote:${encodeURIComponent('ssh:dev')}:${encodeURIComponent('/srv/project')}`);
+
+    const local = page.groups.find((group) => group.workspace.id === WS_A);
+    const remote = page.groups.find((group) => group.workspace.id.startsWith('remote:'));
+    expect(local?.sessions.map((item) => item.id)).toEqual(['s1']);
+    expect(local?.total).toBe(1);
+    expect(remote?.sessions.map((item) => item.id)).toEqual(['s2']);
+    expect(remote?.total).toBe(1);
+  });
+
+  it('rejects an environment filter whose cwd is not absolute POSIX', async () => {
+    const error = await getError('?meta.environment_id=ssh:dev&meta.environment_cwd=relative');
+    expect(error.code).toBe(40001);
+  });
+
+  it('filters a flat page by the normalized environment binding', async () => {
+    const page = await getData(
+      '?meta.environment_id=ssh:dev&meta.environment_cwd=/srv/foo/../project',
+    );
+    expect(page.items.map((item) => item.id)).toEqual(['s2']);
   });
 
   it('caps each group at group.page_size while total keeps the full matching count', async () => {

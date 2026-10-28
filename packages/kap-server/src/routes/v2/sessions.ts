@@ -6,6 +6,7 @@ import {
   ISessionIndexMirror,
   IWorkspaceAliases,
   IWorkspaceService,
+  remoteBindingKey,
   setSessionArchivedBatch,
   type Scope,
   type SessionSummary,
@@ -53,7 +54,7 @@ const v2SortSchema = z.enum([
 ]);
 type V2Sort = z.infer<typeof v2SortSchema>;
 
-const v2ViewSchema = z.enum(['flat', 'by_workspace']);
+const v2ViewSchema = z.enum(['flat', 'by_workspace', 'by_binding']);
 type V2View = z.infer<typeof v2ViewSchema>;
 
 const DEFAULT_PAGE_SIZE = 50;
@@ -93,6 +94,8 @@ function isIdsProjection(fields: readonly string[]): boolean {
 const v2SessionsListQuerySchema = z
   .object({
     'workspace.id': repeatedParam(z.string().min(1)),
+    'meta.environment_id': z.string().min(1).optional(),
+    'meta.environment_cwd': z.string().min(1).optional(),
     'activity.status': repeatedParam(v2ActivityStatusSchema),
     'meta.updated_after': z.coerce.number().int().nonnegative().optional(),
     'meta.updated_before': z.coerce.number().int().nonnegative().optional(),
@@ -165,11 +168,21 @@ const v2SessionsListQuerySchema = z
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }
+    const hasEnvironmentId = value['meta.environment_id'] !== undefined;
+    const hasEnvironmentCwd = value['meta.environment_cwd'] !== undefined;
+    if (hasEnvironmentId !== hasEnvironmentCwd) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'meta.environment_id and meta.environment_cwd must be set together',
+        path: [hasEnvironmentId ? 'meta.environment_cwd' : 'meta.environment_id'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
     if (value['group.page_size'] !== undefined) {
-      if (value.view !== 'by_workspace') {
+      if (value.view !== 'by_workspace' && value.view !== 'by_binding') {
         ctx.addIssue({
           code: 'custom',
-          message: "group.page_size requires view='by_workspace'",
+          message: "group.page_size requires view='by_workspace' or view='by_binding'",
           path: ['group.page_size'],
           params: { code: ErrorCode.VALIDATION_FAILED },
         });
@@ -193,6 +206,8 @@ function asArray<T>(value: T | T[] | undefined): T[] | undefined {
 
 interface NormalizedQuery {
   readonly workspaceFilter?: readonly string[];
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
   readonly statuses?: readonly V2ActivityStatus[];
   readonly updatedAfter?: number;
   readonly updatedBefore?: number;
@@ -227,6 +242,8 @@ const v2SessionSchema = z.object({
     updated_at: z.number().int(),
     archived: z.boolean(),
     archived_at: z.number().int().nullable(),
+    environment_id: z.string().optional(),
+    environment_cwd: z.string().optional(),
   }),
   activity: z.object({ status: v2ActivityStatusSchema, model: z.string().nullable() }),
   git: v2GitDomainSchema.optional(),
@@ -329,6 +346,8 @@ const PAGE_TOKEN_VERSION = 1;
 function queryFingerprint(query: NormalizedQuery): string {
   const canonical = [
     query.workspaceFilter === undefined ? null : [...query.workspaceFilter].toSorted(),
+    query.environmentId ?? null,
+    query.environmentCwd ?? null,
     query.statuses === undefined ? null : [...query.statuses].toSorted(),
     query.updatedAfter ?? null,
     query.updatedBefore ?? null,
@@ -480,6 +499,8 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
 
       const query: NormalizedQuery = {
         workspaceFilter: asArray(raw['workspace.id']),
+        environmentId: raw['meta.environment_id'],
+        environmentCwd: raw['meta.environment_cwd'],
         statuses: asArray(raw['activity.status']),
         updatedAfter: raw['meta.updated_after'],
         updatedBefore: raw['meta.updated_before'],
@@ -506,6 +527,17 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
           }
           throw error;
         }
+      }
+
+      if (query.environmentId !== undefined && remoteBindingKey(query.environmentId, query.environmentCwd) === undefined) {
+        reply.send(
+          errEnvelope(
+            ErrorCode.VALIDATION_FAILED,
+            'meta.environment_cwd must be an absolute POSIX path',
+            req.id,
+          ),
+        );
+        return;
       }
 
       let workspaceIds: string[] | undefined;
@@ -552,6 +584,12 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
         ) {
           return false;
         }
+        if (query.environmentId !== undefined) {
+          const key = remoteBindingKey(query.environmentId, query.environmentCwd);
+          if (key === undefined || remoteBindingKey(summary.environmentId, summary.environmentCwd) !== key) {
+            return false;
+          }
+        }
         return true;
       });
 
@@ -595,6 +633,8 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
               updated_at: summary.updatedAt,
               archived: summary.archived,
               archived_at: summary.archivedAt ?? null,
+              environment_id: summary.environmentId,
+              environment_cwd: summary.environmentCwd,
             },
             activity: {
               status: mapActivityStatus(facts, summary.lastTurnReason),
@@ -611,7 +651,7 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
       const projectIds = (summaries: readonly SessionSummary[]): V2SessionIdProjection[] =>
         summaries.map((summary) => ({ id: summary.id, archived: summary.archived }));
 
-      if (query.view === 'by_workspace') {
+      if (query.view === 'by_workspace' || query.view === 'by_binding') {
         interface SessionGroup {
           readonly workspaceId: string;
           readonly rep: SessionSummary;
@@ -628,9 +668,18 @@ export function registerV2SessionsRoutes(app: V2SessionsRouteHost, core: Scope):
           }
           return canonical;
         };
+        const bindingGroupId = (summary: SessionSummary): string | undefined => {
+          const key = remoteBindingKey(summary.environmentId, summary.environmentCwd);
+          if (key === undefined) return undefined;
+          const cwd = key.slice(key.indexOf('\0') + 1);
+          return `remote:${encodeURIComponent(summary.environmentId ?? '')}:${encodeURIComponent(cwd)}`;
+        };
         const byWorkspace = new Map<string, SessionGroup>();
         for (const summary of sorted) {
-          const groupId = await canonicalIdOf(summary.workspaceId);
+          const groupId =
+            query.view === 'by_binding'
+              ? (bindingGroupId(summary) ?? (await canonicalIdOf(summary.workspaceId)))
+              : await canonicalIdOf(summary.workspaceId);
           const group = byWorkspace.get(groupId);
           if (group === undefined) {
             byWorkspace.set(groupId, {

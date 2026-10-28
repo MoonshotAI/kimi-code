@@ -676,6 +676,21 @@ describe('SessionMetadata', () => {
     expect(mirror.recorded[1]?.updatedAt).toBe((await meta.read()).updatedAt);
   });
 
+  it('preserves the environment binding when metadata changes', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.ready;
+    await meta.update({ environmentId: 'ssh:dev', environmentCwd: '/srv/project' });
+
+    await meta.update({ title: 'remote', lastPrompt: 'hello' });
+
+    expect(mirror.recorded.at(-1)).toMatchObject({
+      environmentId: 'ssh:dev',
+      environmentCwd: '/srv/project',
+      title: 'remote',
+      lastPrompt: 'hello',
+    });
+  });
+
   it('does not re-record when loading an existing document', async () => {
     const store = ix.get(IAtomicDocumentStore);
     await store.set(META_SCOPE, 'state.json', {
