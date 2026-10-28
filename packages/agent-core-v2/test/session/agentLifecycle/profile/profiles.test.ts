@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { getAgentProfileContributions } from '#/app/agentProfileCatalog/contribution';
+import '#/features/plan/profile/plan';
 import '#/session/agentLifecycle/profile/profiles';
 
 function profile(name: string) {
@@ -28,5 +29,30 @@ describe('builtin agent profiles', () => {
     }
     expect(profile('agent').tools).toContain('ExitPlanMode');
     expect(profile('coder').tools).not.toContain('ExitPlanMode');
+  });
+
+  it('uses read-only prompts and omits AGENTS.md only for explore and plan', () => {
+    for (const name of ['agent', 'coder']) {
+      expect(profile(name).omitAgentsMd).toBeUndefined();
+    }
+    const coderPrompt = profile('coder').renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
+    expect(coderPrompt).toContain('# Coding');
+    expect(coderPrompt).toContain('Before you call a change done');
+
+    for (const name of ['explore', 'plan']) {
+      const readOnlyProfile = profile(name);
+      expect(readOnlyProfile.omitAgentsMd).toBe(true);
+      const prompt = readOnlyProfile.renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
+      expect(prompt).not.toContain('# Coding');
+      expect(prompt).not.toContain('Before you call a change done');
+      expect(prompt).toContain('distinguish confirmed findings from hypotheses');
+      expect(prompt).toContain('Read AGENTS.md when');
+    }
+  });
+
+  it('renders the explore subagent role once', () => {
+    const prompt = profile('explore').renderSystemPrompt({}).text;
+
+    expect(prompt.split('You are a subagent;')).toHaveLength(2);
   });
 });

@@ -1318,11 +1318,10 @@ describe('ReadTool', () => {
     expect(output).not.toContain('Max');
   });
 
-  it('interpolates the cap constants into the description and references the Grep tool', () => {
+  it('interpolates the cap constants into the description', () => {
     const tool = toolWithContent('');
     expect(tool.description).toContain('100000');
     expect(tool.description).toContain('500000');
-    expect(tool.description).toContain('Grep');
   });
 
   it('reads files inside additional_dirs via absolute path', async () => {

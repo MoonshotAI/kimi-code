@@ -1,6 +1,6 @@
 Read a UTF-8 or UTF-16 text file from the local filesystem, or a `kimi-file://` attachment of this session.
 
-If the user provides a concrete file path to a text file, call Read directly. Do not `Glob`, `ls`, or otherwise pre-check known text file paths; missing or invalid file paths return errors you can handle. Use `Grep` only when the task is to search for unknown content or locations.
+If the user provides a concrete file path to a text file, call Read directly. Do not `Glob`, `ls`, or otherwise pre-check known text file paths; missing or invalid file paths return errors you can handle.
 
 When you need several files, prefer to read them in parallel: emit multiple `Read` calls in a single response instead of reading one file per turn.
 

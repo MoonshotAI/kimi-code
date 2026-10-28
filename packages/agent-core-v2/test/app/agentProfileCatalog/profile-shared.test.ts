@@ -201,8 +201,34 @@ describe('renderSystemPromptResult', () => {
     expect(prompt).toContain('ROLE_TEXT');
     expect(prompt).toContain('AGENTS');
     expect(prompt).toContain('/work');
+    expect(prompt).toContain('# Project information');
     expect(prompt).toContain('# Skills');
     expect(prompt).toContain('SKILLS');
+  });
+
+  it('omits the empty project information section only for read-only profiles', () => {
+    const full = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('# Project information');
+    expect(full).toContain('The applicable `AGENTS.md` instructions are:');
+    expect(readOnly).not.toContain('# Project information');
+    expect(readOnly).not.toContain('The applicable `AGENTS.md` instructions are:');
+  });
+
+  it('switches coding and change-work guidance for read-only profiles', () => {
+    const full = renderSystemPromptResult('', {}, { skillActive: false }).text;
+    const readOnly = renderSystemPromptResult('', {}, { skillActive: false, readOnly: true }).text;
+
+    expect(full).toContain('# Coding');
+    expect(full).toContain('Before you call a change done');
+    expect(readOnly).not.toContain('# Coding');
+    expect(readOnly).not.toContain('Before you call a change done');
+    expect(readOnly).not.toContain('When the standard way is blocked');
+    expect(readOnly).not.toContain('After you run tests or builds');
+    expect(readOnly).toContain('# Delivering work');
+    expect(readOnly).toContain('distinguish confirmed findings from hypotheses');
+    expect(readOnly).toContain('# Context management');
   });
 
   it('omits the skills section when the profile disables the Skill tool', () => {

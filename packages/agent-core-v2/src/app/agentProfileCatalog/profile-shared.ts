@@ -10,12 +10,14 @@ import {
 import { BUILTIN_AGENT_PROFILE_SOURCE_ID } from './builtinAgentProfileLoader';
 
 import SYSTEM_PROMPT_TEMPLATE from './system.md?raw';
+import CODING_SECTION from './coding.md?raw';
+import DELIVERING_WORK_SECTION from './delivering-work.md?raw';
+import READ_ONLY_DELIVERING_WORK_SECTION from './delivering-work-read-only.md?raw';
+import PROJECT_INFORMATION_SECTION from './project-information.md?raw';
 
 export const TASK_AGENT_ROLE_PREFIX =
-  'You are now running as a subagent. All the `user` messages are sent by the main agent. ' +
-  'The main agent cannot see your context, it can only see your last message when you finish the task. ' +
-  'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
-  'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
+  'You are a subagent; the main agent is your caller and all `user` messages come from it. ' +
+  'The main agent sees only your final message. Do not ask the end user questions; explain ambiguities in your final handoff.';
 
 export function skillActiveFor(tools: readonly string[]): boolean {
   return tools.includes('Skill');
@@ -141,7 +143,7 @@ const PLUGIN_SECTIONS_PROSE =
 
 export function systemPromptVars(
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
 ): Record<string, string> {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
@@ -149,19 +151,35 @@ export function systemPromptVars(
   const skills = skillActive ? (context.skills ?? '') : '';
   const pluginSections = context.pluginSections ?? '';
   const additionalDirsInfo = context.additionalDirsInfo ?? '';
+  const agentsMd = context.agentsMd ?? '';
+  const todoListGuidance = context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '';
+  const planModeGuidance = context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '';
+  const deliveringWorkSection =
+    options.readOnly === true
+      ? READ_ONLY_DELIVERING_WORK_SECTION
+      : renderPrompt(DELIVERING_WORK_SECTION, {
+          todo_list_guidance: todoListGuidance,
+          plan_mode_guidance: planModeGuidance,
+        });
   return {
     role_additional: '',
     product_name: context.productName ?? DEFAULT_PRODUCT_NAME,
     reply_style_guide: context.replyStyleGuide ?? DEFAULT_REPLY_STYLE_GUIDE,
     notify_user_guidance: context.notifyUserActive === true ? ` ${NOTIFY_USER_GUIDANCE}` : '',
-    todo_list_guidance: context.todoListActive === true ? `${TODO_LIST_GUIDANCE}\n\n` : '',
-    plan_mode_guidance: context.planModeAvailable === true ? `${PLAN_MODE_GUIDANCE}\n\n` : '',
+    todo_list_guidance: todoListGuidance,
+    plan_mode_guidance: planModeGuidance,
+    coding_section: options.readOnly === true ? '' : `${CODING_SECTION}\n`,
+    delivering_work_section: `${deliveringWorkSection}\n`,
     os: context.osKind ?? '',
     windows_notes: context.osKind === 'Windows' ? `\n\n${WINDOWS_NOTES}\n\n` : '',
     shell: shellName.length > 0 ? `${shellName} (\`${shellPath}\`)` : '',
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',
-    agents_md: context.agentsMd ?? '',
+    agents_md: agentsMd,
+    agents_section:
+      agentsMd.length > 0 || options.readOnly !== true
+        ? renderPrompt(PROJECT_INFORMATION_SECTION, { agents_md: agentsMd })
+        : '',
     additional_dirs_info: additionalDirsInfo,
     additional_dirs_section:
       additionalDirsInfo.length > 0
@@ -180,7 +198,7 @@ export function systemPromptVars(
 export function renderPromptTemplateResult(
   template: string,
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
   basePrompt?: (context: AgentProfileContext) => SystemPromptRenderResult,
 ): SystemPromptRenderResult {
   const vars = systemPromptVars(context, options);
@@ -198,7 +216,7 @@ export function renderPromptTemplateResult(
 export function renderSystemPromptResult(
   roleAdditional: string,
   context: AgentProfileContext,
-  options: { readonly skillActive: boolean },
+  options: { readonly skillActive: boolean; readonly readOnly?: boolean },
 ): SystemPromptRenderResult {
   return {
     text: renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
