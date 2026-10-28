@@ -141,6 +141,25 @@ export function getModelById(models: ModelConfig[], id: string): ModelConfig | u
   return models.find((m) => m.id === id);
 }
 
+export function resolveSendModel(
+  models: ModelConfig[],
+  currentModel: string,
+  defaultModel: string | null,
+): ModelConfig | undefined {
+  return getModelById(models, currentModel) ?? getModelById(models, defaultModel ?? "");
+}
+
+export function resolveThinkingEffortForSend(
+  model: ModelConfig,
+  currentEffort: string,
+  defaultThinking: boolean,
+  defaultThinkingEffort?: string,
+): string {
+  return supportsThinkingEffort(model, currentEffort)
+    ? currentEffort
+    : defaultEffortForModel(model, defaultThinking, defaultThinkingEffort);
+}
+
 export interface MediaRequirements {
   image: boolean;
   video: boolean;
@@ -358,13 +377,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     const currentModel = hasSelection
       ? replacement ?? state.currentModel
       : getModelById(models, defaultModel ?? "")?.id ?? models[0]?.id ?? "";
-    const previousModel = hasSelection ? getModelById(state.models, state.currentModel) : undefined;
-    const nextModels = selectionMissing && replacement === undefined && previousModel !== undefined
-      ? [...models, previousModel]
-      : models;
-    const model = getModelById(nextModels, currentModel);
-    const preserveThinkingEffort = hasSelection && model !== undefined
-      && supportsThinkingEffort(model, state.thinkingEffort);
+    const model = getModelById(models, currentModel);
+    const preserveThinkingEffort = hasSelection && (model === undefined
+      || supportsThinkingEffort(model, state.thinkingEffort));
     const thinkingEffort = preserveThinkingEffort
       ? state.thinkingEffort
       : model ? defaultEffortForModel(model, defaultThinking, defaultThinkingEffort) : "off";
@@ -373,7 +388,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     }
 
     set({
-      models: nextModels,
+      models,
       defaultModel,
       defaultThinking,
       defaultThinkingEffort,

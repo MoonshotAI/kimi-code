@@ -5,7 +5,7 @@ import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
 import { toast } from "@/components/ui/sonner";
 
-import { useSettingsStore } from "./settings.store";
+import { resolveSendModel, resolveThinkingEffortForSend, useSettingsStore } from "./settings.store";
 import { processEvent } from "./event-handlers";
 import type { StatusUpdate, ContentPart, QuestionRequest, ToolResult } from "shared/legacy-sdk";
 import type { UIStreamEvent } from "shared/types";
@@ -143,7 +143,24 @@ function clearAllInlineErrors(draft: ChatState): void {
 
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
-  const { thinkingEffort } = useSettingsStore.getState();
+  const settings = useSettingsStore.getState();
+  const sendModel = resolveSendModel(settings.models, model, settings.defaultModel);
+  if (sendModel === undefined) {
+    toast.error("The selected model is no longer available. Choose another model before sending.");
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "model.not_configured",
+      message: "The selected model is no longer available. Choose another model before sending.",
+      phase: "preflight",
+    });
+    return;
+  }
+  const thinkingEffort = resolveThinkingEffortForSend(
+    sendModel,
+    settings.thinkingEffort,
+    settings.defaultThinking,
+    settings.defaultThinkingEffort,
+  );
 
   clearHandshakeTimer();
   handshakeTimer = setTimeout(() => {
@@ -160,7 +177,7 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
   }, HANDSHAKE_TIMEOUT_MS);
 
   void bridge
-    .streamChat(content, model, thinkingEffort, planMode, sessionId ?? undefined)
+    .streamChat(content, sendModel.id, thinkingEffort, planMode, sessionId ?? undefined)
     .catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       useChatStore.getState().processEvent({

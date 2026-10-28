@@ -161,7 +161,7 @@ describe("useAppInit model catalog events", () => {
     });
   });
 
-  it("keeps the current selection visible when its catalog entry disappears without replacement", async () => {
+  it("keeps selection context but requires a model when its last catalog entry disappears", async () => {
     const initialModel = {
       id: "current-model",
       name: "Current Model",
@@ -185,11 +185,11 @@ describe("useAppInit model catalog events", () => {
       retiredDefault: undefined,
     }));
 
-    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+    expect(result.current).toMatchObject({ status: "no-models", modelsCount: 0 });
     expect(useSettingsStore.getState()).toMatchObject({
       currentModel: initialModel.id,
       thinkingEffort: "on",
-      models: [initialModel],
+      models: [],
     });
   });
 

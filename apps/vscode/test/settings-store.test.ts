@@ -49,7 +49,13 @@ const MODELS = [
     default_effort: "high",
     strict_thinking_validation: true,
   },
-  { id: "always", name: "Always", provider: "managed:kimi-code", capabilities: ["always_thinking"] },
+  {
+    id: "always",
+    name: "Always",
+    provider: "managed:kimi-code",
+    capabilities: ["always_thinking"],
+    strict_thinking_validation: true,
+  },
 ];
 
 beforeEach(() => {
@@ -219,7 +225,7 @@ describe("Webview background model catalog synchronization", () => {
     expect(boundary.saveConfig).not.toHaveBeenCalled();
   });
 
-  it("keeps a removed current model when no retirement replacement is declared", () => {
+  it("keeps removed selection context without retaining it in the catalog", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
     boundary.saveConfig.mockClear();
 
@@ -229,8 +235,8 @@ describe("Webview background model catalog synchronization", () => {
       currentModel: "reasoning",
       thinkingEffort: "high",
       defaultModel: "always",
+      models: [MODELS[2]],
     });
-    expect(useSettingsStore.getState().models.map((model) => model.id)).toEqual(["always", "reasoning"]);
     expect(boundary.saveConfig).not.toHaveBeenCalled();
   });
 
@@ -368,6 +374,52 @@ describe("Webview background model catalog synchronization", () => {
     await vi.waitFor(() => {
       expect(useSettingsStore.getState().currentModel).toBe("plain");
     });
+  });
+});
+
+describe("Webview model resolution before sending", () => {
+  it("uses the valid default model when the current selection was removed", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+
+    useChatStore.getState().sendMessage("use fallback");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith("use fallback", "always", "on", false, undefined);
+  });
+
+  it("normalizes effort against the fallback model instead of the removed selection", () => {
+    const fallback = {
+      id: "fallback",
+      name: "Fallback",
+      provider: "managed:kimi-code",
+      capabilities: ["thinking"],
+      support_efforts: ["low"],
+      default_effort: "low",
+      strict_thinking_validation: true,
+    };
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([fallback], "fallback", true, "low");
+    useChatStore.setState({ sessionId: "session-1" });
+
+    useChatStore.getState().sendMessage("normalize fallback effort");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith("normalize fallback effort", "fallback", "low", false, "session-1");
+  });
+
+  it("does not send or pick an arbitrary remaining model when the default is also missing", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+
+    useChatStore.getState().sendMessage("keep for retry");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState()).toMatchObject({
+      isStreaming: false,
+      pendingInput: { content: "keep for retry", model: "reasoning" },
+    });
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model is no longer available. Choose another model before sending.",
+    );
   });
 });
 
