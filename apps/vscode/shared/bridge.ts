@@ -37,6 +37,7 @@ export const Methods = {
   ResetSession: "resetSession",
   SetPlanMode: "setPlanMode",
   SteerChat: "steerChat",
+  CompactContext: "compactContext",
   RespondApproval: "respondApproval",
 
   GetKimiSessions: "getKimiSessions",
@@ -141,6 +142,7 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.GetMCPServers:
     case Methods.AbortChat:
     case Methods.ResetSession:
+    case Methods.CompactContext:
     case Methods.GetKimiSessions:
     case Methods.GetAllKimiSessions:
     case Methods.GetRegisteredWorkDirs:
