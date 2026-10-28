@@ -83,6 +83,8 @@ import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
+import { loadExplicitAgentProfiles } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoaderService';
+import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import {
   IExplicitAgentProfileLoader,
@@ -124,6 +126,7 @@ import {
 
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
+  readonly sessionAgentProfiles?: readonly AgentProfile[];
 };
 
 const NO_ABORT = new AbortController().signal;
@@ -213,7 +216,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.workspaceSkillCatalog
       .reloadSources(SESSION_CREATE_RELOAD_SKILL_SOURCES)
       .catch(() => undefined);
-    const handle = await this.materializeSession({ ...opts, sessionId });
+    const sessionAgentProfiles =
+      opts.agentFiles === undefined || opts.agentFiles.length === 0
+        ? undefined
+        : await loadExplicitAgentProfiles(
+            opts.agentFiles,
+            opts.workDir,
+            this.bootstrap.osHomeDir,
+            this.hostFs,
+            this.userAgentProfileLoader,
+          );
+    const handle = await this.materializeSession({ ...opts, sessionId, sessionAgentProfiles });
     try {
       const agents = handle.accessor.get(IAgentLifecycleService);
       const main =
@@ -279,6 +292,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
               workspaceKey: workspaceId,
+              profiles: opts.sessionAgentProfiles,
             }),
             [ISessionSkillCatalogData, this.workspaceSkillCatalog.sessionData()],
             [ISessionInstructionsProvider, this.workspaceInstructions.sessionProvider()],
