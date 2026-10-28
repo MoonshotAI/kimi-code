@@ -181,6 +181,8 @@ export interface MachineEngine {
   abort(reason?: unknown): void;
   pause(): void;
   resume(): void;
+  holdQueue(): void;
+  releaseQueue(): void;
   resetHistory(history: readonly HistoryMessage[]): Promise<void>;
   resetJournal(journal: SyncStoreJournal): Promise<void>;
   stop(): void;
@@ -529,6 +531,12 @@ export function attachMachineEngine(
     },
     resume: () => {
       ref.send({ type: 'input.continue' });
+    },
+    holdQueue: () => {
+      ref.send({ type: 'input.hold_queue' });
+    },
+    releaseQueue: () => {
+      ref.send({ type: 'input.release_queue' });
     },
     resetHistory: (history) => {
       const events: ExternalEvent[] = history.map((message) => messageAppended({ message }));

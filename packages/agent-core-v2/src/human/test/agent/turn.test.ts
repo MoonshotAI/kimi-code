@@ -36,7 +36,7 @@ function statusError(
 }
 
 function createStubRequester(
-  plan: readonly (LlmErrorMessage | 'ok' | 'empty' | 'think_only' | 'filtered_empty')[],
+  plan: readonly (LlmErrorMessage | 'ok' | 'empty' | 'think_only' | 'think_only_truncated' | 'filtered_empty')[],
 ) {
   let calls = 0;
   const requester: LlmRequester = {
@@ -54,6 +54,15 @@ function createStubRequester(
       }
       if (step === 'think_only') {
         onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'reasoning' } });
+        onEvent?.({ type: 'llm.done' });
+        return Promise.resolve();
+      }
+      if (step === 'think_only_truncated') {
+        onEvent?.({ type: 'llm.streaming.part', part: { type: 'think', think: 'reasoning' } });
+        onEvent?.({
+          type: 'llm.streaming.finish',
+          finish: { finishReason: 'truncated', rawFinishReason: 'length' },
+        });
         onEvent?.({ type: 'llm.done' });
         return Promise.resolve();
       }
@@ -327,6 +336,20 @@ describe('turn machine llm retry', () => {
       kind: 'empty_response',
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
+    });
+
+    const truncated = createStubRequester(['think_only_truncated', 'ok']);
+    const truncatedRun = startTurnActor(truncated.requester, { retry: { maxAttemptsPerStep: 5 } });
+
+    await flush();
+
+    expect(truncatedRun.retrying).toHaveLength(0);
+    expect(truncated.calls()).toBe(1);
+    expect(truncatedRun.actor.getSnapshot().context.turnOutput).toMatchObject({ type: 'failed' });
+    expect(truncatedRun.failed[0]).toMatchObject({
+      kind: 'empty_response',
+      finishReason: 'truncated',
+      rawFinishReason: 'length',
     });
   });
 

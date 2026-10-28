@@ -1260,6 +1260,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       protocol: undefined,
     };
     this.active = active;
+    this.engine?.holdQueue();
     this.armTurnWatch(active);
     active.readyResolved = true;
     ready.resolve();
@@ -2190,6 +2191,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.telemetry.setContext({ turn_id: undefined, trace_id: undefined, thinking_effort: undefined });
     this.activeRequestTrace = undefined;
     this.lastRequestTraceId = undefined;
+    if (this.active === undefined) this.engine?.releaseQueue();
     turn.result.resolve(result);
     this.maybeSettle();
   }
