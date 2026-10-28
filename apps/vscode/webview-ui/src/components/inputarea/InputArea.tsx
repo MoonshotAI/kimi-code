@@ -12,6 +12,7 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ActionMenu } from "../ActionMenu";
 import { SlashCommandMenu } from "../SlashCommandMenu";
+import { computeSlashCommandInsert } from "./slash-command-insert";
 import { FilePickerMenu } from "../FilePickerMenu";
 import { MediaThumbnail } from "../MediaThumbnail";
 import { MediaPreviewModal } from "../MediaPreviewModal";
@@ -184,6 +185,18 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     clearInput();
   }
 
+  function handleSlashCommandCompletion(name: string) {
+    if (activeToken?.trigger !== "/") return;
+    const completion = computeSlashCommandInsert({ text, cursorPos, activeToken, commandName: name });
+    setText(completion.text);
+    setCursorPos(completion.cursorPos);
+    setTimeout(() => {
+      textareaRef.current?.setSelectionRange(completion.cursorPos, completion.cursorPos);
+      textareaRef.current?.focus();
+      adjustHeight(textareaRef.current);
+    }, 0);
+  }
+
   function applyMention(filePath: string) {
     const { newText, newCursorPos } = computeMentionInsert({
       text,
@@ -209,7 +222,12 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
     setSelectedIndex: setSlashSelectedIndex,
     handleSlashMenuKey,
     resetSlashMenu,
-  } = useSlashMenu(activeToken, handleSlashCommand, removeActiveToken);
+  } = useSlashMenu(
+    activeToken,
+    handleSlashCommand,
+    handleSlashCommandCompletion,
+    removeActiveToken,
+  );
 
   const {
     showFileMenu,
