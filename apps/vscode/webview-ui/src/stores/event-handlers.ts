@@ -1,5 +1,4 @@
 import { bridge } from "@/services";
-import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
 import { useSettingsStore } from "./settings.store";
 import { isPreflightError, isUserInterrupt } from "shared/errors";
@@ -247,13 +246,16 @@ function isTaskToolResult(steps: UIStep[] | undefined, toolCallId: string): bool
 
 function restorePendingDraftMedia(draft: ChatState): void {
   const content = draft.pendingInput?.content;
-  if (content === undefined) return;
-  const dataUris = [...Content.getImages(content), ...Content.getVideos(content)];
-  const existing = new Set(draft.draftMedia.map((item) => item.dataUri));
-  for (const dataUri of dataUris) {
-    if (existing.has(dataUri)) continue;
-    draft.draftMedia.push({ id: crypto.randomUUID(), dataUri });
-    existing.add(dataUri);
+  // Only an empty composer can be rebuilt without duplicating or overwriting
+  // attachments the user added after the failure. Preserve every media part in
+  // its original order, including repeated URIs.
+  if (draft.draftMedia.length > 0 || !Array.isArray(content)) return;
+  for (const part of content) {
+    if (part.type !== "image_url" && part.type !== "video_url") continue;
+    draft.draftMedia.push({
+      id: crypto.randomUUID(),
+      dataUri: part.type === "image_url" ? part.image_url.url : part.video_url.url,
+    });
   }
 }
 

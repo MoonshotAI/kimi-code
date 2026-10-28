@@ -183,6 +183,24 @@ describe("Model catalog auto-refresh", () => {
     expect(host.harness.refreshProviderModels).toHaveBeenCalledWith({ scope: "all" });
     expect(host.harness.setConfig).not.toHaveBeenCalled();
   });
+
+  it("preserves an absent default when broadcasting refreshed models", async () => {
+    vi.stubEnv("KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS", "0");
+    host.harness.getConfig.mockResolvedValue({
+      models: {
+        "other-model": { provider: "other", model: "other-model", capabilities: [] },
+      },
+    });
+
+    await bridge.startModelCatalogRefresh();
+
+    await vi.waitFor(() => {
+      expect(broadcast).toHaveBeenCalledWith(Events.ModelCatalogChanged, {
+        config: expect.objectContaining({ defaultModel: null }),
+        retiredDefault: undefined,
+      });
+    });
+  });
 });
 
 describe("Webview RPC boundary (validates requests before host dispatch)", () => {

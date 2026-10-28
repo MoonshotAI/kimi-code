@@ -79,6 +79,8 @@ export interface DraftMediaItem {
 export interface PendingInput {
   content: string | ContentPart[];
   model: string;
+  /** Present only while the blocked item is still at the head of the queue. */
+  queueId?: string;
 }
 
 export interface QueuedItem {
@@ -277,6 +279,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         clearAllInlineErrors(draft);
         draft.isStreaming = true;
         draft.handshakeReceived = false;
+        // A locally blocked queue head is still queued. Its direct retry must
+        // consume exactly that id, never a later prompt with the same text.
+        if (pendingInput.queueId !== undefined && draft.queue[0]?.id === pendingInput.queueId) {
+          draft.queue.shift();
+        }
         const lastAssistant = draft.messages.at(-1);
         if (lastAssistant?.role === "assistant" && lastAssistant.inlineError) {
           draft.messages.pop();
@@ -528,7 +535,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     );
     if (sendModel === undefined) {
       toast.error(noValidModelMessage(next.content));
-      set({ isStreaming: false, pendingInput: { content: next.content, model: next.model } });
+      set({ isStreaming: false, pendingInput: { content: next.content, model: next.model, queueId: next.id } });
       return;
     }
 

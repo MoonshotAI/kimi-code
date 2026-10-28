@@ -471,7 +471,11 @@ describe("Webview model resolution before sending", () => {
 
     expect(boundary.streamChat).not.toHaveBeenCalled();
     expect(useChatStore.getState().queue).toHaveLength(1);
-    expect(useChatStore.getState().pendingInput).toEqual({ content: "text follow-up", model: "vision" });
+    expect(useChatStore.getState().pendingInput).toEqual({
+      content: "text follow-up",
+      model: "vision",
+      queueId: useChatStore.getState().queue[0]?.id,
+    });
   });
 
   it("passes conversation media requirements to the extension host", () => {
@@ -545,7 +549,11 @@ describe("Webview model resolution before sending", () => {
 
     expect(boundary.streamChat).not.toHaveBeenCalled();
     expect(useChatStore.getState().queue).toHaveLength(1);
-    expect(useChatStore.getState().pendingInput).toEqual({ content, model: "reasoning" });
+    expect(useChatStore.getState().pendingInput).toEqual({
+      content,
+      model: "reasoning",
+      queueId: useChatStore.getState().queue[0]?.id,
+    });
     expect(boundary.toastError).toHaveBeenCalledWith(
       "The selected model does not support these attachments. Choose another model before sending.",
     );
@@ -567,6 +575,30 @@ describe("Webview model resolution before sending", () => {
       { image: false, video: false },
     );
     expect(useChatStore.getState().queue).toEqual([]);
+  });
+
+  it("consumes a blocked queue head when its retry succeeds", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+    const chat = useChatStore.getState();
+    chat.enqueue("first", "reasoning");
+    chat.enqueue("second", "reasoning");
+    chat.sendNextQueued();
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+    vi.useFakeTimers();
+
+    try {
+      useChatStore.getState().retryLastMessage();
+      expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
+      useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+      vi.advanceTimersByTime(60);
+
+      expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual(["first", "second"]);
+      expect(useChatStore.getState().queue).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it.each(["model.not_configured", "config.invalid", "internal"])(
@@ -649,6 +681,26 @@ describe("Webview MCP update bridge", () => {
 });
 
 describe("Webview chat error recovery", () => {
+  it("restores media in its original order and multiplicity after preflight failure", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in", "video_in"] };
+    const image = "data:image/png;base64,AA";
+    const video = "data:video/mp4;base64,BB";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("first-image", image);
+    useChatStore.getState().addDraftMedia("video", video);
+    useChatStore.getState().addDraftMedia("second-image", image);
+    useChatStore.getState().sendMessage("mixed attachments");
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, video, image]);
+  });
+
   it("stops the pending state and keeps the input available when session setup fails", () => {
     useChatStore.getState().sendMessage("retry this request");
 

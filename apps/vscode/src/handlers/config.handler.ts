@@ -140,7 +140,7 @@ export function toWebviewConfig(config: SdkKimiConfig): WebviewKimiConfig {
     )
     .toSorted((left, right) => left.name.localeCompare(right.name));
   return {
-    defaultModel: config.defaultModel ?? models[0]?.id ?? null,
+    defaultModel: config.defaultModel ?? null,
     defaultThinking: config.thinking?.enabled !== false,
     defaultThinkingEffort: config.thinking?.effort,
     models,
