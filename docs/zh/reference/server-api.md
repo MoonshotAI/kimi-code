@@ -961,7 +961,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 ### 消息与转录
 
-`messages` 端点分页返回 main agent 的扁平化消息历史，`transcript` 端点则提供按 Agent 组织的结构化转录——轮次、任务、交互、附件——即 WebSocket [转录协议](#转录协议) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。
+`messages` 端点分页返回 main agent 的扁平化消息历史，`transcript` 端点则提供按 Agent 组织的结构化转录——轮次、交互、附件——即 WebSocket [转录协议](#转录协议) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1005,7 +1005,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `GET /api/v1/sessions/{session_id}/transcript`
 
-返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记与任务引用。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。这是转录能力的历史半边——实时流式半边是 [转录协议](#转录协议) 订阅。
+返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。这是转录能力的历史半边——实时流式半边是 [转录协议](#转录协议) 订阅。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1015,7 +1015,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `after_turn` | query | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
 | `page_size` | query | integer | 1–100 个轮次。默认 `20` |
 
-分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。
+分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`tasks` 恒为空（任务通过 WebSocket 的 `task` 帧到达，见 [事件](#事件)），`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。
 
 - `40001`：校验失败——`before_turn` 与 `after_turn` 同用，或 `agent_id` 不是纯文本形式
 - `40401`：会话不存在
@@ -1230,7 +1230,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 后台任务
 
-后台任务是会话的异步单元——后台 Shell、subagent 与长时间运行的工具任务。注册表仅包含实时数据：未加载到本服务进程中的会话会返回空列表。
+后台任务是会话的异步单元——后台 Shell、subagent 与长时间运行的工具任务。注册表仅包含实时数据：未加载到本服务进程中的会话会返回空列表。在 WebSocket 上，任务的每次变化都以 `task` 帧到达，任务输出通过 `task.attach` 流式获取（见 [事件](#事件)）。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -2344,13 +2344,17 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅会话（唯一的会话订阅方式）：转录流与交互，`transcript` 按 agent 指定粒度 |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 或退订最后一个 agent 时取消整个会话订阅 |
 | `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
+| `task.attach` | 平铺：`{ request_id, session_id, task_id, since_offset? }` | 把某个 main agent 任务的输出流式推送到本连接，无需订阅会话；`since_offset` 从客户端已有输出之后续传 |
+| `task.detach` | 平铺：`{ request_id, session_id, task_id }` | 停止推送该任务的输出 |
+
+`task.attach` 与 `task.detach` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"? }` 而不是 ack。`task.attach` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 4 KiB 输出（`since_offset` 落在这段范围内时只发它之后的部分），之后推送实时输出。错误：`40001` 帧格式错误，`40401` 会话不存在，`40406` 任务不存在，`50003` 输出无法读取。
 
 ### 事件
 
 事件帧形状为 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）与 `interaction`。
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）、`task` 与 `interaction`。`task.output` 只发给用 `task.attach` 挂到该任务上的连接。
 
 客户端无需订阅会话即可通过 `event.session.work_changed` 跟踪其活动：载荷为 `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`，与 [session 对象](#session-对象) 的实时字段一致。
 
@@ -2358,9 +2362,11 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `timestamp` 和 `payload` 包装——且不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的为 `{ questions }`，含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`，每个带 2–4 个 `{ id, label, description? }` 形式的 `options`。服务端会在每次 `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
 
+每个 agent 的任务——后台 Shell、subagent 及其他异步工作——以 `task` 帧到达，和 `interaction` 一样平铺且不回放：`{ type: "task", session_id, agent_id, event_created_at, task_id, kind: "shell" | "subagent" | "tool" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, usage?, model?, thinking? }`。每帧都携带任务的完整状态，客户端直接替换本地副本即可。`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`；`child_agent_id` 是 subagent 任务的 agent id；`command` 是 Shell 任务的命令；`usage` 为以 token 计的 `{ input_other, output, input_cache_read, input_cache_creation }`。连接会收到所有转录粒度非 `off` 的 agent 的任务：每次 `transcript.reset` 或补漏之后立即收到该 agent 的全部任务（含已结束的），之后每次变化收到变化的那个任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
+
 ### 断线恢复
 
-订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互，每个 agent 的任务则在其 reset 或补漏之后补发。任务输出的挂载同样会丢失：重新发送 `task.attach`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 转录协议
 

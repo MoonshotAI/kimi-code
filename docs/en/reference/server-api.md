@@ -961,7 +961,7 @@ Downloads a prompt media file (an image or other attachment referenced by the se
 
 ### Messages and transcript
 
-The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, tasks, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
+The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
 
 | Method and path | Description |
 | --- | --- |
@@ -1005,7 +1005,7 @@ On success, `data` is the message object in the item shape documented under `GET
 
 #### `GET /api/v1/sessions/{session_id}/transcript`
 
-Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers and task references between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
+Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1015,7 +1015,7 @@ Returns one page of an agent's structured transcript: turns (with their steps an
 | `after_turn` | query | string | Only turns newer than this turn id; mutually exclusive with `before_turn` |
 | `page_size` | query | integer | 1–100 turns. Default `20` |
 
-The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only).
+The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, `tasks` is always empty (tasks arrive as the WebSocket `task` frame, see [Events](#events)), and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only).
 
 - `40001`: validation failure — `before_turn` combined with `after_turn`, or a non-plain `agent_id`
 - `40401`: session not found
@@ -1230,7 +1230,7 @@ On success, `data` is `{ outcome, ended_at }`, where `outcome` is `approved` / `
 
 ### Background tasks
 
-Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list.
+Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list. Over the WebSocket, every task change arrives as a `task` frame, and `task.attach` streams a task's output (see [Events](#events)).
 
 | Method and path | Description |
 | --- | --- |
@@ -2344,13 +2344,17 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
 | `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
+| `task.attach` | flat: `{ request_id, session_id, task_id, since_offset? }` | Stream one main-agent task's output to this connection, no session subscription needed; `since_offset` resumes after output the client already has |
+| `task.detach` | flat: `{ request_id, session_id, task_id }` | Stop streaming that task's output |
+
+`task.attach` and `task.detach` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack. A successful `task.attach` replies with code 0, then sends the last 4 KiB of output (only the part after `since_offset` when it falls inside that window) as one `task.output` frame, followed by live output. Errors: `40001` malformed frame, `40401` session not found, `40406` task not found, `50003` output unreadable.
 
 ### Events
 
 Event frames look like `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)) and `interaction`.
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task`, and `interaction`. `task.output` goes only to connections attached to that task with `task.attach`.
 
 `event.session.work_changed` is how clients follow a session's activity without subscribing to it: its payload is `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`, carrying the same live facts as [the session object](#the-session-object).
 
@@ -2358,9 +2362,11 @@ Three global lifecycle events keep a cross-workspace overview fresh without poll
 
 Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `timestamp` or `payload` wrapper — and it is never replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
 
+Each agent's tasks — background shells, subagents, and other asynchronous work — arrive as the `task` frame, flat and never replayed like `interaction`: `{ type: "task", session_id, agent_id, event_created_at, task_id, kind: "shell" | "subagent" | "tool" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, usage?, model?, thinking? }`. Every frame carries the task's full state, so clients replace their copy. `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`; `child_agent_id` is a subagent task's agent id; `command` is a shell task's command; `usage` is `{ input_other, output, input_cache_read, input_cache_creation }` in tokens. A connection receives the tasks of every agent whose transcript grade is not `off`: all of the agent's tasks, ended ones included, right after each `transcript.reset` or catch-up, then the changed task on every change. Task output streams separately as `{ type: "task.output", session_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
+
 ### Reconnect and recovery
 
-Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and each agent's tasks after its reset or catch-up. Task output attachments are dropped as well: send `task.attach` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 
