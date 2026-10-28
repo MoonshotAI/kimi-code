@@ -1,17 +1,17 @@
-name: Dev Release
-run-name: Dev Release (${{ inputs.trigger }}) · ${{ github.ref_name }}
+name: Canary Release
+run-name: Canary Release (${{ inputs.trigger }}) · ${{ github.ref_name }}
 
 on:
   workflow_dispatch:
     inputs:
       trigger:
-        description: 'Why this dev release is built'
+        description: 'Why this canary release is built'
         type: choice
         options: [nightly, manual]
         default: manual
 
 concurrency:
-  group: kimi-code-dev-release
+  group: kimi-code-canary-release
   cancel-in-progress: false
 
 permissions:
@@ -41,21 +41,21 @@ jobs:
         id: select
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/dev-release.mjs select
-      - name: Compute dev version
+        run: node scripts/canary-release.mjs select
+      - name: Compute canary version
         id: version
         if: steps.select.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/dev-release.mjs version
+        run: node scripts/canary-release.mjs version
 
   native:
-    name: Native dev artifact
+    name: Native canary artifact
     needs: prepare
     if: needs.prepare.outputs.skip == 'false'
     uses: ./.github/workflows/_native-build.yml
     with:
-      upload-artifact-prefix: kimi-code-dev
+      upload-artifact-prefix: kimi-code-canary
       retention-days: 7
       sign-macos: true
       sign-windows: true
@@ -72,7 +72,7 @@ jobs:
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
 
   publish:
-    name: Publish dev
+    name: Publish canary
     needs: [prepare, native]
     if: needs.prepare.outputs.skip == 'false'
     runs-on: ubuntu-latest
@@ -80,11 +80,11 @@ jobs:
       contents: write
       id-token: write
     env:
-      DEV_SHA: ${{ needs.prepare.outputs.sha }}
-      DEV_VERSION: ${{ needs.prepare.outputs.version }}
-      DEV_TAG: ${{ needs.prepare.outputs.tag }}
-      DEV_PUBLISHED_AT: ${{ needs.prepare.outputs.published_at }}
-      KIMI_CODE_DEV_NPM_PUBLISH: ${{ vars.KIMI_CODE_DEV_NPM_PUBLISH }}
+      CANARY_SHA: ${{ needs.prepare.outputs.sha }}
+      CANARY_VERSION: ${{ needs.prepare.outputs.version }}
+      CANARY_TAG: ${{ needs.prepare.outputs.tag }}
+      CANARY_PUBLISHED_AT: ${{ needs.prepare.outputs.published_at }}
+      KIMI_CODE_CANARY_NPM_PUBLISH: ${{ vars.KIMI_CODE_CANARY_NPM_PUBLISH }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -97,47 +97,47 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
       - name: Reject stale publish
-        run: node scripts/dev-release.mjs guard
-      - name: Publish to npm (dev dist-tag)
-        if: vars.KIMI_CODE_DEV_NPM_PUBLISH == 'true'
+        run: node scripts/canary-release.mjs guard
+      - name: Publish to npm (canary dist-tag)
+        if: vars.KIMI_CODE_CANARY_NPM_PUBLISH == 'true'
         run: |
-          if npm view "@moonshot-ai/kimi-code@$DEV_VERSION" version >/dev/null 2>&1; then
-            echo "@moonshot-ai/kimi-code@$DEV_VERSION is already on npm"
+          if npm view "@moonshot-ai/kimi-code@$CANARY_VERSION" version >/dev/null 2>&1; then
+            echo "@moonshot-ai/kimi-code@$CANARY_VERSION is already on npm"
             exit 0
           fi
           npm install -g npm@11
           pnpm install --frozen-lockfile
-          (cd apps/kimi-code && npm pkg set version="$DEV_VERSION")
+          (cd apps/kimi-code && npm pkg set version="$CANARY_VERSION")
           CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
           node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
           export KIMI_CODE_BUILT_IN_CATALOG_FILE="$CATALOG_FILE"
           pnpm build
           cd apps/kimi-code
-          pnpm publish --tag dev --access public --no-git-checks
+          pnpm publish --tag canary --access public --no-git-checks
       - name: Download native artifacts
         uses: actions/download-artifact@v8
         with:
-          pattern: kimi-code-dev-*
-          path: dist-dev
+          pattern: kimi-code-canary-*
+          path: dist-canary
           merge-multiple: true
       - name: Produce manifest.json
-        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-dev "$DEV_TAG"
-      - name: Write dev.json
+        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-canary "$CANARY_TAG"
+      - name: Write canary.json
         run: |
-          mkdir -p "$RUNNER_TEMP/dev-release"
-          node scripts/dev-release.mjs record "$RUNNER_TEMP/dev-release"
-          cp "$RUNNER_TEMP/dev-release/dev.json" dist-dev/dev.json
+          mkdir -p "$RUNNER_TEMP/canary-release"
+          node scripts/canary-release.mjs record "$RUNNER_TEMP/canary-release"
+          cp "$RUNNER_TEMP/canary-release/canary.json" dist-canary/canary.json
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$DEV_TAG" >/dev/null 2>&1; then
-            gh release upload "$DEV_TAG" dist-dev/* --clobber
-            gh release edit "$DEV_TAG" --prerelease --latest=false --draft=false
+          if gh release view "$CANARY_TAG" >/dev/null 2>&1; then
+            gh release upload "$CANARY_TAG" dist-canary/* --clobber
+            gh release edit "$CANARY_TAG" --prerelease --latest=false --draft=false
           else
-            gh release create "$DEV_TAG" dist-dev/* \
-              --target "$DEV_SHA" \
-              --title "$DEV_TAG" \
+            gh release create "$CANARY_TAG" dist-canary/* \
+              --target "$CANARY_SHA" \
+              --title "$CANARY_TAG" \
               --generate-notes \
               --prerelease \
               --latest=false

@@ -22,7 +22,7 @@ import {
   stageNativeUpdate,
 } from '#/cli/update/native-stage';
 import { detectNativeInstall } from '#/cli/update/source';
-import type { InstallIntent, UpdateChannel } from '#/cli/update/types';
+import { UPDATE_CHANNELS, type InstallIntent, type UpdateChannel } from '#/cli/update/types';
 
 const LOCK_HELD_POLL_INTERVAL_MS = 2_000;
 
@@ -103,7 +103,7 @@ export async function runUpdateDownloadCommand(
     process.stderr.write('error: update download is only available in the native build\n');
     return 1;
   }
-  if (channel !== 'stable' && channel !== 'dev') {
+  if (!UPDATE_CHANNELS.includes(channel)) {
     process.stderr.write(`error: invalid update channel ${JSON.stringify(channel)}\n`);
     return 1;
   }
