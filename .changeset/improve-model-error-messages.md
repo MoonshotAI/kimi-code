@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Use backend-provided model error messages and actual model HTTP status codes; stop inferring quota exhaustion from error-message wording.
+Remove SDK fallback error text and synthesized HTTP statuses, and stop classifying quota exhaustion from error-message wording.
