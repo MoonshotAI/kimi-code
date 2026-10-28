@@ -103,10 +103,23 @@ export function blockDecision(
   };
 }
 
-function matches(pattern: string, value: string): boolean {
+export function compileMatcher(pattern: string): RegExp {
+  let flags = '';
+  let rest = pattern;
+  while (true) {
+    const match = rest.match(/^\s*\(\?([imsuyv]+)\)/);
+    if (!match) break;
+    flags += match[1];
+    rest = rest.slice(match[0].length);
+  }
+  const uniqueFlags = Array.from(new Set(flags)).join('');
+  return new RegExp(rest, uniqueFlags || undefined);
+}
+
+export function matches(pattern: string, value: string): boolean {
   if (pattern.length === 0) return true;
   try {
-    return new RegExp(pattern).test(value);
+    return compileMatcher(pattern).test(value);
   } catch {
     return false;
   }
