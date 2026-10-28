@@ -41,17 +41,17 @@ export const Content = {
     return { image: Content.hasImages(input), video: Content.hasVideos(input) };
   },
 
-  build(text: string, mediaUrls: string[]): ContentPart[] {
+  build(text: string, media: readonly { id: string; dataUri: string }[]): ContentPart[] {
     const parts: ContentPart[] = [];
     if (text.trim()) {
       parts.push({ type: "text", text });
     }
-    for (const url of mediaUrls) {
+    for (const { id, dataUri: url } of media) {
       const mediaType = getMediaTypeFromDataUri(url);
       if (mediaType === "video") {
-        parts.push({ type: "video_url", video_url: { url } });
+        parts.push({ type: "video_url", video_url: { url, id } });
       } else {
-        parts.push({ type: "image_url", image_url: { url } });
+        parts.push({ type: "image_url", image_url: { url, id } });
       }
     }
     return parts;

@@ -583,6 +583,36 @@ describe("Webview model resolution before sending", () => {
     );
   });
 
+  it("resets media requirements after context_cleared", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    useChatStore.getState().sendMessage("follow-up");
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+
+    useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
+
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().draftMedia).toEqual([]);
+    useChatStore.getState().sendMessage("follow-up");
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "follow-up",
+      "plain",
+      "off",
+      false,
+      undefined,
+      { image: false, video: false },
+    );
+  });
+
   it("keeps queued messages in order when no valid model remains", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
     useSettingsStore.getState().syncModels([MODELS[2]], null, false);
@@ -699,7 +729,10 @@ describe("Webview model resolution before sending", () => {
       useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
       vi.advanceTimersByTime(60);
 
-      expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual([content, "second"]);
+      expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual([
+        [{ type: "image_url", image_url: expect.objectContaining({ url: image }) }],
+        "second",
+      ]);
       expect(useChatStore.getState().queue).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -829,6 +862,31 @@ describe("Webview chat error recovery", () => {
     });
 
     expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, video]);
+  });
+
+  it("keeps distinct attachments with the same URI on repeated rollback", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    const image = "data:image/png;base64,AA";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("original-image", image);
+    useChatStore.getState().sendMessage("original");
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+    useChatStore.getState().addDraftMedia("new-duplicate", image);
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+
+    expect(useChatStore.getState().draftMedia.map((item) => item.id)).toEqual(["original-image", "new-duplicate"]);
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, image]);
   });
 
   it("stops the pending state and keeps the input available when session setup fails", () => {

@@ -316,6 +316,12 @@ const eventHandlers: Record<string, EventHandler> = {
     }
   },
 
+  context_cleared: (draft) => {
+    draft.messages = [];
+    draft.pendingInput = null;
+    draft.draftMedia = [];
+  },
+
   stream_complete: (draft, _payload: { result: RunResult }) => {
     addTokenUsage(draft.tokenUsage, draft.activeTokenUsage);
     draft.activeTokenUsage = createEmptyTokenUsage();

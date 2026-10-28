@@ -164,8 +164,17 @@ function getSendMediaRequirements(
   return { image, video };
 }
 
+function normalizeSendContent(content: string | ContentPart[]): string | unknown[] {
+  if (typeof content === "string") return content;
+  return content.map((part) => {
+    if (part.type === "image_url") return { type: "image_url", image_url: { url: part.image_url.url } };
+    if (part.type === "video_url") return { type: "video_url", video_url: { url: part.video_url.url } };
+    return part;
+  });
+}
+
 function isSameSendContent(left: string | ContentPart[], right: string | ContentPart[]): boolean {
-  return left === right || JSON.stringify(left) === JSON.stringify(right);
+  return left === right || JSON.stringify(normalizeSendContent(left)) === JSON.stringify(normalizeSendContent(right));
 }
 
 function requiresModelForSend(state: ChatState, content: string | ContentPart[]): boolean {
@@ -262,7 +271,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { draftMedia, isStreaming, pendingInput: previousPendingInput } = get();
     const { currentModel } = useSettingsStore.getState();
 
-    const readyMedia = draftMedia.filter((m) => m.dataUri).map((m) => m.dataUri!);
+    const readyMedia = draftMedia.filter((m) => m.dataUri).map((m) => ({ id: m.id, dataUri: m.dataUri! }));
     const content = readyMedia.length > 0 ? Content.build(text, readyMedia) : text;
     const pendingQueueId = previousPendingInput && isSameSendContent(previousPendingInput.content, content)
       ? previousPendingInput.queueId

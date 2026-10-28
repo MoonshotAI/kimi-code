@@ -65,22 +65,33 @@ export interface PendingDraftMedia {
   dataUri?: string;
 }
 
+function rollbackRequestKey(content: readonly ContentPart[]): string {
+  const serialized = JSON.stringify(content);
+  let hash = 0;
+  for (let index = 0; index < serialized.length; index += 1) {
+    hash = (hash * 31 + serialized.codePointAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 /** Merge a failed prompt's media with newer draft items without losing order or duplicates. */
 export function mergePendingDraftMedia(
   existing: readonly PendingDraftMedia[],
   content: string | ContentPart[],
 ): PendingDraftMedia[] {
   if (!Array.isArray(content)) return [...existing];
+  const requestKey = rollbackRequestKey(content);
   const remaining = [...existing];
   const restored: PendingDraftMedia[] = [];
-  for (const part of content) {
+  for (const [index, part] of content.entries()) {
     if (part.type !== "image_url" && part.type !== "video_url") continue;
     const dataUri = part.type === "image_url" ? part.image_url.url : part.video_url.url;
-    const existingIndex = remaining.findIndex((item) => item.dataUri === dataUri);
+    const id = (part.type === "image_url" ? part.image_url.id : part.video_url.id) || `pending:${requestKey}:${index}`;
+    const existingIndex = remaining.findIndex((item) => item.id === id);
     if (existingIndex >= 0) {
       restored.push(...remaining.splice(existingIndex, 1));
     } else {
-      restored.push({ id: crypto.randomUUID(), dataUri });
+      restored.push({ id, dataUri });
     }
   }
   return restored.length === 0 ? [...existing] : [...restored, ...remaining];

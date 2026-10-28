@@ -186,6 +186,11 @@ describe("Extension-host model validation before sending", () => {
     expect(clearContext).toHaveBeenCalledOnce();
     expect(getConfig).not.toHaveBeenCalled();
     expect(getOrCreateSession).not.toHaveBeenCalled();
+    expect(ctx.broadcast).toHaveBeenCalledWith(
+      "streamEvent",
+      { type: "context_cleared", payload: {}, _sessionId: "session-1" },
+      "view-1",
+    );
     expect(runtime.completeHostAction).toHaveBeenCalledWith("finished", 7);
     expect(runtime.releaseHostAction).toHaveBeenCalledWith(7);
   });
