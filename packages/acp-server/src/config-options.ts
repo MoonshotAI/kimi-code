@@ -104,6 +104,21 @@ export function buildModeOption(currentModeId: AcpModeId): SessionConfigOption {
   };
 }
 
+/** Project the `[secondary_model]` pool into a select config option. */
+export function buildSecondaryModelOption(
+  models: readonly string[],
+  currentValue: string,
+): SessionConfigOption {
+  return {
+    type: 'select',
+    id: 'secondaryModel',
+    name: 'Secondary model',
+    category: 'secondary_model',
+    currentValue,
+    options: models.map((model) => ({ value: model, name: model })),
+  };
+}
+
 /**
  * Compose the `SessionConfigOption[]` surface —
  * `[modelOption, …(thinkingOption?), modeOption]`. Order is part of the
@@ -121,6 +136,8 @@ export function buildSessionConfigOptions(
   currentBaseModelId: string,
   currentThinkingLevel: string,
   currentModeId: AcpModeId,
+  secondaryModels?: readonly string[],
+  secondaryModelCurrent?: string,
 ): SessionConfigOption[] {
   const currentModelEntry = models.find((m) => m.id === currentBaseModelId);
   const showThinking = currentModelEntry?.thinkingSupported === true;
@@ -133,5 +150,10 @@ export function buildSessionConfigOptions(
     out.push(buildThinkingOption(level, alwaysThinking, currentModelEntry?.supportEfforts));
   }
   out.push(buildModeOption(currentModeId));
+  if (secondaryModels !== undefined && secondaryModels.length > 0) {
+    out.push(
+      buildSecondaryModelOption(secondaryModels, secondaryModelCurrent ?? secondaryModels[0]!),
+    );
+  }
   return out;
 }

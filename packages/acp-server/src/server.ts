@@ -522,6 +522,9 @@ export class AcpServer {
         }
         break;
       }
+      case 'secondaryModel':
+        await acpSession.setSecondaryModel(String(value));
+        break;
       default:
         throw RequestError.invalidParams(
           { configId: params.configId },

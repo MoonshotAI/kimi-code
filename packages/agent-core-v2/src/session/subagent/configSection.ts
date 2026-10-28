@@ -244,6 +244,7 @@ export function resolveSubagentBinding(
   config: IConfigService,
   own: { modelAlias: string; thinkingLevel: string },
   requested?: string,
+  sessionDefault?: string,
 ): { model: string; thinking?: string; modelSource: SubagentModelSource } {
   const section = config.get<SecondaryModelConfig | undefined>(SECONDARY_MODEL_SECTION);
   if (section?.force === true) {
@@ -290,7 +291,7 @@ export function resolveSubagentBinding(
       },
     });
   }
-  const choice = requested ?? pool.defaultModel;
+  const choice = requested ?? sessionDefault ?? pool.defaultModel;
   if (choice === undefined) {
     throw new Error2(ErrorCodes.CONFIG_INVALID, SECONDARY_MODEL_DEFAULT_MODEL_REQUIRED_MESSAGE, {
       details: { section: SECONDARY_MODEL_SECTION, field: 'defaultModel' },

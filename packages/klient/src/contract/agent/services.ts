@@ -101,6 +101,12 @@ export const agentPlanContract = {
   cancel: { input: z.tuple([z.string().optional()]), output: noResult },
 } satisfies ServiceContract;
 
+export const agentSecondaryModelPreferenceContract = {
+  get: { input: z.tuple([]), output: z.string().optional() },
+  set: { input: z.tuple([z.string()]), output: noResult },
+  clear: { input: z.tuple([]), output: noResult },
+} satisfies ServiceContract;
+
 export const agentSwarmContract = {
   enter: {
     input: z.tuple([z.enum(['manual', 'task', 'tool'])]),

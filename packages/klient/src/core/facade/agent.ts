@@ -89,6 +89,9 @@ export interface AgentFacade {
   cancelPlan(input?: { id?: string }): Promise<void>;
   enterSwarm(input: { trigger: SwarmModeTrigger }): Promise<void>;
   exitSwarm(): Promise<void>;
+  setSecondaryModel(model: string): Promise<void>;
+  clearSecondaryModel(): Promise<void>;
+  getSecondaryModel(): Promise<string | undefined>;
   getTasks(input?: { activeOnly?: boolean; limit?: number }): Promise<readonly AgentTaskInfo[]>;
   stopTask(input: { taskId: string; reason?: string }): Promise<void>;
   getTaskOutput(input: { taskId: string; tail?: number }): Promise<string>;
@@ -164,6 +167,14 @@ export function createAgentFacade(call: ScopedCaller, scope: ScopeRef): AgentFac
     enterSwarm: (input) =>
       call(scope, 'agentSwarmService', 'enter', [input.trigger]) as Promise<void>,
     exitSwarm: () => call(scope, 'agentSwarmService', 'exit', []) as Promise<void>,
+    setSecondaryModel: (model) =>
+      call(scope, 'agentSecondaryModelPreferenceService', 'set', [model]) as Promise<void>,
+    clearSecondaryModel: () =>
+      call(scope, 'agentSecondaryModelPreferenceService', 'clear', []) as Promise<void>,
+    getSecondaryModel: () =>
+      call(scope, 'agentSecondaryModelPreferenceService', 'get', []) as Promise<
+        string | undefined
+      >,
     getTasks: (input) =>
       call(scope, 'agentTaskService', 'list', [
         input?.activeOnly ?? false,

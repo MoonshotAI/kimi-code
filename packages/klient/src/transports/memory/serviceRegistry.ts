@@ -39,6 +39,7 @@ import { IAgentContextMemoryService } from '@moonshot-ai/agent-core-v2/agent/con
 import { ISessionTokenCountingService } from '@moonshot-ai/agent-core-v2/session/tokenCounting/sessionTokenCounting';
 import { ISessionActivityView } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import { IAgentPlanService } from '@moonshot-ai/agent-core-v2/features/plan/plan';
+import { ISecondaryModelPreferenceService } from '@moonshot-ai/agent-core-v2/session/subagent/secondaryModelPreferenceService';
 import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/features/swarm/agent/swarm';
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { IAgentShellCommandService } from '@moonshot-ai/agent-core-v2/agent/shellCommand/shellCommand';
@@ -83,6 +84,7 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   agentProfileService: IAgentProfileService,
   agentUsageService: ISessionUsageService,
   agentPlanService: IAgentPlanService,
+  agentSecondaryModelPreferenceService: ISecondaryModelPreferenceService,
   agentSwarmService: IAgentSwarmService,
   agentTaskService: IAgentTaskService,
   agentMcpService: IAgentMcpService,

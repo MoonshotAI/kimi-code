@@ -85,6 +85,11 @@ import {
 } from './events-map';
 import { AcpInteractionBridge } from './interaction-bridge';
 import { log } from './log';
+import {
+  resolveSubagentModelPool,
+  SECONDARY_MODEL_SECTION,
+} from '@moonshot-ai/agent-core-v2/session/subagent/configSection';
+import type { IConfigService } from '@moonshot-ai/agent-core-v2/app/config/config';
 import { projectModelCatalog } from './model-catalog';
 import { ACP_MODES, type AcpModeId, acpModeToToggles, DEFAULT_MODE_ID } from './modes';
 import { projectHistoryToSessionUpdates } from './replay';
@@ -1134,12 +1139,33 @@ export class AcpSession {
    */
   async configOptions(): Promise<SessionConfigOption[]> {
     const models = projectModelCatalog(await this.klient.global.kosong.listModels());
+    const secondarySection = await this.klient.global.config.get(SECONDARY_MODEL_SECTION);
+    const secondaryPool = resolveSubagentModelPool({
+      get: () => secondarySection,
+    } as IConfigService);
+    const secondaryModels =
+      secondaryPool === undefined ? undefined : Object.keys(secondaryPool.models);
+    const secondaryCurrent =
+      secondaryPool === undefined
+        ? undefined
+        : ((await this.agent.getSecondaryModel()) ?? secondaryPool.defaultModel);
     return buildSessionConfigOptions(
       models,
       this.currentModelId,
       this.currentThinkingLevel,
       this.currentModeId,
+      secondaryModels,
+      secondaryCurrent,
     );
+  }
+
+  async setSecondaryModel(value: string): Promise<void> {
+    if (value === '' || value === 'primary') {
+      await this.agent.clearSecondaryModel();
+    } else {
+      await this.agent.setSecondaryModel(value);
+    }
+    await this.emitConfigOptionUpdate();
   }
 
   /**

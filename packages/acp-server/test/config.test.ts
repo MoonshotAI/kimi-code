@@ -278,6 +278,45 @@ describe('acp-server config surface', () => {
   );
 
   it(
+    'secondary_model pool is exposed and selectable as a config option',
+    async () => {
+      homeDir = await mkdtemp(join(tmpdir(), 'acp-secondary-'));
+      await writeFakeModelConfig(homeDir);
+      await writeFile(
+        join(homeDir, 'config.toml'),
+        '\n[secondary_model]\ndefaultModel = "fake-alt"\n[secondary_model.models]\nfake = ""\nfake-alt = ""\n',
+        { flag: 'a' },
+      );
+      client = await createTestClient({ homeDir });
+      await client.send('initialize', { protocolVersion: 1, clientCapabilities: {} });
+
+      const { sessionId, configOptions } = (await client.send('session/new', {
+        cwd: homeDir,
+        mcpServers: [],
+      })) as NewSessionResult;
+      const secondary = configOptions.find((o) => o.id === 'secondaryModel');
+      expect(secondary).toBeDefined();
+      expect(secondary?.options?.map((o) => o.value)).toEqual(['fake', 'fake-alt']);
+      expect(secondary?.currentValue).toBe('fake-alt');
+
+      await client.send('session/set_config_option', {
+        sessionId,
+        configId: 'secondaryModel',
+        value: 'fake',
+      });
+      const resumed = (await client.send('session/resume', {
+        sessionId,
+        cwd: homeDir,
+        mcpServers: [],
+      })) as { configOptions: ConfigOption[] };
+      expect(resumed.configOptions.find((o) => o.id === 'secondaryModel')?.currentValue).toBe(
+        'fake',
+      );
+    },
+    30_000,
+  );
+
+  it(
     'session/set_config_option mode=swarm toggles the engine swarm service',
     async () => {
       await boot();

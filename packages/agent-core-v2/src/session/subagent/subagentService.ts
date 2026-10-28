@@ -44,6 +44,7 @@ import {
   resolveSubagentThinking,
   wrapSubagentModelError,
 } from './configSection';
+import { ISecondaryModelPreferenceService } from './secondaryModelPreferenceService';
 import {
   DEFAULT_PROFILE_NAME,
   FORK_CONTEXT_NOTICE,
@@ -72,6 +73,8 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ILogService private readonly log: ILogService,
+    @ISecondaryModelPreferenceService
+    private readonly secondaryModelPreference: ISecondaryModelPreferenceService,
   ) {
     super();
   }
@@ -124,6 +127,7 @@ export class SessionSubagentService extends Service implements ISessionSubagentS
           this.configService,
           { modelAlias: own.modelAlias, thinkingLevel: own.thinkingLevel },
           input.model,
+          this.secondaryModelPreference.get(),
         );
     let model: Model;
     try {
