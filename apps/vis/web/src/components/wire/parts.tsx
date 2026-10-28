@@ -10,7 +10,13 @@
 
 import type { ReactNode } from 'react';
 
-import type { ContentPart, ContextMessage, LoopRecordedEvent, ToolCall } from '../../types';
+import {
+  mediaUrlOf,
+  type CoreContentPart as ContentPart,
+  type ContextMessage,
+  type LoopRecordedEvent,
+  type ToolCall,
+} from '../../types';
 import { ImagePreview } from '../shared/ImagePreview';
 import { JsonViewer } from '../shared/JsonViewer';
 import { SizePreview } from '../shared/SizePreview';
@@ -128,19 +134,19 @@ export function ContentPartView({ part }: { part: ContentPart }) {
         </div>
       );
     case 'image_url':
-      return <ImagePreview url={part.imageUrl.url} />;
+      return <ImagePreview url={mediaUrlOf(part)} />;
     case 'audio_url':
       return (
         <div className="border border-border bg-surface-0 p-2">
           <div className="mb-1 text-fg-3">audio_url</div>
-          <Mono className="break-all">{part.audioUrl.url}</Mono>
+          <Mono className="break-all">{mediaUrlOf(part)}</Mono>
         </div>
       );
     case 'video_url':
       return (
         <div className="border border-border bg-surface-0 p-2">
           <div className="mb-1 text-fg-3">video_url</div>
-          <Mono className="break-all">{part.videoUrl.url}</Mono>
+          <Mono className="break-all">{mediaUrlOf(part)}</Mono>
         </div>
       );
     default:
@@ -176,13 +182,14 @@ function ToolCallView({ call }: { call: ToolCall }) {
 }
 
 export function MessageDetail({ message }: { message: ContextMessage }) {
+  const toolCalls = message.role === 'assistant' ? message.toolCalls : [];
   return (
     <div className="space-y-2">
       <div className="grid grid-cols-[140px_1fr] gap-x-3 gap-y-[2px]">
         <FieldRow label="role">
           <span className="text-[var(--color-cat-ephemeral)]">"{message.role}"</span>
         </FieldRow>
-        {message.toolCallId ? (
+        {message.role === 'tool' && message.toolCallId ? (
           <FieldRow label="toolCallId">
             <Mono>{message.toolCallId}</Mono>
           </FieldRow>
@@ -215,13 +222,13 @@ export function MessageDetail({ message }: { message: ContextMessage }) {
         </div>
       ) : null}
 
-      {message.toolCalls.length > 0 ? (
+      {toolCalls.length > 0 ? (
         <div>
           <div className="mb-1 text-fg-2">
-            toolCalls ({message.toolCalls.length})
+            toolCalls ({toolCalls.length})
           </div>
           <div className="space-y-1">
-            {message.toolCalls.map((tc) => (
+            {toolCalls.map((tc) => (
               <ToolCallView key={tc.id} call={tc} />
             ))}
           </div>

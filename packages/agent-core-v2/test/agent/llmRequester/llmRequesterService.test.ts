@@ -24,9 +24,10 @@ import {
   type TurnInput,
   type TurnLlmEvent,
 } from '#human/agent/turn';
-import { UNKNOWN_CAPABILITY } from '#human/llm/capability';
-import type { LlmModel } from '#human/llm/model';
-import type { LlmRequester } from '#human/llm/requester/requester';
+import { UNKNOWN_CAPABILITY } from '#human/llm-requester/capability';
+import { createOpenAIRequester } from '#human/llm-requester/factories';
+import type { LlmModel } from '#human/llm-requester/model';
+import type { LlmRequester } from '#human/llm-requester/requester';
 import { createActor, emit, setup } from '#human/xstate2';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -48,13 +49,19 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
-import { type Message } from '#/llm-adapter/contract/message';
-import { isToolCall, type StreamedMessagePart, type ToolCall } from '#human/llm/message';
-import type { ThinkingEffort } from '#human/llm/thinking';
+import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
+import {
+  isToolCall,
+  type Message,
+  type StreamedMessagePart,
+  type ToolCall,
+} from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IModelService } from '#/llm-adapter/model/model';
+import { ModelRequesterImpl } from '#/llm-adapter/model/model-requester-impl';
 import {
   type ModelRequestEvent,
   type ModelRequestInput,
@@ -121,7 +128,7 @@ const capabilities: ModelCapability = {
 };
 
 const history: Message[] = [
-  { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+  { role: 'user', content: [{ type: 'text', text: 'hello' }] },
 ];
 
 type ProjectionKind = 'normal' | 'strict' | 'degraded' | 'stripped';
@@ -586,8 +593,12 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     const contextMessages: Message[] = [
       {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,IMAGE' } }],
-        toolCalls: [],
+        content: [
+          {
+            type: 'image_url',
+            imageUrl: { url: 'data:image/png;base64,IMAGE' },
+          },
+        ],
       },
     ];
     const { service, dispatcher, events } = createService(
@@ -639,7 +650,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const imageMessage = (url: string): Message => ({
       role: 'user',
       content: [{ type: 'image_url', imageUrl: { url } }],
-      toolCalls: [],
     });
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
@@ -665,7 +675,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const parts = capturedInputs[1]!.messages.flatMap((message) => message.content);
     const urls = parts
       .filter((part) => part.type === 'image_url')
-      .map((part) => part.imageUrl.url);
+      .map((part) => mediaUrlOf(part));
     expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
     const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
     expect(texts).toContain('<image path="/session/media/f_old.png"></image>');
@@ -713,7 +723,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     const imageMessage = (url: string, id: string): Message => ({
       role: 'user',
       content: [{ type: 'image_url', imageUrl: { url, id } }],
-      toolCalls: [],
     });
     const { service } = createService(
       createRequester(
@@ -741,7 +750,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       .at(-1)
       ?.messages.flatMap((message) => message.content)
       .filter((part) => part.type === 'image_url')
-      .map((part) => part.imageUrl.url);
+      .map((part) => mediaUrlOf(part));
     expect(visibleUrls).toEqual([newUrl]);
   });
 
@@ -819,7 +828,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
           type: 'image_url',
           imageUrl: { url: `data:image/png;base64,${data}` },
         })),
-        toolCalls: [],
       },
     ];
     const { service, dispatcher, events } = createService(
@@ -848,11 +856,14 @@ describe('AgentLLMRequesterService media recovery prefix parity', () => {
   const COMPACTION_INSTRUCTION = 'Summarize the conversation.';
 
   function imageMessage(url: string, id: string): Message {
-    return { role: 'user', content: [{ type: 'image_url', imageUrl: { url, id } }], toolCalls: [] };
+    return {
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url, id } }],
+    };
   }
 
   function textMessage(text: string): Message {
-    return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
+    return { role: 'user', content: [{ type: 'text', text }] };
   }
 
   function mediaRejectingRequester(inputs: ModelRequestInput[]): ModelRequester {
@@ -864,7 +875,9 @@ describe('AgentLLMRequesterService media recovery prefix parity', () => {
         const images = input.messages
           .flatMap((message) => message.content)
           .filter((part) => part.type === 'image_url');
-        if (images.some((part) => part.imageUrl.url === REJECTED_FORMAT_URL)) throw IMAGE_FORMAT_400;
+        if (images.some((part) => mediaUrlOf(part) === REJECTED_FORMAT_URL)) {
+          throw IMAGE_FORMAT_400;
+        }
         if (images.length > 2) throw BODY_TOO_LARGE_413;
         yield* accepting.request(input, signal, params);
       },
@@ -1151,7 +1164,6 @@ describe('AgentLLMRequesterService combined recovery projections', () => {
           type: 'image_url',
           imageUrl: { url: `data:image/png;base64,${data}` },
         })),
-        toolCalls: [],
       },
     ];
     const projector = {
@@ -1419,8 +1431,10 @@ describe('AgentLLMRequesterService media resolver wiring', () => {
   });
 });
 
+type ScriptedToolCallId = string | { readonly id: string; readonly rawId?: string };
+
 function createScriptedRequester(
-  script: { ids: string[]; error?: Error }[],
+  script: { ids: ScriptedToolCallId[]; error?: Error }[],
 ): ModelRequester {
   const base = createRequester({ value: 0 });
   let callIndex = 0;
@@ -1430,30 +1444,34 @@ function createScriptedRequester(
       const step = script[Math.min(callIndex++, script.length - 1)]!;
       if (step.error !== undefined) {
         if (step.ids.length > 0) {
+          const value = step.ids[0]!;
           yield {
             type: 'part',
             part: {
               type: 'function',
-              id: step.ids[0]!,
+              id: typeof value === 'string' ? value : value.id,
               name: 'Bash',
               arguments: null,
               _streamIndex: 0,
+              rawId: typeof value === 'string' ? undefined : value.rawId,
             },
           } satisfies ModelRequestEvent;
         }
         throw step.error;
       }
       const toolCalls: ToolCall[] = [];
-      for (const [index, id] of step.ids.entries()) {
+      for (const [index, value] of step.ids.entries()) {
+        const id = typeof value === 'string' ? value : value.id;
+        const rawId = typeof value === 'string' ? undefined : value.rawId;
         yield {
           type: 'part',
-          part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index },
+          part: { type: 'function', id, name: 'Bash', arguments: null, _streamIndex: index, rawId },
         } satisfies ModelRequestEvent;
         yield {
           type: 'part',
           part: { type: 'tool_call_part', argumentsPart: '{"command":"ls"}', index },
         } satisfies ModelRequestEvent;
-        toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}' });
+        toolCalls.push({ type: 'function', id, name: 'Bash', arguments: '{"command":"ls"}', rawId });
       }
       yield {
         type: 'finish',
@@ -1466,8 +1484,57 @@ function createScriptedRequester(
   };
 }
 
-describe('AgentLLMRequesterService tool call id normalization', () => {
-  it('passes provider-unique ids through unchanged', async () => {
+function createOpenAIModelRequester(ids: readonly string[]): ModelRequester {
+  const base = createRequester({ value: 0 });
+  const requester = createOpenAIRequester({
+    clientFactory: () => ({
+      chat: {
+        completions: {
+          create: () => ({
+            withResponse: async () => ({
+              data: (async function* () {
+                yield {
+                  id: 'chatcmpl-1',
+                  object: 'chat.completion.chunk',
+                  created: 0,
+                  model: 'test-model',
+                  choices: [
+                    {
+                      index: 0,
+                      delta: {
+                        tool_calls: ids.map((id, index) => ({
+                          index,
+                          id,
+                          type: 'function',
+                          function: { name: 'Bash', arguments: '{"command":"ls"}' },
+                        })),
+                      },
+                      finish_reason: 'tool_calls',
+                    },
+                  ],
+                };
+              })(),
+              response: new Response(null),
+            }),
+          }),
+        },
+      },
+    }) as never,
+  });
+  return new ModelRequesterImpl(
+    { ...base.model, protocol: 'openai' },
+    {
+      resolve: () => ({
+        requester,
+        protocol: 'openai',
+        model: { ...turnHarnessModel, baseUrl: 'https://example.test/v1' },
+      }),
+    },
+  );
+}
+
+describe('AgentLLMRequesterService tool call id forwarding', () => {
+  it('passes lower-layer unique ids through unchanged', async () => {
     const parts: StreamedMessagePart[] = [];
     const { service } = createService(
       createScriptedRequester([{ ids: ['call_1', 'call_2'] }]),
@@ -1482,19 +1549,25 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     expect(parts.filter(isToolCall).map((p) => p.id)).toEqual(['call_1', 'call_2']);
   });
 
-  it('rewrites an id repeated across responses and keeps streamed parts consistent', async () => {
+  it('normalizes repeated provider ids in llm and forwards the result', async () => {
     const parts: StreamedMessagePart[] = [];
-    const { service } = createService(
-      createScriptedRequester([{ ids: ['Bash_0'] }, { ids: ['Bash_0'] }]),
-      undefined,
-    );
+    const { service } = createService(createOpenAIModelRequester(['Bash_0']), undefined);
 
     const first = await service.request({}, (part) => {
       parts.push(part);
     });
-    const second = await service.request({}, (part) => {
-      parts.push(part);
-    });
+    const second = await service.request(
+      {
+        messages: [
+          ...history,
+          first.message,
+          { role: 'tool', content: [{ type: 'text', text: 'done' }], toolCallId: 'Bash_0' },
+        ],
+      },
+      (part) => {
+        parts.push(part);
+      },
+    );
 
     expect(first.message.toolCalls[0]!.id).toBe('Bash_0');
     expect(second.message.toolCalls[0]).toMatchObject({ id: 'Bash_0__2', rawId: 'Bash_0' });
@@ -1504,9 +1577,11 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     ]);
   });
 
-  it('rewrites duplicates within a single response', async () => {
+  it('preserves lower-layer duplicate id assignments', async () => {
     const { service } = createService(
-      createScriptedRequester([{ ids: ['Bash_0', 'Bash_0'] }]),
+      createScriptedRequester([
+        { ids: ['Bash_0', { id: 'Bash_0__2', rawId: 'Bash_0' }] },
+      ]),
       undefined,
     );
 
@@ -1518,7 +1593,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     ]);
   });
 
-  it('rolls claims back when the attempt fails mid-stream', async () => {
+  it('does not alter lower-layer ids after a failed attempt', async () => {
     const { service } = createService(
       createScriptedRequester([
         { ids: ['Bash_9'], error: new Error('stream boom') },
@@ -1532,7 +1607,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     expect(retry.message.toolCalls[0]!.id).toBe('Bash_9');
   });
 
-  it('rewrites an id that already exists in the restored context', async () => {
+  it('does not rewrite ids against restored context', async () => {
     const { service } = createService(
       createScriptedRequester([{ ids: ['Bash_0'] }]),
       undefined,
@@ -1548,7 +1623,7 @@ describe('AgentLLMRequesterService tool call id normalization', () => {
     );
 
     const result = await service.request();
-    expect(result.message.toolCalls[0]!.id).toBe('Bash_0__2');
+    expect(result.message.toolCalls[0]!.id).toBe('Bash_0');
   });
 });
 

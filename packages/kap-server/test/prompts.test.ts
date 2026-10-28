@@ -512,7 +512,6 @@ describe('server-v2 /api/v1 prompts', () => {
           { type: 'text', text: 'rendered skill block' },
           { type: 'text', text: 'Review this change.' },
         ],
-        toolCalls: [],
         origin: {
           kind: 'user',
           skillActivations: [{ activationId: 'a1', skillName: 'update-config' }],
@@ -528,7 +527,6 @@ describe('server-v2 /api/v1 prompts', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'plain question' }],
-        toolCalls: [],
         origin: { kind: 'user' },
       },
     });
@@ -545,7 +543,6 @@ describe('server-v2 /api/v1 prompts', () => {
       message: {
         role: 'user',
         content: [{ type: 'text', text: 'User activated the skill' }],
-        toolCalls: [],
         origin: { kind: 'skill_activation', activationId: 'act-1', skillName: 'update-config', trigger: 'user-slash', clientMetadata: [metadata] },
       },
     });
@@ -1087,11 +1084,7 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(replayedMessage).toBeDefined();
       expect(replayedMessage!.content).toContainEqual({
         type: 'image_url',
-        imageUrl: {
-          url: `kimi-file://${uploaded.id}`,
-          id: uploaded.id,
-          name: 'small.png',
-        },
+        imageUrl: { url: `kimi-file://${uploaded.id}`, id: uploaded.id, name: 'small.png' },
       });
     });
   });

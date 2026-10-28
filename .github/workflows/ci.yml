@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-      - run: node --test scripts/release-trigger.test.mjs scripts/dev-release.test.mjs
+      - run: node --test scripts/release-trigger.test.mjs scripts/canary-release.test.mjs
 
   build:
     runs-on: ubuntu-latest

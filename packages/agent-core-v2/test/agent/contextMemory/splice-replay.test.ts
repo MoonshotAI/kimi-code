@@ -20,7 +20,8 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, MediaPart } from '#human/llm/message';
+import { inlineMediaOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -42,14 +43,7 @@ const SCOPE = 'wire';
 const KEY = 'ctx-live';
 const REPLAY_KEY = 'ctx-replay';
 const BLOBREF = 'blobref:';
-const DATA_URI_RE = /^data:([^;]+);base64,(.+)$/;
 const OFFLOAD_THRESHOLD = 64;
-
-function asMedia(value: unknown): { url: string } | undefined {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const obj = value as Record<string, unknown>;
-  return typeof obj['url'] === 'string' ? (obj as { url: string }) : undefined;
-}
 
 class StubBlobService implements IAgentBlobService {
   declare readonly _serviceBrand: undefined;
@@ -83,55 +77,66 @@ class StubBlobService implements IAgentBlobService {
   }
 
   private offloadPart(part: ContentPart): ContentPart {
-    const obj = part as unknown as Record<string, unknown>;
-    for (const [key, value] of Object.entries(obj)) {
-      const media = asMedia(value);
-      if (media === undefined) continue;
-      const match = DATA_URI_RE.exec(media.url);
-      if (match === null) continue;
-      const payload = match[2]!;
-      if (payload.length < OFFLOAD_THRESHOLD) continue;
-      const sha = `sha${this.seq++}`;
-      this.store.set(sha, payload);
-      this.offloadCalls++;
-      return { ...obj, [key]: { ...media, url: `${BLOBREF}${match[1]};${sha}` } } as unknown as ContentPart;
+    if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+      return part;
     }
-    return part;
+    const inline = inlineMediaOf(part);
+    if (inline === undefined || inline.data.length < OFFLOAD_THRESHOLD) return part;
+    const sha = `sha${this.seq++}`;
+    this.store.set(sha, inline.data);
+    this.offloadCalls++;
+    return withMediaUrl(part, `${BLOBREF}${inline.mimeType};${sha}`);
   }
 
   private rehydratePart(part: ContentPart): ContentPart {
-    const obj = part as unknown as Record<string, unknown>;
-    for (const [key, value] of Object.entries(obj)) {
-      const media = asMedia(value);
-      if (media === undefined || !this.isBlobRef(media.url)) continue;
-      const rest = media.url.slice(BLOBREF.length);
-      const semi = rest.indexOf(';');
-      const mime = rest.slice(0, semi);
-      const sha = rest.slice(semi + 1);
-      const payload = this.store.get(sha);
-      if (payload === undefined) continue;
-      this.loadCalls++;
-      return { ...obj, [key]: { ...media, url: `data:${mime};base64,${payload}` } } as unknown as ContentPart;
+    if (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url') {
+      return part;
     }
-    return part;
+    const url = mediaUrlOf(part);
+    if (!this.isBlobRef(url)) return part;
+    const rest = url.slice(BLOBREF.length);
+    const semi = rest.indexOf(';');
+    const mimeType = rest.slice(0, semi);
+    const payload = this.store.get(rest.slice(semi + 1));
+    if (payload === undefined) return part;
+    this.loadCalls++;
+    return withMediaUrl(part, `data:${mimeType};base64,${payload}`);
+  }
+}
+
+function withMediaUrl(part: MediaPart, url: string): MediaPart {
+  switch (part.type) {
+    case 'image_url':
+      return { ...part, imageUrl: { ...part.imageUrl, url } };
+    case 'audio_url':
+      return { ...part, audioUrl: { ...part.audioUrl, url } };
+    case 'video_url':
+      return { ...part, videoUrl: { ...part.videoUrl, url } };
   }
 }
 
 function userMessage(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
+  return { role: 'user', content: [{ type: 'text', text }] };
 }
 
 function imageMessage(payload: string): ContextMessage {
-  const part = {
-    type: 'image',
-    source: { url: `data:image/png;base64,${payload}` },
-  } as unknown as ContentPart;
-  return { role: 'user', content: [part], toolCalls: [] };
+  return {
+    role: 'user',
+    content: [{ type: 'image_url', imageUrl: { url: `data:image/png;base64,${payload}` } }],
+  };
 }
 
-function mediaUrl(message: DeepReadonly<ContextMessage>): string {
-  const part = message.content[0] as unknown as { source: { url: string } };
-  return part.source.url;
+function mediaUrl(message: unknown): string {
+  const part = (message as { readonly content: readonly Record<string, unknown>[] }).content[0];
+  if (part === undefined) throw new Error('expected media content');
+  for (const key of ['imageUrl', 'audioUrl', 'videoUrl']) {
+    const media = part[key];
+    if (media !== null && typeof media === 'object' && !Array.isArray(media)) {
+      const url = (media as Record<string, unknown>)['url'];
+      if (typeof url === 'string') return url;
+    }
+  }
+  throw new Error('expected media URL');
 }
 
 function textOf(message: DeepReadonly<ContextMessage>): string {
@@ -307,12 +312,16 @@ describe('AgentContextMemoryService (wire-backed)', () => {
     const model = replay.agentState.get(contextMemoryKey);
     expect(model.map((message) => message.role)).toEqual(['user', 'assistant', 'tool']);
     expect(model[1]!.content).toEqual([{ type: 'text', text: 'hello' }]);
-    expect(model[1]!.partial).toBeUndefined();
-    expect(model[1]!.toolCalls).toHaveLength(1);
-    expect(model[1]!.toolCalls[0]!.id).toBe('call_1');
-    expect(model[1]!.toolCalls[0]!.name).toBe('Bash');
-    expect(model[2]!.role).toBe('tool');
-    expect(model[2]!.toolCallId).toBe('call_1');
+    const assistant = model[1]!;
+    const tool = model[2]!;
+    if (assistant.role !== 'assistant' || tool.role !== 'tool') {
+      throw new Error('expected assistant tool exchange');
+    }
+    expect(assistant.partial).toBeUndefined();
+    expect(assistant.toolCalls).toHaveLength(1);
+    expect(assistant.toolCalls[0]!.id).toBe('call_1');
+    expect(assistant.toolCalls[0]!.name).toBe('Bash');
+    expect(tool.toolCallId).toBe('call_1');
   });
 
   it('replays v1 context.apply_compaction records with contextSummary as the model summary', async () => {

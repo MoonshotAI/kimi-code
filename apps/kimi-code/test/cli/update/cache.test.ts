@@ -89,14 +89,14 @@ describe('update cache', () => {
     await expect(readUpdateCache()).resolves.toEqual(cache);
   });
 
-  it('writes and reads back a dev channel cache', async () => {
+  it('writes and reads back a canary channel cache', async () => {
     const cache = {
       source: 'cdn',
-      channel: 'dev',
+      channel: 'canary',
       checkedAt: '2026-10-26T01:00:00.000Z',
-      latest: '2.4.0-dev.202610260043',
+      latest: '2.4.0-canary.20261026010000-0123456',
       manifest: {
-        version: '2.4.0-dev.202610260043',
+        version: '2.4.0-canary.20261026010000-0123456',
         publishedAt: '2026-10-26T01:00:00.000Z',
         rollout: [],
       },

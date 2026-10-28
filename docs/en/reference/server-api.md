@@ -115,9 +115,9 @@ ws.onmessage = (e) => console.log(e.data);
 ws.onopen = () =>
   ws.send(
     JSON.stringify({
-      type: 'subscribe',
+      type: 'subscribe_v2',
       id: '1',
-      payload: { session_ids: [process.argv[2]] },
+      payload: { session_id: process.argv[2], transcript: { '*': 'block' } },
     }),
   );
 ```
@@ -131,7 +131,7 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
   -d '{"content": [{"type": "text", "text": "Introduce this repository in one sentence"}]}'
 ```
 
-The subscriber sees, in order: `turn.started` (turn begins) → `assistant.delta` (streaming text increments) → `tool.call.started` / `tool.result` when tool calls happen → `turn.ended` (turn finishes).
+The subscriber first receives `transcript.reset` (the transcript baseline), then `transcript.ops` batches as the turn streams in, including tool calls. `event.session.work_changed` reports `busy: true` when the turn starts and `busy: false` with `last_turn_reason` when it finishes.
 
 5. Read history back over REST at any time:
 
@@ -373,7 +373,7 @@ On success, `data` is the config object; its fields mirror the top-level domains
 
 #### `POST /api/v1/config`
 
-Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message.
+Merge-patches the global configuration: each top-level domain in the body is deep-merged into that domain, and domains absent from the body are left untouched. Setting `yolo` to `true` is shorthand for `default_permission_mode: "yolo"`; a rejected patch (invalid value or persistence failure) returns `40001` with the underlying message. The `secondary_model` domain also accepts `null`, which removes the entire `[secondary_model]` section so subsequently spawned subagents inherit their caller's current model and thinking level.
 
 Every config change — a successful update through this endpoint, an external edit of `config.toml`, or a server-side write such as an OAuth login refresh — is broadcast as the global `event.config.changed` event. Changes inside a short window are merged into one event carrying the affected domain names in `changedFields` (camelCase config domains, for example `defaultModel`) and the full current config projection in `config` (same shape as the `GET /api/v1/config` response).
 
@@ -398,7 +398,7 @@ The body is a partial config object — any subset of the response domains above
 | `loop_control` | body | object | Agent loop control parameters |
 | `background` | body | object | Background task runtime parameters |
 | `subagent` | body | object | Subagent configuration |
-| `secondary_model` | body | object | Secondary model pool for subagents |
+| `secondary_model` | body | object or null | Secondary model pool for subagents; `null` clears the section and restores caller-model inheritance |
 | `experimental` | body | object | Experimental flag id → enabled |
 | `telemetry` | body | boolean | Whether anonymous telemetry is enabled |
 | `auto_session_title` | body | boolean | Whether clients may automatically generate session titles |
@@ -635,7 +635,6 @@ These endpoints create, list, and inspect sessions, drive session-level actions 
 | `GET /api/v1/sessions/{session_id}/runtime` | Read the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/runtime` | Switch the main agent's runtime binding |
 | `POST /api/v1/sessions/{session_id}/export` | Export the session with diagnostics (zip stream, not enveloped) |
-| `GET /api/v1/sessions/{session_id}/snapshot` | Full snapshot for client rebuilds (with `as_of_seq` and `epoch`) |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | Download prompt media by file id (binary) |
 
 #### The session object
@@ -656,11 +655,10 @@ Every endpoint that returns a session uses this wire shape. The live facts (`bus
 | `last_turn_reason` | string | Main agent's latest turn outcome: `completed` / `cancelled` / `failed` |
 | `last_prompt` | string | Most recent user prompt text, when present |
 | `metadata` | object | Custom metadata; always carries `cwd` (the session's working directory) |
-| `agent_config` | object | Projected as `{ model }`; `model` is `""` in most responses and only filled with the live model by `GET /api/v1/sessions/{session_id}/snapshot` |
-| `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; all zeros outside the snapshot endpoint |
+| `agent_config` | object | Projected as `{ model }`; `model` is the live model while the session is loaded, `""` otherwise |
+| `usage` | object | Token rollup `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`; currently all zeros |
 | `permission_rules` | array | Session permission rules; currently always `[]` |
 | `message_count` | integer | Message count; currently always `0` |
-| `last_seq` | integer | Last event sequence number; currently always `0` |
 
 #### `POST /api/v1/sessions`
 
@@ -952,18 +950,6 @@ Exports the session together with diagnostic logs as a zip attachment (`kimi-ses
 | `web_log` | body | string | Client log text to include in the archive, at most 256 KB UTF-8 |
 | `desktop` | body | boolean | Also include the desktop host's log. Default `false` |
 
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-Assembles an atomic snapshot for rebuilding a client after a resync: the session, recent messages, the in-flight turn, live subagents, and pending interactions, all stamped with the `as_of_seq` watermark and `epoch` used to resubscribe — see [Reconnect and recovery](#reconnect-and-recovery). Unlike the plain session endpoints, the embedded session carries the live `agent_config.model` and real `usage` totals.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-
-On success, `data` is `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`: `session` is [the session object](#the-session-object), `messages` is the newest 100 messages as `{ items, has_more }`, `in_flight_turn` is the partially streamed turn (`null` when idle, with `current_prompt_id` when known), `subagents` lists live subagent tasks, and `pending_approvals` / `pending_questions` carry the unanswered interactions.
-
-- `40401`: session not found
-
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
 Downloads a prompt media file (an image or other attachment referenced by the session's prompts) by file id; an id not yet committed to the session falls back to the staged uploads. The response is binary with `Range` support (206 on ranged requests) — see [Binary and streaming endpoints](#binary-and-streaming-endpoints) for the shared conventions; unlike the enveloped endpoints there, a missing session or file answers with a real 404 status carrying an envelope body.
@@ -988,7 +974,7 @@ The `messages` endpoints page the main agent's flattened message history, while 
 
 #### `GET /api/v1/sessions/{session_id}/messages`
 
-Pages the main agent's message history — the flattened context transcript shared with the session snapshot — newest first. Cursor pagination follows [Pagination](#pagination); reading the history resumes the session when it is cold.
+Pages the main agent's message history — the flattened context transcript — newest first. Cursor pagination follows [Pagination](#pagination); reading the history resumes the session when it is cold.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1515,28 +1501,31 @@ On success, `data` is `{ ok: true }`.
 
 ### Workspaces
 
-Workspaces are the registered project directories sessions live in. These endpoints manage the registry — list, register, rename, unregister — plus the per-workspace trust state that gates project-level MCP config. Every endpoint that returns a workspace uses the wire shape documented once under [The workspace object](#the-workspace-object).
+Workspaces are the registered project directories sessions live in. These endpoints manage the registry — list, register, rename and update source folders, unregister — plus the per-workspace trust state that gates project-level MCP config. Every endpoint that returns a workspace uses the wire shape documented once under [The workspace object](#the-workspace-object).
 
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/workspaces` | List registered workspaces |
-| `POST /api/v1/workspaces` | Register a workspace (idempotent on the root path) |
-| `PATCH /api/v1/workspaces/{workspace_id}` | Rename |
+| `POST /api/v1/workspaces` | Register a workspace (fresh entry per call; retries deduped via `idempotency_key`) |
+| `PATCH /api/v1/workspaces/{workspace_id}` | Rename or replace source folders |
+| `POST /api/v1/workspaces/{workspace_id}/primary` | Promote a source folder to the primary directory |
+| `GET /api/v1/workspaces/project-config-dirs` | Read a project's local.toml additional dirs without mutating anything |
 | `DELETE /api/v1/workspaces/{workspace_id}` | Unregister (keeps on-disk content) |
 | `GET /api/v1/workspaces/{workspace_id}/trust` | Read the trust state |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | Grant trust |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | Revoke trust |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | Add an additional directory |
 
 #### The workspace object
 
-Every endpoint that returns a workspace uses this wire shape. Registration and rename broadcast the global `event.workspace.created` / `event.workspace.updated` events.
+Every endpoint that returns a workspace uses this wire shape. Registration and update broadcast the global `event.workspace.created` / `event.workspace.updated` events.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `id` | string | Workspace id, a `wd_<slug>_<hash12>` string derived from the root path |
-| `root` | string | Absolute path of the project directory |
-| `name` | string | Display name, 1–100 characters; defaults to the root's base name |
+| `id` | string | Workspace id: `wd_<slug>_<hash12>` for implicit registration (CLI/VS Code entering a directory), `wm_<uuid>` when created via `POST /api/v1/workspaces` |
+| `root` | string | Absolute path of the primary directory |
+| `name` | string | Display name, 1–100 characters; defaults to the primary directory's base name |
+| `kind` | string | Workspace kind: `managed` (explicitly created, `wm_` id; sessions do not merge the project `local.toml`) or `implicit` (registered by directory, `wd_` id; sessions merge the project `local.toml` for legacy compatibility) |
+| `additional_dirs` | string[] | Registry-managed extra source folders as absolute paths (excludes project `local.toml` and ephemeral sources) |
 | `created_at` | string | Registration time, ISO 8601 |
 | `last_opened_at` | string | Last time the workspace was opened or re-registered, ISO 8601 |
 | `session_count` | integer | Number of sessions in the workspace |
@@ -1549,31 +1538,62 @@ On success, `data` is `{ items }` where each item is [the workspace object](#the
 
 #### `POST /api/v1/workspaces`
 
-Registers a workspace and returns it. Registration is idempotent on the root path: registering an already-registered root returns the existing workspace with only `last_opened_at` refreshed (the stored name is kept), broadcasting `event.workspace.updated` instead of `event.workspace.created`.
+Registers a new workspace and returns it. Every call creates a fresh entry (`wm_<uuid>` id) — even when the same path is already another workspace's primary directory, entries are never folded and no warning is issued. Clients retrying a submission (network retry, double click) should send the same `idempotency_key`; the server dedupes on the key and returns the entry created by the first call.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
-| `root` | body | string | **Required.** Absolute path of an existing directory |
-| `name` | body | string | Display name, 1–100 characters. Default the root's base name |
+| `root` | body | string | **Required.** Absolute path of an existing directory, used as the primary directory |
+| `name` | body | string | Display name, 1–100 characters. Default the primary directory's base name |
+| `additional_dirs` | body | string[] | Extra source folders. Each item resolves like `add-dir` (absolute, relative to the primary directory, or `~` expansion), must exist and be a directory, and must not duplicate the primary directory or another item; at most 64 items |
+| `idempotency_key` | body | string | Client-generated idempotency key, 1–200 characters. Retries with the same key return the workspace created by the first call |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: `root` is missing or not an absolute path (`details` lists the field)
-- `40409`: `root` does not exist or is not a directory
+- `40001`: `root` is missing or not an absolute path, or `additional_dirs` contains duplicates or the primary directory itself (`details` lists the field)
+- `40409`: `root` or a path in `additional_dirs` does not exist or is not a directory
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-Renames a workspace — the display name only; the root path never changes.
+Updates a workspace's display name and/or source folders. `additional_dirs` uses whole-list replace semantics — submit the full edited list; omitting the field keeps the current list; the primary directory never changes. At least one of `name` or `additional_dirs` is required.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **Required.** Workspace id |
-| `name` | body | string | **Required.** New display name, 1–100 characters |
+| `name` | body | string | New display name, 1–100 characters |
+| `additional_dirs` | body | string[] | Full replacement list of extra source folders, resolved and validated like `POST /api/v1/workspaces` |
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: validation failure (`details` lists each field)
+- `40001`: validation failure (both fields missing, or duplicate entries, or an entry equal to the primary directory; `details` lists each field)
+- `40409`: a path in `additional_dirs` does not exist or is not a directory
 - `40410`: workspace not found
+
+#### `POST /api/v1/workspaces/{workspace_id}/primary`
+
+Promotes a source folder in the workspace's dir set to the primary directory. The swap is atomic: the path becomes the new `root` and the previous primary moves into `additional_dirs`; the workspace id and session bucket are unchanged, and all sessions are kept. After the swap, additional directories coming from the previous primary's `local.toml` are no longer merged (`local.toml` follows the primary directory).
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **Required.** Workspace id |
+| `path` | body | string | **Required.** Directory to promote, resolved like `add-dir`; must be in the current dir set (`root` ∪ `additional_dirs`) |
+
+On success, `data` is [the workspace object](#the-workspace-object).
+
+- `40001`: `path` is not in the dir set
+- `40409`: `path` does not exist or is not a directory
+- `40410`: workspace not found
+
+#### `GET /api/v1/workspaces/project-config-dirs`
+
+Reads `workspace.additional_dir` from a project's `local.toml`, read-only: entries are resolved to absolute paths, deduplicated, and the `root` itself is dropped. Neither the registry nor `local.toml` is modified; a missing `local.toml` yields an empty array, while malformed TOML or a configured directory that no longer exists causes the request to fail instead of returning an empty array. Clients can use this to merge legacy project config into a create/edit workspace form, taking effect on save.
+
+| Parameter | In | Type | Description |
+| --- | --- | --- | --- |
+| `root` | query | string | **Required.** Absolute path of the project primary directory |
+
+On success, `data` is `{ additional_dirs: string[] }`.
+
+- `40001`: `root` is missing or empty
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
@@ -1621,22 +1641,6 @@ Revokes workspace trust, unloading its project-level MCP config.
 
 On success, `data` is `{ trusted: false }`.
 
-- `40410`: workspace not found
-
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-Adds an additional directory to the workspace, with the same semantics as the CLI `--add-dir` flag and the TUI `/add-dir` command. The path accepts absolute paths, relative paths (resolved against the workspace root), and `~` expansion.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `workspace_id` | path | string | **Required.** Workspace id |
-| `path` | body | string | **Required.** Directory to add |
-| `persist` | body | boolean | Defaults to `true`: appends to `workspace.additional_dir` in `<project root>/.kimi-code/local.toml`. With `false`, the directory only joins the in-memory ephemeral set shared by all sessions of the workspace |
-
-On success, `data` is `{ project_root, config_path, additional_dirs, persisted }`, where `additional_dirs` lists every additional directory (existing ones included) and `persisted` reports whether this call wrote to disk.
-
-- `40001`: validation failure (`details` lists each field), or an engine-side config validation error such as a corrupted project local config
-- `40409`: `path` does not exist or is not a directory
 - `40410`: workspace not found
 
 ### File system
@@ -2342,7 +2346,6 @@ The only endpoint is `ws://<host>:<port>/api/v1/ws`; authentication happens at t
   "payload": {
     "ws_connection_id": "conn_01JZX4...",
     "protocol_version": 2,
-    "max_event_buffer_size": 1000,
     "capabilities": { "event_batching": false, "compression": false }
   }
 }
@@ -2356,42 +2359,30 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | Subscribe to session events; with `cursors` (per-session `{seq, epoch}`) the server replays missed durable events |
-| `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
+| `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
 
 ### Events
 
-Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
+Event frames look like `{ "type", "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)) and `interaction`.
 
-| Family | Main events |
-| --- | --- |
-| Turns | `turn.started`, `turn.ended`, `turn.step.started` / `completed` / `interrupted` / `retrying` |
-| Streaming text | `assistant.delta`, `thinking.delta` (carry `offset` for alignment) |
-| Tool calls | `tool.call.started`, `tool.call.delta`, `tool.progress`, `tool.result` |
-| Interactions | `interaction` |
-| Subagents | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
-| Background | `task.started` / `terminated`, `shell.started` / `output` / `completed` |
-| Misc | `compaction.*`, `skill.activated`, `goal.updated`, `prompt.*`, `error`, `warning` |
+`event.session.work_changed` is how clients follow a session's activity without subscribing to it: its payload is `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`, carrying the same live facts as [the session object](#the-session-object).
 
 Three global lifecycle events keep a cross-workspace overview fresh without polling per workspace. `event.session.archived` fires on both the live and the cold archive path; its envelope `session_id` is the global watermark `__global__` and the real session id rides in the payload: `{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }` (payload keys `workspace_id` / `sessionId`). `event.workspace.created` / `updated` carry the full workspace object (`{ id, root, name, created_at, last_opened_at, session_count }` — an `updated` also fires when a session creation touches the workspace), and `event.workspace.deleted` carries `{ "workspace_id", "root" }`. These events only cover changes made inside this server process; changes from other processes (for example a CLI writing to the same home) surface through the index reconciliation (about a minute), so overview clients should keep a low-frequency fallback poll. There is no session-deleted event.
 
-Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
-
-Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `seq`, `timestamp`, or `payload` wrapper — and it is never journaled or replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `client_hello` / `subscribe` / `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
+Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `timestamp` or `payload` wrapper — and it is never replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
 
 ### Reconnect and recovery
 
-After reconnecting, pass each session's last applied `{seq, epoch}` in `subscribe`'s `cursors`; the server replays the gap. If you fall more than the buffer (1000 events) behind, or the cursor is no longer valid, you get `resync_required` instead. In that case, call `GET /api/v1/sessions/{session_id}/snapshot` for a full snapshot (with `as_of_seq` and `epoch`), then subscribe again with the fresh cursor.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 
-`subscribe_v2`'s `transcript` field sets a per-agent grade: `off` / `turn` / `block` / `delta` (the `"*"` key sets the default grade), with higher grades pushing finer detail. An agent with a non-`off` grade receives two frame types: `transcript.reset` (a baseline snapshot; history pages in over REST) and `transcript.ops` (incremental op batches with a per-agent strictly increasing `seq`). The agent's legacy events are suppressed on that connection and carried by transcript frames instead. After a disconnect, resume with `transcript_since`; when the server's op journal cannot cover the gap (REST catch-up returns `complete: false`), do a full refresh. The REST counterparts are `GET .../transcript` (turn-paged) and `GET .../transcript/ops?since_seq=` (op-batch catch-up).
+`subscribe_v2`'s `transcript` field sets a per-agent grade: `off` / `turn` / `block` / `delta` (the `"*"` key sets the default grade), with higher grades pushing finer detail. An agent with a non-`off` grade receives two frame types: `transcript.reset` (a baseline snapshot; history pages in over REST) and `transcript.ops` (incremental op batches with a per-agent strictly increasing `seq`). After a disconnect, resume with `transcript_since`; when the server's op journal cannot cover the gap (REST catch-up returns `complete: false`), do a full refresh. The REST counterparts are `GET .../transcript` (turn-paged) and `GET .../transcript/ops?since_seq=` (op-batch catch-up).
 
 ## Binary and streaming endpoints
 

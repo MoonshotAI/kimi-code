@@ -696,6 +696,7 @@ describe('SessionManager controller retirement', () => {
           id: 'workspace',
           name: 'workspace',
           root: '/workspace',
+          kind: 'implicit',
           createdAt: 0,
           lastOpenedAt: 0,
         },

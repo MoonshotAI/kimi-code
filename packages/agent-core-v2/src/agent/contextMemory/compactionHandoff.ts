@@ -134,7 +134,6 @@ export function createCompactionSummaryMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
     origin: { kind: 'compaction_summary' },
   };
 }
@@ -143,7 +142,6 @@ export function createCompactionElisionMessage(omittedTokens: number): ContextMe
   return {
     role: 'user',
     content: [{ type: 'text', text: buildCompactionElisionText(omittedTokens) }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_ELISION_VARIANT },
   };
 }
@@ -158,7 +156,6 @@ export function createCompactionContinuationMessage(): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text: buildCompactionContinuationText() }],
-    toolCalls: [],
     origin: { kind: 'injection', variant: COMPACTION_CONTINUATION_VARIANT },
   };
 }
@@ -336,9 +333,9 @@ function truncateTextToTokensFromEnd(text: string, maxTokens: number): string {
   let start = text.length;
   for (let i = text.length - 1; i >= 0; i--) {
     let isAscii = false;
-    const code = text.charCodeAt(i);
+    const code = text.codePointAt(i);
     if (code >= 0xdc00 && code <= 0xdfff && i > 0) {
-      const high = text.charCodeAt(i - 1);
+      const high = text.codePointAt(i - 1);
       if (high >= 0xd800 && high <= 0xdbff) {
         i--;
       }
@@ -365,7 +362,6 @@ function replaceMessageText<T extends MessageLike>(message: T, text: string): T 
       ),
       { type: 'text', text },
     ],
-    toolCalls: [],
   } as unknown as T;
 }
 

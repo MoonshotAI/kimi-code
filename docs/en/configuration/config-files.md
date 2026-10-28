@@ -209,22 +209,20 @@ default_model = "kimi-code/kimi-for-coding-highspeed"
 | --- | --- | --- | --- |
 | `default_model` | `string` | — | The default model for subagents |
 | `models` | `table<string, string>` | — | Subagent model pool; each key is the alias of a configured [`[models]`](#models) entry, each value a selection hint |
-| `force` | `boolean` | `false` | Pin every subagent to `default_model`, taking the choice away from the main agent |
 | `default_effort` | `string` | — | The thinking effort every spawned subagent binds with; outranks the bound model entry's own `default_effort` |
 
 Constraints between the fields:
 
 - `default_model`: required when a `models` table is configured, and must be one of its keys.
 - `models`: values may be Chinese or English; an empty string lists the alias with no hint.
-- `force`: requires `default_model` and cannot be combined with a `models` table: the table exists to offer a choice, and force removes it.
-- `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry (or the forced model). For per-entry efforts, leave it unset and use model variants (see below).
-- `primary` is a reserved alias (see below) and cannot be a pool key.
+- `default_effort` is section-wide: every spawn binds it regardless of the chosen pool entry. For per-entry efforts, leave it unset and use model variants (see below).
+- `primary` is a reserved alias and cannot be a pool key.
 
 Pool aliases reference the current `[models]` table: if a provider is later deleted or logged out, or its refreshed model list no longer contains an alias, session startup fails with a configuration error naming the broken alias. Fix or remove the entry to recover. The `[secondary_model]` section itself is never rewritten automatically.
 
 In the interactive TUI, the [`/secondary-model`](../reference/slash-commands.md) command (alias `/subagent-model`) opens a model selector: the choice is written to `default_model` (when a models table exists and the picked alias is not in it, an entry with an empty description is added), and newly spawned subagents pick up the new default immediately, no session restart needed.
 
-A configured pool (an explicit `models` table or a lone `default_model`) enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
+Subagents only run on models listed in the pool. A lone `default_model` (or a `models` table with a single entry) pins every subagent to that model. A pool with two or more entries enables model selection: the `Agent` / `AgentSwarm` tools gain a `model` parameter, and the tool description lists the pool (the default marked `[default]`) so the main agent can choose per spawn. Pool keys can only reference configured [`[models]`](#models) entries. The `kimi-code/*` aliases below are provisioned by `/login`:
 
 ```toml
 [secondary_model]
@@ -242,21 +240,12 @@ A spawn resolves the subagent's model in this order:
 
 Rules for the `model` parameter:
 
-- It accepts any pool alias, or `"primary"`, the model the caller itself is running; always valid even when not in the pool.
-- When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model.
-- Binding a pool alias does not inherit the caller's thinking effort. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
-- `"primary"` inherits both the model and the effort level from the caller.
-- A value that is neither a pool alias nor `"primary"` fails the spawn with an error listing the available choices.
+- It accepts pool aliases only. The main agent's own model is not an implicit choice: to let it run hard subtasks on the main model, list that model's alias in the pool explicitly.
+- When neither `default_model` nor `models` is configured, the parameter is not advertised and subagents inherit the caller's model. With a single-entry pool it is not advertised either.
+- Binding a pool alias does not inherit the caller's thinking effort, even when the alias is the caller's own model. The section's `default_effort` wins when set. Otherwise, `[thinking].enabled = false` keeps Thinking off; when Thinking is enabled, resolution continues with the bound model entry's `default_effort`, the global `[thinking].effort`, then the middle of the bound model's `support_efforts`.
+- A value that is not a pool alias fails the spawn with an error listing the available choices.
 
-To take the choice away from the main agent and run every subagent on one fixed model, add `force = true`:
-
-```toml
-[secondary_model]
-default_model = "kimi-code/kimi-for-coding-highspeed"
-force = true
-```
-
-With `force` set, the `model` parameter is not advertised (just like when nothing is configured) and every spawn binds `default_model`; an explicit `model` argument, `"primary"` included, is rejected with an error.
+The former `force` key has been removed: a lone `default_model` already pins every subagent to one model. A configuration that still sets `force` loads with a warning and the key is ignored.
 
 ### Different thinking efforts per pool entry
 
@@ -295,8 +284,7 @@ Note the asymmetry between the main agent and pool-bound subagents: for the main
 ::: warning Note
 Configuration errors fail loudly instead of falling back silently. Session creation, resume, and fork all fail at startup when:
 
-- `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured [`[models]`](#models) entry;
-- `force` is set without `default_model`, or combined with a `models` table.
+- `default_model` is missing, is not a pool key, or a pool key does not resolve to a configured [`[models]`](#models) entry.
 :::
 
 ## `thinking`
@@ -620,7 +608,7 @@ Changes apply on the next start, or immediately with `/reload-tui` (which reload
 
 In addition to the user-level files under `~/.kimi-code`, Kimi Code reads a project-local configuration file at `<project-root>/.kimi-code/local.toml`. It holds settings that are specific to one project checkout and typically should not be shared with teammates.
 
-The file is created automatically when you add an extra workspace directory with [`/add-dir`](../reference/slash-commands.md) and choose to remember it for the project. You rarely need to edit it by hand.
+Earlier versions of [`/add-dir`](../reference/slash-commands.md) wrote remembered directories to this file; current versions write them to the workspace registry in `~/.kimi-code/projects.json` instead, and `local.toml` is now a read-only legacy field that nothing writes to. Sessions of implicit workspaces (entered by directory in the terminal) still merge its `additional_dir` into the additional directories; sessions of explicitly created (managed) workspaces no longer read it. To move legacy entries into the registry, use the import action in the client's create/edit workspace dialog (backed by [`GET /api/v1/workspaces/project-config-dirs`](../reference/server-api.md#get-apiv1workspacesproject-config-dirs)); imported entries are registry-managed and removals take effect immediately.
 
 ### `[workspace]`
 
@@ -628,7 +616,7 @@ The `[workspace]` table groups project-level workspace settings:
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `additional_dir` | `array<string>` | No | Additional workspace directories (absolute paths); written automatically when you confirm "remember this directory" in `/add-dir`, and available in every session of this project |
+| `additional_dir` | `array<string>` | No | Additional workspace directories (absolute paths, legacy compatibility field); written by older versions of `/add-dir` and never written by current versions; still merged for implicit-workspace sessions and ignored by managed workspaces |
 
 ```toml
 [workspace]

@@ -3,12 +3,17 @@ import { z } from 'zod';
 import type { PromptOrigin } from './origin';
 import type { HistoryMessage } from './turn';
 
+const contentPartBaseSchema = {
+  contentType: z.string().optional(),
+  meta: z.record(z.string(), z.unknown()).optional(),
+};
 const textPartSchema = z.object({
+  ...contentPartBaseSchema,
   type: z.literal('text'),
   text: z.string(),
-  meta: z.record(z.string(), z.unknown()).optional(),
 });
 const thinkPartSchema = z.object({
+  ...contentPartBaseSchema,
   type: z.literal('think'),
   think: z.string(),
   encrypted: z.string().optional(),
@@ -18,7 +23,11 @@ const thinkPartSchema = z.object({
 });
 const imageUrlPartSchema = z.object({
   type: z.literal('image_url'),
-  imageUrl: z.object({ url: z.string(), id: z.string().optional(), name: z.string().optional() }),
+  imageUrl: z.object({
+    url: z.string(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+  }),
 });
 const audioUrlPartSchema = z.object({
   type: z.literal('audio_url'),
@@ -26,7 +35,11 @@ const audioUrlPartSchema = z.object({
 });
 const videoUrlPartSchema = z.object({
   type: z.literal('video_url'),
-  videoUrl: z.object({ url: z.string(), id: z.string().optional(), name: z.string().optional() }),
+  videoUrl: z.object({
+    url: z.string(),
+    id: z.string().optional(),
+    name: z.string().optional(),
+  }),
 });
 
 export const contentPartSchema = z.discriminatedUnion('type', [

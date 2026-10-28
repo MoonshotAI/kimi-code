@@ -1,4 +1,4 @@
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 
 export async function runWithCredentialRecovery<T>(
   credentialProvider: LlmCredentialProvider | undefined,

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDownloadProgress, runUpdateDownloadCommand } from '#/cli/sub/update-download';
+import type { UpdateChannel } from '#/cli/update/types';
 
 const mocks = vi.hoisted(() => ({
   detectNativeInstall: vi.fn(() => true),
@@ -129,15 +130,26 @@ describe('runUpdateDownloadCommand', () => {
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('native build'));
   });
 
-  it('passes the selected dev channel to the native stage', async () => {
-    await expect(runUpdateDownloadCommand('0.0.0-dev.42', true, 'switch-channel', 'dev')).resolves.toBe(0);
+  it('passes the selected canary channel to the native stage', async () => {
+    await expect(runUpdateDownloadCommand('2.3.3-canary.20261028012345-0123456', true, 'switch-channel', 'canary')).resolves.toBe(0);
 
     expect(mocks.stageNativeUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      version: '0.0.0-dev.42',
-      channel: 'dev',
+      version: '2.3.3-canary.20261028012345-0123456',
+      channel: 'canary',
       manual: true,
       intent: 'switch-channel',
     }));
+  });
+
+  it('rejects the retired dev channel before staging', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+
+    await expect(
+      runUpdateDownloadCommand('2.3.3-canary.20261028012345-0123456', true, 'switch-channel', 'dev' as UpdateChannel),
+    ).resolves.toBe(1);
+
+    expect(mocks.stageNativeUpdate).not.toHaveBeenCalled();
+    expect(stderrSpy).toHaveBeenCalledWith('error: invalid update channel "dev"\n');
   });
 
   it('does not adopt a same-version stage from a different channel', async () => {
@@ -145,18 +157,18 @@ describe('runUpdateDownloadCommand', () => {
     mocks.tryAcquireUpdateInstallLock
       .mockResolvedValueOnce(null)
       .mockResolvedValue({ filePath: '/tmp/install.lock', release });
-    mocks.readUpdateInstallLockVersion.mockResolvedValue('0.0.0-dev.42');
+    mocks.readUpdateInstallLockVersion.mockResolvedValue('2.3.3-canary.20261028012345-0123456');
     mocks.readStagedNativeUpdate.mockResolvedValue({
-      version: '0.0.0-dev.42',
+      version: '2.3.3-canary.20261028012345-0123456',
       channel: 'stable',
       sha256: STAGED_HASH,
     });
 
-    await expect(runUpdateDownloadCommand('0.0.0-dev.42', false, 'upgrade', 'dev')).resolves.toBe(0);
+    await expect(runUpdateDownloadCommand('2.3.3-canary.20261028012345-0123456', false, 'upgrade', 'canary')).resolves.toBe(0);
 
     expect(mocks.stageNativeUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      version: '0.0.0-dev.42',
-      channel: 'dev',
+      version: '2.3.3-canary.20261028012345-0123456',
+      channel: 'canary',
     }));
     expect(mocks.promoteStagedUpdateToManual).not.toHaveBeenCalled();
   });

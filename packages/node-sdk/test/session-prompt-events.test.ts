@@ -439,16 +439,135 @@ describe('Session.prompt events', () => {
     const homeDir = await makeTempDir();
     const workDir = await makeTempDir();
     const harness = createKimiHarness({ identity: TEST_IDENTITY, homeDir });
+    const childPrompt = 'Find why the parser never terminates.';
+    const finding = 'Found the loop at src/parser.ts:42; not verified yet.';
+    const draft = 'Drafting the report: the loop never advances.';
+    let parentRequests = 0;
+    let childRequests = 0;
+    let signalChildStreaming!: () => void;
+    const childStreaming = new Promise<void>((resolve) => {
+      signalChildStreaming = resolve;
+    });
+    const toolResponse = (id: string, name: string, args: Record<string, unknown>, text?: string) =>
+      [
+        sseChunk({
+          role: 'assistant',
+          ...(text === undefined ? {} : { content: text }),
+          tool_calls: [
+            {
+              index: 0,
+              id,
+              type: 'function',
+              function: { name, arguments: JSON.stringify(args) },
+            },
+          ],
+        }),
+        sseChunk({}, 'tool_calls'),
+        'data: [DONE]',
+      ]
+        .map((line) => `${line}\n\n`)
+        .join('');
 
     try {
       await configureFakeProvider(harness);
+      await harness.setConfig({ experimental: { subagent_fork: true } });
+      fetchStub!.mockImplementation(async (input: Parameters<typeof fetch>[0], init: Parameters<typeof fetch>[1]) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url !== MODEL_URL) throw new Error(`Unexpected fetch: ${url}`);
+        const body = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as {
+          readonly messages?: ReadonlyArray<{ readonly role: string; readonly content: unknown }>;
+        };
+        const messages = body.messages ?? [];
+        const isChild = messages.some(
+          (message) => message.role === 'user' && JSON.stringify(message.content).includes(childPrompt),
+        );
+        if (isChild) {
+          childRequests += 1;
+          if (childRequests === 1) {
+            return new Response(toolResponse('child_tasks', 'TaskList', {}, finding), {
+              status: 200,
+              headers: { 'Content-Type': 'text/event-stream' },
+            });
+          }
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(`${sseChunk({ role: 'assistant', content: draft })}\n\n`),
+              );
+              signalChildStreaming();
+              const abort = () => {
+                controller.error(init?.signal?.reason);
+              };
+              if (init?.signal?.aborted === true) abort();
+              else init?.signal?.addEventListener('abort', abort, { once: true });
+            },
+          });
+          return new Response(stream, {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        }
+
+        parentRequests += 1;
+        if (parentRequests === 1) {
+          return new Response(
+            toolResponse('call_agent', 'Agent', {
+              description: 'trace parser loop',
+              prompt: childPrompt,
+              run_in_background: true,
+              fork: true,
+            }),
+            { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+          );
+        }
+        if (parentRequests === 2) {
+          await childStreaming;
+          const taskId = /task_id: (agent-[0-9a-z]+)/.exec(JSON.stringify(messages))?.[1];
+          if (taskId === undefined) throw new Error('Expected a background task id');
+          return new Response(toolResponse('call_stop', 'TaskStop', { task_id: taskId }), {
+            status: 200,
+            headers: { 'Content-Type': 'text/event-stream' },
+          });
+        }
+        return new Response(sseBody('Stopped the forked subagent.'), {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        });
+      });
+
       const session = await harness.createSession({ id: 'ses_subagent_replay', workDir });
+      await session.setPermission('yolo');
       const events: Event[] = [];
       const unsubscribe = session.onEvent((event) => events.push(event));
-      await session.init();
+      await session.prompt('Stop the forked subagent after it writes a draft.');
+      await vi.waitFor(
+        () => {
+          expect(parentRequests).toBe(3);
+          expect(events).toContainEqual(
+            expect.objectContaining({ type: 'turn.ended', agentId: 'main', reason: 'completed' }),
+          );
+        },
+        { timeout: 10_000, interval: 10 },
+      );
       unsubscribe();
+
       const spawned = events.find((event) => event.type === 'subagent.spawned');
       if (spawned?.type !== 'subagent.spawned') throw new Error('Expected persisted subagent');
+      expect(childRequests).toBe(2);
+      const stopResults = events.filter(
+        (event) => event.type === 'tool.result' && event.toolCallId === 'call_stop',
+      );
+      expect(stopResults).toHaveLength(1);
+      expect(JSON.stringify(stopResults[0])).toContain('status: killed');
+      expect(JSON.stringify(stopResults[0])).toContain('[partial output]');
+      expect(JSON.stringify(stopResults[0])).toContain(finding);
+      expect(JSON.stringify(stopResults[0]).split(draft)).toHaveLength(2);
+      const terminalEvents = events.filter(
+        (event) => event.type === 'subagent.cancelled' || event.type === 'subagent.failed',
+      );
+      expect(terminalEvents).toEqual([
+        expect.objectContaining({ type: 'subagent.cancelled', subagentId: spawned.subagentId }),
+      ]);
       await session.close();
 
       const defaultResume = await harness.resumeSession({ id: session.id });
@@ -459,12 +578,18 @@ describe('Session.prompt events', () => {
         id: session.id,
         includeSubagents: true,
       });
-      expect(fullResume.getResumeState()?.agents[spawned.subagentId]?.replay).toContainEqual(
+      const agents = fullResume.getResumeState()?.agents ?? {};
+      const childReplay = agents[spawned.subagentId]?.replay ?? [];
+      expect(childReplay).toContainEqual(
         expect.objectContaining({
           type: 'message',
           message: expect.objectContaining({ role: 'assistant' }),
         }),
       );
+      expect(JSON.stringify(childReplay).split(finding)).toHaveLength(2);
+      expect(JSON.stringify(childReplay).split(draft)).toHaveLength(2);
+      expect(JSON.stringify(agents['main']?.replay)).toContain('[partial output]');
+      expect(JSON.stringify(agents['main']?.replay).split(draft)).toHaveLength(2);
     } finally {
       await harness.close();
     }

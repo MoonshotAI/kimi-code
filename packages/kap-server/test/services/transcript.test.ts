@@ -14,6 +14,7 @@ import {
   IAgentTaskService,
   IEventBus,
   IFlagService,
+  IBlobStore,
   ISessionIndex,
   ISessionMetadata,
   ISessionLifecycleService,
@@ -195,7 +196,17 @@ describe('AgentTranscriptProjector', () => {
         display: { kind: 'command', command: 'ls' },
       }),
     );
-    feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'call_1', output: 'file.txt' }));
+    feed(
+      ev({
+        type: 'tool.result',
+        turnId: 1,
+        toolCallId: 'call_1',
+        output: [
+          { type: 'text', text: 'file.txt' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+      }),
+    );
     feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1, stepId: 'u1' }));
     feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
 
@@ -226,7 +237,13 @@ describe('AgentTranscriptProjector', () => {
       name: 'Bash',
       state: 'done',
       input: { command: 'ls' },
-      output: 'file.txt',
+      output: [
+        { type: 'text', text: 'file.txt' },
+        {
+          type: 'image_url',
+          imageUrl: expect.objectContaining({ url: 'data:image/png;base64,AAAA' }),
+        },
+      ],
       display: { kind: 'command', command: 'ls' },
     });
   });
@@ -2466,10 +2483,7 @@ describe('AgentTranscriptProjector', () => {
           { type: 'text', text: 'look at this' },
           {
             type: 'image_url',
-            imageUrl: {
-              url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png',
-              name: 'architecture.png',
-            },
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png', name: 'architecture.png' },
           },
         ],
         steeredAt: '2026-01-01T00:00:02.000Z',
@@ -2484,10 +2498,7 @@ describe('AgentTranscriptProjector', () => {
           { type: 'text', text: 'look at this' },
           {
             type: 'image_url',
-            imageUrl: {
-              url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png',
-              name: 'architecture.png',
-            },
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png', name: 'architecture.png' },
           },
         ],
         promptIds: ['p2', 'p3'],
@@ -2812,12 +2823,17 @@ describe('AgentTranscriptProjector', () => {
     try {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
       await mkdir(wireDir, { recursive: true });
+      const blobHash = 'a'.repeat(64);
+      const blobBytes = Buffer.from('cold-image-bytes');
       const records = [
         {
           type: 'context.append_message',
           message: {
             role: 'user',
-            content: [{ type: 'text', text: 'hi' }],
+            content: [
+              { type: 'text', text: 'hi' },
+              { type: 'image_url', imageUrl: { url: `blobref:image/png;${blobHash}`, name: 'cold.png' } },
+            ],
             toolCalls: [],
             origin: { kind: 'user' },
           },
@@ -2887,6 +2903,15 @@ describe('AgentTranscriptProjector', () => {
         core: {
           accessor: {
             get: (token: unknown) => {
+              if (token === IBlobStore) {
+                return {
+                  get: async (scope: string, key: string) => {
+                    expect(scope).toBe('sessions/ws/s1/agents/main/blobs');
+                    expect(key).toBe(blobHash);
+                    return blobBytes;
+                  },
+                };
+              }
               if (token === ISessionManager) return { get: () => undefined, list: () => [] };
               if (token === IWorkspaceInstanceManager) {
               return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
@@ -2899,6 +2924,15 @@ describe('AgentTranscriptProjector', () => {
       });
       const snapshot = await service.readColdSnapshot('s1', 'main');
       expect(snapshot).toBeDefined();
+      expect(snapshot!.attachments).toEqual([
+        {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'cold.png',
+          source: { kind: 'url', url: `data:image/png;base64,${blobBytes.toString('base64')}` },
+        },
+      ]);
+      expect(JSON.stringify(snapshot)).not.toContain('blobref:');
 
       expect(snapshot!.tasks).toEqual([
         {
@@ -4577,7 +4611,7 @@ describe('bindSessionTranscript', () => {
       const store = service.forSessionLive('s1')!;
       await service.whenReady('s1');
       expect(store.getAgent('main')!.getItems().length).toBeGreaterThan(0);
-      main.contextMessages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }];
+      main.contextMessages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' } }];
       main.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'undone prompt' }));
       const read = vi.spyOn(service, 'readColdSnapshot');
       for (let i = 0; i < failures; i++) read.mockRejectedValueOnce(new Error('temporary read failure'));

@@ -1,38 +1,36 @@
 import { LifecycleScope } from '#/app/scopes';
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../contract/capability';
-import type { ModelThinkingMetadata } from '#human/llm/thinking';
-import type { ProviderMediaContribution } from '#human/llm/media/upload';
-import type { LlmModel } from '#human/llm/model';
-import type { ProtocolBase } from '#human/llm/protocol/base';
-import type { ProviderConnection } from '#human/llm/protocol/connection';
-import type { ProtocolTraitFor } from '#human/llm/provider/definition';
-import type { LlmErrorClassifier } from '#human/llm/requester/requester';
-import { anthropicBase, anthropicBetaBase } from '#human/llm/requester/bases/anthropic/requester';
 import {
-  createGoogleGenAIBase,
-  googleGenAIBase,
-} from '#human/llm/requester/bases/google-genai/requester';
-import type { OpenAITrait } from '#human/llm/requester/bases/openai/trait';
-import { openAIBase } from '#human/llm/requester/bases/openai/requester';
-import { openAIResponsesBase } from '#human/llm/requester/bases/openai-responses/requester';
-import { KimiFiles, kimiFilesBaseUrl } from '#human/llm-kimi/files';
+  anthropicRequester,
+  googleGenAIRequester,
+  googleVertexRequester,
+  openAIRequester,
+  openAIResponsesRequester,
+} from '#human/llm/builtin/provider/index';
+import type { LlmRequester as CoreLlmRequester } from '#human/llm/requester';
+import type { ProviderMediaContribution } from '#human/media/upload';
+import type { LlmModel } from '#human/llm-requester/model';
+import type { DefaultHeadersResolver, ProtocolEndpoint } from '#human/llm-requester/connection';
+import {
+  anthropicEndpoint,
+  geminiEndpoint,
+  openAIEndpoint,
+  vertexEndpoint,
+} from '#human/llm-requester/endpoints';
+import type { LlmErrorClassifier, LlmRequestConfig } from '#human/llm-requester/requester';
+import { createOpenAIRunRequester } from '#human/llm-requester/openai';
+import { createRunRequester } from '#human/llm-requester/run';
+import { KimiFiles, kimiFilesBaseUrl } from '#human/media/kimi/files';
+import type { ModelThinkingMetadata } from '#human/llm-requester/thinking';
 
+import { UNKNOWN_CAPABILITY, toLlmCapability, type ModelCapability } from '../contract/capability';
 import type { Model } from '../model/catalog';
 import type { ResolvedLlmModel } from '../model/model-requester-impl';
-import {
-  anthropicConnection,
-  geminiConnection,
-  getProviderDefinition,
-  openAIConnection,
-  vertexConnection,
-} from '../provider/provider-definition';
+import { getProviderDefinition } from '../provider/provider-definition';
 
 import { IProtocolAdapterRegistry, type Protocol } from './protocol';
 import { getProtocolBase, listProtocolBases, type ProtocolBaseId } from './protocol-base';
-
-const vertexGenAIBase = createGoogleGenAIBase({ vertexai: true });
 
 const kimiMedia: ProviderMediaContribution = {
   uploadVideo: (video, { model, signal }) =>
@@ -50,17 +48,17 @@ const kimiMedia: ProviderMediaContribution = {
 };
 
 interface AdapterRoute {
-  readonly base: ProtocolBase<ProtocolTraitFor<Protocol>>;
-  readonly trait?: ProtocolTraitFor<Protocol>;
-  readonly connection?: ProviderConnection;
+  readonly requester: CoreLlmRequester<'protocol'>;
+  readonly options?: (config: LlmRequestConfig) => unknown;
+  readonly endpoint?: ProtocolEndpoint;
+  readonly defaultHeaders?: DefaultHeadersResolver;
   readonly classifyError?: LlmErrorClassifier;
   readonly providerId: string;
   readonly media?: ProviderMediaContribution;
 }
 
-function openAIReasoningTraitFor(model: Model): OpenAITrait | undefined {
-  const reasoningKey = model.providerOptions?.reasoningKey ?? model.reasoningKey;
-  return reasoningKey === undefined ? undefined : { reasoningKey };
+function openAIReasoningKeyFor(model: Model): string | undefined {
+  return model.providerOptions?.reasoningKey ?? model.reasoningKey;
 }
 
 function routeFor(model: Model): AdapterRoute {
@@ -69,68 +67,71 @@ function routeFor(model: Model): AdapterRoute {
       ? undefined
       : getProviderDefinition(model.providerType, model.protocol);
   const routeMedia = definition?.modelSource === 'oauth-catalog' ? kimiMedia : undefined;
-  const custom =
-    definition !== undefined &&
-    (definition.trait !== undefined ||
-      definition.connection !== undefined ||
-      definition.classifyError !== undefined)
-      ? definition
-      : undefined;
   switch (model.protocol) {
     case 'openai':
-      return custom !== undefined
-        ? {
-            base: openAIBase,
-            trait: custom.trait,
-            connection: custom.connection,
-            classifyError: custom.classifyError,
-            providerId: 'openai',
-            media: routeMedia,
-          }
-        : {
-            base: openAIBase,
-            trait: openAIReasoningTraitFor(model),
-            connection: openAIConnection,
-            providerId: 'openai',
-          };
+      return {
+        requester: definition?.requester ?? openAIRequester,
+        options: (config) => ({
+          extras: config.extraParams?.openai,
+          reasoningKey:
+            definition?.requester === undefined ? openAIReasoningKeyFor(model) : undefined,
+          toolMessageConversion:
+            definition?.requester === undefined
+              ? config.toolMessageConversion
+              : (config.toolMessageConversion ?? 'keep_parts'),
+        }),
+        endpoint: definition?.endpoint ?? openAIEndpoint,
+        defaultHeaders: definition?.defaultHeaders,
+        classifyError: definition?.classifyError,
+        providerId: 'openai',
+        media: routeMedia,
+      };
     case 'openai_responses':
-      return custom !== undefined
-        ? {
-            base: openAIResponsesBase,
-            trait: custom.trait,
-            connection: custom.connection,
-            classifyError: custom.classifyError,
-            providerId: 'openai-responses',
-            media: routeMedia,
-          }
-        : {
-            base: openAIResponsesBase,
-            connection: openAIConnection,
-            providerId: 'openai-responses',
-          };
+      return {
+        requester: definition?.requester ?? openAIResponsesRequester,
+        options: (config) => ({
+          extras: config.extraParams?.responses,
+          toolMessageConversion: config.toolMessageConversion,
+        }),
+        endpoint: definition?.endpoint ?? openAIEndpoint,
+        defaultHeaders: definition?.defaultHeaders,
+        classifyError: definition?.classifyError,
+        providerId: 'openai-responses',
+        media: routeMedia,
+      };
     case 'anthropic': {
-      const base = model.providerOptions?.betaApi === true ? anthropicBetaBase : anthropicBase;
-      return custom !== undefined
-        ? {
-            base,
-            trait: custom.trait,
-            connection: custom.connection,
-            classifyError: custom.classifyError,
-            providerId: 'anthropic',
-            media: routeMedia,
-          }
-        : { base, connection: anthropicConnection, providerId: 'anthropic' };
+      const betaApi = model.providerOptions?.betaApi === true;
+      return {
+        requester: definition?.requester ?? anthropicRequester,
+        options: (config) => ({
+          betaApi: betaApi || config.model.betaApi === true,
+          extras: config.extraParams?.anthropic,
+        }),
+        endpoint: definition?.endpoint ?? anthropicEndpoint,
+        defaultHeaders: definition?.defaultHeaders,
+        classifyError: definition?.classifyError,
+        providerId: 'anthropic',
+        media: routeMedia,
+      };
     }
     case 'google-genai':
       return model.providerOptions?.vertexai === true
         ? {
-            base: vertexGenAIBase,
-            connection: vertexConnection,
+            requester: googleVertexRequester,
+            options: (config) => ({
+              vertexai: config.model.vertexai === true ? true : undefined,
+              extras: config.extraParams?.googleGenai,
+            }),
+            endpoint: vertexEndpoint,
             providerId: 'google_genai',
           }
         : {
-            base: googleGenAIBase,
-            connection: geminiConnection,
+            requester: googleGenAIRequester,
+            options: (config) => ({
+              vertexai: config.model.vertexai === true ? true : undefined,
+              extras: config.extraParams?.googleGenai,
+            }),
+            endpoint: geminiEndpoint,
             providerId: 'google_genai',
           };
   }
@@ -147,7 +148,11 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     const definition =
       providerType === undefined ? undefined : getProviderDefinition(providerType, protocol);
     const baseId: ProtocolBaseId = definition?.baseProtocol ?? protocol;
-    return { baseId, trait: definition?.trait };
+    return {
+      baseId,
+      thinkingDriven: definition?.thinkingDriven,
+      strictThinkingValidation: definition?.strictThinkingValidation,
+    };
   }
 
   resolveProviderBaseId(protocol: Protocol, providerType?: string): ProtocolBaseId {
@@ -164,7 +169,7 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
     if (hooked !== undefined) {
       return toV2Capability(hooked);
     }
-    const baseCapability = getProtocolBase(identity.baseId)?.base.capability?.(modelName);
+    const baseCapability = getProtocolBase(identity.baseId)?.capability?.(modelName);
     if (baseCapability !== undefined) {
       return toV2Capability(baseCapability);
     }
@@ -173,11 +178,16 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
 
   resolve(model: Model): ResolvedLlmModel {
     const route = routeFor(model);
-    const requester = route.base.createRequester({
-      connection: route.connection,
-      trait: route.trait,
+    const requesterOptions = {
+      endpoint: route.endpoint,
+      defaultHeaders: route.defaultHeaders,
       classifyError: route.classifyError,
-    });
+      options: route.options,
+    };
+    const requester =
+      model.protocol === 'openai'
+        ? createOpenAIRunRequester(route.requester, requesterOptions)
+        : createRunRequester(route.requester, requesterOptions);
     const llmModel: LlmModel & ModelThinkingMetadata = {
       provider: route.providerId,
       model: model.name,
@@ -196,15 +206,15 @@ export class ProtocolAdapterRegistry implements IProtocolAdapterRegistry {
   }
 }
 
-function toV2Capability(capability: import('#human/llm/capability').ModelCapability): ModelCapability {
+function toV2Capability(capability: import('#human/llm/request').ModelCapability): ModelCapability {
   return {
-    image_in: capability.image_in,
-    video_in: capability.video_in,
-    audio_in: capability.audio_in,
-    thinking: capability.thinking,
-    tool_use: capability.tool_use,
+    image_in: capability.image_in === true,
+    video_in: capability.video_in === true,
+    audio_in: capability.audio_in === true,
+    thinking: capability.thinking === true,
+    tool_use: capability.tool_use ?? true,
     max_context_tokens: 0,
-    dynamically_loaded_tools: capability.dynamically_loaded_tools,
+    dynamically_loaded_tools: capability.dynamically_loaded_tools === true,
   };
 }
 

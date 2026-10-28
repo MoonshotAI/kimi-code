@@ -14,7 +14,7 @@
 
 import { IAgentProfileService } from '@moonshot-ai/agent-core-v2/agent/profile/profile';
 import { ISessionManager } from '@moonshot-ai/agent-core-v2/app/sessionManager/sessionManager';
-import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm/usage';
+import type { TokenUsage } from '@moonshot-ai/agent-core-v2/human/llm-requester/usage';
 import {
   IModelCatalog,
   type ModelCatalogItem,

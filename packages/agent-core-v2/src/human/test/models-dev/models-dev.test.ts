@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import { modelsDevProviderModels, resolveModelsDevImport } from '#/models-dev/models-dev';
-import type { Provider } from '#/llm/provider/definition';
+import type { ProtocolName } from '#/llm-requester/requester';
+import type { CatalogProviderHandle as Provider } from '#/provider-catalog/catalog';
 import {
   createMemoryProviderCatalogStore,
   createProviderCatalog,
   type CatalogModelDefinition,
   type ProviderCatalogRefreshFailed,
-} from '#/llm/provider-catalog';
+} from '#/provider-catalog/catalog';
 
 function byId(
   models: readonly CatalogModelDefinition[],
@@ -298,18 +299,11 @@ describe('providerCatalog', () => {
     expect(catalog.models('openai')).toEqual([]);
 
     let addPulls = 0;
-    const stubProvider = (id: string, protocols: Provider['protocols']): Provider => ({
+    const stubProvider = (id: string, _protocols: readonly ProtocolName[]): Provider => ({
       id,
-      protocols,
       listModels: async () => {
         addPulls += 1;
         return [];
-      },
-      resolveModel: () => {
-        throw new Error('unused');
-      },
-      createRequester: () => {
-        throw new Error('unused');
       },
     });
 
@@ -401,7 +395,6 @@ describe('providerCatalog', () => {
     let googlePulls = 0;
     const provider: Provider = {
       id: 'openai',
-      protocols: ['openai'],
       listModels: async () => {
         openaiPulls += 1;
         return [
@@ -432,16 +425,9 @@ describe('providerCatalog', () => {
           },
         ];
       },
-      resolveModel: () => {
-        throw new Error('unused');
-      },
-      createRequester: () => {
-        throw new Error('unused');
-      },
     };
     const google: Provider = {
       id: 'google',
-      protocols: ['google-genai'],
       listModels: async () => {
         googlePulls += 1;
         return [
@@ -458,12 +444,6 @@ describe('providerCatalog', () => {
             maxContextSize: 1000000,
           },
         ];
-      },
-      resolveModel: () => {
-        throw new Error('unused');
-      },
-      createRequester: () => {
-        throw new Error('unused');
       },
     };
     catalog.refresh(provider);

@@ -4,7 +4,7 @@ import type {
   EnvironmentDisclosureSnapshot,
 } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ThinkingEffort } from '#human/llm/thinking';
+import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type { ModelRequestParams } from '#/llm-adapter/model/model-requester';
 
 import { createDecorator } from "#/_base/di/instantiation";

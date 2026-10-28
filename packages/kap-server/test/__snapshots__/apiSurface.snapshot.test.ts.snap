@@ -242,10 +242,6 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "GET",
-      "/api/v1/sessions/{session_id}/snapshot",
-    ],
-    [
-      "GET",
       "/api/v1/sessions/{session_id}/status",
     ],
     [
@@ -291,6 +287,10 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     [
       "GET",
       "/api/v1/workspaces/{workspace_id}/trust",
+    ],
+    [
+      "GET",
+      "/api/v1/workspaces/project-config-dirs",
     ],
     [
       "GET",
@@ -514,7 +514,7 @@ exports[`API surface snapshot > matches the documented v2 route table and meta e
     ],
     [
       "POST",
-      "/api/v1/workspaces/{workspace_id}/add-dir",
+      "/api/v1/workspaces/{workspace_id}/primary",
     ],
     [
       "POST",

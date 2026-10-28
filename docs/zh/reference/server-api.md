@@ -115,9 +115,9 @@ ws.onmessage = (e) => console.log(e.data);
 ws.onopen = () =>
   ws.send(
     JSON.stringify({
-      type: 'subscribe',
+      type: 'subscribe_v2',
       id: '1',
-      payload: { session_ids: [process.argv[2]] },
+      payload: { session_id: process.argv[2], transcript: { '*': 'block' } },
     }),
   );
 ```
@@ -131,7 +131,7 @@ curl -s -X POST http://127.0.0.1:58627/api/v1/sessions/<session_id>/prompts \
   -d '{"content": [{"type": "text", "text": "用一句话介绍这个仓库"}]}'
 ```
 
-订阅端会依次看到 `turn.started`（轮次开始）→ `assistant.delta`（流式文本增量）→ 发生工具调用时的 `tool.call.started` / `tool.result` → `turn.ended`（轮次结束）。
+订阅端先收到 `transcript.reset`（转录基线），随后随轮次推进收到 `transcript.ops` 批次，工具调用也包含在内。`event.session.work_changed` 会在轮次开始时报告 `busy: true`，结束时报告 `busy: false` 并带上 `last_turn_reason`。
 
 5. 随时可以用 REST 回读历史消息：
 
@@ -373,7 +373,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 #### `POST /api/v1/config`
 
-合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。
+合并式更新全局配置：请求体中的每个顶层域被深合并进对应域，未出现在请求体中的域保持不动。把 `yolo` 设为 `true` 是 `default_permission_mode: "yolo"` 的简写；被拒绝的补丁（值非法或持久化失败）返回 `40001` 与底层错误信息。`secondary_model` 域还接受 `null`：删除整个 `[secondary_model]` 节，使之后派生的 subagent 继承调用方当前的模型与思考强度。
 
 每一次配置变更——经本端点成功更新、在进程外编辑 `config.toml`，或服务端内部写入（如 OAuth 登录刷新）——都会广播全局 `event.config.changed` 事件。短时间窗内的多次变更会合并为一个事件，其 `changedFields` 携带受影响的域名（camelCase 配置域，例如 `defaultModel`），`config` 携带当前完整的配置投影（与 `GET /api/v1/config` 响应同形状）。
 
@@ -398,7 +398,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `loop_control` | body | object | Agent 循环控制参数 |
 | `background` | body | object | 后台任务运行参数 |
 | `subagent` | body | object | subagent 配置 |
-| `secondary_model` | body | object | subagent 的次级模型池 |
+| `secondary_model` | body | object 或 null | subagent 的次级模型池；`null` 删除该配置节并恢复继承调用方模型 |
 | `experimental` | body | object | 实验开关 id → 是否启用 |
 | `telemetry` | body | boolean | 是否启用匿名遥测 |
 | `auto_session_title` | body | boolean | 是否允许客户端自动生成会话标题 |
@@ -635,7 +635,6 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `GET /api/v1/sessions/{session_id}/runtime` | 读取 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/runtime` | 切换 main agent 的运行时绑定 |
 | `POST /api/v1/sessions/{session_id}/export` | 导出会话与诊断信息（zip 流，不走信封） |
-| `GET /api/v1/sessions/{session_id}/snapshot` | 客户端重建用全量快照（含 `as_of_seq` 与 `epoch`） |
 | `GET /api/v1/sessions/{session_id}/media/{file_id}` | 按文件 id 下载提示词媒体（二进制） |
 
 #### session 对象
@@ -656,11 +655,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `last_turn_reason` | string | main agent 最近一次轮次的结果：`completed` / `cancelled` / `failed` |
 | `last_prompt` | string | 最近一条用户提示词文本（如有） |
 | `metadata` | object | 自定义元数据；始终携带 `cwd`（会话的工作目录） |
-| `agent_config` | object | 投影为 `{ model }`；`model` 在大多数响应中为 `""`，仅由 `GET /api/v1/sessions/{session_id}/snapshot` 填入实时模型 |
-| `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；在 snapshot 端点之外全为零 |
+| `agent_config` | object | 投影为 `{ model }`；会话已加载时 `model` 为实时模型，否则为 `""` |
+| `usage` | object | token 汇总 `{ input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, context_tokens, context_limit?, total_cost_usd?, turn_count? }`；当前全为零 |
 | `permission_rules` | array | 会话权限规则；当前始终为 `[]` |
 | `message_count` | integer | 消息数；当前始终为 `0` |
-| `last_seq` | integer | 最后的事件序列号；当前始终为 `0` |
 
 #### `POST /api/v1/sessions`
 
@@ -952,18 +950,6 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `web_log` | body | string | 要包含在归档中的客户端日志文本，最多 256 KB UTF-8 |
 | `desktop` | body | boolean | 同时包含桌面宿主的日志。默认 `false` |
 
-#### `GET /api/v1/sessions/{session_id}/snapshot`
-
-为重新同步后重建客户端组装一份原子快照：会话、最近的消息、进行中的轮次、存活的 subagent 以及待处理交互，全部盖上 `as_of_seq` 水位与用于重新订阅的 `epoch`——见 [断线恢复](#断线恢复)。与普通的会话端点不同，内嵌的会话携带实时的 `agent_config.model` 与真实的 `usage` 总计。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-
-成功时，`data` 为 `{ as_of_seq, epoch, session, messages, in_flight_turn, subagents?, pending_approvals, pending_questions }`：`session` 为 [session 对象](#session-对象)，`messages` 为最新 100 条消息的 `{ items, has_more }`，`in_flight_turn` 为已部分流式输出的轮次（空闲时为 `null`，已知时带 `current_prompt_id`），`subagents` 列出存活的 subagent 任务，`pending_approvals` / `pending_questions` 承载未答复的交互。
-
-- `40401`：会话不存在
-
 #### `GET /api/v1/sessions/{session_id}/media/{file_id}`
 
 按文件 id 下载提示词媒体文件（会话提示词引用的图片或其他附件）；尚未提交到会话的 id 会回退到暂存的上传中查找。响应为二进制并支持 `Range`（范围请求返回 206）——共享约定见 [二进制与流式端点](#二进制与流式端点)；与那里走信封的端点不同，会话或文件不存在时会返回真正的 404 状态码并携带信封体。
@@ -988,7 +974,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `GET /api/v1/sessions/{session_id}/messages`
 
-分页返回 main agent 的消息历史——与会话快照共享的扁平化上下文转录——最新在前。游标分页遵循 [分页](#分页)；读取历史会在会话为冷态时将其恢复。
+分页返回 main agent 的消息历史——扁平化的上下文转录——最新在前。游标分页遵循 [分页](#分页)；读取历史会在会话为冷态时将其恢复。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1515,28 +1501,31 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 ### 工作区
 
-工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表——列出、注册、重命名、注销——以及控制项目级 MCP 配置是否加载的每工作区信任状态。所有返回工作区的端点都使用 [workspace 对象](#workspace-对象) 中统一说明的传输结构。
+工作区是已注册的项目目录，会话都落在其中。这组端点管理注册表——列出、注册、重命名与更新源文件夹、注销——以及控制项目级 MCP 配置是否加载的每工作区信任状态。所有返回工作区的端点都使用 [workspace 对象](#workspace-对象) 中统一说明的传输结构。
 
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/v1/workspaces` | 列出已注册工作区 |
-| `POST /api/v1/workspaces` | 注册工作区（按根路径幂等） |
-| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名 |
+| `POST /api/v1/workspaces` | 注册工作区（每次调用创建新条目；重试经 `idempotency_key` 去重） |
+| `PATCH /api/v1/workspaces/{workspace_id}` | 重命名或整体替换源文件夹 |
+| `POST /api/v1/workspaces/{workspace_id}/primary` | 将某个源文件夹提升为主目录 |
+| `GET /api/v1/workspaces/project-config-dirs` | 只读获取项目 local.toml 的附加目录 |
 | `DELETE /api/v1/workspaces/{workspace_id}` | 注销（保留磁盘内容） |
 | `GET /api/v1/workspaces/{workspace_id}/trust` | 读取信任状态 |
 | `POST /api/v1/workspaces/{workspace_id}/trust` | 授予信任 |
 | `POST /api/v1/workspaces/{workspace_id}/untrust` | 撤销信任 |
-| `POST /api/v1/workspaces/{workspace_id}/add-dir` | 添加附加目录 |
 
 #### workspace 对象
 
-所有返回工作区的端点都使用此传输结构。注册与重命名会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
+所有返回工作区的端点都使用此传输结构。注册与更新会广播全局事件 `event.workspace.created` / `event.workspace.updated`。
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | 工作区 id，由根路径派生的 `wd_<slug>_<hash12>` 字符串 |
-| `root` | string | 项目目录的绝对路径 |
-| `name` | string | 显示名，1–100 个字符；默认取根目录的基名 |
+| `id` | string | 工作区 id：隐式渠道（CLI/VS Code 按目录进入）为 `wd_<slug>_<hash12>`，经 `POST /api/v1/workspaces` 显式创建为 `wm_<uuid>` |
+| `root` | string | 主目录的绝对路径 |
+| `name` | string | 显示名，1–100 个字符；默认取主目录的基名 |
+| `kind` | string | 工作区类别：`managed`（经显式创建，`wm_` id；会话不合并项目 `local.toml`）或 `implicit`（按目录隐式注册，`wd_` id；会话合并项目 `local.toml` 以兼容旧配置） |
+| `additional_dirs` | string[] | 注册表管理的额外源文件夹绝对路径（不含项目 `local.toml` 与临时来源） |
 | `created_at` | string | 注册时间，ISO 8601 |
 | `last_opened_at` | string | 最近一次打开或重新注册工作区的时间，ISO 8601 |
 | `session_count` | integer | 工作区内的会话数 |
@@ -1549,31 +1538,62 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 #### `POST /api/v1/workspaces`
 
-注册工作区并返回它。注册按根路径幂等：重复注册同一根路径会返回已存在的工作区，仅刷新 `last_opened_at`（保留已存名称），并广播 `event.workspace.updated` 而非 `event.workspace.created`。
+注册一个新工作区并返回它。每次调用都创建新条目（`wm_<uuid>` id）——即使同一路径已是其他工作区的主目录也不会折叠或提示。客户端重复提交（网络重试、重复点击）应携带同一个 `idempotency_key`，服务端按键去重并返回首次创建的条目。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
-| `root` | body | string | **必填。** 已存在目录的绝对路径 |
-| `name` | body | string | 显示名，1–100 个字符。默认根目录的基名 |
+| `root` | body | string | **必填。** 已存在目录的绝对路径，作为主目录 |
+| `name` | body | string | 显示名，1–100 个字符。默认主目录的基名 |
+| `additional_dirs` | body | string[] | 额外源文件夹。每项按 `add-dir` 相同规则解析（绝对路径、相对主目录或 `~` 展开），须已存在且为目录，不得与主目录或彼此重复，最多 64 项 |
+| `idempotency_key` | body | string | 客户端生成的幂等键，1–200 个字符。相同键的重试返回首次创建的工作区 |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：`root` 缺失或不是绝对路径（`details` 会列出该字段）
-- `40409`：`root` 不存在或不是目录
+- `40001`：`root` 缺失或不是绝对路径，或 `additional_dirs` 含重复项、与主目录相同（`details` 会列出该字段）
+- `40409`：`root` 或 `additional_dirs` 中的路径不存在或不是目录
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
 
-重命名工作区——仅修改显示名，根路径不变。
+更新工作区的显示名与/或源文件夹。`additional_dirs` 为整体替换语义——提交编辑后的完整列表，省略该字段则保持不变；主目录不可修改。`name` 与 `additional_dirs` 至少提供其一。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
-| `name` | body | string | **必填。** 新的显示名，1–100 个字符 |
+| `name` | body | string | 新的显示名，1–100 个字符 |
+| `additional_dirs` | body | string[] | 替换后的完整额外源文件夹列表，解析与校验规则同 `POST /api/v1/workspaces` |
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：校验失败（`details` 逐字段说明）
+- `40001`：校验失败（两个字段都缺失，或目录项重复、与主目录相同；`details` 逐字段说明）
+- `40409`：`additional_dirs` 中的路径不存在或不是目录
 - `40410`：工作区不存在
+
+#### `POST /api/v1/workspaces/{workspace_id}/primary`
+
+将目录集内的某个源文件夹提升为主目录。服务端做原子交换：该路径成为新的 `root`，原主目录进入 `additional_dirs`；工作区 id 与会话桶不变，全部会话保留。交换后原主目录 `local.toml` 中的附加目录将不再并入（`local.toml` 跟随主目录生效）。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `workspace_id` | path | string | **必填。** 工作区 id |
+| `path` | body | string | **必填。** 要提升的目录，解析规则同 `add-dir`；必须在当前目录集（`root` ∪ `additional_dirs`）内 |
+
+成功时 `data` 为 [workspace 对象](#workspace-对象)。
+
+- `40001`：`path` 不在目录集内
+- `40409`：`path` 不存在或不是目录
+- `40410`：工作区不存在
+
+#### `GET /api/v1/workspaces/project-config-dirs`
+
+只读返回指定项目 `local.toml` 的 `workspace.additional_dir`：解析为绝对路径、去重、剔除 `root` 自身。不修改注册表，也不修改 `local.toml`；`local.toml` 缺失时返回空数组，TOML 损坏或配置的目录已不存在时请求失败，不会按空配置返回。客户端可凭此把项目旧配置并入新建或编辑工作区的表单，随保存生效。
+
+| 参数 | 位置 | 类型 | 说明 |
+| --- | --- | --- | --- |
+| `root` | query | string | **必填。** 项目主目录的绝对路径 |
+
+成功时 `data` 为 `{ additional_dirs: string[] }`。
+
+- `40001`：`root` 缺失或为空
 
 #### `DELETE /api/v1/workspaces/{workspace_id}`
 
@@ -1623,19 +1643,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 - `40410`：工作区不存在
 
-#### `POST /api/v1/workspaces/{workspace_id}/add-dir`
-
-为工作区添加附加目录，语义与 CLI `--add-dir` 及 TUI `/add-dir` 一致。路径支持绝对路径、相对路径（相对工作区根目录解析）与 `~` 展开。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `workspace_id` | path | string | **必填。** 工作区 id |
-| `path` | body | string | **必填。** 要添加的目录 |
-| `persist` | body | boolean | 缺省 `true`：追加到 `<项目根>/.kimi-code/local.toml` 的 `workspace.additional_dir`；为 `false` 时仅加入内存中的临时集合（同一工作区所有会话共享），不写盘 |
-
-成功时 `data` 为 `{ project_root, config_path, additional_dirs, persisted }`，其中 `additional_dirs` 是全部附加目录（含既有目录），`persisted` 表示本次是否写盘。
-
-- `40001`：校验失败（`details` 逐字段说明），或项目本地配置损坏等引擎校验错误
 - `40409`：`path` 不存在或不是目录
 - `40410`：工作区不存在
 
@@ -2342,7 +2349,6 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
   "payload": {
     "ws_connection_id": "conn_01JZX4...",
     "protocol_version": 2,
-    "max_event_buffer_size": 1000,
     "capabilities": { "event_batching": false, "compression": false }
   }
 }
@@ -2356,42 +2362,30 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 | 帧 | payload | 说明 |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | 订阅会话事件；带 `cursors`（每会话 `{seq, epoch}`）时回放错过的持久事件 |
-| `unsubscribe` | `{ session_ids }` | 取消会话订阅 |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅转录流（唯一的转录订阅通道），`transcript` 按 agent 指定粒度 |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 表示整个会话 |
-| `client_hello` | `{ client_id }` | 握手帧，其余字段为遗留兼容 |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅会话（唯一的会话订阅方式）：转录流与交互，`transcript` 按 agent 指定粒度 |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 或退订最后一个 agent 时取消整个会话订阅 |
+| `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
 
 ### 事件
 
-事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
+事件帧形状为 `{ "type", "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话事件**：只发给订阅了该会话的连接，受 `agent_filter` 过滤。主要事件族：
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）与 `interaction`。
 
-| 事件族 | 主要事件 |
-| --- | --- |
-| 轮次 | `turn.started`、`turn.ended`、`turn.step.started` / `completed` / `interrupted` / `retrying` |
-| 流式文本 | `assistant.delta`、`thinking.delta`（带 `offset` 用于对齐） |
-| 工具调用 | `tool.call.started`、`tool.call.delta`、`tool.progress`、`tool.result` |
-| 交互 | `interaction` |
-| subagent | `subagent.spawned` / `started` / `suspended` / `completed` / `failed` |
-| 后台 | `task.started` / `terminated`、`shell.started` / `output` / `completed` |
-| 其他 | `compaction.*`、`skill.activated`、`goal.updated`、`prompt.*`、`error`、`warning` |
+客户端无需订阅会话即可通过 `event.session.work_changed` 跟踪其活动：载荷为 `{ busy, main_turn_active?, pending_interaction?, last_turn_reason? }`，与 [session 对象](#session-对象) 的实时字段一致。
 
 有三个全局生命周期事件可以让跨工作区概览免掉逐工作区轮询。`event.session.archived` 在在线归档与冷归档两条路径上都会发出；其事件帧 `session_id` 是全局水位 `__global__`，真实会话 id 在 payload 里：`{ "type": "event.session.archived", "workspace_id": "wd_...", "sessionId": "session_..." }`（payload 字段为 `workspace_id` / `sessionId`）。`event.workspace.created` / `updated` 携带完整工作区对象（`{ id, root, name, created_at, last_opened_at, session_count }`——会话创建触碰工作区时也会发 `updated`），`event.workspace.deleted` 携带 `{ "workspace_id", "root" }`。这些事件只覆盖本服务进程内的变更；其他进程（例如写同一 home 目录的 CLI）的变更要等索引 reconcile（约一分钟）才可见，因此概览客户端应保留低频兜底轮询。目前没有会话删除事件。
 
-事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
-
-会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `seq`、`timestamp` 和 `payload` 包装——且从不写入日志、不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的为 `{ questions }`，含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`，每个带 2–4 个 `{ id, label, description? }` 形式的 `options`。服务端会在每次 `client_hello` / `subscribe` / `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
+会话内所有 agent（含 subagent）的审批与提问都以 `interaction` 帧到达。与其他事件不同，它是平铺的——没有 `timestamp` 和 `payload` 包装——且不回放：`{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`。审批的 `outcome` 为 `approved` / `rejected` / `cancelled`，提问为 `answered` / `dismissed` / `cancelled`。审批的 `request` 为 `{ tool_name, action, tool_input_display?, expires_at }`，`expires_at` 为发起后 24 小时；提问的为 `{ questions }`，含 1–4 个 `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`，每个带 2–4 个 `{ id, label, description? }` 形式的 `options`。服务端会在每次 `subscribe_v2` 成功确认后立即补发该会话当前待处理的交互，因此客户端应在收到确认时清空该会话的待处理列表，再用随后到达的帧重建。回应交互使用 [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id)。
 
 ### 断线恢复
 
-重连后在 `subscribe` 的 `cursors` 里带上每个会话最后应用事件的 `{seq, epoch}`，服务端会回放缺口；落后超过缓冲（1000 条）或游标失效时改为收到 `resync_required`。此时调用 `GET /api/v1/sessions/{session_id}/snapshot` 拿全量快照（含 `as_of_seq` 与 `epoch`），再以新游标重新订阅。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 转录协议
 
-`subscribe_v2` 的 `transcript` 按 agent 指定粒度：`off` / `turn` / `block` / `delta`（键 `"*"` 表示默认粒度），粒度越高推送越细。粒度非 `off` 的 agent 走两帧推送：`transcript.reset`（基线快照，历史经 REST 分页回读）和 `transcript.ops`（增量批次，带每个 agent 连续递增的 `seq`）；该 agent 的旧式事件在同一连接上被抑制，改由转录帧承载。断线时用 `transcript_since` 续传；服务端批次日志无法覆盖缺口时（REST 补漏返回 `complete: false`）需全量刷新。REST 侧对应 `GET .../transcript`（按轮次分页）与 `GET .../transcript/ops?since_seq=`（批次补漏）。
+`subscribe_v2` 的 `transcript` 按 agent 指定粒度：`off` / `turn` / `block` / `delta`（键 `"*"` 表示默认粒度），粒度越高推送越细。粒度非 `off` 的 agent 走两帧推送：`transcript.reset`（基线快照，历史经 REST 分页回读）和 `transcript.ops`（增量批次，带每个 agent 连续递增的 `seq`）。断线时用 `transcript_since` 续传；服务端批次日志无法覆盖缺口时（REST 补漏返回 `complete: false`）需全量刷新。REST 侧对应 `GET .../transcript`（按轮次分页）与 `GET .../transcript/ops?since_seq=`（批次补漏）。
 
 ## 二进制与流式端点
 

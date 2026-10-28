@@ -57,9 +57,12 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     c.onRequest('terminal/release', () => ({}));
   }
 
-  async function boot(clientCapabilities: Record<string, unknown> = {}): Promise<TestClient> {
+  async function boot(
+    clientCapabilities: Record<string, unknown> = {},
+    imageInput = false,
+  ): Promise<TestClient> {
     homeDir = await mkdtemp(join(tmpdir(), 'acp-e2e-turn-'));
-    await writeFakeModelConfig(homeDir);
+    await writeFakeModelConfig(homeDir, imageInput ? { image: true } : undefined);
     scripted = createScriptedProvider();
     client = await createTestClient({ homeDir, extraSeeds: [scripted.seed] });
     await client.send('initialize', { protocolVersion: 1, clientCapabilities });
@@ -407,8 +410,7 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
   }, 30_000);
 
   it('streams tool-call args deltas: lazy pending CREATE → cumulative update → started upgrade → completed', async () => {
-    const c = await boot({ terminal: true });
-    // Args stream in two fragments; the merge yields the full command.
+    const c = await boot({ terminal: true }, true);
     scripted!.mockNextResponse(
       { type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ec' },
       { type: 'tool_call_part', argumentsPart: 'ho delta_stream"}' },
@@ -423,12 +425,11 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     };
     await c.waitForSessionUpdate('available_commands_update', 10_000);
 
-    const promptPromise = c.send('session/prompt', {
+    const bashResult = (await c.send('session/prompt', {
       sessionId: created.sessionId,
-      prompt: [{ type: 'text', text: 'run echo' }],
-    });
-    const result = (await promptPromise) as { stopReason: string };
-    expect(result.stopReason).toBe('end_turn');
+      prompt: [{ type: 'text', text: 'run the command' }],
+    })) as { stopReason: string };
+    expect(bashResult.stopReason).toBe('end_turn');
 
     type ToolCallWire = {
       sessionUpdate?: string;
@@ -437,7 +438,8 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
       title?: string;
       kind?: string;
       rawInput?: unknown;
-      content?: Array<{ content?: { text?: string } }>;
+      rawOutput?: unknown;
+      content?: Array<{ type?: string; content?: { type?: string; text?: string } }>;
     };
     const updates = c
       .sessionUpdates()
@@ -467,11 +469,74 @@ describe('acp-server real prompt turn (scripted LLM)', () => {
     expect(updates[2]?.kind).toBe('execute');
     expect(updates[2]?.rawInput).toEqual({ command: 'echo delta_stream' });
 
-    // 4. Result → terminal completed update carrying the command output.
-    const terminal = updates.at(-1);
+    // 4. Result → terminal completed update.
+    expect(updates.at(-1)?.sessionUpdate).toBe('tool_call_update');
+    expect(updates.at(-1)?.status).toBe('completed');
+    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
+
+    const mediaCallOffset = scripted!.callHistory().length;
+    const mediaPath = join(homeDir!, 'picture.png');
+    await writeFile(mediaPath, Buffer.from(solidPngBase64(1, 1), 'base64'));
+    const args = JSON.stringify({ path: mediaPath });
+    const splitAt = 12;
+    scripted!.mockNextResponse(
+      { type: 'function', id: 'call_media', name: 'ReadMediaFile', arguments: args.slice(0, splitAt) },
+      { type: 'tool_call_part', argumentsPart: args.slice(splitAt) },
+    );
+    scripted!.mockNextText('done');
+
+    const mediaResult = (await c.send('session/prompt', {
+      sessionId: created.sessionId,
+      prompt: [{ type: 'text', text: 'read the picture' }],
+    })) as { stopReason: string };
+    expect(mediaResult.stopReason).toBe('end_turn');
+
+    const mediaUpdates = c
+      .sessionUpdates()
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .filter((u) => u?.toolCallId?.endsWith(':call_media'));
+    expect(mediaUpdates[0]?.sessionUpdate).toBe('tool_call');
+    expect(mediaUpdates[0]?.status).toBe('pending');
+    expect(mediaUpdates[0]?.title).toBe('ReadMediaFile');
+    expect(mediaUpdates[0]?.kind).toBe('other');
+    expect(mediaUpdates[0]?.rawInput).toBeUndefined();
+    expect(textOf(mediaUpdates[0])).toBe(args.slice(0, splitAt));
+    expect(mediaUpdates[1]?.sessionUpdate).toBe('tool_call_update');
+    expect(mediaUpdates[1]?.status).toBe('in_progress');
+    expect(textOf(mediaUpdates[1])).toBe(args);
+    expect(mediaUpdates[2]?.sessionUpdate).toBe('tool_call_update');
+    expect(mediaUpdates[2]?.status).toBe('in_progress');
+    expect(mediaUpdates[2]?.kind).toBe('other');
+    expect(mediaUpdates[2]?.rawInput).toEqual({ path: mediaPath });
+
+    const terminal = mediaUpdates.at(-1);
     expect(terminal?.sessionUpdate).toBe('tool_call_update');
     expect(terminal?.status).toBe('completed');
-    expect(JSON.stringify(scripted!.callHistory()[1])).toContain('delta_stream');
+    expect(terminal?.rawOutput).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'image_url',
+          imageUrl: expect.objectContaining({ url: expect.any(String) }),
+        }),
+      ]),
+    );
+    expect(JSON.stringify(terminal?.rawOutput)).not.toContain('"source"');
+    expect(JSON.stringify(scripted!.callHistory()[mediaCallOffset + 1])).toContain('picture.png');
+
+    const beforeLoad = c.sessionUpdates().length;
+    await c.send('session/load', { sessionId: created.sessionId, cwd: homeDir, mcpServers: [] });
+    const replayedUpdates = c
+      .sessionUpdates()
+      .slice(beforeLoad)
+      .map((m) => (m.params as { update?: ToolCallWire }).update)
+      .filter((u) => u?.toolCallId?.endsWith(':call_media') && u.status === 'completed');
+    expect(replayedUpdates).toHaveLength(1);
+    expect(replayedUpdates[0]?.content).toEqual(
+      expect.arrayContaining([
+        { type: 'content', content: { type: 'text', text: '[image_url]' } },
+      ]),
+    );
+    expect(JSON.stringify(replayedUpdates)).not.toContain('"source"');
   }, 30_000);
 
   it('refreshes the tool card title on a status progress update and drops other progress kinds', async () => {

@@ -10,8 +10,8 @@ import {
   type CatalogProviderInfo,
   type ProviderCatalog,
   type ProviderCatalogChanged,
-} from '#human/llm/provider-catalog';
-import type { ModelCapability } from '#human/llm/capability';
+} from '#human/provider-catalog/catalog';
+import type { ModelCapability } from '#human/llm-requester/capability';
 
 import { deepEqual } from '../record-diff';
 import { IProviderService, type ProviderConfig } from '../provider/provider';

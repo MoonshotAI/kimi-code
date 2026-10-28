@@ -13,7 +13,7 @@ import {
   type TestInstantiationService,
 } from '#/_base/di/test';
 import { AsyncEmitter, Emitter, Event, type IWaitUntil } from '#/_base/event';
-import { emptyUsage } from '#human/llm/usage';
+import { emptyUsage } from '#human/llm-requester/usage';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,
@@ -1173,7 +1173,18 @@ describe('IExternalHooksRunnerService integration', () => {
         inputData?: unknown;
       }> = [];
       const hookEngine = {
-        trigger: async () => [],
+        trigger: async (
+          event: string,
+          args: { matcherValue?: unknown; cwd?: string; inputData?: unknown },
+        ) => {
+          fired.push({
+            event,
+            matcherValue: args.matcherValue,
+            cwd: args.cwd,
+            inputData: args.inputData,
+          });
+          return [];
+        },
         triggerBlock: async () => undefined,
         fireAndForgetTrigger: async (
           event: string,
@@ -1232,7 +1243,13 @@ describe('IExternalHooksRunnerService integration', () => {
           prompt: 'user text',
         }),
       );
-      const queuedContent = [{ type: 'text' as const, text: 'later' }];
+      const queuedContent = [
+        { type: 'text' as const, text: 'later' },
+        {
+          type: 'image_url' as const,
+          imageUrl: { url: 'https://example.com/queued.png', name: 'queued.png' },
+        },
+      ];
       eventBus.publish(
         new PromptQueued({
           agentId: 'main',
@@ -1254,6 +1271,19 @@ describe('IExternalHooksRunnerService integration', () => {
         }),
       );
       await flushMicrotasks();
+      const submittedContent = [
+        { type: 'text' as const, text: 'submit' },
+        {
+          type: 'image_url' as const,
+          imageUrl: { url: 'https://example.com/submitted.png', name: 'submitted.png' },
+        },
+      ];
+      await ix.get(IAgentLoopService).hooks.onBeforeSubmitPrompt.run({
+        promptMessage: { role: 'user', content: submittedContent, origin: { kind: 'user' } },
+        isSteer: false,
+        hookParts: [],
+        block: false,
+      });
 
       expect(fired).toEqual([
         {
@@ -1287,7 +1317,13 @@ describe('IExternalHooksRunnerService integration', () => {
           inputData: {
             sessionTitle: 'My Session',
             promptId: 'p1',
-            prompt: queuedContent,
+            prompt: [
+              { type: 'text', text: 'later' },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'https://example.com/queued.png', name: 'queued.png' },
+              },
+            ],
             queueLength: 2,
           },
         },
@@ -1303,6 +1339,22 @@ describe('IExternalHooksRunnerService integration', () => {
             status: 'running',
             detached: undefined,
             startedAt: 123,
+          },
+        },
+        {
+          event: 'UserPromptSubmit',
+          matcherValue: submittedContent,
+          cwd: '/tmp',
+          inputData: {
+            sessionTitle: 'My Session',
+            prompt: [
+              { type: 'text', text: 'submit' },
+              {
+                type: 'image_url',
+                imageUrl: { url: 'https://example.com/submitted.png', name: 'submitted.png' },
+              },
+            ],
+            isSteer: false,
           },
         },
       ]);
