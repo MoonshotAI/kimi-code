@@ -160,6 +160,32 @@ describe('CLI options parsing', () => {
       expect(parse(['-S']).session).toBe('');
     });
 
+    it.each(['-r', '--resume'])('bare %s selects the interactive session picker', (flag) => {
+      const opts = parse([flag]);
+      expect(opts.session).toBe('');
+      expect(validateOptions(opts).uiMode).toBe('shell');
+    });
+
+    it.each(['-r', '--resume'])('%s conflicts with --continue even without an ID', (flag) => {
+      expect(() => validateOptions(parse([flag, '--continue']))).toThrow(
+        'Cannot combine --continue, --session.',
+      );
+    });
+
+    it.each([
+      ['-r', '--agent', 'reviewer'],
+      ['--resume', '--agent', 'reviewer'],
+      ['-r', '--agent-file', 'reviewer.md'],
+      ['--resume', '--agent-file', 'reviewer.md'],
+    ])('bare %s conflicts with %s', (resumeFlag, agentFlag, agentValue) => {
+      expect(() => validateOptions(parse([agentFlag, agentValue, resumeFlag]))).toThrow(
+        'Cannot combine --agent/--agent-file with --session/--continue',
+      );
+      expect(() => validateOptions(parse([resumeFlag, 'ses_123', agentFlag, agentValue]))).toThrow(
+        'Cannot combine --agent/--agent-file with --session/--continue',
+      );
+    });
+
     it('-C sets continue', () => {
       expect(parse(['-C']).continue).toBe(true);
     });
@@ -404,7 +430,15 @@ describe('CLI options parsing', () => {
       const help = createProgram('0.1.0-test', () => {}, () => {}).helpInformation();
       const normalizedHelp = help.replaceAll(/\s+/g, ' ');
 
-      expect(normalizedHelp).toContain('Agent profile to start the new session with.');
+      expect(normalizedHelp).toContain('Agent profile name for a new session');
+      expect(normalizedHelp).toContain('Mutually exclusive with --agent-file');
+      expect(normalizedHelp).toContain('tools/disallowedTools in frontmatter');
+      expect(normalizedHelp).toContain('alias: -r, --resume');
+      expect(normalizedHelp).toContain('Alias for --session');
+      expect(
+        normalizedHelp.match(/Cannot be combined with --session\/--resume\/--continue\./g),
+      ).toHaveLength(2);
+      expect(normalizedHelp).not.toContain('loaded via --agent-file');
       expect(normalizedHelp).not.toContain('print-mode invocation');
     });
 
