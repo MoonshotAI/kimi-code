@@ -1,5 +1,5 @@
 /**
- * Serialize a `ChatState` into a plain, JSON-shaped object for the audit
+ * Serialize an `AgentState` into a plain, JSON-shaped object for the audit
  * panel's state tree and structural diff. Maps become key-sorted plain
  * objects (stable display order), Sets become sorted arrays; everything
  * else is passed through by reference (state is immutable, so sharing is
@@ -7,20 +7,19 @@
  */
 
 import type {
+  AgentState,
   TranscriptAttachment,
   TranscriptInteraction,
   TranscriptItem,
   TranscriptMeta,
+  TranscriptTask,
   TranscriptTodo,
 } from '@moonshot-ai/transcript';
 
-import type { ChatState } from '../transcript/store';
-import type { TaskFrame } from '../transcript/ws';
-
-/** Plain-object view of a `ChatState` (Maps/Sets unwrapped). */
+/** Plain-object view of an `AgentState` (Maps/Sets unwrapped). */
 export interface SerializedAgentState {
   readonly items: readonly TranscriptItem[];
-  readonly tasks: Record<string, TaskFrame>;
+  readonly tasks: Record<string, TranscriptTask>;
   readonly interactions: Record<string, TranscriptInteraction>;
   readonly attachments: Record<string, TranscriptAttachment>;
   readonly todos: Record<string, TranscriptTodo>;
@@ -35,7 +34,7 @@ function mapToSortedObject<V>(map: ReadonlyMap<string, V>): Record<string, V> {
   return out;
 }
 
-export function serializeState(state: ChatState): SerializedAgentState {
+export function serializeState(state: AgentState): SerializedAgentState {
   return {
     items: state.items,
     tasks: mapToSortedObject(state.tasks),

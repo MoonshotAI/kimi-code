@@ -3,16 +3,19 @@
  *
  * A pure observer: the chat pipeline (REST loads, WS frames, user actions)
  * calls the `record*` methods AFTER applying each step to the real
- * `TranscriptChatStore`, passing the resulting immutable `ChatState`
+ * `TranscriptChatStore`, passing the resulting immutable `AgentState`
  * reference. Replaying the trail is therefore free — every entry already
  * holds the exact state the store had at that point, ready for the
  * timeline slider and the structural diff.
  */
 
-import type { AgentTranscriptSnapshot, TranscriptOperation } from '@moonshot-ai/transcript';
+import type {
+  AgentState,
+  AgentTranscriptSnapshot,
+  TranscriptOperation,
+} from '@moonshot-ai/transcript';
 
 import type { TranscriptPage } from '../transcript/api';
-import type { ChatState } from '../transcript/store';
 
 export const AUDIT_TRAIL_MAX_ENTRIES = 5000;
 
@@ -22,7 +25,7 @@ interface AuditEntryBase {
   /** Local record time (ISO). */
   readonly at: string;
   /** Store state right after this entry was applied (immutable reference). */
-  readonly state: ChatState;
+  readonly state: AgentState;
   /** One-line summary for the timeline list. */
   readonly summary: string;
 }
@@ -52,7 +55,7 @@ export interface ResetAuditEntry extends AuditEntryBase {
 
 export interface EventAuditEntry extends AuditEntryBase {
   readonly kind: 'event';
-  readonly event: 'ack-refresh' | 'resync' | 'gap' | 'prompt' | 'cancel' | 'task';
+  readonly event: 'ack-refresh' | 'resync' | 'gap' | 'prompt' | 'cancel';
   readonly detail?: string | undefined;
 }
 
@@ -90,7 +93,7 @@ export class AuditTrail {
     request: RestAuditEntry['request'],
     appliedAs: RestAuditEntry['appliedAs'],
     page: TranscriptPage,
-    state: ChatState,
+    state: AgentState,
   ): void {
     const cursor = request.beforeTurn !== undefined ? `?before_turn=${request.beforeTurn}` : '';
     this.push({
@@ -107,7 +110,7 @@ export class AuditTrail {
     ops: readonly TranscriptOperation[],
     delivery: OpsAuditEntry['delivery'],
     envelopeAt: string | undefined,
-    state: ChatState,
+    state: AgentState,
   ): void {
     this.push({
       kind: 'ops',
@@ -123,7 +126,7 @@ export class AuditTrail {
     snapshot: AgentTranscriptSnapshot,
     hasMoreOlder: boolean,
     envelopeAt: string | undefined,
-    state: ChatState,
+    state: AgentState,
   ): void {
     this.push({
       kind: 'reset',
@@ -138,7 +141,7 @@ export class AuditTrail {
   recordEvent(
     event: EventAuditEntry['event'],
     detail: string | undefined,
-    state: ChatState,
+    state: AgentState,
   ): void {
     const label =
       event === 'ack-refresh'
@@ -149,9 +152,7 @@ export class AuditTrail {
             ? 'append gap → REST refresh'
             : event === 'prompt'
               ? 'prompt sent'
-              : event === 'task'
-                ? 'task event'
-                : 'cancel sent';
+              : 'cancel sent';
     this.push({
       kind: 'event',
       event,

@@ -10,9 +10,7 @@
  * `subscriptions`, then a `subscribe_v2` frame carrying the opt-in
  * `transcript` grade map (plus the `transcript_since` cursor when a
  * watermark is known), and forwards every `transcript.ops` frame to the
- * consumer, plus every `task` frame (task state is not part of the
- * transcript: the server sends each task of the agent after a reset and again
- * on every change). Full transcript state never comes from here:
+ * consumer. Full state never comes from here:
  * `transcript.reset` snapshots are ignored by the store (they are surfaced
  * through the optional `onReset` handler for observers like the audit panel),
  * because complete data (initial load and any refresh) is read back from the
@@ -61,8 +59,6 @@ export interface TranscriptWsHandlers {
     hasMoreOlder: boolean,
     meta?: TranscriptFrameMeta,
   ) => void;
-  /** Full state of one task of the agent, as the server `task` frame. */
-  onTask?: (agentId: string, task: TaskFrame) => void;
   /** Server signalled desync for our session — consumer should REST-refresh. */
   onResyncRequired: () => void;
   /** Socket re-established after a drop — volatile ops were missed meanwhile. */
@@ -94,34 +90,6 @@ interface ServerFrame {
   readonly code?: number;
   readonly timestamp?: string;
   readonly payload?: unknown;
-}
-
-/** The flat server `task` frame (snake_case wire fields). */
-export interface TaskFrame {
-  readonly agent_id: string;
-  readonly task_id: string;
-  readonly kind: 'shell' | 'subagent' | 'tool' | 'other';
-  readonly status: 'running' | 'ended';
-  readonly outcome?: 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
-  readonly phase?: 'working' | 'suspended';
-  readonly detached: boolean;
-  readonly description?: string;
-  readonly child_agent_id?: string;
-  readonly parent_tool_call_id?: string;
-  readonly command?: string;
-  readonly started_at?: string;
-  readonly ended_at?: string;
-  readonly result_summary?: string;
-  readonly error?: string;
-  readonly state_reason?: string;
-  readonly usage?: {
-    readonly input_other: number;
-    readonly output: number;
-    readonly input_cache_read: number;
-    readonly input_cache_creation: number;
-  };
-  readonly model?: string;
-  readonly thinking?: string;
 }
 
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';
@@ -268,12 +236,6 @@ export class TranscriptWs {
           parsed.data.has_more_older,
           { at: frame.timestamp, seq: parsed.data.seq },
         );
-        return;
-      }
-      case 'task': {
-        const task = frame as unknown as TaskFrame;
-        if (typeof task.agent_id !== 'string' || typeof task.task_id !== 'string') return;
-        this.handlers.onTask?.(task.agent_id, task);
         return;
       }
       case 'ping': {

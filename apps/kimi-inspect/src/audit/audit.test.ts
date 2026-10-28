@@ -3,10 +3,9 @@
  * and tail-preserving truncation used by the chat view's audit panel.
  */
 
-import type { TranscriptTurn } from '@moonshot-ai/transcript';
+import { EMPTY_AGENT_STATE, type AgentState, type TranscriptTurn } from '@moonshot-ai/transcript';
 import { describe, expect, it } from 'vitest';
 
-import { EMPTY_CHAT_STATE, type ChatState } from '../transcript/store';
 import { diffValue, type DiffNode } from './diff';
 import { serializeState } from './serialize';
 import { AuditTrail, AUDIT_TRAIL_MAX_ENTRIES } from './trail';
@@ -23,8 +22,8 @@ function turnItem(n: number): TranscriptTurn {
   };
 }
 
-function stateWith(items: readonly TranscriptTurn[]): ChatState {
-  return { ...EMPTY_CHAT_STATE, items };
+function stateWith(items: readonly TranscriptTurn[]): AgentState {
+  return { ...EMPTY_AGENT_STATE, items };
 }
 
 // ---------------------------------------------------------------- diff
@@ -108,7 +107,7 @@ describe('diffValue', () => {
 
   it('diffs two serialized states with meta changes visible (goal/plan fields)', () => {
     const prev = serializeState(stateWith([turnItem(1)]));
-    const nextState: ChatState = {
+    const nextState: AgentState = {
       ...stateWith([turnItem(1)]),
       meta: {
         goal: { objective: 'ship it', status: 'active' },
@@ -131,11 +130,17 @@ describe('diffValue', () => {
 
 describe('serializeState', () => {
   it('turns maps into sorted plain objects and sets into arrays', () => {
-    const state: ChatState = {
-      ...EMPTY_CHAT_STATE,
+    const state: AgentState = {
+      ...EMPTY_AGENT_STATE,
       tasks: new Map([
-        ['b-task', { agent_id: 'main', task_id: 'b-task', kind: 'shell', status: 'running', detached: false }],
-        ['a-task', { agent_id: 'main', task_id: 'a-task', kind: 'tool', status: 'ended', outcome: 'completed', detached: false }],
+        [
+          'b-task',
+          { taskId: 'b-task', kind: 'shell', state: 'running', detached: false, outputTail: '' },
+        ],
+        [
+          'a-task',
+          { taskId: 'a-task', kind: 'tool', state: 'completed', detached: false, outputTail: '' },
+        ],
       ]),
       pendingInteractions: new Set(['z', 'a']),
     };
@@ -169,6 +174,7 @@ describe('AuditTrail', () => {
   const page = {
     items: [turnItem(1)],
     hasMoreOlder: false,
+    tasks: [],
     interactions: [],
     attachments: [],
     todos: [],
@@ -184,7 +190,7 @@ describe('AuditTrail', () => {
     trail.recordOps([{ op: 'turn.upsert', turn: turnItem(2) }], 'live', '2026-01-01T00:00:00Z', s2);
     trail.recordEvent('prompt', 'hello', s2);
     trail.recordReset(
-      { items: [], interactions: [], attachments: [], todos: [], prompts: [], meta: {} },
+      { items: [], tasks: [], interactions: [], attachments: [], todos: [], prompts: [], meta: {} },
       false,
       undefined,
       s2,
@@ -209,18 +215,18 @@ describe('AuditTrail', () => {
     const unsubscribe = trail.subscribe(() => {
       notified += 1;
     });
-    trail.recordEvent('cancel', undefined, EMPTY_CHAT_STATE);
-    trail.recordEvent('gap', undefined, EMPTY_CHAT_STATE);
+    trail.recordEvent('cancel', undefined, EMPTY_AGENT_STATE);
+    trail.recordEvent('gap', undefined, EMPTY_AGENT_STATE);
     expect(notified).toBe(2);
     unsubscribe();
-    trail.recordEvent('resync', undefined, EMPTY_CHAT_STATE);
+    trail.recordEvent('resync', undefined, EMPTY_AGENT_STATE);
     expect(notified).toBe(2);
   });
 
   it('drops the oldest entries beyond the cap while indices keep increasing', () => {
     const trail = new AuditTrail();
     for (let i = 0; i < AUDIT_TRAIL_MAX_ENTRIES + 10; i += 1) {
-      trail.recordEvent('prompt', `p${i}`, EMPTY_CHAT_STATE);
+      trail.recordEvent('prompt', `p${i}`, EMPTY_AGENT_STATE);
     }
     const entries = trail.getEntries();
     expect(entries).toHaveLength(AUDIT_TRAIL_MAX_ENTRIES);

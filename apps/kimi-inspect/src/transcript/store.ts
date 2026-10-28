@@ -5,18 +5,14 @@
  * (`applyOperation` on an `AgentState`) — the reducer is NOT re-implemented
  * here. State arrives through exactly two channels:
  *
- *  - REST pages (`applyPage`): the only source of FULL transcript state. A
- *    `replace` page (initial load / full refresh) is the newest slice and
- *    replaces local state wholesale, globals included except tasks; a
- *    non-replace page is an older slice fetched with `before_turn` and
- *    prepended ahead of the loaded window (items only — globals stay with the
- *    fresher live state).
- *  - WS delta ops (`applyOps`): incremental `transcript.ops`. Ops are
+ *  - REST pages (`applyPage`): the only source of FULL state. A `replace`
+ *    page (initial load / full refresh) is the newest slice and replaces
+ *    local state wholesale, globals included; a non-replace page is an older
+ *    slice fetched with `before_turn` and prepended ahead of the loaded
+ *    window (items only — globals stay with the fresher live state).
+ *  - WS delta ops (`applyOps`): incremental `transcript.ops` only. Ops are
  *    idempotent upserts plus offset-placed appends, so ops buffered while a
  *    REST refresh is in flight converge when flushed onto the fresh pages.
- *
- * Tasks are not part of the transcript: each WS `task` frame carries the
- * task's full state and replaces the previous one (`applyTask`).
  *
  * `onGap` surfaces `append` placement gaps so the caller can trigger a full
  * REST refresh (the WS channel carries no snapshots to fall back on).
@@ -32,14 +28,6 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { TranscriptPage } from './api';
-import type { TaskFrame } from './ws';
-
-/** The transcript reducer state plus the agent's tasks, keyed by task id. */
-export interface ChatState extends AgentState {
-  readonly tasks: ReadonlyMap<string, TaskFrame>;
-}
-
-export const EMPTY_CHAT_STATE: ChatState = { ...EMPTY_AGENT_STATE, tasks: new Map() };
 
 export function countTurns(items: readonly TranscriptItem[]): number {
   let count = 0;
@@ -111,13 +99,13 @@ export function createCoalescedRunner(run: () => Promise<void>): () => void {
 }
 
 export class TranscriptChatStore {
-  private state: ChatState = EMPTY_CHAT_STATE;
+  private state: AgentState = EMPTY_AGENT_STATE;
   private readonly listeners = new Set<() => void>();
 
   /** Called when an `append` op could not be placed — the caller should refresh. */
   onGap: (() => void) | undefined;
 
-  getState(): ChatState {
+  getState(): AgentState {
     return this.state;
   }
 
@@ -131,15 +119,15 @@ export class TranscriptChatStore {
 
   /**
    * Merge one REST page. With `replace`, the page is the newest slice and
-   * becomes the whole state except tasks (initial load / full refresh);
-   * otherwise it is an older slice prepended ahead of the window (deduped by
-   * item id), updating only `items` and `hasMoreOlder`.
+   * becomes the whole state (initial load / full refresh); otherwise it is an
+   * older slice prepended ahead of the window (deduped by item id), updating
+   * only `items` and `hasMoreOlder`.
    */
   applyPage(page: TranscriptPage, opts?: { replace?: boolean }): void {
     if (opts?.replace === true) {
       this.state = {
         items: page.items,
-        tasks: this.state.tasks,
+        tasks: new Map(page.tasks.map((task) => [task.taskId, task])),
         interactions: new Map(
           page.interactions.map((interaction) => [interaction.interactionId, interaction]),
         ),
@@ -175,16 +163,10 @@ export class TranscriptChatStore {
       const result = applyOperation(this.state, op);
       if (result.gap !== undefined) this.onGap?.();
       if (!result.changed) continue;
-      this.state = { ...result.state, tasks: this.state.tasks };
+      this.state = result.state;
       changed = true;
     }
     if (changed) this.notify();
-  }
-
-  /** Replace one task with the full state carried by a WS `task` frame. */
-  applyTask(task: TaskFrame): void {
-    this.state = { ...this.state, tasks: new Map(this.state.tasks).set(task.task_id, task) };
-    this.notify();
   }
 
   private notify(): void {
