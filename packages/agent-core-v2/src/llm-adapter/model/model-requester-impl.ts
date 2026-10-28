@@ -155,6 +155,7 @@ export class ModelRequesterImpl implements ModelRequester {
 
     let accumulator = createMessageAccumulator();
     let usage: TokenUsage | undefined;
+    let cacheReadReported = false;
     let finish: FinishInfo | undefined;
     let messageId: string | undefined;
     let traceId: string | null | undefined;
@@ -194,6 +195,7 @@ export class ModelRequesterImpl implements ModelRequester {
                 requestStartedAt = now;
                 accumulator = createMessageAccumulator();
                 usage = undefined;
+                cacheReadReported = false;
                 finish = undefined;
                 messageId = undefined;
               }
@@ -221,6 +223,7 @@ export class ModelRequesterImpl implements ModelRequester {
             }
             case 'llm.streaming.usage': {
               usage = mergeUsagePatch(usage, event.usage);
+              if (event.usage.inputCacheRead !== undefined) cacheReadReported = true;
               return;
             }
             case 'llm.streaming.finish': {
@@ -239,6 +242,7 @@ export class ModelRequesterImpl implements ModelRequester {
             case 'llm.request.retrying': {
               accumulator = createMessageAccumulator();
               usage = undefined;
+              cacheReadReported = false;
               finish = undefined;
               messageId = undefined;
               return;
@@ -268,7 +272,7 @@ export class ModelRequesterImpl implements ModelRequester {
     }
 
     if (usage !== undefined) {
-      queue.push({ type: 'usage', usage, model: this.model.name });
+      queue.push({ type: 'usage', usage, model: this.model.name, cacheReadReported });
     }
     queue.push({
       type: 'finish',

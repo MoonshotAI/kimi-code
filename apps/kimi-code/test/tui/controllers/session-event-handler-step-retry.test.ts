@@ -46,7 +46,6 @@ function makeHost() {
     showNotice: vi.fn(),
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     mountEditorReplacement: vi.fn(),
     restoreEditor: vi.fn(),
@@ -111,6 +110,16 @@ describe('SessionEventHandler step retry state', () => {
     handler.handleEvent(retryingEvent as any, vi.fn());
     expect(host.patchLivePane).toHaveBeenCalledWith({ mode: 'waiting' });
     expect(host.state.appState.streamingPhase).toBe('waiting');
+  });
+
+  it('records cache activity on completed steps', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.handleEvent(
+      { type: 'turn.step.completed', sessionId: 's1', agentId: 'main', turnId: 1, step: 1 } as any,
+      vi.fn(),
+    );
+    expect(host.recordSessionActivity).toHaveBeenCalledOnce();
   });
 
   it.each([

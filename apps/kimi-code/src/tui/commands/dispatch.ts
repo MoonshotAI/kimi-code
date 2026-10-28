@@ -177,9 +177,6 @@ export interface SlashCommandHost {
   /** Queue a `/compact` for FIFO dispatch; false when one is already queued. */
   enqueueCompactCommand(args: string): boolean;
   requestQueuedGoalPromotion?(): void;
-  /** Reset the client-side cache-break baseline after the context was cut
-   *  (/undo): the next step's cache-read drop is expected, not a break. */
-  noteContextCut?(): void;
 
   // UI
   showLoginProgressSpinner(label: string): LoginProgressSpinnerHandle;

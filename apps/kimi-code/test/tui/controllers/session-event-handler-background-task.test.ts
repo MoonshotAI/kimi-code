@@ -216,7 +216,6 @@ function makeSessionEventHost() {
     track: vi.fn(),
     recordSessionActivity: vi.fn(),
     updateActivityPane: vi.fn(),
-    noteStepUsage: vi.fn(),
     noteCompactionFinished: vi.fn(),
     handleBackgroundTaskStatus: vi.fn(),
     mountEditorReplacement: vi.fn(),

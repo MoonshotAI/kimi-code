@@ -309,6 +309,53 @@ describe('LLMRequester service migration coverage', () => {
       });
       expect(llmRequester.lastTurnRequest()?.contextRevision).toBe(context.prefixRevision());
     });
+
+    it('emits cache break with loop-assigned turn, step and trace identifiers', async () => {
+      await ctx.dispose();
+      const records: TelemetryRecord[] = [];
+      let calls = 0;
+      ctx = createTestAgent(
+        llmGenerateServices(requesterFromGenerateFn(async () => {
+          const index = calls++;
+          return {
+            id: `response-${index + 1}`,
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: `response-${index + 1}` }],
+              toolCalls: [],
+            },
+            usage: {
+              inputOther: 100,
+              output: 50,
+              inputCacheRead: index === 0 ? 10000 : 5000,
+              inputCacheCreation: 0,
+            },
+            finishReason: 'completed',
+            rawFinishReason: 'stop',
+            traceId: `trace-${index + 1}`,
+          };
+        })),
+        telemetryServices(recordingTelemetry(records)),
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'first turn' }] });
+      await ctx.untilTurnEnd();
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'second turn' }] });
+      await ctx.untilTurnEnd();
+
+      const event = records.find((record) => record.event === 'cache_break_detected');
+      expect(event?.properties).toMatchObject({
+        agent_id: 'main',
+        turn_id: 1,
+        step_no: 1,
+        trace_id: 'trace-2',
+        prev_turn_id: 0,
+        prev_step_no: 1,
+        prev_trace_id: 'trace-1',
+        prev_input_cache_read: 10000,
+        curr_input_cache_read: 5000,
+      });
+    });
   });
 
   describe('tool-call deltas', () => {

@@ -303,16 +303,16 @@ function normalizeResponsesFinish(
   return NO_FINISH;
 }
 
-function parseUsage(usage: RawObject | null | undefined): TokenUsage | undefined {
+function parseUsage(usage: RawObject | null | undefined): Partial<TokenUsage> | undefined {
   if (usage === null || usage === undefined) {
     return undefined;
   }
   const inputTokens = readNumberField(usage, 'input_tokens') ?? 0;
   const outputTokens = readNumberField(usage, 'output_tokens') ?? 0;
   const details = readObjectField(usage, 'input_tokens_details');
-  const cached = details === undefined ? 0 : (readNumberField(details, 'cached_tokens') ?? 0);
+  const cached = details === undefined ? undefined : readNumberField(details, 'cached_tokens');
   return {
-    inputOther: inputTokens - cached,
+    inputOther: inputTokens - (cached ?? 0),
     output: outputTokens,
     inputCacheRead: cached,
     inputCacheCreation: 0,

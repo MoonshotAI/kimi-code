@@ -2314,7 +2314,7 @@ describe('openai responses base', () => {
     expect(topLevelUsage).toEqual({
       inputOther: 3,
       output: 1,
-      inputCacheRead: 0,
+      inputCacheRead: undefined,
       inputCacheCreation: 0,
       raw: { input_tokens: 3, output_tokens: 1 },
     });

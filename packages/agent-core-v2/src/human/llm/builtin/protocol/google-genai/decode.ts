@@ -125,7 +125,7 @@ export function createDecoder(sink: DecodeSink): Decoder {
   return { push, end: () => {} };
 }
 
-function parseUsage(response: Record<string, unknown>): TokenUsage | undefined {
+function parseUsage(response: Record<string, unknown>): Partial<TokenUsage> | undefined {
   const usageMetadata = response['usageMetadata'] as Record<string, unknown> | undefined;
   if (usageMetadata === undefined || usageMetadata === null) {
     return undefined;
@@ -137,13 +137,13 @@ function parseUsage(response: Record<string, unknown>): TokenUsage | undefined {
   const cachedContentTokenCount =
     typeof usageMetadata['cachedContentTokenCount'] === 'number'
       ? usageMetadata['cachedContentTokenCount']
-      : 0;
+      : undefined;
   const candidatesTokenCount =
     typeof usageMetadata['candidatesTokenCount'] === 'number'
       ? usageMetadata['candidatesTokenCount']
       : 0;
   return {
-    inputOther: Math.max(promptTokenCount - cachedContentTokenCount, 0),
+    inputOther: Math.max(promptTokenCount - (cachedContentTokenCount ?? 0), 0),
     output: candidatesTokenCount,
     inputCacheRead: cachedContentTokenCount,
     inputCacheCreation: 0,
