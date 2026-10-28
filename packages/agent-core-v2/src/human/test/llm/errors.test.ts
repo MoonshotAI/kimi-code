@@ -531,6 +531,9 @@ describe('requester error conversion', () => {
       },
     });
     expect(failure).not.toHaveProperty('error.statusCode');
+    if (failure?.type === 'llm.failed.remote' && failure.error.kind === 'quota_exhausted') {
+      expect(failure.error.headers?.['x-trace-id']).toBe('req-kimi-anthropic-stream');
+    }
   });
 
   it('preserves diagnostics for an unknown OpenAI stream business code', async () => {

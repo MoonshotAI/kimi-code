@@ -62,7 +62,10 @@ function withDecodedDiagnostics(
     ...error,
     requestId: error.requestId ?? decoded.requestId,
     retryAfterMs: error.retryAfterMs ?? decoded.retryAfterMs,
-    headers: error.headers ?? decoded.headers,
+    headers:
+      error.headers === null
+        ? decoded.headers
+        : { ...decoded.headers, ...error.headers },
   };
 }
 

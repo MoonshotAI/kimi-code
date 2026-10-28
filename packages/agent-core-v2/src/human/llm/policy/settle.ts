@@ -227,7 +227,10 @@ export async function settleLlmRequest(
                 ...statusError,
                 requestId: statusError.requestId ?? requestId ?? null,
                 retryAfterMs: statusError.retryAfterMs ?? parseRetryAfterMs(headers),
-                headers: statusError.headers ?? headers ?? null,
+                headers:
+                  statusError.headers === null
+                    ? (headers ?? null)
+                    : { ...headers, ...statusError.headers },
               });
         failure = { error, rawError: event.rawError };
         return;
