@@ -48,8 +48,8 @@
 //   interaction.request                (none)                                                                         src/agent/interaction/interactionOps.ts
 //   interaction.resolved               (none)                                                                         src/agent/interaction/interactionOps.ts
 //   interruptionReminder.recorded      interruptionReminder                                                           src/agent/interruptionReminder/interruptionReminderOps.ts
-//   llm.request                        llm.requestTrace                                                               src/agent/llmRequester/llmRequestOps.ts
-//   llm.tools_snapshot                 llm.requestTrace                                                               src/agent/llmRequester/llmRequestOps.ts
+//   llm.request                        llm.requestTrace                                                               src/agent/loop/llmRequestOps.ts
+//   llm.tools_snapshot                 llm.requestTrace                                                               src/agent/loop/llmRequestOps.ts
 //   mcp.server_failed                  mcp.failures                                                                   src/agent/mcp/mcpFailureOps.ts
 //   mcp.server_failure_resolved        mcp.failures                                                                   src/agent/mcp/mcpFailureOps.ts
 //   mcp.tools_discovered               mcp.discovery                                                                  src/agent/mcp/mcpDiscoveryOps.ts
@@ -403,7 +403,7 @@ interface InterruptionReminderRecordedPayload {
 
 /**
  * states: llm.requestTrace
- * owner: src/agent/llmRequester/llmRequestOps.ts
+ * owner: src/agent/loop/llmRequestOps.ts
  */
 interface LlmRequestPayload {
   _name: 'llm.request';
@@ -431,7 +431,7 @@ interface LlmRequestPayload {
 
 /**
  * states: llm.requestTrace
- * owner: src/agent/llmRequester/llmRequestOps.ts
+ * owner: src/agent/loop/llmRequestOps.ts
  */
 interface LlmToolsSnapshotPayload {
   _name: 'llm.tools_snapshot';

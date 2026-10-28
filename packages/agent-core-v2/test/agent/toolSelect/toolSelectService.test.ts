@@ -213,6 +213,7 @@ class RecordingEventBus implements IEventBus {
 
 class FakeLoopService implements IAgentLoopService {
   readonly _serviceBrand = undefined;
+  readonly requester = {} as IAgentLoopService['requester'];
 
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot<BeforeStepContext>(),

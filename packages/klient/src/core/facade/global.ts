@@ -38,7 +38,7 @@ import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model
 import type {
   ModelRequestEvent,
   ModelRequestInput,
-} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/generate';
 import {
   fromCoreMessage,
   fromCorePart,

@@ -17,7 +17,7 @@ import { lowerMessage as lowerOpenAI } from '#human/llm/builtin/protocol/openai/
 import { lowerMessage as lowerAnthropic } from '#human/llm/builtin/protocol/anthropic/lower';
 import { providerImagePolicy } from '#human/llm/protocol/kit/media';
 import type { Message, ToolMessage } from '#human/llm/message';
-import { degradeLeadingMediaParts } from '#/agent/contextProjector/mediaProjection';
+import { degradeLeadingMediaParts } from '#human/llm/builtin/policy/media-degrade';
 import { parseDaemonFileUrl } from '#/agent/media/mediaRef';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';

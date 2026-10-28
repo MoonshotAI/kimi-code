@@ -31,18 +31,24 @@ export interface LlmRecoveryLedger {
   readonly applied: readonly LlmRecoveryRecord[];
   apply(request: LlmRequest): LlmRequest;
   record(entry: LlmRecoveryEntry): void;
+  fork(): LlmRecoveryLedger;
 }
 
-export function createRecoveryLedger(): LlmRecoveryLedger {
-  const applied: LlmRecoveryRecord[] = [];
-  const rewrites: LlmRequestRewrite[] = [];
+export function createRecoveryLedger(
+  seed: readonly LlmRecoveryEntry[] = [],
+): LlmRecoveryLedger {
+  const entries = [...seed];
+  const applied: LlmRecoveryRecord[] = entries.map(({ strategy, action }) => ({ strategy, action }));
+  const rewrites = entries.flatMap(({ rewrite }) => (rewrite === undefined ? [] : [rewrite]));
   return {
     applied,
     apply: (request) => rewrites.reduce((current, rewrite) => rewrite(current), request),
-    record: ({ strategy, action, rewrite }) => {
-      applied.push({ strategy, action });
-      if (rewrite !== undefined) rewrites.push(rewrite);
+    record: (entry) => {
+      entries.push(entry);
+      applied.push({ strategy: entry.strategy, action: entry.action });
+      if (entry.rewrite !== undefined) rewrites.push(entry.rewrite);
     },
+    fork: () => createRecoveryLedger(entries),
   };
 }
 

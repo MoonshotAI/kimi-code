@@ -140,6 +140,7 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
   const hasPending = () => pending.length > 0;
   const stub: StubLoop = {
     _serviceBrand: undefined, hooks, launches, cancels, startTurn,
+    requester: {} as IAgentLoopService['requester'],
     queue: { hasPendingRequests: hasPending },
     settleActive(result = { type: 'completed', steps: 0, truncated: false }) { releaseActiveResult?.(result); },
     submit(input: UserEntry, options?: LoopSubmitOptions) {

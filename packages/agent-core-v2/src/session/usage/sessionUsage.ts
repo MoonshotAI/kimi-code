@@ -1,7 +1,7 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import type { UsageRecordedContext, UsageStatus } from '#/agent/usage/usage';
 import type { TokenUsage } from '#human/llm-requester/usage';
 

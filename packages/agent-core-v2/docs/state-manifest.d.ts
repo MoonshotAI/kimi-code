@@ -55,7 +55,7 @@
 //     agentsMdReminder.seeded                         src/agent/agentsMdReminder/agentsMdReminderService.ts
 //     changeNotifier.snapshot                         src/agent/changeNotifier/changeNotifierOps.ts
 //     contextMemory                                   src/agent/contextMemory/contextOps.ts
-//     contextProjector.lastRepairSignature            src/agent/contextProjector/contextProjectorService.ts
+//     contextProjector.lastRepairSignature            src/agent/loop/projector.ts
 //     environmentBinding                              src/agent/environmentBinding/environmentBindingOps.ts
 //     externalHooks.stopHookContinuationUsed          src/features/externalHooks/agent/agentExternalHooksService.ts
 //     fileHistory                                     src/features/fileHistory/fileHistoryOps.ts
@@ -67,12 +67,12 @@
 //     fullCompaction.observedMaxContextTokensByModel  src/agent/fullCompaction/fullCompactionService.ts
 //     fullCompaction.wireRanges                       src/agent/fullCompaction/compactionOps.ts
 //     interruptionReminder                            src/agent/interruptionReminder/interruptionReminderOps.ts
-//     llm.requestTrace                                src/agent/llmRequester/llmRequestOps.ts
-//     llmRequester.emittedThinkingEffortWarnings      src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.lastConfigLogSignature             src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.lastTurnRequest                    src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.mediaRecovery                      src/agent/llmRequester/llmRequesterService.ts
-//     llmRequester.turnConfigs                        src/agent/llmRequester/llmRequesterService.ts
+//     llm.requestTrace                                src/agent/loop/llmRequestOps.ts
+//     llmRequester.emittedThinkingEffortWarnings      src/agent/loop/requester.ts
+//     llmRequester.lastConfigLogSignature             src/agent/loop/requester.ts
+//     llmRequester.lastTurnRequest                    src/agent/loop/requester.ts
+//     llmRequester.mediaRecovery                      src/agent/loop/requester.ts
+//     llmRequester.turnConfigs                        src/agent/loop/requester.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
 //     loop.lastRequestTraceId                         src/agent/loop/loopService.ts
 //     mcp.discovery                                   src/agent/mcp/mcpDiscoveryOps.ts
@@ -1607,8 +1607,6 @@ export interface AgentStateSnapshot {
     };
     readonly durationMs?: number;
   }))[];
-  // src/agent/contextProjector/contextProjectorService.ts
-  'contextProjector.lastRepairSignature': string | null;
   // src/agent/environmentBinding/environmentBindingOps.ts
   // replayable · durable — folds: EnvironmentSetBinding
   'environmentBinding': /* EnvironmentBinding — packages/agent-core-v2/src/environment/environment.ts */ {
@@ -1634,15 +1632,20 @@ export interface AgentStateSnapshot {
   // src/agent/interruptionReminder/interruptionReminderOps.ts
   // replayable · durable — folds: InterruptionReminderRecorded
   'interruptionReminder': null;
-  // src/agent/llmRequester/llmRequestOps.ts
+  // src/agent/loop/llmRequestOps.ts
   // replayable · durable — folds: LlmToolsSnapshot, LlmRequest
-  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/llmRequester/llmRequestOps.ts */ {
+  'llm.requestTrace': /* LlmRequestTraceState — packages/agent-core-v2/src/agent/loop/llmRequestOps.ts */ {
     readonly seenToolsHashes: readonly string[];
   };
-  // src/agent/llmRequester/llmRequesterService.ts
+  // src/agent/loop/loopService.ts
+  'loop.disposing': boolean;
+  'loop.lastRequestTraceId': string | undefined;
+  // src/agent/loop/projector.ts
+  'contextProjector.lastRepairSignature': string | null;
+  // src/agent/loop/requester.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
-  'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/llmRequester/llmRequester.ts */ {
+  'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/loop/requesterContract.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
     readonly toolsHash: string;
@@ -1653,18 +1656,12 @@ export interface AgentStateSnapshot {
     readonly startedAt: number;
     readonly finishedAt: number;
   } | undefined;
-  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+  'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;
-    readonly media: /* MediaProjection — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-      readonly degradeCount: number;
-    } | {
-      readonly strip: /* MediaStripSnapshot — packages/agent-core-v2/src/agent/contextProjector/contextProjector.ts */ {
-        readonly "__@mediaStripSnapshotBrand": undefined;
-      };
-    };
+    readonly ledger: unknown;
   } | undefined;
-  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/llmRequester/llmRequesterService.ts */ {
+  'llmRequester.turnConfigs': Map<number, /* TurnRequestConfig — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly resolved: /* ProfileModelContext — packages/agent-core-v2/src/agent/profile/profile.ts */ {
       readonly modelAlias: string;
       readonly modelCapabilities: /* ModelCapability — packages/agent-core-v2/src/llm-adapter/contract/capability.ts */ {
@@ -1684,11 +1681,16 @@ export interface AgentStateSnapshot {
       readonly compactionTriggerRatio: number | undefined;
       readonly compactionMaxAttempts: number | undefined;
     };
-    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
+    readonly params: /* ModelRequestParams — packages/agent-core-v2/src/llm-adapter/model/generate.ts */ {
       readonly cacheKey?: string;
-      readonly sampling?: /* SamplingOptions — packages/agent-core-v2/src/llm-adapter/model/model-requester.ts */ {
+      readonly sampling?: /* LlmSampling — packages/agent-core-v2/src/human/llm/request.ts */ {
         readonly temperature?: number;
         readonly topP?: number;
+        readonly topK?: number;
+        readonly stop?: readonly string[];
+        readonly seed?: number;
+        readonly presencePenalty?: number;
+        readonly frequencyPenalty?: number;
       };
       readonly thinkingEffort?: 'off' | 'on' | (string & {});
       readonly thinkingKeep?: string;
@@ -1700,9 +1702,6 @@ export interface AgentStateSnapshot {
     };
     readonly systemPrompt: string;
   }>;
-  // src/agent/loop/loopService.ts
-  'loop.disposing': boolean;
-  'loop.lastRequestTraceId': string | undefined;
   // src/agent/loop/turnOps.ts
   // replayable · durable — folds: ContextAppendLoopEvent, TurnPrompt, TurnSteer, ContextUndo, ContextApplyCompaction, ContextClear, TurnCancel, TurnEnded
   'turn': /* TurnModelState — packages/agent-core-v2/src/agent/loop/turnOps.ts */ {

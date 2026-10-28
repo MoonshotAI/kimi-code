@@ -5,8 +5,6 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
-import type { ProviderMediaContribution } from '#human/media/upload';
-import type { LlmModel } from '#human/llm-requester/model';
 import type {
   LlmRequestConfig,
   LlmRequestContent,
@@ -24,13 +22,20 @@ import {
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#human/llm/message';
 import type { Model } from '#/llm-adapter/model/catalog';
-import type { ModelRequestEvent } from '#/llm-adapter/model/model-requester';
-import { effectiveMaxCompletionTokens } from '#/llm-adapter/model/model-requester';
+import {
+  effectiveMaxCompletionTokens,
+  generateModel,
+  type ModelRequestEvent,
+  type ModelRequestInput,
+  type ModelRequestParams,
+} from '#/llm-adapter/model/generate';
+import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
   buildStreamTiming,
-  ModelRequesterImpl,
-  type ModelLlmGateway,
-} from '#/llm-adapter/model/model-requester-impl';
+  coreRequesterFromA,
+} from '../../harness/scripted-generate';
+import { uploadImage, uploadVideo } from '#/llm-adapter/model/media';
+import type { LlmFiles } from '#human/llm/request';
 
 class FakeLlmRequester implements LlmRequester {
   readonly calls: Array<{
@@ -52,25 +57,22 @@ class FakeLlmRequester implements LlmRequester {
   }
 }
 
-const BASE_LLM_MODEL: LlmModel = {
-  provider: 'fake',
-  model: 'fake-model',
-  capability: {
-    image_in: false,
-    video_in: false,
-    audio_in: false,
-    thinking: false,
-    tool_use: true,
-  },
-  maxContextSize: 128000,
-};
-
-function gatewayReturning(
-  requester: LlmRequester,
-  media?: ProviderMediaContribution,
-): ModelLlmGateway {
+function modelEventRequester(model: Model, requester: LlmRequester) {
   return {
-    resolve: () => ({ requester, protocol: 'openai', model: BASE_LLM_MODEL, media }),
+    request: (input: ModelRequestInput, signal?: AbortSignal, params?: ModelRequestParams) =>
+      generateModel(
+        coreRequesterFromA(
+          new ProtocolAdapterRegistry().request(model, params).with({
+            endpoint: {
+              credentials: { resolve: () => model.credentialProvider?.resolve() },
+            },
+          }),
+          requester,
+        ),
+        input,
+        signal,
+        params,
+      ),
   };
 }
 
@@ -118,13 +120,13 @@ async function collect(stream: AsyncIterable<ModelRequestEvent>): Promise<ModelR
 
 const INPUT = { systemPrompt: 'sys', tools: [], messages: [] };
 
-describe('ModelRequesterImpl request execution', () => {
+describe('generateModel request execution', () => {
   it('maps ModelRequestParams onto LlmRequestConfig, content and control', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider('sk-1')),
-      gatewayReturning(requester),
+      requester,
     );
     const signal = AbortSignal.timeout(1000);
     const messages: Message[] = [
@@ -200,9 +202,9 @@ describe('ModelRequesterImpl request execution', () => {
   it('omits the thinking intent when no effort is requested', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) => textStream(emit);
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider()),
-      gatewayReturning(requester),
+      requester,
     );
     await collect(impl.request(INPUT));
     expect(requester.calls[0]?.config.thinking).toBeUndefined();
@@ -230,9 +232,9 @@ describe('ModelRequesterImpl request execution', () => {
         { type: 'llm.done' },
       ]);
     const traceIds: Array<string | null> = [];
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider()),
-      gatewayReturning(requester),
+      requester,
     );
     const events = await collect(
       impl.request(INPUT, undefined, { onTraceId: (id) => traceIds.push(id) }),
@@ -283,9 +285,9 @@ describe('ModelRequesterImpl request execution', () => {
           headers: null,
         },
       });
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createOAuthCredentialProvider(() => Promise.resolve('tok'))),
-      gatewayReturning(requester),
+      requester,
     );
 
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
@@ -309,9 +311,9 @@ describe('ModelRequesterImpl request execution', () => {
           headers: null,
         },
       });
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider('sk-bad')),
-      gatewayReturning(requester),
+      requester,
     );
 
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
@@ -333,9 +335,9 @@ describe('ModelRequesterImpl request execution', () => {
           headers: null,
         },
       });
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider()),
-      gatewayReturning(requester),
+      requester,
     );
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect((failure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
@@ -361,57 +363,49 @@ describe('ModelRequesterImpl request execution', () => {
   });
 
   it('uploadVideo presence is the capability declaration', async () => {
-    const requester = new FakeLlmRequester();
-    const impl = new ModelRequesterImpl(
-      modelWith(createStaticCredentialProvider('sk-1')),
-      gatewayReturning(requester),
-    );
-    await expect(impl.uploadVideo('file-id')).rejects.toThrow(/does not support video upload/);
+    const model = modelWith(createStaticCredentialProvider('sk-1'));
+    const initial = new ProtocolAdapterRegistry().request(model);
+    await expect(
+      uploadVideo(model, initial, { data: new Uint8Array([1]), mimeType: 'video/mp4' }),
+    ).rejects.toThrow(/does not support video upload/);
 
     const seen: Array<string | undefined> = [];
-    const media: ProviderMediaContribution = {
-      uploadVideo: (_video, options) => {
-        seen.push(options.model.apiKey);
-        return Promise.resolve({
-          type: 'video_url',
-          videoUrl: { url: 'https://cdn.example.test/v.mp4' },
-        });
+    const files: LlmFiles = {
+      kinds: new Set(['video']),
+      upload: (_file, { endpoint }) => {
+        seen.push(endpoint.apiKey);
+        return Promise.resolve({ url: 'https://cdn.example.test/v.mp4' });
       },
     };
-    const withMedia = new ModelRequesterImpl(
-      modelWith(createStaticCredentialProvider('sk-1')),
-      gatewayReturning(requester, media),
+    const part = await uploadVideo(
+      model,
+      initial.with({ endpoint: { files } }),
+      { data: new Uint8Array([1]), mimeType: 'video/mp4' },
     );
-    const part = await withMedia.uploadVideo({ data: new Uint8Array([1]), mimeType: 'video/mp4' });
     expect(part).toEqual({ type: 'video_url', videoUrl: { url: 'https://cdn.example.test/v.mp4' } });
     expect(seen).toEqual(['sk-1']);
   });
 
   it('uploadImage presence is the capability declaration', async () => {
-    const requester = new FakeLlmRequester();
-    const impl = new ModelRequesterImpl(
-      modelWith(createStaticCredentialProvider('sk-1')),
-      gatewayReturning(requester),
-    );
+    const model = modelWith(createStaticCredentialProvider('sk-1'));
+    const initial = new ProtocolAdapterRegistry().request(model);
     await expect(
-      impl.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' }),
+      uploadImage(model, initial, { data: new Uint8Array([1]), mimeType: 'image/png' }),
     ).rejects.toThrow(/does not support image upload/);
 
     const seen: Array<string | undefined> = [];
-    const media: ProviderMediaContribution = {
-      uploadImage: (_image, options) => {
-        seen.push(options.model.apiKey);
-        return Promise.resolve({
-          type: 'image_url',
-          imageUrl: { url: 'ms://img-1', id: 'img-1' },
-        });
+    const files: LlmFiles = {
+      kinds: new Set(['image']),
+      upload: (_file, { endpoint }) => {
+        seen.push(endpoint.apiKey);
+        return Promise.resolve({ url: 'ms://img-1', id: 'img-1' });
       },
     };
-    const withMedia = new ModelRequesterImpl(
-      modelWith(createStaticCredentialProvider('sk-1')),
-      gatewayReturning(requester, media),
+    const part = await uploadImage(
+      model,
+      initial.with({ endpoint: { files } }),
+      { data: new Uint8Array([1]), mimeType: 'image/png' },
     );
-    const part = await withMedia.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' });
     expect(part).toEqual({
       type: 'image_url',
       imageUrl: { url: 'ms://img-1', id: 'img-1' },
@@ -430,9 +424,9 @@ describe('ModelRequesterImpl request execution', () => {
       emit({ type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } });
       emit({ type: 'llm.done' });
     };
-    const impl = new ModelRequesterImpl(
+    const impl = modelEventRequester(
       modelWith(createStaticCredentialProvider()),
-      gatewayReturning(requester),
+      requester,
     );
     const events = await collect(impl.request(INPUT));
     const timing = events.find((event) => event.type === 'timing');

@@ -1,12 +1,9 @@
-import { IInstantiationService } from '#/_base/di/instantiation';
 import { Service } from '#/_base/di/service';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import {
-  IAgentLLMRequesterService,
-  type AgentLLMTurnRequestSnapshot,
-} from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMTurnRequestSnapshot } from '#/agent/loop/requesterContract';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { inputTotal } from '#human/llm-requester/usage';
@@ -29,7 +26,7 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IModelCatalog private readonly models: IModelCatalog,
-    @IInstantiationService private readonly instantiation: IInstantiationService,
+    @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
   ) {
     super();
@@ -37,8 +34,8 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
     this.parentId = scopeContext.forkedFrom;
     this.parentRequest = agentLifecycle
       .handleOf(this.parentId)
-      ?.accessor.get(IAgentLLMRequesterService)
-      .lastTurnRequest();
+      ?.accessor.get(IAgentLoopService)
+      .requester.lastTurnRequest();
     this._register(
       usage.onDidRecord((e) => {
         if (e.agent.agentId === scopeContext.agentId) this.probe(e);
@@ -66,9 +63,7 @@ export class AgentCacheProbeService extends Service implements IAgentCacheProbeS
       providerType = model.providerType ?? model.protocol;
       protocol = model.protocol;
     } catch { }
-    const own = this.instantiation
-      .invokeFunction((accessor) => accessor.get(IAgentLLMRequesterService))
-      .lastTurnRequest();
+    const own = this.loopService.requester.lastTurnRequest();
     const sameModel = parent !== undefined && parent.modelAlias === e.model;
     const compared = sameModel && own !== undefined;
     this.telemetry.track2('prompt_cache_probe', {

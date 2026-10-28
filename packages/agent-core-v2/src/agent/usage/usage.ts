@@ -1,5 +1,5 @@
 import type { AgentContext } from '#/agent/agentContext/agentContext';
-import type { AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import type { TokenUsage } from '#human/llm-requester/usage';
 
 import { type ErrorCode } from '#/errors';

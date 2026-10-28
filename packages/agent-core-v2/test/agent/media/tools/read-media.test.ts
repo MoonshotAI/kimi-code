@@ -50,7 +50,7 @@ import { EventBusService } from '#/app/event/eventBusService';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { IModelCatalog } from '#/llm-adapter/model/catalog';
-import type { ModelRequester } from '#/llm-adapter/model/model-requester';
+import type { IAgentLoopService } from '#/agent/loop/loop';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import { sniffImageDimensions } from '#/agent/media/file-type';
@@ -931,7 +931,6 @@ describe('AgentMediaToolsRegistrar', () => {
     };
     const modelCatalog = {
       get: catalogModel,
-      getRequester: (id: string) => ({ model: catalogModel(id) }),
     } as unknown as IModelCatalog;
     const workspaceCtx = {
       workDir: '/workspace',
@@ -956,6 +955,7 @@ describe('AgentMediaToolsRegistrar', () => {
       registry,
       profile,
       modelCatalog,
+      { requester: {} } as unknown as IAgentLoopService,
       eventBus,
       dispatcher,
       environment,
@@ -1150,13 +1150,13 @@ describe('createVideoUploader', () => {
   };
   const input = { data: new Uint8Array(2048), mimeType: 'video/mp4', filename: 'clip.mp4' };
 
-  function modelWith(uploadVideo: ModelRequester['uploadVideo']): Pick<ModelRequester, 'uploadVideo'> {
-    return { uploadVideo } as Pick<ModelRequester, 'uploadVideo'>;
+  function modelWith(uploadVideo: VideoUploader | undefined): VideoUploader | undefined {
+    return uploadVideo;
   }
 
   it('returns undefined when the model does not support video upload', () => {
     expect(createVideoUploader(undefined)).toBeUndefined();
-    expect(createVideoUploader({} as Pick<ModelRequester, 'uploadVideo'>)).toBeUndefined();
+    expect(createVideoUploader(undefined)).toBeUndefined();
   });
 
   it('binds uploadVideo without telemetry', async () => {

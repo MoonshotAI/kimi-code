@@ -8,7 +8,7 @@ import { buildCompactionSummaryText, isRealUserInput } from '#/agent/contextMemo
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ISessionTokenCountingService } from '#/session/tokenCounting/sessionTokenCounting';
-import { IAgentLLMRequesterService, type AgentLLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import type { AgentLLMRequestFinish } from '#/agent/loop/requesterContract';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { retryBackoffDelay, sleepForRetry } from '#/_base/utils/retry';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
@@ -148,7 +148,6 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @ISessionTokenCountingService private readonly tokenCounting: ISessionTokenCountingService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
@@ -677,7 +676,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
 
         try {
           const runRequest = async () => {
-            const request = this.llmRequester.start(
+            const request = this.loopService.requester.start(
               {
                 messages,
                 maxOutputSize: compactionMaxOutputSize,
@@ -697,7 +696,7 @@ export class AgentFullCompactionService extends Service implements IAgentFullCom
             return request.result;
           };
           const result = await runWithCredentialRecovery(
-            this.llmRequester.currentCredentialProvider(),
+            this.loopService.requester.currentCredentialProvider(),
             runRequest,
             signal,
           );

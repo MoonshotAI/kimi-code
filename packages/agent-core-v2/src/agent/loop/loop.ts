@@ -7,6 +7,7 @@ import type { ContentPart, TextPart } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Hooks } from '#/hooks';
 import type { UserEntry } from '#human/agent/turn';
+import type { LoopRequester } from './requesterContract';
 import { LoopErrors } from './errors';
 import type {
   MachineEngine,
@@ -204,6 +205,8 @@ export interface LoopNotifyHandle {
 
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
+
+  readonly requester: LoopRequester;
 
   submit(input: UserEntry, options?: LoopSubmitOptions): LoopSubmitResult;
 

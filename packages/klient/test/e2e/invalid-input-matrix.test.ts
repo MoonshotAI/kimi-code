@@ -3,7 +3,7 @@
  * klient in-memory transport and a local mock model endpoint.
  *
  * Every case runs the REAL pipeline: klient facade → engine session/loop →
- * llmRequester → ModelRequesterImpl → composed ChatProvider.generate → the
+ * llmRequester → core requester → composed ChatProvider.generate → the
  * provider's message-conversion layer → HTTP against a local `node:http`
  * server. The mock server captures request bodies (so fallbacks can be
  * asserted on their wire shape) and replies with scripted SSE streams or
@@ -981,7 +981,7 @@ describe('video blocks', () => {
     expect(chatCalls).toHaveLength(2);
     const secondBody = chatCalls[1]?.json as { messages: Record<string, unknown>[] };
     const toolMessage = secondBody.messages.find((message) => message['role'] === 'tool');
-    // ModelRequesterImpl.uploadVideo throws for providers without the hook;
+    // The endpoint has no file upload support and the upload helper throws;
     // ReadMediaFile converts that into an error tool result (engine fallback).
     expect(String(toolMessage?.['content'])).toContain('does not support video upload');
     expect(ctx.payloads('prompt.completed')[0]?.['reason']).toBe('completed');

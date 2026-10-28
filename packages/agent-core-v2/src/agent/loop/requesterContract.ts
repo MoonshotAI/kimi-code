@@ -1,5 +1,6 @@
-import { createDecorator } from '#/_base/di/instantiation';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
+import type { VideoUploadInput } from '#human/media/upload';
+import type { VideoURLPart } from '#human/llm/message';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
 import type {
@@ -10,7 +11,7 @@ import type {
 } from '#human/llm/message';
 import type { TokenUsage } from '#human/llm-requester/usage';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
+import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import type { LogContext } from '#/_base/log/log';
 
 export type AgentLLMRequestLogFields = Readonly<LogContext>;
@@ -74,9 +75,7 @@ export interface AgentLLMTurnRequestSnapshot {
   readonly finishedAt: number;
 }
 
-export interface IAgentLLMRequesterService {
-  readonly _serviceBrand: undefined;
-
+export interface LoopRequester {
   prepareTurnConfig(turnId: number): PreparedTurnRequestConfig | undefined;
 
   currentCredentialProvider(): LlmCredentialProvider | undefined;
@@ -84,6 +83,11 @@ export interface IAgentLLMRequesterService {
   credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined;
 
   lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined;
+
+  uploadVideo?(
+    input: VideoUploadInput,
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<VideoURLPart>;
 
   request(
     overrides?: AgentLLMRequestOverrides,
@@ -97,7 +101,3 @@ export interface IAgentLLMRequesterService {
     signal?: AbortSignal,
   ): AgentLLMRequestTask;
 }
-
-export const IAgentLLMRequesterService = createDecorator<IAgentLLMRequesterService>(
-  'agentLLMRequesterService',
-);

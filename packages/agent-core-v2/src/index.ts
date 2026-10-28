@@ -157,7 +157,7 @@ export type {
 export type { ThinkingEffort, ThinkingRequestOptions } from '#human/llm-requester/thinking';
 export type { VideoUploadInput } from '#human/media/upload';
 export type { ToolCallIdPolicy } from '#human/llm-requester/requester';
-export type { SamplingOptions } from '#/llm-adapter/model/model-requester';
+export type { SamplingOptions } from '#/llm-adapter/model/generate';
 export * from '#/llm-adapter/contract/request-trace';
 export type { KimiThinkingConfig } from '#human/llm/builtin/provider/kimi/protocol';
 
@@ -207,7 +207,7 @@ export * from '#/llm-adapter/model/model-service';
 export * from '#/llm-adapter/model/thinking';
 export * from '#/llm-adapter/model/catalog';
 export * from '#/llm-adapter/model/catalog-service';
-export * from '#/llm-adapter/model/model-requester';
+export * from '#/llm-adapter/model/generate';
 import '#/llm-adapter/model/errors';
 export {
   MODEL_CATALOG_SECTION,
@@ -652,9 +652,6 @@ export * from '#/features/reminder/types';
 import '#/features/reminder/reminderFeature';
 export * from '#/features/dateChange/dateChange';
 export * from '#/features/dateChange/dateChangeService';
-export * from '#/agent/contextProjector/contextProjector';
-export * from '#/agent/contextProjector/contextProjectorService';
-export * from '#/agent/contextProjector/mediaProjection';
 export * from '#/agent/tokenCounting/tokenCounting';
 export * from '#/agent/tokenCounting/tokenCountingOps';
 export * from '#/session/tokenCounting/sessionTokenCounting';
@@ -674,9 +671,8 @@ export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
 export * from '#/agent/fullCompaction/contextRecovery';
 export * from '#/agent/fullCompaction/compactionInstruction';
-export * from '#/agent/llmRequester/llmRequester';
-export * from '#/agent/llmRequester/llmRequesterService';
-export * from '#/agent/llmRequester/llmRequestOps';
+export * from '#/agent/loop/requesterContract';
+export * from '#/agent/loop/llmRequestOps';
 export * from '#/_base/utils/promise';
 export * from '#/_base/utils/retry';
 export * from '#/_base/utils/timer';

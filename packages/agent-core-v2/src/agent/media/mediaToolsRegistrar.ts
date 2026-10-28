@@ -9,8 +9,7 @@ import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
-import { type ModelRequester } from '#/llm-adapter/model/model-requester';
-import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -36,6 +35,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
+    @IAgentLoopService private readonly loopService: IAgentLoopService,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher dispatcher: IEventDispatcher,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
@@ -117,22 +117,19 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     const skillCatalog = this.skillCatalog;
     const environment = this.environment;
     const pathClass = inspected?.host?.pathClass;
-    let requester: ModelRequester | undefined;
-    if (model !== undefined) {
-      try {
-        requester = this.modelCatalog.getRequester(modelAlias);
-      } catch {
-        requester = undefined;
-      }
-    }
-    const uploader = createVideoUploader(requester, {
-      client: this.telemetry,
-      props: {
-        model: modelAlias,
-        provider_type: model?.providerType ?? model?.protocol,
-        protocol: model?.protocol,
+    const uploader = createVideoUploader(
+      model === undefined
+        ? undefined
+        : this.loopService.requester.uploadVideo?.bind(this.loopService.requester),
+      {
+        client: this.telemetry,
+        props: {
+          model: modelAlias,
+          provider_type: model?.providerType ?? model?.protocol,
+          protocol: model?.protocol,
+        },
       },
-    });
+    );
     this.registration = registerMediaTools(this.toolRegistry, {
       attachmentStore: this.attachmentStore,
       environment,
@@ -149,15 +146,7 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
         },
       },
       capabilities,
-      videoUploader:
-        uploader === undefined || requester === undefined
-          ? undefined
-          : (input, options) =>
-              runWithCredentialRecovery(
-                requester.model.credentialProvider,
-                () => uploader(input, options),
-                options?.signal,
-              ),
+      videoUploader: uploader,
       inlineVideoSupported: model?.protocol !== 'openai' && model?.protocol !== 'openai_responses',
       providerType: model?.providerType,
       telemetry: this.telemetry,

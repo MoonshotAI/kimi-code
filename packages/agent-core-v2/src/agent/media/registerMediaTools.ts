@@ -1,5 +1,4 @@
 import type { ModelCapability } from '#human/llm-requester/capability';
-import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from './sessionMediaStore';
@@ -47,13 +46,11 @@ export function registerMediaTools(
 }
 
 export function createVideoUploader(
-  requester: Pick<ModelRequester, 'uploadVideo'> | undefined,
+  uploadVideo: VideoUploader | undefined,
   telemetry?: VideoUploadTelemetry,
 ): VideoUploader | undefined {
-  const uploadVideo = requester?.uploadVideo;
   if (uploadVideo === undefined) return undefined;
-  const bound = uploadVideo.bind(requester);
-  if (telemetry === undefined) return (input, options) => bound(input, options);
+  if (telemetry === undefined) return (input, options) => uploadVideo(input, options);
 
   return async (input, options) => {
     const startedAt = Date.now();
@@ -69,7 +66,7 @@ export function createVideoUploader(
       }
     };
     try {
-      const part = await bound(input, options);
+      const part = await uploadVideo(input, options);
       track({ ...base, outcome: 'success', duration_ms: Date.now() - startedAt });
       return part;
     } catch (error) {

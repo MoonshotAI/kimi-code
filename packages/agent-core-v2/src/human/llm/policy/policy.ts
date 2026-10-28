@@ -39,6 +39,7 @@ export interface LlmPolicy {
 export interface LlmRunControl {
   readonly signal: AbortSignal;
   readonly recoveries?: LlmRecoveryLedger;
+  readonly onAttempt?: (request: LlmRequest) => void;
   readonly onEvent?: (event: LlmRunEvent) => void;
 }
 
@@ -118,11 +119,12 @@ export function llmStartedEvent(request: LlmRequest): LlmRunStarted {
 export async function runLlmRequest(
   request: LlmRequest,
   control: LlmRunControl,
+  settle: typeof settleLlmRequest = settleLlmRequest,
 ): Promise<LlmOutcome> {
   control.onEvent?.(llmStartedEvent(request));
   let outcome: LlmOutcome;
   try {
-    outcome = await runAttempts(request, control);
+    outcome = await runAttempts(request, control, settle);
   } catch (error) {
     outcome =
       control.signal.aborted || isAbortError(error)
@@ -133,7 +135,11 @@ export async function runLlmRequest(
   return outcome;
 }
 
-async function runAttempts(request: LlmRequest, control: LlmRunControl): Promise<LlmOutcome> {
+async function runAttempts(
+  request: LlmRequest,
+  control: LlmRunControl,
+  settle: typeof settleLlmRequest,
+): Promise<LlmOutcome> {
   const { signal, onEvent } = control;
   const policy = request.policy ?? {};
   const ledger = control.recoveries ?? createRecoveryLedger();
@@ -154,7 +160,8 @@ async function runAttempts(request: LlmRequest, control: LlmRunControl): Promise
       }
     }
 
-    const result = await settleLlmRequest(resolvedRequest, { signal, onEvent });
+    control.onAttempt?.(resolvedRequest);
+    const result = await settle(resolvedRequest, { signal, onEvent });
     if (result.type === 'done' || result.type === 'aborted') {
       return result;
     }

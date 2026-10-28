@@ -1107,7 +1107,7 @@ describe('FullCompaction', () => {
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
     const fullCompaction = ctx.get(IAgentFullCompactionService);
-    for (let i = 0; i < 10 && fullCompaction.compacting?.traceId === undefined; i += 1) {
+    for (let i = 0; i < 100 && fullCompaction.compacting?.traceId === undefined; i += 1) {
       await Promise.resolve();
     }
     expect(fullCompaction.compacting?.traceId).toBe('trace-compact-retry');

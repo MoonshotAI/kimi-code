@@ -15,7 +15,12 @@ import { LifecycleScope } from '#/app/scopes';
 import { createScopedTestHost, createServices, stubPair } from '#/_base/di/test';
 import type { Event2 } from '#/app/event/event2';
 import { buildKimiFileUrl } from '#/agent/media/kimiFileUrl';
-import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
+import { IAgentMediaResolverService, type AgentMediaResolution } from '#/agent/media/mediaResolver';
+import type { ImageUploader, VideoUploader } from '#/llm-adapter/model/media';
+import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
+import type { LlmFiles } from '#human/llm/request';
+import type { LlmRequestInitialization } from '#/llm-adapter/model/generate';
+import { contentsOf, createRequester } from '#human/llm/requester';
 import { AgentMediaResolverService } from '#/agent/media/mediaResolverService';
 import { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -27,7 +32,6 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
 import type { ContentPart, ImageURLPart, Message, VideoURLPart } from '#human/llm/message';
 import type { LlmCredentialProvider } from '#human/llm-requester/requester';
-import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { Protocol } from '#/llm-adapter/protocol/protocol';
 import { IBlobStore } from '#/persistence/interface/blobStore';
 
@@ -173,33 +177,61 @@ function requester(opts: {
   providerType?: string;
   baseUrl?: string;
   headers?: Record<string, string>;
-  uploadVideo?: ModelRequester['uploadVideo'];
-  uploadImage?: ModelRequester['uploadImage'];
+  uploadVideo?: VideoUploader;
+  uploadImage?: ImageUploader;
   credentialProvider?: LlmCredentialProvider;
-}): ModelRequester {
+}): AgentMediaResolution {
+  const model: AgentMediaResolution['model'] = {
+    id: 'm',
+    name: 'stub',
+    aliases: [],
+    protocol: opts.protocol ?? 'openai',
+    baseUrl: opts.baseUrl,
+    headers: opts.headers ?? {},
+    capabilities: {
+      video_in: opts.videoIn ?? true,
+      image_in: opts.imageIn ?? true,
+    } as unknown as ModelCapability,
+    maxContextSize: 1000,
+    alwaysThinking: false,
+    providerName: 'p',
+    providerType: opts.providerType ?? 'kimi',
+    credentialProvider: opts.credentialProvider,
+  };
+  const files: LlmFiles | undefined =
+    opts.uploadVideo === undefined && opts.uploadImage === undefined
+      ? undefined
+      : {
+          kinds: new Set([
+            ...(opts.uploadVideo === undefined ? [] : ['video' as const]),
+            ...(opts.uploadImage === undefined ? [] : ['image' as const]),
+          ]),
+          upload: async (file, { signal }) => {
+            if (file.kind === 'video') {
+              const part = await opts.uploadVideo!(
+                { data: file.data, mimeType: file.mimeType, filename: file.filename },
+                { signal },
+              );
+              return part.videoUrl;
+            }
+            if (file.kind === 'image') {
+              const part = await opts.uploadImage!(
+                { data: file.data, mimeType: file.mimeType, filename: file.filename },
+                { signal },
+              );
+              return part.imageUrl;
+            }
+            throw new Error('unused audio upload');
+          },
+        };
+  const initial = new ProtocolAdapterRegistry().request(model);
   return {
-    model: {
-      id: 'm',
-      name: 'stub',
-      aliases: [],
-      protocol: opts.protocol ?? 'openai',
-      baseUrl: opts.baseUrl,
-      headers: opts.headers ?? {},
-      capabilities: {
-        video_in: opts.videoIn ?? true,
-        image_in: opts.imageIn ?? true,
-      } as unknown as ModelCapability,
-      maxContextSize: 1000,
-      alwaysThinking: false,
-      providerName: 'p',
-      providerType: opts.providerType ?? 'kimi',
-      credentialProvider: opts.credentialProvider,
-    },
-    request: () => {
-      throw new Error('unused');
-    },
-    uploadVideo: opts.uploadVideo,
-    uploadImage: opts.uploadImage,
+    model,
+    requester: createRequester().with({
+      protocol: contentsOf(initial).protocol as LlmRequestInitialization['protocol'],
+      model: contentsOf(initial).model as LlmRequestInitialization['model'],
+      endpoint: { ...contentsOf(initial).endpoint, files },
+    }),
   };
 }
 
@@ -328,7 +360,7 @@ describe('AgentMediaResolverService video strategy', () => {
     name: string;
     files: Map<string, { name: string; bytes: Buffer }>;
     fileId: string;
-    req: (upload: ModelRequester['uploadVideo']) => ModelRequester;
+    req: (upload: VideoUploader | undefined) => AgentMediaResolution;
   };
 
   it.each<TagCase>([

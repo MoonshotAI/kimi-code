@@ -1,7 +1,7 @@
-import type { IAgentLLMRequesterService, AgentLLMRequestFinish, AgentLLMRequestSource } from '#/agent/llmRequester/llmRequester';
+import type { LoopRequester, AgentLLMRequestFinish, AgentLLMRequestSource } from '../requesterContract';
 import type { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
+import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import type { ToolInfo, ToolResult as AgentToolResult, ToolUpdate as AgentToolUpdate } from '#/tool/toolContract';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { createAgentMachine, type PromptGate, type PromptGateVerdict } from '#human/agent/machine';
@@ -117,7 +117,7 @@ export type MachineEngineEvent =
 export interface CreateMachineEngineOptions {
   readonly model: LlmModel;
   readonly systemPrompt?: string;
-  readonly llmRequester: IAgentLLMRequesterService;
+  readonly llmRequester: LoopRequester;
   readonly toolExecutor: IAgentToolExecutorService;
   readonly toolInfos: () => readonly ToolInfo[];
   readonly maxAttemptsPerStep?: number;

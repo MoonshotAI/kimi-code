@@ -1,23 +1,9 @@
-import { LifecycleScope } from '#/app/scopes';
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentStateService } from '#/agent/state/agentState';
 import type { Message } from '#human/llm/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import {
-  IAgentContextProjectorService,
-  type MediaStripSnapshot,
-  type ProjectionPolicy,
-} from './contextProjector';
-import {
-  MEDIA_DEGRADE_KEEP_RECENT,
-  captureMediaStripSnapshot,
-  countMediaParts,
-  degradeLeadingMediaParts,
-  stripMediaPartsBySnapshot,
-} from './mediaProjection';
 import {
   project,
   projectStrict,
@@ -31,13 +17,11 @@ export const contextProjectorLastRepairSignatureKey = defineState<string | null>
   () => null,
 );
 
-export class AgentContextProjectorService implements IAgentContextProjectorService {
-  declare readonly _serviceBrand: undefined;
-
+export class AgentLoopProjector {
   constructor(
-    @ILogService private readonly log: ILogService,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentStateService private readonly states: IAgentStateService,
+    private readonly log: ILogService,
+    private readonly telemetry: ITelemetryService,
+    private readonly states: IAgentStateService,
   ) {
     this.states.contributeState(contextProjectorLastRepairSignatureKey);
   }
@@ -50,29 +34,8 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     this.states.set(contextProjectorLastRepairSignatureKey, value);
   }
 
-  project(
-    messages: readonly ContextMessage[],
-    policy: ProjectionPolicy = {},
-    mediaPaths?: ReadonlyMap<string, string>,
-  ): readonly Message[] {
-    const projected = this.projectWithTrace(
-      messages,
-      policy.structure === 'strict' ? projectStrict : project,
-    );
-    const media = policy.media;
-    if (media === undefined) return projected;
-    if ('degradeCount' in media)
-      return degradeLeadingMediaParts(projected, media.degradeCount, undefined, mediaPaths);
-    return stripMediaPartsBySnapshot(projected, media.strip, mediaPaths);
-  }
-
-  captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {
-    return captureMediaStripSnapshot(this.projectWithTrace(messages, project));
-  }
-
-  captureMediaDegradeCount(messages: readonly ContextMessage[]): number {
-    const mediaCount = countMediaParts(this.projectWithTrace(messages, project));
-    return Math.max(0, mediaCount - MEDIA_DEGRADE_KEEP_RECENT);
+  project(messages: readonly ContextMessage[], strict = false): readonly Message[] {
+    return this.projectWithTrace(messages, strict ? projectStrict : project);
   }
 
   private projectWithTrace(
@@ -141,11 +104,3 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     });
   }
 }
-
-registerScopedService(
-  LifecycleScope.Agent,
-  IAgentContextProjectorService,
-  AgentContextProjectorService,
-  ScopeActivation.OnScopeCreated,
-  'contextProjector',
-);

@@ -13,9 +13,10 @@ import { abortError, isAbortError, isUserCancellation, userCancellationReason } 
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { retryErrorFields } from '#/_base/utils/retry';
-import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
+import { AgentLoopRequester } from './requester';
+import type { LoopRequester } from './requesterContract';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import type { ModelRequestTiming } from '#/llm-adapter/model/model-requester';
+import type { ModelRequestTiming } from '#/llm-adapter/model/generate';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { abortedToolOutput } from '#/agent/toolExecutor/toolExecutorService';
 import type { ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -135,6 +136,8 @@ const TURN_WATCH_WARN_MS = 10 * 60_000;
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
 
+  readonly requester: LoopRequester;
+
   readonly hooks: IAgentLoopService['hooks'] = {
     onWillBeginStep: new OrderedHookSlot(),
     onDidFinishStep: new OrderedHookSlot(),
@@ -163,7 +166,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IConfigService private readonly config: IConfigService,
@@ -179,6 +181,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @ILogService private readonly logger: ILogService,
   ) {
     super();
+    this.requester = instantiation.createInstance(AgentLoopRequester);
     this.states.contributeState(turnKey);
     this.states.contributeState(loopLastRequestTraceIdKey);
     this.states.contributeState(loopDisposingKey);
@@ -205,10 +208,27 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.states.set(loopDisposingKey, value);
   }
 
+  private requesterFacade(): LoopRequester {
+    return {
+      prepareTurnConfig: (turnId) => this.requester.prepareTurnConfig(turnId),
+      currentCredentialProvider: () => this.requester.currentCredentialProvider(),
+      credentialProviderForTurn: (turnId) => this.requester.credentialProviderForTurn(turnId),
+      lastTurnRequest: () => this.requester.lastTurnRequest(),
+      uploadVideo: (input, options) => {
+        if (this.requester.uploadVideo === undefined) {
+          return Promise.reject(new Error('video upload is unavailable'));
+        }
+        return this.requester.uploadVideo(input, options);
+      },
+      request: (overrides, onPart, signal) => this.requester.request(overrides, onPart, signal),
+      start: (overrides, onPart, signal) => this.requester.start(overrides, onPart, signal),
+    };
+  }
+
   private engineOptions(): CreateMachineEngineOptions {
     return {
       model: MACHINE_LOOP_MODEL,
-      llmRequester: this.llmRequester,
+      llmRequester: this.requesterFacade(),
       toolExecutor: this.toolExecutor,
       toolInfos: () => this.toolRegistry.list(),
       maxAttemptsPerStep: this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxAttemptsPerStep,
@@ -1263,7 +1283,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     active.providerType = provider_type;
     active.protocol = protocol;
     this.telemetry.setContext({ turn_id: id });
-    const thinkingEffort = this.llmRequester.prepareTurnConfig(id)?.thinkingEffort;
+    const thinkingEffort = this.requester.prepareTurnConfig(id)?.thinkingEffort;
     this.telemetry.setContext({ thinking_effort: thinkingEffort });
     void this.dispatcher.dispatch(
       new TurnPrompt({

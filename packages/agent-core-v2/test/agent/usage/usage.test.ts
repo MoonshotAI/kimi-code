@@ -6,9 +6,10 @@ import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
-  IAgentLLMRequesterService,
+  type LoopRequester,
   type AgentLLMTurnRequestSnapshot,
-} from '#/agent/llmRequester/llmRequester';
+} from '#/agent/loop/requesterContract';
+import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { AgentStateService } from '#/agent/state/agentStateService';
@@ -329,8 +330,8 @@ describe('AgentCacheProbeService', () => {
 
   function requesterReturning(
     lastTurnRequest: () => AgentLLMTurnRequestSnapshot | undefined,
-  ): IAgentLLMRequesterService {
-    return { _serviceBrand: undefined, lastTurnRequest } as unknown as IAgentLLMRequesterService;
+  ): LoopRequester {
+    return { lastTurnRequest } as unknown as LoopRequester;
   }
 
   function stubProbeDeps(
@@ -353,7 +354,9 @@ describe('AgentCacheProbeService', () => {
       IAgentScopeContext,
       makeAgentScopeContext({ agentId: 'test-agent', agentScope: '', forkedFrom }),
     );
-    ix.stub(IAgentLLMRequesterService, requesterReturning(() => requests.own));
+    ix.stub(IAgentLoopService, {
+      requester: requesterReturning(() => requests.own),
+    } as unknown as IAgentLoopService);
     const parentRequester = requesterReturning(() => requests.parent);
     const parentRevisionAtFork = requests.parent?.contextRevision ?? 0;
     const parentContextMemory = {
@@ -367,7 +370,9 @@ describe('AgentCacheProbeService', () => {
           ? {
               accessor: {
                 get: (id: unknown) =>
-                  id === IAgentContextMemoryService ? parentContextMemory : parentRequester,
+                  id === IAgentContextMemoryService
+                    ? parentContextMemory
+                    : { requester: parentRequester },
               },
             }
           : undefined,
