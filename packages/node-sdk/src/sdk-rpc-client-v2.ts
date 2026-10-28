@@ -1801,10 +1801,7 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     if (workspaceId === undefined) return;
     const target = this.engineAccessor.get(IWorkspaceInstanceManager).get(workspaceId);
     if (target === undefined) return;
-    await target.program.instructions.reload();
-    await target.program.skills.reload();
-    await target.program.agentProfiles.reload().catch(() => undefined);
-    await target.program.userAgentProfiles.reload().catch(() => undefined);
+    await target.program.reload();
   }
 
   private async refreshPluginSessionStarts(excludedSessionId?: string): Promise<void> {

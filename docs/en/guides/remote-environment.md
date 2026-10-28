@@ -137,8 +137,9 @@ The connection handshake requires a minimum executor version and a POSIX target.
 Several behaviors are deliberately scoped. Each of the following is a known limitation:
 
 - **Hooks run on the Kimi Code host**: `PreToolUse` and other lifecycle hooks always execute on the machine running Kimi Code, so in a remote session they observe local facts (local files, local processes), not the target's. They run with the session's local working directory; hooks that would execute on the target itself are a future, undesigned concept.
-- **MCP servers stay local by default**: stdio MCP servers without an explicit `environment_id` keep running on your machine even in remote sessions; they do not see the target's filesystem.
-- **No hot reload on remote workspaces**: file watching is outside the remote abstraction, so changes to `AGENTS.md`, project skills, or MCP configuration on the target are not picked up live.
+- **MCP servers stay local by default**: stdio MCP servers without an explicit `environment_id` keep running on your machine even in remote sessions; they do not see the target's filesystem. MCP configuration comes from the local directory you started Kimi Code in, including its project-level configuration; MCP configuration on the target is not read.
+- **Remote sessions load only user-level agent files**: project-level agent files can replace the system prompt, and workspace trust currently covers local paths only, so remote sessions read neither `.kimi-code/agents/` nor `.agents/agents/` on the target, and do not apply the project-level agent files of the directory you started in.
+- **No hot reload on remote workspaces**: file watching is outside the remote abstraction, so changes to `AGENTS.md` or project skills on the target are not picked up live; they are read again when you create or resume a session, or run `/reload`.
 - **Tower mode unsupported**: tower multi-agent orchestration does not work on remote workspaces.
 - **Git status slot hidden**: the CLI footer's git indicators (branch, status, PR) are local-only and hidden for remote sessions.
 - **`/feedback` scanner unsupported**: the codebase scanner attached to `/feedback` scans the local disk and is unavailable for remote workspaces; a notice is shown instead.

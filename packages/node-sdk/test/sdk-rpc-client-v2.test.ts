@@ -70,6 +70,7 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { ISessionMediaStore } from '@moonshot-ai/agent-core-v2/agent/media/sessionMediaStore';
+import { ISessionAgentProfileCatalog } from '@moonshot-ai/agent-core-v2/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { attachmentFileSource } from '@moonshot-ai/agent-core-v2/agent/tools/fileReadSource';
 import { HostFileSystem } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostFsService';
 import { HostProcessService } from '@moonshot-ai/agent-core-v2/os/backends/node-local/hostProcessService';
@@ -410,6 +411,36 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(message).not.toContain('(deleted)');
       expect(message).not.toContain(join(workDir, 'AGENTS.md'));
       expect(message).not.toContain(remotePersonalAgentsMd);
+    } finally {
+      await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
+    }
+  });
+
+  it('keeps launch-directory project agents out of remote sessions, which read only user agents', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-profiles-local-'));
+    const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-profiles-remote-'));
+    tempDirs.push(workDir, remoteDir);
+    const agentMd = (name: string): string => `---\nname: ${name}\ndescription: ${name} agent\n---\n\nYou are ${name}.\n`;
+    await mkdir(join(workDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(join(workDir, '.kimi-code', 'agents', 'launch-project.md'), agentMd('launch-project'));
+    await mkdir(join(remoteDir, '.kimi-code', 'agents'), { recursive: true });
+    await writeFile(join(remoteDir, '.kimi-code', 'agents', 'remote-project.md'), agentMd('remote-project'));
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    await mkdir(join(homeDir, 'agents'), { recursive: true });
+    await writeFile(join(homeDir, 'agents', 'personal.md'), agentMd('personal'));
+    const provider = await attachFakeBoxEnvironment(client);
+    try {
+      const local = await harness.createSession({ workDir, environmentId: 'local' });
+      const remote = await harness.createSession({ workDir, environmentId: 'fake-box' });
+      const profileNames = (sessionId: string): string[] => getLiveSessionById(client.engineAccessor, sessionId)!.accessor
+        .get(ISessionAgentProfileCatalog)
+        .list()
+        .map((profile) => profile.name);
+
+      expect(profileNames(local.id)).toEqual(expect.arrayContaining(['launch-project', 'personal']));
+      expect(profileNames(remote.id)).toContain('personal');
+      expect(profileNames(remote.id)).not.toContain('launch-project');
+      expect(profileNames(remote.id)).not.toContain('remote-project');
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
     }

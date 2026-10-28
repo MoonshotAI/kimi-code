@@ -1150,10 +1150,7 @@ async function refreshWorkspaceCatalogs(
   if (workspaceId !== undefined) {
     const target = core.accessor.get(IWorkspaceInstanceManager).get(workspaceId);
     if (target !== undefined) {
-      await target.program.instructions.reload();
-      await target.program.skills.reload();
-      await target.program.agentProfiles.reload().catch(() => undefined);
-      await target.program.userAgentProfiles.reload().catch(() => undefined);
+      await target.program.reload();
     }
   }
   const sessions = core.accessor.get(ISessionManager).list();

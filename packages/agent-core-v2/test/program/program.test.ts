@@ -19,6 +19,7 @@ import type { IEnvironmentService } from '#/app/environment/environment';
 import { Program, type ProgramWorkdir } from '#/program/program';
 import type { ProgramSessionControllerInput } from '#/program/programDependencies';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
+import { environmentBindingId } from '#/environment/environment';
 import { EnvironmentRegistry } from '#/environment/environmentRegistry';
 import { FileSkillDiscovery } from '#/features/skill/catalog/fileSkillDiscovery';
 import { UserFileSkillSource } from '#/features/skill/catalog/userFileSkillSource';
@@ -99,18 +100,22 @@ function setup(readiness = new Map<string, Promise<void>>(), order: string[] = [
       getSkippedByPolicy: () => [],
       getSkillRoots: () => [],
     };
-    return {
-      id,
+    const root = {
       state: behavior,
       dirs: behavior,
       fs: behavior,
       git: behavior,
       instructions: { ...behavior, snapshot: {} },
+      skills: { ...behavior, catalog },
+      agentProfiles: behavior,
+    };
+    return {
+      id,
+      root,
+      workdirs: new Map(),
       mcpConfig: { ...behavior, servers: () => ({}) },
       mcp: behavior,
       trust: { ...behavior, isTrusted: () => false },
-      skills: { ...behavior, catalog },
-      agentProfiles: behavior,
       userAgentProfiles: behavior,
       pluginAgentProfiles: behavior,
       explicitAgentProfiles: behavior,
@@ -211,28 +216,30 @@ describe('Program', () => {
     const { registry, program, create } = setup();
     registry.register(fakeEnvironment('local', 'one'));
     const generation = create.mock.results[0]?.value as unknown as {
-      skills: { catalog: {
-        listSkills(): unknown[];
-        listInvocableSkills(): unknown[];
-        getSkippedByPolicy(): unknown[];
-        getSkillRoots(): string[];
-      } };
-      instructions: { snapshot: { agentsMdPaths?: readonly string[] } };
+      root: {
+        skills: { catalog: {
+          listSkills(): unknown[];
+          listInvocableSkills(): unknown[];
+          getSkippedByPolicy(): unknown[];
+          getSkillRoots(): string[];
+        } };
+        instructions: { snapshot: { agentsMdPaths?: readonly string[] } };
+      };
       mcpConfig: { servers(): Record<string, unknown> };
       mcp: unknown;
     };
     const skill = { source: 'workspace' };
-    generation.skills.catalog.listSkills = () => [skill];
-    generation.skills.catalog.listInvocableSkills = () => [skill];
-    generation.skills.catalog.getSkippedByPolicy = () => [];
-    generation.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
-    generation.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
+    generation.root.skills.catalog.listSkills = () => [skill];
+    generation.root.skills.catalog.listInvocableSkills = () => [skill];
+    generation.root.skills.catalog.getSkippedByPolicy = () => [];
+    generation.root.skills.catalog.getSkillRoots = () => ['/workspace/.agents/skills'];
+    generation.root.instructions.snapshot = { agentsMdPaths: ['/workspace/AGENTS.md'] };
     generation.mcpConfig.servers = () => ({ baseline: {} });
     await program.ready;
     await Promise.resolve();
 
-    expect(program.skills).toBe(generation.skills);
-    expect(program.instructions).toBe(generation.instructions);
+    expect(program.skills).toBe(generation.root.skills);
+    expect(program.instructions).toBe(generation.root.instructions);
     expect(program.mcpConfig).toBe(generation.mcpConfig);
     expect(program.mcp).toBe(generation.mcp);
     expect(program.snapshot()).toMatchObject({
@@ -313,7 +320,7 @@ interface LocalityFixture {
   readonly registry: EnvironmentRegistry;
   readonly program: Program;
   readonly local: () => GenerationAccess;
-  readonly workdir: (cwd: string, contextKey?: string) => ProgramWorkdir;
+  readonly workdir: (cwd: string) => Promise<ProgramWorkdir>;
   readonly controllerInputs: ProgramSessionControllerInput[];
   readonly profileRegistry: AgentProfileRegistryService;
   readonly profileRegistrations: { readonly sourceId: string; readonly profiles: readonly string[] }[];
@@ -510,12 +517,17 @@ async function localityFixture(options: { readonly remoteCwd?: string } = {}): P
       : { fs: scopedFs(remoteRoot, await realpath(remoteRoot), realFs), process: new HostProcessService() },
   ) as FakeEnvironment);
 
-  const local = (): GenerationAccess => (program as unknown as { generation: GenerationAccess }).generation;
+  const local = (): GenerationAccess => {
+    const generation = (program as unknown as {
+      generation: { root: GenerationAccess; mcpConfig: IWorkspaceMcpConfigService; userAgentProfiles: IUserAgentProfileLoader };
+    }).generation;
+    return { ...generation.root, mcpConfig: generation.mcpConfig, userAgentProfiles: generation.userAgentProfiles };
+  };
   const workdirs: ProgramWorkdir[] = [];
   let controller: { dispose(): void } | undefined;
-  const workdir = (cwd: string, contextKey = 'session-a'): ProgramWorkdir => {
+  const workdir = async (cwd: string): Promise<ProgramWorkdir> => {
     controller ??= program.createSessionController();
-    const created = controllerInputs[0]!.createWorkdir('remote', cwd, contextKey);
+    const created = await controllerInputs[0]!.acquireWorkdir('remote', cwd);
     workdirs.push(created);
     return created;
   };
@@ -590,6 +602,8 @@ describe('Program local generation and remote workdirs', () => {
       expect(fixture.profileRegistrations.filter((entry) => entry.sourceId === 'workspace')).toEqual([
         { sourceId: 'workspace', profiles: ['local-agent'] },
       ]);
+      expect(fixture.profileRegistry.entries().find((entry) => entry.sourceId === 'workspace')?.contextKey)
+        .toBe(environmentBindingId('local', fixture.localRoot));
 
       await local.git.status();
       expect(fixture.localGitCalls).toEqual([fixture.localRoot]);
@@ -601,12 +615,12 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('roots a remote workdir at the session cwd on the target fs while user config stays local', async () => {
+  it('roots a remote workdir at the session cwd on the target fs while user config and profiles stay local', async () => {
     const fixture = await localityFixture();
     try {
       await awaitLocality(fixture.local());
       const localProfilesBefore = fixture.profileRegistrations.length;
-      const remote = fixture.workdir(fixture.remoteRoot);
+      const remote = await fixture.workdir(fixture.remoteRoot);
       await awaitWorkdir(remote);
       const remoteProfiles = fixture.profileRegistrations.slice(localProfilesBefore);
 
@@ -621,11 +635,9 @@ describe('Program local generation and remote workdirs', () => {
 
       expect(remote.skills.catalog.listSkills().map((skill) => skill.name)).toEqual(['target-skill', 'user-skill']);
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
-      expect(remoteProfiles.filter((entry) => entry.sourceId === 'workspace')).toEqual([
-        { sourceId: 'workspace', profiles: ['target-agent'] },
-      ]);
-      expect(remoteProfiles.filter((entry) => entry.sourceId === 'user')).toEqual([]);
-      expect(fixture.profileRegistry.entries().find((entry) => entry.sourceId === 'workspace' && entry.contextKey === 'session-a')).toBeDefined();
+      expect(remoteProfiles).toEqual([]);
+      expect(remote.contextKey).toBe(environmentBindingId('remote', fixture.remoteRoot));
+      expect(fixture.profileRegistry.entries().some((entry) => entry.contextKey === remote.contextKey)).toBe(false);
 
       const listed = await remote.fs.list({ path: '.', depth: 1, limit: 100, show_hidden: false, follow_gitignore: false, sort: 'name_asc', include_git_status: false });
       expect(listed.items.map((entry) => entry.name)).toContain('AGENTS.md');
@@ -640,7 +652,7 @@ describe('Program local generation and remote workdirs', () => {
     try {
       const cwd = join(fixture.remoteRoot, 'src');
       await mkdir(cwd);
-      const remote = fixture.workdir(cwd);
+      const remote = await fixture.workdir(cwd);
       await awaitWorkdir(remote);
       const instructions = remote.instructions.sessionProvider();
       expect(instructions.agentsMd).toContain('target project instructions');
@@ -661,7 +673,7 @@ describe('Program local generation and remote workdirs', () => {
         join(fixture.remoteRoot, '.kimi-code', 'local.toml'),
         '[workspace]\nadditional_dir = ["~/shared"]\n',
       );
-      const remote = fixture.workdir(fixture.remoteRoot);
+      const remote = await fixture.workdir(fixture.remoteRoot);
       await awaitWorkdir(remote);
       expect(remote.dirs.additionalDirs).toEqual([join(fixture.remoteHomeDir, 'shared')]);
     } finally {
@@ -669,15 +681,18 @@ describe('Program local generation and remote workdirs', () => {
     }
   });
 
-  it('roots each workdir at its own cwd and unregisters its profiles on dispose', async () => {
+  it('roots each workdir at its own cwd and shares one workdir per environment and cwd', async () => {
     const fixture = await localityFixture({ remoteCwd: undefined });
     try {
       await awaitLocality(fixture.local());
-      const target = fixture.workdir(fixture.remoteRoot, 'session-a');
-      const alt = fixture.workdir(fixture.remoteAltRoot, 'session-b');
+      const target = await fixture.workdir(fixture.remoteRoot);
+      const shared = await fixture.workdir(fixture.remoteRoot);
+      const alt = await fixture.workdir(fixture.remoteAltRoot);
       await awaitWorkdir(target);
       await awaitWorkdir(alt);
 
+      expect(shared.instructions).toBe(target.instructions);
+      expect(alt.instructions).not.toBe(target.instructions);
       expect(target.instructions.snapshot.agentsMd).toContain('target project instructions');
       expect(target.instructions.snapshot.agentsMd).not.toContain('alt project instructions');
       expect(target.dirs.additionalDirs).toEqual([join(fixture.remoteRoot, 'targetextra')]);
@@ -687,8 +702,57 @@ describe('Program local generation and remote workdirs', () => {
       expect(alt.dirs.additionalDirs).toEqual([join(fixture.remoteAltRoot, 'altextra')]);
 
       target.dispose();
-      expect(fixture.profileRegistry.entries().some((entry) => entry.contextKey === 'session-a')).toBe(false);
-      expect(fixture.profileRegistry.entries().some((entry) => entry.contextKey === 'session-b')).toBe(true);
+      expect((await fixture.workdir(fixture.remoteRoot)).instructions).toBe(shared.instructions);
+      shared.dispose();
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('refreshes a shared remote workdir for every new holder because the target cannot be watched', async () => {
+    const fixture = await localityFixture();
+    try {
+      const first = await fixture.workdir(fixture.remoteRoot);
+      await awaitWorkdir(first);
+      await writeFile(join(fixture.remoteRoot, 'AGENTS.md'), 'edited target instructions');
+      expect(first.instructions.snapshot.agentsMd).toContain('target project instructions');
+
+      const second = await fixture.workdir(fixture.remoteRoot);
+
+      expect(second.instructions).toBe(first.instructions);
+      expect(second.instructions.snapshot.agentsMd).toContain('edited target instructions');
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('rebuilds a workdir once every holder released it', async () => {
+    const fixture = await localityFixture({ remoteCwd: undefined });
+    try {
+      const first = await fixture.workdir(fixture.remoteRoot);
+      await awaitWorkdir(first);
+      first.dispose();
+      const second = await fixture.workdir(fixture.remoteRoot);
+      await awaitWorkdir(second);
+      expect(second.instructions).not.toBe(first.instructions);
+    } finally {
+      await fixture.cleanup();
+    }
+  });
+
+  it('reloads remote workdirs together with the workspace root', async () => {
+    const fixture = await localityFixture();
+    try {
+      await awaitLocality(fixture.local());
+      const remote = await fixture.workdir(fixture.remoteRoot);
+      await awaitWorkdir(remote);
+      await writeFile(join(fixture.remoteRoot, 'AGENTS.md'), 'updated target instructions');
+      await writeFile(join(fixture.localRoot, 'AGENTS.md'), 'updated local instructions');
+
+      await fixture.program.reload();
+
+      expect(remote.instructions.snapshot.agentsMd).toContain('updated target instructions');
+      expect(fixture.local().instructions.snapshot.agentsMd).toContain('updated local instructions');
     } finally {
       await fixture.cleanup();
     }

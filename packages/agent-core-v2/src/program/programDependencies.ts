@@ -20,28 +20,18 @@ import type { IExtraAgentProfileLoader } from '#/workspace/workspaceAgentProfile
 import type { IExplicitAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/explicitAgentProfileLoader';
 import type { IPluginAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/pluginAgentProfileLoader';
 import type { IUserAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/userAgentProfileLoader';
-import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
-import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
-import type { IWorkspaceFsService } from '#/workspace/workspaceFs/fs';
-import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 import type { IWorkspaceMcpService } from '#/workspace/workspaceMcp/workspaceMcp';
-import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import type { IWorkspaceTrustStore } from '#/workspace/workspaceTrust/workspaceTrustStore';
 import type { ProgramWorkdir } from './program';
 
 export interface ProgramSessionControllerInput {
   readonly context: IWorkspaceContext;
-  readonly workspaceAgentProfiles: IWorkspaceAgentProfileLoader;
   readonly extraAgentProfiles: IExtraAgentProfileLoader;
   readonly explicitAgentProfiles: IExplicitAgentProfileLoader;
   readonly userAgentProfiles: IUserAgentProfileLoader;
   readonly pluginAgentProfiles: IPluginAgentProfileLoader;
-  readonly dirs: IWorkspaceDirs;
-  readonly skills: IWorkspaceSkillCatalog;
-  readonly instructions: IWorkspaceInstructionsService;
   readonly mcp: IWorkspaceMcpService;
-  readonly fs: IWorkspaceFsService;
-  readonly createWorkdir: (environmentId: string, cwd: string, contextKey: string) => ProgramWorkdir;
+  readonly acquireWorkdir: (environmentId: string, cwd: string) => Promise<ProgramWorkdir>;
   readonly onDispose: () => void;
 }
 
