@@ -24,6 +24,12 @@ export const EditInputSchema = z.object({
     .boolean()
     .optional()
     .describe('Set true only when every occurrence of old_string should be replaced.'),
+  allow_large_delete: z
+    .boolean()
+    .optional()
+    .describe(
+      'Set true only when intentionally deleting 3 or more lines with an empty (or whitespace-only) new_string, including cumulative multi-line replace_all matches. Omit for normal edits.',
+    ),
 });
 
 export type EditInput = z.infer<typeof EditInputSchema>;

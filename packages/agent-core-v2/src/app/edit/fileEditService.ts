@@ -26,6 +26,7 @@ export class FileEditService implements IFileEditService {
         old_string: input.old_string,
         new_string: input.new_string,
         replace_all: input.replace_all,
+        allow_large_delete: input.allow_large_delete,
       });
       if (!result.ok) {
         return { ok: false, error: result.error };
