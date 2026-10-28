@@ -230,7 +230,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await handle.accessor.get(ISessionMetadata).update(
           environment.environmentId === LOCAL_ENVIRONMENT_ID
             ? { environmentCwd: environment.cwd }
-            : { environmentId: environment.environmentId, environmentCwd: environment.cwd },
+            : {
+                environmentId: environment.environmentId,
+                environmentCwd: environment.cwd,
+                cwd: opts.workDir,
+              },
           { touchUpdatedAt: false },
         );
       }
@@ -466,10 +470,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
     const summary = await this.index.get(sessionId);
     if (summary === undefined || summary.workspaceId !== this.workspaceId) return undefined;
-    const workDir = summary.cwd ?? this.workspaceContext.cwd;
     const persisted = await this.readMetaFromDisk(sessionId);
-
     const environment = sessionEnvironment(persisted?.environmentId, persisted?.environmentCwd);
+    const workDir = environment !== undefined && environment.environmentId !== LOCAL_ENVIRONMENT_ID
+      ? persisted?.cwd ?? this.workspaceContext.cwd
+      : summary.cwd ?? this.workspaceContext.cwd;
+
     const handle = await this.materializeSession({
       sessionId,
       workDir,
@@ -739,10 +745,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           labels: labelsFromAgentMeta(sourceAgent),
         };
       }
+      const hostCwd = sourceHandle?.accessor.get(ISessionContext).cwd ?? sourceMeta?.cwd ?? this.workspaceContext.cwd;
       const meta: SessionMeta = {
         id: targetId,
         version: SESSION_META_VERSION,
-        cwd: this.workspaceContext.cwd,
+        cwd: hostCwd,
         createdAt: now,
         updatedAt: toEpochMs(sourceMeta?.updatedAt) || now,
         archived: false,
@@ -765,7 +772,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         buildSessionSummary({
           id: targetId,
           workspaceId: this.workspaceId,
-          cwd: this.workspaceContext.cwd,
+          cwd: hostCwd,
           title,
           lastPrompt: meta.lastPrompt,
           createdAt: now,

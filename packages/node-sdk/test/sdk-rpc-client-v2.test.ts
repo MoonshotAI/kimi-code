@@ -458,7 +458,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       });
       const session = await harness.createSession({ workDir, environmentId: 'fake-box', model: 'stub' });
       const meta = JSON.parse(await readFile(join(await findSessionDir(homeDir, session.id), 'state.json'), 'utf-8'));
-      expect(meta).toMatchObject({ environmentId: 'fake-box', environmentCwd: remoteDir });
+      expect(meta).toMatchObject({ environmentId: 'fake-box', environmentCwd: remoteDir, cwd: workDir });
       await client.engineAccessor.get(ISessionManager).close(session.id);
       const fake = client.engineAccessor.get(IEnvironmentService).current('fake-box') as FakeEnvironment;
       fake.setStatus('disconnected');
@@ -496,7 +496,7 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-attachment-work-'));
     const remoteDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-attachment-target-'));
     tempDirs.push(workDir, remoteDir);
-    const { harness, client } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
+    const { harness, client, homeDir } = await makeEnvironmentHarness({ defaultCwd: remoteDir });
     const provider = await attachFakeBoxEnvironment(client);
     const bytes = Buffer.from('original-image-bytes');
     const read = async (sessionId: string, reference: string) => {
@@ -510,9 +510,18 @@ describe('SDKRpcClientV2 (agent-core-v2 wiring)', () => {
       expect(await read(session.id, reference)).toEqual(bytes);
       const fork = await harness.forkSession({ id: session.id });
       expect(await read(fork.id, reference)).toEqual(bytes);
+      await client.engineAccessor.get(IAtomicDocumentStore).set('', 'session_index.jsonl', {
+        sessionId: session.id,
+        sessionDir: await findSessionDir(homeDir, session.id),
+        workDir: remoteDir,
+      });
       await session.close();
       await harness.resumeSession({ id: session.id });
       expect(await read(session.id, reference)).toEqual(bytes);
+      expect(getLiveSessionById(client.engineAccessor, session.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
+      await fork.close();
+      const restoredFork = await harness.resumeSession({ id: fork.id });
+      expect(getLiveSessionById(client.engineAccessor, restoredFork.id)!.accessor.get(ISessionContext).cwd).toBe(workDir);
     } finally {
       await provider.dispose(); await harness.close(); vi.unstubAllEnvs();
     }
