@@ -314,15 +314,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     );
 
-    // Keep the failed input in pendingInput and the rest in the queue. Sending
-    // the next item would overwrite the failed one when the model must be fixed first.
-    if (
-      event.type === "error"
-      && "phase" in event
-      && event.phase === "preflight"
-      && "code" in event
-      && event.code === "model.not_configured"
-    ) {
+    // Keep the failed input in pendingInput and the rest in the queue. Every
+    // terminal preflight error means the send could not start; advancing now
+    // would overwrite the failed prompt, matching the desktop queue behavior.
+    if (event.type === "error" && "phase" in event && event.phase === "preflight") {
       return;
     }
 

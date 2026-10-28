@@ -569,30 +569,33 @@ describe("Webview model resolution before sending", () => {
     expect(useChatStore.getState().queue).toEqual([]);
   });
 
-  it("keeps the failed and remaining prompts when host model preflight rejects a queued send", () => {
-    useSettingsStore.getState().initModels(MODELS, "plain", false);
-    const chat = useChatStore.getState();
-    chat.enqueue("first", "plain");
-    chat.enqueue("second", "plain");
-    vi.useFakeTimers();
+  it.each(["model.not_configured", "config.invalid", "internal"])(
+    "keeps the failed and remaining prompts after host %s preflight rejection",
+    (code) => {
+      useSettingsStore.getState().initModels(MODELS, "plain", false);
+      const chat = useChatStore.getState();
+      chat.enqueue("first", "plain");
+      chat.enqueue("second", "plain");
+      vi.useFakeTimers();
 
-    try {
-      chat.sendNextQueued();
-      useChatStore.getState().processEvent({
-        type: "error",
-        code: "model.not_configured",
-        message: "The selected model is no longer available. Choose another model before sending.",
-        phase: "preflight",
-      });
-      vi.advanceTimersByTime(100);
+      try {
+        chat.sendNextQueued();
+        useChatStore.getState().processEvent({
+          type: "error",
+          code,
+          message: "The request could not start. Fix the problem before retrying.",
+          phase: "preflight",
+        });
+        vi.advanceTimersByTime(100);
 
-      expect(boundary.streamChat).toHaveBeenCalledTimes(1);
-      expect(useChatStore.getState().pendingInput).toEqual({ content: "first", model: "plain" });
-      expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
+        expect(boundary.streamChat).toHaveBeenCalledTimes(1);
+        expect(useChatStore.getState().pendingInput).toEqual({ content: "first", model: "plain" });
+        expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 });
 
 describe("Webview MCP update bridge", () => {
