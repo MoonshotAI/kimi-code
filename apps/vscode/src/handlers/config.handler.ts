@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import { ProtocolAdapterRegistry } from "@moonshot-ai/agent-core-v2";
 import {
   effectiveModelAlias,
   type KimiConfig as SdkKimiConfig,
@@ -16,6 +17,8 @@ import type {
 import type { ExtensionConfig, SessionConfig } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
 import type { Handler } from "./types";
+
+const protocolRegistry = new ProtocolAdapterRegistry();
 
 const SLASH_COMMANDS: SlashCommandInfo[] = [
   { name: "init", aliases: [], description: "Analyze the codebase and generate AGENTS.md" },
@@ -147,13 +150,27 @@ export function toWebviewConfig(config: SdkKimiConfig): WebviewKimiConfig {
   };
 }
 
+function effectiveCapabilitiesForModel(id: string, model: ModelAlias, providerType?: ProviderType): string[] {
+  const protocol = model.protocol ?? providerType;
+  const detected = protocol === undefined || protocol === "kimi" || protocol === "vertexai"
+    ? undefined
+    : protocolRegistry.resolveCapability(protocol, model.model || id, providerType);
+  const capabilities = new Set((model.capabilities ?? []).map((capability) => capability.trim().toLowerCase()));
+  if (detected?.image_in) capabilities.add("image_in");
+  if (detected?.video_in) capabilities.add("video_in");
+  if (detected?.audio_in) capabilities.add("audio_in");
+  if (detected?.thinking) capabilities.add("thinking");
+  if (detected?.tool_use) capabilities.add("tool_use");
+  return [...capabilities];
+}
+
 function toWebviewModel(id: string, model: ModelAlias, providerType?: ProviderType): ModelConfig {
   const effective = effectiveModelAlias(model, providerType);
   return {
     id,
     name: effective.displayName ?? effective.model ?? id,
     provider: effective.provider,
-    capabilities: [...(effective.capabilities ?? [])],
+    capabilities: effectiveCapabilitiesForModel(id, effective, providerType),
     adaptive_thinking: effective.adaptiveThinking,
     support_efforts:
       effective.supportEfforts === undefined ? undefined : [...effective.supportEfforts],

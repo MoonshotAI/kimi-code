@@ -244,6 +244,10 @@ export class SessionRuntime {
     return actionId;
   }
 
+  emitContextCleared(): void {
+    this.emitStreamEvent({ type: "context_cleared", payload: {}, _sessionId: this.id });
+  }
+
   emitHostText(text: string, actionId = this.activeHostActionId): void {
     if (!this.hostActionActive || actionId !== this.activeHostActionId || text.length === 0) return;
     this.emitStreamEvent({

@@ -155,6 +155,7 @@ describe("Extension-host model validation before sending", () => {
       session: { clearContext },
       beginHostAction: vi.fn(() => 7),
       emitHostText: vi.fn(),
+      emitContextCleared: vi.fn(),
       completeHostAction: vi.fn(),
       releaseHostAction: vi.fn(),
       wasHostActionCancelled: vi.fn(() => false),
@@ -186,11 +187,7 @@ describe("Extension-host model validation before sending", () => {
     expect(clearContext).toHaveBeenCalledOnce();
     expect(getConfig).not.toHaveBeenCalled();
     expect(getOrCreateSession).not.toHaveBeenCalled();
-    expect(ctx.broadcast).toHaveBeenCalledWith(
-      "streamEvent",
-      { type: "context_cleared", payload: {}, _sessionId: "session-1" },
-      "view-1",
-    );
+    expect(runtime.emitContextCleared).toHaveBeenCalledOnce();
     expect(runtime.completeHostAction).toHaveBeenCalledWith("finished", 7);
     expect(runtime.releaseHostAction).toHaveBeenCalledWith(7);
   });

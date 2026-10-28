@@ -66,10 +66,10 @@ export interface PendingDraftMedia {
 }
 
 function rollbackRequestKey(content: readonly ContentPart[]): string {
-  const serialized = JSON.stringify(content);
+  const serialized = String(JSON.stringify(content));
   let hash = 0;
-  for (let index = 0; index < serialized.length; index += 1) {
-    hash = (hash * 31 + serialized.codePointAt(index)) >>> 0;
+  for (const byte of new TextEncoder().encode(serialized)) {
+    hash = (hash * 31 + byte) >>> 0;
   }
   return hash.toString(36);
 }

@@ -4,7 +4,6 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import * as vscode from "vscode";
 
-import { Events } from "../../shared/bridge";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import {
   buildExportMarkdown,
@@ -57,11 +56,7 @@ export async function runHostSlashCommand(
         case "clear":
         case "reset":
           await runtime.session.clearContext();
-          ctx.broadcast?.(
-            Events.StreamEvent,
-            { type: "context_cleared", payload: {}, _sessionId: runtime.id },
-            ctx.webviewId,
-          );
+          runtime.emitContextCleared();
           emit("The context has been cleared.");
           break;
         case "yolo":

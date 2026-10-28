@@ -613,6 +613,16 @@ describe("Webview model resolution before sending", () => {
     );
   });
 
+  it("preserves new draft attachments on context_cleared", () => {
+    const image = "data:image/png;base64,AA";
+    useChatStore.getState().addDraftMedia("next-image", image);
+
+    useChatStore.getState().processEvent({ type: "context_cleared", payload: {} });
+
+    expect(useChatStore.getState().messages).toEqual([]);
+    expect(useChatStore.getState().draftMedia).toEqual([{ id: "next-image", dataUri: image }]);
+  });
+
   it("keeps queued messages in order when no valid model remains", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
     useSettingsStore.getState().syncModels([MODELS[2]], null, false);

@@ -343,6 +343,26 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     });
   });
 
+  it("merges protocol-detected media capabilities without duplicating declared values", async () => {
+    host.harness.getConfig.mockResolvedValueOnce({
+      providers: { custom: { type: "anthropic" } },
+      defaultModel: "custom/claude",
+      models: {
+        "custom/claude": {
+          provider: "custom",
+          model: "claude-sonnet-4",
+          capabilities: [" IMAGE_IN "],
+        },
+      },
+    });
+
+    const result = await bridge.handle({ id: "rpc-models", method: Methods.GetModels }, "view-1");
+    const models = (result as { result: { models: Array<{ capabilities: string[] }> } }).result.models;
+
+    expect(models[0]?.capabilities).toContain("image_in");
+    expect(models[0]?.capabilities.filter((capability) => capability === "image_in")).toHaveLength(1);
+  });
+
   it("resolves the fallback-profile default effort with the provider type", async () => {
     // claude-latest declares efforts but no default; the Anthropic fallback
     // profile only matches when the provider type joins the resolution.
