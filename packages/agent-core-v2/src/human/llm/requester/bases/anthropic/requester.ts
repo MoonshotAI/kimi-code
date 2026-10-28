@@ -21,8 +21,10 @@ import {
   type ToolCallIdPolicy,
 } from '#/llm/requester/requester';
 import {
-  getLlmHeadersTimeoutDispatcher,
+  createLlmStreamWatchdog,
+  getLlmDispatcher,
   resolveLlmHeadersTimeoutMs,
+  resolveLlmStreamIdleTimeoutMs,
 } from '#/llm/requester/timeout';
 
 import {
@@ -87,9 +89,7 @@ function buildDefaultHeaders(
 }
 
 function createClient(model: LlmModel, headers: Record<string, string> | undefined): Anthropic {
-  const headersTimeoutMs = resolveLlmHeadersTimeoutMs();
-  const dispatcher =
-    headersTimeoutMs === undefined ? undefined : getLlmHeadersTimeoutDispatcher(headersTimeoutMs);
+  const dispatcher = getLlmDispatcher(resolveLlmHeadersTimeoutMs());
   return new Anthropic({
     apiKey: model.apiKey ?? 'unused',
     authToken: null,
@@ -179,18 +179,19 @@ async function executeAnthropicRequest(
     headers: mergeRequestHeaders(connection?.defaultHeaders?.(ctx), ctx.model.defaultHeaders),
   });
   onEvent?.({ type: 'llm.sent' });
+  const watchdog = createLlmStreamWatchdog(signal, resolveLlmStreamIdleTimeoutMs());
   const betaHeaders =
     !request.useBetaApi && request.betas.length > 0
       ? { 'anthropic-beta': request.betas.join(',') }
       : undefined;
-  const requestOptions = { signal, headers: betaHeaders };
+  const requestOptions = { signal: watchdog.signal, headers: betaHeaders };
   const { data: stream, response } = request.useBetaApi
     ? await client.beta.messages.create(request.params, requestOptions).withResponse()
     : await client.messages.create(request.params, requestOptions).withResponse();
   onEvent?.({ type: 'llm.streaming.headers', headers: headersToRecord(response.headers) ?? {} });
   const parse = format.createStreamParser();
   let messageId: string | undefined;
-  for await (const event of stream) {
+  for await (const event of watchdog.watch(stream)) {
     let failed = false;
     parse(event, {
       onDelta: (part) => onEvent?.({ type: 'llm.streaming.part', part }),
