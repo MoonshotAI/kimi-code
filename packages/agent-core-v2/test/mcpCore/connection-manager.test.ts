@@ -943,9 +943,6 @@ describe('McpConnectionManager', () => {
         'pending',
         'failed',
         'failed',
-        'pending',
-        'failed',
-        'pending',
         'connected',
       ]);
     } finally {
@@ -1040,9 +1037,6 @@ describe('McpConnectionManager', () => {
       expect(seen.filter((s) => s.name === 'remote').map((s) => s.status)).toEqual([
         'pending',
         'failed',
-        'pending',
-        'failed',
-        'pending',
         'connected',
       ]);
     } finally {
@@ -1409,8 +1403,7 @@ describe('McpConnectionManager', () => {
       expect(cm.resolved('remote')).toBeDefined();
 
       const remoteStatuses = seen.filter((s) => s.name === 'remote').map((s) => s.status);
-      expect(remoteStatuses.slice(0, 3)).toEqual(['pending', 'connected', 'failed']);
-      expect(remoteStatuses.slice(-2)).toEqual(['pending', 'connected']);
+      expect(remoteStatuses).toEqual(['pending', 'connected', 'failed', 'connected']);
     } finally {
       await cm.shutdown();
       await closeServer(httpServer);
