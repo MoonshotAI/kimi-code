@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
-import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
+import { parse as parseToml } from 'smol-toml';
 import { z } from 'zod';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -22,11 +22,6 @@ const ProjectLocalTomlSchema = z.object({
 
 type ProjectLocalToml = z.infer<typeof ProjectLocalTomlSchema>;
 
-interface ProjectLocalTomlFile {
-  readonly raw: Record<string, unknown>;
-  readonly parsed: ProjectLocalToml;
-}
-
 export class FileProjectLocalConfigService implements IProjectLocalConfigService {
   declare readonly _serviceBrand: undefined;
 
@@ -38,9 +33,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
     const configPath = this.getProjectLocalConfigPath(projectRoot);
-    const file = await this.readProjectLocalToml(configPath);
+    const parsed = await this.readProjectLocalToml(configPath);
 
-    const additionalDirs = file?.parsed.workspace?.additional_dir;
+    const additionalDirs = parsed?.workspace?.additional_dir;
     if (additionalDirs === undefined) {
       return { projectRoot, configPath, additionalDirs: [] };
     }
@@ -54,35 +49,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
   resolveAdditionalDirs(baseDir: string, additionalDirs: readonly string[]): Promise<string[]> {
     return this.resolveAdditionalDirsInternal(baseDir, additionalDirs);
-  }
-
-  async appendAdditionalDir(
-    workDir: string,
-    inputPath: string,
-  ): Promise<ProjectAdditionalDirsLoadResult> {
-    const projectRoot = await this.findProjectRoot(workDir);
-    const configPath = this.getProjectLocalConfigPath(projectRoot);
-    const additionalDir = await this.resolveAdditionalDir(workDir, inputPath);
-    const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
-    const fileAdditionalDirs = file.parsed.workspace?.additional_dir ?? [];
-    const fileExistingDirs = this.resolveExistingAdditionalDirs(projectRoot, fileAdditionalDirs);
-
-    if (this.hasSameAdditionalDir(fileExistingDirs, additionalDir)) {
-      return { projectRoot, configPath, additionalDirs: fileExistingDirs };
-    }
-
-    const workspace = cloneRecord(file.raw['workspace']);
-    workspace['additional_dir'] = [...fileExistingDirs, additionalDir];
-    file.raw['workspace'] = workspace;
-
-    try {
-      await this.fs.mkdir(dirname(configPath), { recursive: true });
-      await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
-    } catch (error: unknown) {
-      throw toStorageIoError(error, { path: configPath, op: 'write' });
-    }
-
-    return { projectRoot, configPath, additionalDirs: [...fileExistingDirs, additionalDir] };
   }
 
   private getProjectLocalConfigPath(projectRoot: string): string {
@@ -101,9 +67,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
   }
 
-  private async readProjectLocalToml(
-    configPath: string,
-  ): Promise<ProjectLocalTomlFile | undefined> {
+  private async readProjectLocalToml(configPath: string): Promise<ProjectLocalToml | undefined> {
     let text: string;
     try {
       text = await this.fs.readText(configPath);
@@ -112,7 +76,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       throw toStorageIoError(error, { path: configPath, op: 'read' });
     }
 
-    if (text.trim().length === 0) return { raw: {}, parsed: {} };
+    if (text.trim().length === 0) return {};
 
     let raw: unknown;
     try {
@@ -135,7 +99,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       );
     }
 
-    return { raw: cloneRecord(raw), parsed: parseProjectLocalToml(raw) };
+    return parseProjectLocalToml(raw);
   }
 
   private async resolveAdditionalDirsInternal(
@@ -146,21 +110,6 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
     for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
       const resolvedDir = await this.resolveAdditionalDir(baseDir, additionalDir);
-      if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
-      resolvedDirs.push(resolvedDir);
-    }
-
-    return resolvedDirs;
-  }
-
-  private resolveExistingAdditionalDirs(
-    projectRoot: string,
-    additionalDirs: readonly string[],
-  ): string[] {
-    const resolvedDirs: string[] = [];
-
-    for (const additionalDir of normalizeAdditionalDirs(additionalDirs)) {
-      const resolvedDir = this.resolvePath(projectRoot, additionalDir);
       if (this.hasSameAdditionalDir(resolvedDirs, resolvedDir)) continue;
       resolvedDirs.push(resolvedDir);
     }
@@ -277,11 +226,6 @@ function describeProjectLocalValidationError(error: z.ZodError): string {
   }
   if (issue?.path[0] === 'workspace') return 'workspace must be a table';
   return `Invalid project local config: ${error.message}`;
-}
-
-function cloneRecord(value: unknown): Record<string, unknown> {
-  if (!isPlainObject(value)) return {};
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

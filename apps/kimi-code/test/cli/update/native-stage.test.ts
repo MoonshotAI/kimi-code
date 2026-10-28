@@ -187,6 +187,7 @@ describe('stageNativeUpdate', () => {
     expect(result.status).toBe('staged');
     expect(result.staged).toMatchObject({
       version: VERSION,
+      channel: 'stable',
       target: 'linux-x64',
       sha256: sha256Hex(PAYLOAD),
       exeSize: PAYLOAD.length,
@@ -510,6 +511,104 @@ describe('stageNativeUpdate', () => {
     expect((await readStagedNativeUpdate(exePath))?.manual).toBe(true);
   });
 
+  it('records the switch intent and never adopts a stage without it for a channel switch', async () => {
+    await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: mockCdnFetch({ payload: PAYLOAD }),
+      manual: true,
+    });
+
+    const switchFetch = mockCdnFetch({ payload: PAYLOAD });
+    const result = await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: switchFetch,
+      manual: true,
+      intent: 'switch-channel',
+    });
+
+    expect(result.status).toBe('staged');
+    expect(switchFetch).toHaveBeenCalled();
+    expect((await readStagedNativeUpdate(exePath))?.intent).toBe('switch-channel');
+
+    const repeat = await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: mockCdnFetch({ payload: PAYLOAD }),
+      manual: true,
+      intent: 'switch-channel',
+    });
+    expect(repeat.status).toBe('already-staged');
+  });
+
+  it('persists the selected canary channel instead of inferring it from the version', async () => {
+    const target = '2.3.3-canary.20261028012345-0123456';
+    const result = await stageNativeUpdate({
+      version: target,
+      channel: 'canary',
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: mockCdnFetch({ version: target, payload: PAYLOAD }),
+      manual: true,
+      intent: 'switch-channel',
+    });
+
+    expect(result.status).toBe('staged');
+    expect(result.staged.channel).toBe('canary');
+    expect((await readStagedNativeUpdate(exePath))?.channel).toBe('canary');
+  });
+
+  it('rejects an unconfirmed channel switch before downloading or writing a stage', async () => {
+    const fetchImpl = mockCdnFetch({ payload: PAYLOAD });
+
+    await expect(stageNativeUpdate({
+      version: VERSION,
+      channel: 'canary',
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl,
+      intent: 'switch-channel',
+    })).rejects.toThrow(/manual confirmation/);
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await readStagedNativeUpdate(exePath)).toBeNull();
+  });
+
+  it('does not adopt a same-version stage from a different channel', async () => {
+    await stageNativeUpdate({
+      version: VERSION,
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: mockCdnFetch({ payload: PAYLOAD }),
+      manual: true,
+    });
+    const canaryFetch = mockCdnFetch({ payload: PAYLOAD });
+
+    const result = await stageNativeUpdate({
+      version: VERSION,
+      channel: 'canary',
+      exePath,
+      platform: 'linux',
+      arch: 'x64',
+      fetchImpl: canaryFetch,
+      manual: true,
+    });
+
+    expect(result.status).toBe('staged');
+    expect(canaryFetch).toHaveBeenCalled();
+    expect(result.staged.channel).toBe('canary');
+  });
+
   it('re-stages when the staged exe is corrupted at the same size', async () => {
     const first = await stageNativeUpdate({
       version: VERSION,
@@ -821,6 +920,7 @@ describe('stageNativeUpdate', () => {
             sha256: sha256Hex(otherPayload),
             exeSize: otherPayload.length,
             stagedAt: new Date().toISOString(),
+            channel: 'stable',
           })}\n`,
         );
         // …then this attempt's download fails.

@@ -2,13 +2,28 @@ import { randomUUID } from 'node:crypto';
 
 import type { DurableAgentRuntimeParticipant, IEventDispatcher, IDisposable } from '@moonshot-ai/agent-core-v2';
 import { ContextAppendMessage } from '@moonshot-ai/agent-core-v2/agent/contextMemory/contextEvents';
-import { TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
+import { TurnEnded, TurnPrompt } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 
 interface SurveyTurnHistory {
   readonly count: number;
   readonly reliable: boolean;
   readonly firstPrompt: number;
   readonly firstUserMessage: number;
+  readonly firstPromptAt?: number;
+  readonly currentOrigin?: unknown;
+  readonly evaluation?: {
+    readonly origin: unknown;
+    readonly traceId?: string;
+    readonly endedAt?: number;
+  };
+}
+
+export interface SurveyTurnRecovery {
+  readonly userTurnCount: number;
+  readonly firstPromptAt?: number;
+  readonly origin: unknown;
+  readonly traceId?: string;
+  readonly endedAt?: number;
 }
 
 const EMPTY_HISTORY: SurveyTurnHistory = {
@@ -31,13 +46,32 @@ function observeHistory(
 ): SurveyTurnHistory {
   if (record === null || typeof record !== 'object') return { ...history, reliable: false };
   if (!('type' in record)) return history;
+  const time = 'time' in record && typeof record.time === 'number' ? record.time : undefined;
   if (record.type === 'turn.prompt') {
-    const counted = isSurveyTurnOrigin('origin' in record ? record.origin : undefined);
+    const origin = 'origin' in record ? record.origin : undefined;
+    const counted = isSurveyTurnOrigin(origin);
     return {
       ...history,
       count: history.count + (counted === true ? 1 : 0),
       reliable: history.reliable && counted !== undefined,
       firstPrompt: Math.min(history.firstPrompt, position),
+      firstPromptAt: history.firstPromptAt ?? time,
+      currentOrigin: origin,
+      evaluation: undefined,
+    };
+  }
+  if (record.type === 'turn.ended') {
+    const origin = history.currentOrigin;
+    return {
+      ...history,
+      currentOrigin: undefined,
+      evaluation: isSurveyTurnOrigin(origin) === true
+        ? {
+            origin,
+            traceId: 'traceId' in record && typeof record.traceId === 'string' ? record.traceId : undefined,
+            endedAt: time,
+          }
+        : undefined,
     };
   }
   if (record.type === 'context.append_message' && 'message' in record) {
@@ -58,6 +92,7 @@ function observeHistory(
 export interface MountedSurveyTurnCounter extends IDisposable {
   readonly count: number | undefined;
   readonly whenAttached: Promise<void>;
+  recovery(): SurveyTurnRecovery | undefined;
 }
 
 export function mountSurveyTurnCounter(dispatcher: IEventDispatcher): MountedSurveyTurnCounter {
@@ -68,7 +103,7 @@ export function mountSurveyTurnCounter(dispatcher: IEventDispatcher): MountedSur
     | { phase: 'disposed' } = { phase: 'pending' };
   const participant: DurableAgentRuntimeParticipant<typeof state> = {
     id: `session-rating.survey-turns:${randomUUID()}`,
-    events: [TurnPrompt, ContextAppendMessage],
+    events: [TurnPrompt, TurnEnded, ContextAppendMessage],
     undoable: false,
     getState: () => state,
     commit: (next) => { state = next; },
@@ -94,6 +129,19 @@ export function mountSurveyTurnCounter(dispatcher: IEventDispatcher): MountedSur
       return attachment.phase !== 'attached' || dispatcher.restorePhase !== 'ready'
         ? undefined
         : countOf(state.history);
+    },
+    recovery() {
+      if (attachment.phase !== 'attached' || dispatcher.restorePhase !== 'ready') return undefined;
+      const userTurnCount = countOf(state.history);
+      const evaluation = state.history.evaluation;
+      if (userTurnCount === undefined || evaluation === undefined) return undefined;
+      return {
+        userTurnCount,
+        firstPromptAt: state.history.firstPromptAt,
+        origin: evaluation.origin,
+        traceId: evaluation.traceId,
+        endedAt: evaluation.endedAt,
+      };
     },
     dispose() {
       if (attachment.phase === 'attached') attachment.registration.dispose();

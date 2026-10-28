@@ -68,27 +68,29 @@ export function createReminderHarness(
         context.append({
           role: 'user',
           content: [{ type: 'text', text: wrapSystemReminder(content) }],
-          toolCalls: [],
           origin,
         });
         continue;
       }
       if (Array.isArray(content)) {
         if (content.length === 0) continue;
-        context.append({ role: 'user', content: [...content], toolCalls: [], origin });
+        context.append({ role: 'user', content: [...content], origin });
         continue;
       }
       const message = (content as { readonly message: ContextInjectionMessage }).message;
       if (message.content.length === 0 && (message.tools === undefined || message.tools.length === 0)) {
         continue;
       }
-      context.append({
-        role: message.role,
-        content: [...message.content],
-        toolCalls: [],
-        tools: message.tools,
-        origin,
-      });
+      if (message.role === 'system') {
+        context.append({
+          role: 'system',
+          content: [...message.content],
+          tools: message.tools === undefined ? undefined : [...message.tools],
+          origin,
+        });
+      } else {
+        context.append({ role: 'user', content: [...message.content], origin });
+      }
     }
     await next();
   });

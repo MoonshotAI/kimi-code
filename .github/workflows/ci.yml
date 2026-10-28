@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
-      - run: node --test scripts/release-trigger.test.mjs
+      - run: node --test scripts/release-trigger.test.mjs scripts/canary-release.test.mjs
 
   build:
     runs-on: ubuntu-latest
@@ -157,10 +157,10 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: |
-          pnpm dlx --package @typescript/native-preview@beta tsgo --version
+          pnpm exec tsc --version
           for config in packages/*/tsconfig.json apps/kimi-code/tsconfig.json; do
             echo "Typechecking ${config}"
-            pnpm dlx --package @typescript/native-preview@beta tsgo -p "${config}" --noEmit
+            pnpm exec tsc -p "${config}" --noEmit
           done
       - name: Typecheck VS Code extension
         run: pnpm --filter kimi-code run typecheck

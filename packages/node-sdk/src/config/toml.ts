@@ -8,7 +8,6 @@ import { ErrorCodes, KimiError } from '#/errors';
 import { atomicWrite } from '#/utils/fs';
 
 import { applyEnvModelConfig, stripEnvModelConfig } from './env-model';
-import { applySecondaryModelConfig, stripSecondaryModelConfig } from './secondary-model';
 import {
   KimiConfigSchema,
   formatConfigValidationError,
@@ -87,7 +86,7 @@ export function loadRuntimeConfig(
   filePath: string,
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): KimiConfig {
-  return applySecondaryModelConfig(applyEnvModelConfig(readConfigFile(filePath), env), env);
+  return applyEnvModelConfig(readConfigFile(filePath), env);
 }
 
 export interface RuntimeConfigLoadResult {
@@ -166,7 +165,6 @@ export function loadRuntimeConfigSafe(
       `Ignoring KIMI_MODEL_* environment overrides: ${describeUnknownError(error)}`,
     );
   }
-  config = applySecondaryModelConfig(config, env);
 
   return { config, fileWarnings, envWarnings, fileError };
 }
@@ -419,7 +417,7 @@ function transformLoopControlData(data: Record<string, unknown>): Record<string,
 }
 
 export async function writeConfigFile(filePath: string, config: KimiConfig): Promise<void> {
-  const validated = validateConfig(stripSecondaryModelConfig(stripEnvModelConfig(config)));
+  const validated = validateConfig(stripEnvModelConfig(config));
   await mkdir(dirname(filePath), { recursive: true, mode: 0o700 });
   await atomicWrite(filePath, `${stringifyToml(configToTomlData(validated))}\n`);
 }
@@ -664,11 +662,7 @@ function secondaryModelToToml(
 ): Record<string, unknown> {
   const out = cloneRecord(rawSecondaryModel);
   for (const [key, value] of Object.entries(secondaryModel)) {
-    if (key === 'capabilities' && Array.isArray(value)) {
-      out[camelToSnake(key)] = [...value];
-    } else {
-      setDefined(out, camelToSnake(key), value);
-    }
+    setDefined(out, camelToSnake(key), value);
   }
   return out;
 }

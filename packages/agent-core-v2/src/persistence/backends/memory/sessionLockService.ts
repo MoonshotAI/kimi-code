@@ -6,4 +6,6 @@ export class InMemorySessionLockService extends SessionLockHolds {
   }
 
   protected unpublish(): void {}
+
+  protected evict(): void {}
 }

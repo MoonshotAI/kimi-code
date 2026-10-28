@@ -1,18 +1,21 @@
 
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket, type RawData } from 'ws';
 import {
   IAgentLifecycleService,
+  IAgentPlanService,
   IConfigService,
   closeSessionById,
   MAIN_AGENT_ID,
   getLiveSessionById,
+  interactions,
   resumeSessionById,
+  type ApprovalRequest,
 } from '@moonshot-ai/agent-core-v2';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -161,7 +164,7 @@ interface TxSnapshot {
 const getTranscript = (server: RunningServer, base: string, sid: string): Promise<TxSnapshot> =>
   rest<TxSnapshot>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/transcript?agent_id=main`);
 
-const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pendingInteraction: string }> =>
+const getSessionFacts = (server: RunningServer, base: string, sid: string): Promise<{ busy: boolean; pending_interaction?: string }> =>
   rest(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}`);
 
 async function createSession(server: RunningServer, base: string): Promise<string> {
@@ -172,7 +175,7 @@ async function createSession(server: RunningServer, base: string): Promise<strin
   return data.id;
 }
 
-function submitPrompt(server: RunningServer, base: string, sid: string, text: string, permissionMode: 'manual' | 'yolo' = 'yolo'): Promise<{ prompt_id: string }> {
+function submitPrompt(server: RunningServer, base: string, sid: string, text: string, permissionMode: 'manual' | 'yolo' | 'auto' = 'yolo'): Promise<{ prompt_id: string }> {
   return rest<{ prompt_id: string }>(server, base, `/api/v1/sessions/${encodeURIComponent(sid)}/prompts`, {
     method: 'POST',
     body: { content: [{ type: 'text', text }], model: 'stub', permission_mode: permissionMode },
@@ -437,9 +440,9 @@ describe('transcript contract e2e', () => {
     expect((approval.request as any)?.toolName).toBe('Bash');
     expect(mid.meta.agent).toBeDefined();
 
-    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/approvals/${encodeURIComponent(approval.interactionId)}`, {
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approval.interactionId)}`, {
       method: 'POST',
-      body: { decision: 'approved' },
+      body: { kind: 'approval', decision: 'approved' },
     });
     await idle(server!, base, sid);
 
@@ -453,6 +456,67 @@ describe('transcript contract e2e', () => {
       .find((f: any) => f.kind === 'tool' && f.name === 'Bash');
     expect(toolFrame).toMatchObject({ state: 'done' });
     expect(String(toolFrame.output)).toContain('contract-hi');
+  });
+
+  it.each([
+    ['approved', { decision: 'approved' }, false, 'Exited plan mode'],
+    ['revised', { decision: 'rejected', feedback: 'Cover the error path too.' }, true, 'Cover the error path too.'],
+    ['dismissed', { decision: 'cancelled' }, true, 'Plan approval dismissed'],
+  ] as const)('S8: in Never Ask, a plan waits for review over REST and is %s', async (_label, response, staysInPlan, output) => {
+    await boot([
+      {
+        match: (body) => body.includes('Plan the greeting change') && !body.includes('call_exit_plan'),
+        respond: () => sseToolCall('call_exit_plan', 'ExitPlanMode', '{}'),
+      },
+      { match: () => true, respond: () => sseText('done') },
+    ]);
+    const sid = await createSession(server!, base);
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/profile`, {
+      method: 'POST',
+      body: { agent_config: { plan_mode: true, permission_mode: 'auto' } },
+    });
+    const planService = getLiveSessionById(server!.core.accessor, sid)!
+      .accessor.get(IAgentLifecycleService)
+      .handleOf(MAIN_AGENT_ID)!
+      .accessor.get(IAgentPlanService);
+    const planPath = (await planService.status())!.path;
+    await mkdir(dirname(planPath), { recursive: true });
+    await writeFile(planPath, '# Plan\n\n- Change the greeting\n- Add a test', 'utf-8');
+
+    await submitPrompt(server!, base, sid, 'Plan the greeting change', 'auto');
+
+    const pendingReview = () =>
+      interactions
+        .findAll({ kind: 'approval', resolved: false, tags: { sessionId: sid } })
+        .find((item) => (item.payload as ApprovalRequest).toolName === 'ExitPlanMode');
+    await until('plan review pending', async () => pendingReview() !== undefined);
+    const review = pendingReview()!;
+    const approvalId = review.id;
+    expect((review.payload as ApprovalRequest).display).toMatchObject({
+      kind: 'plan_review',
+      plan: '# Plan\n\n- Change the greeting\n- Add a test',
+      path: planPath,
+    });
+    expect((await getSessionFacts(server!, base, sid)).pending_interaction).toBe('approval');
+    const mid = await getTranscript(server!, base, sid);
+    expect(mid.interactions.some((x: any) => x.interactionId === approvalId && x.state === 'pending')).toBe(true);
+    expect(await planService.status()).not.toBeNull();
+
+    await rest(server!, base, `/api/v1/sessions/${encodeURIComponent(sid)}/interactions/${encodeURIComponent(approvalId)}`, {
+      method: 'POST',
+      body: { kind: 'approval', ...response },
+    });
+    await idleOrDump(server!, base, sid);
+
+    expect((await planService.status()) !== null).toBe(staysInPlan);
+    const end = await getTranscript(server!, base, sid);
+    expect(end.interactions.every((x: any) => x.state !== 'pending')).toBe(true);
+    const toolFrame = end.items
+      .filter((i) => i.kind === 'turn')
+      .flatMap((t: any) => t.steps)
+      .flatMap((s: any) => s.frames)
+      .find((f: any) => f.kind === 'tool' && f.name === 'ExitPlanMode');
+    expect(String(toolFrame.output)).toContain(output);
   });
 
   it('S4: a background subagent produces task entities and a task-origin notification turn', async () => {

@@ -11,6 +11,7 @@ import {
   agentSwarmPartialItemsCountFromArguments,
   agentSwarmPartialItemsFromArguments,
   calculateAgentSwarmGridLayout,
+  isAgentSwarmRejection,
 } from '#/tui/components/messages/agent-swarm-progress';
 import { AgentSwarmProgressEstimator } from '#/tui/components/messages/agent-swarm-progress-estimator';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
@@ -153,6 +154,28 @@ describe('calculateAgentSwarmGridLayout', () => {
     expect(agentSwarmGridHeightForTerminalRows(10)).toBe(4);
     expect(agentSwarmGridHeightForTerminalRows(20, 5)).toBe(9);
     expect(agentSwarmGridHeightForTerminalRows(4)).toBe(0);
+  });
+});
+
+describe('isAgentSwarmRejection', () => {
+  it('matches failures that ended the call before any subagent started', () => {
+    expect(isAgentSwarmRejection(
+      'Swarm mode is off, so AgentSwarm did not run and no subagents were started.',
+    )).toBe(true);
+    expect(isAgentSwarmRejection(
+      'AgentSwarm requires at least 2 items unless resume_agent_ids is provided.',
+    )).toBe(true);
+  });
+
+  it('does not match per-subagent results or cancellations', () => {
+    expect(isAgentSwarmRejection([
+      '<agent_swarm_result>',
+      '<summary>failed: 1</summary>',
+      '<subagent index="1" outcome="failed">Agent timed out.</subagent>',
+      '</agent_swarm_result>',
+    ].join('\n'))).toBe(false);
+    expect(isAgentSwarmRejection('Aborted by the user')).toBe(false);
+    expect(isAgentSwarmRejection('The user manually interrupted this subagent batch.')).toBe(false);
   });
 });
 

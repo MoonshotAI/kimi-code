@@ -11,11 +11,9 @@ import { IReadTool, ReadInputSchema, type ReadInput } from '@moonshot-ai/agent-c
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
-  DefaultWorkspaceUnavailableError,
   Error2,
   ErrorCodes,
   IBootstrapService,
-  IDefaultWorkspace,
   IOAuthService,
   type Event2,
   type IOAuthService as IOAuthServiceType,
@@ -32,6 +30,7 @@ import {
   ISessionMetadata,
   ISessionTitleService,
   IWireService,
+  IWorkspaceInstanceManager,
   IWorkspaceService,
   MAIN_AGENT_ID,
   closeSessionById,
@@ -41,7 +40,8 @@ import {
   type ContextMessage,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
-import { SessionMetaUpdated } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetaEvents';
+import { ISessionLockService } from '@moonshot-ai/agent-core-v2/persistence/interface/sessionLock';
+import { IHostProcessService, type IHostProcess } from '@moonshot-ai/agent-core-v2/os/interface/hostProcess';
 import { TurnSteer } from '@moonshot-ai/agent-core-v2/agent/loop/turnOps';
 import type { AgentTranscriptSnapshot } from '@moonshot-ai/transcript';
 import { TurnStarted } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
@@ -77,7 +77,6 @@ interface SessionWire {
   usage: { input_tokens: number };
   permission_rules: unknown[];
   message_count: number;
-  last_seq: number;
 }
 
 interface PageWire {
@@ -134,7 +133,7 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  async function restartWithFreshHome(seeds?: ScopeSeed): Promise<void> {
+  async function restartWithFreshHome(): Promise<void> {
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -151,7 +150,6 @@ describe('server-v2 /api/v1/sessions', () => {
       homeDir: home,
       logLevel: 'silent',
       debugEndpoints: true,
-      seeds,
     });
     base = `http://127.0.0.1:${server.port}`;
   }
@@ -381,7 +379,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data.agent_config).toEqual({ model: '' });
     expect(body.data.permission_rules).toEqual([]);
     expect(body.data.message_count).toBe(0);
-    expect(body.data.last_seq).toBe(0);
+    expect(body.data).not.toHaveProperty('last_seq');
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
   });
 
@@ -389,78 +387,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const { body } = await postJson<null>('/api/v1/sessions', { title: 'no cwd' });
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('metadata.cwd');
-  });
-
-  describe('default workspace', () => {
-    function defaultWorkspaceStub(
-      root: string,
-      ensure: () => Promise<string> = async () => {
-        await mkdir(root, { recursive: true });
-        return root;
-      },
-    ): ScopeSeed {
-      const stub: IDefaultWorkspace = {
-        _serviceBrand: undefined,
-        ensure,
-        isDefault: async (candidate) => candidate === root,
-      };
-      return [[IDefaultWorkspace, stub]];
-    }
-
-    it('creates sessions in the default workspace and flags it on the workspace wire', async () => {
-      const root = join(tmpdir(), `kimi-default-workspace-${randomBytes(4).toString('hex')}`);
-      await restartWithFreshHome(defaultWorkspaceStub(root));
-      try {
-        const first = await postJson<SessionWire>('/api/v1/sessions', { default_workspace: true });
-        const second = await postJson<SessionWire>('/api/v1/sessions', { default_workspace: true });
-
-        expect(first.body.code).toBe(0);
-        expect(first.body.data.metadata.cwd).toBe(root);
-        expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
-
-        const workspaces = await getJson<{ items: { id: string; is_default: boolean }[] }>(
-          '/api/v1/workspaces',
-        );
-        expect(workspaces.body.data.items).toEqual([
-          expect.objectContaining({ id: first.body.data.workspace_id, is_default: true }),
-        ]);
-      } finally {
-        await rm(root, { recursive: true, force: true });
-      }
-    });
-
-    it.each([
-      ['workspace_id', { workspace_id: 'wd_missing_000000000000' }],
-      ['metadata', { metadata: { cwd: '/x' } }],
-    ])('rejects default_workspace combined with %s (40001)', async (_label, extra) => {
-      const { body } = await postJson<null>('/api/v1/sessions', {
-        default_workspace: true,
-        ...extra,
-      });
-      expect(body.code).toBe(40001);
-      expect(body.details?.[0]?.path).toBe('default_workspace');
-    });
-
-    it('reports an unusable default workspace as 40930 with path and reason', async () => {
-      const root = join(tmpdir(), 'kimi-default-workspace-denied');
-      await restartWithFreshHome(
-        defaultWorkspaceStub(root, async () => {
-          throw new DefaultWorkspaceUnavailableError(
-            { path: root, reason: 'permission_denied' },
-            `default workspace ${root} is unavailable: permission denied`,
-          );
-        }),
-      );
-
-      const { body } = await postJson<{ path: string; reason: string }>('/api/v1/sessions', {
-        default_workspace: true,
-      });
-      expect(body.code).toBe(40930);
-      expect(body.data).toEqual({ path: root, reason: 'permission_denied' });
-
-      const workspaces = await getJson<{ items: unknown[] }>('/api/v1/workspaces');
-      expect(workspaces.body.data.items).toEqual([]);
-    });
   });
 
   it('rejects create with unknown workspace_id (40410)', async () => {
@@ -489,6 +415,35 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40409);
   });
 
+  it.each(['missing', 'not-a-directory'] as const)(
+    'rejects create via workspace_id when the registered root is %s (40409)',
+    async (state) => {
+      const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-workspace-root-'));
+      let workspaceId: string | undefined;
+      try {
+        const created = await postJson<{ id: string }>('/api/v1/workspaces', { root: cwd });
+        expect(created.body.code).toBe(0);
+        workspaceId = created.body.data.id;
+        await rm(cwd, { recursive: true, force: true });
+        if (state === 'not-a-directory') await writeFile(cwd, 'not a directory', 'utf8');
+
+        const { body } = await postJson<null>('/api/v1/sessions', {
+          workspace_id: workspaceId,
+        });
+        expect(body.code).toBe(40409);
+        const sessions = await getJson<PageWire>(
+          `/api/v1/sessions?workspace_id=${encodeURIComponent(workspaceId)}`,
+        );
+        expect(sessions.body.data.items).toEqual([]);
+      } finally {
+        if (workspaceId !== undefined) {
+          await deleteJson<{ deleted: boolean }>(`/api/v1/workspaces/${workspaceId}`);
+        }
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('creates a second session via workspace_id resolved from a prior cwd create', async () => {
     const cwd = home as string;
     const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -501,6 +456,37 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(second.body.code).toBe(0);
     expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
     expect(second.body.data.id).not.toBe(first.body.data.id);
+  });
+
+  it('shares one workspace until the last session closes', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-shared-workspace-'));
+    let firstId: string | undefined;
+    let secondId: string | undefined;
+    try {
+      const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      expect(first.body.code).toBe(0);
+      firstId = first.body.data.id;
+
+      const second = await postJson<SessionWire>('/api/v1/sessions', {
+        workspace_id: first.body.data.workspace_id,
+        metadata: { cwd },
+      });
+      expect(second.body.code).toBe(0);
+      secondId = second.body.data.id;
+      expect(second.body.data.workspace_id).toBe(first.body.data.workspace_id);
+      expect(second.body.data.id).not.toBe(first.body.data.id);
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const workspace = manager.get(first.body.data.workspace_id);
+      expect(workspace).toBeDefined();
+      await closeSessionById((server as RunningServer).core.accessor, firstId);
+      expect(manager.get(first.body.data.workspace_id)).toBe(workspace);
+      await closeSessionById((server as RunningServer).core.accessor, secondId);
+      expect(manager.get(first.body.data.workspace_id)).toBeUndefined();
+    } finally {
+      if (firstId !== undefined) await closeSessionById((server as RunningServer).core.accessor, firstId);
+      if (secondId !== undefined) await closeSessionById((server as RunningServer).core.accessor, secondId);
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 
   it('rejects create when cwd mismatches workspace root (40001)', async () => {
@@ -571,23 +557,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
     const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
     expect(got.body.data.agent_config).toEqual({ model: 'stub' });
-  });
-
-  it('reports the journaled event watermark as last_seq', async () => {
-    const cwd = home as string;
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
-    const id = created.body.data.id;
-
-    const initial = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    const baseline = initial.body.data.last_seq;
-
-    const renamed = await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
-      title: 'watermark probe',
-    });
-    expect(renamed.body.code).toBe(0);
-
-    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    expect(got.body.data.last_seq).toBeGreaterThan(baseline);
   });
 
   it('supports exclude_empty when listing sessions', async () => {
@@ -747,6 +716,7 @@ describe('server-v2 /api/v1/sessions', () => {
       resolveTokenProvider: () => ({ getAccessToken: async () => 'test-token' }),
       getCachedAccessToken: async () => 'test-token',
       getRegion: () => 'mainland-cn',
+      getRegionAsync: async () => 'mainland-cn',
     };
     server = await startServer({
       hostIdentity: TEST_HOST_IDENTITY,
@@ -1012,19 +982,134 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('archives a session via :archive and reflects archived flag on get', async () => {
-    const cwd = home as string;
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+  it('takes over the session lock via :takeover', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
     const id = created.body.data.id;
+    const takeover = vi.spyOn(
+      (server as RunningServer).core.accessor.get(ISessionLockService),
+      'takeover',
+    );
+    try {
+      const taken = await postJson<{ taken_over: boolean }>(`/api/v1/sessions/${id}:takeover`);
+      expect(taken.body.code).toBe(0);
+      expect(taken.body.data).toEqual({ taken_over: true });
+      expect(takeover).toHaveBeenCalledWith(id);
 
-    const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
-    expect(archived.body.code).toBe(0);
-    expect(archived.body.data).toEqual({ archived: true });
-
-    const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
-    expect(got.body.code).toBe(0);
-    expect(got.body.data.archived).toBe(true);
+      const missing = await postJson<null>('/api/v1/sessions/sess_missing_takeover:takeover');
+      expect(missing.body.code).toBe(40401);
+      expect(takeover).toHaveBeenCalledTimes(1);
+    } finally {
+      takeover.mockRestore();
+    }
   });
+
+  it('archives a session, force-kills a SIGTERM-ignoring baseline MCP, and reacquires the workspace', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'kimi-server-v2-session-archive-mcp-'));
+    const fixture = new URL('../../agent-core-v2/test/mcpCore/fixtures/mock-stdio-server.mjs', import.meta.url).pathname;
+    const spawned: IHostProcess[] = [];
+    let disposeReplacement: (() => void) | undefined;
+    const hostProcesses = (server as RunningServer).core.accessor.get(IHostProcessService);
+    const spawn = hostProcesses.spawn.bind(hostProcesses);
+    const spawnSpy = vi.spyOn(hostProcesses, 'spawn').mockImplementation(async (command, args, options) => {
+      const child = await spawn(command, args, options);
+      if (command === process.execPath && args?.[0] === fixture) spawned.push(child);
+      return child;
+    });
+    try {
+      vi.stubEnv('KIMI_CODE_TRUST_WORKSPACE', '1');
+      await mkdir(join(cwd, '.kimi-code'), { recursive: true });
+      await writeFile(
+        join(cwd, '.kimi-code', 'mcp.json'),
+        JSON.stringify({
+          mcpServers: {
+            fixture: {
+              command: process.execPath,
+              args: [fixture],
+              env: { KIMI_TEST_MCP_IGNORE_SIGTERM: '1' },
+            },
+          },
+        }),
+      );
+      const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+      const id = created.body.data.id;
+      const workspaceId = created.body.data.workspace_id;
+      const manager = (server as RunningServer).core.accessor.get(IWorkspaceInstanceManager);
+      const workspace = manager.get(workspaceId);
+      expect(workspace).toBeDefined();
+      await workspace!.program.mcp.ready;
+      const connections = workspace!.program.mcp.connectionManager();
+      await vi.waitFor(() => {
+        expect(connections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
+      });
+      expect(spawned).toHaveLength(1);
+      const child = spawned[0]!;
+      const killSpy = vi.spyOn(child, 'kill');
+      expect(child.exitCode).toBeNull();
+      let disposeSubscription: (() => void) | undefined;
+      const closed = new Promise<void>((resolve) => {
+        const subscription = manager.onDidChange((change) => {
+          if (change.workspaceId !== workspaceId || change.instance !== undefined) return;
+          subscription.dispose();
+          resolve();
+        });
+        disposeSubscription = () => subscription.dispose();
+      });
+
+      const archived = await postJson<{ archived: boolean }>(`/api/v1/sessions/${id}:archive`);
+      expect(archived.body.code).toBe(0);
+      expect(archived.body.data).toEqual({ archived: true });
+      expect(manager.get(workspaceId)).toBeUndefined();
+      const replacementLeasePromise = manager.acquire({ workspaceId });
+      await closed;
+      disposeSubscription?.();
+      expect(connections.list()).toEqual([]);
+      expect(child.exitCode).not.toBeNull();
+      if (process.platform !== 'win32') expect(killSpy).toHaveBeenCalledWith('SIGKILL');
+
+      const got = await getJson<SessionWire>(`/api/v1/sessions/${id}`);
+      expect(got.body.code).toBe(0);
+      expect(got.body.data.archived).toBe(true);
+
+      const replacementLease = await replacementLeasePromise;
+      disposeReplacement = () => {
+        replacementLease.dispose();
+      };
+      const replacement = replacementLease.instance;
+      expect(replacement).not.toBe(workspace);
+      await replacement.program.mcp.ready;
+      const replacementConnections = replacement.program.mcp.connectionManager();
+      await vi.waitFor(() => {
+        expect(replacementConnections.list().some((entry) => entry.name === 'fixture' && entry.status === 'connected')).toBe(true);
+      });
+      expect(spawned).toHaveLength(2);
+      const replacementChild = spawned[1]!;
+      expect(replacementChild.exitCode).toBeNull();
+      let disposeReplacementSubscription: (() => void) | undefined;
+      const replacementClosed = new Promise<void>((resolve) => {
+        const subscription = manager.onDidChange((change) => {
+          if (change.workspaceId !== workspaceId || change.instance !== undefined) return;
+          subscription.dispose();
+          resolve();
+        });
+        disposeReplacementSubscription = () => {
+          subscription.dispose();
+        };
+      });
+      replacementLease.dispose();
+      await replacementClosed;
+      disposeReplacementSubscription?.();
+      expect(replacementChild.exitCode).not.toBeNull();
+    } finally {
+      disposeReplacement?.();
+      spawnSpy.mockRestore();
+      for (const child of spawned) {
+        if (child.exitCode === null) await child.kill('SIGKILL');
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  }, 30_000);
 
   it('archives a cold session after a failed resume when the workspace root is gone', async () => {
     const cwd = join(home as string, 'gone-ws');
@@ -1089,7 +1174,6 @@ describe('server-v2 /api/v1/sessions', () => {
 
       const got = await getJson<null>(`/api/v1/sessions/${id}`);
       expect(got.body.code).toBe(40401);
-      await expect(readFile(join(home!, 'server', 'events', `${id}.jsonl`))).rejects.toMatchObject({ code: 'ENOENT' });
 
       expect(
         events
@@ -1163,6 +1247,7 @@ describe('server-v2 /api/v1/sessions', () => {
     base = `http://127.0.0.1:${server.port}`;
 
     const cwd = await mkdtemp(join(tmpdir(), 'kimi-reload-cwd-'));
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-reload-extra-'));
     await mkdir(join(cwd, '.git'));
     try {
       const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -1182,19 +1267,47 @@ describe('server-v2 /api/v1/sessions', () => {
       const baselineCount = baseline.body.data.items.length;
 
       await writeFile(join(cwd, 'AGENTS.md'), 'new workspace rules');
+      const projectsPath = join(home as string, 'projects.json');
+      const projects = JSON.parse(await readFile(projectsPath, 'utf8')) as {
+        projects: Record<string, { root: string; additional_dirs?: string[] }>;
+      };
+      const project = Object.values(projects.projects).find((entry) => entry.root === cwd);
+      if (project === undefined) throw new Error('expected the session project');
+      project.additional_dirs = [extra];
+      await writeFile(projectsPath, JSON.stringify(projects), 'utf8');
 
       const second = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
       expect(second.body.code).toBe(0);
 
-      const after = await getJson<{ items: unknown[]; has_more: boolean }>(
-        `/api/v1/sessions/${id}/messages`,
-      );
+      const after = await getJson<{
+        items: { metadata?: { origin?: { variant?: string } } }[];
+        has_more: boolean;
+      }>(`/api/v1/sessions/${id}/messages`);
       expect(after.body.data.items.length).toBeGreaterThan(baselineCount);
       const text = JSON.stringify(after.body.data.items);
       expect(text).toContain('AGENTS.md');
       expect(text).toContain('were not included in your system prompt');
+      expect(text).toContain(`Added directories: ${extra}.`);
+      expect(
+        after.body.data.items.filter(
+          (item) => item.metadata?.origin?.variant === 'workspace_dirs_change',
+        ),
+      ).toHaveLength(1);
+
+      const third = await postJson<SessionWire>(`/api/v1/sessions/${id}:reload`);
+      expect(third.body.code).toBe(0);
+      const reloaded = await getJson<{
+        items: { metadata?: { origin?: { variant?: string } } }[];
+        has_more: boolean;
+      }>(`/api/v1/sessions/${id}/messages`);
+      expect(
+        reloaded.body.data.items.filter(
+          (item) => item.metadata?.origin?.variant === 'workspace_dirs_change',
+        ),
+      ).toHaveLength(1);
     } finally {
       await rm(cwd, { recursive: true, force: true });
+      await rm(extra, { recursive: true, force: true });
     }
   });
 
@@ -1272,38 +1385,10 @@ describe('server-v2 /api/v1/sessions', () => {
     }
   });
 
-  it('keeps failed journal cleanup retriable without publishing deletion', async () => {
-    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
-    const id = created.body.data.id;
-    const journalPath = join(home!, 'server', 'events', `${id}.jsonl`);
-    await vi.waitFor(async () => expect(await readFile(journalPath, 'utf8')).toContain('journal_header'));
-    await closeSessionById(server!.core.accessor, id);
-    await rm(journalPath);
-    await mkdir(journalPath);
-    const events: Event2<any>[] = [];
-    const sub = server!.core.accessor.get(IEventService).subscribe((event) => events.push(event));
-    try {
-      const failed = await postJson(`/api/v1/sessions/${id}:delete`);
-      expect(failed.body.code).not.toBe(0);
-      expect(await server!.core.accessor.get(ISessionManager).status(id)).toBeDefined();
-      expect(events.filter((event) => event.type === 'event.session.deleted')).toEqual([]);
-      await rm(journalPath, { recursive: true });
-      const retried = await postJson<{ deleted: boolean }>(`/api/v1/sessions/${id}:delete`);
-      expect(retried.body.data).toEqual({ deleted: true });
-      expect(events.filter((event) => event.type === 'event.session.deleted')).toHaveLength(1);
-      await expect(readFile(journalPath)).rejects.toMatchObject({ code: 'ENOENT' });
-    } finally {
-      sub.dispose();
-    }
-  });
-
   it.each(['closing', 'cleanup'] as const)('waits for %s before recreating an explicit session id', async (phase) => {
     const manager = server!.core.accessor.get(ISessionManager);
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd: home } });
     const id = created.body.data.id;
-    const journalPath = join(home!, 'server', 'events', `${id}.jsonl`);
-    await vi.waitFor(async () => expect(await readFile(journalPath, 'utf8')).toContain('journal_header'));
-    const oldJournal = await readFile(journalPath, 'utf8');
     let enter!: () => void;
     let release!: () => void;
     const entered = new Promise<void>((resolve) => { enter = resolve; });
@@ -1327,14 +1412,6 @@ describe('server-v2 /api/v1/sessions', () => {
       release();
       await deletion;
       await creation;
-      server!.core.accessor.get(IEventService).publish(new SessionMetaUpdated({
-        payload: { sessionId: id, agentId: 'main', patch: { title: 'Recreated session' } },
-      }));
-      await vi.waitFor(async () => {
-        const journal = await readFile(journalPath, 'utf8');
-        expect(journal).toContain('journal_header');
-        expect(JSON.parse(journal.split('\n')[0]!).epoch).not.toBe(JSON.parse(oldJournal.split('\n')[0]!).epoch);
-      });
       expect(manager.get(id)).toBeDefined();
     } finally {
       release();
@@ -1572,7 +1649,7 @@ describe('server-v2 /api/v1/sessions', () => {
     const agent = session.accessor.get(IAgentLifecycleService).handleOf(MAIN_AGENT_ID)!;
     const context = agent.accessor.get(IAgentContextMemoryService);
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'original prompt' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'user', content: [{ type: 'text', text: 'original prompt' }], origin: { kind: 'user' } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer before steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
@@ -1581,7 +1658,7 @@ describe('server-v2 /api/v1/sessions', () => {
       origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
+      { role: 'user', content: [{ type: 'text', text: 'steered prompt' }], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IEventDispatcher).dispatch(new TurnSteer({
@@ -1590,7 +1667,7 @@ describe('server-v2 /api/v1/sessions', () => {
       origin: { kind: 'user', inTurn: true },
     }));
     context.append(
-      { role: 'user', content: [{ type: 'text', text: 'second steer' }], toolCalls: [], origin: { kind: 'user', inTurn: true } },
+      { role: 'user', content: [{ type: 'text', text: 'second steer' }], origin: { kind: 'user', inTurn: true } },
       { role: 'assistant', content: [{ type: 'text', text: 'answer after second steer' }], toolCalls: [] },
     );
     await agent.accessor.get(IWireService).flush();
@@ -1619,7 +1696,6 @@ describe('server-v2 /api/v1/sessions', () => {
     const user = (text: string): ContextMessage => ({
       role: 'user',
       content: [{ type: 'text', text }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     const assistant = (text: string): ContextMessage => ({
@@ -2089,23 +2165,26 @@ describe('server-v2 /api/v1/sessions', () => {
     const typedId = encodeWorkDirKey(typedRoot);
     const lowerId = encodeWorkDirKey(lowerRoot);
     await writeFile(
-      join(home as string, 'workspaces.json'),
+      join(home as string, 'projects.json'),
       JSON.stringify({
-        version: 1,
-        workspaces: {
+        schema_version: 2,
+        projects: {
           [typedId]: {
             root: typedRoot,
             name: 'proj',
+            kind: 'implicit',
             created_at: '2024-01-01T00:00:00.000Z',
             last_opened_at: '2024-01-01T00:00:00.000Z',
           },
           [lowerId]: {
             root: lowerRoot,
             name: 'proj',
+            kind: 'implicit',
             created_at: '2024-01-01T00:00:00.000Z',
             last_opened_at: '2024-01-01T00:00:00.000Z',
           },
         },
+        deleted_project_ids: [],
       }),
       'utf8',
     );

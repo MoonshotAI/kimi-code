@@ -10,7 +10,7 @@ import { createServices } from '#/_base/di/test';
 import { AsyncEmitter, Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigService } from '#/app/config/config';
+import { IConfigService, type ConfigSectionChangedEvent } from '#/app/config/config';
 import { MCP_SECTION, type McpSection } from '#/app/mcpConfig/configSection';
 import {
   IMcpConfigStore,
@@ -65,6 +65,7 @@ describe('WorkspaceMcpConfigService', () => {
   let storeWrites: AsyncEmitter<McpConfigWriteEvent>;
   let trusted: boolean;
   let trustFlips: Emitter<WorkspaceTrustChange>;
+  let sectionChanges: Emitter<ConfigSectionChangedEvent>;
   let changes: McpServersChange[];
 
   beforeEach(() => {
@@ -77,6 +78,7 @@ describe('WorkspaceMcpConfigService', () => {
     storeWrites = disposables.add(new AsyncEmitter<McpConfigWriteEvent>());
     trusted = true;
     trustFlips = new Emitter<WorkspaceTrustChange>();
+    sectionChanges = disposables.add(new Emitter<ConfigSectionChangedEvent>());
     changes = [];
   });
 
@@ -89,7 +91,10 @@ describe('WorkspaceMcpConfigService', () => {
     ]);
   });
 
-  function createService(mcpSection?: McpSection): IWorkspaceMcpConfigService {
+  function createService(
+    mcpSection?: McpSection,
+    trustReady: () => Promise<void> = () => Promise.resolve(),
+  ): IWorkspaceMcpConfigService {
     const ix = createServices(disposables, {
       strict: true,
       additionalServices: (reg) => {
@@ -102,12 +107,15 @@ describe('WorkspaceMcpConfigService', () => {
         reg.defineInstance(ILogService, stubLog());
         reg.definePartialInstance(IConfigService, {
           ready: Promise.resolve(),
+          onDidSectionChange: sectionChanges.event,
           get: <T = unknown>(domain: string): T =>
             (domain === MCP_SECTION ? mcpSection : undefined) as T,
         });
         reg.defineInstance(IHostFileSystem, new HostFileSystem());
         reg.definePartialInstance(IWorkspaceTrust, {
-          ready: Promise.resolve(),
+          get ready() {
+            return trustReady();
+          },
           isTrusted: () => trusted,
           onDidChange: trustFlips.event,
         });
@@ -157,6 +165,37 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
   });
 
+  it('skips the project-level config files when trust initialization fails', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+
+    const service = createService(undefined, () => Promise.reject(new Error('trust storage unavailable')));
+    await service.ready;
+
+    expect(service.servers()).toEqual({});
+  });
+
+  it('retries full initialization after trust recovery', async () => {
+    await writeProjectConfig({ fileOnly: stdioConfig('file') });
+    pluginServers = { pluginOnly: stdioConfig('plugin') };
+    trusted = false;
+    let attempts = 0;
+    const service = createService(undefined, () => {
+      attempts++;
+      return attempts === 1
+        ? Promise.reject(new Error('trust storage unavailable'))
+        : Promise.resolve();
+    });
+    await service.ready;
+    expect(service.servers()).toEqual({});
+
+    trustFlips.fire({ trusted: false });
+
+    await vi.waitFor(() => {
+      expect(changes).toEqual([{ upsert: { pluginOnly: stdioConfig('plugin') }, remove: [] }]);
+    });
+    expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
+  });
+
   it('picks up the project servers when the workspace becomes trusted', async () => {
     await writeProjectConfig({ fileOnly: stdioConfig('file') });
     trusted = false;
@@ -198,11 +237,30 @@ describe('WorkspaceMcpConfigService', () => {
     expect(service.servers()).toEqual({ pluginOnly: stdioConfig('plugin') });
   }, 20000);
 
-  it('exposes the [mcp] section as tunables, resolved live', async () => {
-    const service = createService({ startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true });
+  it('exposes live tunables and publishes only reconnect delay changes', async () => {
+    const mcpSection = { startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true };
+    const service = createService(mcpSection);
     await service.ready;
 
     expect(service.tunables()).toEqual({ startupTimeoutMs: 1234, toolTimeoutMs: 5678, defaultDeferred: true });
+    const tunableEvents: unknown[] = [];
+    service.onDidChangeTunables((event) => tunableEvents.push(event));
+    sectionChanges.fire({
+      domain: MCP_SECTION,
+      source: 'reload',
+      value: { ...mcpSection, startupTimeoutMs: 999 },
+      previousValue: mcpSection,
+    });
+    expect(tunableEvents).toEqual([]);
+    sectionChanges.fire({
+      domain: MCP_SECTION,
+      source: 'reload',
+      value: { ...mcpSection, reconnectMaxDelayMs: 100 },
+      previousValue: mcpSection,
+    });
+    expect(tunableEvents).toEqual([
+      { ...mcpSection, reconnectInitialDelayMs: undefined, reconnectMaxDelayMs: 100 },
+    ]);
   });
 
   it('publishes the diff when a watched config file changes', async () => {

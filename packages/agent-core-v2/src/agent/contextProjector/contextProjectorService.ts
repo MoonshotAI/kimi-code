@@ -4,7 +4,7 @@ import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/state/state';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentStateService } from '#/agent/state/agentState';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentContextProjectorService,
@@ -14,7 +14,8 @@ import {
 import {
   MEDIA_DEGRADE_KEEP_RECENT,
   captureMediaStripSnapshot,
-  degradeOlderMediaParts,
+  countMediaParts,
+  degradeLeadingMediaParts,
   stripMediaPartsBySnapshot,
 } from './mediaProjection';
 import {
@@ -60,13 +61,18 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     );
     const media = policy.media;
     if (media === undefined) return projected;
-    if (media === 'degraded')
-      return degradeOlderMediaParts(projected, MEDIA_DEGRADE_KEEP_RECENT, undefined, mediaPaths);
+    if ('degradeCount' in media)
+      return degradeLeadingMediaParts(projected, media.degradeCount, undefined, mediaPaths);
     return stripMediaPartsBySnapshot(projected, media.strip, mediaPaths);
   }
 
   captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {
     return captureMediaStripSnapshot(this.projectWithTrace(messages, project));
+  }
+
+  captureMediaDegradeCount(messages: readonly ContextMessage[]): number {
+    const mediaCount = countMediaParts(this.projectWithTrace(messages, project));
+    return Math.max(0, mediaCount - MEDIA_DEGRADE_KEEP_RECENT);
   }
 
   private projectWithTrace(

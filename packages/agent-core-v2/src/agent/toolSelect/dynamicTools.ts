@@ -4,8 +4,10 @@ export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
 
 export const LOADABLE_TOOLS_VARIANT = 'loadable-tools';
 
-export function isDynamicToolSchemaMessage(message: ContextMessage): boolean {
-  return message.tools !== undefined && message.tools.length > 0;
+export function isDynamicToolSchemaMessage(
+  message: ContextMessage,
+): message is Extract<ContextMessage, { readonly role: 'system' }> {
+  return message.role === 'system' && message.tools !== undefined && message.tools.length > 0;
 }
 
 export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
@@ -26,7 +28,7 @@ export function stripDynamicToolContext(
     if (isDynamicToolSchemaMessage(message)) {
       const { tools: _tools, ...rest } = message;
       void _tools;
-      if (rest.content.length === 0 && rest.toolCalls.length === 0) continue;
+      if (rest.content.length === 0) continue;
       out.push(rest);
       continue;
     }
@@ -40,7 +42,7 @@ export function collectLoadedDynamicToolNames(
 ): Set<string> {
   const names = new Set<string>();
   for (const message of history) {
-    if (message.tools === undefined) continue;
+    if (message.role !== 'system' || message.tools === undefined) continue;
     for (const tool of message.tools) {
       names.add(tool.name);
     }

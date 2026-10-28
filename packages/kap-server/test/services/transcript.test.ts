@@ -14,6 +14,7 @@ import {
   IAgentTaskService,
   IEventBus,
   IFlagService,
+  IBlobStore,
   ISessionIndex,
   ISessionMetadata,
   ISessionLifecycleService,
@@ -195,7 +196,17 @@ describe('AgentTranscriptProjector', () => {
         display: { kind: 'command', command: 'ls' },
       }),
     );
-    feed(ev({ type: 'tool.result', turnId: 1, toolCallId: 'call_1', output: 'file.txt' }));
+    feed(
+      ev({
+        type: 'tool.result',
+        turnId: 1,
+        toolCallId: 'call_1',
+        output: [
+          { type: 'text', text: 'file.txt' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+      }),
+    );
     feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1, stepId: 'u1' }));
     feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
 
@@ -226,7 +237,13 @@ describe('AgentTranscriptProjector', () => {
       name: 'Bash',
       state: 'done',
       input: { command: 'ls' },
-      output: 'file.txt',
+      output: [
+        { type: 'text', text: 'file.txt' },
+        {
+          type: 'image_url',
+          imageUrl: expect.objectContaining({ url: 'data:image/png;base64,AAAA' }),
+        },
+      ],
       display: { kind: 'command', command: 'ls' },
     });
   });
@@ -2068,6 +2085,38 @@ describe('AgentTranscriptProjector', () => {
     expect(tx.listPendingInteractions()).toEqual([]);
   });
 
+  it('marks a question cancelled by the engine as cancelled, not answered', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'q1',
+        kind: 'question',
+        payload: { questions: [{ question: 'Pick', options: [] }] },
+        createdAt: 1000,
+      }),
+    );
+    tx.apply(projector.mapInteractionResolved('q1', { cancelled: true, reason: 'turn_ended' }));
+    expect(tx.getInteraction('q1')).toMatchObject({ state: 'cancelled' });
+  });
+
+  it('keeps an answer keyed by a question named cancelled as answered', () => {
+    const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
+    const tx = new AgentTranscript('main');
+
+    tx.apply(
+      projector.mapInteractionRequested({
+        id: 'q2',
+        kind: 'question',
+        payload: { questions: [{ question: 'cancelled', options: [] }] },
+        createdAt: 1000,
+      }),
+    );
+    tx.apply(projector.mapInteractionResolved('q2', { cancelled: true }));
+    expect(tx.getInteraction('q2')).toMatchObject({ state: 'answered' });
+  });
+
   it('projects question requests onto the wire shape with stable question/option ids', () => {
     const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
     const tx = new AgentTranscript('main');
@@ -2434,10 +2483,7 @@ describe('AgentTranscriptProjector', () => {
           { type: 'text', text: 'look at this' },
           {
             type: 'image_url',
-            imageUrl: {
-              url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png',
-              name: 'architecture.png',
-            },
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png', name: 'architecture.png' },
           },
         ],
         steeredAt: '2026-01-01T00:00:02.000Z',
@@ -2452,10 +2498,7 @@ describe('AgentTranscriptProjector', () => {
           { type: 'text', text: 'look at this' },
           {
             type: 'image_url',
-            imageUrl: {
-              url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png',
-              name: 'architecture.png',
-            },
+            imageUrl: { url: 'kimi-file://f_img9?path=%2Fabs%2Fsession%2Fmedia%2Ff_img9.png', name: 'architecture.png' },
           },
         ],
         promptIds: ['p2', 'p3'],
@@ -2780,12 +2823,17 @@ describe('AgentTranscriptProjector', () => {
     try {
       const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
       await mkdir(wireDir, { recursive: true });
+      const blobHash = 'a'.repeat(64);
+      const blobBytes = Buffer.from('cold-image-bytes');
       const records = [
         {
           type: 'context.append_message',
           message: {
             role: 'user',
-            content: [{ type: 'text', text: 'hi' }],
+            content: [
+              { type: 'text', text: 'hi' },
+              { type: 'image_url', imageUrl: { url: `blobref:image/png;${blobHash}`, name: 'cold.png' } },
+            ],
             toolCalls: [],
             origin: { kind: 'user' },
           },
@@ -2855,6 +2903,15 @@ describe('AgentTranscriptProjector', () => {
         core: {
           accessor: {
             get: (token: unknown) => {
+              if (token === IBlobStore) {
+                return {
+                  get: async (scope: string, key: string) => {
+                    expect(scope).toBe('sessions/ws/s1/agents/main/blobs');
+                    expect(key).toBe(blobHash);
+                    return blobBytes;
+                  },
+                };
+              }
               if (token === ISessionManager) return { get: () => undefined, list: () => [] };
               if (token === IWorkspaceInstanceManager) {
               return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
@@ -2867,6 +2924,15 @@ describe('AgentTranscriptProjector', () => {
       });
       const snapshot = await service.readColdSnapshot('s1', 'main');
       expect(snapshot).toBeDefined();
+      expect(snapshot!.attachments).toEqual([
+        {
+          attachmentId: 'att_1',
+          mediaType: 'image/*',
+          name: 'cold.png',
+          source: { kind: 'url', url: `data:image/png;base64,${blobBytes.toString('base64')}` },
+        },
+      ]);
+      expect(JSON.stringify(snapshot)).not.toContain('blobref:');
 
       expect(snapshot!.tasks).toEqual([
         {
@@ -3155,6 +3221,53 @@ describe('AgentTranscriptProjector', () => {
       await write([boundary, user, assistant]);
       const dangling = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
       expect(dangling!.meta.activity).toBe('idle');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot realigns turn ordinals to wire ids and marks the wedged turn', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-wedged-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const userTurn = (turnId: number, promptId: string, text: string, time: number) => [
+        { type: 'turn.prompt', turnId, promptId, origin: { kind: 'user' }, time },
+        { type: 'agent.turn.started', turnId, time: time + 1 },
+        { type: 'context.append_message', message: { id: promptId, role: 'user', content: [{ type: 'text', text }], toolCalls: [], origin: { kind: 'user' } }, time },
+        { type: 'context.append_message', message: { role: 'assistant', content: [{ type: 'text', text: `answer ${turnId}` }], toolCalls: [] }, time: time + 2 },
+      ];
+      const foldedNotification = (turnId: number, taskId: string, time: number) => [
+        { type: 'turn.prompt', turnId, promptId: `n${turnId}`, origin: { kind: 'task_notification', taskId }, time },
+        { type: 'context.append_message', message: { id: `n${turnId}`, role: 'user', content: [{ type: 'text', text: `<notification>done ${turnId}</notification>` }], toolCalls: [], origin: { kind: 'task_notification', taskId } }, time },
+      ];
+      const records = [
+        ...userTurn(3, 'u3', 'before the gap', 1000),
+        { type: 'turn.ended', turnId: 3, reason: 'completed', time: 1100 },
+        ...foldedNotification(4, 'bg-4', 2000),
+        ...foldedNotification(5, 'bg-5', 2100),
+        ...userTurn(6, 'u6', 'wedged prompt', 3000),
+        ...userTurn(7, 'u7', 'after restart', 4000),
+        { type: 'turn.ended', turnId: 7, reason: 'completed', time: 4100 },
+      ];
+      await writeFile(
+        join(wireDir, 'wire.jsonl'),
+        records.map((record) => JSON.stringify(record)).join('\n') + '\n',
+      );
+      const snapshot = await coldTranscriptService(home).readColdSnapshot('s1', 'main');
+      const turns = (snapshot?.items ?? []).filter((item) => item.kind === 'turn');
+      expect(turns.map((turn) => [turn.turnId, turn.ordinal, turn.state])).toEqual([
+        ['t3', 3, 'completed'],
+        ['t6', 6, 'failed'],
+        ['t7', 7, 'completed'],
+      ]);
+      const wedged = turns[1];
+      if (wedged?.kind !== 'turn') throw new Error('expected turn');
+      expect(wedged.wedged).toBe(true);
+      expect(wedged.prompt).toBe('wedged prompt');
+      expect(wedged.startedAt).toBe(new Date(3001).toISOString());
+      expect(wedged.endedAt).toBeUndefined();
+      expect(wedged.steps[0]?.stepId).toBe('t6.1');
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -4498,7 +4611,7 @@ describe('bindSessionTranscript', () => {
       const store = service.forSessionLive('s1')!;
       await service.whenReady('s1');
       expect(store.getAgent('main')!.getItems().length).toBeGreaterThan(0);
-      main.contextMessages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } }];
+      main.contextMessages = [{ role: 'user', content: [{ type: 'text', text: 'hi' }], origin: { kind: 'user' } }];
       main.bus.emit(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'undone prompt' }));
       const read = vi.spyOn(service, 'readColdSnapshot');
       for (let i = 0; i < failures; i++) read.mockRejectedValueOnce(new Error('temporary read failure'));

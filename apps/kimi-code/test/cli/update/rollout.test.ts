@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   appendRolloutDecisionLog,
-  decidePassiveUpdateTarget,
+  decidePassiveUpdate,
   isRolloutBypassedByExperimentalEnv,
   isRolloutEligible,
   MAX_ROLLOUT_DELAY_SECONDS,
@@ -14,7 +14,6 @@ import {
   rolloutDelayForBucket,
   rolloutDelaySeconds,
   resolveUpdateDeviceId,
-  selectPassiveUpdateTarget,
 } from '#/cli/update/rollout';
 import type { RolloutBatch, UpdateManifest } from '#/cli/update/types';
 
@@ -153,59 +152,30 @@ describe('isRolloutEligible', () => {
   });
 });
 
-describe('selectPassiveUpdateTarget', () => {
-  const now = secondsAfterPublish(60);
-
-  it('falls back to plain latest when manifest is null', () => {
-    expect(selectPassiveUpdateTarget('1.0.0', '2.0.0', null, 'device-a', now)).toEqual({
-      version: '2.0.0',
-    });
-    expect(selectPassiveUpdateTarget('1.0.0', null, null, 'device-a', now)).toBeNull();
-  });
-
-  it('returns null when the manifest version is not newer', () => {
-    const manifest = makeManifest({ rollout: [] });
-    expect(selectPassiveUpdateTarget('2.0.0', '2.0.0', manifest, 'device-a', now)).toBeNull();
-    expect(selectPassiveUpdateTarget('3.0.0', '2.0.0', manifest, 'device-a', now)).toBeNull();
-  });
-
-  it('returns the target once the device batch is eligible', () => {
-    const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 0 }] });
-    expect(selectPassiveUpdateTarget('1.0.0', '2.0.0', manifest, 'device-a', now)).toEqual({
-      version: '2.0.0',
-    });
-  });
-
-  it('hides the target while the device batch is not yet eligible', () => {
-    const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 86_400 }] });
-    expect(selectPassiveUpdateTarget('1.0.0', '2.0.0', manifest, 'device-a', now)).toBeNull();
-  });
-});
-
-describe('decidePassiveUpdateTarget', () => {
+describe('decidePassiveUpdate', () => {
   const now = secondsAfterPublish(60);
 
   it('reports no-latest when nothing is known yet', () => {
-    const decision = decidePassiveUpdateTarget('1.0.0', null, null, 'device-a', now);
-    expect(decision).toMatchObject({ target: null, reason: 'no-latest' });
+    const decision = decidePassiveUpdate('1.0.0', { channel: 'stable', latest: null, manifest: null }, 'device-a', now);
+    expect(decision).toMatchObject({ plan: { kind: 'none' }, reason: 'no-latest' });
   });
 
   it('reports not-newer when the known version is not an upgrade', () => {
-    expect(decidePassiveUpdateTarget('2.0.0', '2.0.0', null, 'device-a', now)).toMatchObject({
-      target: null,
+    expect(decidePassiveUpdate('2.0.0', { channel: 'stable', latest: '2.0.0', manifest: null }, 'device-a', now)).toMatchObject({
+      plan: { kind: 'none' },
       reason: 'not-newer',
     });
     const manifest = makeManifest({ rollout: [] });
-    expect(decidePassiveUpdateTarget('2.0.0', '2.0.0', manifest, 'device-a', now)).toMatchObject({
-      target: null,
+    expect(decidePassiveUpdate('2.0.0', { channel: 'stable', latest: '2.0.0', manifest }, 'device-a', now)).toMatchObject({
+      plan: { kind: 'none' },
       reason: 'not-newer',
     });
   });
 
   it('reports no-manifest legacy visibility when only plain latest is known', () => {
-    const decision = decidePassiveUpdateTarget('1.0.0', '2.0.0', null, 'device-a', now);
+    const decision = decidePassiveUpdate('1.0.0', { channel: 'stable', latest: '2.0.0', manifest: null }, 'device-a', now);
     expect(decision).toMatchObject({
-      target: { version: '2.0.0' },
+      plan: { kind: 'upgrade', target: { channel: 'stable', version: '2.0.0' } },
       reason: 'no-manifest',
       bucket: null,
       delaySeconds: null,
@@ -215,15 +185,14 @@ describe('decidePassiveUpdateTarget', () => {
 
   it('reports held with bucket, delay and eligibleAt while the batch is gated', () => {
     const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 86_400 }] });
-    const decision = decidePassiveUpdateTarget(
+    const decision = decidePassiveUpdate(
       '1.0.0',
-      '2.0.0',
-      manifest,
+      { channel: 'stable', latest: '2.0.0', manifest },
       'device-a',
       secondsAfterPublish(60),
     );
     expect(decision).toMatchObject({
-      target: null,
+      plan: { kind: 'none' },
       reason: 'held',
       bucket: rolloutBucket('device-a', '2.0.0'),
       delaySeconds: 86_400,
@@ -233,17 +202,52 @@ describe('decidePassiveUpdateTarget', () => {
 
   it('reports eligible once the batch delay has passed', () => {
     const manifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 43_200 }] });
-    const decision = decidePassiveUpdateTarget(
+    const decision = decidePassiveUpdate(
       '1.0.0',
-      '2.0.0',
-      manifest,
+      { channel: 'stable', latest: '2.0.0', manifest },
       'device-a',
       secondsAfterPublish(43_200),
     );
     expect(decision).toMatchObject({
-      target: { version: '2.0.0' },
+      plan: { kind: 'upgrade', target: { channel: 'stable', version: '2.0.0' } },
       reason: 'eligible',
       delaySeconds: 43_200,
+    });
+  });
+
+  it('uses the normal eligible path for an empty canary rollout', () => {
+    const manifest = makeManifest({ version: '2.4.1-canary.20261028012345-0123456', rollout: [] });
+    const decision = decidePassiveUpdate(
+      '2.4.1-canary.20261027012345-89abcde',
+      { channel: 'canary', latest: '2.4.1-canary.20261028012345-0123456', manifest },
+      'device-a',
+      now,
+    );
+    expect(decision).toMatchObject({
+      plan: { kind: 'upgrade', target: { channel: 'canary', version: '2.4.1-canary.20261028012345-0123456' } },
+      reason: 'eligible',
+      delaySeconds: 0,
+    });
+  });
+
+  it('returns a channel switch without applying the stable rollout hold', () => {
+    const manifest = makeManifest({ version: '2.4.1', rollout: [{ percent: 100, delaySeconds: 86_400 }] });
+    const decision = decidePassiveUpdate(
+      '2.4.1-canary.20261028012345-0123456',
+      { channel: 'stable', latest: '2.4.1', manifest },
+      'device-a',
+      now,
+    );
+    expect(decision).toMatchObject({
+      plan: {
+        kind: 'switch-channel',
+        sourceChannel: 'canary',
+        target: { channel: 'stable', version: '2.4.1' },
+      },
+      reason: 'switch-channel',
+      bucket: null,
+      delaySeconds: null,
+      eligibleAt: null,
     });
   });
 });
@@ -321,9 +325,15 @@ describe('experimental flag bypass', () => {
   const heldManifest = makeManifest({ rollout: [{ percent: 100, delaySeconds: 86_400 }] });
 
   it('bypasses a held rollout and reports experimental', () => {
-    const decision = decidePassiveUpdateTarget('1.0.0', '2.0.0', heldManifest, 'device-a', now, true);
+    const decision = decidePassiveUpdate(
+      '1.0.0',
+      { channel: 'stable', latest: '2.0.0', manifest: heldManifest },
+      'device-a',
+      now,
+      true,
+    );
     expect(decision).toMatchObject({
-      target: { version: '2.0.0' },
+      plan: { kind: 'upgrade', target: { channel: 'stable', version: '2.0.0' } },
       reason: 'experimental',
       bucket: null,
       delaySeconds: null,
@@ -331,21 +341,52 @@ describe('experimental flag bypass', () => {
     });
   });
 
-  it('still reports not-newer / no-latest under bypass', () => {
-    expect(decidePassiveUpdateTarget('2.0.0', '2.0.0', heldManifest, 'device-a', now, true)).toMatchObject({
-      target: null,
-      reason: 'not-newer',
-    });
-    expect(decidePassiveUpdateTarget('1.0.0', null, null, 'device-a', now, true)).toMatchObject({
-      target: null,
-      reason: 'no-latest',
-    });
+  it('still reports not-newer and no-latest under bypass', () => {
+    expect(decidePassiveUpdate(
+      '2.0.0',
+      { channel: 'stable', latest: '2.0.0', manifest: heldManifest },
+      'device-a',
+      now,
+      true,
+    )).toMatchObject({ plan: { kind: 'none' }, reason: 'not-newer' });
+    expect(decidePassiveUpdate(
+      '1.0.0',
+      { channel: 'stable', latest: null, manifest: null },
+      'device-a',
+      now,
+      true,
+    )).toMatchObject({ plan: { kind: 'none' }, reason: 'no-latest' });
   });
 
   it('marks plain-latest visibility as experimental when bypassing', () => {
-    expect(decidePassiveUpdateTarget('1.0.0', '2.0.0', null, 'device-a', now, true)).toMatchObject({
-      target: { version: '2.0.0' },
+    const decision = decidePassiveUpdate(
+      '1.0.0',
+      { channel: 'stable', latest: '2.0.0', manifest: null },
+      'device-a',
+      now,
+      true,
+    );
+    expect(decision).toMatchObject({
+      plan: { kind: 'upgrade', target: { channel: 'stable', version: '2.0.0' } },
       reason: 'experimental',
+    });
+  });
+
+  it('does not turn a channel switch into an automatic upgrade', () => {
+    const decision = decidePassiveUpdate(
+      '2.4.1',
+      { channel: 'canary', latest: '2.4.1-canary.20261028012345-0123456', manifest: null },
+      'device-a',
+      now,
+      true,
+    );
+    expect(decision).toMatchObject({
+      plan: {
+        kind: 'switch-channel',
+        sourceChannel: 'stable',
+        target: { channel: 'canary', version: '2.4.1-canary.20261028012345-0123456' },
+      },
+      reason: 'switch-channel',
     });
   });
 });

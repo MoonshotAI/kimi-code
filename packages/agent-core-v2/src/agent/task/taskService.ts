@@ -7,6 +7,7 @@ import type { ContentPart } from '#human/llm/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
 import { ILogService } from '#/_base/log/log';
+import { codePointBoundaryStart } from '#/_base/text/code-points';
 import { defineState } from '#/state/state';
 import {
   abortable,
@@ -608,7 +609,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   async readOutput(taskId: string, tail?: number): Promise<string> {
     const output = (await this.getOutputSnapshot(taskId, Number.MAX_SAFE_INTEGER)).preview;
     if (tail === undefined) return output;
-    return output.slice(-Math.max(0, Math.trunc(tail)));
+    const tailChars = Math.max(0, Math.trunc(tail));
+    if (tailChars === 0) return output;
+    return output.slice(codePointBoundaryStart(output, Math.max(0, output.length - tailChars)));
   }
 
   async suppressTerminalNotification(taskId: string): Promise<void> {
@@ -1117,6 +1120,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       void this.dispatcher.dispatch(
         new TaskTerminated({ agentId: this.scopeContext.agentId, info, outputTail }),
       );
+    } else {
+      this.log.warn('task terminal event dropped: agent lifecycle inactive', {
+        taskId: info.taskId,
+        status: info.status,
+      });
     }
     this.telemetry.track2('background_task_completed', {
       task_id: info.taskId,
@@ -1127,17 +1135,25 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private async notifyAgentTask(info: AgentTaskInfo): Promise<void> {
-    if (!this.lifecycleActive()) return;
+    if (!this.lifecycleActive()) {
+      this.log.warn('task notification skipped: agent lifecycle inactive', {
+        taskId: info.taskId,
+        status: info.status,
+      });
+      return;
+    }
     const context = await this.buildAgentTaskNotificationContext(info);
     if (context === undefined) return;
-    if (!this.lifecycleActive() || this.isTerminalNotificationSuppressed(info.taskId)) return;
+    if (!this.lifecycleActive() || this.isTerminalNotificationSuppressed(info.taskId)) {
+      this.log.warn('task notification dropped before scheduling', { taskId: info.taskId });
+      return;
+    }
     const key = notificationKey(context.origin);
     if (this.deliveredNotificationKeys.has(key)) return;
     const handle = this.loop.notify({
       message: {
         role: 'user',
         content: [...context.content],
-        toolCalls: [],
         origin: context.origin,
       },
       turnScoped: false,
@@ -1260,7 +1276,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.context.append({
       role: 'user',
       content: [...context.content],
-      toolCalls: [],
       origin: context.origin,
     });
     this.fireNotificationHook(context.notification);
@@ -1279,7 +1294,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     };
     const key = notificationKey(origin);
     if (this.buildingNotificationKeys.has(key)) return undefined;
-    if (this.scheduledNotificationKeys.has(key)) return undefined;
+    if (this.scheduledNotificationKeys.has(key)) {
+      this.log.debug('task notification already scheduled; in-process redelivery suppressed', {
+        taskId: info.taskId,
+      });
+      return undefined;
+    }
     if (this.deliveredNotificationKeys.has(key)) return undefined;
     if (this.hasDeliveredNotification(key)) return undefined;
     this.buildingNotificationKeys.add(key);
@@ -1321,7 +1341,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private fireNotificationHook(notification: AgentTaskNotification): void {
-    if (!this.lifecycleActive()) return;
+    if (!this.lifecycleActive()) {
+      this.log.warn('task notification hook skipped: agent lifecycle inactive', {
+        sourceId: notification.source_id,
+      });
+      return;
+    }
     void this.dispatcher.dispatch(
       new TaskNotified({
         agentId: this.scopeContext.agentId,

@@ -6,6 +6,86 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 2.4.0 (2026-10-28)
+
+### Features
+
+- Add `/import-sessions` and `kimi import-sessions` to import Claude Code and Codex sessions from the last 15 or 30 days. Run either one and choose a time range.
+- Add `/provider refresh [providerId]` to re-fetch provider model lists at runtime.
+- Expand streaming thinking with Ctrl-O.
+- Report main-session and subagent status to compatible terminals with OSC 7501, including pending interactions and retained results.
+- Support per-task model selection and the `max_running_tasks` limit in Tower, and raise its default agent concurrency limit from 16 to 256.
+
+### Polish
+
+- Plan mode can now only be enabled by the user instead of being entered automatically by the agent; every plan requires user review, Never Ask no longer approves plans automatically, and `kimi -p` skips `default_plan_mode` and cannot approve a plan in a session already in Plan mode.
+- Web sessions now unload from memory after 30 minutes idle and resume transparently on next access.
+- Improve the layout and interaction experience of some Fullscreen components, including approval option display, mouse selection, and focus switching.
+- Move todo lists into expandable transcript cards and remove the old input-area panel and `Ctrl-T` shortcut.
+- Improve the built-in `/import-from-cc-codex` skill.
+
+### Bug Fixes
+
+- Reconnect workspace MCP servers automatically with backoff when the initial connection fails or the connection drops; tune the interval with `[mcp] reconnect_initial_delay_ms` and `reconnect_max_delay_ms`.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
+## 2.3.3 (2026-10-26)
+
+### Polish
+
+- Show a high-usage warning when you turn on swarm mode with `/swarm`.
+- Update model switch confirmation prompts.
+- Merge the two repeated permission-mode notice lines in the swarm and goal start confirmation prompts into one sentence each.
+
+### Bug Fixes
+
+- Stop showing a failed swarm for `AgentSwarm` calls rejected before any subagent starts, such as while swarm mode is off; after such a rejection, the agent points you to `/swarm` if you asked for a swarm.
+- web: Improved interactions and fixed known bugs.
+
+## 2.3.2 (2026-10-25)
+
+### Bug Fixes
+
+- Handle tasks directly by default instead of proactively launching subagents; request delegation explicitly in your message, AGENTS.md, a skill, or an enabled multi-agent mode.
+- Agent swarms now start only when you turn on swarm mode: the agent can no longer launch `AgentSwarm` by itself, so swarms are no longer available in `kimi -p` or ACP clients such as Zed.
+
+## 2.3.1 (2026-10-23)
+
+### Features
+
+- Offer to take over a session that is still in use after a retry, so sessions left locked by an exited process can be used again, and add a `KIMI_CODE_SESSION_LOCK=0` switch that turns off the session lock.
+
+### Polish
+
+- Show the holding client's name in session-in-use errors.
+
+### Bug Fixes
+
+- Fix sessions occasionally remaining occupied after an application crash on macOS and Linux.
+- Fix workspace trust failures when Git Bash is unavailable on Windows.
+- web: Improved interactions and fixed known bugs.
+
+## 2.3.0 (2026-10-21)
+
+### Features
+
+- Plugin skills are now invoked by qualified name `<pluginID>:<skillName>`, so same-named skills from different plugins no longer shadow each other; bare-name invocation no longer works.
+- When the same session is open in multiple clients, sending a message from another client now shows an occupancy prompt, with options to retry or cancel.
+- A session title is now generated automatically after the first turn and shown as the terminal window title.
+- Switching models mid-session now shows a confirmation dialog: start a new session, compact and continue, or continue directly.
+- Remote control now supports streaming, and the limit is raised from 10 MiB to 100 MiB.
+
+### Polish
+
+- `/compact` now queues while the agent is busy instead of failing with an error.
+- The session rating toggle moves from tui.toml to config.toml.
+- `dangerous_command_guard = false` now disables all built-in confirmation guardrails, not only dangerous commands.
+
+### Bug Fixes
+
+- Hooks now run in the session's project directory instead of the server startup directory.
+- Fix several known issues and make various refinements. See the [changelog on GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md) for more technical entries.
+
 ## 2.2.0 (2026-10-14)
 
 ### Features

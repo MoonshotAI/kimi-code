@@ -6,7 +6,13 @@ import type {
   CompactionCompleted,
   CompactionStarted,
 } from '@moonshot-ai/agent-core-v2/agent/fullCompaction/compactionOps';
-import { daemonFileRefFromPart, type ContentPart, type ContextUndone, type CronFired, type GoalUpdated } from '@moonshot-ai/agent-core-v2';
+import {
+  daemonFileRefFromPart,
+  type ContextUndone,
+  type CronFired,
+  type GoalUpdated,
+} from '@moonshot-ai/agent-core-v2';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
 import { annotateBundledSkillParts, isSkillActivationPart } from '@moonshot-ai/agent-core-v2/human/agent/origin';
 import type {
@@ -91,8 +97,9 @@ import {
 
 import { toLegacyPhase, type LegacyActivityApproval } from '../legacyStatus/legacyStatus';
 import { LegacyActivityTracker, phaseFromDomainEvent } from '../legacyStatus/legacyActivity';
+import { interactionOutcome } from '../../protocol/interaction-wire';
 import { toWireQuestion } from '../../protocol/question-wire';
-import { projectPromptContentParts } from '../messages/messageProjection';
+import { projectPromptContentParts, projectToolResultOutput } from '../messages/messageProjection';
 
 export interface ProjectorInteraction {
   readonly id: string;
@@ -479,15 +486,17 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     this.ensureHighWater();
     const mapped = this.wireToExport.get(event.turnId);
-    let turnId: string;
-    let ordinal: number;
-    if (
+    const reentry =
       mapped !== undefined &&
       this.currentTurn?.turnId === mapped &&
-      this.currentTurn.state === 'running'
-    ) {
+      this.currentTurn.state === 'running';
+    const ops: TranscriptOperation[] = [];
+    if (!reentry) this.closeWedgedCurrentTurn(ops);
+    let turnId: string;
+    let ordinal: number;
+    if (reentry && mapped !== undefined) {
       turnId = mapped;
-      ordinal = this.currentTurn.ordinal;
+      ordinal = this.currentTurn!.ordinal;
     } else {
       const alloc = allocateExportTurn(
         event.turnId,
@@ -500,7 +509,6 @@ export class AgentTranscriptProjector {
       turnId = alloc.turnId;
       ordinal = alloc.ordinal;
     }
-    const ops: TranscriptOperation[] = [];
     const attachmentIds: string[] = [];
     for (const input of event.promptAttachments ?? []) {
       const attachment: TranscriptAttachment =
@@ -539,6 +547,56 @@ export class AgentTranscriptProjector {
     ops.push({ op: 'turn.upsert', turn: this.currentTurn });
     ops.push({ op: 'meta.merge', meta: { activity: 'turn' } });
     return ops;
+  }
+
+  private closeWedgedCurrentTurn(ops: TranscriptOperation[]): void {
+    const turn = this.currentTurn;
+    if (turn === undefined || turn.state !== 'running') return;
+    const turnId = turn.turnId;
+    this.flushOpenFrames(ops);
+    if (this.currentStep !== undefined && this.currentStep.state === 'running') {
+      const step: StepHeader = { ...this.currentStep, state: 'interrupted', endedAt: nowIso() };
+      this.currentStep = step;
+      ops.push({ op: 'step.upsert', turnId: step.turnId, step });
+    }
+    if (this.currentStep === undefined && this.pendingSteers.length > 0) {
+      const ordinal = (this.stepOrdinals.get(turnId) ?? this.lookups?.stepOrdinal?.(turnId) ?? 0) + 1;
+      const step: StepHeader = {
+        kind: 'step',
+        stepId: `${turnId}.${ordinal}`,
+        turnId,
+        ordinal,
+        state: 'interrupted',
+        endedAt: nowIso(),
+      };
+      this.stepOrdinals.set(turnId, ordinal);
+      this.currentStep = step;
+      ops.push({ op: 'step.upsert', turnId, step });
+    }
+    if (this.currentStep !== undefined) {
+      for (const pending of this.pendingSteers) {
+        this.steerUserFrame(
+          ops,
+          turnId,
+          this.currentStep.stepId,
+          pending.input,
+          pending.files,
+          pending.promptIds,
+          pending.origin,
+        );
+      }
+    }
+    this.pendingSteers = [];
+    this.currentStep = undefined;
+    ops.push({
+      op: 'turn.upsert',
+      turn: {
+        ...turn,
+        state: 'failed',
+        wedged: true,
+        usage: this.takeTurnUsage(turnId) ?? turn.usage,
+      },
+    });
   }
 
   private onTurnEnded(event: {
@@ -977,11 +1035,12 @@ export class AgentTranscriptProjector {
     const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
     if (hit === undefined) return [];
     const isError = event.isError === true;
+    const output = projectToolResultOutput(event.output);
     const frame: ToolCallFrame = {
       ...hit.frame,
       state: isError ? 'error' : 'done',
-      output: event.output,
-      error: isError && typeof event.output === 'string' ? event.output : undefined,
+      output,
+      error: isError && typeof output === 'string' ? output : undefined,
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
     const ops: TranscriptOperation[] = [
@@ -1646,7 +1705,7 @@ export class AgentTranscriptProjector {
     const record = this.interactions.get(id);
     if (record === undefined) return [];
     this.interactions.delete(id);
-    const state = mapInteractionEndState(record.interactionKind, response);
+    const state = interactionOutcome(record.interactionKind, response);
     const ops: TranscriptOperation[] = [
       { op: 'interaction.upsert', interaction: { ...record, state, response } },
     ];
@@ -1736,17 +1795,6 @@ function mapTaskKind(kind: string): TranscriptTask['kind'] {
   }
 }
 
-function mapInteractionEndState(
-  kind: 'approval' | 'question',
-  response: unknown,
-): TranscriptInteraction['state'] {
-  if (kind === 'question') return response === null ? 'dismissed' : 'answered';
-  const decision = (response as { decision?: unknown } | null | undefined)?.decision;
-  if (decision === 'approved' || decision === 'rejected' || decision === 'cancelled') {
-    return decision;
-  }
-  return 'cancelled';
-}
 
 const TODO_LIST_TOOL_NAME = 'TodoList';
 const TODO_ENTITY_ID = 'todo';

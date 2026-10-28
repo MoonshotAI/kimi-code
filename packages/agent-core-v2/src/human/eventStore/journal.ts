@@ -1,4 +1,5 @@
 import type { Branch } from '#/store/branch';
+import { historyRecordFromPersistent, historyRecordToPersistent } from '#/message';
 import type { Tree } from '#/store/tree';
 import type { AppendInput, EntryLine } from '#/store/types';
 import { isOffloadedPayload } from '#/store/types';
@@ -62,7 +63,11 @@ export function memoryJournal(ref?: { tree: string; branch: string }): SyncStore
 export function journalFromBranch(branch: Branch, tree: Tree): StoreJournal {
   return {
     ref: { tree: branch.tree, branch: branch.name },
-    append: (input) => branch.append(input),
+    append: (input) =>
+      branch.append({
+        ...input,
+        data: historyRecordToPersistent(input.type, input.data as Record<string, unknown>),
+      }),
     settled: () => branch.settled(),
     read: () => readBranchChain(branch, tree),
     nextSeq: () => branch.nextSeq,
@@ -97,7 +102,10 @@ async function* readBranchChain(branch: Branch, tree: Tree): AsyncIterable<Journ
         ts: entry.ts,
         type: entry.type,
         kind: entry.payload.kind,
-        data: await tree.resolve(entry),
+        data: historyRecordFromPersistent(
+          entry.type,
+          (await tree.resolve(entry)) as Record<string, unknown>,
+        ),
       };
     }
   }

@@ -139,4 +139,31 @@ describe('approval reverse-rpc', () => {
       feedback: 'approval handler failed',
     });
   });
+
+  it('tracks the requesting agent until approval settles or fails', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const token = Symbol('permission');
+    const tracker = {
+      startInteraction: vi.fn(() => token),
+      endInteraction: vi.fn(),
+    };
+    const handler = createApprovalRequestHandler(controller, undefined, tracker);
+
+    await expect(handler(approvalEvent({ agentId: 'agent-1' }))).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(tracker.startInteraction).toHaveBeenCalledWith({
+      agentId: 'agent-1',
+      kind: 'permission',
+    });
+    expect(tracker.endInteraction).toHaveBeenCalledWith(token);
+
+    show.mockRejectedValueOnce(new Error('boom'));
+    await expect(handler(approvalEvent({ agentId: 'agent-1' }))).resolves.toEqual({
+      decision: 'cancelled',
+      feedback: 'approval handler failed',
+    });
+    expect(tracker.endInteraction).toHaveBeenCalledTimes(2);
+  });
 });

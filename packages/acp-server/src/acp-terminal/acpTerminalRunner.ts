@@ -166,7 +166,6 @@ class AcpSessionRuntime implements Runtime {
   readonly fs: IHostFileSystem;
   readonly process;
   readonly watch = undefined;
-  readonly terminal = undefined;
   readonly status = 'ready' as const;
   readonly onDidChangeStatus = () => ({ dispose: () => {} });
 
@@ -241,7 +240,7 @@ class AcpWorkspaceRuntimeAttachment implements RuntimeProviderAttachment {
   async dispose(): Promise<void> {
     const registrations = [...this.sessions.values()];
     this.sessions.clear();
-    for (const registration of registrations.reverse()) await registration.remove();
+    for (const registration of registrations.toReversed()) await registration.remove();
   }
 }
 

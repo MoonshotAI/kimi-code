@@ -28,7 +28,6 @@ import {
   projectRoots,
   sessionMediaOriginalsDir,
   userRoots,
-  type ContentPart,
   type ISessionScopeHandle,
   type Scope,
   type SkillDefinition,
@@ -37,6 +36,7 @@ import {
   IAgentProfileService,
 } from '@moonshot-ai/agent-core-v2';
 import { join } from 'node:path';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

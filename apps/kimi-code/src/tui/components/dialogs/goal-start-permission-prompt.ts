@@ -1,11 +1,13 @@
 import {
   StartPermissionPromptComponent,
   type StartPermissionOption,
+  type StartPermissionPromptOptions,
 } from './start-permission-prompt';
 
 export type GoalStartPermissionChoice = 'auto' | 'yolo' | 'manual' | 'cancel';
 
-export interface GoalStartPermissionPromptOptions {
+export interface GoalStartPermissionPromptOptions
+  extends Pick<StartPermissionPromptOptions, 'layout'> {
   readonly mode: 'manual' | 'yolo';
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
@@ -16,13 +18,13 @@ export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',
     label: 'Switch to Ask When Needed and start',
     description:
-      'Tools and plan changes are approved automatically. Kimi Code may still ask you questions.',
+      'Tools are approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'manual',
@@ -42,13 +44,13 @@ export const GOAL_START_YOLO_OPTIONS: readonly StartPermissionOption[] = [
     value: 'auto',
     label: 'Switch to Never Ask and start',
     description:
-      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically, and questions are skipped.',
+      'Best if you want Kimi Code to keep working while you are away. Tools are approved automatically and questions are skipped; only plans in Plan mode wait for your review.',
   },
   {
     value: 'yolo',
     label: 'Keep Ask When Needed and start',
     description:
-      'Tools and plan changes stay approved automatically. Kimi Code may still ask you questions.',
+      'Tools stay approved automatically. Kimi Code may still ask you questions.',
   },
   {
     value: 'cancel',
@@ -66,14 +68,12 @@ const MANUAL_OPTIONS = GOAL_START_MANUAL_OPTIONS;
 const YOLO_OPTIONS = GOAL_START_YOLO_OPTIONS;
 
 const MANUAL_NOTICE_LINES = [
-  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions.',
-  'Always Ask mode is not suitable for unattended goal work.',
+  'Always Ask mode asks you before Kimi Code runs commands, edits files, or takes other risky actions, and is not suitable for unattended goal work.',
   'You can go back without losing your command.',
 ] as const;
 
 const YOLO_NOTICE_LINES = [
-  'Ask When Needed mode approves tools and plan changes automatically.',
-  'Ask When Needed mode can still stop for questions.',
+  'Ask When Needed mode approves tools automatically, but can still stop for questions.',
   'Switch to Never Ask if you want questions skipped during goal work.',
 ] as const;
 
@@ -88,6 +88,7 @@ export class GoalStartPermissionPromptComponent extends StartPermissionPromptCom
       options: opts.mode === 'yolo' ? YOLO_OPTIONS : MANUAL_OPTIONS,
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,
+      layout: opts.layout,
     });
   }
 }

@@ -5,6 +5,7 @@ import { createControlledPromise } from '@antfu/utils';
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { IInstantiationService } from '#/_base/di/instantiation';
+import { ILogService } from '#/_base/log/log';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
@@ -22,10 +23,9 @@ import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IConfigService } from '#/app/config/config';
 import { AgentErrorEvent } from '#/agent/mcp/mcpEvents';
-import { type FinishReason } from '#human/llm/finish-reason';
-import { mergeInPlace } from '#/llm-adapter/contract/message';
-import type { ContentPart, UserMessage } from '#human/llm/message';
-import { emptyUsage, type TokenUsage } from '#human/llm/usage';
+import { type FinishReason } from '#human/llm-requester/finish-reason';
+import { mergeInPlace, type ContentPart, type UserMessage } from '#human/llm/message';
+import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
@@ -129,6 +129,8 @@ export const loopLastRequestTraceIdKey = defineState<string | undefined>(
 export const loopDisposingKey = defineState<boolean>('loop.disposing', () => false);
 
 const MAX_STEP_SIGNAL_LISTENERS = 64;
+const TURN_WATCH_CHECK_MS = 60_000;
+const TURN_WATCH_WARN_MS = 10 * 60_000;
 
 export class AgentLoopService extends Disposable implements IAgentLoopService {
   declare readonly _serviceBrand: undefined;
@@ -147,6 +149,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private readonly nudges: Nudge[] = [];
   private nudgeCursor = 0;
   private active: ActiveTurn | undefined;
+  private turnWatch:
+    | { timer: NodeJS.Timeout; signature: string; since: number; lastWarnAt: number }
+    | undefined;
   private pendingMachineTurn:
     | { readonly id: number; readonly queueItemId?: string; readonly entry?: UserEntry }
     | undefined;
@@ -171,6 +176,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IPluginService private readonly plugins: IPluginService,
     @ISessionRunGate private readonly runGate: ISessionRunGate,
+    @ILogService private readonly logger: ILogService,
   ) {
     super();
     this.states.contributeState(turnKey);
@@ -180,6 +186,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.deliverToolResult(ctx);
       await next();
     });
+    this._register(toDisposable(() => this.disarmTurnWatch()));
   }
 
   private get lastRequestTraceId(): string | undefined {
@@ -317,7 +324,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       role: 'user',
       content: [...input.message.content],
       id,
-      toolCalls: [],
       origin: meta?.origin as PromptOrigin | undefined,
     };
     if (tracked) {
@@ -451,6 +457,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (this.quiescenceDepth === 0 && this.engine !== undefined) {
       nudge.sentToMachine = true;
       this.machineEngine().notify(createUserEntry(machineUserMessage(note.message)));
+    } else {
+      this.logger.debug('loop notify buffered before reaching the machine', {
+        agentId: this.scopeContext.agentId,
+        buffered: this.nudges.length - this.nudgeCursor,
+        quiescenceDepth: this.quiescenceDepth,
+        engineAttached: this.engine !== undefined,
+      });
     }
     return {
       get dropped() {
@@ -587,7 +600,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const promptMessage: ContextMessage = {
       role: 'user',
       content: [...message.content],
-      toolCalls: [],
       id: queueItemId,
       origin: entry.meta?.origin as PromptOrigin | undefined,
     };
@@ -624,8 +636,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [...entry.message.content],
         id: waiter.id,
-        toolCalls: [],
-        origin: entry.meta?.origin as PromptOrigin | undefined,
+          origin: entry.meta?.origin as PromptOrigin | undefined,
       });
     }
     waiter.launched.resolve(undefined);
@@ -1122,6 +1133,62 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     };
   }
 
+  private armTurnWatch(active: ActiveTurn): void {
+    this.disarmTurnWatch();
+    const signatureOf = (): string => {
+      const engine = this.engine?.snapshot();
+      return [
+        active.gatedSteps,
+        active.steps,
+        active.partials.length,
+        engine?.turn?.phase ?? '',
+        engine?.turn?.step ?? '',
+        engine?.turn?.activeToolCalls.length ?? '',
+      ].join(':');
+    };
+    const watch = {
+      timer: undefined as unknown as NodeJS.Timeout,
+      signature: signatureOf(),
+      since: Date.now(),
+      lastWarnAt: 0,
+    };
+    watch.timer = setInterval(() => {
+      if (this.active !== active) {
+        this.disarmTurnWatch();
+        return;
+      }
+      const signature = signatureOf();
+      if (signature !== watch.signature) {
+        watch.signature = signature;
+        watch.since = Date.now();
+        return;
+      }
+      const silentMs = Date.now() - watch.since;
+      if (silentMs < TURN_WATCH_WARN_MS) return;
+      if (Date.now() - watch.lastWarnAt < TURN_WATCH_WARN_MS) return;
+      watch.lastWarnAt = Date.now();
+      const engine = this.engine?.snapshot();
+      this.logger.warn('turn watchdog: no new events from the running turn', {
+        agentId: this.scopeContext.agentId,
+        turnId: active.id,
+        silentMinutes: Math.round(silentMs / 60_000),
+        steps: active.steps,
+        phase: engine?.turn?.phase,
+        pendingNotifications: engine?.notificationCount,
+        paused: engine?.paused,
+        queuedPrompts: engine?.queue.length,
+      });
+    }, TURN_WATCH_CHECK_MS);
+    watch.timer.unref();
+    this.turnWatch = watch;
+  }
+
+  private disarmTurnWatch(): void {
+    if (this.turnWatch === undefined) return;
+    clearInterval(this.turnWatch.timer);
+    this.turnWatch = undefined;
+  }
+
   private beginActiveTurn(waiter: PromptWaiter, entry: UserEntry, id: number): ActiveTurn {
     const origin = (entry.meta?.origin as PromptOrigin | undefined) ?? { kind: 'user' };
     const tracked = entry.meta?.tracked === true;
@@ -1134,8 +1201,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         role: 'user',
         content: [...entry.message.content],
         id: waiter.id,
-        toolCalls: [],
-        origin: entry.meta?.origin as PromptOrigin | undefined,
+          origin: entry.meta?.origin as PromptOrigin | undefined,
       },
       userMessageId: entry.meta?.userMessageId ?? '',
       createdAt: entry.meta?.createdAt ?? '',
@@ -1189,6 +1255,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       protocol: undefined,
     };
     this.active = active;
+    this.armTurnWatch(active);
     active.readyResolved = true;
     ready.resolve();
     active.mode = this.telemetry.getContext().mode;
@@ -1275,6 +1342,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       }
       nudge.onConsume?.();
     }
+    if (live > 0) {
+      this.logger.debug('loop consumed drained notifications', {
+        agentId: this.scopeContext.agentId,
+        live,
+        remaining: this.nudges.length - this.nudgeCursor,
+      });
+    }
     return { live, bypass };
   }
 
@@ -1323,8 +1397,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
                 role: 'user',
                 content: [...entry.message.content],
                 id,
-                toolCalls: [],
-                origin: entry.meta?.origin as PromptOrigin | undefined,
+                          origin: entry.meta?.origin as PromptOrigin | undefined,
               },
               userMessageId: entry.meta?.userMessageId ?? '',
               createdAt: entry.meta?.createdAt ?? '',
@@ -1359,8 +1432,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           contextMessage: {
             role: 'user',
             content: gatedContent,
-            toolCalls: [],
-            origin: markInTurnOrigin(merged.origin),
+                  origin: markInTurnOrigin(merged.origin),
             id: messageId,
           },
           promptIds,
@@ -2042,6 +2114,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private async endTurn(turn: ActiveTurn, result: TurnResult): Promise<void> {
     if (this.active !== turn) return;
     this.active = undefined;
+    this.disarmTurnWatch();
     await this.wire.drainPersisted().catch(() => undefined);
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (nudge.turnScoped && !nudge.dropped) {
@@ -2182,7 +2255,6 @@ interface SteeredPrompt extends PromptProjection {
 const EMPTY_HANDLE_MESSAGE: ContextMessage = {
   role: 'user',
   content: [],
-  toolCalls: [],
 };
 
 function projectionFromEntry(entry: UserEntry): PromptProjection {
@@ -2194,7 +2266,6 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
       role: 'user',
       content: [...entry.message.content],
       id: entry.meta?.promptId,
-      toolCalls: [],
       origin: entry.meta?.origin as PromptOrigin | undefined,
     },
     userMessageId: entry.meta?.userMessageId ?? '',

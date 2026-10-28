@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto';
-
-import type { Message } from '#/llm-adapter/contract/message';
-import type { ContentPart } from '#human/llm/message';
+import { mediaKeyOf, type ContentPart, type MediaPart, type Message } from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 
 import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
 
@@ -29,55 +27,18 @@ export const MEDIA_STRIPPED_PLACEHOLDERS = {
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;
 
-type DegradableMediaPart = Extract<
-  ContentPart,
-  { readonly type: keyof MediaPlaceholderSet }
->;
-
-interface MediaContainer {
-  readonly url: string;
-  readonly id?: string;
-}
+type DegradableMediaPart = MediaPart;
 
 interface MediaStripSnapshotData {
   readonly keys: ReadonlySet<string>;
 }
 
-type MediaContainerKeyCache = Partial<Record<DegradableMediaPart['type'], string>>;
-
-const MEDIA_CONTAINER_KEY_CACHE = new WeakMap<MediaContainer, MediaContainerKeyCache>();
+const mediaStripKey = mediaKeyOf;
 
 function isDegradableMediaPart(
   part: ContentPart,
 ): part is DegradableMediaPart {
   return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
-}
-
-function mediaContainer(part: DegradableMediaPart): MediaContainer {
-  if (part.type === 'image_url') return part.imageUrl;
-  if (part.type === 'audio_url') return part.audioUrl;
-  return part.videoUrl;
-}
-
-function mediaStripKey(part: DegradableMediaPart): string {
-  const container = mediaContainer(part);
-  let cache = MEDIA_CONTAINER_KEY_CACHE.get(container);
-  const cached = cache?.[part.type];
-  if (cached !== undefined) return cached;
-
-  const key = createHash('sha256')
-    .update(part.type)
-    .update('\0')
-    .update(container.id ?? '')
-    .update('\0')
-    .update(container.url)
-    .digest('hex');
-  if (cache === undefined) {
-    cache = {};
-    MEDIA_CONTAINER_KEY_CACHE.set(container, cache);
-  }
-  cache[part.type] = key;
-  return key;
 }
 
 function mediaStripSnapshotKeys(snapshot: MediaStripSnapshot): ReadonlySet<string> {
@@ -88,7 +49,7 @@ function mediaPathTag(
   part: DegradableMediaPart,
   mediaPaths: ReadonlyMap<string, string> | undefined,
 ): ContentPart | undefined {
-  const path = mediaPaths?.get(mediaContainer(part).url);
+  const path = mediaPaths?.get(mediaUrlOf(part));
   if (path === undefined) return undefined;
   const kind = mediaKindOfPart(part);
   if (kind === undefined) return undefined;
@@ -127,18 +88,21 @@ export function stripMediaPartsBySnapshot(
   return changed ? result : messages;
 }
 
-export function degradeOlderMediaParts(
-  messages: readonly Message[],
-  keepRecent: number,
-  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
-  mediaPaths?: ReadonlyMap<string, string>,
-): readonly Message[] {
-  const mediaCount = messages.reduce(
+export function countMediaParts(messages: readonly Message[]): number {
+  return messages.reduce(
     (count, message) => count + message.content.filter(isDegradableMediaPart).length,
     0,
   );
-  let toDegrade = Math.max(0, mediaCount - keepRecent);
-  if (toDegrade === 0) return messages;
+}
+
+export function degradeLeadingMediaParts(
+  messages: readonly Message[],
+  count: number,
+  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
+  mediaPaths?: ReadonlyMap<string, string>,
+): readonly Message[] {
+  let toDegrade = count;
+  if (toDegrade <= 0) return messages;
 
   return messages.map((message) => {
     if (toDegrade === 0 || !message.content.some(isDegradableMediaPart)) return message;

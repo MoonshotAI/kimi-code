@@ -285,4 +285,37 @@ describe('AgentTaskService — readOutput / getOutputSnapshot', () => {
     expect(await manager.readOutput(taskId, 5)).toBe('ddddd');
     await manager.wait(taskId);
   });
+
+  it('readOutput returns the full output for a nonpositive tail', async () => {
+    const taskId = registerProcess(
+      manager,
+      immediateProcess(0, 'aaaaa-bbbbb-ccccc-ddddd'),
+      'echo',
+      'demo',
+    );
+
+    await waitForOutput(manager, taskId, 'ddddd');
+
+    const full = await manager.readOutput(taskId);
+    expect(await manager.readOutput(taskId, 0)).toBe(full);
+    expect(await manager.readOutput(taskId, -7)).toBe(full);
+    await manager.wait(taskId);
+  });
+
+  it('readOutput does not split a surrogate pair at the tail boundary', async () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    const taskId = registerProcess(
+      manager,
+      immediateProcess(0, `aaaaa-bbbbb-${emoji}cc`),
+      'echo',
+      'demo',
+    );
+
+    await waitForOutput(manager, taskId, 'cc');
+
+    expect(await manager.readOutput(taskId, 3)).toBe('cc');
+    expect(await manager.readOutput(taskId, 2)).toBe('cc');
+    expect(await manager.readOutput(taskId, 4)).toBe(`${emoji}cc`);
+    await manager.wait(taskId);
+  });
 });

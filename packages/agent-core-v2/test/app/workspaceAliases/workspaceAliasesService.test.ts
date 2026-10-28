@@ -17,11 +17,13 @@ import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { JsonAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
+import { FileProjectLocalConfigService } from '#/persistence/backends/node-fs/projectLocalConfigService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IEventService } from '#/app/event/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
 import { WorkspaceService } from '#/app/workspace/workspaceService';
 import { FileWorkspacePersistence } from '#/app/workspace/fileWorkspacePersistence';
@@ -89,19 +91,24 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     fileStorage: FileStorageService = new FileStorageService(homeDir),
     persistence?: IWorkspacePersistence,
   ): IWorkspaceAliases {
+    const noopLog = {
+      error: () => {},
+      warn: () => {},
+      info: () => {},
+      debug: () => {},
+    } as unknown as ILogService;
     const host = createScopedTestHost([
       stubPair(IFileSystemStorageService, fileStorage),
       stubPair(IAtomicDocumentStore, new JsonAtomicDocumentStore(fileStorage)),
       stubPair(IBootstrapService, stubBootstrap(homeDir)),
-      stubPair(IAppendLogStore, new AppendLogStore(fileStorage)),
-      stubPair(ILogService, {
-        error: () => {},
-        warn: () => {},
-        info: () => {},
-        debug: () => {},
-      } as unknown as ILogService),
+      stubPair(IAppendLogStore, new AppendLogStore(fileStorage, noopLog)),
+      stubPair(ILogService, noopLog),
       ...(persistence !== undefined ? [stubPair(IWorkspacePersistence, persistence)] : []),
       stubPair(IHostFileSystem, hostFs),
+      stubPair(
+        IProjectLocalConfigService,
+        new FileProjectLocalConfigService(stubBootstrap(homeDir), hostFs),
+      ),
       stubPair(IEventService, {
         publish: () => {},
         subscribe: () => ({ dispose: () => {} }),
@@ -123,6 +130,17 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await fsp.writeFile(
       join(homeDir, 'workspaces.json'),
       JSON.stringify({ version: 1, workspaces, ...extra }),
+      'utf8',
+    );
+  }
+
+  async function writeProjectsJson(
+    projects: Record<string, PersistedWorkspaceEntry>,
+    deletedIds: readonly string[] = [],
+  ): Promise<void> {
+    await fsp.writeFile(
+      join(homeDir, 'projects.json'),
+      JSON.stringify({ schema_version: 2, projects, deleted_project_ids: deletedIds }),
       'utf8',
     );
   }
@@ -159,6 +177,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       [typedId]: {
         root: typedRoot,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -195,6 +214,32 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect(await aliases.resolveAliasIds(id)).toEqual([id]);
   });
 
+  it('resolveAliasIds keeps wm_ entries out of hash alias sets and vice versa', async () => {
+    const root = join(homeDir, 'proj');
+    const hashId = encodeWorkDirKey(root);
+    const projectId = 'wm_7f3a9c1e-1111-2222-3333-444455556666';
+    await writeWorkspacesJson({
+      [hashId]: {
+        root,
+        name: 'proj',
+        kind: 'implicit',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+      [projectId]: {
+        root,
+        name: 'proj project',
+        kind: 'managed',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+
+    const aliases = build();
+    expect(await aliases.resolveAliasIds(hashId)).toEqual([hashId]);
+    expect(await aliases.resolveAliasIds(projectId)).toEqual([projectId]);
+  });
+
   it('resolveAliasIds reuses the loaded catalog and session index across calls', async () => {
     const root = join(homeDir, 'proj');
     const id = encodeWorkDirKey(root);
@@ -202,6 +247,7 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       [id]: {
         root,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -220,10 +266,11 @@ describe('WorkspaceAliasesService (file-backed)', () => {
   it('resolveAliasIds coalesces concurrent cold loads', async () => {
     const root = join(homeDir, 'proj');
     const id = encodeWorkDirKey(root);
-    await writeWorkspacesJson({
+    await writeProjectsJson({
       [id]: {
         root,
         name: 'proj',
+        kind: 'implicit',
         created_at: '2026-01-01T00:00:00.000Z',
         last_opened_at: '2026-01-01T00:00:00.000Z',
       },
@@ -256,13 +303,13 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
 
     const persistence = currentHost!.app.accessor.get(IWorkspacePersistence);
-    await persistence.save({
+    await persistence.update(() => ({
       workspaces: [
-        { id: typedId, root: typedRoot, name: 'proj', createdAt: 0, lastOpenedAt: 0 },
-        { id: legacyId, root: 'c:\\users\\foo\\proj', name: 'proj', createdAt: 0, lastOpenedAt: 0 },
+        { id: typedId, root: typedRoot, name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
+        { id: legacyId, root: 'c:\\users\\foo\\proj', name: 'proj', kind: 'implicit', additionalDirs: [], createdAt: 0, lastOpenedAt: 0 },
       ],
       deletedIds: [],
-    });
+    }));
     expect((await aliases.resolveAliasIds(typedId)).toSorted()).toEqual(
       [legacyId, typedId].toSorted(),
     );
@@ -283,8 +330,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
         if (this.gate !== undefined) await this.gate;
         return catalog;
       }
-      save(catalog: WorkspaceCatalog): Promise<void> {
-        return this.inner.save(catalog);
+      update(
+        mutator: (current: WorkspaceCatalog) => WorkspaceCatalog | Promise<WorkspaceCatalog>,
+      ): Promise<void> {
+        return this.inner.update(mutator);
       }
     }
     const entry = (root: string): PersistedWorkspaceEntry => ({
@@ -299,19 +348,21 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await writeWorkspacesJson({ [typedId]: entry(typedRoot) });
     const storage = new FileStorageService(homeDir);
     const persistence = new GatedPersistence(
-      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), stubBootstrap(homeDir)),
+      new FileWorkspacePersistence(new JsonAtomicDocumentStore(storage), storage, stubBootstrap(homeDir)),
     );
     const aliases = build(undefined, storage, persistence);
     const ws = (id: string, root: string): Workspace => ({
       id,
       root,
       name: 'proj',
+      kind: 'implicit',
+      additionalDirs: [],
       createdAt: 0,
       lastOpenedAt: 0,
     });
 
     await aliases.resolveAliasIds(typedId);
-    await persistence.save({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] });
+    await persistence.update(() => ({ workspaces: [ws(typedId, typedRoot)], deletedIds: [] }));
 
     let release: (() => void) | undefined;
     persistence.gate = new Promise<void>((resolve) => {
@@ -322,10 +373,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await vi.waitFor(() => {
       expect(persistence.loads).toBe(baseline + 1);
     });
-    await persistence.save({
+    await persistence.update(() => ({
       workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
       deletedIds: [],
-    });
+    }));
     const p2 = aliases.resolveAliasIds(legacyId);
     release!();
 
@@ -364,6 +415,8 @@ describe('WorkspaceAliasesService (file-backed)', () => {
       id,
       root,
       name: 'proj',
+      kind: 'implicit',
+      additionalDirs: [],
       createdAt: 0,
       lastOpenedAt: 0,
     });
@@ -385,10 +438,10 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     await vi.waitFor(() => {
       expect(storage.indexReads).toBe(baseline + 1);
     });
-    await persistence.save({
+    await persistence.update(() => ({
       workspaces: [ws(typedId, typedRoot), ws(legacyId, 'c:\\users\\foo\\proj')],
       deletedIds: [],
-    });
+    }));
     release!();
 
     expect((await p).toSorted()).toEqual([legacyId, typedId].toSorted());
@@ -434,9 +487,9 @@ describe('WorkspaceAliasesService (file-backed)', () => {
     const aliases = build();
     expect(await aliases.resolveAliasIds(typedId)).toEqual([typedId]);
 
-    await writeWorkspacesJson({
-      [typedId]: entry(typedRoot),
-      [legacyId]: entry('c:\\users\\foo\\proj'),
+    await writeProjectsJson({
+      [typedId]: { ...entry(typedRoot), kind: 'implicit' },
+      [legacyId]: { ...entry('c:\\users\\foo\\proj'), kind: 'implicit' },
     });
     await vi.waitFor(
       async () => {

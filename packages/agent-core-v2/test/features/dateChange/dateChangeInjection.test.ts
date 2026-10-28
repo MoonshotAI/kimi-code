@@ -267,7 +267,6 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'older metadata reminder' }],
-      toolCalls: [],
       origin: {
         kind: 'injection',
         variant: 'date_change',
@@ -294,7 +293,6 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     await runWillBeginStepHooks(loop);
@@ -305,7 +303,6 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -323,7 +320,6 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'first turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
     await runWillBeginStepHooks(loop);
@@ -334,7 +330,6 @@ describe('AgentDateChangeService', () => {
     context.append({
       role: 'user',
       content: [{ type: 'text', text: 'replacement turn' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 

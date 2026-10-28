@@ -14,6 +14,7 @@ import {
 import {
   DEFAULT_REPLY_STYLE_GUIDE,
   NOTIFY_USER_GUIDANCE,
+  PLAN_MODE_GUIDANCE,
   renderAgentProfilePrompt,
   profileCanDelegate,
   renderPromptTemplateResult,
@@ -543,6 +544,33 @@ describe('systemPromptVars todo_list_guidance', () => {
     expect(withTodo).toContain(`\n\n${TODO_LIST_GUIDANCE}\n\nBefore you finalize a reply`);
     expect(withoutTodo).not.toContain(TODO_LIST_GUIDANCE);
     expect(withoutTodo).toMatch(/[^\n]\n\nBefore you finalize a reply/);
+  });
+});
+
+describe('systemPromptVars plan_mode_guidance', () => {
+  it('adds the plan mode guidance paragraph only when the context marks plan mode available', () => {
+    expect(systemPromptVars({ planModeAvailable: true }, { skillActive: false })['plan_mode_guidance']).toBe(
+      `${PLAN_MODE_GUIDANCE}\n\n`,
+    );
+    expect(systemPromptVars({ planModeAvailable: false }, { skillActive: false })['plan_mode_guidance']).toBe('');
+    expect(systemPromptVars({}, { skillActive: false })['plan_mode_guidance']).toBe('');
+  });
+
+  it('places the guidance as its own paragraph right after the opening of Delivering work', () => {
+    const withPlan = renderSystemPromptResult('', { planModeAvailable: true }, { skillActive: false }).text;
+    const withoutPlan = renderSystemPromptResult('', {}, { skillActive: false }).text;
+
+    expect(withPlan).toContain(
+      `only if the user asked for a fix.\n\n${PLAN_MODE_GUIDANCE}\n\nBefore you call a change done`,
+    );
+    expect(withoutPlan).not.toContain(PLAN_MODE_GUIDANCE);
+    expect(withoutPlan).toContain('only if the user asked for a fix.\n\nBefore you call a change done');
+  });
+
+  it('tells the model that only the user turns plan mode on', () => {
+    expect(PLAN_MODE_GUIDANCE).toContain('only the user can turn on');
+    expect(PLAN_MODE_GUIDANCE).toContain('you cannot enter it yourself');
+    expect(PLAN_MODE_GUIDANCE).not.toContain('EnterPlanMode');
   });
 });
 

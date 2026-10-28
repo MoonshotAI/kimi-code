@@ -110,6 +110,8 @@ const V2_RECORD_TYPES: ReadonlySet<string> = new Set([
   'subagent.completed',
   'subagent.failed',
   'subagent.cancelled',
+  'mcp.server_failed',
+  'mcp.server_failure_resolved',
 ]);
 
 describe('v1 wire vocabulary', () => {
@@ -624,7 +626,6 @@ function userMessage(text: string): ContextMessage {
   return {
     role: 'user',
     content: [{ type: 'text', text }],
-    toolCalls: [],
   };
 }
 

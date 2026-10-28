@@ -16,7 +16,7 @@ import {
 import { IAgentProfileRegistry } from '#/app/agentProfileCatalog/agentProfileRegistry';
 import { BuiltinAgentProfileLoaderService } from '#/app/agentProfileCatalog/builtinAgentProfileLoaderService';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import type { WatchChange } from '#human/utils/watch';
 import { IAgentAgentsMdReminderService } from '#/agent/agentsMdReminder/agentsMdReminder';
@@ -345,6 +345,42 @@ describe('AgentProfileService.bind', () => {
     expect(ctx.get(IAgentProfileService).data().agentsMdPaths).toEqual(
       bindingRecord?.['agentsMdPaths'],
     );
+  });
+
+  it('restores a binding recorded with EnterPlanMode with its prompt and rejects the removed tool', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    const legacyPrompt = 'Legacy system prompt recorded while EnterPlanMode existed.';
+    const legacyRecords = persistence.records.map((record) =>
+      record.type === 'profile.bind'
+        ? {
+            ...record,
+            systemPrompt: legacyPrompt,
+            activeToolNames: [
+              ...((record['activeToolNames'] as readonly string[] | undefined) ?? []),
+              'EnterPlanMode',
+            ],
+          }
+        : record,
+    );
+    ctx = createTestAgent(
+      { persistence: new InMemoryWireRecordPersistence(legacyRecords), autoConfigure: false },
+      hostEnvironmentServices(homeDir),
+    );
+    await ctx.restorePersisted();
+
+    const { profile, toolPolicy } = profileServices(ctx);
+    expect(profile.getSystemPrompt()).toBe(legacyPrompt);
+    expect(profile.getActiveToolNames()).toContain('EnterPlanMode');
+    expect(toolPolicy.isToolActive('ExitPlanMode')).toBe(true);
+    expect(await executeDirectToolCall(ctx, 'EnterPlanMode')).toMatchObject({
+      isError: true,
+      output: 'Tool "EnterPlanMode" not found',
+    });
   });
 
   it('keeps the system prompt frozen after a default bind when AGENTS.md changes', async () => {
@@ -1412,6 +1448,7 @@ describe('change-notifier belief seeding', () => {
         notifyAgentsMdChanges: async () => {},
         notifySkillChanges: async () => {},
         notifySubagentChanges: async () => {},
+        notifyWorkspaceDirsChanges: async () => {},
         seedBeliefs,
         mute: () => {},
         unmute: () => {},

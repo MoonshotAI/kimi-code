@@ -16,6 +16,7 @@ import { RuntimeWorkspaceView } from '#/runtime/runtimeWorkspaceView';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IOAuthService } from '#/app/auth/auth';
 import {
   DEFAULT_TOOL_RESULT_MAX_RETAINED_CHARS,
   ToolAccesses,
@@ -67,6 +68,7 @@ export class GlobTool implements IGlobTool {
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
+    @IOAuthService private readonly auth?: IOAuthService,
   ) {}
 
   get description(): string {
@@ -174,6 +176,7 @@ export class GlobTool implements IGlobTool {
       const resolution = await ensureRgPath(createRgProbe(processService), {
         signal,
         allowCachedFallback: true,
+        resolveRegion: () => this.auth?.getRegion(),
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {

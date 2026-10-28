@@ -20,6 +20,7 @@ describe('resolveCompletionBudget', () => {
     expect(
       resolveCompletionBudget({ maxCompletionTokensCap: 100, maxOutputSize: 200 }),
     ).toBe(100);
+    expect(resolveCompletionBudget({ maxCompletionTokensCap: 300, maxOutputSize: 200 })).toBe(300);
     expect(resolveCompletionBudget({ maxOutputSize: 200 })).toBe(200);
     expect(resolveCompletionBudget({})).toBeUndefined();
   });
@@ -28,6 +29,7 @@ describe('resolveCompletionBudget', () => {
     expect(resolveCompletionBudget({ maxCompletionTokensCap: 0 })).toBeUndefined();
     expect(resolveCompletionBudget({ maxCompletionTokensCap: -5, maxOutputSize: 200 })).toBeUndefined();
     expect(resolveCompletionBudget({ maxOutputSize: 0 })).toBeUndefined();
+    expect(resolveCompletionBudget({ maxOutputSize: -5 })).toBeUndefined();
   });
 });
 
@@ -38,6 +40,7 @@ describe('completionBudgetParams (the budget fold)', () => {
       usedContextTokens: undefined,
       maxContextTokens: 128000,
     });
+    expect(completionBudgetParams({ budget: 0.5, capability: capability(128000) })?.maxCompletionTokens).toBe(1);
   });
 
   it('returns undefined without a budget', () => {

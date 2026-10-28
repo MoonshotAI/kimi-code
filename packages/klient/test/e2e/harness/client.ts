@@ -5,9 +5,9 @@
  * into a single, typed object that scenarios can drive. Handles:
  *   - Envelope unwrap + typed REST helpers
  *   - WS `server_hello` → `client_hello` → ack handshake
- *   - `subscribe` / `unsubscribe` ack correlation
+ *   - `subscribe_v2` / `unsubscribe_v2` ack correlation
  *   - Approval + question reverse-RPC auto-resolve via per-event handlers
- *   - `waitForFrame` / `waitForSessionBusy` convenience waits
+ *   - `waitForFrame` / `waitForSessionBusy` / `runUntilIdle` convenience waits
  *
  * **What it is NOT**: a server bootstrap helper. Connect to a server process
  * that's already running at `baseUrl` (default `http://127.0.0.1:58627`).
@@ -23,20 +23,11 @@ import type {
   ProviderCatalogItem,
   SetDefaultModelResponse,
 } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
-import type { Terminal } from '@moonshot-ai/agent-core-v2/os/interface/terminal';
-import type {
-  ApprovalRequest,
-  ApprovalResponse,
-} from '@moonshot-ai/kap-server/protocol/approval';
 import type { Message } from '@moonshot-ai/kap-server/protocol/message';
 import type {
-  QuestionRequest,
-  QuestionResponse,
-} from '@moonshot-ai/kap-server/protocol/question';
-import type {
-  ApprovalResolveResult,
-  ListPendingApprovalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-approval';
+  InteractionRespondRequest,
+  InteractionRespondResult,
+} from '@moonshot-ai/kap-server/protocol/interaction';
 import type {
   ListModelsResponse,
   ListProvidersResponse,
@@ -51,10 +42,6 @@ import type {
   PromptThinking,
 } from '@moonshot-ai/kap-server/protocol/rest-prompt';
 import type {
-  ListPendingQuestionsResponse,
-  QuestionResolveResult,
-} from '@moonshot-ai/kap-server/protocol/rest-question';
-import type {
   CompactSessionRequest,
   CompactSessionResponse,
   ForkSessionRequest,
@@ -62,11 +49,6 @@ import type {
   UndoSessionRequest,
   UndoSessionResponse,
 } from '@moonshot-ai/kap-server/protocol/rest-session';
-import type {
-  CloseTerminalResponse,
-  CreateTerminalRequest,
-  ListTerminalsResponse,
-} from '@moonshot-ai/kap-server/protocol/rest-terminal';
 import type {
   Session,
   SessionChildCreate,
@@ -82,7 +64,6 @@ import { ulid } from 'ulid';
 import { WebSocket as WsWebSocket } from 'ws';
 
 import { HttpClient } from './http.js';
-import { installReverseRpcHandler } from './reverse-rpc.js';
 import { DEFAULT_FRAME_TIMEOUT_MS, waitForSessionBusy } from './wait.js';
 import { type AnyFrame, WsClient } from './ws.js';
 
@@ -103,10 +84,15 @@ export interface DaemonClientOptions {
 }
 
 export interface SubmitAndWaitOptions {
-  /** Default `prompt.completed`. */
-  waitFor?: 'prompt.completed' | 'turn.ended';
   /** Default 60s. */
   timeoutMs?: number;
+}
+
+export interface SubmitAndWaitResult {
+  prompt_id: string;
+  user_message_id: string;
+  /** The `event.session.work_changed` frame that reported the session idle again. */
+  finalFrame: AnyFrame;
 }
 
 type UploadFileData = Blob | ArrayBuffer | Uint8Array | string;
@@ -141,36 +127,6 @@ export const DEFAULT_PROMPT_CONTROLS = {
 export type PromptSubmitInput =
   Pick<PromptSubmission, 'content'>
   & Partial<Pick<PromptSubmission, 'metadata' | 'model' | 'thinking' | 'permission_mode' | 'plan_mode'>>;
-
-export interface TerminalAttachOptions {
-  sinceSeq?: number;
-  timeoutMs?: number;
-}
-
-export interface TerminalControlOptions {
-  timeoutMs?: number;
-}
-
-export interface TerminalAttachResult {
-  attached: true;
-  replayed: number;
-}
-
-export interface TerminalDetachResult {
-  detached: true;
-}
-
-export interface TerminalInputResult {
-  accepted: true;
-}
-
-export interface TerminalResizeResult {
-  resized: true;
-}
-
-export interface TerminalCloseResult {
-  closed: true;
-}
 
 function fillPromptDefaults(input: PromptSubmitInput): PromptSubmission {
   return { ...DEFAULT_PROMPT_CONTROLS, ...input };
@@ -271,26 +227,6 @@ export class DaemonClient {
     return this.http.createChild(sid, body);
   }
 
-  // ── Terminals ──────────────────────────────────────────────────────────
-  listTerminals(sid: string): Promise<ListTerminalsResponse> {
-    return this.http.listTerminals(sid);
-  }
-  createTerminal(
-    sid: string,
-    body: CreateTerminalRequest = {},
-  ): Promise<Terminal> {
-    return this.http.createTerminal(sid, body);
-  }
-  getTerminal(sid: string, terminalId: string): Promise<Terminal> {
-    return this.http.getTerminal(sid, terminalId);
-  }
-  closeTerminal(
-    sid: string,
-    terminalId: string,
-  ): Promise<CloseTerminalResponse> {
-    return this.http.closeTerminal(sid, terminalId);
-  }
-
   // ── Workspaces + folder picker ──────────────────────────────────────────
   listWorkspaces(): Promise<{ items: Workspace[] }> {
     return this.http.listWorkspaces();
@@ -358,38 +294,20 @@ export class DaemonClient {
   abortSession(sid: string): Promise<SessionAbortResponse> {
     return this.http.abortSession(sid);
   }
-  resolveApproval(
+  respondInteraction(
     sid: string,
-    aid: string,
-    body: ApprovalResponse,
-  ): Promise<ApprovalResolveResult> {
-    return this.http.resolveApproval(sid, aid, body);
-  }
-  listPendingApprovals(sid: string): Promise<ListPendingApprovalsResponse> {
-    return this.http.listPendingApprovals(sid);
-  }
-  resolveQuestion(
-    sid: string,
-    qid: string,
-    body: QuestionResponse,
-  ): Promise<QuestionResolveResult> {
-    return this.http.resolveQuestion(sid, qid, body);
-  }
-  listPendingQuestions(sid: string): Promise<ListPendingQuestionsResponse> {
-    return this.http.listPendingQuestions(sid);
-  }
-  dismissQuestion(
-    sid: string,
-    qid: string,
-  ): Promise<{ dismissed: true; dismissed_at: string }> {
-    return this.http.dismissQuestion(sid, qid);
+    interactionId: string,
+    body: InteractionRespondRequest,
+  ): Promise<InteractionRespondResult> {
+    return this.http.respondInteraction(sid, interactionId, body);
   }
 
   // ── WS lifecycle ────────────────────────────────────────────────────────
   /**
    * Open the WS socket, wait for `server_hello`, send `client_hello`, await
-   * the ack. Returns the server's hello payload (buffer sizes, capabilities,
-   * etc.).
+   * the ack. Returns the server's hello payload (connection id, heartbeat).
+   * Every connection receives the global events, including
+   * `event.session.work_changed`, without subscribing.
    */
   async connect(): Promise<ServerHelloMessage['payload']> {
     if (this._serverHello) return this._serverHello;
@@ -415,7 +333,7 @@ export class DaemonClient {
       {
         type: 'client_hello',
         id: helloId,
-        payload: { client_id: this.clientId, subscriptions: [] },
+        payload: { client_id: this.clientId },
       },
       this._controlAckTimeoutMs,
     );
@@ -429,28 +347,35 @@ export class DaemonClient {
     return helloPayload;
   }
 
-  /** Send `subscribe` and await its ack. Tracks the session for `close()`. */
+  /**
+   * Send `subscribe_v2` for the session's transcript stream and await its
+   * ack. Throws when the server reports the session as not found.
+   */
   async subscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (this._subscribed.has(sid)) return;
     const id = `sub-${ulid()}`;
     const ack = await ws.sendAndAwaitAck(
-      { type: 'subscribe', id, payload: { session_ids: [sid] } },
+      { type: 'subscribe_v2', id, payload: { session_id: sid, transcript: { '*': 'turn' } } },
       this._controlAckTimeoutMs,
     );
     if (ack.code !== 0) {
       throw new Error(`subscribe rejected (code=${ack.code}): ${ack.msg ?? 'no message'}`);
     }
+    const accepted = (ack.payload as { accepted?: string[] } | undefined)?.accepted ?? [];
+    if (!accepted.includes(sid)) {
+      throw new Error(`subscribe rejected: session ${sid} not found`);
+    }
     this._subscribed.add(sid);
   }
 
-  /** Send `unsubscribe` and await its ack. */
+  /** Send `unsubscribe_v2` and await its ack. */
   async unsubscribe(sid: string): Promise<void> {
     const ws = this._requireWs();
     if (!this._subscribed.has(sid)) return;
     const id = `unsub-${ulid()}`;
     const ack = await ws.sendAndAwaitAck(
-      { type: 'unsubscribe', id, payload: { session_ids: [sid] } },
+      { type: 'unsubscribe_v2', id, payload: { session_id: sid } },
       this._controlAckTimeoutMs,
     );
     if (ack.code !== 0) {
@@ -502,178 +427,81 @@ export class DaemonClient {
     return waitForSessionBusy(this.http, sid, busy, opts);
   }
 
-  // ── Terminal WS controls ───────────────────────────────────────────────
-  attachTerminal(
-    sid: string,
-    terminalId: string,
-    options: TerminalAttachOptions = {},
-  ): Promise<TerminalAttachResult> {
-    return this._sendWsControl<TerminalAttachResult>(
-      'terminal_attach',
-      {
-        session_id: sid,
-        terminal_id: terminalId,
-        since_seq: options.sinceSeq,
-      },
-      options.timeoutMs,
-    );
-  }
-
-  detachTerminal(
-    sid: string,
-    terminalId: string,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalDetachResult> {
-    return this._sendWsControl<TerminalDetachResult>(
-      'terminal_detach',
-      { session_id: sid, terminal_id: terminalId },
-      options.timeoutMs,
-    );
-  }
-
-  writeTerminalInput(
-    sid: string,
-    terminalId: string,
-    data: string,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalInputResult> {
-    return this._sendWsControl<TerminalInputResult>(
-      'terminal_input',
-      { session_id: sid, terminal_id: terminalId, data },
-      options.timeoutMs,
-    );
-  }
-
-  resizeTerminal(
-    sid: string,
-    terminalId: string,
-    cols: number,
-    rows: number,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalResizeResult> {
-    return this._sendWsControl<TerminalResizeResult>(
-      'terminal_resize',
-      { session_id: sid, terminal_id: terminalId, cols, rows },
-      options.timeoutMs,
-    );
-  }
-
-  closeTerminalControl(
-    sid: string,
-    terminalId: string,
-    options: TerminalControlOptions = {},
-  ): Promise<TerminalCloseResult> {
-    return this._sendWsControl<TerminalCloseResult>(
-      'terminal_close',
-      { session_id: sid, terminal_id: terminalId },
-      options.timeoutMs,
-    );
-  }
-
-  // ── Reverse RPC (approval + question) ───────────────────────────────────
-  /**
-   * Install a handler invoked on every `event.approval.requested` frame.
-   * The handler's return value is POSTed to `/sessions/{sid}/approvals/{aid}`.
-   * Returns an unsubscribe handle (also auto-disposed by `close()`).
-   */
-  onApprovalRequested(
-    handler: (req: ApprovalRequest) => Promise<ApprovalResponse> | ApprovalResponse,
-  ): () => void {
-    const ws = this._requireWs();
-    const unsubscribe = installReverseRpcHandler<ApprovalRequest, ApprovalResponse>(ws, {
-      requestEventType: 'event.approval.requested',
-      idField: 'approval_id',
-      buildPath: (sid, aid) => `/sessions/${sid}/approvals/${aid}`,
-      handler,
-      postResolve: (sid, aid, body) => this.http.resolveApproval(sid, aid, body),
-      logger: this._logger,
-    });
-    this._disposers.push(unsubscribe);
-    return () => {
-      const idx = this._disposers.indexOf(unsubscribe);
-      if (idx >= 0) this._disposers.splice(idx, 1);
-      unsubscribe();
-    };
-  }
-
-  /**
-   * Install a handler invoked on every `event.question.requested` frame.
-   * Returns an unsubscribe handle (also auto-disposed by `close()`).
-   */
-  onQuestionAsked(
-    handler: (req: QuestionRequest) => Promise<QuestionResponse> | QuestionResponse,
-  ): () => void {
-    const ws = this._requireWs();
-    const unsubscribe = installReverseRpcHandler<QuestionRequest, QuestionResponse>(ws, {
-      requestEventType: 'event.question.requested',
-      idField: 'question_id',
-      buildPath: (sid, qid) => `/sessions/${sid}/questions/${qid}`,
-      handler,
-      postResolve: (sid, qid, body) => this.http.resolveQuestion(sid, qid, body),
-      logger: this._logger,
-    });
-    this._disposers.push(unsubscribe);
-    return () => {
-      const idx = this._disposers.indexOf(unsubscribe);
-      if (idx >= 0) this._disposers.splice(idx, 1);
-      unsubscribe();
-    };
-  }
-
   // ── High-level convenience ──────────────────────────────────────────────
   /**
-   * Submit a prompt and wait for its terminal event. `waitFor` defaults to
-   * the synthesized `prompt.completed` event (broadcast after `turn.ended`
-   * lands for the same prompt). Returns `prompt_id` and the matching frame.
+   * Run `action` and wait until the session goes busy and then idle again,
+   * as reported by `event.session.work_changed`. The frame listener is
+   * attached before `action` runs, so a fast turn cannot slip past it.
+   */
+  async runUntilIdle<T>(
+    sid: string,
+    action: () => Promise<T>,
+    opts: { timeoutMs?: number } = {},
+  ): Promise<{ result: T; finalFrame: AnyFrame }> {
+    const ws = this._requireWs();
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
+    let dispose = (): void => {};
+    const idle = new Promise<AnyFrame>((resolve, reject) => {
+      let sawBusy = false;
+      const timer = setTimeout(() => {
+        dispose();
+        reject(new Error(`session ${sid} did not return to idle within ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
+      const off = ws.onFrame((frame) => {
+        if (frame.type !== 'event.session.work_changed' || frame.session_id !== sid) return;
+        const busy = (frame.payload as { busy?: boolean } | undefined)?.busy;
+        if (busy === true) {
+          sawBusy = true;
+        } else if (busy === false && sawBusy) {
+          dispose();
+          resolve(frame);
+        }
+      });
+      dispose = () => {
+        clearTimeout(timer);
+        off();
+      };
+    });
+    try {
+      const result = await action();
+      return { result, finalFrame: await idle };
+    } catch (error) {
+      dispose();
+      throw error;
+    }
+  }
+
+  /**
+   * Submit a prompt and wait for the session to finish the resulting work.
+   * The final frame's `last_turn_reason` tells how the turn ended.
    */
   async submitAndWait(
     sid: string,
     input: PromptSubmitInput,
     opts: SubmitAndWaitOptions = {},
-  ): Promise<{ prompt_id: string; user_message_id: string; finalFrame: AnyFrame }> {
-    const ws = this._requireWs();
-    const waitFor = opts.waitFor ?? 'prompt.completed';
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
-
-    // POST the prompt FIRST — without `prompt_id` we have nothing to match on.
-    // The WS layer queues every frame from the moment we open, so any events
-    // that arrive between this POST and the `waitForFrame` below are still
-    // there to be matched (they're drained from the queue, not dropped).
-    const submit = await this.http.submitPrompt(sid, fillPromptDefaults(input));
-
-    const finalFrame = await ws.waitForFrame((f) => {
-      if (f.type !== waitFor) return false;
-      const payload = (f.payload as { promptId?: string; prompt_id?: string } | undefined) ?? {};
-      const pid = payload.promptId ?? payload.prompt_id;
-      return pid === submit.prompt_id;
-    }, timeoutMs);
-
-    return { prompt_id: submit.prompt_id, user_message_id: submit.user_message_id, finalFrame };
+  ): Promise<SubmitAndWaitResult> {
+    return this.submitAndWaitStateful(sid, fillPromptDefaults(input), opts);
   }
 
   /**
    * Stateful-session companion to `submitAndWait` — POSTs `body` verbatim
-   * (NO default controls injected), then waits for the terminal event for
-   * the resulting `prompt_id`. Use after `updateSession(sid, {agent_config:
-   * {...}})` to verify the session's shadow drives the next prompt without
-   * the body needing to redeclare any controls.
+   * (NO default controls injected), then waits for the session to go idle.
+   * Use after `updateSession(sid, {agent_config: {...}})` to verify the
+   * session's shadow drives the next prompt without the body needing to
+   * redeclare any controls.
    */
   async submitAndWaitStateful(
     sid: string,
     body: PromptSubmission,
     opts: SubmitAndWaitOptions = {},
-  ): Promise<{ prompt_id: string; user_message_id: string; finalFrame: AnyFrame }> {
-    const ws = this._requireWs();
-    const waitFor = opts.waitFor ?? 'prompt.completed';
-    const timeoutMs = opts.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
-    const submit = await this.http.submitPrompt(sid, body);
-    const finalFrame = await ws.waitForFrame((f) => {
-      if (f.type !== waitFor) return false;
-      const payload = (f.payload as { promptId?: string; prompt_id?: string } | undefined) ?? {};
-      const pid = payload.promptId ?? payload.prompt_id;
-      return pid === submit.prompt_id;
-    }, timeoutMs);
-    return { prompt_id: submit.prompt_id, user_message_id: submit.user_message_id, finalFrame };
+  ): Promise<SubmitAndWaitResult> {
+    const { result, finalFrame } = await this.runUntilIdle(
+      sid,
+      () => this.http.submitPrompt(sid, body),
+      opts,
+    );
+    return { prompt_id: result.prompt_id, user_message_id: result.user_message_id, finalFrame };
   }
 
   // ── internals ───────────────────────────────────────────────────────────
@@ -682,22 +510,6 @@ export class DaemonClient {
       throw new Error('ws not connected — call `await client.connect()` first');
     }
     return this._ws;
-  }
-
-  private async _sendWsControl<T>(
-    type: string,
-    payload: Record<string, unknown>,
-    timeoutMs?: number,
-  ): Promise<T> {
-    const id = `${type}-${ulid()}`;
-    const ack = await this._requireWs().sendAndAwaitAck(
-      { type, id, payload },
-      timeoutMs ?? this._controlAckTimeoutMs,
-    );
-    if (ack.code !== 0) {
-      throw new Error(`${type} rejected (code=${ack.code ?? 'unknown'}): ${ack.msg ?? 'no message'}`);
-    }
-    return (ack.payload ?? {}) as T;
   }
 }
 

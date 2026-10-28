@@ -7,6 +7,7 @@ import {
   ISessionIndex,
   IWireService,
   createContextTranscriptReducer,
+  fromPersistentWireRecord,
   resumeSessionById,
   type ContextMessage,
   type ContextTranscript,
@@ -160,7 +161,7 @@ async function readTranscript(core: Scope, agent: IAgentScopeHandle): Promise<Co
   for await (const record of core.accessor
     .get(IAppendLogStore)
     .read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
-    reducer.add(record);
+    reducer.add(fromPersistentWireRecord(record));
   }
   return reducer.result();
 }

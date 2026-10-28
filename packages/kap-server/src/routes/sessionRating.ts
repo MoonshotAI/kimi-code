@@ -1,3 +1,4 @@
+import { resumeSessionById, type Scope } from '@moonshot-ai/agent-core-v2';
 import type { SessionRatingHost } from '@moonshot-ai/kimi-code-product/session-rating/node';
 import { z } from 'zod';
 
@@ -25,6 +26,7 @@ export function registerSessionRatingRoutes(
   app: SessionRatingRouteHost,
   sessionRating: SessionRatingHost,
   transcripts: TranscriptService,
+  core: Scope,
 ): void {
   const route = defineRoute(
     {
@@ -42,15 +44,21 @@ export function registerSessionRatingRoutes(
         'Evaluate the latest completed transcript turn, or report a displayed rating and its final answer',
       tags: ['sessions'],
     },
-    (req, reply) => {
+    async (req, reply) => {
       const { session_id } = req.params;
       const request = req.body;
       if (request.op === 'evaluate') {
-        const latest = transcripts.forSessionLive(session_id)?.getAgent('main')
-          ?.getItems().findLast((item) => item.kind === 'turn');
-        const offer = latest?.turnId === request.turn_id && latest.state !== 'running'
-          ? sessionRating.evaluate(session_id)
-          : undefined;
+        const store = transcripts.forSessionLive(session_id);
+        const items = store === undefined
+          ? (await transcripts.readColdSnapshot(session_id))?.items
+          : store.getAgent('main')?.getItems();
+        const latest = items?.findLast((item) => item.kind === 'turn');
+        const completed = latest?.turnId === request.turn_id && latest.state !== 'running';
+        if (completed && store === undefined) {
+          await resumeSessionById(core.accessor, session_id);
+          await sessionRating.whenReady(session_id);
+        }
+        const offer = completed ? sessionRating.evaluate(session_id) : undefined;
         reply.send(okEnvelope({
           appearance: offer === undefined
             ? null

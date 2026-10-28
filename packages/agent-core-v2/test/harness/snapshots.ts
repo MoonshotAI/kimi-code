@@ -1,5 +1,4 @@
-import type { Message } from '#/llm-adapter/contract/message';
-import type { Tool as LLMTool } from '#/llm-adapter/contract/message';
+import type { Message, ToolDescription as LLMTool } from '#human/llm/message';
 import { expect } from 'vitest';
 
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
@@ -93,6 +92,56 @@ export function generateInputsSnapshot(
 
 export function normalizeGenerateInput(input: GenerateCall): GenerateCall {
   return stripUndefined(input) as GenerateCall;
+}
+
+export type GenerateCallPrefixBreak =
+  | { readonly at: 'systemPrompt'; readonly previous: string; readonly next: string }
+  | {
+      readonly at: 'tools' | 'history';
+      readonly index: number;
+      readonly previous: unknown;
+      readonly next: unknown;
+    };
+
+export function findGenerateCallPrefixBreak(
+  previous: GenerateCall,
+  next: GenerateCall,
+): GenerateCallPrefixBreak | undefined {
+  if (previous.systemPrompt !== next.systemPrompt) {
+    return { at: 'systemPrompt', previous: previous.systemPrompt, next: next.systemPrompt };
+  }
+  const toolIndex = firstDifference(
+    previous.tools,
+    next.tools,
+    Math.max(previous.tools.length, next.tools.length),
+  );
+  if (toolIndex !== undefined) {
+    return {
+      at: 'tools',
+      index: toolIndex,
+      previous: previous.tools[toolIndex],
+      next: next.tools[toolIndex],
+    };
+  }
+  const historyIndex = firstDifference(previous.history, next.history, previous.history.length);
+  if (historyIndex === undefined) return undefined;
+  return {
+    at: 'history',
+    index: historyIndex,
+    previous: previous.history[historyIndex],
+    next: next.history[historyIndex],
+  };
+}
+
+function firstDifference(
+  previous: readonly unknown[],
+  next: readonly unknown[],
+  length: number,
+): number | undefined {
+  for (let index = 0; index < length; index += 1) {
+    if (!isDeepEqual(previous[index], next[index])) return index;
+  }
+  return undefined;
 }
 
 function stringifyCompact(obj: unknown) {
@@ -194,18 +243,16 @@ function formatToolNames(tools: GenerateCall['tools']): string {
 }
 
 function isMessagePrefix(previous: readonly Message[], input: readonly Message[]): boolean {
-  if (previous.length > input.length) return false;
-  return previous.every((message, index) => isDeepEqual(message, input[index]));
+  return firstDifference(previous, input, previous.length) === undefined;
 }
 
 function formatMessages(messages: readonly Message[]): string[] {
   if (messages.length === 0) return ['  []'];
 
   return messages.map((message) => {
-    const role =
-      message.toolCallId === undefined ? message.role : `${message.role}[${message.toolCallId}]`;
+    const role = message.role === 'tool' ? `${message.role}[${message.toolCallId}]` : message.role;
     const parts = [formatContent(message.content)];
-    if (message.toolCalls.length > 0) {
+    if (message.role === 'assistant' && message.toolCalls.length > 0) {
       parts.push(`calls ${message.toolCalls.map((call) => formatToolCall(call)).join(', ')}`);
     }
     return `  ${role}: ${parts.join('  ')}`;
@@ -243,7 +290,7 @@ function formatText(text: string): string {
   return JSON.stringify(normalizeWallTime(text));
 }
 
-function formatToolCall(call: Message['toolCalls'][number]): string {
+function formatToolCall(call: Extract<Message, { role: 'assistant' }>['toolCalls'][number]): string {
   return `${call.id}:${call.name} ${formatToolCallArguments(call.arguments)}`;
 }
 
@@ -367,7 +414,8 @@ function isVolatileDurationKey(key: string): boolean {
 
 function isPlanModeReminder(value: string): boolean {
   return (
-    value.includes('Plan mode is active. You MUST NOT make any edits') &&
+    value.includes('Plan mode is active') &&
+    value.includes('You MUST NOT make any edits') &&
     value.includes('Plan file:')
   );
 }

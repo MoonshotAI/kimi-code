@@ -4,7 +4,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 
 import { ErrorCodes, Error2 } from '#/errors';
-import type { IHostProcess } from '#/os/interface/hostProcess';
+import { HostProcessError, HostProcessErrorCode, type IHostProcess } from '#/os/interface/hostProcess';
 import type { IRuntimeResolver } from '#/workspace/workspaceInstance/workspaceInstanceManager';
 import { proxyEnvForChild, reconcileChildNoProxy } from '#/_base/utils/proxy';
 
@@ -13,10 +13,11 @@ import {
   KIMI_MCP_CLIENT_NAME,
   KIMI_MCP_CLIENT_VERSION,
   MCP_LIVENESS_PROBE_TIMEOUT_MS,
+  McpClassifiedStartupError,
   toMcpToolDefinition,
   toMcpToolResult,
-  type UnexpectedCloseListener,
-  type UnexpectedCloseReason,
+  type SessionEvidence,
+  type SessionEvidenceListener,
 } from './client-shared';
 import type { McpServerStdioConfig } from './config-schema';
 import type { MCPClient, MCPToolDefinition, MCPToolResult } from './types';
@@ -33,6 +34,7 @@ export interface StdioMcpClientOptions {
 }
 
 const STDERR_BUFFER_CAPACITY = 4 * 1024;
+const STDIO_TERMINATION_GRACE_MS = 5_000;
 
 export class StdioMcpClient implements MCPClient {
   private readonly client: Client;
@@ -44,9 +46,9 @@ export class StdioMcpClient implements MCPClient {
   private closed = false;
   private ready = false;
   private hooksInstalled = false;
-  private unexpectedCloseListener: UnexpectedCloseListener | undefined;
+  private sessionEvidenceListener: SessionEvidenceListener | undefined;
   private lastTransportError: Error | undefined;
-  private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
+  private pendingSessionEvidence: SessionEvidence | undefined;
 
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
 
@@ -74,7 +76,7 @@ export class StdioMcpClient implements MCPClient {
       );
     } catch (error) {
       await this.closeStartedClient();
-      throw error;
+      throw classifyStdioStartupError(error);
     }
     if (this.closed) {
       await this.closeStartedClient();
@@ -89,11 +91,11 @@ export class StdioMcpClient implements MCPClient {
     await this.closeStartedClient();
   }
 
-  onUnexpectedClose(listener: UnexpectedCloseListener): void {
-    this.unexpectedCloseListener = listener;
-    const pending = this.pendingUnexpectedClose;
+  onSessionEvidence(listener: SessionEvidenceListener): void {
+    this.sessionEvidenceListener = listener;
+    const pending = this.pendingSessionEvidence;
     if (pending !== undefined) {
-      this.pendingUnexpectedClose = undefined;
+      this.pendingSessionEvidence = undefined;
       listener(pending);
     }
   }
@@ -137,15 +139,18 @@ export class StdioMcpClient implements MCPClient {
       if (this.closed) return;
       if (!this.ready) return;
       const stderr = this.stderrBuffer.snapshot();
-      const reason: UnexpectedCloseReason = {
-        error: this.lastTransportError,
-        stderr: stderr.length > 0 ? stderr : undefined,
+      const evidence: SessionEvidence = {
+        kind: 'hard',
+        reason: {
+          error: this.lastTransportError,
+          stderr: stderr.length > 0 ? stderr : undefined,
+        },
       };
-      const listener = this.unexpectedCloseListener;
+      const listener = this.sessionEvidenceListener;
       if (listener !== undefined) {
-        listener(reason);
+        listener(evidence);
       } else {
-        this.pendingUnexpectedClose = reason;
+        this.pendingSessionEvidence = evidence;
       }
     };
     this.client.onerror = (error) => {
@@ -235,6 +240,24 @@ class RuntimeStdioTransport implements Transport {
     if (process !== undefined) {
       try {
         await process.kill();
+        let graceTimer: ReturnType<typeof setTimeout> | undefined;
+        const exited = await Promise.race([
+          process.wait().then(
+            () => true,
+            () => true,
+          ),
+          new Promise<false>((resolve) => {
+            graceTimer = setTimeout(() => {
+              resolve(false);
+            }, STDIO_TERMINATION_GRACE_MS);
+            graceTimer.unref?.();
+          }),
+        ]);
+        if (graceTimer !== undefined) clearTimeout(graceTimer);
+        if (!exited && process.exitCode === null) {
+          await process.kill('SIGKILL');
+          await process.wait();
+        }
       } catch {}
       void process.dispose();
     }
@@ -298,4 +321,18 @@ export function mergeStdioEnv(
   Object.assign(merged, proxyEnvForChild(merged));
   reconcileChildNoProxy(merged, configEnv);
   return merged;
+}
+
+const permanentSpawnErrnos = new Set(['ENOENT', 'EACCES', 'ENOEXEC', 'ENOTDIR', 'EISDIR']);
+
+function classifyStdioStartupError(error: unknown): unknown {
+  if (!(error instanceof HostProcessError) || error.code !== HostProcessErrorCode.SpawnFailed) {
+    return error;
+  }
+  const cause = error.cause as { readonly code?: unknown } | undefined;
+  const errno = error.details?.['errno'] ?? cause?.code;
+  if (typeof errno === 'string' && permanentSpawnErrnos.has(errno)) {
+    return new McpClassifiedStartupError('config', error.message, { cause: error });
+  }
+  return error;
 }

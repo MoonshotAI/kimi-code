@@ -37,6 +37,13 @@ describe('tower-worker profile', () => {
     }
   });
 
+  it('leaves plan mode tools out of the worker profile', () => {
+    const tools = TOWER_WORKER_PROFILE_DEF.tools ?? [];
+
+    expect(tools).not.toContain('EnterPlanMode');
+    expect(tools).not.toContain('ExitPlanMode');
+  });
+
   it('keeps the coder whenToUse', () => {
     const coder = builtinProfile('coder');
     expect(TOWER_WORKER_PROFILE_DEF.whenToUse).toBe(coder.whenToUse);

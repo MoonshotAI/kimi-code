@@ -5,9 +5,9 @@ import type { BindAgentInput } from '#/agent/profile/profile';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
-export type SessionCreateSource = 'startup' | 'resume' | 'fork';
+export type SessionCreateSource = 'startup' | 'resume' | 'reclaimed' | 'fork';
 
-export type SessionCloseReason = 'exit' | 'archive';
+export type SessionCloseReason = 'exit' | 'reclaim' | 'archive';
 
 export interface CreateSessionOptions {
   readonly sessionId?: string;

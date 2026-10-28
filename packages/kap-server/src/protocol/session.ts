@@ -58,7 +58,6 @@ export const sessionSchema = z.object({
   usage: sessionUsageSchema,
   permission_rules: z.array(permissionRuleSchema),
   message_count: z.number().int().nonnegative(),
-  last_seq: z.number().int().nonnegative(),
 });
 
 export type Session = z.infer<typeof sessionSchema>;
@@ -68,7 +67,6 @@ export const sessionCreateSchema = z.object({
   metadata: sessionMetadataSchema.optional(),
   agent_config: sessionAgentConfigPartialSchema.optional(),
   workspace_id: workspaceIdSchema.optional(),
-  default_workspace: z.boolean().optional(),
 });
 
 export type SessionCreate = z.infer<typeof sessionCreateSchema>;

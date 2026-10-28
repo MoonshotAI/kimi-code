@@ -6,8 +6,8 @@ import {
   type TurnOutput,
 } from '#/agent/turn';
 import { createUserMessage, extractText } from '#/llm/message';
-import type { LlmRequestConfig } from '#/llm/requester/requester';
-import type { TokenUsage } from '#/llm/usage';
+import type { LlmRequestConfig } from '#/llm-requester/requester';
+import type { TokenUsage } from '#/llm-requester/usage';
 import { createActor, waitFor } from '#/xstate2';
 
 import instructionTemplate from './compaction-instruction.md?raw';

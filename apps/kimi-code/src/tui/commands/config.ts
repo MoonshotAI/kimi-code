@@ -1,10 +1,11 @@
 import {
+  ErrorCodes,
   PRIMARY_SUBAGENT_MODEL_CHOICE,
-  SECONDARY_DERIVED_MODEL_ALIAS,
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
   type Session,
+  type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
@@ -15,6 +16,7 @@ import {
 } from '../components/dialogs/experiments-selector';
 import { MermaidPreferenceSelectorComponent } from '../components/dialogs/mermaid-preference-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
+import { ModelSwitchConfirmDialogComponent } from '../components/dialogs/model-switch-confirm-dialog';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
@@ -25,15 +27,33 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import { DEFAULT_MARKDOWN_CONFIG, DEFAULT_TUI_CONFIG, saveTuiConfig, type MarkdownConfig, type TuiConfig, type TuiMode } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
+import {
+  matchModelSwitchRule,
+  needsModelSwitchConfirmConfigRefresh,
+  peekModelSwitchConfirmConfig,
+  refreshModelSwitchConfirmConfig,
+  resolveModelSwitchHint,
+  resolveModelSwitchWarning,
+  type ModelSwitchAction,
+  type ModelSwitchRule,
+} from '#/utils/model-switch-confirm-config';
+import {
+  matchEffortSwitchRule,
+  needsEffortSwitchConfigRefresh,
+  peekEffortSwitchConfig,
+  refreshEffortSwitchConfig,
+  type EffortSwitchRule,
+} from '#/utils/effort-switch-config';
+import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { NO_ACTIVE_SESSION_MESSAGE, TUI_MODE_RESTART_NOTICE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
-import { isSessionOccupiedError } from '../utils/session-lock-errors';
 import { setMarkdownMermaidMode, type MermaidRenderMode } from '../utils/markdown-options';
 import {
   effectiveModelForHost,
   hasConversationHistory,
   MODEL_SWITCH_CACHE_WARNING,
   performModelSwitch,
+  type ModelSwitchPersistence,
 } from '../utils/model-switch';
 import { PERMISSION_MODE_DESCRIPTIONS, PERMISSION_MODE_DISPLAY_NAMES } from '../utils/permission-mode';
 import { showUsage } from './info';
@@ -45,6 +65,8 @@ import type { SlashCommandHost } from './dispatch';
 // ---------------------------------------------------------------------------
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
+
+const MODEL_SWITCH_COMPACT_TIMEOUT_MS = 10 * 60 * 1000;
 
 const EFFORT_SWITCH_CACHE_WARNING =
   'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
@@ -127,8 +149,9 @@ export async function handleCompactCommand(host: SlashCommandHost, args: string)
   try {
     await session.compact({ instruction: customInstruction });
   } catch (error) {
-    if (!isSessionOccupiedError(error)) throw error;
-    host.showError(formatErrorMessage(error));
+    const message = formatErrorMessage(error);
+    host.setAppState({ isCompacting: false });
+    host.failSessionRequest(message);
   }
 }
 
@@ -161,26 +184,26 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
   const alias = args.trim();
   await refreshModelsForPicker(host);
   if (alias.length === 0) {
-    showModelPicker(host);
+    await showModelPicker(host);
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
     host.showError(`Unknown model alias: ${alias}`);
     return;
   }
-  showModelPicker(host, alias);
+  await showModelPicker(host, alias);
 }
 
 export async function handleSecondaryModelCommand(host: SlashCommandHost, args: string): Promise<void> {
   const alias = args.trim();
   await refreshModelsForPicker(host);
   const models = pickerModelsForHost(host);
-  // The pool reserves `primary` as the symbolic "caller's own model" choice —
-  // a user alias with that name can never be the subagent default.
+  // The pool reserves `primary` for Tower spawn's symbolic "tower's own model"
+  // choice — a user alias with that name can never be the subagent default.
   delete models[PRIMARY_SUBAGENT_MODEL_CHOICE];
   if (alias === PRIMARY_SUBAGENT_MODEL_CHOICE) {
     host.showError(
-      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool (it always binds the caller's own model) — rename the [models] alias to use it here.`,
+      `"${PRIMARY_SUBAGENT_MODEL_CHOICE}" is reserved by the subagent model pool — rename the [models] alias to use it here.`,
     );
     return;
   }
@@ -213,6 +236,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   const segments = segmentsFor(effective);
   const arg = args.trim().toLowerCase();
   if (arg.length === 0) {
+    if (model.provider === DEFAULT_OAUTH_PROVIDER_NAME) await ensureEffortSwitchConfig(host);
     showEffortPicker(host, effective, segments);
     return;
   }
@@ -231,7 +255,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
       'warning',
     );
   }
-  await performModelSwitch(host, alias, arg, 'model');
+  await confirmThenPerformEffortSwitch(host, arg, 'model');
 }
 
 function showEffortPicker(
@@ -241,25 +265,65 @@ function showEffortPicker(
 ): void {
   const liveEffort = host.state.appState.thinkingEffort;
   const currentValue = segments.includes(liveEffort) ? liveEffort : (segments[0] ?? 'off');
-  const alias = host.state.appState.model;
   host.mountEditorReplacement(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
       warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
+      descriptions: model.provider === DEFAULT_OAUTH_PROVIDER_NAME ? effortDescriptions() : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, effort, 'model');
+        void confirmThenPerformEffortSwitch(host, effort, 'model');
       },
       onSessionOnlySelect: (effort) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, effort, 'session');
+        void confirmThenPerformEffortSwitch(host, effort, 'session');
       },
       onCancel: () => {
         host.restoreEditor();
       },
     }),
   );
+}
+
+async function confirmThenPerformEffortSwitch(
+  host: SlashCommandHost,
+  thinking: ThinkingEffort,
+  persist: ModelSwitchPersistence,
+): Promise<void> {
+  const alias = host.state.appState.model;
+  const model = host.state.appState.availableModels[alias];
+  if (
+    model?.provider !== DEFAULT_OAUTH_PROVIDER_NAME ||
+    thinking === host.state.appState.thinkingEffort ||
+    host.state.appState.streamingPhase !== 'idle'
+  ) {
+    await performModelSwitch(host, alias, thinking, persist);
+    return;
+  }
+  await ensureEffortSwitchConfig(host);
+  if (matchedEffortSwitchRule(host, thinking) === undefined) {
+    await performModelSwitch(host, alias, thinking, persist);
+    return;
+  }
+  confirmThenPerformModelSwitch(host, alias, thinking, persist);
+}
+
+function effortDescriptions(): Record<string, string> | undefined {
+  const config = peekEffortSwitchConfig();
+  if (config?.descriptions?.enable !== true) return undefined;
+  const descriptions: Record<string, string> = {};
+  for (const [effort, localized] of Object.entries(config.descriptions.items ?? {})) {
+    if (localized.en !== undefined) descriptions[effort] = localized.en;
+  }
+  return descriptions;
+}
+
+async function ensureEffortSwitchConfig(host: SlashCommandHost): Promise<void> {
+  if (!needsEffortSwitchConfigRefresh()) return;
+  try {
+    await refreshEffortSwitchConfig({ accessToken: await host.harness.auth.getCachedAccessToken() });
+  } catch {}
 }
 
 // ---------------------------------------------------------------------------
@@ -344,19 +408,29 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
 
 /**
  * The models a picker may offer: the user's configured aliases with
- * host-effective provider resolution applied, minus the synthesized
- * `__secondary__` derived entry — a runtime artifact of the v1 engine's
- * `[secondary_model]` recipe that must never be selectable as a model.
+ * host-effective provider resolution applied.
  */
 function pickerModelsForHost(host: SlashCommandHost): Record<string, ModelAlias> {
   return Object.fromEntries(
-    Object.entries(host.state.appState.availableModels)
-      .filter(([alias]) => alias !== SECONDARY_DERIVED_MODEL_ALIAS)
-      .map(([alias, model]) => [alias, effectiveModelForHost(host, model)]),
+    Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
+      alias,
+      effectiveModelForHost(host, model),
+    ]),
   );
 }
 
-export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
+export async function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): Promise<void> {
+  if (needsModelSwitchConfirmConfigRefresh() || needsEffortSwitchConfigRefresh()) {
+    try {
+      const accessToken = await host.harness.auth.getCachedAccessToken();
+      const readiness: Promise<unknown>[] = [];
+      if (needsModelSwitchConfirmConfigRefresh()) {
+        readiness.push(refreshModelSwitchConfirmConfig({ accessToken }));
+      }
+      if (needsEffortSwitchConfigRefresh()) readiness.push(refreshEffortSwitchConfig({ accessToken }));
+      await Promise.all(readiness);
+    } catch {}
+  }
   const models = pickerModelsForHost(host);
   const entries = Object.entries(models);
   if (entries.length === 0) {
@@ -373,13 +447,14 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
       warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
+      effortDescriptions: effortDescriptions(),
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, 'model');
+        confirmThenPerformModelSwitch(host, alias, thinking, 'model');
       },
       onSessionOnlySelect: ({ alias, thinking }) => {
         host.restoreEditor();
-        void performModelSwitch(host, alias, thinking, 'session');
+        confirmThenPerformModelSwitch(host, alias, thinking, 'session');
       },
       onCancel: () => {
         host.restoreEditor();
@@ -387,6 +462,169 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
     }),
   );
 }
+
+/**
+ * Cloud-gated confirmation for a model or effort switch. Model changes ignore
+ * effort rules; pure effort changes use the effort config and offer only
+ * confirm/cancel in either session type.
+ */
+export function confirmThenPerformModelSwitch(
+  host: SlashCommandHost,
+  alias: string,
+  thinking: ThinkingEffort,
+  persist: ModelSwitchPersistence,
+): void {
+  const effortOnly = alias === host.state.appState.model && thinking !== host.state.appState.thinkingEffort;
+  const rule = effortOnly ? matchedEffortSwitchRule(host, thinking) : matchedModelSwitchRule(host, alias);
+  if (rule === undefined) {
+    void performModelSwitch(host, alias, thinking, persist);
+    return;
+  }
+  const availableModels = host.state.appState.availableModels;
+  const fromModel = effortOnly
+    ? host.state.appState.thinkingEffort
+    : modelDisplayName(host.state.appState.model, availableModels[host.state.appState.model]);
+  const toModel = effortOnly ? thinking : modelDisplayName(alias, availableModels[alias]);
+  const sessionType = hasConversationHistory(host) ? 'old' : 'new';
+  const dismiss = (): void => {
+    // Only close while this dialog still owns the editor replacement: an
+    // approval/question panel mounted over it must never be wiped out by the
+    // async finalizer of a settled action.
+    if (host.state.activeDialog !== 'model-switch-confirm') return;
+    host.state.activeDialog = null;
+    host.restoreEditor();
+  };
+  let settled = false;
+  host.mountEditorReplacement(
+    new ModelSwitchConfirmDialogComponent({
+      fromModel,
+      toModel,
+      sessionType,
+      kind: effortOnly ? 'effort' : 'model',
+      hint: resolveModelSwitchHint(rule),
+      warning: resolveModelSwitchWarning(rule),
+      onSelect: (action) => {
+        if (settled) return;
+        settled = true;
+        dismiss();
+        void runModelSwitchAction(host, action, alias, thinking, persist);
+      },
+      onCancel: () => {
+        if (settled) return;
+        settled = true;
+        dismiss();
+      },
+    }),
+  );
+  host.state.activeDialog = 'model-switch-confirm';
+}
+
+function matchedEffortSwitchRule(host: SlashCommandHost, thinking: ThinkingEffort): EffortSwitchRule | undefined {
+  const previous = host.state.appState.thinkingEffort;
+  const model = host.state.appState.availableModels[host.state.appState.model];
+  if (model?.provider !== DEFAULT_OAUTH_PROVIDER_NAME) return undefined;
+  if (thinking === previous || host.state.appState.streamingPhase !== 'idle') return undefined;
+  return matchEffortSwitchRule(
+    peekEffortSwitchConfig(),
+    previous,
+    thinking,
+    hasConversationHistory(host) ? 'old' : 'new',
+  );
+}
+
+export function matchedModelSwitchRule(host: SlashCommandHost, alias: string): ModelSwitchRule | undefined {
+  const prevAlias = host.state.appState.model;
+  // Same-alias effort changes use matchedEffortSwitchRule instead. Streaming
+  // switches keep the existing error path without a preceding dialog.
+  if (alias === prevAlias) return undefined;
+  if (host.state.appState.streamingPhase !== 'idle') return undefined;
+  const fromModelId = host.state.appState.availableModels[prevAlias]?.model;
+  const toModelId = host.state.appState.availableModels[alias]?.model;
+  if (fromModelId === undefined || toModelId === undefined) return undefined;
+  return matchModelSwitchRule(
+    peekModelSwitchConfirmConfig(),
+    fromModelId,
+    toModelId,
+    hasConversationHistory(host) ? 'old' : 'new',
+  );
+}
+
+/**
+ * Fire a compaction and wait for it to settle before the model switch. The
+ * compact RPC resolves as soon as the engine *starts* compacting — the
+ * completed/cancelled/failed outcome arrives later as an event — and
+ * performModelSwitch rejects any switch while the session is busy, so the
+ * switch must hold until one of those events lands. True only when the
+ * compaction completed on the same session; any other outcome shows a
+ * message and leaves the model unchanged.
+ */
+export async function compactForModelSwitch(
+  host: SlashCommandHost,
+  session: Session,
+): Promise<boolean> {
+  type CompactionSettle = 'completed' | 'cancelled' | 'failed' | 'timeout';
+  let settle: (outcome: CompactionSettle) => void = () => undefined;
+  const settled = new Promise<CompactionSettle>((resolve) => {
+    settle = resolve;
+  });
+  const unsubscribe = session.onEvent((event) => {
+    if (event.type === 'compaction.completed') settle('completed');
+    else if (event.type === 'compaction.cancelled') settle('cancelled');
+    else if (event.type === 'error' && event.code === ErrorCodes.COMPACTION_FAILED) {
+      settle('failed');
+    }
+  });
+  const timer = setTimeout(() => {
+    settle('timeout');
+  }, MODEL_SWITCH_COMPACT_TIMEOUT_MS);
+  try {
+    await session.compact({});
+    const outcome = await settled;
+    if (outcome === 'completed' && host.session === session) return true;
+    if (outcome === 'completed') {
+      host.showNotice('Model switch aborted — session changed.');
+    } else if (outcome === 'timeout') {
+      host.showError('Timed out waiting for compaction — model unchanged.');
+    } else if (outcome === 'cancelled') {
+      host.showNotice('Compaction cancelled — model unchanged.');
+    } else {
+      host.showNotice('Model switch aborted — model unchanged.');
+    }
+    return false;
+  } catch (error) {
+    host.showError(`Failed to compact: ${formatErrorMessage(error)}. Model unchanged.`);
+    return false;
+  } finally {
+    clearTimeout(timer);
+    unsubscribe();
+  }
+}
+
+async function runModelSwitchAction(
+  host: SlashCommandHost,
+  action: ModelSwitchAction,
+  alias: string,
+  thinking: ThinkingEffort,
+  persist: ModelSwitchPersistence,
+): Promise<void> {
+  switch (action) {
+    case 'cancel':
+      return;
+    case 'continue':
+      await performModelSwitch(host, alias, thinking, persist);
+      return;
+    case 'compact': {
+      // Compact with the current model first, then switch: the new model
+      // starts from the compacted context.
+      if (host.session !== undefined && !(await compactForModelSwitch(host, host.session))) {
+        return;
+      }
+      await performModelSwitch(host, alias, thinking, persist);
+      return;
+    }
+  }
+}
+
 
 // ---------------------------------------------------------------------------
 // Secondary model (`/secondary-model`) — persists `[secondary_model] default_model`
@@ -864,7 +1102,7 @@ export function showSettingsSelector(host: SlashCommandHost): void {
 function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelection): void {
   host.restoreEditor();
   switch (value) {
-    case 'model': showModelPicker(host); return;
+    case 'model': void showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
     case 'tuiMode': showTuiModePicker(host); return;

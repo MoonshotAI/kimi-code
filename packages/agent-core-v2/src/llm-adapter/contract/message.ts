@@ -3,9 +3,10 @@ import type {
   ContentPart,
   Message as LlmMessage,
   Role,
+  StreamedMessagePart,
   ToolCall,
   ToolDescription,
-} from '#human/llm/message';
+} from '#human/message';
 
 export type {
   AudioURLPart,
@@ -18,7 +19,7 @@ export type {
   ToolCall,
   ToolCallPart,
   VideoURLPart,
-} from '#human/llm/message';
+} from '#human/message';
 
 export type Tool = ToolDescription;
 
@@ -29,7 +30,11 @@ export {
   isToolCall,
   isToolCallPart,
   mergeInPlace,
-} from '#human/llm/message';
+  fromCoreMessage,
+  fromCorePart,
+  toCoreMessage,
+  toCorePart,
+} from '#human/message';
 
 export interface Message {
   readonly role: Role;
