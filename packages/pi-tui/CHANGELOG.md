@@ -1,5 +1,17 @@
 # @moonshot-ai/pi-tui
 
+## 0.86.0
+
+### Minor Changes
+
+- [#4347](https://github.com/MoonshotAI/kimi-code/pull/4347) [`b3c6e0a`](https://github.com/MoonshotAI/kimi-code/commit/b3c6e0a75a3b1716a360a75eed7194be9b97c176) Thanks [@Grapedge](https://github.com/Grapedge)! - Support OSC 7501 child records and tmux passthrough for program-status reports.
+
+- [#4347](https://github.com/MoonshotAI/kimi-code/pull/4347) [`b3c6e0a`](https://github.com/MoonshotAI/kimi-code/commit/b3c6e0a75a3b1716a360a75eed7194be9b97c176) Thanks [@Grapedge](https://github.com/Grapedge)! - Add terminal color utilities, program status reporting, and wheel acceleration, with upstream input and rendering fixes.
+
+### Patch Changes
+
+- [#4310](https://github.com/MoonshotAI/kimi-code/pull/4310) [`8df234a`](https://github.com/MoonshotAI/kimi-code/commit/8df234a618f5ba1f5261cc1696b0cf4340989f8e) Thanks [@Grapedge](https://github.com/Grapedge)! - Add an opt-in guard that ignores mouse-button gestures immediately after the terminal regains focus.
+
 ## 0.85.0
 
 ### Minor Changes
