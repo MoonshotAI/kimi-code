@@ -110,7 +110,6 @@ registerAgentProfile({
   whenToUse:
     'Fast agent specialized for exploring codebases: it finds files by patterns (e.g. "src/**/*.yaml"), searches code for keywords (e.g. "database connection"), and answers questions about the codebase (e.g. "how does the auth module work?"). When calling this agent, specify the desired thoroughness level: "quick" for basic searches, "medium" for moderate exploration, or "thorough" for comprehensive analysis across multiple locations and naming conventions.',
   tools: EXPLORE_TOOLS,
-  omitAgentsMd: true,
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(`${TASK_AGENT_ROLE_PREFIX}\n\n${EXPLORE_ROLE.trim()}`, context, {
       skillActive: skillActiveFor(EXPLORE_TOOLS),

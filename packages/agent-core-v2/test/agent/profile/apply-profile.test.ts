@@ -163,37 +163,6 @@ describe('AgentProfileService.applyProfile', () => {
     expect(svc.getAgentsMdWarning()).toBeUndefined();
   });
 
-  it('omits AGENTS.md from the prompt and seeded beliefs when requested by the profile', async () => {
-    const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
-    const omitProfile = normalizeAgentProfile({
-      name: 'omit-agents-profile',
-      omitAgentsMd: true,
-      systemPrompt: (context) => `agents:${context.agentsMd ?? ''}`,
-      tools: [],
-    });
-    await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');
-    const { profile: svc } = buildContext(
-      agentService(IAgentChangeNotifierService, {
-        _serviceBrand: undefined,
-        notifyAgentsMdChanges: async () => {},
-        notifySkillChanges: async () => {},
-        notifySubagentChanges: async () => {},
-        seedBeliefs,
-        mute: () => {},
-        unmute: () => {},
-      }),
-    );
-
-    await svc.applyProfile(omitProfile);
-
-    expect(svc.data().systemPrompt).toBe('agents:');
-    expect(svc.data().agentsMdPaths).toEqual([]);
-    expect(seedBeliefs).toHaveBeenCalledTimes(1);
-    const seed = seedBeliefs.mock.calls[0]?.[0];
-    expect(seed?.agentsMd).toBe('');
-    expect(seed?.agentsMdPaths).toEqual([]);
-  });
-
   it('seeds change-notifier beliefs from the applied profile context', async () => {
     const seedBeliefs = vi.fn<IAgentChangeNotifierService['seedBeliefs']>();
     await writeFile(join(workDir, 'AGENTS.md'), 'project instructions', 'utf-8');

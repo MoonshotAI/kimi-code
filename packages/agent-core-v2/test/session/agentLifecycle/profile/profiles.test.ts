@@ -31,22 +31,20 @@ describe('builtin agent profiles', () => {
     expect(profile('coder').tools).not.toContain('ExitPlanMode');
   });
 
-  it('uses read-only prompts and omits AGENTS.md only for explore and plan', () => {
-    for (const name of ['agent', 'coder']) {
-      expect(profile(name).omitAgentsMd).toBeUndefined();
-    }
+  it('uses read-only prompts for explore and plan while preserving AGENTS.md', () => {
     const coderPrompt = profile('coder').renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
     expect(coderPrompt).toContain('# Coding');
     expect(coderPrompt).toContain('Before you call a change done');
+    expect(coderPrompt).toContain('# Project information');
+    expect(coderPrompt).toContain('AGENTS');
 
     for (const name of ['explore', 'plan']) {
-      const readOnlyProfile = profile(name);
-      expect(readOnlyProfile.omitAgentsMd).toBe(true);
-      const prompt = readOnlyProfile.renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
+      const prompt = profile(name).renderSystemPrompt({ agentsMd: 'AGENTS' }).text;
       expect(prompt).not.toContain('# Coding');
       expect(prompt).not.toContain('Before you call a change done');
       expect(prompt).toContain('distinguish confirmed findings from hypotheses');
-      expect(prompt).toContain('Read AGENTS.md when');
+      expect(prompt).toContain('# Project information');
+      expect(prompt).toContain('AGENTS');
     }
   });
 

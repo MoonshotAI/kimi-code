@@ -446,14 +446,12 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
 
   useProfile(profile: ResolvedAgentProfile, context: SystemPromptContext): void {
     this.activeProfile = profile;
-    const agentsMd = profile.omitAgentsMd === true ? '' : context.agentsMd;
-    const agentsMdPaths = profile.omitAgentsMd === true ? [] : context.agentsMdPaths;
-    const rendered = renderAgentProfilePrompt(profile, { ...context, agentsMd, agentsMdPaths });
+    const rendered = renderAgentProfilePrompt(profile, context);
     this.update({
       profileName: profile.name,
       systemPrompt: rendered.text,
       environmentDisclosure: rendered.environment,
-      agentsMdPaths: agentsMdPaths ?? [],
+      agentsMdPaths: context.agentsMdPaths ?? [],
       disallowedTools: profile.disallowedTools ?? [],
     });
     this.setActiveTools(profile.tools);
@@ -905,8 +903,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const pluginSections = await this.resolvePluginSections();
     return {
       ...base,
-      agentsMd: profile.omitAgentsMd === true ? '' : base.agentsMd,
-      agentsMdPaths: profile.omitAgentsMd === true ? [] : base.agentsMdPaths,
       cwd: view.workDir,
       osKind: env.osKind,
       shellName: env.shellName,

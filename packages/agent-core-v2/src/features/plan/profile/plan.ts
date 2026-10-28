@@ -22,7 +22,7 @@ const PLAN_ROLE =
   '2. Unanswered questions for explore\n' +
   '3. A preliminary plan if questions remain, otherwise a final implementation plan\n\n' +
   'You are read-only: do not run commands or modify files, even when general instructions say to make changes. ' +
-  'Read AGENTS.md when the plan depends on project conventions. Return the plan as your final message.';
+  'Return the plan as your final message.';
 
 registerAgentProfile({
   name: 'plan',
@@ -30,7 +30,6 @@ registerAgentProfile({
   whenToUse:
     'Use this agent when the parent agent needs a step-by-step implementation plan, key file identification, and architectural trade-off analysis before code changes are made.',
   tools: PLAN_TOOLS,
-  omitAgentsMd: true,
   renderSystemPrompt: (context) =>
     renderSystemPromptResult(PLAN_ROLE, context, {
       skillActive: skillActiveFor(PLAN_TOOLS),
