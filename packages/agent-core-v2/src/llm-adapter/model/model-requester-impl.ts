@@ -3,7 +3,6 @@ import * as nodePath from 'node:path';
 import { performance, type EventLoopUtilization } from 'node:perf_hooks';
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
-import type { LlmErrorMessage } from '#human/llm/errors';
 import { emptyResponseError } from '#human/llm/empty-response';
 import { NO_FINISH, type FinishInfo } from '#human/llm/finish-reason';
 import type { ProviderMediaContribution, ImageUploadInput, VideoUploadInput } from '#human/llm/media/upload';
@@ -22,10 +21,10 @@ import type { TokenUsage } from '#human/llm/usage';
 
 import {
   ChatProviderError,
-  errorFromLlmMessage,
+  createAbortError,
   ImageUploadUnsupportedError,
   isAbortError,
-  llmMessageFromError,
+  LlmError,
   traceIdFromHeadersRecord,
   VideoUploadUnsupportedError,
 } from '../contract/errors';
@@ -154,7 +153,7 @@ export class ModelRequesterImpl implements ModelRequester {
     let finish: FinishInfo | undefined;
     let messageId: string | undefined;
     let traceId: string | null | undefined;
-    let failed: LlmErrorMessage | undefined;
+    let failed: LlmError | DOMException | undefined;
 
     const config: LlmRequestConfig = {
       model: resolved.model,
@@ -228,7 +227,7 @@ export class ModelRequesterImpl implements ModelRequester {
             }
             case 'llm.failed.syntax':
             case 'llm.failed.remote': {
-              failed = event.error;
+              failed = event.error.kind === 'abort' ? createAbortError() : new LlmError(event.error);
               return;
             }
             case 'llm.request.retrying': {
@@ -254,12 +253,12 @@ export class ModelRequesterImpl implements ModelRequester {
     );
 
     if (failed !== undefined) {
-      throw errorFromLlmMessage(failed);
+      throw failed;
     }
 
     const emptyError = emptyResponseError(accumulator.finish(), config.model, finish ?? NO_FINISH);
     if (emptyError !== null) {
-      throw errorFromLlmMessage(emptyError);
+      throw new LlmError(emptyError);
     }
 
     if (usage !== undefined) {
@@ -314,10 +313,8 @@ function throwToEvent(inner: LlmRequester): LlmRequester {
       try {
         await inner.generate(config, content, control);
       } catch (error) {
-        if (isAbortError(error)) throw error;
-        const message = llmMessageFromError(error);
-        if (message === undefined) throw translateProviderError(error);
-        control.onEvent?.({ type: 'llm.failed.remote', error: message });
+        if (error instanceof LlmError || isAbortError(error)) throw error;
+        throw translateProviderError(error);
       }
     },
   };

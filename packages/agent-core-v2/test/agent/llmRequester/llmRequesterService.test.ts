@@ -47,6 +47,7 @@ import {
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
+  LlmError,
 } from '#/llm-adapter/contract/errors';
 import { emptyUsage, type TokenUsage } from '#human/llm/usage';
 import { type Message } from '#/llm-adapter/contract/message';
@@ -475,10 +476,18 @@ describe('AgentLLMRequesterService infinite retry', () => {
     expect(calls.value).toBe(1);
   });
 
-  it('keeps deterministic projection recovery ahead of infinite retry', async () => {
+  it('keeps canonical request-too-large recovery ahead of infinite retry', async () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
-    const requester = createRequester(calls, new APIRequestTooLargeError(413, 'Request Entity Too Large'));
+    const tooLarge = new LlmError({
+      kind: 'request_too_large',
+      message: 'Request Entity Too Large',
+      statusCode: 413,
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+    });
+    const requester = createRequester(calls, tooLarge);
     const { service } = createService(requester, undefined, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
@@ -488,18 +497,23 @@ describe('AgentLLMRequesterService infinite retry', () => {
     expect(calls.value).toBe(2);
   });
 
-  it('lets context overflow reach deterministic recovery instead of retrying', async () => {
+  it('lets canonical context overflow reach deterministic recovery instead of retrying', async () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
-    const requester = createRequester(
-      calls,
-      new APIContextOverflowError(400, 'context length exceeded'),
-    );
+    const overflow = new LlmError({
+      kind: 'context_overflow',
+      message: 'context length exceeded',
+      statusCode: 400,
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+    });
+    const requester = createRequester(calls, overflow);
     const { service } = createService(requester, undefined, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
 
-    await expect(service.request()).rejects.toBeInstanceOf(APIContextOverflowError);
+    await expect(service.request()).rejects.toBe(overflow);
     expect(calls.value).toBe(1);
   });
 
@@ -1281,6 +1295,40 @@ describe('AgentLLMRequesterService trace id', () => {
       }),
     });
     expect(request.trace.traceId).toBe('trace-fail-1');
+  });
+
+  it('reads status and trace metadata directly from a canonical failure', async () => {
+    const failure = new LlmError({
+      kind: 'status',
+      message: 'canonical failure',
+      statusCode: 503,
+      requestId: 'req-canonical-503',
+      retryAfterMs: null,
+      headers: { 'x-trace-id': 'trace-canonical-503' },
+    });
+    const requester = createTracedRequester(null);
+    Object.defineProperty(requester, 'request', {
+      value: async function* () {
+        const events: ModelRequestEvent[] = [];
+        for (const event of events) yield event;
+        throw failure;
+      },
+    });
+    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 3, step: 2 } });
+    await expect(request.result).rejects.toBe(failure);
+
+    expect(telemetryRecords).toContainEqual({
+      event: 'api_error',
+      properties: expect.objectContaining({
+        error_type: '5xx_server',
+        status_code: 503,
+        trace_id: 'trace-canonical-503',
+        turn_id: 3,
+        step_no: 2,
+      }),
+    });
+    expect(request.trace.traceId).toBe('trace-canonical-503');
   });
 
   it('keeps the header-captured trace when the request fails after headers arrived', async () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isError2 } from '#/_base/errors/errors';
+import { Error2, isError2 } from '#/_base/errors/errors';
 import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
@@ -15,9 +15,7 @@ import type {
   LlmRequester,
 } from '#human/llm/requester/requester';
 import {
-  APIEmptyResponseError,
-  APIStatusError,
-  ChatProviderError,
+  LlmError,
   PROVIDER_API_ERROR_CODE,
   PROVIDER_AUTH_ERROR_CODE,
   isAbortError,
@@ -319,45 +317,81 @@ describe('ModelRequesterImpl request execution', () => {
     expect(requester.calls).toHaveLength(1);
   });
 
-  it('translates remote, syntax and empty-response failures and rethrows aborts untouched', async () => {
+  it('constructs canonical remote, syntax and empty-response failures and rethrows aborts untouched', async () => {
     const requester = new FakeLlmRequester();
-    requester.handler = (_i, emit) =>
-      emit({
-        type: 'llm.failed.remote',
-        error: {
-          kind: 'status',
-          statusCode: 500,
-          message: 'boom',
-          requestId: null,
-          retryAfterMs: null,
-          headers: null,
-        },
-      });
+    const remoteMessage = {
+      kind: 'status',
+      statusCode: 500,
+      message: 'boom',
+      requestId: 'req-500',
+      retryAfterMs: null,
+      headers: { 'x-trace-id': 'trace-500' },
+    } as const;
+    requester.handler = (_i, emit) => emit({ type: 'llm.failed.remote', error: remoteMessage });
     const impl = new ModelRequesterImpl(
       modelWith(createStaticCredentialProvider()),
       gatewayReturning(requester),
     );
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
-    expect((failure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+    expect(failure).toBeInstanceOf(LlmError);
+    expect((failure as LlmError).llmError).toBe(remoteMessage);
+    expect(failure).toMatchObject({
+      code: PROVIDER_API_ERROR_CODE,
+      name: 'APIStatusError',
+      details: { statusCode: 500, requestId: 'req-500', traceId: 'trace-500' },
+    });
 
-    requester.handler = (_i, emit) =>
-      emit({
-        type: 'llm.failed.syntax',
-        error: { kind: 'syntax', code: 'request_format', message: 'bad request shape' },
-      });
+    const syntaxMessage = { kind: 'syntax', code: 'request_format', message: 'bad request shape' } as const;
+    requester.handler = (_i, emit) => emit({ type: 'llm.failed.syntax', error: syntaxMessage });
     const syntaxFailure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
-    expect(syntaxFailure).toBeInstanceOf(ChatProviderError);
-    expect((syntaxFailure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+    expect(syntaxFailure).toBeInstanceOf(LlmError);
+    expect((syntaxFailure as LlmError).llmError).toBe(syntaxMessage);
+    expect(syntaxFailure).toMatchObject({ code: PROVIDER_API_ERROR_CODE, name: 'ChatProviderError' });
+    expect((syntaxFailure as LlmError).details).toBeUndefined();
 
     requester.handler = (_i, emit) =>
       emit({ type: 'llm.failed.remote', error: { kind: 'abort', message: 'aborted' } });
     const aborted = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect(isAbortError(aborted)).toBe(true);
+    expect(aborted).not.toBeInstanceOf(LlmError);
 
     requester.handler = (_i, emit) => emit({ type: 'llm.done' });
     const empty = await collect(impl.request(INPUT)).catch((error: unknown) => error);
-    expect(empty).toBeInstanceOf(APIEmptyResponseError);
-    expect((empty as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+    expect(empty).toBeInstanceOf(LlmError);
+    expect(empty).toMatchObject({ code: PROVIDER_API_ERROR_CODE, name: 'APIEmptyResponseError' });
+    expect((empty as LlmError).kind).toBe('empty_response');
+  });
+
+  it('rethrows the identical canonical error and leaves internal Error2 instances untouched', async () => {
+    const requester = new FakeLlmRequester();
+    const canonical = new LlmError({
+      kind: 'rate_limit',
+      statusCode: 429,
+      message: 'actual rate limit',
+      requestId: 'req-canonical',
+      retryAfterMs: null,
+      headers: { 'x-trace-id': 'trace-canonical' },
+    });
+    requester.handler = () => {
+      throw canonical;
+    };
+    const impl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(requester),
+    );
+
+    const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
+    expect(failure).toBe(canonical);
+
+    const internal = new Error2('internal', 'KAP internal failure', {
+      details: { operation: 'model-request' },
+    });
+    requester.handler = () => {
+      throw internal;
+    };
+    const internalFailure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
+    expect(internalFailure).toBe(internal);
+    expect(internalFailure).toMatchObject({ code: 'internal', message: 'KAP internal failure' });
   });
 
   it('uploadVideo presence is the capability declaration', async () => {

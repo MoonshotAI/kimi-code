@@ -361,14 +361,30 @@ export function convertAnthropicError(
   if (error instanceof RawAnthropicSDKConnectionError) {
     return { kind: 'connection', message: error.message };
   }
-  if (error instanceof RawAnthropicSDKAPIError && typeof error.status === 'number') {
-    return toLlmStatusErrorMessage({
-      statusCode: error.status,
-      message: error.message,
+  if (error instanceof RawAnthropicSDKAPIError) {
+    const body = error.error as
+      | { error?: { type?: unknown; message?: unknown } }
+      | undefined;
+    const message = typeof body?.error?.message === 'string' ? body.error.message : '';
+    const statusInfo = {
       requestId: error.requestID ?? null,
       retryAfterMs: parseRetryAfterMs(error.headers),
       headers: headersToRecord(error.headers),
-    });
+    };
+    if (typeof error.status === 'number') {
+      return toLlmStatusErrorMessage({ statusCode: error.status, message, ...statusInfo });
+    }
+    if (body !== undefined) {
+      const type =
+        error.type ?? (typeof body.error?.type === 'string' ? body.error.type : undefined);
+      if (type === 'rate_limit_error') {
+        return { kind: 'rate_limit', message, ...statusInfo };
+      }
+      if (type === 'overloaded_error') {
+        return { kind: 'overloaded', message, ...statusInfo };
+      }
+      return { kind: 'provider', message };
+    }
   }
   if (error instanceof Error) {
     return toLlmTransportErrorMessage(error.message);

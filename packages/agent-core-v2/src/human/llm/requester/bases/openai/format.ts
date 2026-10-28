@@ -9,7 +9,6 @@ import {
   headersToRecord,
   isAbortError,
   parseRetryAfterMs,
-  sanitizeStatusErrorMessage,
   toLlmErrorMessage,
   toLlmStatusErrorMessage,
   toLlmTransportErrorMessage,
@@ -336,7 +335,7 @@ export function isContextOverflowErrorCode(code: string | null | undefined): boo
 }
 
 function isOpenAIInsufficientQuotaError(error: RawOpenAISDKAPIError): boolean {
-  if (error.status !== 429) return false;
+  if (error.status !== 429 && error.status !== undefined) return false;
   if (typeof error.code === 'string' && isOpenAIInsufficientQuotaCode(error.code)) return true;
   if (typeof error.type === 'string' && isOpenAIInsufficientQuotaCode(error.type)) return true;
   return error.message.toLowerCase().includes('insufficient_quota');
@@ -359,27 +358,39 @@ export function convertOpenAIError(
   if (error instanceof RawOpenAISDKConnectionError) {
     return { kind: 'connection', message: error.message };
   }
-  if (error instanceof RawOpenAISDKAPIError && typeof error.status === 'number') {
-    const requestId = error.requestID ?? null;
-    const retryAfterMs = parseRetryAfterMs(error.headers);
-    const headers = headersToRecord(error.headers);
-    if (isOpenAIInsufficientQuotaError(error)) {
-      return {
-        kind: 'quota_exhausted',
-        message: sanitizeStatusErrorMessage(error.message),
-        statusCode: 429,
-        requestId,
-        retryAfterMs,
-        headers,
-      };
+  if (error instanceof RawOpenAISDKAPIError) {
+    const nestedError = error.error as { message?: unknown } | undefined;
+    const message = typeof nestedError?.message === 'string' ? nestedError.message : '';
+    const statusInfo = {
+      requestId: error.requestID ?? null,
+      retryAfterMs: parseRetryAfterMs(error.headers),
+      headers: headersToRecord(error.headers),
+    };
+    if (typeof error.status === 'number') {
+      if (isOpenAIInsufficientQuotaError(error)) {
+        return { kind: 'quota_exhausted', message, statusCode: 429, ...statusInfo };
+      }
+      return toLlmStatusErrorMessage({ statusCode: error.status, message, ...statusInfo });
     }
-    return toLlmStatusErrorMessage({
-      statusCode: error.status,
-      message: error.message,
-      requestId,
-      retryAfterMs,
-      headers,
-    });
+    if (error.error !== undefined) {
+      if (isOpenAIInsufficientQuotaError(error)) {
+        return { kind: 'quota_exhausted', message, ...statusInfo };
+      }
+      if (isContextOverflowErrorCode(error.code) || isContextOverflowErrorCode(error.type)) {
+        return { kind: 'context_overflow', message, ...statusInfo };
+      }
+      if (
+        error.code === 'rate_limit_exceeded' ||
+        error.type === 'rate_limit_error' ||
+        error.type === 'rate_limit_exceeded'
+      ) {
+        return { kind: 'rate_limit', message, ...statusInfo };
+      }
+      if (error.code === 'overloaded_error' || error.type === 'overloaded_error') {
+        return { kind: 'overloaded', message, ...statusInfo };
+      }
+      return { kind: 'provider', message };
+    }
   }
   if (
     error instanceof RawOpenAISDKAPIError &&

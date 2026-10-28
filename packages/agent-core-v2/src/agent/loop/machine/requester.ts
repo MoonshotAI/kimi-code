@@ -4,7 +4,7 @@ import type {
   IAgentLLMRequesterService,
 } from '#/agent/llmRequester/llmRequester';
 import { unwrapErrorCause } from '#/errors';
-import { llmMessageFromError } from '#/llm-adapter/contract/errors';
+import { LlmError, llmMessageFromError } from '#/llm-adapter/contract/errors';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
 import { toLlmErrorMessage, type LlmRemoteErrorMessage } from '#human/llm/errors';
 import type {
@@ -107,9 +107,18 @@ export function createMachineRequester(
     } catch (error) {
       lastFinish = undefined;
       lastError = error;
+      if (error instanceof LlmError) {
+        if (error.llmError.kind === 'syntax') {
+          control.onEvent?.({ type: 'llm.failed.syntax', error: error.llmError, rawError: error });
+        } else {
+          control.onEvent?.({ type: 'llm.failed.remote', error: error.llmError, rawError: error });
+        }
+        return;
+      }
       control.onEvent?.({
         type: 'llm.failed.remote',
         error: toRemoteErrorMessage(error, signal),
+        rawError: error,
       });
     }
   };

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import type { LlmErrorMessage } from '#human/llm/errors';
+import { toKimiErrorPayload } from '#/errors';
+import '#/llm-adapter/protocol/errors';
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -12,8 +15,14 @@ import {
   ChatProviderError,
   classifyApiError,
   createAbortError,
+  errorFromLlmMessage,
   isAbortError,
+  isImageFormatError,
+  isProviderRateLimitError,
+  isRecoverableRequestStructureError,
   isRetryableGenerateError,
+  isToolExchangeAdjacencyError,
+  LlmError,
   normalizeAPIStatusError,
   throwIfAbortError,
 } from '#/llm-adapter/contract/errors';
@@ -180,5 +189,158 @@ describe('classifyApiError', () => {
   it('falls back to other for unknown values', () => {
     expect(classifyApiError(new Error('boom')).kind).toBe('other');
     expect(classifyApiError('boom').kind).toBe('other');
+  });
+});
+
+describe('LlmError', () => {
+  type CanonicalLlmMessage = Exclude<LlmErrorMessage, LlmErrorMessage<'abort'>>;
+
+  const statusInfo = {
+    requestId: 'req-1',
+    retryAfterMs: 1500,
+    headers: { 'x-trace-id': 'trace-1' },
+  } as const;
+  const legacyEquivalents = [
+    ['rate limit', { kind: 'rate_limit', message: 'slow down', statusCode: 429, ...statusInfo }],
+    ['quota', { kind: 'quota_exhausted', message: 'quota exhausted', statusCode: 429, ...statusInfo }],
+    ['overloaded', { kind: 'overloaded', message: 'overloaded', statusCode: 529, ...statusInfo }],
+    [
+      'context overflow',
+      { kind: 'context_overflow', message: 'context length exceeded', statusCode: 400, ...statusInfo },
+    ],
+    [
+      'request too large',
+      { kind: 'request_too_large', message: 'request entity too large', statusCode: 413, ...statusInfo },
+    ],
+    [
+      'request structure',
+      {
+        kind: 'request_structure',
+        message: 'tool_use blocks must be followed by tool_result blocks',
+        statusCode: 400,
+        ...statusInfo,
+      },
+    ],
+    [
+      'image format',
+      { kind: 'image_format', message: 'unsupported image format', statusCode: 400, ...statusInfo },
+    ],
+    ['status', { kind: 'status', message: 'service unavailable', statusCode: 503, ...statusInfo }],
+    [
+      'empty response',
+      { kind: 'empty_response', message: 'empty', finishReason: 'completed', rawFinishReason: 'stop' },
+    ],
+    [
+      'filtered empty response',
+      { kind: 'empty_response', message: 'filtered', finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    ],
+    ['connection', { kind: 'connection', message: 'connection failed' }],
+    ['timeout', { kind: 'timeout', message: 'request timed out' }],
+    ['syntax', { kind: 'syntax', message: 'bad request', code: 'request_format' }],
+    ['provider', { kind: 'provider', message: 'provider failure' }],
+    ['unknown', { kind: 'unknown', message: 'unknown failure' }],
+  ] as const satisfies readonly (readonly [string, CanonicalLlmMessage])[];
+
+  it.each(legacyEquivalents)('preserves the legacy %s payload and policies', (_label, message) => {
+    const canonical = new LlmError(message);
+    const legacy = errorFromLlmMessage(message);
+
+    expect(canonical.llmError).toBe(message);
+    expect(canonical.cause).toBeUndefined();
+    expect(toKimiErrorPayload(canonical)).toEqual(toKimiErrorPayload(legacy));
+    expect(isRetryableGenerateError(canonical)).toBe(isRetryableGenerateError(legacy));
+    expect(isImageFormatError(canonical)).toBe(isImageFormatError(legacy));
+    expect(isToolExchangeAdjacencyError(canonical)).toBe(isToolExchangeAdjacencyError(legacy));
+    expect(isRecoverableRequestStructureError(canonical)).toBe(
+      isRecoverableRequestStructureError(legacy),
+    );
+    expect(isProviderRateLimitError(canonical)).toBe(isProviderRateLimitError(legacy));
+    expect(classifyApiError(canonical)).toEqual(classifyApiError(legacy));
+  });
+
+  it('preserves actual HTTP 429 metadata without capturing headers in details', () => {
+    const message: CanonicalLlmMessage = {
+      kind: 'rate_limit',
+      message: 'too many requests',
+      statusCode: 429,
+      requestId: 'req-real-429',
+      retryAfterMs: 2000,
+      headers: { 'x-trace-id': 'trace-real-429', 'retry-after': '2' },
+    };
+    const error = new LlmError(message);
+
+    expect(error).toMatchObject({
+      code: 'provider.rate_limit',
+      name: 'APIProviderRateLimitError',
+      message: 'too many requests',
+      statusCode: 429,
+      requestId: 'req-real-429',
+      retryAfterMs: 2000,
+      traceId: 'trace-real-429',
+      details: {
+        statusCode: 429,
+        requestId: 'req-real-429',
+        traceId: 'trace-real-429',
+      },
+    });
+    expect(error.cause).toBeUndefined();
+    expect(error.details).not.toHaveProperty('headers');
+    expect(error.details).not.toHaveProperty('retryAfterMs');
+  });
+
+  it('keeps stream business semantics without HTTP status details', () => {
+    const messages: CanonicalLlmMessage[] = [
+      {
+        kind: 'rate_limit',
+        message: 'stream rate limited',
+        requestId: null,
+        retryAfterMs: null,
+        headers: null,
+      },
+      {
+        kind: 'quota_exhausted',
+        message: 'stream quota exhausted',
+        requestId: null,
+        retryAfterMs: null,
+        headers: null,
+      },
+      {
+        kind: 'context_overflow',
+        message: 'stream context overflow',
+        requestId: null,
+        retryAfterMs: null,
+        headers: null,
+      },
+    ];
+
+    for (const message of messages) {
+      const error = new LlmError(message);
+      const legacyExportResult = errorFromLlmMessage(message);
+      expect(error.kind).toBe(message.kind);
+      expect(error.statusCode).toBeUndefined();
+      expect(error.details).toBeUndefined();
+      expect(error.cause).toBeUndefined();
+      expect(toKimiErrorPayload(error).details).toBeUndefined();
+      expect(toKimiErrorPayload(error)).not.toHaveProperty('details.statusCode');
+      expect(legacyExportResult).toBeInstanceOf(LlmError);
+      expect((legacyExportResult as LlmError).llmError).toBe(message);
+      expect(isProviderRateLimitError(error)).toBe(message.kind === 'rate_limit');
+    }
+  });
+
+  it('keeps a stream business 503 retryable without an HTTP status', () => {
+    const error = new LlmError({
+      kind: 'status',
+      message: 'stream unavailable',
+      requestId: null,
+      retryAfterMs: null,
+      headers: null,
+      retryable: true,
+    });
+
+    expect(error.statusCode).toBeUndefined();
+    expect(error.retryable).toBe(true);
+    expect(isRetryableGenerateError(error)).toBe(true);
+    expect(toKimiErrorPayload(error).details).toBeUndefined();
   });
 });

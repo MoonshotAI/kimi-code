@@ -7,7 +7,7 @@ const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
 const JITTER_FACTOR = 0.25;
 
-const RETRYABLE_STATUS_CODES: readonly number[] = [408, 409, 429, 500, 502, 503, 504, 529];
+const RETRYABLE_STATUS_CODES: ReadonlySet<number> = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
 export interface LlmRetryOptions {
   readonly maxAttemptsPerStep?: number;
@@ -50,7 +50,10 @@ export function isRetryableError(error: LlmErrorMessage): boolean {
     case 'empty_response':
       return error.finishReason !== 'filtered';
     case 'status':
-      return RETRYABLE_STATUS_CODES.includes(error.statusCode);
+      return (
+        error.retryable ??
+        (error.statusCode !== undefined && RETRYABLE_STATUS_CODES.has(error.statusCode))
+      );
     default:
       return true;
   }

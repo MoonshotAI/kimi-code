@@ -58,10 +58,11 @@ export type LlmStatusErrorKind =
   | 'image_format';
 
 export interface LlmStatusErrorInfo {
-  readonly statusCode: number;
+  readonly statusCode?: number;
   readonly requestId: string | null;
   readonly retryAfterMs: number | null;
   readonly headers: Record<string, string> | null;
+  readonly retryable?: boolean;
 }
 
 export type LlmErrorMessage<T extends LlmErrorKind = LlmErrorKind> =
@@ -213,39 +214,37 @@ export interface LlmStatusErrorInput {
   readonly requestId?: string | null;
   readonly retryAfterMs?: number | null;
   readonly headers?: Record<string, string> | null;
+  readonly retryable?: boolean;
 }
 
 export function toLlmStatusErrorMessage(input: LlmStatusErrorInput): LlmRemoteErrorMessage {
-  const info: LlmStatusErrorInfo = {
+  const statusInfo: LlmStatusErrorInfo = {
     statusCode: input.statusCode,
     requestId: input.requestId ?? null,
     retryAfterMs: input.retryAfterMs ?? null,
     headers: input.headers ?? null,
   };
-  const message = sanitizeStatusErrorMessage(input.message);
+  const info =
+    input.retryable === undefined ? statusInfo : { ...statusInfo, retryable: input.retryable };
   if (input.statusCode === 429) {
-    return { kind: 'rate_limit', message, ...info };
+    return { kind: 'rate_limit', message: input.message, ...info };
   }
   if (isContextOverflowStatusError(input.statusCode, input.message)) {
-    return { kind: 'context_overflow', message, ...info };
+    return { kind: 'context_overflow', message: input.message, ...info };
   }
   if (isRequestTooLargeStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_too_large', message, ...info };
+    return { kind: 'request_too_large', message: input.message, ...info };
   }
   if (isProviderOverloadStatusError(input.statusCode, input.message)) {
-    return { kind: 'overloaded', message, ...info };
+    return { kind: 'overloaded', message: input.message, ...info };
   }
   if (isRequestStructureStatusError(input.statusCode, input.message)) {
-    return { kind: 'request_structure', message, ...info };
+    return { kind: 'request_structure', message: input.message, ...info };
   }
   if (isImageFormatStatusError(input.statusCode, input.message)) {
-    return { kind: 'image_format', message, ...info };
+    return { kind: 'image_format', message: input.message, ...info };
   }
-  return {
-    kind: 'status',
-    message: appendThinkingEffortConfigHint(input.statusCode, message),
-    ...info,
-  };
+  return { kind: 'status', message: input.message, ...info };
 }
 
 export function parseRetryAfterMs(headers: unknown): number | null {
@@ -297,8 +296,11 @@ export function isRequestTooLargeStatusError(statusCode: number, message: string
   return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
-export function isToolExchangeAdjacencyStatusError(statusCode: number, message: string): boolean {
-  if (statusCode !== 400 && statusCode !== 422) return false;
+export function isToolExchangeAdjacencyStatusError(
+  statusCode: number | undefined,
+  message: string,
+): boolean {
+  if (statusCode !== undefined && statusCode !== 400 && statusCode !== 422) return false;
   const lowerMessage = message.toLowerCase();
   return TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }

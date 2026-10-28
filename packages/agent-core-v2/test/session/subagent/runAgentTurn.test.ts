@@ -21,6 +21,7 @@ import {
   TurnStepStarted,
 } from '#/agent/loop/turnEvents';
 import { ErrorCodes, isError2 } from '#/errors';
+import { LlmError } from '#/llm-adapter/contract/errors';
 import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 
 function makeTurn(result: TurnResult): Turn {
@@ -208,6 +209,25 @@ describe('runAgentTurn', () => {
     const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
     const error = await rejection(run.completion);
     expect(isError2(error) && error.code).toBe(ErrorCodes.AGENT_MAX_TOKENS_EXCEEDED);
+  });
+
+  it('throws the original canonical rate-limit error without reconstruction', async () => {
+    const canonical = new LlmError({
+      kind: 'rate_limit',
+      message: 'actual subagent rate limit',
+      statusCode: 429,
+      requestId: 'req-subagent-429',
+      retryAfterMs: null,
+      headers: { 'x-trace-id': 'trace-subagent-429' },
+    });
+    const { handle } = handleWith(makeTurn({ type: 'failed', steps: 1, error: canonical }), [
+      assistant('partial work'),
+    ]);
+
+    const run = await runAgentTurn(handle, { kind: 'prompt', prompt: 'find it' }, { signal });
+    const error = await rejection(run.completion);
+
+    expect(error).toBe(canonical);
   });
 });
 
