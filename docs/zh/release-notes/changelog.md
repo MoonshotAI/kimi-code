@@ -6,6 +6,29 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 2.4.0（2026-10-28）
+
+### 新功能
+
+- 新增 `/import-sessions` 和 `kimi import-sessions`，可导入近 15 或 30 天的 Claude Code、Codex 会话。
+- 新增 `/provider refresh [providerId]`，可在运行时重新拉取 provider 模型列表。
+- 流式输出思考内容时可按 `Ctrl-O` 展开查看。
+- 兼容终端可通过 OSC 7501 展示主会话、子代理状态及待处理交互。
+- Tower 支持按任务选择模型和 `max_running_tasks` 并发限制，默认 Agent 并发上限从 16 提高到 256。
+
+### 优化
+
+- 默认不再由 Agent 自动进入 Plan 模式，只能由用户开启；所有计划都需用户审阅，Never Ask 不再自动批准；`kimi -p` 跳过 `default_plan_mode`，且不能批准已处于 Plan 模式的计划。
+- Web 会话空闲 30 分钟后自动卸载，再次访问时透明恢复。
+- 优化 Fullscreen 模式部分组件的布局与交互体验，改进审批选项展示、鼠标选择和焦点切换。
+- Todo 列表改为可展开的消息流卡片，移除输入区常驻面板和 `Ctrl-T` 快捷键。
+- 优化内置 `/import-from-cc-codex` Skill。
+
+### 修复
+
+- 工作区 MCP 断线后自动退避重连，可用 `[mcp] reconnect_initial_delay_ms` 和 `reconnect_max_delay_ms` 调整间隔。
+- 修复了一些已知问题，并做了若干细节优化。更详细的变更记录见 [GitHub](https://github.com/MoonshotAI/kimi-code/blob/main/apps/kimi-code/CHANGELOG.md)。
+
 ## 2.3.3（2026-10-26）
 
 ### 优化
