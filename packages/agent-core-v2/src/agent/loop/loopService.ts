@@ -420,12 +420,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return handle;
   }
 
-  promptHandleForTurn(turnId: number): PromptHandle | undefined {
-    const active = this.active;
-    if (active === undefined || active.id !== turnId) return undefined;
-    return this.promptHandle(active.prompt.id);
-  }
-
   private promptStateOf(id: string): PromptState {
     if (this.active?.prompt.id === id) return 'running';
     if (this.steered.has(id)) return 'steered';

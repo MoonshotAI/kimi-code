@@ -12,6 +12,7 @@ import { runAgentTurn } from '#/session/subagent/runAgentTurn';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { TurnStarted } from '#/agent/loop/turnEvents';
+import { TurnPrompt } from '#/agent/loop/turnOps';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   taskServices,
@@ -68,12 +69,12 @@ describe('task notification → main agent (real Agent instance)', () => {
 
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
       const turnStarted: TurnStarted[] = [];
-      let notificationPrompt: ReturnType<IAgentLoopService['promptHandleForTurn']>;
+      const turnPrompts: TurnPrompt[] = [];
       const subscription = ctx.get(IEventBus).subscribe(TurnStarted, (event) => {
         turnStarted.push(event);
-        if (event.origin.kind === 'task') {
-          notificationPrompt = loop.promptHandleForTurn(event.turnId);
-        }
+      });
+      const promptSubscription = ctx.get(IEventBus).subscribe(TurnPrompt, (event) => {
+        turnPrompts.push(event);
       });
       const turnEnd = ctx.untilTurnEnd();
       const taskId = background.registerTask(agentTask(
@@ -102,12 +103,17 @@ describe('task notification → main agent (real Agent instance)', () => {
       const notificationTurn = turnStarted.find((event) => event.origin?.kind === 'task');
       expect(notificationTurn?.prompt).toBeUndefined();
       expect(notificationTurn?.promptId).toBeUndefined();
-      const notificationPromptText = JSON.stringify(notificationPrompt?.message.content);
+      const notificationPromptText = JSON.stringify(
+        turnPrompts.find(
+          (event) => event.origin.kind === 'task' && event.turnId === notificationTurn?.turnId,
+        )?.input,
+      );
       expect(notificationPromptText).toContain('<notification');
       expect(notificationPromptText).toContain(taskId);
       expect(notificationPromptText).toContain('<output-file');
       expect(notificationPromptText).toContain('</notification>');
       subscription.dispose();
+      promptSubscription.dispose();
     });
 
     it('BUSY: completed bg agent during an active turn is flushed into an LLM call', async () => {

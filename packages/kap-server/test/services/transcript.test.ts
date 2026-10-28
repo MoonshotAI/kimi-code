@@ -3248,11 +3248,10 @@ describe('AgentTranscriptProjector', () => {
       if (coldTaskTurn === undefined) throw new Error('expected cold task turn');
       expect(coldTaskTurn.prompt).toBe(notification);
 
-      const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID, {
-        turnPrompt: () => notification,
-      });
+      const projector = new AgentTranscriptProjector('main', TEST_SESSION_ID);
       const liveTx = new AgentTranscript('main');
       const feed = (event: ProjectorBusEvent): void => void liveTx.apply(projector.map(event));
+      feed(ev({ type: 'turn.prompt', turnId: 1, input: [{ type: 'text', text: notification }], origin: taskOrigin }));
       feed(ev({ type: 'turn.started', turnId: 1, origin: taskOrigin }));
       feed(ev({
         type: 'task.notified',
@@ -3764,7 +3763,7 @@ describe('bindSessionTranscript', () => {
       this.closeHandlers.add(cb);
       return { dispose: () => this.closeHandlers.delete(cb) };
     }
-    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string; prompt?: { id: string; text: string; origin: 'user' | 'task' } }): FakeAgentHandle {
+    add(id: string, opts?: { loopStatus?: { state?: 'idle' | 'running'; activeTurnId?: number }; tasks?: readonly unknown[]; activePromptId?: string }): FakeAgentHandle {
       const bus = this.handles.get(id)?.bus ?? new FakeBus();
       const undoParticipants = new Map<string, AgentConversationUndoParticipant>();
       const scope = makeAgentScopeContext({
@@ -3809,23 +3808,19 @@ describe('bindSessionTranscript', () => {
               };
             }
             if (token === IAgentLoopService) {
-              const prompt = opts?.prompt ??
-                (opts?.activePromptId === undefined
-                  ? undefined
-                  : { id: opts.activePromptId, text: 'hi', origin: 'user' as const });
               const active =
-                prompt === undefined
+                opts?.activePromptId === undefined
                   ? undefined
                   : {
-                      id: prompt.id,
-                      userMessageId: prompt.id,
+                      id: opts.activePromptId,
+                      userMessageId: opts.activePromptId,
                       createdAt: '2026-01-01T00:00:00.000Z',
                       state: 'running' as const,
                       message: {
                         role: 'user' as const,
-                        content: [{ type: 'text' as const, text: prompt.text }],
+                        content: [{ type: 'text' as const, text: 'hi' }],
                         toolCalls: [],
-                        origin: prompt.origin === 'task' ? { kind: 'task' as const, taskId: 'task_1' } : { kind: 'user' as const },
+                        origin: { kind: 'user' as const },
                       },
                       launched: Promise.resolve(undefined),
                       completion: new Promise(() => {}),
@@ -3843,7 +3838,6 @@ describe('bindSessionTranscript', () => {
                   activeTraceId: undefined,
                 }),
                 promptHandle: (id: string) => (active?.id === id ? active : undefined),
-                promptHandleForTurn: (turnId: number) => (activity.turn?.turnId === turnId ? active : undefined),
               };
             }
             if (token === IAgentTaskService) {
@@ -3911,15 +3905,19 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
-  it('projects the active task prompt and keeps one notification after heal', () => {
+  it('projects the observable task prompt and keeps one notification after heal', () => {
     const notification = '<notification id="task:task_1:completed" category="task" type="task.completed" source_kind="background_task" source_id="task_1">\nTitle: Background agent completed\nSeverity: info\ninspect done.\n<output-file path="/tmp/task_1/output.log" bytes="4">\nRead the output file.\n</output-file>\n</notification>';
     const agents = new FakeAgents();
     const store = new TranscriptStore('s1');
     const binding = bindSessionTranscript(store, fakeSession(agents));
-    const main = agents.add('main', {
-      prompt: { id: 'notification-prompt', text: notification, origin: 'task' },
-    });
+    const main = agents.add('main');
 
+    main.bus.emit(ev({
+      type: 'turn.prompt',
+      turnId: 1,
+      input: [{ type: 'text', text: notification }],
+      origin: { kind: 'task', taskId: 'task_1' },
+    }));
     main.bus.emit(ev({
       type: 'turn.started',
       turnId: 1,

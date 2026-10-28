@@ -17,8 +17,6 @@ import {
   type Interaction,
   type ISessionScopeHandle,
 } from '@moonshot-ai/agent-core-v2';
-import { isUserPromptSubmitHookPart } from '@moonshot-ai/agent-core-v2/agent/contextMemory/hookParts';
-import { turnPromptText } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { AgentDescriptor, TranscriptChangeEvent, TranscriptStore } from '@moonshot-ai/transcript';
 
 import { legacyApprovalsOf } from '../legacyStatus/legacyActivity';
@@ -117,14 +115,6 @@ export function bindSessionTranscript(
           return max;
         },
         prompt: (promptId) => store.getAgent(agentId)?.getPrompt(promptId),
-        turnPrompt: (turnId) => {
-          const prompt = agents.handleOf(agentId)?.accessor.get(IAgentLoopService)?.promptHandleForTurn(turnId);
-          if (prompt?.message.origin?.kind !== 'task') return undefined;
-          return turnPromptText(
-            prompt.message.content.filter((part) => !isUserPromptSubmitHookPart(part)),
-            prompt.message.origin,
-          );
-        },
         resolvePlanRevisionKey: (key) =>
           agents.handleOf(agentId)?.accessor.get(IAgentScopeContext).scope(key) ?? key,
       });

@@ -247,10 +247,6 @@ class FakeLoopService implements IAgentLoopService {
     throw new Error('unused in this suite');
   }
 
-  promptHandleForTurn(): never {
-    throw new Error('unused in this suite');
-  }
-
   notify(): LoopNotifyHandle {
     throw new Error('unused in this suite');
   }
