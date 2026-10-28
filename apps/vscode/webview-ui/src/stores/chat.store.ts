@@ -93,6 +93,8 @@ export interface ChatState {
   isStreaming: boolean;
   isCompacting: boolean;
   handshakeReceived: boolean;
+  /** True from send until the sent message's TurnBegin arrives. */
+  awaitingTurnBegin: boolean;
   draftMedia: DraftMediaItem[];
   lastStatus: StatusUpdate | null;
   tokenUsage: TokenUsage;
@@ -125,6 +127,9 @@ export interface ChatState {
 }
 
 let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
+// Monotonic token identifying the latest send; bridge replies from earlier
+// sends must not touch composer state they no longer own.
+let sendGeneration = 0;
 
 function clearHandshakeTimer() {
   if (handshakeTimer) {
@@ -144,6 +149,7 @@ function clearAllInlineErrors(draft: ChatState): void {
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
   const { thinkingEffort } = useSettingsStore.getState();
+  const generation = ++sendGeneration;
 
   clearHandshakeTimer();
   handshakeTimer = setTimeout(() => {
@@ -161,7 +167,66 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
 
   void bridge
     .streamChat(content, model, thinkingEffort, planMode, sessionId ?? undefined)
+    .then((result) => {
+      // Ignore stale replies: a newer send owns the composer state now.
+      if (generation !== sendGeneration) {
+        return;
+      }
+      const s = useChatStore.getState();
+      if (result.bounced === true) {
+        // Our send never started a turn. Note the TurnBegin that may have
+        // cleared awaitingTurnBegin is not necessarily ours: with the same
+        // session open in two views, the winning view's TurnBegin is
+        // broadcast to every subscriber, so key the branches on the parked
+        // input instead. When the host says the bounce raced a live turn
+        // (busyTurn), that turn's terminal event is still coming even if our
+        // store has not seen its TurnBegin yet — queue unconditionally then.
+        if (s.pendingInput !== null) {
+          if (s.isStreaming || result.busyTurn === true) {
+            // The session is busy with a turn this store lost track of (e.g.
+            // a live turn after a reload, or another view's): queue the
+            // message so it sends when that turn's terminal event flushes
+            // the queue, and keep the streaming state so further input
+            // enqueues too.
+            const pending = s.pendingInput;
+            useChatStore.setState({ awaitingTurnBegin: false, pendingInput: null });
+            s.enqueue(pending.content, pending.model);
+            // Safety net: that turn's terminal event may already have been
+            // processed before this reply arrived (its flush saw an empty
+            // queue). This retry no-ops while the session is busy, and frees
+            // the item otherwise instead of stranding it.
+            setTimeout(() => useChatStore.getState().sendNextQueued(), 50);
+          } else {
+            // A terminal error event already handled this send (e.g. a bounce
+            // during an exclusive operation) — keep the state it produced;
+            // the parked pendingInput drives the composer restore.
+            useChatStore.setState({ awaitingTurnBegin: false });
+          }
+        } else {
+          // The busy turn ended before this reply arrived: its stream_complete
+          // already cleared the parked input, so the session is free now —
+          // send again instead of losing the prompt.
+          useChatStore.setState(
+            produce((draft: ChatState) => {
+              draft.isStreaming = true;
+              draft.handshakeReceived = false;
+              draft.awaitingTurnBegin = true;
+              draft.pendingInput = { content, model };
+            }),
+          );
+          doSend(useChatStore.getState(), content, model);
+        }
+      } else if (result.done === false && s.awaitingTurnBegin) {
+        // The send never started a turn: roll the text back into the composer
+        // (via pendingInput) instead of parking it until some later event.
+        useChatStore.setState({ isStreaming: false, awaitingTurnBegin: false });
+      }
+    })
     .catch((error: unknown) => {
+      // Ignore stale rejections: a newer send owns the composer state now.
+      if (generation !== sendGeneration) {
+        return;
+      }
       const detail = error instanceof Error ? error.message : String(error);
       useChatStore.getState().processEvent({
         type: "error",
@@ -179,6 +244,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   isCompacting: false,
   handshakeReceived: false,
+  awaitingTurnBegin: false,
   draftMedia: [],
   lastStatus: null,
   tokenUsage: createEmptyTokenUsage(),
@@ -213,6 +279,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draft.draftMedia = [];
         draft.isStreaming = true;
         draft.handshakeReceived = false;
+        draft.awaitingTurnBegin = true;
         draft.pendingInput = { content, model: currentModel };
       }),
     );
@@ -234,6 +301,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         clearAllInlineErrors(draft);
         draft.isStreaming = true;
         draft.handshakeReceived = false;
+        draft.awaitingTurnBegin = true;
         const lastAssistant = draft.messages.at(-1);
         if (lastAssistant?.role === "assistant" && lastAssistant.inlineError) {
           draft.messages.pop();
@@ -258,7 +326,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       return;
     }
     // Clear handshake timeout on receiving valid response
-    if (event.type === "TurnBegin" || event.type === "StepBegin" || event.type === "ContentPart") {
+    if (event.type === "TurnBegin") {
+      clearHandshakeTimer();
+      set({ handshakeReceived: true, awaitingTurnBegin: false });
+    } else if (event.type === "StepBegin" || event.type === "ContentPart") {
       clearHandshakeTimer();
       set({ handshakeReceived: true });
     } else if (event.type === "stream_complete" || event.type === "error") {
@@ -282,6 +353,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   loadSession: async (sessionId, events) => {
     clearHandshakeTimer();
+    // Invalidate in-flight sends: their replies must not touch the freshly
+    // loaded session's state (a stale bounced reply would resend the old
+    // prompt into it).
+    sendGeneration += 1;
 
     // Abort any ongoing stream when switching sessions
     const { isStreaming: wasStreaming } = get();
@@ -295,6 +370,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       isCompacting: false,
       handshakeReceived: false,
+      awaitingTurnBegin: false,
       draftMedia: [],
       lastStatus: null,
       tokenUsage: createEmptyTokenUsage(),
@@ -334,6 +410,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
   startNewConversation: async () => {
     clearHandshakeTimer();
+    // Invalidate in-flight sends, same as loadSession.
+    sendGeneration += 1;
 
     // Abort any ongoing stream before starting new conversation
     const { isStreaming: wasStreaming } = get();
@@ -349,6 +427,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       isCompacting: false,
       handshakeReceived: false,
+      awaitingTurnBegin: false,
       draftMedia: [],
       lastStatus: null,
       tokenUsage: createEmptyTokenUsage(),
@@ -476,6 +555,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draft.queue = rest;
         draft.isStreaming = true;
         draft.handshakeReceived = false;
+        draft.awaitingTurnBegin = true;
         draft.pendingInput = { content: next.content, model: next.model };
         draft.draftMedia = [];
       }),
