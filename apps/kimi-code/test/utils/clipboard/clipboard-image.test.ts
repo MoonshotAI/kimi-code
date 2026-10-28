@@ -159,3 +159,76 @@ describe('readClipboardMedia', () => {
     }
   });
 });
+
+describe('readClipboardMedia on Linux/WSL', () => {
+  // WSLg bridges Windows clipboard images into the Wayland clipboard as
+  // image/bmp only, which the image pipeline cannot decode.
+  function wslgBmpOnlyClipboard(clipTmp: { path: string }) {
+    return vi.fn((command: string, args: string[]) => {
+      if (command === 'wl-paste' && args.includes('--list-types')) {
+        return { stdout: Buffer.from('image/bmp\n'), ok: true };
+      }
+      if (command === 'wl-paste') {
+        return { stdout: Buffer.from([0x42, 0x4d, 0x00]), ok: true };
+      }
+      if (command === 'xclip') return { stdout: Buffer.alloc(0), ok: false };
+      if (command === 'wslpath') {
+        clipTmp.path = args[1] ?? '';
+        return { stdout: Buffer.from('C:\\Temp\\kimi-wsl-clip-test.png\n'), ok: true };
+      }
+      if (command === 'powershell.exe') {
+        writeFileSync(clipTmp.path, png(3, 2));
+        return { stdout: Buffer.from('ok\n'), ok: true };
+      }
+      return { stdout: Buffer.alloc(0), ok: false };
+    });
+  }
+
+  it('skips undecodable image/bmp and falls through to the WSL PowerShell fallback', async () => {
+    const clipTmp = { path: '' };
+    const runCommand = wslgBmpOnlyClipboard(clipTmp);
+
+    const media = await readClipboardMedia({
+      platform: 'linux',
+      env: { WSL_DISTRO_NAME: 'Ubuntu-24.04', WAYLAND_DISPLAY: 'wayland-0' },
+      clipboard: null,
+      runCommand,
+    });
+
+    expect(media).toEqual({ kind: 'image', bytes: png(3, 2), mimeType: 'image/png' });
+
+    // The BMP payload must never be read, and the PowerShell fallback must
+    // receive the temp path embedded in the script (env vars do not cross
+    // the WSL boundary unless listed in WSLENV).
+    const calls = runCommand.mock.calls;
+    expect(
+      calls.some((c) => c[0] === 'wl-paste' && (c[1] as string[]).includes('--type')),
+    ).toBe(false);
+    const psCall = calls.find((c) => c[0] === 'powershell.exe');
+    expect(psCall?.[1]?.join(' ')).toContain("$path = 'C:\\Temp\\kimi-wsl-clip-test.png'");
+  });
+
+  it('returns null for a BMP-only clipboard when not on WSL', async () => {
+    const runCommand = vi.fn((command: string, args: string[]) => {
+      if (command === 'wl-paste' && args.includes('--list-types')) {
+        return { stdout: Buffer.from('image/bmp\n'), ok: true };
+      }
+      if (command === 'wl-paste') {
+        return { stdout: Buffer.from([0x42, 0x4d, 0x00]), ok: true };
+      }
+      return { stdout: Buffer.alloc(0), ok: false };
+    });
+
+    const media = await readClipboardMedia({
+      platform: 'linux',
+      env: { WAYLAND_DISPLAY: 'wayland-0' },
+      clipboard: null,
+      runCommand,
+    });
+
+    expect(media).toBeNull();
+    expect(
+      runCommand.mock.calls.some((c) => c[0] === 'wl-paste' && (c[1] as string[]).includes('--type')),
+    ).toBe(false);
+  });
+});
