@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { bridge, Events } from "@/services";
 import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
 import type { KimiConfig as WebviewKimiConfig, ModelCatalogChangedEvent } from "shared/legacy-sdk";
@@ -70,6 +70,7 @@ export function useAppInit(): AppInitState {
     modelsCount: 0,
   });
   const [initKey, setInitKey] = useState(0);
+  const modelCatalogRevision = useRef(0);
   const {
     initModels,
     syncModels,
@@ -77,7 +78,6 @@ export function useAppInit(): AppInitState {
     setWireSlashCommands,
     setIsLoggedIn,
     setWorkspaceRoot,
-    isLoggedIn,
   } = useSettingsStore();
 
   const refresh = useCallback(() => {
@@ -93,6 +93,7 @@ export function useAppInit(): AppInitState {
 
   useEffect(() => {
     return bridge.on<ModelCatalogChangedEvent>(Events.ModelCatalogChanged, ({ config, retiredDefault }) => {
+      modelCatalogRevision.current += 1;
       syncModels(
         config.models,
         config.defaultModel,
@@ -112,16 +113,17 @@ export function useAppInit(): AppInitState {
           return { ...current, modelsCount };
         }
         return {
-          status: resolveModelCatalogStatus(syncedConfig, isLoggedIn),
+          status: resolveModelCatalogStatus(syncedConfig, synced.isLoggedIn),
           errorMessage: null,
           modelsCount,
         };
       });
     });
-  }, [isLoggedIn, syncModels]);
+  }, [syncModels]);
 
   useEffect(() => {
     let cancelled = false;
+    const catalogRevisionAtStart = modelCatalogRevision.current;
 
     async function init() {
       try {
@@ -156,6 +158,22 @@ export function useAppInit(): AppInitState {
         console.log("[AppInit] Login status:", loginStatus, "kimiConfig:", kimiConfig);
 
         setIsLoggedIn(loginStatus.loggedIn);
+        if (modelCatalogRevision.current !== catalogRevisionAtStart) {
+          const synced = useSettingsStore.getState();
+          const syncedConfig = {
+            ...kimiConfig,
+            models: synced.models,
+            defaultModel: synced.currentModel || kimiConfig.defaultModel,
+          };
+          const modelsCount = syncedConfig.models.length;
+          setState({
+            status: resolveModelCatalogStatus(syncedConfig, synced.isLoggedIn),
+            errorMessage: null,
+            modelsCount,
+          });
+          return;
+        }
+
         initModels(kimiConfig.models, kimiConfig.defaultModel, kimiConfig.defaultThinking, kimiConfig.defaultThinkingEffort);
 
         const modelsCount = kimiConfig.models.length;

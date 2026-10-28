@@ -192,4 +192,75 @@ describe("useAppInit model catalog events", () => {
       models: [initialModel],
     });
   });
+
+  it("does not overwrite a newer catalog event with an older initialization snapshot", async () => {
+    const staleConfig = { defaultModel: null, defaultThinking: false, models: [] };
+    let resolveLogin!: (value: { loggedIn: boolean }) => void;
+    let resolveModels!: (value: typeof staleConfig) => void;
+    boundary.checkLoginStatus.mockReturnValue(new Promise((resolve) => {
+      resolveLogin = resolve;
+    }));
+    boundary.getModels.mockReturnValue(new Promise((resolve) => {
+      resolveModels = resolve;
+    }));
+
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(boundary.getModels).toHaveBeenCalled();
+    });
+    await act(async () => {
+      resolveModels(staleConfig);
+      await Promise.resolve();
+    });
+
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    const config = {
+      defaultModel: "new-model",
+      defaultThinking: false,
+      models: [
+        { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+      ],
+    };
+    act(() => listener?.({ config }));
+    expect(useSettingsStore.getState().currentModel).toBe("new-model");
+
+    await act(async () => {
+      resolveLogin({ loggedIn: true });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: "new-model",
+      models: config.models,
+    });
+  });
+
+  it("uses the latest login state when a stale catalog listener fires", async () => {
+    boundary.checkLoginStatus.mockResolvedValue({ loggedIn: false });
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("not-logged-in");
+    });
+    const staleListener = boundary.listeners.get("modelCatalogChanged");
+    expect(staleListener).toBeTypeOf("function");
+
+    act(() => {
+      useSettingsStore.getState().setIsLoggedIn(true);
+    });
+    const config = {
+      defaultModel: "new-model",
+      defaultThinking: false,
+      models: [
+        { id: "new-model", name: "New Model", provider: "managed:kimi-code", capabilities: [] },
+      ],
+    };
+    act(() => staleListener?.({ config }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
+  });
 });
