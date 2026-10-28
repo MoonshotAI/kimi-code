@@ -79,10 +79,10 @@ export function installCommandFor(
   platform: NodeJS.Platform,
   channel: UpdateChannel = 'stable',
 ): string {
-  if (source === 'native' && channel === 'dev') {
+  if (source === 'native' && channel === 'canary') {
     return platform === 'win32'
-      ? `$env:KIMI_CODE_UPDATE_CHANNEL='dev'; ${CLI_COMMAND_NAME} update --yes`
-      : `KIMI_CODE_UPDATE_CHANNEL=dev ${CLI_COMMAND_NAME} update --yes`;
+      ? `$env:KIMI_CODE_UPDATE_CHANNEL='canary'; ${CLI_COMMAND_NAME} update --yes`
+      : `KIMI_CODE_UPDATE_CHANNEL=canary ${CLI_COMMAND_NAME} update --yes`;
   }
   switch (source) {
     case 'npm-global':
@@ -190,7 +190,7 @@ function resolveInstallSpawn(
   const { cmd, args } = spawnForSource(source, plan.target.version, platform);
   if (source === 'native') {
     const nativeArgs = [...args];
-    if (plan.target.channel === 'dev') nativeArgs.push('--channel', 'dev');
+    if (plan.target.channel === 'canary') nativeArgs.push('--channel', 'canary');
     if (options?.manual === true) nativeArgs.push('--manual');
     if (plan.kind === 'switch-channel') nativeArgs.push('--switch-channel');
     return { resolvedCmd: cmd, args: nativeArgs, shell: false };

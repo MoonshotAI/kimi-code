@@ -1,0 +1,144 @@
+name: Canary Release
+run-name: Canary Release (${{ inputs.trigger }}) · ${{ github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      trigger:
+        description: 'Why this canary release is built'
+        type: choice
+        options: [nightly, manual]
+        default: manual
+
+concurrency:
+  group: kimi-code-canary-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    if: github.repository_owner == 'MoonshotAI'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      skip: ${{ steps.select.outputs.skip }}
+      sha: ${{ steps.select.outputs.sha }}
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      published_at: ${{ steps.version.outputs.published_at }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - name: Check latest main commit
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/canary-release.mjs select
+      - name: Compute canary version
+        id: version
+        if: steps.select.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/canary-release.mjs version
+
+  native:
+    name: Native canary artifact
+    needs: prepare
+    if: needs.prepare.outputs.skip == 'false'
+    uses: ./.github/workflows/_native-build.yml
+    with:
+      upload-artifact-prefix: kimi-code-canary
+      retention-days: 7
+      sign-macos: true
+      sign-windows: true
+      sha: ${{ needs.prepare.outputs.sha }}
+      version: ${{ needs.prepare.outputs.version }}
+    secrets:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+  publish:
+    name: Publish canary
+    needs: [prepare, native]
+    if: needs.prepare.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      CANARY_SHA: ${{ needs.prepare.outputs.sha }}
+      CANARY_VERSION: ${{ needs.prepare.outputs.version }}
+      CANARY_TAG: ${{ needs.prepare.outputs.tag }}
+      CANARY_PUBLISHED_AT: ${{ needs.prepare.outputs.published_at }}
+      KIMI_CODE_CANARY_NPM_PUBLISH: ${{ vars.KIMI_CODE_CANARY_NPM_PUBLISH }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - name: Reject stale publish
+        run: node scripts/canary-release.mjs guard
+      - name: Publish to npm (canary dist-tag)
+        if: vars.KIMI_CODE_CANARY_NPM_PUBLISH == 'true'
+        run: |
+          if npm view "@moonshot-ai/kimi-code@$CANARY_VERSION" version >/dev/null 2>&1; then
+            echo "@moonshot-ai/kimi-code@$CANARY_VERSION is already on npm"
+            exit 0
+          fi
+          npm install -g npm@11
+          pnpm install --frozen-lockfile
+          (cd apps/kimi-code && npm pkg set version="$CANARY_VERSION")
+          CATALOG_FILE="$RUNNER_TEMP/kimi-code-built-in-catalog.json"
+          node apps/kimi-code/scripts/update-catalog.mjs --out "$CATALOG_FILE"
+          export KIMI_CODE_BUILT_IN_CATALOG_FILE="$CATALOG_FILE"
+          pnpm build
+          cd apps/kimi-code
+          pnpm publish --tag canary --access public --no-git-checks
+      - name: Download native artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-canary-*
+          path: dist-canary
+          merge-multiple: true
+      - name: Produce manifest.json
+        run: node apps/kimi-code/scripts/native/produce-manifest.mjs dist-canary "$CANARY_TAG"
+      - name: Write canary.json
+        run: |
+          mkdir -p "$RUNNER_TEMP/canary-release"
+          node scripts/canary-release.mjs record "$RUNNER_TEMP/canary-release"
+          cp "$RUNNER_TEMP/canary-release/canary.json" dist-canary/canary.json
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$CANARY_TAG" >/dev/null 2>&1; then
+            gh release upload "$CANARY_TAG" dist-canary/* --clobber
+            gh release edit "$CANARY_TAG" --prerelease --latest=false --draft=false
+          else
+            gh release create "$CANARY_TAG" dist-canary/* \
+              --target "$CANARY_SHA" \
+              --title "$CANARY_TAG" \
+              --generate-notes \
+              --prerelease \
+              --latest=false
+          fi

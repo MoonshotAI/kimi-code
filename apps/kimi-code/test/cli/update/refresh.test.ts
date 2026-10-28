@@ -37,7 +37,7 @@ describe('refreshUpdateCache', () => {
   it('tags the cache with the requested channel', async () => {
     const writeCache = vi.fn(async () => {});
     const result = await refreshUpdateCache({
-      channel: 'dev',
+      channel: 'canary',
       fetchLatest: async () => ({ latest: '0.5.0', manifest: MANIFEST }),
       writeCache,
       now: () => new Date('2026-05-20T12:34:56.000Z'),
@@ -45,7 +45,7 @@ describe('refreshUpdateCache', () => {
 
     const written = {
       source: 'cdn',
-      channel: 'dev',
+      channel: 'canary',
       checkedAt: '2026-05-20T12:34:56.000Z',
       latest: '0.5.0',
       manifest: MANIFEST,

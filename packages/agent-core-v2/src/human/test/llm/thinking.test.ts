@@ -688,7 +688,9 @@ describe('openai requester thinking', () => {
         for await (const chunk of request) {
           body += String(chunk);
         }
-        bodies.push(JSON.parse(body) as Record<string, unknown>);
+        const parsed = JSON.parse(body) as Record<string, unknown>;
+        bodies.push(parsed);
+        const reasoningKey = parsed['model'] === 'other-model' ? 'reasoning_content' : 'reasoning';
         response.writeHead(200, { 'content-type': 'text/event-stream' });
         response.end(
           `data: ${JSON.stringify({
@@ -699,7 +701,7 @@ describe('openai requester thinking', () => {
             choices: [
               {
                 index: 0,
-                delta: { role: 'assistant', content: 'hi', reasoning: 'detected' },
+                delta: { role: 'assistant', content: 'hi', [reasoningKey]: 'detected' },
                 finish_reason: 'stop',
               },
             ],
@@ -719,6 +721,13 @@ describe('openai requester thinking', () => {
       createUserMessage('hi'),
       createAssistantMessage([{ type: 'think', think: 'cached' }]),
     ];
+    const switchedHistory = [
+      createUserMessage('hi'),
+      createAssistantMessage([
+        { type: 'think', think: 'from-b', reasoningKey: 'reasoning_content' },
+        { type: 'think', think: 'unmarked' },
+      ]),
+    ];
     const requester = createOpenAIRequester();
     const kimiRequester = createKimiOpenAIRequester();
     try {
@@ -737,6 +746,11 @@ describe('openai requester thinking', () => {
         { messages: reasoningHistory },
         { signal: new AbortController().signal },
       );
+      await requester.generate(
+        { model: httpModel, thinking: { effort: 'off' } },
+        { messages: switchedHistory },
+        { signal: new AbortController().signal },
+      );
       await kimiRequester.generate(
         { model: httpModel },
         { messages },
@@ -753,7 +767,10 @@ describe('openai requester thinking', () => {
       const otherAssistant = bodyMessages(bodies[2])[1];
       expect(otherAssistant['reasoning_content']).toBe('cached');
       expect('reasoning' in otherAssistant).toBe(false);
-      const kimiAssistant = bodyMessages(bodies[4])[1];
+      const switchedAssistant = bodyMessages(bodies[3])[1];
+      expect(switchedAssistant['reasoning_content']).toBe('from-b');
+      expect(switchedAssistant['reasoning']).toBe('unmarked');
+      const kimiAssistant = bodyMessages(bodies[5])[1];
       expect(kimiAssistant['reasoning']).toBe('cached');
       expect('reasoning_content' in kimiAssistant).toBe(false);
     } finally {
