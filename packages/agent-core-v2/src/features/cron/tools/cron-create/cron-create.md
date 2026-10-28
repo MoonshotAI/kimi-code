@@ -1,4 +1,4 @@
-Schedule a prompt to be enqueued later in this session, recurring or once. `cron` is 5-field cron in the user's local time (`0 9 * * *` = 9am local).
+Schedule a prompt to be enqueued later in this session, recurring or once.
 
 When the requested time is approximate, avoid minute 0 and 30 so fires from many users do not land at once: "around 9" → `57 8 * * *`, "hourly" → `7 * * * *`.
 

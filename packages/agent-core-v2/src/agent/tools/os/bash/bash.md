@@ -8,8 +8,6 @@ Execute a `${SHELL_NAME}` command. Use this for shell semantics — pipes, env, 
 - `grep` / `rg` (search file contents) → `Grep`
 - `echo` / `printf` (talk to the user) → just output text directly
 
-The dedicated tools render in the per-tool permission UI and keep raw stdout out of the conversation; that is why they are worth reaching for whenever one fits.
-
 Each call runs in a fresh shell: variables and `cd` do not persist, so pass `cwd` or use absolute paths. stdout and stderr are combined and may be truncated; a non-zero exit ends the output with `Command failed with exit code: N`. Do not run interactive commands or commands that never exit. ${TIMEOUT_GUIDANCE}
 
 ${BACKGROUND_GUIDANCE}
