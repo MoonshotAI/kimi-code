@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PassThrough, Readable, type Writable } from 'node:stream';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -22,6 +25,7 @@ import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-
 import type { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { type ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProcess';
+import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { type BashInput, BashInputSchema } from '#/agent/tools/os/bash/bash';
 import { BashTool } from '#/agent/tools/os/bash/bashTool';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
@@ -840,9 +844,11 @@ describe('BashTool', () => {
     expect(exec).toHaveBeenCalledTimes(1);
     const [command, args, execOptions] = exec.mock.calls[0]!;
     expect(command).toBe('/bin/bash');
-    expect(args).toEqual(['-c', "cd '/workspace' && printf ok"]);
+    expect(args).toEqual(['-c', 'printf ok']);
+    expect(execOptions?.cwd).toBe('/workspace');
     expect(execOptions?.env).toMatchObject({
       NO_COLOR: '1',
+      PWD: '/workspace',
       TERM: 'dumb',
     });
     expect(proc.stdin.end).toHaveBeenCalledTimes(1);
@@ -859,7 +865,76 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'pwd', cwd: '/workspace/project', timeout: 60 }));
 
     expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
-    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/workspace/project' && pwd"]);
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', 'pwd']);
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('/workspace/project');
+    expect(exec.mock.calls[0]?.[2]?.env).toMatchObject({ PWD: '/workspace/project' });
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'keeps later lines in cwd when the first command is backgrounded',
+    async () => {
+      const cwd = mkdtempSync(join(tmpdir(), 'kimi-bash-cwd-'));
+      try {
+        const tool = bashTool(new HostProcessService());
+        const result = await executeTool(
+          tool,
+          context({ command: 'true &\npwd -P\nwait', cwd, timeout: 60 }),
+        );
+
+        expect(result).toMatchObject({ isError: false });
+        expect(typeof result.output).toBe('string');
+        expect((result.output as string).trim()).toBe(realpathSync(cwd));
+      } finally {
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves the logical cwd for a symlinked workspace',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'kimi-bash-cwd-'));
+      const target = join(root, 'target');
+      const cwd = join(root, 'workspace');
+      mkdirSync(target);
+      symlinkSync(target, cwd, 'dir');
+
+      try {
+        const tool = bashTool(new HostProcessService());
+        const result = await executeTool(tool, context({ command: 'pwd', cwd, timeout: 60 }));
+
+        expect(result).toMatchObject({ isError: false });
+        expect(typeof result.output).toBe('string');
+        expect((result.output as string).trim()).toBe(cwd);
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it('resolves a relative args.cwd against the session cwd', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'sub\n' }));
+    const tool = bashTool(runner, posixEnv, createTestCtx('/workspace/project'));
+
+    await executeTool(tool, context({ command: 'pwd', cwd: 'packages/ui', timeout: 60 }));
+
+    expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', 'pwd']);
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('/workspace/project/packages/ui');
+  });
+
+  it('resolves a relative Windows args.cwd without Git Bash path conversion', async () => {
+    const { runner, exec } = createTestRunner(processWithOutput({ stdout: 'sub\n' }));
+    const tool = bashTool(runner, windowsBashEnv, createTestCtx('C:\\Users\\me\\project'));
+
+    await executeTool(tool, context({ command: 'pwd', cwd: 'packages\\ui', timeout: 60 }));
+
+    expect(exec.mock.calls[0]?.[0]).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', 'pwd']);
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('C:\\Users\\me\\project\\packages\\ui');
+    expect(exec.mock.calls[0]?.[2]?.env).toMatchObject({
+      PWD: '/c/Users/me/project/packages/ui',
+    });
   });
 
   it('accepts args.cwd outside the workspace roots', async () => {
@@ -871,7 +946,8 @@ describe('BashTool', () => {
       context({ command: 'pwd', cwd: '/outside/workspace', timeout: 60 }),
     );
 
-    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/outside/workspace' && pwd"]);
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', 'pwd']);
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('/outside/workspace');
     expect(result).toMatchObject({ output: 'out\n', isError: false });
   });
 
@@ -882,7 +958,8 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'pwd', timeout: 60 }));
 
     expect(exec.mock.calls[0]?.[0]).toBe('/bin/bash');
-    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', "cd '/var/app' && pwd"]);
+    expect(exec.mock.calls[0]?.[1]).toEqual(['-c', 'pwd']);
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('/var/app');
   });
 
   it('uses Git Bash semantics on Windows', async () => {
@@ -895,8 +972,12 @@ describe('BashTool', () => {
     expect(exec).toHaveBeenCalledTimes(1);
     const [command, args, execOptions] = exec.mock.calls[0]!;
     expect(command).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
-    expect(args).toEqual(['-c', "cd '/c/Users/me/project' && echo ok 2>/dev/null"]);
-    expect(execOptions?.env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
+    expect(args).toEqual(['-c', 'echo ok 2>/dev/null']);
+    expect(execOptions?.cwd).toBe('C:\\Users\\me\\project');
+    expect(execOptions?.env).toMatchObject({
+      PWD: '/c/Users/me/project',
+      SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe',
+    });
     expect(result).toMatchObject({
       output: 'ok\n',
       isError: false,
@@ -1299,7 +1380,8 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
     const args = exec.mock.calls[0]?.[1] as readonly string[];
-    expect(args[1]).toBe("cd '/c/Users/me/project' && ls 2>/dev/null");
+    expect(args[1]).toBe('ls 2>/dev/null');
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('C:\\Users\\me\\project');
   });
 
   it('passes nul-redirect through unchanged on Linux so the argv keeps the literal file target', async () => {
@@ -1309,7 +1391,8 @@ describe('BashTool', () => {
     await executeTool(tool, context({ command: 'ls 2>nul', timeout: 60 }));
 
     const args = exec.mock.calls[0]?.[1] as readonly string[];
-    expect(args[1]).toBe("cd '/workspace' && ls 2>nul");
+    expect(args[1]).toBe('ls 2>nul');
+    expect(exec.mock.calls[0]?.[2]?.cwd).toBe('/workspace');
   });
 
   it('exposes a shell description that documents /bin/bash, TaskOutput/TaskStop, safety and efficiency sections, and background semantics', () => {
@@ -1731,7 +1814,8 @@ describe('BashTool background mode', () => {
     expect(exec).toHaveBeenCalledTimes(2);
     const [command, args, execOptions] = exec.mock.calls[0]!;
     expect(command).toBe('C:\\Program Files\\Git\\bin\\bash.exe');
-    expect(args).toEqual(['-c', "cd '/c/Users/me/project' && echo ok 2>/dev/null"]);
+    expect(args).toEqual(['-c', 'echo ok 2>/dev/null']);
+    expect(execOptions?.cwd).toBe('C:\\Users\\me\\project');
     expect(execOptions?.env).toMatchObject({ SHELL: 'C:\\Program Files\\Git\\bin\\bash.exe' });
     expect(secondProc.kill).toHaveBeenCalledWith('SIGTERM');
     expect(results).toContainEqual(expect.objectContaining({ isError: false }));
