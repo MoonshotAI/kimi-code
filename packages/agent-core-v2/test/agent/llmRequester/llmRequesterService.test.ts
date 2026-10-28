@@ -5,8 +5,6 @@ import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import type { AgentContext } from '#/agent/agentContext/agentContext';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import type { ContextMessage } from '#/agent/contextMemory/types';
-import { AgentLoopProjector } from '#/agent/loop/projector';
 import { AgentLoopRequester, KIMI_CODE_INFINITE_RETRY_ENV } from '#/agent/loop/requester';
 import { createMachineRequester } from '#/agent/loop/machine/requester';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -130,29 +128,6 @@ const history: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'hello' }] },
 ];
 
-type ProjectionKind = 'normal' | 'strict';
-
-function recordProjectionCalls(
-  project: (
-    messages: readonly ContextMessage[],
-    strict: boolean,
-  ) => readonly Message[] = (messages) => messages,
-): {
-  projector: Pick<AgentLoopProjector, 'project'>;
-  calls: ProjectionKind[];
-} {
-  const calls: ProjectionKind[] = [];
-  return {
-    projector: {
-      project: (messages: readonly ContextMessage[], strict = false) => {
-        calls.push(strict ? 'strict' : 'normal');
-        return project(messages, strict);
-      },
-    },
-    calls,
-  };
-}
-
 function createRequester(
   calls: { value: number },
   firstCallError?: Error | null,
@@ -205,7 +180,6 @@ afterEach(() => disposables.dispose());
 
 function createService(
   requester: ModelEventRequester,
-  projector: Pick<AgentLoopProjector, 'project'> | undefined,
   options: {
     readonly thinkingLevel?: ThinkingEffort;
     readonly mediaResolver?: Partial<IAgentMediaResolverService>;
@@ -317,9 +291,6 @@ function createService(
   registerTestEventDispatcher(ix);
   ix.set(IAgentStateService, new AgentStateService());
   const service = ix.createInstance(AgentLoopRequester);
-  if (projector !== undefined) {
-    (service as unknown as { projector: AgentLoopProjector }).projector = projector as AgentLoopProjector;
-  }
 
   return {
     service,
@@ -334,7 +305,7 @@ function createService(
 
 describe('AgentLoopRequester measured anchors', () => {
   it('skips the measured anchor when the stream reports no usage', async () => {
-    const { service, measuredCalls } = createService(createRequester({ value: 0 }), undefined);
+    const { service, measuredCalls } = createService(createRequester({ value: 0 }));
 
     await service.request();
 
@@ -352,7 +323,7 @@ describe('AgentLoopRequester measured anchors', () => {
       };
       yield* base(input, signal, options);
     };
-    const { service, measuredCalls } = createService(requester, undefined);
+    const { service, measuredCalls } = createService(requester);
 
     await service.request();
 
@@ -366,7 +337,7 @@ describe('AgentLoopRequester Anthropic effort diagnostics', () => {
     const calls = { value: 0 };
     const requester = createRequester(calls, null);
     Object.defineProperty(requester.model, 'supportEfforts', { value: ['max'] });
-    const { service, events } = createService(requester, undefined, { thinkingLevel: 'high' });
+    const { service, events } = createService(requester, { thinkingLevel: 'high' });
 
     const result = await service.request();
 
@@ -386,33 +357,36 @@ describe('AgentLoopRequester Anthropic effort diagnostics', () => {
 describe('AgentLoopRequester strict resend', () => {
   it('resends once with strict projection after a recoverable structural 400', async () => {
     const calls = { value: 0 };
-    const projection = recordProjectionCalls();
-    const { service } = createService(createRequester(calls), projection.projector);
+    const inputs: ModelRequestInput[] = [];
+    const contextMessages: Message[] = [
+      { role: 'assistant', content: [{ type: 'text', text: 'stale' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    ];
+    const { service } = createService(createRequester(calls, undefined, [], inputs), {
+      contextMessages,
+    });
 
     const result = await service.request();
 
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(result.usage).toEqual(emptyUsage());
     expect(calls.value).toBe(2);
-    expect(projection.calls).toEqual(['normal', 'strict']);
+    expect(inputs.map((input) => input.messages.map((message) => message.role))).toEqual([
+      ['assistant', 'user'],
+      ['user'],
+    ]);
   });
 
   it('does not resend for non-recoverable errors', async () => {
-    const requester = createRequester({ value: 0 });
-    Object.defineProperty(requester, 'request', {
-      value: async function* () {
-        const events: ModelRequestEvent[] = [];
-        for (const event of events) yield event;
-        throw new APIStatusError(401, 'unauthorized');
-      },
-    });
-    const projection = recordProjectionCalls();
-    const { service } = createService(requester, projection.projector);
+    const calls = { value: 0 };
+    const { service } = createService(
+      createRequester(calls, new APIStatusError(401, 'unauthorized')),
+    );
 
     await expect(service.request()).rejects.toMatchObject({
       statusCode: 401,
     });
-    expect(projection.calls).toEqual(['normal']);
+    expect(calls.value).toBe(1);
   });
 });
 
@@ -429,7 +403,7 @@ describe('AgentLoopRequester infinite retry', () => {
       new APIConnectionError('socket hang up'),
       new APIProviderQuotaExhaustedError('quota exhausted'),
     ]);
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
 
@@ -444,7 +418,7 @@ describe('AgentLoopRequester infinite retry', () => {
   it('honors the provider retry-after delay while retrying indefinitely', async () => {
     const calls = { value: 0 };
     const requester = createRequester(calls, new APIProviderRateLimitError('slow down', null, 1));
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
 
@@ -459,7 +433,7 @@ describe('AgentLoopRequester infinite retry', () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
     const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
     const controller = new AbortController();
@@ -477,7 +451,7 @@ describe('AgentLoopRequester infinite retry', () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
     const requester = createRequester(calls, new APIRequestTooLargeError(413, 'Request Entity Too Large'));
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
 
@@ -493,7 +467,7 @@ describe('AgentLoopRequester infinite retry', () => {
       calls,
       new APIContextOverflowError(400, 'context length exceeded'),
     );
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
 
@@ -507,7 +481,7 @@ describe('AgentLoopRequester infinite retry', () => {
     const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'), [
       new APIStatusError(404, 'model not found'),
     ]);
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
 
@@ -524,7 +498,7 @@ describe('AgentLoopRequester infinite retry', () => {
     vi.useFakeTimers();
     const calls = { value: 0 };
     const requester = createRequester(calls, new APIStatusError(400, 'endpoint broken'));
-    const { service } = createService(requester, undefined);
+    const { service } = createService(requester);
 
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
     expect(calls.value).toBe(1);
@@ -557,7 +531,6 @@ describe('AgentLoopRequester media-stripped resend', () => {
     const inputs: ModelRequestInput[] = [];
     const { service } = createService(
       createRequester(calls, IMAGE_FORMAT_400, [], inputs),
-      undefined,
       { contextMessages },
     );
 
@@ -573,7 +546,6 @@ describe('AgentLoopRequester media-stripped resend', () => {
     const inputs: ModelRequestInput[] = [];
     const { service } = createService(
       createRequester(calls, IMAGE_FORMAT_400, [], inputs),
-      undefined,
       { contextMessages },
     );
 
@@ -589,7 +561,6 @@ describe('AgentLoopRequester media-stripped resend', () => {
     const calls = { value: 0 };
     const { service } = createService(
       createRequester(calls, new APIStatusError(400, 'some other validation problem')),
-      undefined,
     );
 
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
@@ -600,7 +571,6 @@ describe('AgentLoopRequester media-stripped resend', () => {
     const calls = { value: 0 };
     const { service, dispatcher, events } = createService(
       createRequester(calls, IMAGE_FORMAT_400),
-      undefined,
       { contextMessages },
     );
 
@@ -649,7 +619,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
         [],
         inputs,
       ),
-      undefined,
       { contextMessages: threeImages() },
     );
 
@@ -669,7 +638,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     });
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
-      undefined,
       {
         mediaResolver: {
           resolve: async (messages) => messages,
@@ -702,7 +670,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const inputs: ModelRequestInput[] = [];
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413], inputs),
-      undefined,
       { contextMessages: threeImages() },
     );
 
@@ -717,7 +684,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const calls = { value: 0 };
     const { service, dispatcher, records } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
-      undefined,
       { contextMessages: threeImages() },
     );
 
@@ -748,7 +714,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
         [BODY_TOO_LARGE_413],
         capturedInputs,
       ),
-      undefined,
     );
 
     await service.request({
@@ -776,7 +741,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const inputs: ModelRequestInput[] = [];
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413], inputs),
-      undefined,
       { contextMessages: threeImages() },
     );
 
@@ -792,7 +756,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const inputs: ModelRequestInput[] = [];
     const { service } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [], inputs),
-      undefined,
       { contextMessages: threeImages() },
     );
 
@@ -810,7 +773,7 @@ describe('AgentLoopRequester media-degraded resend', () => {
       new APIStatusError(422, 'unprocessable'),
     ]) {
       const calls = { value: 0 };
-      const { service } = createService(createRequester(calls, error), undefined);
+      const { service } = createService(createRequester(calls, error));
 
       await expect(service.request()).rejects.toStrictEqual(error);
       expect(calls.value).toBe(1);
@@ -821,7 +784,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const calls = { value: 0 };
     const { service, dispatcher, events } = createService(
       createRequester(calls, BODY_TOO_LARGE_413),
-      undefined,
     );
 
     await service.request();
@@ -835,7 +797,6 @@ describe('AgentLoopRequester media-degraded resend', () => {
     const calls = { value: 0 };
     const { service, dispatcher, events } = createService(
       createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
-      undefined,
       { contextMessages: threeImages() },
     );
 
@@ -901,7 +862,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
 
   it('starts the next turn on the media-degraded projection the previous turn settled on', async () => {
     const inputs: ModelRequestInput[] = [];
-    const { service } = createService(mediaRejectingRequester(inputs), undefined);
+    const { service } = createService(mediaRejectingRequester(inputs));
 
     await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
     expect(inputs).toHaveLength(2);
@@ -920,7 +881,6 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
     const inputs: ModelRequestInput[] = [];
     const { service } = createService(
       createRequester({ value: 0 }, BODY_TOO_LARGE_413, [], inputs),
-      undefined,
     );
 
     await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
@@ -938,7 +898,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
 
   it('re-degrades instead of stripping when new media push an inherited degraded request over the limit', async () => {
     const inputs: ModelRequestInput[] = [];
-    const { service } = createService(mediaRejectingRequester(inputs), undefined);
+    const { service } = createService(mediaRejectingRequester(inputs));
 
     await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
     await service.request({
@@ -965,7 +925,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
       { type: 'operation', turnId: undefined, requestKind: 'full_compaction' },
     ] as const) {
       const inputs: ModelRequestInput[] = [];
-      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+      const { service } = createService(mediaRejectingRequester(inputs));
       const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
 
       await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
@@ -1005,7 +965,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
     for (const hasNewMedia of [false, true]) {
       const inputs: ModelRequestInput[] = [];
       const requester = mediaRejectingRequester(inputs);
-      const { service } = createService(requester, undefined);
+      const { service } = createService(requester);
       const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
       await service.request({ messages: [rejected], source: { type: 'turn', turnId: 1, step: 1 } });
 
@@ -1028,7 +988,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
     let revision = 0;
     let modelAlias = 'm';
     const inputs: ModelRequestInput[] = [];
-    const { service } = createService(mediaRejectingRequester(inputs), undefined, {
+    const { service } = createService(mediaRejectingRequester(inputs), {
       modelAlias: () => modelAlias,
       prefixRevision: () => revision,
     });
@@ -1051,7 +1011,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
     'starts a $trigger compaction request on the media-degraded projection of the last turn',
     async ({ turnId }) => {
       const inputs: ModelRequestInput[] = [];
-      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+      const { service } = createService(mediaRejectingRequester(inputs));
 
       await service.request({ messages: degradedTurn, source: { type: 'turn', turnId: 1, step: 1 } });
       expect(inputs).toHaveLength(2);
@@ -1074,7 +1034,7 @@ describe('AgentLoopRequester media recovery prefix parity', () => {
     'keeps media added after the strip snapshot visible in a $trigger compaction request',
     async ({ turnId }) => {
       const inputs: ModelRequestInput[] = [];
-      const { service } = createService(mediaRejectingRequester(inputs), undefined);
+      const { service } = createService(mediaRejectingRequester(inputs));
       const rejected = imageMessage(REJECTED_FORMAT_URL, 'rejected');
       const fresh = imageMessage('data:image/png;base64,FRESH', 'fresh');
 
@@ -1109,6 +1069,7 @@ describe('AgentLoopRequester combined recovery projections', () => {
   const STRUCTURAL_400 = new APIStatusError(400, 'messages: `tool_use` ids must be unique');
 
   const contextMessages: Message[] = [
+    { role: 'assistant', content: [{ type: 'text', text: 'stale' }], toolCalls: [] },
     {
       role: 'user',
       content: ['ONE', 'TWO', 'THREE'].map((data) => ({
@@ -1118,48 +1079,49 @@ describe('AgentLoopRequester combined recovery projections', () => {
     },
   ];
 
-  function createStrictRecordingProjector(stricts: boolean[]): Pick<AgentLoopProjector, 'project'> {
-    return {
-      project: (messages: readonly ContextMessage[], strict = false) => {
-        stricts.push(strict);
-        return messages;
-      },
-    };
-  }
-
-  it('accumulates media repairs on top of strict across repeated rejections', async () => {
+  it('accumulates media repairs on strict without persisting strict to the next step', async () => {
     const calls = { value: 0 };
-    const stricts: boolean[] = [];
+    const inputs: ModelRequestInput[] = [];
     const { service, dispatcher, records } = createService(
-      createRequester(calls, STRUCTURAL_400, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
-      createStrictRecordingProjector(stricts),
+      createRequester(calls, STRUCTURAL_400, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413], inputs),
       { contextMessages },
     );
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
 
     expect(calls.value).toBe(4);
-    expect(stricts).toEqual([false, true]);
+    expect(inputs.map((input) => input.messages.map((message) => message.role))).toEqual([
+      ['assistant', 'user'],
+      ['user'],
+      ['user'],
+      ['user'],
+    ]);
     await dispatcher.flush();
     expect(
       records.filter((record) => record.type === 'llm.request').map((record) => record['projection']),
     ).toEqual([undefined, 'strict', 'strict-media-degraded', 'strict-media-stripped']);
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    await dispatcher.flush();
+
+    expect(calls.value).toBe(5);
+    expect(inputs[4]?.messages.map((message) => message.role)).toEqual(['assistant', 'user']);
+    expect(
+      records.findLast((record) => record.type === 'llm.request')?.['projection'],
+    ).toBe('media-stripped');
   });
 
   it('strips rejected images on top of strict after an image-format rejection on the strict resend', async () => {
     const calls = { value: 0 };
-    const stricts: boolean[] = [];
     const inputs: ModelRequestInput[] = [];
     const { service, dispatcher, records } = createService(
       createRequester(calls, STRUCTURAL_400, [IMAGE_FORMAT_400], inputs),
-      createStrictRecordingProjector(stricts),
       { contextMessages },
     );
 
     await service.request();
 
     expect(calls.value).toBe(3);
-    expect(stricts).toEqual([false, true]);
     expect(
       inputs[2]?.messages.flatMap((message) => message.content)
         .filter((part) => part.type === 'image_url'),
@@ -1172,10 +1134,9 @@ describe('AgentLoopRequester combined recovery projections', () => {
 
   it('applies the strict repair on top of degraded media without repeating the media warning', async () => {
     const calls = { value: 0 };
-    const stricts: boolean[] = [];
+    const inputs: ModelRequestInput[] = [];
     const { service, dispatcher, events, records } = createService(
-      createRequester(calls, BODY_TOO_LARGE_413, [STRUCTURAL_400]),
-      createStrictRecordingProjector(stricts),
+      createRequester(calls, BODY_TOO_LARGE_413, [STRUCTURAL_400], inputs),
       { contextMessages },
     );
 
@@ -1183,7 +1144,11 @@ describe('AgentLoopRequester combined recovery projections', () => {
     await dispatcher.flush();
 
     expect(calls.value).toBe(3);
-    expect(stricts).toEqual([false, true]);
+    expect(inputs[2]?.messages.map((message) => message.role)).toEqual(['user']);
+    expect(
+      inputs[2]?.messages.flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url'),
+    ).toHaveLength(2);
     expect(
       records.filter((record) => record.type === 'llm.request').map((record) => record['projection']),
     ).toEqual([undefined, 'media-degraded', 'strict-media-degraded']);
@@ -1194,10 +1159,6 @@ describe('AgentLoopRequester combined recovery projections', () => {
 });
 
 describe('AgentLoopRequester trace id', () => {
-  const passthroughProjector = {
-    project: (messages: readonly ContextMessage[]) => messages,
-  };
-
   function createTracedRequester(traceId: string | null): ModelEventRequester {
     const model: Model = {
       id: 'm',
@@ -1248,7 +1209,7 @@ describe('AgentLoopRequester trace id', () => {
         } satisfies ModelRequestEvent;
       },
     });
-    const { service } = createService(requester, passthroughProjector);
+    const { service } = createService(requester);
     const request = service.start({ source: { type: 'turn', turnId: 1, step: 1 } });
     await headersArrived;
     expect(request.trace.traceId).toBe('trace-req-1');
@@ -1260,7 +1221,7 @@ describe('AgentLoopRequester trace id', () => {
   });
 
   it('reports an absent trace before a request that returns none', async () => {
-    const { service } = createService(createTracedRequester(null), passthroughProjector);
+    const { service } = createService(createTracedRequester(null));
     const request = service.start();
     const finish = await request.result;
 
@@ -1277,7 +1238,7 @@ describe('AgentLoopRequester trace id', () => {
         throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-1');
       },
     });
-    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const { service, telemetryRecords } = createService(requester);
     const request = service.start({ source: { type: 'turn', turnId: 3, step: 2 } });
     await expect(request.result).rejects.toMatchObject({ statusCode: 500 });
 
@@ -1306,7 +1267,7 @@ describe('AgentLoopRequester trace id', () => {
         throw new APIEmptyResponseError('no content, no tool calls');
       },
     });
-    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const { service, telemetryRecords } = createService(requester);
     const request = service.start({ source: { type: 'turn', turnId: 4, step: 1 } });
     await expect(request.result).rejects.toThrow();
 
@@ -1333,7 +1294,7 @@ describe('AgentLoopRequester trace id', () => {
         throw new APIConnectionError('socket hang up');
       },
     });
-    const { service, telemetryRecords } = createService(requester, passthroughProjector);
+    const { service, telemetryRecords } = createService(requester);
     const request = service.start();
     await expect(request.result).rejects.toThrow('socket hang up');
 
@@ -1347,7 +1308,6 @@ describe('AgentLoopRequester trace id', () => {
   it('mirrors the request trace into the ambient telemetry context', async () => {
     const { service, telemetry } = createService(
       createTracedRequester('trace-ambient-1'),
-      passthroughProjector,
     );
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
@@ -1373,7 +1333,7 @@ describe('AgentLoopRequester trace id', () => {
         } satisfies ModelRequestEvent;
       },
     });
-    const { service, telemetry } = createService(requester, passthroughProjector);
+    const { service, telemetry } = createService(requester);
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(telemetry.getContext()['trace_id']).toBe('trace-ambient-2');
@@ -1392,7 +1352,7 @@ describe('AgentLoopRequester trace id', () => {
         throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-ambient');
       },
     });
-    const { service, telemetry } = createService(requester, passthroughProjector);
+    const { service, telemetry } = createService(requester);
 
     await expect(
       service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
@@ -1404,7 +1364,6 @@ describe('AgentLoopRequester trace id', () => {
   it('keeps the ambient trace untouched for operation requests', async () => {
     const { service, telemetry } = createService(
       createTracedRequester('trace-operation-1'),
-      passthroughProjector,
     );
     telemetry.setContext({ trace_id: 'trace-turn-1' });
 
@@ -1423,7 +1382,7 @@ describe('AgentLoopRequester media resolver wiring', () => {
         _resolution: Parameters<IAgentMediaResolverService['resolve']>[1],
       ) => messages,
     );
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       mediaResolver: { resolve },
     });
 
@@ -1538,7 +1497,6 @@ describe('AgentLoopRequester tool call id forwarding', () => {
     const parts: StreamedMessagePart[] = [];
     const { service } = createService(
       createScriptedRequester([{ ids: ['call_1', 'call_2'] }]),
-      undefined,
     );
 
     const result = await service.request({}, (part) => {
@@ -1551,7 +1509,7 @@ describe('AgentLoopRequester tool call id forwarding', () => {
 
   it('normalizes repeated provider ids in llm and forwards the result', async () => {
     const parts: StreamedMessagePart[] = [];
-    const { service } = createService(createOpenAIModelEventRequester(['Bash_0']), undefined);
+    const { service } = createService(createOpenAIModelEventRequester(['Bash_0']));
 
     const first = await service.request({}, (part) => {
       parts.push(part);
@@ -1582,7 +1540,6 @@ describe('AgentLoopRequester tool call id forwarding', () => {
       createScriptedRequester([
         { ids: ['Bash_0', { id: 'Bash_0__2', rawId: 'Bash_0' }] },
       ]),
-      undefined,
     );
 
     const result = await service.request();
@@ -1599,7 +1556,6 @@ describe('AgentLoopRequester tool call id forwarding', () => {
         { ids: ['Bash_9'], error: new Error('stream boom') },
         { ids: ['Bash_9'] },
       ]),
-      undefined,
     );
 
     await expect(service.request()).rejects.toThrow('stream boom');
@@ -1610,7 +1566,6 @@ describe('AgentLoopRequester tool call id forwarding', () => {
   it('does not rewrite ids against restored context', async () => {
     const { service } = createService(
       createScriptedRequester([{ ids: ['Bash_0'] }]),
-      undefined,
       {
         contextMessages: [
           {
@@ -1634,7 +1589,7 @@ describe('AgentLoopRequester attempt retry notification', () => {
 
   it('notifies before resending with a repaired projection', async () => {
     const calls = { value: 0 };
-    const { service } = createService(createRequester(calls), undefined);
+    const { service } = createService(createRequester(calls));
     const onAttemptRetry = vi.fn();
 
     const result = await service.request({ onAttemptRetry });
@@ -1650,7 +1605,7 @@ describe('AgentLoopRequester attempt retry notification', () => {
     const requester = createRequester(calls, new APIConnectionError('socket hang up'), [
       new APIConnectionError('socket hang up again'),
     ]);
-    const { service } = createService(requester, undefined, {
+    const { service } = createService(requester, {
       env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' },
     });
     const onAttemptRetry = vi.fn();
@@ -1667,7 +1622,6 @@ describe('AgentLoopRequester attempt retry notification', () => {
     const calls = { value: 0 };
     const { service } = createService(
       createRequester(calls, new APIStatusError(400, 'max_tokens must be positive')),
-      undefined,
     );
     const onAttemptRetry = vi.fn();
 
@@ -1688,7 +1642,6 @@ describe('turn machine stream state across service-internal retries', () => {
         { ids: ['call_a'], error: new APIConnectionError('terminated') },
         { ids: ['call_b'] },
       ]),
-      undefined,
       { env: { [KIMI_CODE_INFINITE_RETRY_ENV]: '1' } },
     );
     const machineRequester = createMachineRequester(service);

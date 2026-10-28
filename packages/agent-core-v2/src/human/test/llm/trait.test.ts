@@ -1399,7 +1399,7 @@ describe('request resolvers and recoveries', () => {
             id: 'chained',
             resolve: (request, ctl) => {
               seen.push(
-                `${request.profile?.systemPrompt ?? ''}:${request.model.spec.name}:${ctl.signal.aborted}`,
+                `${request.profile?.systemPrompt ?? ''}:${request.model.spec.name}:${ctl.signal.aborted}:${ctl.appliedRecoveries.map((recovery) => `${recovery.strategy}/${recovery.action}`).join(',')}`,
               );
               ctl.report({ code: 'resolver.chained', message: 'chained' });
               return Promise.resolve({
@@ -1432,9 +1432,9 @@ describe('request resolvers and recoveries', () => {
     expect(recoverySeen).toEqual(['sys:test-model']);
     expect(seen).toEqual([
       'sys',
-      'resolved:resolved-model:false',
+      'resolved:resolved-model:false:',
       'recovered',
-      'resolved:resolved-model:false',
+      'resolved:resolved-model:false:request/rewrite',
     ]);
     expect(resolverNotices).toEqual(['chained:resolver.chained', 'chained:resolver.chained']);
     const body = client.body();

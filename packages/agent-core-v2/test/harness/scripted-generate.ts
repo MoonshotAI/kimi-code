@@ -19,6 +19,7 @@ import type { AssistantMessage, Message, ToolDescription as Tool } from '#human/
 import {
   isAbortError,
   isImageFormatError,
+  isRecoverableRequestStructureError,
   llmMessageFromError,
 } from '#/llm-adapter/contract/errors';
 import { unwrapErrorCause } from '#/errors';
@@ -506,7 +507,9 @@ async function runLegacyRequester(
     const normalized =
       classified?.kind === 'status' && isImageFormatError(raw)
         ? { ...classified, kind: 'image_format' as const }
-        : classified;
+        : classified?.kind === 'status' && isRecoverableRequestStructureError(raw)
+          ? { ...classified, kind: 'request_structure' as const }
+          : classified;
     return {
       type: 'failed',
       error: normalized ?? toLlmErrorMessage(raw),

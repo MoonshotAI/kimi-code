@@ -152,6 +152,7 @@ async function runAttempts(
     for (const resolver of listOf(policy.resolvers)) {
       resolvedRequest = await resolver.resolve(resolvedRequest, {
         signal,
+        appliedRecoveries: ledger.applied,
         report: (notice) =>
           onEvent?.({ type: 'llm.notice', notice: { ...notice, source: resolver.id } }),
       });

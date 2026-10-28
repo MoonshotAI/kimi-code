@@ -24,7 +24,6 @@ import {
   APIContextOverflowError,
   APIStatusError,
   classifyApiError,
-  isRecoverableRequestStructureError,
   isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import { type ThinkingEffort } from '#human/llm-requester/thinking';
@@ -76,6 +75,11 @@ import {
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { AgentLoopProjector } from './projector';
+import {
+  createStructureRecovery,
+  createStructureResolver,
+  hasStrictStructureRecovery,
+} from './projectionPolicy';
 import { uploadVideo as uploadCoreVideo } from '#/llm-adapter/model/media';
 import { isAbortError } from '#/_base/utils/abort';
 import { parseBooleanEnv } from '#/_base/utils/env';
@@ -366,13 +370,13 @@ export class AgentLoopRequester implements LoopRequester {
     let cacheProbeReported = false;
     const shaped = this.toolSelect.shapeHistory(request.messages);
     const recoveryLedger = this.recoveredMedia(request)?.fork() ?? createRecoveryLedger();
+    const structureResolver = createStructureResolver(this.projector);
+    const structureRecovery = createStructureRecovery(this.projector);
     const mediaPaths =
       countMediaParts(shaped) === 0 ? new Map<string, string>() : await this.mediaResolver.displayPaths(shaped);
-    let strict = false;
     let previousMediaCount: number | undefined;
     let previousMediaRecovery: LlmRecoveryRecord | undefined;
     const run = async (): Promise<AgentLLMRequestFinish> => {
-      const projected = this.projector.project(shaped, strict);
       let input: ModelRequestInput | undefined;
       let recorded: LlmRequestPayload | undefined;
       let startedAt: number | undefined;
@@ -391,7 +395,7 @@ export class AgentLoopRequester implements LoopRequester {
         {
           systemPrompt: request.systemPrompt,
           tools: request.tools,
-          messages: projected,
+          messages: shaped,
         },
         signal,
         {
@@ -400,6 +404,7 @@ export class AgentLoopRequester implements LoopRequester {
         },
         {
           recoveries: [
+            structureRecovery,
             createMediaDegradeRecovery((part) => {
               const path = mediaPaths.get(mediaUrlOf(part));
               if (path === undefined) return undefined;
@@ -408,6 +413,7 @@ export class AgentLoopRequester implements LoopRequester {
               return { type: 'text', text: buildMediaPathTag(kind, path) };
             }),
           ],
+          resolvers: [structureResolver],
           recoveryLedger,
           resolveMessages: (messages, resolveSignal) =>
             this.mediaResolver.resolve(
@@ -419,7 +425,7 @@ export class AgentLoopRequester implements LoopRequester {
             input = attemptInput;
             onRequestTrace(undefined);
             const mediaRecovery = latestMediaRecovery(recoveryLedger.applied);
-            const projection = projectionNameOf(strict, mediaRecovery);
+            const projection = projectionNameOf(recoveryLedger.applied, mediaRecovery);
             const fields =
               projection === undefined
                 ? request.logFields
@@ -470,6 +476,20 @@ export class AgentLoopRequester implements LoopRequester {
             startedAt = Date.now();
           },
           onRecovery: (recovery) => {
+            if (recovery.strategy === 'structure') {
+              this.log.warn('provider rejected request structure; resending with strict projection', {
+                model: request.model.name,
+                ...request.logFields,
+              });
+              this.telemetry.track2('llm_request_projection_fallback', {
+                projection: 'strict',
+                error_type: recovery.error.kind,
+                model: request.model.id,
+                turn_id: request.source?.turnId,
+              });
+              onAttemptRetry?.();
+              return;
+            }
             if (recovery.strategy !== 'media-degrade') return;
             this.markMediaRecovery(request, recoveryLedger);
             const degraded = recovery.action === 'degraded';
@@ -612,26 +632,6 @@ export class AgentLoopRequester implements LoopRequester {
       } catch (error) {
         const raw = unwrapErrorCause(error);
         if (
-          !strict &&
-          signal?.aborted !== true &&
-          isRecoverableRequestStructureError(raw)
-        ) {
-          signal?.throwIfAborted();
-          strict = true;
-          this.log.warn('provider rejected request structure; resending with strict projection', {
-            model: request.model.name,
-            ...request.logFields,
-          });
-          this.telemetry.track2('llm_request_projection_fallback', {
-            projection: 'strict',
-            error_type: classifyApiError(raw).kind,
-            model: request.model.id,
-            turn_id: request.source?.turnId,
-          });
-          onAttemptRetry?.();
-          continue;
-        }
-        if (
           !this.infiniteRetryEnabled ||
           isAbortError(error) ||
           signal?.aborted === true ||
@@ -712,7 +712,7 @@ export class AgentLoopRequester implements LoopRequester {
     this.states.set(llmRequesterMediaRecoveryKey, {
       modelAlias: request.modelAlias,
       contextRevision: request.contextRevision,
-      ledger,
+      ledger: ledger.fork((entry) => entry.strategy === 'media-degrade'),
     });
   }
 
@@ -964,10 +964,10 @@ function latestMediaRecovery(
 }
 
 function projectionNameOf(
-  strict: boolean,
+  recoveries: readonly LlmRecoveryRecord[],
   media: LlmRecoveryRecord | undefined,
 ): LlmRequestProjection | undefined {
-  if (strict) {
+  if (hasStrictStructureRecovery(recoveries)) {
     if (media === undefined) return 'strict';
     return media.action === 'degraded' ? 'strict-media-degraded' : 'strict-media-stripped';
   }

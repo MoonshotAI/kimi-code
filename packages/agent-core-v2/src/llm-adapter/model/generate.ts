@@ -3,6 +3,7 @@ import type { LlmRequestModel, LlmProtocolBinding, LlmEndpoint, LlmSampling } fr
 import { contentsOf, type LlmRequester } from '#human/llm/requester';
 import type { LlmOutcome, LlmRunEvent } from '#human/llm/response';
 import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
+import type { LlmResolver } from '#human/llm/policy/resolver';
 import type { FinishReason } from '#human/llm-requester/finish-reason';
 import type { ResponseFormat } from '#human/llm-requester/response-format';
 import type { ThinkingEffort } from '#human/llm-requester/thinking';
@@ -67,6 +68,7 @@ export interface ModelRequestParams {
 
 export interface ModelRequestPolicy {
   readonly recoveries: readonly LlmRecovery[];
+  readonly resolvers?: readonly LlmResolver[];
   readonly recoveryLedger?: LlmRecoveryLedger;
   readonly resolveMessages?: (
     messages: readonly Message[],
@@ -120,6 +122,19 @@ async function runModel(
   let traceId: string | null | undefined;
   try {
     const resolveMessages = policy?.resolveMessages;
+    const resolvers: LlmResolver[] = [...(policy?.resolvers ?? [])];
+    if (resolveMessages !== undefined) {
+      resolvers.push({
+        id: 'model-media',
+        resolve: async (request, control) => ({
+          ...request,
+          content: {
+            ...request.content,
+            messages: await resolveMessages(request.content.messages, control.signal),
+          },
+        }),
+      });
+    }
     const requester = initial.with({
       model: { responseFormat: input.responseFormat },
       profile: {
@@ -130,21 +145,7 @@ async function runModel(
       policy: {
         retry: { maxAttemptsPerStep: 1 },
         recoveries: policy?.recoveries ?? [],
-        resolvers:
-          resolveMessages === undefined
-            ? []
-            : [
-                {
-                  id: 'model-media',
-                  resolve: async (request, control) => ({
-                    ...request,
-                    content: {
-                      ...request.content,
-                      messages: await resolveMessages(request.content.messages, control.signal),
-                    },
-                  }),
-                },
-              ],
+        resolvers,
       },
     });
     const outcome = await requester.generate(
