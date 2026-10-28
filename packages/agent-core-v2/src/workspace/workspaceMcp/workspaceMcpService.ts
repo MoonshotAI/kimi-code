@@ -42,6 +42,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
   private readonly resolveClientName = (): string | undefined => this.identity.current().slug;
   private readonly sessionLifecycle: LiveRef<ISessionManager>;
   private sessionLifecycleAttached = false;
+  private shutdown?: Promise<void>;
 
   constructor(
     @IWorkspaceContext workspace: IWorkspaceContext,
@@ -65,13 +66,18 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
       runtimeResolver: this.runtimeResolver,
       workspaceId: workspace.workspaceId,
       runtimeId: 'local',
+      reconnectRetryEnabled: true,
       resolveDefaults: () => this.mcpConfig.tunables(),
       resolveClientName: this.resolveClientName,
     });
-    this._register({ dispose: () => void this.manager.shutdown() });
     this._register(
       this.mcpConfig.onDidChange((change) => {
         change.waitUntil(this.scheduleApply(change));
+      }),
+    );
+    this._register(
+      this.mcpConfig.onDidChangeTunables(() => {
+        this.manager.rescheduleRetries();
       }),
     );
     this._register({ dispose: this.oauthEventSubscription(this.manager) });
@@ -80,6 +86,30 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.ready = this.initialize().catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
     });
+  }
+
+  override dispose(): void {
+    void this.disposeAsync().catch((error) => {
+      this.log.error('mcp disposal failed', { error });
+    });
+  }
+
+  disposeAsync(): Promise<void> {
+    this.shutdown ??= (async () => {
+      let disposalError: unknown;
+      try {
+        super.dispose();
+      } catch (error) {
+        disposalError = error;
+      }
+      await this.manager.shutdown();
+      if (disposalError !== undefined) {
+        throw disposalError instanceof Error
+          ? disposalError
+          : new Error('MCP disposal failed', { cause: disposalError });
+      }
+    })();
+    return this.shutdown;
   }
 
   private attachSessionLifecycle(): void {

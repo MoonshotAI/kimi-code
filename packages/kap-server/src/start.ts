@@ -380,7 +380,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   const sessionRating = createServerSessionRating(core, { debugEndpoints, logger });
   core.accessor.get(IGlobalSearchService).setLiveTranscriptSource(transcriptService);
   const broadcaster = new SessionEventBroadcaster({
-    eventsDir: join(homeDir, 'server', 'events'),
     core,
     logger,
     transcriptService,
@@ -443,8 +442,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
           { name: 'search', description: 'Global message search' },
           { name: 'transcript', description: 'Turn-granular session transcript' },
           { name: 'prompts', description: 'Prompt submission & abort' },
-          { name: 'approvals', description: 'Approval resolution' },
-          { name: 'questions', description: 'Question resolution & dismiss' },
+          { name: 'interactions', description: 'Approval and question responses' },
           { name: 'tools', description: 'Tool & MCP server management' },
           { name: 'tasks', description: 'Task management' },
           { name: 'fs', description: 'Filesystem operations' },
@@ -494,7 +492,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       void close().catch((error: unknown) => logger.error({ err: error }, 'server close failed'));
     },
     connectionRegistry,
-    broadcaster,
     transcriptService,
     sessionRating,
     dangerousBypassAuth: opts.disableAuth === true,
@@ -507,7 +504,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     validateCredential,
     registry: connectionRegistry,
     broadcaster,
-    logger,
   });
   const wssDebug = debugEndpoints ? registerWsDebug() : undefined;
 

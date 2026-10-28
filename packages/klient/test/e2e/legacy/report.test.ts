@@ -41,7 +41,7 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'http',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         method: 'POST',
         path: '/sessions',
         status: 200,
@@ -61,7 +61,7 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'ws',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         direction: 'lifecycle',
         message: 'open',
         url: 'ws://server.example.test/api/v1/ws',
@@ -71,13 +71,12 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'ws',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         direction: 'in',
         frame: {
-          type: 'prompt.completed',
-          seq: 3,
+          type: 'event.session.work_changed',
           session_id: 'session_1',
-          payload: { promptId: 'prompt_1' },
+          payload: { busy: false, last_turn_reason: 'completed' },
         },
       },
       { reportDir },
@@ -85,7 +84,7 @@ describe('server-e2e report', () => {
     recordReportEvent(
       {
         kind: 'log',
-        caseName: 'refresh: replay from zero',
+        caseName: 'send: prompt completes',
         label: 'fresh listSessions snapshot',
         value: {
           count: 20,
@@ -99,7 +98,7 @@ describe('server-e2e report', () => {
     const html = readFileSync(htmlPath, 'utf8');
 
     expect(html).toContain('Daemon E2E Report');
-    expect(html).toContain('refresh: replay from zero');
+    expect(html).toContain('send: prompt completes');
     expect(html).toContain('class="case-nav"');
     expect(html).toContain('class="case-link"');
     expect(html).toContain('Client -&gt; Server');
@@ -121,7 +120,7 @@ describe('server-e2e report', () => {
     expect(html).toContain('POST /sessions');
     expect(html).toContain('HTTP 200');
     expect(html).toContain('WS open');
-    expect(html).toContain('WS &lt;- prompt.completed');
+    expect(html).toContain('WS &lt;- event.session.work_changed');
     expect(html).toContain('<span class="event-title">fresh listSessions snapshot</span>');
     expect(html).not.toContain('<span class="event-meta">');
     expect(html).toContain('session_1');
@@ -197,7 +196,6 @@ describe('server-e2e report', () => {
             },
             permission_rules: [],
             message_count: 0,
-            last_seq: 0,
           },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },
@@ -394,7 +392,6 @@ describe('server-e2e report', () => {
             },
             permission_rules: [],
             message_count: 0,
-            last_seq: 0,
           },
         }),
         { status: 200, headers: { 'content-type': 'application/json' } },

@@ -110,10 +110,9 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       .filter((l) => l.length > 0)
       .map((l) => JSON.parse(l) as { type: string; [key: string]: unknown });
 
-    // Content round trip: the v2 context transcript sees exactly the imported
-    // messages — the synthesized turn records must not alter, duplicate, or
-    // drop any message. (`toolCallDisplays` is UI-only enrichment the context
-    // transcript deliberately does not carry, so strip it from both sides.)
+    // Content round trip: the v2 context transcript preserves the imported
+    // messages. Compare their native role/content shape while dropping UI-only
+    // displays and optional usage/timing metadata.
     const transcript = reduceContextTranscript(records);
     const imported = records
       .filter((r) => r.type === 'context.append_message')
@@ -122,7 +121,12 @@ describe('migrated session is discoverable by agent-core-v2', () => {
       messages: readonly unknown[],
     ): unknown[] =>
       messages.map((m) => {
-        const { toolCallDisplays: _dropped, ...rest } = m as Record<string, unknown>;
+        const {
+          toolCallDisplays: _dropped,
+          usage: _usage,
+          llmTiming: _llmTiming,
+          ...rest
+        } = m as Record<string, unknown>;
         return rest;
       });
     expect(stripDisplays([...transcript.entries])).toEqual(stripDisplays(imported));

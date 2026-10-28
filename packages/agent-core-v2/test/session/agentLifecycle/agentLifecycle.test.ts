@@ -36,7 +36,7 @@ import { agentContextOf, IAgentScopeContext } from '#/agent/scopeContext/scopeCo
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IBuiltinAgentProfileLoader } from '#/app/agentProfileCatalog/builtinAgentProfileLoader';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { IProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocol';
 import { IHostClock } from '#/os/interface/hostClock';
 import { ISessionStateService } from '#/session/state/sessionState';
@@ -1377,7 +1377,6 @@ describe('AgentLifecycleService', () => {
     svc.handleOf(child.agentId)!.accessor.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'persisted side question' }],
-      toolCalls: [],
     });
     await svc.remove(svc.get(child.agentId)!);
     expect(svc.handleOf(child.agentId)).toBeUndefined();
@@ -1496,7 +1495,7 @@ describe('AgentLifecycleService', () => {
       arguments: '{}',
     };
     const history: ContextMessage[] = [
-      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'analyze this repo' }] },
       { role: 'assistant', content: [], toolCalls: [agentCall], partial: true },
     ];
     sourceHandle.accessor.get(IAgentContextMemoryService).append(...history);

@@ -1,7 +1,7 @@
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isUnknownCapability } from '#/llm-adapter/contract/capability';
-import { thinkingMetadataOf } from '#human/llm/thinking';
+import { thinkingMetadataOf } from '#human/llm-requester/thinking';
 import type { Model } from '#/llm-adapter/model/catalog';
 import { ProtocolAdapterRegistry } from '#/llm-adapter/protocol/protocolAdapterRegistry';
 import {
@@ -103,30 +103,31 @@ describe('supportedProtocols', () => {
 });
 
 describe('resolveAdapterIdentity', () => {
-  it('resolves the kimi pair registrations to their vendor traits', () => {
+  it('resolves the kimi pair registrations to their vendor protocol bindings', () => {
     expect(registry.resolveAdapterIdentity('openai', 'kimi').baseId).toBe('openai');
-    expect(registry.resolveAdapterIdentity('openai', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').thinkingDriven).toBe(true);
+    expect(registry.resolveAdapterIdentity('openai', 'kimi').strictThinkingValidation).toBe(true);
     expect(registry.resolveAdapterIdentity('anthropic', 'kimi').baseId).toBe('anthropic');
-    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('anthropic', 'kimi').thinkingDriven).toBe(true);
     expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').baseId).toBe(
       'openai_responses',
     );
-    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').trait).toBeDefined();
+    expect(registry.resolveAdapterIdentity('openai_responses', 'kimi').thinkingDriven).toBe(true);
   });
 
   it('resolves unregistered pairs to the protocol itself with no vendor trait', () => {
     const google = registry.resolveAdapterIdentity('google-genai', 'kimi');
     expect(google.baseId).toBe('google-genai');
-    expect(google.trait).toBeUndefined();
+    expect(google.thinkingDriven).toBeUndefined();
     const unknown = registry.resolveAdapterIdentity('openai', 'no-such-vendor');
     expect(unknown.baseId).toBe('openai');
-    expect(unknown.trait).toBeUndefined();
+    expect(unknown.thinkingDriven).toBeUndefined();
   });
 
   it('resolves the no-providerType branch identically', () => {
     const identity = registry.resolveAdapterIdentity('openai');
     expect(identity.baseId).toBe('openai');
-    expect(identity.trait).toBeUndefined();
+    expect(identity.thinkingDriven).toBeUndefined();
   });
 });
 
@@ -196,11 +197,74 @@ describe('resolve gateway routes', () => {
     expect(vertex.protocol).toBe('google-genai');
   });
 
-  it('routes kimi+anthropic through the kimi anthropic trait with media', () => {
+  it('routes kimi+anthropic with media and explicit beta opt-in', async () => {
     const resolved = registry.resolve(modelWith({ protocol: 'anthropic', providerType: 'kimi' }));
     expect(resolved.protocol).toBe('anthropic');
     expect(typeof resolved.media?.uploadVideo).toBe('function');
     expect(typeof resolved.media?.uploadImage).toBe('function');
+
+    const urls: string[] = [];
+    const terminal: string[] = [];
+    const failures: unknown[] = [];
+    vi.stubGlobal('fetch', (async (
+      input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1],
+    ) => {
+      urls.push(new Request(input, init).url);
+      const events = [
+        {
+          type: 'message_start',
+          message: {
+            id: 'msg_1',
+            type: 'message',
+            role: 'assistant',
+            model: 'wire-model',
+            content: [],
+            stop_reason: null,
+            stop_sequence: null,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          },
+        },
+        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'hi' } },
+        { type: 'content_block_stop', index: 0 },
+        { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 1 } },
+        { type: 'message_stop' },
+      ];
+      return new Response(
+        events
+          .map((event) => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`)
+          .join(''),
+        { status: 200, headers: { 'content-type': 'text/event-stream' } },
+      );
+    }) as typeof fetch);
+    const generate = async (providerOptions?: Model['providerOptions']) => {
+      const routed = registry.resolve(
+        modelWith({ protocol: 'anthropic', providerType: 'kimi', providerOptions }),
+      );
+      await routed.requester.generate(
+        { model: routed.model, stream: true },
+        { messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }] },
+        {
+          signal: new AbortController().signal,
+          onEvent: (event) => {
+            if (event.type === 'llm.done') terminal.push(event.type);
+            if (event.type === 'llm.failed.remote' || event.type === 'llm.failed.syntax') {
+              failures.push(event.error);
+            }
+          },
+        },
+      );
+    };
+    try {
+      await generate();
+      await generate({ betaApi: true });
+      expect(failures).toEqual([]);
+      expect(urls.map((url) => new URL(url).searchParams.get('beta'))).toEqual([null, 'true']);
+      expect(terminal).toEqual(['llm.done', 'llm.done']);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('carries thinking metadata and model limits onto the resolved LlmModel', () => {
@@ -269,11 +333,11 @@ describe('kimi provider definitions', () => {
     const anthropic = getProviderDefinition('kimi', 'anthropic');
     const responses = getProviderDefinition('kimi', 'openai_responses');
     expect(native?.baseProtocol).toBe('openai');
-    expect(native?.trait).toBeDefined();
+    expect(native?.requester).toBeDefined();
     expect(anthropic?.baseProtocol).toBe('anthropic');
-    expect(anthropic?.trait).toBeDefined();
+    expect(anthropic?.requester).toBeDefined();
     expect(responses?.baseProtocol).toBe('openai_responses');
-    expect(responses?.trait).toBeDefined();
+    expect(responses?.requester).toBeDefined();
     for (const definition of [native, anthropic, responses]) {
       expect(definition?.endpoint).toEqual({
         apiKeyEnv: 'KIMI_API_KEY',

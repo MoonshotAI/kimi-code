@@ -1,5 +1,6 @@
 import type {
   AgentReplayRecord,
+  BackgroundTaskInfo,
   ContextMessage,
   GoalChange,
   PermissionMode,
@@ -8,6 +9,7 @@ import type {
   ToolCall,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { isAgentSwarmRejection } from '../components/messages/agent-swarm-progress';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { ShellRunComponent } from '../components/messages/shell-run';
 import { ReplayTurnBoundaryComponent } from '../components/messages/user-message';
@@ -69,6 +71,7 @@ export interface SessionReplayHost {
   showError(msg: string): void;
   appendTranscriptEntry(entry: TranscriptEntry): void;
   mergeAllTurnSteps(): void;
+  restoreProgramStatusBackground?(tasks: readonly BackgroundTaskInfo[]): void;
 }
 
 function extractBashTag(
@@ -191,6 +194,7 @@ export class SessionReplayRenderer {
     for (const info of agent.background) {
       sessionEventHandler.backgroundTasks.set(info.taskId, info);
     }
+    this.host.restoreProgramStatusBackground?.(agent.background);
     sessionEventHandler.backgroundTaskTranscriptedTerminal.clear();
     for (const info of agent.background) {
       if (isTerminalBackgroundTask(info)) {
@@ -491,6 +495,10 @@ export class SessionReplayRenderer {
       output: toolResultOutput(message.content),
       is_error: message.isError,
     };
+    if (call.name === 'AgentSwarm' && result.is_error === true && isAgentSwarmRejection(result.output)) {
+      this.host.streamingUI.discardToolCall(toolCallId);
+      return;
+    }
     call.result = result;
     this.applyStepContext(context);
     this.host.streamingUI.onToolCallEnd(toolCallId, result);

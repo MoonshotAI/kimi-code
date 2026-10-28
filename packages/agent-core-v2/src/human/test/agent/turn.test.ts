@@ -2,15 +2,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assign, createActor, emit, setup } from '#/xstate2';
 
 import { credentialsRecovery } from '#/credentials/credentials';
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import type { LlmErrorMessage } from '#/llm/errors';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import type { LlmErrorMessage } from '#/llm-requester/errors';
 import type { ContentPart, Message, UserMessage } from '#/llm/message';
-import { createMediaDegradeRecovery } from '#/llm/media/degrade';
-import type { LlmModel } from '#/llm/model';
-import { createRequestActor, type LlmEvent } from '#/llm/requester/actor';
-import type { LlmRecovery } from '#/llm/requester/recovery';
-import type { LlmCredentialProvider, LlmRequester } from '#/llm/requester/requester';
-import type { LlmRetryOptions } from '#/llm/requester/retry';
+import { createMediaDegradeRecovery } from '#/media/degrade';
+import type { LlmModel } from '#/llm-requester/model';
+import { createRequestActor, type LlmEvent } from '#/llm-requester/actor';
+import type { LlmRecovery } from '#/llm-requester/recovery';
+import type { LlmCredentialProvider, LlmRequester } from '#/llm-requester/requester';
+import type { LlmRetryOptions } from '#/llm-requester/retry';
 import {
   createTurnMachine,
   createUserEntry,

@@ -1,11 +1,11 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 
-import type { ModelCapability } from '#/llm/capability';
+import type { ModelCapability } from '#/llm-requester/capability';
 import type { ContentPart } from '#/llm/message';
-import { mediaKindForPath, mediaMimeForPath } from '#/llm/media/mime';
-import { buildMediaRefUrl } from '#/llm/media/ref';
-import type { MediaStore } from '#/llm/media/store';
+import { mediaKindForPath, mediaMimeForPath } from '#/media/mime';
+import { buildMediaRefUrl } from '#/media/ref';
+import type { MediaStore } from '#/media/store';
 import type { ToolResult } from '#/tool/executor';
 import { defineTool, type ToolDefinition } from '#/tool/tool';
 

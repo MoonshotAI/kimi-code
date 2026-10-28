@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelCapability } from '../contract/capability';
-import type { LlmCredentialProvider } from '#human/llm/requester/requester';
-import type { TokenUsage } from '#human/llm/usage';
+import type { LlmCredentialProvider } from '#human/llm-requester/requester';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { Protocol, ProtocolProviderOptions } from '../protocol/protocol';
 import type { ProviderConfig } from '../provider/provider';
 

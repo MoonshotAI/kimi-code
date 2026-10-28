@@ -1,5 +1,5 @@
 import assert from "node:assert";
-import { describe, it, mock } from "node:test";
+import { afterEach, beforeEach, describe, it, mock } from "node:test";
 import { setKittyProtocolActive } from "../src/keys.ts";
 import {
 	normalizeAppleTerminalInput,
@@ -70,6 +70,28 @@ describe("normalizeAppleTerminalInput", () => {
 });
 
 describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
+	const environmentKeys = [
+		"TMUX",
+		"STY",
+		"ZELLIJ",
+		"ZELLIJ_SESSION_NAME",
+		"REX_SESSION",
+		"REX_BLOCK",
+		"HERDR_ENV",
+	];
+	let previousEnvironment: Record<string, string | undefined>;
+	beforeEach(() => {
+		previousEnvironment = Object.fromEntries(environmentKeys.map((key) => [key, process.env[key]]));
+		for (const key of environmentKeys) delete process.env[key];
+	});
+	afterEach(() => {
+		for (const key of environmentKeys) {
+			const value = previousEnvironment[key];
+			if (value === undefined) delete process.env[key];
+			else process.env[key] = value;
+		}
+	});
+
 	type NegotiationHarness = {
 		terminal: ProcessTerminal;
 		writes: string[];
@@ -132,7 +154,7 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 	it("queries Kitty mode before enabling modifyOtherKeys fallback", () => {
 		const harness = setupNegotiation();
 		try {
-			assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+			assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b]7501;?\x1b\\\x1b[c");
 			assert.equal(harness.writes.includes("\x1b[>4;2m"), false);
 			assert.equal(harness.terminal.kittyProtocolActive, false);
 		} finally {
@@ -187,6 +209,21 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 		}
 	});
 
+	it("forwards device attributes replies that answer other queries", () => {
+		const harness = setupNegotiation();
+		try {
+			harness.send("\x1b[?7u");
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), undefined);
+
+			// The TUI's color query uses DA1 as its own sentinel.
+			harness.send("\x1b[?62;4;52c");
+			assert.equal(harness.getInput(), "\x1b[?62;4;52c");
+		} finally {
+			harness.cleanup();
+		}
+	});
+
 	it("forwards normal input while waiting for Kitty response", () => {
 		const harness = setupNegotiation();
 		try {
@@ -216,6 +253,243 @@ describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 			harness.cleanup();
 			mock.timers.reset();
 		}
+	});
+
+	// #10607
+	describe("program status (OSC 7501)", () => {
+		const working = "\x1b]7501;state=working:app=pi\x1b\\";
+		const clear = "\x1b]7501;state=clear\x1b\\";
+		function withOverride(value: string | undefined, fn: () => void): void {
+			const previous = process.env.PI_PROGRAM_STATUS;
+			if (value === undefined) delete process.env.PI_PROGRAM_STATUS;
+			else process.env.PI_PROGRAM_STATUS = value;
+			try {
+				fn();
+			} finally {
+				if (previous === undefined) delete process.env.PI_PROGRAM_STATUS;
+				else process.env.PI_PROGRAM_STATUS = previous;
+			}
+		}
+
+		function withEnv(values: Record<string, string | undefined>, fn: () => void): void {
+			const previous = Object.fromEntries(Object.keys(values).map((key) => [key, process.env[key]]));
+			for (const [key, value] of Object.entries(values)) {
+				if (value === undefined) delete process.env[key];
+				else process.env[key] = value;
+			}
+			try {
+				fn();
+			} finally {
+				for (const [key, value] of Object.entries(previous)) {
+					if (value === undefined) delete process.env[key];
+					else process.env[key] = value;
+				}
+			}
+		}
+
+		const tmuxWorking = "\x1bPtmux;\x1b\x1b]7501;state=working:app=pi\x1b\x1b\\\x1b\\";
+		const tmuxClear = "\x1bPtmux;\x1b\x1b]7501;state=clear\x1b\x1b\\\x1b\\";
+
+		it("reports the latest status once the terminal answers the query before DA", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.includes(working), false);
+
+					harness.send("\x1b]7501;?\x1b\\");
+					assert.equal(harness.getInput(), undefined);
+					assert.equal(harness.writes.filter((write) => write === working).length, 1);
+					harness.send("\x1b[?62;4;52c");
+
+					harness.terminal.setProgramStatus({ state: "done" });
+					assert.equal(harness.writes.at(-1), "\x1b]7501;state=done\x1b\\");
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("reports nothing when DA arrives first and swallows late replies", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.send("\x1b[?62;4;52c");
+					harness.send("\x1b]7501;?\x07");
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+
+					assert.equal(harness.getInput(), undefined);
+					assert.equal(
+						harness.writes.some((write) => write.startsWith("\x1b]7501;state=")),
+						false,
+					);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("skips the query when PI_PROGRAM_STATUS is set", () => {
+			withOverride("1", () => {
+				const harness = setupNegotiation();
+				try {
+					assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.at(-1), working);
+				} finally {
+					harness.cleanup();
+				}
+			});
+			withOverride("0", () => {
+				const harness = setupNegotiation();
+				try {
+					assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.includes(working), false);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("does not let a DA reply from before a restart end the new query", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					harness.terminal.stop();
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+
+					// The first start's replies arrive late: its DA, then the second start's reply and DA.
+					harness.send("\x1b[?62;4;52c");
+					harness.send("\x1b]7501;?\x1b\\");
+					harness.send("\x1b[?62;4;52c");
+					assert.equal(harness.writes.at(-1), working);
+					assert.equal(harness.getInput(), undefined);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("uses tmux passthrough for status reports and stop when explicitly enabled", () => {
+			withEnv({ TMUX: "/tmp/tmux-test/default,1,0" }, () => {
+				withOverride("1", () => {
+					const harness = setupNegotiation();
+					try {
+						harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+						assert.equal(harness.writes.at(-1), tmuxWorking);
+						harness.terminal.stop();
+						assert.equal(harness.writes.filter((write) => write === tmuxClear).length, 1);
+					} finally {
+						harness.cleanup();
+					}
+				});
+			});
+		});
+
+		it("uses the Rex fallback in tmux without sending a support query", () => {
+			withEnv({ TMUX: "/tmp/tmux-test/default,1,0", REX_SESSION: "rex-test" }, () => {
+				withOverride(undefined, () => {
+					const harness = setupNegotiation();
+					try {
+						assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+						harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+						assert.equal(harness.writes.at(-1), tmuxWorking);
+					} finally {
+						harness.cleanup();
+					}
+				});
+			});
+		});
+
+		it("keeps auto reporting off in tmux without Rex and in screen", () => {
+			for (const environment of [
+				{ TMUX: "/tmp/tmux-test/default,1,0" },
+				{ STY: "screen-test" },
+			]) {
+				withEnv({ ...environment, REX_SESSION: undefined, REX_BLOCK: undefined }, () => {
+					withOverride(undefined, () => {
+						const harness = setupNegotiation();
+						try {
+							assert.equal(harness.writes[0], "\x1b[>7u\x1b[?u\x1b[c");
+							harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+							assert.equal(harness.writes.includes(working), false);
+							assert.equal(harness.writes.includes(tmuxWorking), false);
+						} finally {
+							harness.cleanup();
+						}
+					});
+				});
+			}
+		});
+
+		it("reports raw root records in screen when explicitly enabled", () => {
+			withEnv({ STY: "screen-test" }, () => {
+				withOverride("1", () => {
+					const harness = setupNegotiation();
+					try {
+						harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+						assert.equal(harness.writes.at(-1), working);
+					} finally {
+						harness.cleanup();
+					}
+				});
+			});
+		});
+
+		it("replays child records and clears a whole id subtree", () => {
+			withOverride("1", () => {
+				const harness = setupNegotiation();
+				const parentWorking = "\x1b]7501;state=working:id=agent\x1b\\";
+				const childBlocked = "\x1b]7501;state=blocked:kind=question:id=agent/one\x1b\\";
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					harness.terminal.setProgramStatus({ state: "working", id: "agent" });
+					harness.terminal.setProgramStatus({ state: "blocked", kind: "question", id: "agent/one" });
+					harness.terminal.stop();
+
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+					assert.equal(harness.writes.at(-1), childBlocked);
+					assert.ok(harness.writes.includes(parentWorking));
+
+					harness.terminal.setProgramStatus({ state: "clear", id: "agent" });
+					assert.equal(harness.writes.at(-1), "\x1b]7501;state=clear:id=agent\x1b\\");
+					harness.terminal.stop();
+					const writesBeforeRestart = harness.writes.length;
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+					const replayed = harness.writes
+						.slice(writesBeforeRestart)
+						.filter((write) => write.startsWith("\x1b]7501;"));
+					assert.deepEqual(replayed, [working]);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
+
+		it("clears the status on stop and reports it again after restart", () => {
+			withOverride(undefined, () => {
+				const harness = setupNegotiation();
+				try {
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					harness.send("\x1b]7501;?\x1b\\");
+					harness.terminal.stop();
+					assert.ok(harness.writes.includes(clear));
+
+					// Stopped: nothing is written until the restarted terminal confirms support again.
+					const writesBeforeRestart = harness.writes.length;
+					harness.terminal.setProgramStatus({ state: "working", app: "pi" });
+					assert.equal(harness.writes.length, writesBeforeRestart);
+
+					(harness.terminal as unknown as { queryAndEnableKittyProtocol(): void }).queryAndEnableKittyProtocol();
+					harness.send("\x1b]7501;?\x1b\\");
+					assert.equal(harness.writes.at(-1), working);
+				} finally {
+					harness.cleanup();
+				}
+			});
+		});
 	});
 
 	it("replays buffered CSI-prefix input when it is not a Kitty response", () => {

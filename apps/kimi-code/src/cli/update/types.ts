@@ -13,8 +13,46 @@ export type InstallSource =
   | 'unsupported';
 
 export interface UpdateTarget {
+  readonly channel: UpdateChannel;
   readonly version: string;
 }
+
+export const UPDATE_CHANNELS = ['stable', 'dev'] as const;
+
+/** Release line selected after resolving install source, installed version, and environment. */
+export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];
+
+export interface UpdatePointer {
+  readonly channel: UpdateChannel;
+  readonly latest: string | null;
+}
+
+export interface UpdateFeed extends UpdatePointer {
+  readonly manifest: UpdateManifest | null;
+}
+
+/**
+ * The channel resolved once at the env boundary. `default` means the variable
+ * is unset or empty; `invalid` keeps the rejected raw value for the warning.
+ */
+export type ChannelSelection =
+  | { readonly channel: UpdateChannel; readonly origin: 'default' }
+  | { readonly channel: UpdateChannel; readonly origin: 'env' }
+  | { readonly channel: UpdateChannel; readonly origin: 'invalid'; readonly raw: string }
+  | { readonly channel: 'stable'; readonly origin: 'homebrew' };
+
+export type UpdatePlan =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'upgrade'; readonly target: UpdateTarget }
+  | {
+      readonly kind: 'switch-channel';
+      readonly sourceChannel: UpdateChannel;
+      readonly target: UpdateTarget;
+    };
+
+export type ActionableUpdatePlan = Exclude<UpdatePlan, { readonly kind: 'none' }>;
+export type UpgradePlan = Extract<UpdatePlan, { readonly kind: 'upgrade' }>;
+export type InstallIntent = ActionableUpdatePlan['kind'];
 
 /** One gradual-rollout cohort: `percent` of devices delayed by `delaySeconds`. */
 export interface RolloutBatch {
@@ -32,12 +70,9 @@ export interface UpdateManifest {
   readonly rollout: readonly RolloutBatch[];
 }
 
-export interface UpdateCache {
+export interface UpdateCache extends UpdateFeed {
   readonly source: 'cdn';
   readonly checkedAt: string | null;
-  readonly latest: string | null;
-  /** Null when the manifest came from the plain-text fallback or a legacy cache file. */
-  readonly manifest: UpdateManifest | null;
 }
 
 export interface UpdateInstallActive {
@@ -64,12 +99,13 @@ export interface UpdateInstallState {
   readonly lastSuccess: UpdateInstallSuccess | null;
 }
 
-export type UpdateDecision = 'none' | 'prompt-install' | 'manual-command';
+export type UpdatePromptAction = 'none' | 'prompt-install' | 'manual-command';
 export type UpdatePreflightResult = 'continue' | 'exit';
 
 export function emptyUpdateCache(): UpdateCache {
   return {
     source: 'cdn',
+    channel: 'stable',
     checkedAt: null,
     latest: null,
     manifest: null,

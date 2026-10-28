@@ -15,6 +15,8 @@ export type {
   PromptOrigin,
   CronTask,
 } from '@moonshot-ai/agent-core-v2';
+export type { ContentPart as CoreContentPart } from '@moonshot-ai/agent-core-v2/human/llm/message';
+export { mediaUrlOf } from '@moonshot-ai/agent-core-v2/human/llm/protocol/kit/media';
 export { WIRE_PROTOCOL_VERSION } from '@moonshot-ai/agent-core-v2/wire/migration/migration';
 export type {
   AgentTaskInfo as BackgroundTaskInfo,
@@ -45,6 +47,8 @@ import type {
   InterruptionReminderRecorded,
   LlmRequest,
   LlmToolsSnapshot,
+  McpServerFailed,
+  McpServerFailureResolved,
   McpToolsDiscovered,
   PlanModeCancel,
   PlanModeEnter,
@@ -188,6 +192,8 @@ export type AgentRecord =
   | WireRecordOf<'interruptionReminder.recorded', InterruptionReminderRecorded>
   | WireRecordOf<'llm.request', LlmRequest>
   | WireRecordOf<'llm.tools_snapshot', LlmToolsSnapshot>
+  | WireRecordOf<'mcp.server_failed', McpServerFailed>
+  | WireRecordOf<'mcp.server_failure_resolved', McpServerFailureResolved>
   | WireRecordOf<'mcp.tools_discovered', McpToolsDiscovered>
   | WireRecordOf<'permission.record_approval_result', PermissionRecordApprovalResult>
   | WireRecordOf<'permission.set_mode', PermissionSetMode>

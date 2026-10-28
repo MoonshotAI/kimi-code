@@ -9,11 +9,19 @@ import {
 
 function makeSwarmHandler() {
   const requestRender = vi.fn();
+  const programStatus = {
+    startSubagent: vi.fn(),
+    touchSubagent: vi.fn(),
+    completeSubagent: vi.fn(),
+    failSubagent: vi.fn(),
+    cancelSubagent: vi.fn(),
+  };
   const transcriptContainer = { addChild: vi.fn() };
   const dockChild = { render: vi.fn(() => ['dock line']) };
   const host = {
+    programStatus,
     state: {
-      appState: { availableModels: {} },
+      appState: { availableModels: {}, swarmMode: true },
       ui: {
         requestRender,
         terminal: { rows: 40, columns: 120 },
@@ -40,7 +48,7 @@ function makeSwarmHandler() {
     backgroundTaskTerminalEntries: new Map(),
     syncBackgroundAgentBadge: vi.fn(),
   });
-  return { handler, host, requestRender, transcriptContainer, dockChild };
+  return { handler, host, programStatus, requestRender, transcriptContainer, dockChild };
 }
 
 function swarmComponentOf(transcriptContainer: { addChild: ReturnType<typeof vi.fn> }) {
@@ -162,6 +170,22 @@ describe('SubAgentEventHandler — subagent.cancelled', () => {
     const output = component.render(120).join('\n');
     expect(output).toContain('⊘');
     expect(output).toContain('hello');
+  });
+});
+
+describe('SubAgentEventHandler — program status', () => {
+  it('reports foreground spawn and completion with the task description', () => {
+    const { handler, programStatus } = makeSwarmHandler();
+
+    handler.handleLifecycleEvent(lifecycleEvent('subagent.spawned', 'child-1', 'tc-1'));
+    expect(programStatus.startSubagent).toHaveBeenCalledWith({
+      agentId: 'child-1',
+      title: 'task child-1',
+      taskId: undefined,
+    });
+
+    handler.handleLifecycleEvent(lifecycleEvent('subagent.completed', 'child-1', 'tc-1'));
+    expect(programStatus.completeSubagent).toHaveBeenCalledWith('child-1');
   });
 });
 

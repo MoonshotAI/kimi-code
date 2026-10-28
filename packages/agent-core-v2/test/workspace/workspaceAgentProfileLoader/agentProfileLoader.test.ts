@@ -121,7 +121,7 @@ function workspaceContextStub(workDir: string): IWorkspaceContext {
     workspaceId: 'wd_test',
     cwd: workDir,
     source: 'local',
-    meta: { id: 'wd_test', root: workDir, name: 'test', createdAt: 0, lastOpenedAt: 0 },
+    meta: { id: 'wd_test', root: workDir, name: 'test', kind: 'implicit', createdAt: 0, lastOpenedAt: 0 },
     persistenceScope: 'sessions/wd_test',
   };
 }

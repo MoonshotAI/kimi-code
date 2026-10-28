@@ -26,7 +26,9 @@ function startsNewTurn(message: ContextMessage): boolean {
   }
 }
 
-function isToolCallRound(message: ContextMessage): boolean {
+function isToolCallRound(
+  message: ContextMessage,
+): message is Extract<ContextMessage, { readonly role: 'assistant' }> {
   return message.role === 'assistant' && message.toolCalls.length > 0;
 }
 

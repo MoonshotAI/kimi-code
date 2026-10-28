@@ -34,8 +34,8 @@ describe('loop-event fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : undefined,
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       note: m.note,
       durationMs: m.durationMs,
@@ -53,7 +53,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'lookup result' }],
-          toolCalls: [],
           toolCallId: 'c1',
           isError: false,
           durationMs: 42,
@@ -66,7 +65,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'other result' }],
-          toolCalls: [],
           toolCallId: 'c2',
           isError: false,
         },
@@ -125,7 +123,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'boom' }],
-          toolCalls: [],
           toolCallId: 'c2',
           isError: true,
         },
@@ -158,8 +155,8 @@ describe('loop-event fold parity', () => {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
-      toolCalls: m.toolCalls,
-      toolCallId: m.toolCallId,
+      toolCalls: m.role === 'assistant' ? m.toolCalls : undefined,
+      toolCallId: m.role === 'tool' ? m.toolCallId : undefined,
       isError: m.isError,
       partial: m.partial,
     }));
@@ -219,7 +216,7 @@ describe('loop-event fold parity', () => {
       {
         role: 'tool',
         content: expect.any(Array),
-        toolCalls: [],
+        toolCalls: undefined,
         toolCallId: 'c1',
         isError: true,
         partial: undefined,
@@ -415,8 +412,7 @@ describe('loop-event fold parity', () => {
       {
         role: 'tool',
         content: expect.any(Array),
-        toolCalls: [],
-        toolCallId: 'c1',
+          toolCallId: 'c1',
         isError: true,
         partial: undefined,
       },
@@ -434,7 +430,6 @@ describe('loop-event fold parity', () => {
         {
           role: 'tool',
           content: [{ type: 'text', text: 'result text' }],
-          toolCalls: [],
           toolCallId: 'c3',
           isError: false,
           note: '<system>Image compressed.</system>',
@@ -469,7 +464,7 @@ describe('loop-event fold parity', () => {
   });
 
   it('matches immutable output while reusing the state array in mutable mode', () => {
-    const user: ContextMessage = { role: 'user', content: [{ type: 'text', text: 'go' }], toolCalls: [] };
+    const user: ContextMessage = { role: 'user', content: [{ type: 'text', text: 'go' }] };
     let actual = foldAppendMessage([], user, true);
     let expected = foldAppendMessage([], user);
     const restored = actual;
@@ -506,7 +501,6 @@ describe('loop-event fold parity', () => {
     const deferred: ContextMessage = {
       role: 'user',
       content: [{ type: 'text', text: 'deferred' }],
-      toolCalls: [],
     };
     actual = foldAppendMessage(actual, deferred, true);
     expected = foldAppendMessage(expected, deferred);

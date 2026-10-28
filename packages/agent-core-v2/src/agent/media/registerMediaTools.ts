@@ -1,4 +1,4 @@
-import type { ModelCapability } from '#human/llm/capability';
+import type { ModelCapability } from '#human/llm-requester/capability';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';

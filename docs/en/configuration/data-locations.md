@@ -72,7 +72,7 @@ Each top-level file under the data root serves a specific purpose; most are mana
 
 ## Session data
 
-Each session's data is stored under `sessions/<workDirKey>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`). `workDirKey` is a bucket name derived from the working directory path, in the format `wd_<slug>_<first-12-chars-of-sha256>`.
+Each session's data is stored under `sessions/<workspaceId>/<sessionId>/`, and a top-level `session_index.jsonl` index is maintained (one record per line, each containing `sessionId`, `sessionDir`, and `workDir`). For an implicit workspace, `workspaceId` is a bucket name derived from the working directory path, in the format `wd_<slug>_<first-12-chars-of-sha256>`. For a managed workspace (a project created explicitly), `workspaceId` is the generated `wm_<uuid>`.
 
 Inside each session directory:
 

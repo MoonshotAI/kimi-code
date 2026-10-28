@@ -104,7 +104,7 @@ describeLive('DaemonClient (live server required)', () => {
     created.push({ client, sid: session.id });
     log('created session', session);
     await client.connect();
-    log('subscribe request', { type: 'subscribe', session_ids: [session.id] });
+    log('subscribe request', { type: 'subscribe_v2', session_id: session.id });
     await expect(client.subscribe(session.id)).resolves.toBeUndefined();
     log('subscribe accepted', { session_id: session.id });
   });
@@ -231,7 +231,7 @@ describeLive('DaemonClient (live server required)', () => {
             },
           ],
         },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       successLog('seed prompt completed', {
         prompt_id: promptResult.prompt_id,
@@ -253,14 +253,13 @@ describeLive('DaemonClient (live server required)', () => {
         body: populatedCompactRequest,
       });
 
-      const completedPromise = client.waitForFrame(
-        (f) => f.type === 'compaction.completed' && f.session_id === populated.id,
+      const compaction = await client.runUntilIdle(
+        populated.id,
+        () => client.compactSession(populated.id, populatedCompactRequest),
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
-      const compactResponse = await client.compactSession(populated.id, populatedCompactRequest);
-      successLog('rest response', compactResponse);
-      const completedFrame = await completedPromise;
-      successLog('compaction completed frame', frameForLog(completedFrame));
+      successLog('rest response', compaction.result);
+      successLog('compaction idle frame', frameForLog(compaction.finalFrame));
 
       const afterCompact = await client.listMessages(populated.id, { page_size: 100 });
       successLog('messages after compact', afterCompact);
@@ -294,7 +293,7 @@ describeLive('DaemonClient (live server required)', () => {
       const keepPrompt = await client.submitAndWait(
         session.id,
         { content: [{ type: 'text', text: 'Remember KEEP. Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('keep prompt completed', {
         prompt_id: keepPrompt.prompt_id,
@@ -305,7 +304,7 @@ describeLive('DaemonClient (live server required)', () => {
       const undoPrompt = await client.submitAndWait(
         session.id,
         { content: [{ type: 'text', text: 'Remember UNDO-ME. Reply with "OK".' }] },
-        { waitFor: 'prompt.completed', timeoutMs: PROMPT_TIMEOUT_MS },
+        { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       log('undo prompt completed', {
         prompt_id: undoPrompt.prompt_id,
@@ -470,8 +469,8 @@ describe('DaemonClient session action helpers', () => {
     expect(parseRecordedJsonBody(calls[2])).toEqual({});
   });
 
-  it('child-session and pending reverse-RPC helpers call recovery routes', async () => {
-    const log = createCaseLogger('client helper: children + pending');
+  it('child-session and interaction helpers call recovery routes', async () => {
+    const log = createCaseLogger('client helper: children + interactions');
     const calls: FetchCall[] = [];
     const child = testSession({ id: 'sess_child', title: 'Child session' });
     const client = new DaemonClient({
@@ -480,9 +479,7 @@ describe('DaemonClient session action helpers', () => {
         [
           okEnvelope(child),
           okEnvelope({ items: [child], has_more: false }),
-          okEnvelope({ items: [] }),
-          okEnvelope({ items: [] }),
-          okEnvelope({ dismissed: true, dismissed_at: '2026-06-09T00:00:00.000Z' }),
+          okEnvelope({ outcome: 'dismissed', ended_at: '2026-06-09T00:00:00.000Z' }),
         ],
         calls,
       ),
@@ -497,26 +494,24 @@ describe('DaemonClient session action helpers', () => {
     await expect(
       client.listChildren('sess_parent', { page_size: 5, busy: false }),
     ).resolves.toEqual({ items: [child], has_more: false });
-    await expect(client.listPendingApprovals('sess_parent')).resolves.toEqual({ items: [] });
-    await expect(client.listPendingQuestions('sess_parent')).resolves.toEqual({ items: [] });
-    await expect(client.dismissQuestion('sess_parent', 'question_1')).resolves.toEqual({
-      dismissed: true,
-      dismissed_at: '2026-06-09T00:00:00.000Z',
+    await expect(
+      client.respondInteraction('sess_parent', 'question_1', { kind: 'question', dismissed: true }),
+    ).resolves.toEqual({
+      outcome: 'dismissed',
+      ended_at: '2026-06-09T00:00:00.000Z',
     });
 
     log('fetch calls', calls);
     expect(calls.map((call) => [call.init.method, call.url])).toEqual([
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/children'],
       ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/children?page_size=5&busy=false'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/approvals?status=pending'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/questions?status=pending'],
-      ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/questions/question_1:dismiss'],
+      ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/interactions/question_1'],
     ]);
     expect(parseRecordedJsonBody(calls[0])).toEqual({
       title: 'Child session',
       metadata: { topic: 'side-question' },
     });
-    expect(parseRecordedJsonBody(calls[4])).toEqual({});
+    expect(parseRecordedJsonBody(calls[2])).toEqual({ kind: 'question', dismissed: true });
   });
 
   it('uploadFile posts multipart form data and deleteFile hits the file route', async () => {
@@ -609,7 +604,6 @@ function okEnvelope<T>(data: T): { code: 0; msg: string; data: T; request_id: st
 
 function frameForLog(frame: {
   type: string;
-  seq?: number;
   session_id?: string;
   id?: string;
   code?: number;
@@ -618,7 +612,6 @@ function frameForLog(frame: {
 }): Record<string, unknown> {
   return {
     type: frame.type,
-    seq: frame.seq,
     session_id: frame.session_id,
     id: frame.id,
     code: frame.code,
@@ -649,7 +642,6 @@ function testSession(overrides: Partial<Session> = {}): Session {
     },
     permission_rules: [],
     message_count: 0,
-    last_seq: 0,
   };
   return {
     ...base,

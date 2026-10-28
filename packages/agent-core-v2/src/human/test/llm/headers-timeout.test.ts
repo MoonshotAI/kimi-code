@@ -1,13 +1,17 @@
+import OpenAI from 'openai';
 import { describe, expect, it, vi } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { createUserMessage, type Message } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
-import { LLM_HEADERS_TIMEOUT_ENV } from '#/llm/requester/timeout';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import { createOpenAIResponsesRequester } from '#/llm/requester/bases/openai-responses/requester';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { createUserMessage, type Message } from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
+import { LLM_HEADERS_TIMEOUT_ENV } from '#/llm-requester/timeout';
+import { createAnthropicRequester } from '#/llm-requester/factories';
+import { createGoogleGenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import { createOpenAIResponsesRequester } from '#/llm-requester/factories';
+import { createProviderCatalog } from '#/provider-catalog/catalog';
+import { anthropicProvider, openaiProvider } from '#/provider-catalog/provider/providers/standard';
 
 const model: LlmModel = {
   provider: 'test',
@@ -26,6 +30,9 @@ const openAISse = [
 ].join('\n');
 
 const responsesSse = [
+  'event: response.output_text.delta',
+  'data: {"type":"response.output_text.delta","delta":"hi"}',
+  '',
   'event: response.completed',
   'data: {"type":"response.completed","response":{"id":"resp_1","status":"completed","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}}',
   '',
@@ -54,10 +61,19 @@ const anthropicSse = [
   '',
 ].join('\n');
 
-async function generate(requester: LlmRequester): Promise<LlmRequestEvent[]> {
+const googleSse = [
+  'data: {"candidates":[{"content":{"role":"model","parts":[{"text":"hi"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1}}',
+  '',
+  '',
+].join('\n');
+
+async function generate(
+  requester: LlmRequester,
+  requestModel: LlmModel = model,
+): Promise<LlmRequestEvent[]> {
   const events: LlmRequestEvent[] = [];
   await requester.generate(
-    { model },
+    { model: requestModel },
     { messages },
     { signal: new AbortController().signal, onEvent: (event) => events.push(event) },
   );
@@ -65,7 +81,7 @@ async function generate(requester: LlmRequester): Promise<LlmRequestEvent[]> {
 }
 
 describe('default client headers timeout', () => {
-  it('passes the configured headers-timeout dispatcher to fetch and fails the request on invalid values', async () => {
+  it('scopes headers-timeout dispatch and invalid-value failures to supported default clients', async () => {
     const proxyEnvKeys = [
       'http_proxy',
       'HTTP_PROXY',
@@ -91,10 +107,10 @@ describe('default client headers timeout', () => {
     vi.stubGlobal('fetch', fetchStub);
     try {
       const protocols = [
-        { create: () => createOpenAIRequester(), sse: openAISse },
-        { create: () => createOpenAIResponsesRequester(), sse: responsesSse },
-        { create: () => createAnthropicRequester(), sse: anthropicSse },
-      ];
+        { name: 'openai', create: () => createOpenAIRequester(), provider: openaiProvider, sse: openAISse },
+        { name: 'openai_responses', create: () => createOpenAIResponsesRequester(), provider: openaiProvider, sse: responsesSse },
+        { name: 'anthropic', create: () => createAnthropicRequester(), provider: anthropicProvider, sse: anthropicSse },
+      ] as const;
       let calls = 0;
       for (const protocol of protocols) {
         currentSse = protocol.sse;
@@ -110,6 +126,22 @@ describe('default client headers timeout', () => {
         expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
         expect(fetchStub).toHaveBeenCalledTimes(calls);
         expect(fetchStub.mock.calls[calls - 1]?.[1]).toHaveProperty('dispatcher');
+
+        const catalog = await createProviderCatalog();
+        catalog.upsert({
+          provider: protocol.provider,
+          models: [
+            { ...model, provider: protocol.provider.id, protocol: protocol.name, apiKey: 'test' },
+          ],
+        });
+        catalog.ping(protocol.provider.id, model.model);
+        const expectedCalls = calls + 1;
+        await vi.waitFor(() => {
+          expect(fetchStub).toHaveBeenCalledTimes(expectedCalls);
+        });
+        calls = expectedCalls;
+        expect(fetchStub.mock.calls[calls - 1]?.[1]).toHaveProperty('dispatcher');
+        catalog.stop();
         delete process.env[LLM_HEADERS_TIMEOUT_ENV];
       }
 
@@ -130,11 +162,53 @@ describe('default client headers timeout', () => {
       delete process.env['ALL_PROXY'];
 
       process.env[LLM_HEADERS_TIMEOUT_ENV] = 'abc';
-      let events = await generate(createOpenAIRequester());
-      expect(events.at(-1)).toMatchObject({
-        type: 'llm.failed.remote',
-        error: { message: expect.stringContaining(LLM_HEADERS_TIMEOUT_ENV) },
+      currentSse = openAISse;
+      let events = await generate(
+        createOpenAIRequester({
+          clientFactory: () =>
+            new OpenAI({
+              apiKey: 'test',
+              baseURL: model.baseUrl,
+              maxRetries: 0,
+              fetch: fetchStub as typeof fetch,
+            }),
+        }),
+      );
+      calls += 1;
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+      expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
+
+      currentSse = googleSse;
+      events = await generate(createGoogleGenAIRequester(), { ...model, apiKey: 'test' });
+      calls += 1;
+      expect(events.at(-1)).toMatchObject({ type: 'llm.done' });
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+      expect(fetchStub.mock.calls[calls - 1]?.[1]).not.toHaveProperty('dispatcher');
+
+      for (const protocol of protocols) {
+        currentSse = protocol.sse;
+        events = await generate(protocol.create());
+        expect(events.at(-1)).toMatchObject({
+          type: 'llm.failed.remote',
+          error: { message: expect.stringContaining(LLM_HEADERS_TIMEOUT_ENV) },
+        });
+      }
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+
+      const invalidCatalog = await createProviderCatalog();
+      invalidCatalog.upsert({
+        provider: openaiProvider,
+        models: [{ ...model, provider: openaiProvider.id, protocol: 'openai', apiKey: 'test' }],
       });
+      invalidCatalog.ping(openaiProvider.id, model.model);
+      await vi.waitFor(() => {
+        expect(invalidCatalog.models(openaiProvider.id).at(0)?.pingError).toContain(
+          LLM_HEADERS_TIMEOUT_ENV,
+        );
+      });
+      expect(fetchStub).toHaveBeenCalledTimes(calls);
+      invalidCatalog.stop();
 
       process.env[LLM_HEADERS_TIMEOUT_ENV] = '3000000000';
       events = await generate(createOpenAIRequester());
@@ -144,6 +218,7 @@ describe('default client headers timeout', () => {
       });
 
       process.env[LLM_HEADERS_TIMEOUT_ENV] = '45000';
+      currentSse = openAISse;
       process.env['HTTP_PROXY'] = 'not-a-url';
       events = await generate(createOpenAIRequester());
       calls += 1;

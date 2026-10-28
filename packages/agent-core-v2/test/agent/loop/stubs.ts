@@ -147,7 +147,6 @@ export function stubLoopWithHooks(options: StubLoopOptions = {}): StubLoop {
       const id = input.meta?.promptId ?? 'p';
       const message: ContextMessage = {
         ...input.message,
-        toolCalls: [],
         origin: input.meta?.origin as PromptOrigin | undefined,
       };
       pending.push({ kind: 'prompt', message, onConsume: options?.onMaterialize });

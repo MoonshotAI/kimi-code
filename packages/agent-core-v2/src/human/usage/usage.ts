@@ -1,5 +1,5 @@
-import { modelKey, type LlmModel } from '#/llm/model';
-import { emptyUsage, type TokenUsage } from '#/llm/usage';
+import { modelKey, type LlmModel } from '#/llm-requester/model';
+import { emptyUsage, type TokenUsage } from '#/llm-requester/usage';
 
 export interface UsageRecord {
   usage: Partial<TokenUsage>;

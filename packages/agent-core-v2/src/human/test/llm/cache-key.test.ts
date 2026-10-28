@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
-import { createUserMessage, type Message } from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import { createAnthropicRequester } from '#/llm/requester/bases/anthropic/requester';
-import { createOpenAIRequester } from '#/llm/requester/bases/openai/requester';
-import type { LlmClientContext } from '#/llm/requester/requester';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
+import { createKimiOpenAIRequester } from '#/llm-requester/factories';
+import { createUserMessage, type Message } from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import { createAnthropicRequester } from '#/llm-requester/factories';
+import { createOpenAIRequester } from '#/llm-requester/factories';
+import type { LlmClientContext } from '#/llm-requester/requester';
 
 const model: LlmModel = {
   provider: 'test',
@@ -121,10 +122,9 @@ describe('openai requester cacheKey', () => {
     expect(client.body()['extra_body']).toEqual({ trace_id: 't1' });
   });
 
-  it('lets a trait override the cache key params', async () => {
+  it('encodes the cache key as prompt_cache_key for the kimi requester', async () => {
     const client = stubOpenAIClient(chatCompletionChunks);
-    const requester = createOpenAIRequester({
-      trait: { encodeCacheKey: (key) => ({ custom_cache: key }) },
+    const requester = createKimiOpenAIRequester({
       clientFactory: client.clientFactory,
     });
     await requester.generate(
@@ -132,8 +132,7 @@ describe('openai requester cacheKey', () => {
       { messages },
       { signal: new AbortController().signal },
     );
-    expect(client.body()['custom_cache']).toBe('session-1');
-    expect(client.body()['prompt_cache_key']).toBeUndefined();
+    expect(client.body()['prompt_cache_key']).toBe('session-1');
   });
 
   it('omits prompt_cache_key when no cache key is given', async () => {

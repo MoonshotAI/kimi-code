@@ -103,16 +103,16 @@ After Kimi Code restarts, if another session takes over the current project, the
 
 Tower is mutually exclusive with Goal, Plan, and swarm modes. Entering Tower exits Plan or swarm and pauses the active goal; activating a goal or entering Plan or swarm also exits Tower. Tower state remains on disk, and you can return later with `/tower on`.
 
-Workers and reviewers follow different default model-selection rules. Without `[secondary_model]`, both use Tower's current primary model. Once it is configured, newly spawned workers use `default_model`, while **reviewers continue to use the primary model**; however, when `[secondary_model].force = true`, reviewers also use `default_model`. The pool default is therefore the worker default, not the reviewer default. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
+Workers and reviewers follow different default model-selection rules. Without `[secondary_model]`, both use Tower's current primary model. Once it is configured, newly spawned workers use `default_model`, while **reviewers continue to use the primary model**. The pool default is therefore the worker default, not the reviewer default. See [Subagent model pool](../configuration/config-files.md#subagent-model-pool) for configuration details.
 
 You can explicitly choose the model for an individual new spawn in a normal message. For example, assuming `smart/slow` is configured in the pool:
 
 - "Spawn the worker agent-docs with smart/slow."
 - "Use primary for the reviewer of feat/build-gemm."
 
-The only allowed choices are `primary` (Tower's current primary model) and aliases configured in `[secondary_model.models]`; aliases that exist only in `[models]` are not accepted. The choice applies only to that new agent: it does not change running or resumed agents and is not saved for future spawns. When `[secondary_model].force = true`, the forced model remains a hard configuration constraint, and Tower rejects every explicit choice, including `primary`, rather than silently overriding it.
+The only allowed choices are `primary` (Tower's current primary model) and the pool aliases (`[secondary_model.models]` keys, or a lone `default_model`); aliases that exist only in `[models]` are not accepted. The choice applies only to that new agent: it does not change running or resumed agents and is not saved for future spawns.
 
-To control token costs, you can assign workers a cheaper secondary model. When `force = true` is not set, reviewers remain on the primary model by default, preserving budget for independent review.
+To control token costs, you can assign workers a cheaper secondary model. Reviewers remain on the primary model by default, preserving budget for independent review; ask for a pool alias explicitly to run a reviewer on a cheaper model.
 
 ## Safety and resource cost
 

@@ -73,7 +73,6 @@ import {
   buildSubagentModelDescriptions,
   exposesSubagentModelChoice,
   formatSubagentTimeoutDescription,
-  isSubagentModelForced,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
   stripSubagentForkParameter,
@@ -91,7 +90,7 @@ import {
   USER_INTERRUPTED_SUBAGENT_MESSAGE,
   type SubagentToolInput,
 } from './agent';
-import { SubagentTask, type SubagentHandle } from './subagent-task';
+import { NO_PARTIAL_OUTPUT, SubagentTask, type SubagentHandle } from './subagent-task';
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
 import AGENT_BACKGROUND_DESCRIPTION from './agent-background-enabled.md?raw';
@@ -185,10 +184,7 @@ export class SubagentTool implements ISubagentTool {
     if (typeLines) {
       description += `\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`;
     }
-    const modelLines = buildSubagentModelDescriptions(
-      this.config,
-      this.profile.data().modelAlias,
-    );
+    const modelLines = buildSubagentModelDescriptions(this.config);
     if (modelLines !== undefined) {
       description += `\n\n${modelLines}`;
     }
@@ -242,20 +238,8 @@ export class SubagentTool implements ISubagentTool {
   }
 
   private anySubagentModelSupports(supports: (capabilities: ModelCapability) => boolean): boolean {
-    if (isSubagentModelForced(this.config)) {
-      const forced = resolveSubagentModelPool(this.config)?.defaultModel;
-      if (forced === undefined) return false;
-      try {
-        const capabilities = this.modelCatalog.get(forced).capabilities;
-        return supports(capabilities);
-      } catch {
-        return false;
-      }
-    }
-    const own = this.profile.getModelCapabilities();
-    if (supports(own)) return true;
     const pool = resolveSubagentModelPool(this.config);
-    if (pool === undefined) return false;
+    if (pool === undefined) return supports(this.profile.getModelCapabilities());
     for (const alias of Object.keys(pool.models)) {
       try {
         const capabilities = this.modelCatalog.get(alias).capabilities;
@@ -395,6 +379,7 @@ export class SubagentTool implements ISubagentTool {
         usage: r.usage,
         stopReason: r.stopReason,
       })),
+      partialOutput: run.partialOutput,
     };
   }
 
@@ -594,7 +579,12 @@ export class SubagentTool implements ISubagentTool {
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
       : formatSubagentStoppedMessage(info?.stopReason);
     return {
-      output: formatForegroundAgentFailure(handle, message, failureStopReason(info, stopCode)),
+      output: formatForegroundAgentFailure(
+        handle,
+        message,
+        failureStopReason(info, stopCode),
+        await this.tasks.readOutput(taskId),
+      ),
       isError: true,
     };
   }
@@ -767,6 +757,7 @@ function formatForegroundAgentFailure(
   handle: SubagentHandle,
   message: string,
   reason: SubagentStopReason,
+  partialOutput: string,
 ): string {
   const lines = [
     `agent_id: ${handle.agentId}`,
@@ -775,6 +766,9 @@ function formatForegroundAgentFailure(
     `stop_reason: ${reason}`,
     '',
     `subagent error: ${message}`,
+    '',
+    partialOutput.length > 0 ? partialOutput : NO_PARTIAL_OUTPUT,
+    '',
   ];
   if (reason !== 'cancelled') lines.push(resumeHint(handle.agentId, 'continue'));
   const next = nextStep(reason);
