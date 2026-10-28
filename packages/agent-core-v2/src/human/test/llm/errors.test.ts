@@ -98,6 +98,20 @@ describe('convertOpenAIError', () => {
     });
   });
 
+  it('classifies a structured context code before the HTTP fallback', () => {
+    const raw = new RawOpenAISDKAPIError(
+      400,
+      { code: 'context_length_exceeded' },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    expect(convertOpenAIError(raw)).toMatchObject({
+      kind: 'context_overflow',
+      message: '',
+      statusCode: 400,
+    });
+  });
+
   it('maps context overflow messages to context_overflow', () => {
     const raw = new RawOpenAISDKAPIError(
       400,
@@ -747,6 +761,19 @@ describe('Anthropic error decoding', () => {
       statusCode: 503,
       retryAfterMs: 4000,
     });
+  });
+
+  it('classifies a structured context code without exposing a stream status', () => {
+    const raw = new RawAnthropicSDKAPIError(
+      400,
+      { error: { type: 'context_length_exceeded' } },
+      'SDK-composed fallback',
+      new Headers(),
+    );
+    const converted = convertAnthropicError(raw, 'stream');
+    expect(converted).toMatchObject({ kind: 'context_overflow', message: '' });
+    expect(converted.statusCode).toBeUndefined();
+    expect(isRetryableError(converted)).toBe(false);
   });
 
   it('preserves diagnostics for an unknown stream business code', () => {

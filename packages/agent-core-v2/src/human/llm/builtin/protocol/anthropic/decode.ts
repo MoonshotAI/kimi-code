@@ -259,6 +259,9 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     ) {
       return { kind: 'rate_limit', message, statusCode, ...statusInfo };
     }
+    if (type === 'context_length_exceeded') {
+      return { kind: 'context_overflow', message, statusCode, ...statusInfo };
+    }
     if (statusCode !== undefined) {
       return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
     }

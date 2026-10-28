@@ -411,13 +411,13 @@ export function decodeError(error: unknown, source?: 'stream'): LlmRemoteErrorMe
     if (isOpenAIOverloadedErrorCode(code) || isOpenAIOverloadedErrorCode(type)) {
       return { kind: 'overloaded', message, statusCode, ...statusInfo };
     }
+    if (isContextOverflowErrorCode(code) || isContextOverflowErrorCode(type)) {
+      return { kind: 'context_overflow', message, statusCode, ...statusInfo };
+    }
     if (statusCode !== undefined) {
       return toLlmStatusErrorMessage({ statusCode, message, ...statusInfo });
     }
     if (error.error !== undefined) {
-      if (isContextOverflowErrorCode(code) || isContextOverflowErrorCode(type)) {
-        return { kind: 'context_overflow', message, ...statusInfo };
-      }
       if (isOpenAIRateLimitErrorCode(code) || isOpenAIRateLimitErrorCode(type)) {
         return { kind: 'rate_limit', message, ...statusInfo };
       }
