@@ -584,39 +584,6 @@ describe("Webview config saves (thinking effort persistence parity with the TUI)
     } as never);
   }
 
-  it("rejects a selection that disappeared before the config save", async () => {
-    mockConfig();
-
-    const result = await bridge.handle(
-      { id: "rpc-stale", method: Methods.SaveConfig, params: { model: "removed-model", thinking: true, effort: "high" } },
-      "view-1",
-    );
-
-    expect(result).toMatchObject({ id: "rpc-stale", error: expect.stringContaining("no longer available") });
-    expect(host.harness.setConfig).not.toHaveBeenCalled();
-  });
-
-  it("normalizes a stale effort against the refreshed model before saving", async () => {
-    host.harness.getConfig.mockResolvedValue({
-      providers: { "managed:kimi-code": { type: "kimi" } },
-      defaultModel: "kimi/reasoning",
-      thinking: { enabled: true, effort: "high" },
-      models: {
-        "kimi/reasoning": { ...effortModel, supportEfforts: ["low"], defaultEffort: "low" },
-      },
-    } as never);
-
-    await bridge.handle(
-      { id: "rpc-effort", method: Methods.SaveConfig, params: { model: "kimi/reasoning", thinking: true, effort: "high" } },
-      "view-1",
-    );
-
-    expect(host.harness.setConfig).toHaveBeenCalledWith({
-      defaultModel: "kimi/reasoning",
-      thinking: { enabled: true, effort: "low" },
-    });
-  });
-
   it("persists a non-top effort as the global default", async () => {
     mockConfig();
 

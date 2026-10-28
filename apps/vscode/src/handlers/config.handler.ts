@@ -13,7 +13,6 @@ import type {
   ModelConfig,
   SlashCommandInfo,
 } from "../../shared/legacy-sdk";
-import { resolveThinkingEffortForSend } from "../../shared/model-resolution";
 import type { ExtensionConfig, SessionConfig } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
 import type { Handler } from "./types";
@@ -39,24 +38,19 @@ const SLASH_COMMANDS: SlashCommandInfo[] = [
 ];
 
 const saveConfig: Handler<SessionConfig, { ok: boolean }> = async (params, ctx) => {
-  const requestedEffort = sessionConfigEffort(params);
+  const effort = sessionConfigEffort(params);
   const effortChanged = params.effortChanged !== false;
   const config = await ctx.harness.getConfig({ reload: true });
   const model = config.models?.[params.model];
-  if (model === undefined) {
-    throw new Error("The selected model is no longer available. Choose another model before saving.");
-  }
   // Resolve with the provider type the way the TUI's effectiveModelForHost
   // does: without it the Anthropic fallback profile (e.g. `claude-latest`)
   // never matches, so the inferred default that gates persistence is missed.
-  const providerType = config.providers?.[model.provider]?.type ?? model.protocol;
-  const effort = resolveThinkingEffortForSend(
-    toWebviewModel(params.model, model, providerType),
-    requestedEffort,
-    config.thinking?.enabled !== false,
-    config.thinking?.effort,
-  ) as ThinkingEffort;
-  const full = thinkingConfig(effort, effectiveModelAlias(model, providerType));
+  const providerType =
+    model === undefined ? undefined : (config.providers?.[model.provider]?.type ?? model.protocol);
+  const full = thinkingConfig(
+    effort,
+    model === undefined ? undefined : effectiveModelAlias(model, providerType),
+  );
   // Re-confirming the effort already shown is not an explicit choice —
   // persist the model but leave the stored effort preference alone (the TUI's
   // persistModelSelection rule).
