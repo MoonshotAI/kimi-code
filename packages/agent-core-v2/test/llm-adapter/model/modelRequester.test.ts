@@ -290,6 +290,28 @@ describe('ModelRequesterImpl request execution', () => {
       usage: { inputCacheRead: 0 },
       cacheReadReported: true,
     });
+
+    const retryRequester = new FakeLlmRequester();
+    retryRequester.handler = (_i, emit) =>
+      emitAll(emit, [
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.usage', usage: { inputCacheRead: 100 } },
+        { type: 'llm.request.retrying' },
+        { type: 'llm.sent' },
+        { type: 'llm.streaming.part', part: { type: 'text', text: 'retry' } },
+        { type: 'llm.streaming.usage', usage: { inputOther: 10 } },
+        { type: 'llm.streaming.finish', finish: { finishReason: 'completed', rawFinishReason: 'stop' } },
+        { type: 'llm.done' },
+      ]);
+    const retryImpl = new ModelRequesterImpl(
+      modelWith(createStaticCredentialProvider()),
+      gatewayReturning(retryRequester),
+    );
+    const retryEvents = await collect(retryImpl.request(INPUT));
+    expect(retryEvents.find((event) => event.type === 'usage')).toMatchObject({
+      usage: { inputOther: 10, inputCacheRead: 0 },
+      cacheReadReported: false,
+    });
   });
 
   it('surfaces a 401 as provider.auth_error without replaying', async () => {

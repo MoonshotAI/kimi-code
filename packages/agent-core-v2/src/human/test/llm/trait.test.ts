@@ -2437,6 +2437,31 @@ describe('google genai base', () => {
     expect(functionPart?.rawId).toBeUndefined();
     expect(finish).toEqual({ finishReason: 'completed', rawFinishReason: 'STOP' });
     expect(messageId).toBe('gemini-resp-1');
+
+    const missingCacheClient = stubGoogleClient([
+      {
+        candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+        usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 },
+      },
+    ]);
+    let missingCacheUsage: TokenUsage | undefined;
+    await createGoogleGenAIRequester({ clientFactory: missingCacheClient.clientFactory }).generate(
+      { model: { ...model, model: 'gemini-2.5-flash', apiKey: 'test-key' } },
+      { messages: [createUserMessage('hi')] },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.usage') missingCacheUsage = event.usage;
+        },
+      },
+    );
+    expect(missingCacheUsage).toEqual({
+      inputOther: 10,
+      output: 5,
+      inputCacheRead: undefined,
+      inputCacheCreation: 0,
+      raw: { promptTokenCount: 10, candidatesTokenCount: 5 },
+    });
   });
 
   it.each(['gemini-3-pro-preview', 'gemini-4-argon'])(
