@@ -350,11 +350,11 @@ function scopedFs(base: string, realBase: string, inner: IHostFileSystem, additi
     readLines: (path, options) => { assert(path); return inner.readLines(path, options); },
     createExclusive: (path, data) => { assert(path); return inner.createExclusive(path, data); },
     stat: (path) => { assert(path); return inner.stat(path); },
-    lstat: (path) => { assert(path); return inner.lstat(path); },
+    lstat: inner.lstat.bind(inner),
     readdir: (path) => { assert(path); return inner.readdir(path); },
     mkdir: (path, options) => { assert(path); return inner.mkdir(path, options); },
     remove: (path) => { assert(path); return inner.remove(path); },
-    realpath: (path) => { assert(path); return inner.realpath(path); },
+    realpath: inner.realpath.bind(inner),
   };
 }
 
