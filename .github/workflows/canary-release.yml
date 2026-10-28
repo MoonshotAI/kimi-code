@@ -34,6 +34,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: pnpm/action-setup@v6
       - uses: actions/setup-node@v6
         with:
           node-version-file: .nvmrc
@@ -42,6 +43,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/canary-release.mjs select
+      - name: Install dependencies
+        if: steps.select.outputs.skip == 'false'
+        run: pnpm install --frozen-lockfile
       - name: Compute canary version
         id: version
         if: steps.select.outputs.skip == 'false'
