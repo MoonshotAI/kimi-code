@@ -16,6 +16,11 @@ import type {
 
 type PendingVetoFactory = () => Promise<BeforeExecuteDecision | undefined>;
 
+interface PendingVetoEntry {
+  readonly listener?: unknown;
+  readonly factory: PendingVetoFactory;
+}
+
 export function denyToolExecution(reason: string): ExecutableToolResult {
   return { output: reason, isError: true };
 }
@@ -33,7 +38,9 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   private _vetoResult: ExecutableToolResult | undefined;
   private _finalAllowed = false;
   private _passMetadata: unknown;
-  private readonly _pendingVetos: PendingVetoFactory[] = [];
+  private _updatedArgs: Record<string, unknown> | undefined;
+  private _currentListener: unknown;
+  private readonly _pendingVetos: PendingVetoEntry[] = [];
   private _open = true;
 
   constructor(context: ResolvedToolExecutionHookContext) {
@@ -62,9 +69,18 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this._passMetadata ??= metadata;
   }
 
+  updateArgs(args: Record<string, unknown>): void {
+    this.assertOpen('updateArgs');
+    this._updatedArgs = args;
+  }
+
+  setCurrentListener(listener: unknown): void {
+    this._currentListener = listener;
+  }
+
   waitUntil(factory: PendingVetoFactory): void {
     this.assertOpen('waitUntil');
-    this._pendingVetos.push(factory);
+    this._pendingVetos.push({ listener: this._currentListener, factory });
   }
 
   get vetoResult(): ExecutableToolResult | undefined {
@@ -79,7 +95,11 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     return this._passMetadata;
   }
 
-  get pendingVetos(): readonly PendingVetoFactory[] {
+  get updatedArgs(): Record<string, unknown> | undefined {
+    return this._updatedArgs;
+  }
+
+  get pendingVetos(): readonly PendingVetoEntry[] {
     return this._pendingVetos;
   }
 
@@ -97,6 +117,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
 export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
   async fireBeforeExecute(
     context: ResolvedToolExecutionHookContext,
+    skipListeners?: ReadonlySet<unknown>,
   ): Promise<BeforeExecuteDecision | undefined> {
     if (this.isDisposed || this._listeners === undefined || this._listeners.size === 0) {
       return undefined;
@@ -104,16 +125,27 @@ export class BeforeToolExecuteEmitter extends Emitter<BeforeToolExecuteEvent> {
 
     const event = new BeforeToolExecuteEventImpl(context);
     for (const entry of Array.from(this._listeners)) {
+      if (skipListeners?.has(entry)) continue;
+      event.setCurrentListener(entry);
       await entry.listener.call(entry.thisArg, event);
-      if (event.finalAllowed) return undefined;
       if (event.vetoResult !== undefined) return { veto: event.vetoResult };
+      if (event.updatedArgs !== undefined) {
+        return { updatedArgs: event.updatedArgs, updatedBy: entry };
+      }
+      if (event.finalAllowed) return undefined;
     }
     event.closeRegistration();
 
     let passMetadata = event.passMetadata;
-    for (const factory of event.pendingVetos) {
-      const decision = await factory();
+    for (const pending of event.pendingVetos) {
+      const decision = await pending.factory();
       if (decision?.veto !== undefined) return { veto: decision.veto };
+      if (decision?.updatedArgs !== undefined) {
+        return {
+          updatedArgs: decision.updatedArgs,
+          updatedBy: decision.updatedBy ?? pending.listener,
+        };
+      }
       passMetadata ??= decision?.executionMetadata;
     }
     return passMetadata === undefined ? undefined : { executionMetadata: passMetadata };

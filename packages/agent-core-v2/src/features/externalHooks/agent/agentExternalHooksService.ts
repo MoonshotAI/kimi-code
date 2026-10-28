@@ -7,16 +7,19 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentTaskService, type AgentTaskInfo, type AgentTaskNotificationContext } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
+import { USER_PROMPT_ORIGIN, type PromptOrigin } from '#/agent/contextMemory/types';
 import {
   IAgentFullCompactionService,
   type FullCompactionTask,
 } from '#/agent/fullCompaction/fullCompaction';
 import type { CompactionResult } from '#/agent/fullCompaction/types';
-import { IAgentLoopService, type AfterStepContext } from '#/agent/loop/loop';
-import { TurnStarted } from '#/agent/loop/turnEvents';
+import {
+  IAgentLoopService,
+  type AfterStepContext,
+  type PromptSubmitContext,
+} from '#/agent/loop/loop';
+import { TurnStarted, turnPromptText } from '#/agent/loop/turnEvents';
 import { TurnEnded } from '#/agent/loop/turnOps';
-import { type PromptSubmitContext } from '#/agent/loop/loop';
 import { PromptQueued } from '#/agent/prompt/promptEvents';
 import { TaskNotified, TaskStarted } from '#/agent/task/taskOps';
 import {
@@ -26,21 +29,27 @@ import {
 import { IEventBus } from '#/app/event/eventBus';
 import { AgentEvent2 } from '#/app/event/event2';
 import type { ExecutableToolResult } from '#/tool/toolContract';
-import type { ResolvedToolExecutionHookContext, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
+import type { BeforeToolExecuteEvent, ToolDidExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { denyToolExecution } from '#/agent/toolExecutor/beforeToolExecuteEvent';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
+import { wrapSystemReminder } from '#/features/reminder/systemReminder';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 
 import { IAgentExternalHooksService } from './agentExternalHooks';
 import { IExternalHooksRunnerService } from '../app/externalHooksRunner';
+import { blockDecision } from '../internal/matchHooks';
 import type { HookMatcherValue } from '../internal/types';
 import {
+  extractHookMessages,
+  extractUpdatedInput,
+  renderHookResult,
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
 } from '../internal/userPrompt';
+import { ISessionExternalHooksService } from '../session/sessionExternalHooks';
 
 export interface HookResultPayload {
   readonly agentId: string;
@@ -102,6 +111,10 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private sessionTitle: string | undefined;
+  private readonly pendingToolHookReminders: Array<{
+    readonly event: string;
+    readonly message: string;
+  }> = [];
 
   private withSessionFacts(inputData: Record<string, unknown>): Record<string, unknown> {
     return { sessionTitle: this.sessionTitle, ...inputData };
@@ -169,7 +182,7 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
     this._register(
       toolExecutor.hooks.onDidExecuteTool.register('externalHooks', async (ctx, next) => {
-        this.notifyPostToolUse(ctx);
+        await this.runPostToolUse(ctx);
         await next();
       }),
     );
@@ -234,6 +247,14 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
   }
 
   private registerLoopHooks(loop: IAgentLoopService): void {
+    if (loop.hooks.onWillBeginStep !== undefined) {
+      this._register(
+        loop.hooks.onWillBeginStep.register('externalHooks', async (_ctx, next) => {
+          this.flushPendingHookReminders();
+          await next();
+        }),
+      );
+    }
     this._register(
       loop.hooks.onDidFinishStep.register('externalHooks', async (ctx, next) => {
         await next();
@@ -299,10 +320,42 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
     );
   }
 
-  private async runPreToolUse(ctx: ResolvedToolExecutionHookContext): Promise<string | undefined> {
+  private appendHookReminder(event: string, message: string): void {
+    this.context.append({
+      role: 'user',
+      content: [{ type: 'text', text: wrapSystemReminder(renderHookResult(event, message)) }],
+      toolCalls: [],
+      origin: { kind: 'injection', variant: 'external_hook' },
+    });
+    void this.dispatcher.dispatch(
+      new HookResult({
+        agentId: this.scopeContext.agentId,
+        hookEvent: event,
+        content: message,
+      }),
+    );
+  }
+
+  private flushPendingHookReminders(): void {
+    if (this.scopeContext.agentId === 'main') {
+      try {
+        const sessionHooks = this.instantiation.invokeFunction((accessor) =>
+          accessor.get(ISessionExternalHooksService),
+        );
+        for (const message of sessionHooks.drainSessionStartMessages?.() ?? []) {
+          this.appendHookReminder('SessionStart', message);
+        }
+      } catch {}
+    }
+    for (const entry of this.pendingToolHookReminders.splice(0)) {
+      this.appendHookReminder(entry.event, entry.message);
+    }
+  }
+
+  private async runPreToolUse(ctx: BeforeToolExecuteEvent): Promise<string | undefined> {
     ctx.signal.throwIfAborted();
     const toolInput = isPlainRecord(ctx.args) ? ctx.args : {};
-    const block = await this.runner.triggerBlock('PreToolUse', {
+    const triggerArgs = {
       matcherValue: ctx.toolCall.name,
       signal: ctx.signal,
       cwd: this.sessionContext.cwd,
@@ -312,42 +365,74 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
         toolInput,
         toolCallId: ctx.toolCall.id,
       }),
-    });
+    };
+    const results = await this.runner.trigger('PreToolUse', triggerArgs);
+    const block =
+      results.length > 0
+        ? blockDecision('PreToolUse', results)
+        : await this.runner.triggerBlock('PreToolUse', triggerArgs);
     ctx.signal.throwIfAborted();
+    for (const message of extractHookMessages(results, { allowPlainStdout: false })) {
+      this.pendingToolHookReminders.push({ event: 'PreToolUse', message });
+    }
+    if (block === undefined) {
+      const updatedInput = extractUpdatedInput(results);
+      if (updatedInput !== undefined) {
+        ctx.updateArgs?.(updatedInput);
+      }
+    }
     return block?.reason;
   }
 
-  private notifyPostToolUse(ctx: ToolDidExecuteContext): void {
+  private async runPostToolUse(ctx: ToolDidExecuteContext): Promise<void> {
     const output = toolOutputText(ctx.result.output);
     const isError = ctx.result.isError === true;
-    this.fireAndForget(
-      isError ? 'PostToolUseFailure' : 'PostToolUse',
-      {
-        toolName: ctx.toolCall.name,
-        toolInput: isPlainRecord(ctx.args) ? ctx.args : {},
-        toolCallId: ctx.toolCall.id,
-        error: isError ? toKimiErrorPayload(output) : undefined,
-        toolOutput: isError ? undefined : output.slice(0, 2000),
-      },
-      ctx.toolCall.name,
-      ctx.signal,
-    );
+    const eventName = isError ? 'PostToolUseFailure' : 'PostToolUse';
+    try {
+      const results = await this.runner.trigger(eventName, {
+        matcherValue: ctx.toolCall.name,
+        signal: ctx.signal,
+        cwd: this.sessionContext.cwd,
+        sessionId: this.sessionContext.sessionId,
+        inputData: this.withSessionFacts({
+          toolName: ctx.toolCall.name,
+          toolInput: isPlainRecord(ctx.args) ? ctx.args : {},
+          toolCallId: ctx.toolCall.id,
+          error: isError ? toKimiErrorPayload(output) : undefined,
+          toolOutput: isError ? undefined : output.slice(0, 2000),
+          toolResponse: isError ? undefined : output,
+        }),
+      });
+      for (const entry of this.pendingToolHookReminders.splice(0)) {
+        this.appendHookReminder(entry.event, entry.message);
+      }
+      for (const message of extractHookMessages(results, { allowPlainStdout: false })) {
+        this.appendHookReminder(eventName, message);
+      }
+    } catch {}
   }
 
   private async runPromptSubmitHook(
     ctx: PromptSubmitContext,
   ): Promise<boolean> {
-    if ((ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN).kind !== 'user') return false;
+    const origin = ctx.promptMessage.origin ?? USER_PROMPT_ORIGIN;
+    if (!isUserPromptSubmitOrigin(origin)) return false;
 
     const signal = new AbortController().signal;
     const input = ctx.promptMessage.content;
+    const slashText = resolveSlashPromptHookText(origin);
+    const promptText = slashText ?? turnPromptText(input, origin) ?? '';
     signal.throwIfAborted();
     const results = await this.runner.trigger('UserPromptSubmit', {
-      matcherValue: input,
+      matcherValue: slashText ?? input,
       signal,
       cwd: this.sessionContext.cwd,
       sessionId: this.sessionContext.sessionId,
-      inputData: this.withSessionFacts({ prompt: input, isSteer: ctx.isSteer }),
+      inputData: this.withSessionFacts({
+        prompt: promptText,
+        isSteer: ctx.isSteer,
+        transcriptPath: `${this.sessionContext.sessionDir}/agents/${this.scopeContext.agentId}/wire.jsonl`,
+      }),
     });
     signal.throwIfAborted();
 
@@ -459,6 +544,29 @@ export class AgentExternalHooksService extends Service implements IAgentExternal
       signal,
     );
   }
+}
+
+function isUserPromptSubmitOrigin(origin: PromptOrigin): boolean {
+  if (origin.kind === 'user') return true;
+  return (
+    (origin.kind === 'skill_activation' || origin.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
+  );
+}
+
+function resolveSlashPromptHookText(origin: PromptOrigin): string | undefined {
+  if (origin.kind === 'skill_activation') {
+    const args = origin.skillArgs?.trim();
+    return args !== undefined && args.length > 0
+      ? `/${origin.skillName} ${args}`
+      : `/${origin.skillName}`;
+  }
+  if (origin.kind === 'plugin_command') {
+    const command = `/${origin.pluginId}:${origin.commandName}`;
+    const args = origin.commandArgs?.trim();
+    return args !== undefined && args.length > 0 ? `${command} ${args}` : command;
+  }
+  return undefined;
 }
 
 function toolOutputText(output: ExecutableToolResult['output']): string {

@@ -37,7 +37,9 @@ export interface HookDef {
 export interface HookResult {
   readonly action: 'allow' | 'block';
   readonly message?: string;
+  readonly additionalContext?: string;
   readonly reason?: string;
+  readonly updatedInput?: Record<string, unknown>;
   readonly stdout?: string;
   readonly stderr?: string;
   readonly exitCode?: number;

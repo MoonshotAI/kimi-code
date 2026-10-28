@@ -45,13 +45,17 @@ const HookSpecificOutputSchema = z.preprocess(
   z
     .looseObject({
       message: OptionalStringSchema,
+      additionalContext: OptionalStringSchema,
       permissionDecision: z.unknown().optional(),
       permissionDecisionReason: z.unknown().optional(),
+      updatedInput: z.unknown().optional(),
     })
     .optional(),
 );
 const HookJsonOutputSchema = z.looseObject({
   message: OptionalStringSchema,
+  systemMessage: OptionalStringSchema,
+  additionalContext: OptionalStringSchema,
   hookSpecificOutput: HookSpecificOutputSchema,
 });
 
@@ -155,6 +159,7 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
     return {
       action: 'block',
       message: structured.message ?? structured.reason,
+      additionalContext: structured.additionalContext,
       reason: structured.reason,
       stdout,
       stderr,
@@ -165,6 +170,8 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
 
   return allowResult({
     message: structured?.message,
+    additionalContext: structured?.additionalContext,
+    updatedInput: structured?.updatedInput,
     stdout,
     stderr,
     exitCode,
@@ -174,7 +181,16 @@ function resultFromExitCode(exitCode: number, stdout: string, stderr: string): H
 
 function structuredOutput(
   stdout: string,
-): { action?: 'block'; reason?: string; message?: string; structuredOutput: true } | undefined {
+):
+  | {
+      action?: 'block';
+      reason?: string;
+      message?: string;
+      additionalContext?: string;
+      updatedInput?: Record<string, unknown>;
+      structuredOutput: true;
+    }
+  | undefined {
   const text = stdout.trim();
   if (text.length === 0) return undefined;
 
@@ -183,9 +199,22 @@ function structuredOutput(
     const output = HookJsonOutputSchema.safeParse(parsed);
     if (!output.success) return undefined;
 
-    const { message, hookSpecificOutput } = output.data;
+    const { message, systemMessage, additionalContext, hookSpecificOutput } = output.data;
+    const statusMessage = joinDistinctNonEmpty([
+      message,
+       hookSpecificOutput?.message,
+      systemMessage,
+    ]);
+    const contextMessage = joinDistinctNonEmpty([
+      additionalContext,
+      hookSpecificOutput?.additionalContext,
+    ]);
     const result = {
-      message: message ?? hookSpecificOutput?.message,
+      message: statusMessage ?? contextMessage,
+      additionalContext: contextMessage,
+      updatedInput: isRecord(hookSpecificOutput?.updatedInput)
+        ? hookSpecificOutput.updatedInput
+        : undefined,
       structuredOutput: true as const,
     };
     if (hookSpecificOutput?.permissionDecision !== 'deny') {
@@ -193,7 +222,8 @@ function structuredOutput(
     }
     return {
       action: 'block',
-      message: result.message,
+      message: statusMessage ?? contextMessage,
+      additionalContext: contextMessage,
       reason:
         typeof hookSpecificOutput.permissionDecisionReason === 'string'
           ? hookSpecificOutput.permissionDecisionReason
@@ -205,8 +235,21 @@ function structuredOutput(
   }
 }
 
+function joinDistinctNonEmpty(values: readonly (string | undefined)[]): string | undefined {
+  const parts: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed !== undefined && trimmed.length > 0 && !parts.includes(trimmed)) {
+      parts.push(trimmed);
+    }
+  }
+  return parts.length === 0 ? undefined : parts.join('\n');
+}
+
 function allowResult(input: {
   readonly message?: string;
+  readonly additionalContext?: string;
+  readonly updatedInput?: Record<string, unknown>;
   readonly stdout?: string;
   readonly stderr?: string;
   readonly exitCode?: number;
@@ -217,6 +260,8 @@ function allowResult(input: {
   return {
     action: 'allow',
     message: input.message,
+    additionalContext: input.additionalContext,
+    updatedInput: input.updatedInput,
     stdout: input.stdout,
     stderr: input.stderr,
     exitCode: input.exitCode,
