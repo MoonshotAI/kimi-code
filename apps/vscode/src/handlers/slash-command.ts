@@ -13,36 +13,12 @@ import {
 } from "../utils/session-context";
 import type { HandlerContext } from "./types";
 
-const HOST_COMMANDS = new Set([
-  "init",
-  "compact",
-  "clear",
-  "reset",
-  "yolo",
-  "auto",
-  "afk",
-  "plan",
-  "add-dir",
-  "export",
-  "import",
-]);
+import type { HostSlashCommand } from "../../shared/host-commands";
+
+export { isModelFreeHostCommand, parseHostSlashCommand } from "../../shared/host-commands";
+export type { HostSlashCommand } from "../../shared/host-commands";
+
 const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
-
-export interface HostSlashCommand {
-  readonly name: string;
-  readonly args: string;
-  readonly raw: string;
-}
-
-export function parseHostSlashCommand(content: string | readonly unknown[]): HostSlashCommand | undefined {
-  if (typeof content !== "string") return undefined;
-  const raw = content.trim();
-  const match = /^\/([^\s]+)(?:\s+(.*))?\s*$/s.exec(raw);
-  if (match === null) return undefined;
-  const name = match[1]!.toLowerCase();
-  if (!HOST_COMMANDS.has(name) && !name.startsWith("skill:")) return undefined;
-  return { name, args: match[2]?.trim() ?? "", raw };
-}
 
 export async function runHostSlashCommand(
   runtime: SessionRuntime,

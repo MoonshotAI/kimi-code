@@ -14,7 +14,7 @@ import { VSCodeSettings } from "../config/vscode-settings";
 import { normalizeEffort } from "../runtime/kimi-runtime";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import { isWorkspacePathContained, relativeWorkspacePath } from "../utils/workspace-path";
-import { parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
+import { isModelFreeHostCommand, parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
 import { toWebviewConfig } from "./config.handler";
 import type { Handler } from "./types";
 
@@ -104,6 +104,21 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     }
   }
 
+  const slash = parseHostSlashCommand(params.content);
+  if (slash !== undefined && isModelFreeHostCommand(slash)) {
+    // Commands that only edit existing session state must not be blocked by a
+    // stale model catalog. Prompt-producing commands still require a model.
+    const runtime = ctx.getSession();
+    if (runtime !== undefined) {
+      try {
+        return { done: await runHostSlashCommand(runtime, slash, ctx) };
+      } catch (error) {
+        emitCaughtError(ctx, error, "runtime", runtime.id);
+        return { done: false };
+      }
+    }
+  }
+
   let model = params.model;
   let effort = normalizeEffort(params.effort ?? (params.thinking === true ? "on" : "off"));
   let runtime: SessionRuntime;
@@ -156,7 +171,6 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
     return { done: false };
   }
 
-  const slash = parseHostSlashCommand(params.content);
   if (slash !== undefined) {
     try {
       return { done: await runHostSlashCommand(runtime, slash, ctx) };

@@ -522,6 +522,54 @@ describe("Webview model resolution before sending", () => {
     expect(useChatStore.getState().pendingInput).toEqual({ content: "direct follow-up", model: "vision" });
   });
 
+  it("allows model-free slash commands on an active session with incompatible history", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      sessionId: "session-1",
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    useChatStore.getState().sendMessage("/clear");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "/clear",
+      "vision",
+      "off",
+      false,
+      "session-1",
+      { image: true, video: false },
+    );
+  });
+
+  it("keeps prompt-producing slash commands behind model validation", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      sessionId: "session-1",
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    useChatStore.getState().sendMessage("/compact");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model is no longer available. Choose another model before sending.",
+    );
+  });
+
   it("keeps queued messages in order when no valid model remains", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
     useSettingsStore.getState().syncModels([MODELS[2]], null, false);
@@ -595,6 +643,33 @@ describe("Webview model resolution before sending", () => {
       vi.advanceTimersByTime(60);
 
       expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual(["first", "second"]);
+      expect(useChatStore.getState().queue).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("restores a blocked queued attachment and consumes it on composer retry", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    const image = "data:image/png;base64,AA";
+    const content = [{ type: "image_url" as const, image_url: { url: image } }];
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    const chat = useChatStore.getState();
+    chat.enqueue(content, "vision");
+    chat.enqueue("second", "vision");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    chat.sendNextQueued();
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image]);
+    useSettingsStore.getState().syncModels([vision], "vision", false);
+    vi.useFakeTimers();
+
+    try {
+      useChatStore.getState().sendMessage("");
+      expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["second"]);
+      useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+      vi.advanceTimersByTime(60);
+
+      expect(boundary.streamChat.mock.calls.map((call) => call[0])).toEqual([content, "second"]);
       expect(useChatStore.getState().queue).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -699,6 +774,31 @@ describe("Webview chat error recovery", () => {
     });
 
     expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, video, image]);
+  });
+
+  it("merges failed media with attachments added after the failure", () => {
+    const media = { id: "media", name: "Media", provider: "managed:kimi-code", capabilities: ["image_in", "video_in"] };
+    const image = "data:image/png;base64,AA";
+    const video = "data:video/mp4;base64,BB";
+    useSettingsStore.getState().initModels([media], "media", false);
+    useChatStore.getState().addDraftMedia("original-image", image);
+    useChatStore.getState().sendMessage("original");
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+    useChatStore.getState().addDraftMedia("new-video", video);
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Unable to send the message.",
+      phase: "preflight",
+    });
+
+    expect(useChatStore.getState().draftMedia.map((item) => item.dataUri)).toEqual([image, video]);
   });
 
   it("stops the pending state and keeps the input available when session setup fails", () => {

@@ -147,4 +147,46 @@ describe("Extension-host model validation before sending", () => {
       "view-1",
     );
   });
+
+  it("runs model-free slash commands on the existing session without catalog preflight", async () => {
+    const clearContext = vi.fn().mockResolvedValue(undefined);
+    const runtime = {
+      id: "session-1",
+      session: { clearContext },
+      beginHostAction: vi.fn(() => 7),
+      emitHostText: vi.fn(),
+      completeHostAction: vi.fn(),
+      releaseHostAction: vi.fn(),
+      wasHostActionCancelled: vi.fn(() => false),
+    };
+    const getConfig = vi.fn();
+    const getOrCreateSession = vi.fn();
+    const ctx = {
+      webviewId: "view-1",
+      workDir: "/workspace",
+      harness: { getConfig },
+      getSession: () => runtime,
+      getOrCreateSession,
+      saveAllDirty: vi.fn(),
+      broadcast: vi.fn(),
+      logError: vi.fn(),
+    } as unknown as HandlerContext;
+
+    const result = await chatHandlers[Methods.StreamChat]!(
+      {
+        content: "/clear",
+        model: "removed-model",
+        effort: "off",
+        mediaRequirements: { image: true, video: true },
+      },
+      ctx,
+    );
+
+    expect(result).toEqual({ done: true });
+    expect(clearContext).toHaveBeenCalledOnce();
+    expect(getConfig).not.toHaveBeenCalled();
+    expect(getOrCreateSession).not.toHaveBeenCalled();
+    expect(runtime.completeHostAction).toHaveBeenCalledWith("finished", 7);
+    expect(runtime.releaseHostAction).toHaveBeenCalledWith(7);
+  });
 });

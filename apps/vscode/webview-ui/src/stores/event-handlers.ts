@@ -1,4 +1,5 @@
 import { bridge } from "@/services";
+import { mergePendingDraftMedia } from "@/lib/media-utils";
 import { useApprovalStore } from "./approval.store";
 import { useSettingsStore } from "./settings.store";
 import { isPreflightError, isUserInterrupt } from "shared/errors";
@@ -246,17 +247,8 @@ function isTaskToolResult(steps: UIStep[] | undefined, toolCallId: string): bool
 
 function restorePendingDraftMedia(draft: ChatState): void {
   const content = draft.pendingInput?.content;
-  // Only an empty composer can be rebuilt without duplicating or overwriting
-  // attachments the user added after the failure. Preserve every media part in
-  // its original order, including repeated URIs.
-  if (draft.draftMedia.length > 0 || !Array.isArray(content)) return;
-  for (const part of content) {
-    if (part.type !== "image_url" && part.type !== "video_url") continue;
-    draft.draftMedia.push({
-      id: crypto.randomUUID(),
-      dataUri: part.type === "image_url" ? part.image_url.url : part.video_url.url,
-    });
-  }
+  if (content === undefined) return;
+  draft.draftMedia = mergePendingDraftMedia(draft.draftMedia, content);
 }
 
 function isSameMessageContent(left: ChatMessage["content"], right: ChatMessage["content"]): boolean {

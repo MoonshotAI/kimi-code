@@ -2,6 +2,8 @@ import { create } from "zustand";
 import { produce } from "immer";
 import { bridge } from "@/services";
 import { Content } from "@/lib/content";
+import { mergePendingDraftMedia } from "@/lib/media-utils";
+import { isModelFreeHostCommand, parseHostSlashCommand } from "shared/host-commands";
 import { useApprovalStore } from "./approval.store";
 import { toast } from "@/components/ui/sonner";
 
@@ -162,33 +164,47 @@ function getSendMediaRequirements(
   return { image, video };
 }
 
+function requiresModelForSend(state: ChatState, content: string | ContentPart[]): boolean {
+  const command = parseHostSlashCommand(content);
+  return state.sessionId === null || command === undefined || !isModelFreeHostCommand(command);
+}
+
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
   const settings = useSettingsStore.getState();
   const mediaRequirements = getSendMediaRequirements(state, content);
-  const sendModel = resolveSendModel(
-    settings.models,
-    model,
-    settings.defaultModel,
-    mediaRequirements,
-  );
-  if (sendModel === undefined) {
-    const message = noValidModelMessage(content);
-    toast.error(message);
-    useChatStore.getState().processEvent({
-      type: "error",
-      code: "model.not_configured",
-      message,
-      phase: "preflight",
-    });
-    return;
+  let sendModelId = model;
+  let thinkingEffort = settings.thinkingEffort;
+  if (requiresModelForSend(state, content)) {
+    const sendModel = resolveSendModel(
+      settings.models,
+      model,
+      settings.defaultModel,
+      mediaRequirements,
+    );
+    if (sendModel === undefined) {
+      const message = noValidModelMessage(content);
+      toast.error(message);
+      useChatStore.getState().processEvent({
+        type: "error",
+        code: "model.not_configured",
+        message,
+        phase: "preflight",
+      });
+      return;
+    }
+    sendModelId = sendModel.id;
+    thinkingEffort = resolveThinkingEffortForSend(
+      sendModel,
+      settings.thinkingEffort,
+      settings.defaultThinking,
+      settings.defaultThinkingEffort,
+    );
   }
-  const thinkingEffort = resolveThinkingEffortForSend(
-    sendModel,
-    settings.thinkingEffort,
-    settings.defaultThinking,
-    settings.defaultThinkingEffort,
-  );
+  const pendingQueueId = state.pendingInput?.queueId;
+  if (pendingQueueId !== undefined && state.queue[0]?.id === pendingQueueId) {
+    useChatStore.setState({ queue: state.queue.slice(1) });
+  }
 
   clearHandshakeTimer();
   handshakeTimer = setTimeout(() => {
@@ -205,7 +221,7 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
   }, HANDSHAKE_TIMEOUT_MS);
 
   void bridge
-    .streamChat(content, sendModel.id, thinkingEffort, planMode, sessionId ?? undefined, mediaRequirements)
+    .streamChat(content, sendModelId, thinkingEffort, planMode, sessionId ?? undefined, mediaRequirements)
     .catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       useChatStore.getState().processEvent({
@@ -234,8 +250,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
   planMode: false,
 
   sendMessage: (text) => {
-    const { draftMedia, isStreaming } = get();
+    const { draftMedia, isStreaming, pendingInput: previousPendingInput } = get();
     const { currentModel } = useSettingsStore.getState();
+    const pendingQueueId = previousPendingInput?.queueId;
 
     const readyMedia = draftMedia.filter((m) => m.dataUri).map((m) => m.dataUri!);
     const content = readyMedia.length > 0 ? Content.build(text, readyMedia) : text;
@@ -258,7 +275,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
         draft.draftMedia = [];
         draft.isStreaming = true;
         draft.handshakeReceived = false;
-        draft.pendingInput = { content, model: currentModel };
+        draft.pendingInput = {
+          content,
+          model: currentModel,
+          ...(pendingQueueId === undefined ? {} : { queueId: pendingQueueId }),
+        };
       }),
     );
     useApprovalStore.getState().clearRequests();
@@ -279,11 +300,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
         clearAllInlineErrors(draft);
         draft.isStreaming = true;
         draft.handshakeReceived = false;
-        // A locally blocked queue head is still queued. Its direct retry must
-        // consume exactly that id, never a later prompt with the same text.
-        if (pendingInput.queueId !== undefined && draft.queue[0]?.id === pendingInput.queueId) {
-          draft.queue.shift();
-        }
         const lastAssistant = draft.messages.at(-1);
         if (lastAssistant?.role === "assistant" && lastAssistant.inlineError) {
           draft.messages.pop();
@@ -527,15 +543,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     const [next, ...rest] = queue;
     const settings = useSettingsStore.getState();
-    const sendModel = resolveSendModel(
-      settings.models,
-      next.model,
-      settings.defaultModel,
-      getSendMediaRequirements(get(), next.content),
-    );
-    if (sendModel === undefined) {
+    if (
+      requiresModelForSend(get(), next.content)
+      && resolveSendModel(
+        settings.models,
+        next.model,
+        settings.defaultModel,
+        getSendMediaRequirements(get(), next.content),
+      ) === undefined
+    ) {
       toast.error(noValidModelMessage(next.content));
-      set({ isStreaming: false, pendingInput: { content: next.content, model: next.model, queueId: next.id } });
+      set((state) => ({
+        isStreaming: false,
+        pendingInput: { content: next.content, model: next.model, queueId: next.id },
+        draftMedia: mergePendingDraftMedia(state.draftMedia, next.content),
+      }));
       return;
     }
 
