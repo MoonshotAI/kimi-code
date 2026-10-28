@@ -147,14 +147,28 @@ function noValidModelMessage(content: string | ContentPart[]): string {
     : "The selected model is no longer available. Choose another model before sending.";
 }
 
+function getSendMediaRequirements(
+  state: ChatState,
+  content: string | ContentPart[],
+): { image: boolean; video: boolean } {
+  let { image, video } = Content.getMediaRequirements(content);
+  for (const message of state.messages) {
+    image ||= Content.hasImages(message.content);
+    video ||= Content.hasVideos(message.content);
+    if (image && video) break;
+  }
+  return { image, video };
+}
+
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
   const settings = useSettingsStore.getState();
+  const mediaRequirements = getSendMediaRequirements(state, content);
   const sendModel = resolveSendModel(
     settings.models,
     model,
     settings.defaultModel,
-    Content.getMediaRequirements(content),
+    mediaRequirements,
   );
   if (sendModel === undefined) {
     const message = noValidModelMessage(content);
@@ -189,7 +203,7 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
   }, HANDSHAKE_TIMEOUT_MS);
 
   void bridge
-    .streamChat(content, sendModel.id, thinkingEffort, planMode, sessionId ?? undefined)
+    .streamChat(content, sendModel.id, thinkingEffort, planMode, sessionId ?? undefined, mediaRequirements)
     .catch((error: unknown) => {
       const detail = error instanceof Error ? error.message : String(error);
       useChatStore.getState().processEvent({
@@ -503,7 +517,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       settings.models,
       next.model,
       settings.defaultModel,
-      Content.getMediaRequirements(next.content),
+      getSendMediaRequirements(get(), next.content),
     );
     if (sendModel === undefined) {
       toast.error(noValidModelMessage(next.content));

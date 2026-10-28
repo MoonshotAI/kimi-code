@@ -384,7 +384,14 @@ describe("Webview model resolution before sending", () => {
 
     useChatStore.getState().sendMessage("use fallback");
 
-    expect(boundary.streamChat).toHaveBeenCalledWith("use fallback", "always", "on", false, undefined);
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "use fallback",
+      "always",
+      "on",
+      false,
+      undefined,
+      { image: false, video: false },
+    );
   });
 
   it("normalizes effort against the fallback model instead of the removed selection", () => {
@@ -403,7 +410,14 @@ describe("Webview model resolution before sending", () => {
 
     useChatStore.getState().sendMessage("normalize fallback effort");
 
-    expect(boundary.streamChat).toHaveBeenCalledWith("normalize fallback effort", "fallback", "low", false, "session-1");
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "normalize fallback effort",
+      "fallback",
+      "low",
+      false,
+      "session-1",
+      { image: false, video: false },
+    );
   });
 
   it("does not send or pick an arbitrary remaining model when the default is also missing", () => {
@@ -425,15 +439,83 @@ describe("Webview model resolution before sending", () => {
   it("blocks attachments when the fallback model lacks media capabilities", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
     useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
-    useChatStore.getState().addDraftMedia("image-1", "data:image/png;base64,AA");
+    const dataUri = "data:image/png;base64,AA";
+    useChatStore.getState().addDraftMedia("image-1", dataUri);
 
     useChatStore.getState().sendMessage("image attached");
 
     expect(boundary.streamChat).not.toHaveBeenCalled();
     expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().draftMedia).toEqual([{ id: expect.any(String), dataUri }]);
     expect(boundary.toastError).toHaveBeenCalledWith(
       "The selected model does not support these attachments. Choose another model before sending.",
     );
+  });
+
+  it("includes conversation media when resolving a queued fallback", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    const chat = useChatStore.getState();
+    chat.enqueue("text follow-up", "vision");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    chat.sendNextQueued();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queue).toHaveLength(1);
+    expect(useChatStore.getState().pendingInput).toEqual({ content: "text follow-up", model: "vision" });
+  });
+
+  it("passes conversation media requirements to the extension host", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+
+    useChatStore.getState().sendMessage("text follow-up");
+
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "text follow-up",
+      "vision",
+      "off",
+      false,
+      undefined,
+      { image: true, video: false },
+    );
+  });
+
+  it("keeps prior history and the current input when no history-compatible model remains", () => {
+    const vision = { id: "vision", name: "Vision", provider: "managed:kimi-code", capabilities: ["image_in"] };
+    useSettingsStore.getState().initModels([vision, MODELS[0]], "vision", false);
+    useChatStore.setState({
+      messages: [{
+        id: "history-image",
+        role: "user",
+        content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AA" } }],
+        timestamp: 1,
+      }],
+    });
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+
+    useChatStore.getState().sendMessage("direct follow-up");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().messages).toHaveLength(1);
+    expect(useChatStore.getState().pendingInput).toEqual({ content: "direct follow-up", model: "vision" });
   });
 
   it("keeps queued messages in order when no valid model remains", () => {
@@ -476,7 +558,14 @@ describe("Webview model resolution before sending", () => {
 
     useChatStore.getState().sendNextQueued();
 
-    expect(boundary.streamChat).toHaveBeenCalledWith("queued", "always", "on", false, undefined);
+    expect(boundary.streamChat).toHaveBeenCalledWith(
+      "queued",
+      "always",
+      "on",
+      false,
+      undefined,
+      { image: false, video: false },
+    );
     expect(useChatStore.getState().queue).toEqual([]);
   });
 });
@@ -486,7 +575,7 @@ describe("Webview MCP update bridge", () => {
     const posted: unknown[] = [];
     let receiveMessage: ((event: { data: unknown }) => void) | undefined;
     vi.stubGlobal("document", {
-      body: { getAttribute: () => "mcp-test-view" },
+      body: { dataset: { webviewid: "mcp-test-view" } },
     });
     vi.stubGlobal("window", {
       addEventListener: (_type: string, listener: (event: { data: unknown }) => void) => {

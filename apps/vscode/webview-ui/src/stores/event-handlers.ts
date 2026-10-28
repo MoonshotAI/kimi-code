@@ -1,4 +1,5 @@
 import { bridge } from "@/services";
+import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
 import { useSettingsStore } from "./settings.store";
 import { isPreflightError, isUserInterrupt } from "shared/errors";
@@ -244,6 +245,22 @@ function isTaskToolResult(steps: UIStep[] | undefined, toolCallId: string): bool
   return toolItem?.call.name === "Task" || toolItem?.call.name === "Agent";
 }
 
+function restorePendingDraftMedia(draft: ChatState): void {
+  const content = draft.pendingInput?.content;
+  if (content === undefined) return;
+  const dataUris = [...Content.getImages(content), ...Content.getVideos(content)];
+  const existing = new Set(draft.draftMedia.map((item) => item.dataUri));
+  for (const dataUri of dataUris) {
+    if (existing.has(dataUri)) continue;
+    draft.draftMedia.push({ id: crypto.randomUUID(), dataUri });
+    existing.add(dataUri);
+  }
+}
+
+function isSameMessageContent(left: ChatMessage["content"], right: ChatMessage["content"]): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
 function handlePreflightError(draft: ChatState, _code: string, _message: string): void {
   // Pre-flight: 删除未发送成功的消息，恢复输入
   addTokenUsage(draft.tokenUsage, draft.activeTokenUsage);
@@ -251,16 +268,25 @@ function handlePreflightError(draft: ChatState, _code: string, _message: string)
   draft.isStreaming = false;
   draft.isCompacting = false;
   useApprovalStore.getState().clearRequests();
+  restorePendingDraftMedia(draft);
 
   // 删除空的 assistant 消息
   const lastAssistant = getLastAssistant(draft);
-  if (lastAssistant && !hasContent(lastAssistant)) {
+  const removedEmptyAssistant = lastAssistant !== undefined && !hasContent(lastAssistant);
+  if (removedEmptyAssistant) {
     draft.messages.pop();
   }
 
-  // 删除对应的 user 消息
+  // 只删除能与本次待重试内容配对的 user 消息；本地/宿主在校验阶段
+  // 直接报错时还没有新消息，不能误删上一条历史。
+  const pendingContent = draft.pendingInput?.content;
   const lastUser = draft.messages.at(-1);
-  if (lastUser?.role === "user") {
+  if (
+    removedEmptyAssistant
+    && lastUser?.role === "user"
+    && pendingContent !== undefined
+    && isSameMessageContent(lastUser.content, pendingContent)
+  ) {
     const userContent = lastUser.content;
     draft.messages.pop();
     // 触发回滚（通过 pendingInput 保存）
