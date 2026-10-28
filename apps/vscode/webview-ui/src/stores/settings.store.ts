@@ -145,8 +145,10 @@ export function resolveSendModel(
   models: ModelConfig[],
   currentModel: string,
   defaultModel: string | null,
+  mediaReq?: MediaRequirements,
 ): ModelConfig | undefined {
-  return getModelById(models, currentModel) ?? getModelById(models, defaultModel ?? "");
+  const candidates = mediaReq === undefined ? models : getModelsForMedia(models, mediaReq);
+  return getModelById(candidates, currentModel) ?? getModelById(candidates, defaultModel ?? "");
 }
 
 export function resolveThinkingEffortForSend(

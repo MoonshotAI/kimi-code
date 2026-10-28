@@ -172,6 +172,21 @@ describe("VS Code model catalog refresh scheduler", () => {
     expect(harness.refreshProviderModels).toHaveBeenCalledTimes(2);
   });
 
+  it("does not overflow intervals above the Node timeout limit into rapid refresh", async () => {
+    const harness = makeHarness({
+      providers: {},
+      modelCatalog: { refreshIntervalMs: 2_147_484_647, refreshOnStart: false },
+    });
+    const { scheduler } = makeScheduler(harness);
+
+    await scheduler.start();
+    await vi.advanceTimersByTimeAsync(2_147_483_647);
+    expect(harness.refreshProviderModels).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(harness.refreshProviderModels).toHaveBeenCalledTimes(1);
+  });
+
   it("does not broadcast an in-flight refresh after disposal", async () => {
     const harness = makeHarness();
     let resolveRefresh!: (result: RefreshProviderModelsResponse) => void;

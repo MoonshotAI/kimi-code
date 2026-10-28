@@ -263,4 +263,96 @@ describe("useAppInit model catalog events", () => {
 
     expect(result.current).toMatchObject({ status: "ready", modelsCount: 1 });
   });
+
+  it("uses the valid default model instead of a removed managed alias for login routing", async () => {
+    const removed = {
+      id: "managed-old",
+      name: "Managed Old",
+      provider: "managed:kimi-code",
+      capabilities: [],
+    };
+    boundary.getModels.mockResolvedValue({
+      defaultModel: removed.id,
+      defaultThinking: false,
+      models: [removed],
+    });
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    act(() => {
+      useSettingsStore.getState().setIsLoggedIn(false);
+    });
+
+    const config = {
+      defaultModel: "custom/default",
+      defaultThinking: false,
+      models: [
+        { id: "managed/a", name: "A Managed", provider: "managed:kimi-code", capabilities: [] },
+        { id: "custom/default", name: "Z Custom Default", provider: "openai", capabilities: [] },
+      ],
+    };
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({ config }));
+
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 2 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: removed.id,
+      defaultModel: "custom/default",
+    });
+  });
+
+  it("uses the valid default model after an initialization race for login routing", async () => {
+    const removed = {
+      id: "managed-old",
+      name: "Managed Old",
+      provider: "managed:kimi-code",
+      capabilities: [],
+    };
+    useSettingsStore.getState().initModels([removed], removed.id, false);
+    const staleConfig = { defaultModel: removed.id, defaultThinking: false, models: [removed] };
+    let resolveLogin!: (value: { loggedIn: boolean }) => void;
+    let resolveModels!: (value: typeof staleConfig) => void;
+    boundary.checkLoginStatus.mockReturnValue(new Promise((resolve) => {
+      resolveLogin = resolve;
+    }));
+    boundary.getModels.mockReturnValue(new Promise((resolve) => {
+      resolveModels = resolve;
+    }));
+
+    const { result } = renderHook(() => useAppInit());
+    await waitFor(() => {
+      expect(boundary.getModels).toHaveBeenCalled();
+    });
+    await act(async () => {
+      resolveModels(staleConfig);
+      await Promise.resolve();
+    });
+
+    const config = {
+      defaultModel: "custom/default",
+      defaultThinking: false,
+      models: [
+        { id: "managed/a", name: "A Managed", provider: "managed:kimi-code", capabilities: [] },
+        { id: "custom/default", name: "Z Custom Default", provider: "openai", capabilities: [] },
+      ],
+    };
+    const listener = boundary.listeners.get("modelCatalogChanged");
+    expect(listener).toBeTypeOf("function");
+    act(() => listener?.({ config }));
+    await act(async () => {
+      resolveLogin({ loggedIn: false });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(result.current.status).toBe("ready");
+    });
+    expect(result.current).toMatchObject({ status: "ready", modelsCount: 2 });
+    expect(useSettingsStore.getState()).toMatchObject({
+      currentModel: removed.id,
+      defaultModel: "custom/default",
+    });
+  });
 });

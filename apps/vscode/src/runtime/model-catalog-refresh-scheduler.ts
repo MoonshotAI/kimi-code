@@ -5,6 +5,7 @@ import type {
 } from "@moonshot-ai/kimi-code-sdk";
 
 const DEFAULT_REFRESH_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const MAX_TIMEOUT_MS = 2_147_483_647;
 const INTERVAL_ENV = "KIMI_CODE_MODEL_CATALOG_REFRESH_INTERVAL_MS";
 const REFRESH_ON_START_ENV = "KIMI_CODE_MODEL_CATALOG_REFRESH_ON_START";
 
@@ -20,7 +21,7 @@ export class ModelCatalogRefreshScheduler {
   private readonly onRefreshed: ModelCatalogRefreshSchedulerOptions["onRefreshed"];
   private readonly log: ModelCatalogRefreshSchedulerOptions["log"];
   private readonly env: NodeJS.ProcessEnv;
-  private timer: ReturnType<typeof setInterval> | undefined;
+  private timer: ReturnType<typeof setTimeout> | undefined;
   private started = false;
   private disposed = false;
   private refreshing = false;
@@ -48,16 +49,33 @@ export class ModelCatalogRefreshScheduler {
     const refreshOnStart = resolveRefreshOnStart(this.env, config?.modelCatalog?.refreshOnStart);
     if (refreshOnStart) void this.refresh("startup");
 
-    if (intervalMs > 0) {
-      this.timer = setInterval(() => void this.refresh("interval"), intervalMs);
+    if (intervalMs > 0) this.scheduleRefresh(intervalMs);
+  }
+
+  private scheduleRefresh(intervalMs: number): void {
+    const deadline = Date.now() + intervalMs;
+    const schedule = (remainingMs: number): void => {
+      this.timer = setTimeout(() => {
+        const remaining = deadline - Date.now();
+        if (remaining > 0 && !this.disposed) {
+          schedule(remaining);
+          return;
+        }
+        this.timer = undefined;
+        if (this.disposed) return;
+        void this.refresh("interval").finally(() => {
+          if (!this.disposed) this.scheduleRefresh(intervalMs);
+        });
+      }, Math.min(remainingMs, MAX_TIMEOUT_MS));
       this.timer.unref?.();
-    }
+    };
+    schedule(intervalMs);
   }
 
   dispose(): void {
     this.disposed = true;
     if (this.timer !== undefined) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = undefined;
     }
   }

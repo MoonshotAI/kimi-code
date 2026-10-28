@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { bridge, Events } from "@/services";
-import { requiresManagedProviderLogin, useSettingsStore } from "@/stores";
+import { requiresManagedProviderLogin, resolveSendModel, useSettingsStore } from "@/stores";
 import type { KimiConfig as WebviewKimiConfig, ModelCatalogChangedEvent } from "shared/legacy-sdk";
 import type { ExtensionConfig } from "shared/types";
 
@@ -105,7 +105,7 @@ export function useAppInit(): AppInitState {
       const syncedConfig = {
         ...config,
         models: synced.models,
-        defaultModel: synced.currentModel || config.defaultModel,
+        defaultModel: resolveSendModel(synced.models, synced.currentModel, synced.defaultModel)?.id ?? null,
       };
       setState((current) => {
         const modelsCount = syncedConfig.models.length;
@@ -163,7 +163,7 @@ export function useAppInit(): AppInitState {
           const syncedConfig = {
             ...kimiConfig,
             models: synced.models,
-            defaultModel: synced.currentModel || kimiConfig.defaultModel,
+            defaultModel: resolveSendModel(synced.models, synced.currentModel, synced.defaultModel)?.id ?? null,
           };
           const modelsCount = syncedConfig.models.length;
           setState({

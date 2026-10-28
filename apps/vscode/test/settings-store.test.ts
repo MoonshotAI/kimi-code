@@ -421,6 +421,64 @@ describe("Webview model resolution before sending", () => {
       "The selected model is no longer available. Choose another model before sending.",
     );
   });
+
+  it("blocks attachments when the fallback model lacks media capabilities", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    useChatStore.getState().addDraftMedia("image-1", "data:image/png;base64,AA");
+
+    useChatStore.getState().sendMessage("image attached");
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model does not support these attachments. Choose another model before sending.",
+    );
+  });
+
+  it("keeps queued messages in order when no valid model remains", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+    const chat = useChatStore.getState();
+    chat.enqueue("first", "reasoning");
+    chat.enqueue("second", "reasoning");
+
+    chat.sendNextQueued();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState()).toMatchObject({
+      isStreaming: false,
+      pendingInput: { content: "first", model: "reasoning" },
+    });
+    expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["first", "second"]);
+  });
+
+  it("keeps an attachment queued when the fallback lacks media capabilities", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[0]], "plain", false);
+    const content = [{ type: "image_url" as const, image_url: { url: "data:image/png;base64,AA" } }];
+    useChatStore.getState().enqueue(content, "reasoning");
+
+    useChatStore.getState().sendNextQueued();
+
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    expect(useChatStore.getState().queue).toHaveLength(1);
+    expect(useChatStore.getState().pendingInput).toEqual({ content, model: "reasoning" });
+    expect(boundary.toastError).toHaveBeenCalledWith(
+      "The selected model does not support these attachments. Choose another model before sending.",
+    );
+  });
+
+  it("continues the queue with a valid default model", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+    useChatStore.getState().enqueue("queued", "reasoning");
+
+    useChatStore.getState().sendNextQueued();
+
+    expect(boundary.streamChat).toHaveBeenCalledWith("queued", "always", "on", false, undefined);
+    expect(useChatStore.getState().queue).toEqual([]);
+  });
 });
 
 describe("Webview MCP update bridge", () => {

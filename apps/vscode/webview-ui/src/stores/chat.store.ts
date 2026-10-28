@@ -141,16 +141,28 @@ function clearAllInlineErrors(draft: ChatState): void {
   }
 }
 
+function noValidModelMessage(content: string | ContentPart[]): string {
+  return Content.hasMedia(content)
+    ? "The selected model does not support these attachments. Choose another model before sending."
+    : "The selected model is no longer available. Choose another model before sending.";
+}
+
 function doSend(state: ChatState, content: string | ContentPart[], model: string) {
   const { sessionId, planMode } = state;
   const settings = useSettingsStore.getState();
-  const sendModel = resolveSendModel(settings.models, model, settings.defaultModel);
+  const sendModel = resolveSendModel(
+    settings.models,
+    model,
+    settings.defaultModel,
+    Content.getMediaRequirements(content),
+  );
   if (sendModel === undefined) {
-    toast.error("The selected model is no longer available. Choose another model before sending.");
+    const message = noValidModelMessage(content);
+    toast.error(message);
     useChatStore.getState().processEvent({
       type: "error",
       code: "model.not_configured",
-      message: "The selected model is no longer available. Choose another model before sending.",
+      message,
       phase: "preflight",
     });
     return;
@@ -486,6 +498,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
     }
 
     const [next, ...rest] = queue;
+    const settings = useSettingsStore.getState();
+    const sendModel = resolveSendModel(
+      settings.models,
+      next.model,
+      settings.defaultModel,
+      Content.getMediaRequirements(next.content),
+    );
+    if (sendModel === undefined) {
+      toast.error(noValidModelMessage(next.content));
+      set({ isStreaming: false, pendingInput: { content: next.content, model: next.model } });
+      return;
+    }
 
     set(
       produce((draft: ChatState) => {
