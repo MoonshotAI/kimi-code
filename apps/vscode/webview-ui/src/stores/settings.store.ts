@@ -281,7 +281,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
   initModels: (models, defaultModel, defaultThinking, defaultThinkingEffort) => {
     settingsSaveRevision += 1;
-    const initialModel = defaultModel || models[0]?.id || "";
+    const initialModel = defaultModel ?? "";
     const model = getModelById(models, initialModel);
 
     const thinkingEffort = model ? defaultEffortForModel(model, defaultThinking, defaultThinkingEffort) : "off";
@@ -306,7 +306,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
       : undefined;
     const currentModel = hasSelection
       ? replacement ?? state.currentModel
-      : getModelById(models, defaultModel ?? "")?.id ?? models[0]?.id ?? "";
+      : getModelById(models, defaultModel ?? "")?.id ?? "";
     const model = getModelById(models, currentModel);
     const preserveThinkingEffort = hasSelection && (model === undefined
       || supportsThinkingEffort(model, state.thinkingEffort));

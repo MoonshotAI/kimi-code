@@ -164,6 +164,10 @@ function getSendMediaRequirements(
   return { image, video };
 }
 
+function isSameSendContent(left: string | ContentPart[], right: string | ContentPart[]): boolean {
+  return left === right || JSON.stringify(left) === JSON.stringify(right);
+}
+
 function requiresModelForSend(state: ChatState, content: string | ContentPart[]): boolean {
   const command = parseHostSlashCommand(content);
   return state.sessionId === null || command === undefined || !isModelFreeHostCommand(command);
@@ -202,7 +206,12 @@ function doSend(state: ChatState, content: string | ContentPart[], model: string
     );
   }
   const pendingQueueId = state.pendingInput?.queueId;
-  if (pendingQueueId !== undefined && state.queue[0]?.id === pendingQueueId) {
+  if (
+    pendingQueueId !== undefined
+    && state.pendingInput !== null
+    && isSameSendContent(state.pendingInput.content, content)
+    && state.queue[0]?.id === pendingQueueId
+  ) {
     useChatStore.setState({ queue: state.queue.slice(1) });
   }
 
@@ -252,10 +261,12 @@ export const useChatStore = create<ChatState>((set, get) => ({
   sendMessage: (text) => {
     const { draftMedia, isStreaming, pendingInput: previousPendingInput } = get();
     const { currentModel } = useSettingsStore.getState();
-    const pendingQueueId = previousPendingInput?.queueId;
 
     const readyMedia = draftMedia.filter((m) => m.dataUri).map((m) => m.dataUri!);
     const content = readyMedia.length > 0 ? Content.build(text, readyMedia) : text;
+    const pendingQueueId = previousPendingInput && isSameSendContent(previousPendingInput.content, content)
+      ? previousPendingInput.queueId
+      : undefined;
 
     if (Content.isEmpty(content)) {
       return;

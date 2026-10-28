@@ -377,6 +377,19 @@ describe("Webview background model catalog synchronization", () => {
   });
 });
 
+describe("Webview model selection without a default", () => {
+  it("keeps model selection empty when no default exists during init and refresh", () => {
+    useSettingsStore.getState().initModels(MODELS, null, false);
+    expect(useSettingsStore.getState().currentModel).toBe("");
+
+    useSettingsStore.getState().initModels([], null, false);
+    useSettingsStore.getState().syncModels([MODELS[0]], null, false);
+
+    expect(useSettingsStore.getState().currentModel).toBe("");
+    expect(useSettingsStore.getState().defaultModel).toBeNull();
+  });
+});
+
 describe("Webview model resolution before sending", () => {
   it("uses the valid default model when the current selection was removed", () => {
     useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
@@ -647,6 +660,23 @@ describe("Webview model resolution before sending", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("keeps a blocked queue head when sending a different draft", () => {
+    useSettingsStore.getState().initModels(MODELS, "reasoning", true, "high");
+    useSettingsStore.getState().syncModels([MODELS[2]], null, false);
+    const chat = useChatStore.getState();
+    chat.enqueue("first", "reasoning");
+    chat.enqueue("second", "reasoning");
+    chat.sendNextQueued();
+    expect(boundary.streamChat).not.toHaveBeenCalled();
+    useSettingsStore.getState().syncModels([MODELS[2]], "always", true);
+
+    useChatStore.getState().sendMessage("different follow-up");
+
+    expect(boundary.streamChat).toHaveBeenCalledOnce();
+    expect(boundary.streamChat.mock.calls[0]?.[0]).toBe("different follow-up");
+    expect(useChatStore.getState().queue.map((item) => item.content)).toEqual(["first", "second"]);
   });
 
   it("restores a blocked queued attachment and consumes it on composer retry", () => {
