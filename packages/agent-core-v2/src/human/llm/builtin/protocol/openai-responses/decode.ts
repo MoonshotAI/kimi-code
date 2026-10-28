@@ -462,11 +462,17 @@ export function createDecoder(sink: DecodeSink): Decoder<RawChunk> {
     if (messageId !== undefined) {
       sink.onMessageId(messageId);
     }
-    const usage = parseUsage(readObjectField(eventResponse ?? event, 'usage'));
+    const type = readStringField(event, 'type');
+    const responseUsage =
+      eventResponse === undefined ? undefined : readObjectField(eventResponse, 'usage');
+    const usage = parseUsage(
+      type === 'response.completed' || type === 'response.incomplete'
+        ? responseUsage
+        : (responseUsage ?? readObjectField(event, 'usage')),
+    );
     if (usage !== undefined) {
       sink.onUsage(usage);
     }
-    const type = readStringField(event, 'type');
     if (type === undefined) {
       if (!hasOwn(event, 'type')) {
         const message = readStringField(event, 'message');

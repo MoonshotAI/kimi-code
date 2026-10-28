@@ -28,8 +28,8 @@ export function resolveOpenAIReasoningKey(
 ): string {
   return (
     reasoningKey ??
-    historyReasoningKey(messages) ??
     detectedReasoningKey ??
+    historyReasoningKey(messages) ??
     KNOWN_REASONING_KEYS[0]!
   );
 }

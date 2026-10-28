@@ -2285,6 +2285,39 @@ describe('openai responses base', () => {
     expect(parts).toContainEqual({ type: 'text', text: 'sunny' });
     expect(finish).toEqual({ finishReason: 'completed', rawFinishReason: 'completed' });
     expect(messageId).toBe('resp_1');
+
+    const topLevelUsageClient = stubResponsesClient([
+      {
+        type: 'response.output_text.delta',
+        response: { id: 'resp_top_level_usage' },
+        delta: 'hi',
+        usage: { input_tokens: 3, output_tokens: 1 },
+      },
+      {
+        type: 'response.completed',
+        response: { id: 'resp_top_level_usage', status: 'completed' },
+      },
+    ]);
+    let topLevelUsage: TokenUsage | undefined;
+    await createOpenAIResponsesRequester({
+      clientFactory: topLevelUsageClient.clientFactory,
+    }).generate(
+      { model },
+      { messages },
+      {
+        signal: new AbortController().signal,
+        onEvent: (event) => {
+          if (event.type === 'llm.streaming.usage') topLevelUsage = event.usage;
+        },
+      },
+    );
+    expect(topLevelUsage).toEqual({
+      inputOther: 3,
+      output: 1,
+      inputCacheRead: 0,
+      inputCacheCreation: 0,
+      raw: { input_tokens: 3, output_tokens: 1 },
+    });
   });
 });
 
