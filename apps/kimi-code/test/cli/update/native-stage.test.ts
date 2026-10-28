@@ -548,11 +548,11 @@ describe('stageNativeUpdate', () => {
     expect(repeat.status).toBe('already-staged');
   });
 
-  it('persists the selected dev channel instead of inferring it from the version', async () => {
-    const target = '0.0.0-dev.42';
+  it('persists the selected canary channel instead of inferring it from the version', async () => {
+    const target = '2.3.3-canary.20261028012345-0123456';
     const result = await stageNativeUpdate({
       version: target,
-      channel: 'dev',
+      channel: 'canary',
       exePath,
       platform: 'linux',
       arch: 'x64',
@@ -562,8 +562,8 @@ describe('stageNativeUpdate', () => {
     });
 
     expect(result.status).toBe('staged');
-    expect(result.staged.channel).toBe('dev');
-    expect((await readStagedNativeUpdate(exePath))?.channel).toBe('dev');
+    expect(result.staged.channel).toBe('canary');
+    expect((await readStagedNativeUpdate(exePath))?.channel).toBe('canary');
   });
 
   it('rejects an unconfirmed channel switch before downloading or writing a stage', async () => {
@@ -571,7 +571,7 @@ describe('stageNativeUpdate', () => {
 
     await expect(stageNativeUpdate({
       version: VERSION,
-      channel: 'dev',
+      channel: 'canary',
       exePath,
       platform: 'linux',
       arch: 'x64',
@@ -592,21 +592,21 @@ describe('stageNativeUpdate', () => {
       fetchImpl: mockCdnFetch({ payload: PAYLOAD }),
       manual: true,
     });
-    const devFetch = mockCdnFetch({ payload: PAYLOAD });
+    const canaryFetch = mockCdnFetch({ payload: PAYLOAD });
 
     const result = await stageNativeUpdate({
       version: VERSION,
-      channel: 'dev',
+      channel: 'canary',
       exePath,
       platform: 'linux',
       arch: 'x64',
-      fetchImpl: devFetch,
+      fetchImpl: canaryFetch,
       manual: true,
     });
 
     expect(result.status).toBe('staged');
-    expect(devFetch).toHaveBeenCalled();
-    expect(result.staged.channel).toBe('dev');
+    expect(canaryFetch).toHaveBeenCalled();
+    expect(result.staged.channel).toBe('canary');
   });
 
   it('re-stages when the staged exe is corrupted at the same size', async () => {
