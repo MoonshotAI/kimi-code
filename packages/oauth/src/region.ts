@@ -72,6 +72,7 @@ export const KIMI_REGION_PROFILES: Record<KimiRegion, KimiRegionProfile> = {
     baseUrl: 'https://api.kimi.ai/coding/v1',
     cdnBase: 'https://code.kimi.ai/kimi-code',
     siteBase: 'https://www.kimi.ai',
+    telemetryEndpoint: 'https://telemetry-logs.kimi.ai/v1/event',
     relayOrigin: 'https://code-rc.kimi.ai',
   },
 };
