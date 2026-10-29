@@ -298,13 +298,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           if (req.body.thinking !== undefined && !thinkingConsumed)
             resolved.profile.setThinking(req.body.thinking);
           if (req.body.permission_mode !== undefined) resolved.permissionMode.setMode(req.body.permission_mode);
-          session.accessor.get(ISessionRunGate).begin();
-          await applyAgentConfig(resolved.agent, {
-            plan_mode: req.body.plan_mode,
-            swarm_mode: req.body.swarm_mode,
-            goal_objective: req.body.goal_objective,
-            goal_control: req.body.goal_control,
-          });
           if (req.body.disabled_tools !== undefined) {
             try {
               await resolved.toolPolicy.setSessionDisabledTools(req.body.disabled_tools);
@@ -315,6 +308,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
               throw error;
             }
           }
+          session.accessor.get(ISessionRunGate).begin();
+          await applyAgentConfig(resolved.agent, {
+            plan_mode: req.body.plan_mode,
+            swarm_mode: req.body.swarm_mode,
+            goal_objective: req.body.goal_objective,
+            goal_control: req.body.goal_control,
+          });
           const parts = contentToCoreParts(resolvedContent);
           const clientMetadata = req.body.metadata === undefined ? undefined : [structuredClone(req.body.metadata)];
           if (req.body.skills !== undefined) {

@@ -2166,12 +2166,17 @@ describe('server-v2 /api/v1 prompts', () => {
   it('rejects disabled_tools before the agent profile is bound', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const create = vi.spyOn(agent.accessor.get(IAgentGoalService), 'createGoal');
 
     const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'hello' }],
       disabled_tools: ['Bash'],
+      goal_objective: 'finish the migration',
     });
     expect(body.code).toBe(40001);
+    expect(create).not.toHaveBeenCalled();
   });
 
   it('persists disabled_tools across a cold resume', async () => {
