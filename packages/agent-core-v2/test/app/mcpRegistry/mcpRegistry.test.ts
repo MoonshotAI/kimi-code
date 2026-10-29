@@ -211,8 +211,11 @@ describe('McpRegistryService', () => {
       });
     });
 
-    it('loads only user and plugin entries when the workspace is untrusted', async () => {
+    it('refreshes workspace trust between registry queries', async () => {
       await store.add(stdioServer('userOnly', 'user-only'));
+      await writeJson(join(home, 'mcp.json'), {
+        mcpServers: { userOnly: { command: 'user-only' } },
+      });
       const { project, sub } = await makeProject();
       await writeJson(join(project, '.mcp.json'), {
         mcpServers: { repoOnly: { command: 'repo-only' } },
@@ -224,13 +227,23 @@ describe('McpRegistryService', () => {
         pluginEntry('demo', 'api', { transport: 'stdio', command: 'plugin-only' }),
       ];
       trusted = false;
+      const hidden = ['plugin-demo:api', 'userOnly'];
 
       const entries = await registry.list({ cwd: sub });
+      expect(entries.map((entry) => entry.name).toSorted()).toEqual(hidden);
 
-      expect(entries.map((entry) => entry.name).toSorted()).toEqual([
+      trusted = true;
+      const trustedEntries = await registry.list({ cwd: sub });
+      expect(trustedEntries.map((entry) => entry.name).toSorted()).toEqual([
+        'localOnly',
         'plugin-demo:api',
+        'repoOnly',
         'userOnly',
       ]);
+
+      trusted = false;
+      const untrustedAgain = await registry.list({ cwd: sub });
+      expect(untrustedAgain.map((entry) => entry.name).toSorted()).toEqual(hidden);
     });
 
     it('loads project layers for an untrusted workspace with process or config overrides', async () => {

@@ -112,7 +112,7 @@ Fields in the config file fall into two categories: **top-level scalars** that d
 | [`task`](#task) | `table` | — | Background task and Tower agent runtime parameters; `background` is the legacy section name |
 | [`tools`](#tools) | `table` | — | Global tool switch |
 | [`image`](#image) | `table` | — | Image compression parameters |
-| [`workspace`](#workspace) | `table` | — | Workspace settings, including the trust gate |
+| [`workspace`](#workspace-trust) | `table` | — | Workspace settings, including the trust gate |
 | [`services`](#services) | `table` | — | Built-in external service configuration |
 | [`permission`](#permission) | `table` | — | Initial permission rules |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | Lifecycle hooks |
@@ -483,7 +483,7 @@ Both values must be positive integers. A call's `max_chars` overrides the defaul
 
 `enabled` can be overridden by the `KIMI_CODE_WATCH` environment variable, which takes higher priority than `config.toml`.
 
-## `workspace`
+## `workspace trust`
 
 `workspace` groups workspace-related settings in the user-level `config.toml`. Its `require_trust` field controls whether Kimi Code asks for trust confirmation when an untrusted workspace is opened for the first time; confirmation is required by default.
 

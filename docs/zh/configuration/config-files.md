@@ -112,7 +112,7 @@ timeout = 5
 | [`task`](#task) | `table` | — | 后台任务与 Tower Agent 运行参数；`background` 为 legacy 配置节名称 |
 | [`tools`](#tools) | `table` | — | 全局工具开关 |
 | [`image`](#image) | `table` | — | 图片压缩参数 |
-| [`workspace`](#workspace) | `table` | — | 工作区设置，包括信任机制 |
+| [`workspace`](#workspace-trust) | `table` | — | 工作区设置，包括信任机制 |
 | [`services`](#services) | `table` | — | 内置外部服务配置 |
 | [`permission`](#permission) | `table` | — | 初始权限规则 |
 | [`hooks`](../customization/hooks.md) | `array<table>` | — | 生命周期 hook |
@@ -482,7 +482,7 @@ max_chars = 500000
 
 `enabled` 可被环境变量 `KIMI_CODE_WATCH` 覆盖，优先级高于配置文件。
 
-## `workspace`
+## `workspace trust`
 
 `workspace` 用于集中存放用户级 `config.toml` 中的工作区设置。其 `require_trust` 字段控制首次打开尚未受信任的工作区时是否要求信任确认；默认要求确认。
 

@@ -31,7 +31,7 @@ Deleting a server from the configuration does not interrupt open sessions: the s
 
 When Kimi Code finds project-level MCP servers in an untrusted folder, it shows each server's transport and launch target in the workspace trust prompt. The prompt defaults to `Trust this folder`; review the listed command and arguments or remote URL before confirming. Trusting the folder enables the project-level MCP servers for that workspace.
 
-Headless runs (for example `kimi -p` in CI) cannot show the trust prompt, so project-level MCP servers stay disabled there unless the workspace is already trusted. Set [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#runtime-switches) to `1` to trust the workspace for that process. To disable workspace trust globally and load project-level MCP servers without confirmation, set [`[workspace] require_trust = false`](../configuration/config-files.md#workspace) in `config.toml`; use that setting only when every workspace is already trusted.
+Headless runs (for example `kimi -p` in CI) cannot show the trust prompt, so project-level MCP servers stay disabled there unless the workspace is already trusted. Set [`KIMI_CODE_TRUST_WORKSPACE`](../configuration/env-vars.md#runtime-switches) to `1` to trust the workspace for that process. To disable workspace trust globally and load project-level MCP servers without confirmation, set [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) in `config.toml`; use that setting only when every workspace is already trusted.
 
 Structure of `mcp.json`:
 

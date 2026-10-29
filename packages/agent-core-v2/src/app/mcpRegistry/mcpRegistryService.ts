@@ -44,7 +44,7 @@ export class McpRegistryService implements IMcpRegistryService {
       }
     } else {
       const cwd = canonicalWorkspaceRoot(query.cwd);
-      const trusted = await this.trust.forRoot(cwd).get();
+      const trusted = await this.trust.forRoot(cwd).refresh();
       if (!trusted) {
         const userEntries = await this.store.list();
         for (const server of userEntries) {

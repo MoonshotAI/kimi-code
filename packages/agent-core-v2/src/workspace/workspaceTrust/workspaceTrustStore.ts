@@ -19,6 +19,7 @@ import { IWorkspaceTrust, type WorkspaceTrustChange } from './workspaceTrust';
 
 export interface IWorkspaceTrustEntry extends IWorkspaceTrust {
   isPersistedTrusted(): boolean;
+  refresh(): Promise<boolean>;
 }
 
 export interface IWorkspaceTrustStore {
@@ -82,6 +83,21 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
     await this.config.ready;
     if (!this.trustGateEnabled()) return true;
     await this.ready;
+    return this.isTrusted();
+  }
+
+  async refresh(): Promise<boolean> {
+    await this.config.ready;
+    if (!this.trustGateEnabled()) return true;
+    await this.ready;
+    const refresh = this.mutationTail.catch(() => {}).then(async () => {
+      const trusted = await readWorkspaceTrust(this.docs, this.root, this.telemetry);
+      if (this.trusted === trusted) return;
+      this.trusted = trusted;
+      this.changeEmitter.fire({ trusted });
+    });
+    this.mutationTail = refresh;
+    await refresh;
     return this.isTrusted();
   }
 

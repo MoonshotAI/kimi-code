@@ -1639,7 +1639,7 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 | --- | --- | --- | --- |
 | `workspace_id` | path | string | **必填。** 工作区 id |
 
-成功时 `data` 为 `{ trusted }`，表示撤销后的有效信任状态。通常为 `{ trusted: false }`；如果 `KIMI_CODE_TRUST_WORKSPACE` 或 [`[workspace] require_trust = false`](../configuration/config-files.md#workspace) 生效，则仍为 `true`。
+成功时 `data` 为 `{ trusted }`，表示撤销后的有效信任状态。通常为 `{ trusted: false }`；如果 `KIMI_CODE_TRUST_WORKSPACE` 或 [`[workspace] require_trust = false`](../configuration/config-files.md#workspace-trust) 生效，则仍为 `true`。
 
 - `40410`：工作区不存在
 
