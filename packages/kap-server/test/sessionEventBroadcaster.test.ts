@@ -1706,6 +1706,47 @@ describe('SessionEventBroadcaster', () => {
       expect(taskEvents(offView)).toEqual([]);
     });
 
+    it('delivers a task change that lands right after the subscription baseline', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+      const started = {
+        taskId: 'bash-1',
+        kind: 'process',
+        description: 'sleep',
+        status: 'running',
+        detached: true,
+        startedAt: 1_700_000_000_000,
+        endedAt: null,
+      };
+      await bc.subscribe('s1', collectingTarget().target, { '*': 'turn' });
+      main.bus.emit(agentEvent('task.started', { info: started }));
+
+      const view = collectingTarget();
+      let terminated = false;
+      const target: BroadcastTarget = {
+        send: (frame, delivery) => {
+          view.target.send(frame, delivery);
+          if (frame.type !== 'task' || terminated) return;
+          terminated = true;
+          queueMicrotask(() =>
+            main.bus.emit(
+              agentEvent('task.terminated', {
+                info: { ...started, status: 'completed', endedAt: 1_700_000_005_000 },
+              }),
+            ),
+          );
+        },
+      };
+      await bc.subscribe('s1', target, { '*': 'turn' });
+
+      const statuses = view.envelopes
+        .filter((frame) => frame.type === 'task')
+        .map((frame) => (frame as unknown as TaskEventMessage).status);
+      expect(statuses).toEqual(['running', 'ended']);
+    });
+
     it('streams for a client subscribed before any agent exists', async () => {
       const lc = new FakeLifecycle();
       sessions.set('s1', lc);

@@ -3339,6 +3339,9 @@ describe('SessionTasks', () => {
 
     feed({ type: 'subagent.suspended', subagentId: 'agent-0', reason: 'approval' });
     expect(task('agent-0')).toMatchObject({ status: 'running', phase: 'suspended', state_reason: 'approval' });
+    feed({ type: 'subagent.started', subagentId: 'agent-0' });
+    expect(task('agent-0')).toMatchObject({ status: 'running', phase: 'working' });
+    expect(task('agent-0')?.state_reason).toBeUndefined();
     feed({ type: 'subagent.failed', subagentId: 'agent-0', error: 'boom' });
     expect(task('agent-0')).toMatchObject({ status: 'ended', outcome: 'failed', error: 'boom' });
     expect(task('agent-0')?.phase).toBeUndefined();

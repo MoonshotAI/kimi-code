@@ -2365,7 +2365,7 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 | `task.attach` | flat: `{ request_id, session_id, task_id, since_offset? }` | Stream one main-agent task's output to this connection, no session subscription needed; `since_offset` resumes after output the client already has |
 | `task.detach` | flat: `{ request_id, session_id, task_id }` | Stop streaming that task's output |
 
-`task.attach` and `task.detach` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack. A successful `task.attach` replies with code 0, then sends the last 4 KiB of output (only the part after `since_offset` when it falls inside that window) as one `task.output` frame, followed by live output. Errors: `40001` malformed frame, `40401` session not found, `40406` task not found, `50003` output unreadable.
+`task.attach` and `task.detach` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack. A successful `task.attach` replies with code 0, then sends the last 32 KiB of output (only the part after `since_offset` when it falls inside that window) as one `task.output` frame, followed by live output. Errors: `40001` malformed frame, `40401` session not found, `40406` task not found, `50003` output unreadable.
 
 ### Events
 

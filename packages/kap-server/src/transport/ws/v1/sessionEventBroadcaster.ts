@@ -200,7 +200,6 @@ export class SessionEventBroadcaster {
       state.transcriptSeeded.delete(target);
     }
     await this.subscribeTranscript(state, target, transcriptGrades, prev, transcriptSince);
-    if (state.targets.has(target)) state.transcriptSeeded.add(target);
     return true;
   }
 
@@ -281,6 +280,7 @@ export class SessionEventBroadcaster {
       this.sendTranscriptReset(state, target, transcript, grade);
       this.sendTasks(state, target, descriptor.agentId);
     }
+    state.transcriptSeeded.add(target);
   }
 
   private replayTranscriptOps(
@@ -446,7 +446,6 @@ export class SessionEventBroadcaster {
     this.attachInteractions(sessionId, state);
     for (const [target, spec] of state.targets) {
       await this.subscribeTranscript(state, target, spec, undefined);
-      if (state.targets.has(target)) state.transcriptSeeded.add(target);
     }
   }
 

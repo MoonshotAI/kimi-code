@@ -228,7 +228,7 @@ function foldSubagentRun(
         result_summary: rerun ? undefined : (text(event['resultSummary']) ?? prev.result_summary),
         usage: rerun ? undefined : (usageOf(event['usage']) ?? prev.usage),
         error: rerun ? undefined : (text(event['error']) ?? prev.error),
-        state_reason: text(event['reason']) ?? (rerun ? undefined : prev.state_reason),
+        state_reason: text(event['reason']),
       }),
     );
   }

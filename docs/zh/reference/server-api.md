@@ -2368,7 +2368,7 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 | `task.attach` | 平铺：`{ request_id, session_id, task_id, since_offset? }` | 把某个 main agent 任务的输出流式推送到本连接，无需订阅会话；`since_offset` 从客户端已有输出之后续传 |
 | `task.detach` | 平铺：`{ request_id, session_id, task_id }` | 停止推送该任务的输出 |
 
-`task.attach` 与 `task.detach` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"? }` 而不是 ack。`task.attach` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 4 KiB 输出（`since_offset` 落在这段范围内时只发它之后的部分），之后推送实时输出。错误：`40001` 帧格式错误，`40401` 会话不存在，`40406` 任务不存在，`50003` 输出无法读取。
+`task.attach` 与 `task.detach` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"? }` 而不是 ack。`task.attach` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 32 KiB 输出（`since_offset` 落在这段范围内时只发它之后的部分），之后推送实时输出。错误：`40001` 帧格式错误，`40401` 会话不存在，`40406` 任务不存在，`50003` 输出无法读取。
 
 ### 事件
 
