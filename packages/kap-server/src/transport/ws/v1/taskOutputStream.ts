@@ -159,15 +159,13 @@ export class TaskOutputAttachments {
     this.sink.respond({ type: 'response', request_id: requestId, code: CODE_OK });
     const end = tail.offset + tail.data.byteLength;
     const first = firstChunk(tail.offset, tail.data, request.since_offset);
-    if (first !== undefined) {
-      this.sink.output({
-        type: 'task.output',
-        session_id: sessionId,
-        task_id: taskId,
-        offset: first.offset,
-        text: first.text,
-      });
-    }
+    this.sink.output({
+      type: 'task.output',
+      session_id: sessionId,
+      task_id: taskId,
+      offset: first.offset,
+      text: first.text,
+    });
     for (const chunk of pending) {
       if (chunk.offset >= end) forward(chunk);
     }
@@ -183,11 +181,11 @@ export class TaskOutputAttachments {
   }
 }
 
-export function firstChunk(
+function firstChunk(
   tailOffset: number,
   data: Uint8Array,
   sinceOffset: number | undefined,
-): { readonly offset: number; readonly text: string } | undefined {
+): { readonly offset: number; readonly text: string } {
   const end = tailOffset + data.byteLength;
   let start = 0;
   if (
@@ -200,7 +198,6 @@ export function firstChunk(
   } else {
     while (start < data.byteLength && isUtf8Continuation(data[start]!)) start += 1;
   }
-  if (start >= data.byteLength) return undefined;
   return {
     offset: tailOffset + start,
     text: Buffer.from(data.buffer, data.byteOffset + start, data.byteLength - start).toString('utf-8'),

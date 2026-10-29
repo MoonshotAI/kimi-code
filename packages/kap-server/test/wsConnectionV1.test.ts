@@ -778,22 +778,44 @@ describe('WsConnectionV1 task output', () => {
     conn.close();
   });
 
-  it('sends nothing after the reply when since_offset is already at the end', async () => {
+  it('sends an empty first chunk when since_offset is already at the end', async () => {
     const output = makeTaskOutput('bash-k3f9x2ab', startLines);
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
+    const end = Buffer.byteLength(startLines, 'utf-8');
 
     send(socket, {
       type: 'task.attach',
       request_id: 'r1',
       session_id: 's1',
       task_id: 'bash-k3f9x2ab',
-      since_offset: Buffer.byteLength(startLines, 'utf-8'),
+      since_offset: end,
     });
-    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
     await new Promise((resolve) => setTimeout(resolve, 30));
 
-    expect(taskFrames(socket)).toEqual([{ type: 'response', request_id: 'r1', code: 0 }]);
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 0 },
+      { type: 'task.output', session_id: 's1', task_id: 'bash-k3f9x2ab', offset: end, text: '' },
+    ]);
+    conn.close();
+  });
+
+  it('sends an empty first chunk when the task has no output yet', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
+
+    expect(taskFrames(socket)[1]).toEqual({
+      type: 'task.output',
+      session_id: 's1',
+      task_id: 'bash-k3f9x2ab',
+      offset: 0,
+      text: '',
+    });
     conn.close();
   });
 
