@@ -291,6 +291,10 @@ export class TranscriptService {
     return this.live.get(sessionId)?.tasks.list(agentId) ?? [];
   }
 
+  async whenTasksLoaded(sessionId: string, agentId: string): Promise<void> {
+    await this.live.get(sessionId)?.tasks.whenLoaded(agentId);
+  }
+
   private journalOps(sessionId: string, event: TranscriptChangeEvent): number {
     const entry = this.live.get(sessionId);
     if (entry === undefined) return 0;

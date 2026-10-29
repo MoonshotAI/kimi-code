@@ -250,14 +250,10 @@ export class SessionEventBroadcaster {
     const store = service.forSessionLive(state.sessionId);
     if (store === undefined) return;
     await service.whenReady(state.sessionId);
-    const backfill = new Set(
-      Object.keys(spec).filter((agentId) => agentId !== '*' && gradeFor(spec, agentId) !== 'off'),
-    );
-    for (const descriptor of store.agents()) {
-      if (gradeFor(spec, descriptor.agentId) !== 'off') backfill.add(descriptor.agentId);
-    }
     await Promise.all(
-      [...backfill].map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
+      subscribedAgentIds(store, spec).map((agentId) =>
+        service.ensureAgentHistory(state.sessionId, agentId),
+      ),
     );
     const currentSpec = state.targets.get(target);
     if (currentSpec === undefined) return;
@@ -272,14 +268,13 @@ export class SessionEventBroadcaster {
         const catchup = service.getOpsSince(state.sessionId, descriptor.agentId, since);
         if (catchup !== undefined && catchup.complete) {
           this.replayTranscriptOps(state, target, descriptor.agentId, grade, catchup.batches);
-          this.sendTasks(state, target, descriptor.agentId);
           continue;
         }
       }
       if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
       this.sendTranscriptReset(state, target, transcript, grade);
-      this.sendTasks(state, target, descriptor.agentId);
     }
+    for (const agentId of subscribedAgentIds(store, currentSpec)) this.sendTasks(state, target, agentId);
     state.transcriptSeeded.add(target);
   }
 
@@ -351,6 +346,7 @@ export class SessionEventBroadcaster {
         for (const descriptor of agents) {
           if (stream.knownAgents.has(descriptor.agentId)) continue;
           stream.knownAgents.add(descriptor.agentId);
+          void service.whenTasksLoaded(state.sessionId, descriptor.agentId);
           const transcript = store.getAgent(descriptor.agentId);
           if (transcript === undefined) continue;
           for (const [target, spec] of state.targets) {
@@ -757,6 +753,12 @@ export class SessionEventBroadcaster {
       logger.warn({ eventType, err: error }, 'session event dispatch failed');
     }
   }
+}
+
+function subscribedAgentIds(store: TranscriptStore, spec: TranscriptGradeSpec): string[] {
+  const agentIds = new Set(Object.keys(spec).filter((agentId) => agentId !== '*'));
+  for (const descriptor of store.agents()) agentIds.add(descriptor.agentId);
+  return [...agentIds].filter((agentId) => gradeFor(spec, agentId) !== 'off');
 }
 
 function buildTranscriptEnvelope(

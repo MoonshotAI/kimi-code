@@ -1747,6 +1747,63 @@ describe('SessionEventBroadcaster', () => {
       expect(statuses).toEqual(['running', 'ended']);
     });
 
+    it('resends tasks of every subscribed agent when a re-subscribe raises another agent', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      lc.addAgent('agent-0');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+      const started = {
+        taskId: 'bash-1',
+        kind: 'process',
+        description: 'sleep',
+        status: 'running',
+        detached: true,
+        startedAt: 1_700_000_000_000,
+        endedAt: null,
+      };
+
+      const view = collectingTarget();
+      let terminated = false;
+      const target: BroadcastTarget = {
+        send: (frame, delivery) => {
+          view.target.send(frame, delivery);
+          if (terminated || frame.type !== 'transcript.reset') return;
+          if ((frame.payload as { agent_id?: string }).agent_id !== 'agent-0') return;
+          terminated = true;
+          main.bus.emit(
+            agentEvent('task.terminated', {
+              info: { ...started, status: 'completed', endedAt: 1_700_000_005_000 },
+            }),
+          );
+        },
+      };
+      await bc.subscribe('s1', target, { main: 'turn', 'agent-0': 'off' });
+      main.bus.emit(agentEvent('task.started', { info: started }));
+      await bc.subscribe('s1', target, { main: 'turn', 'agent-0': 'turn' });
+
+      expect(terminated).toBe(true);
+      const statuses = view.envelopes
+        .filter((frame) => frame.type === 'task')
+        .map((frame) => (frame as unknown as TaskEventMessage).status);
+      expect(statuses).toEqual(['running', 'ended']);
+    });
+
+    it('loads the task history of an agent that joins the roster after the subscription', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      const core = makeCore(sessions, eventBus);
+      const service = new TranscriptService({ homeDir: dir, core });
+      const loads = vi.spyOn(service, 'whenTasksLoaded');
+      bc = new SessionEventBroadcaster({ core, transcriptService: service });
+
+      await bc.subscribe('s1', collectingTarget().target, { '*': 'turn' });
+      lc.addAgent('agent-0');
+
+      expect(loads).toHaveBeenCalledWith('s1', 'agent-0');
+    });
+
     it('streams for a client subscribed before any agent exists', async () => {
       const lc = new FakeLifecycle();
       sessions.set('s1', lc);

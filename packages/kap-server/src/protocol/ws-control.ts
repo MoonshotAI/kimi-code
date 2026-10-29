@@ -309,7 +309,7 @@ export const taskEventOperation = {
   kind: 'event',
   messageSchema: taskEventMessageSchema,
   description:
-    'Full state of one task of a subscribed agent; every task of the agent is sent after each transcript reset or catch-up, then the changed task on every change.',
+    'Full state of one task of a subscribed agent; every task of the subscribed agents is sent once each subscribe_v2 completes, then the changed task on every change.',
 } as const satisfies WsOperationDefinition;
 
 export const taskOutputEventOperation = {

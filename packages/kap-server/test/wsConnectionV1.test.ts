@@ -650,15 +650,23 @@ describe('WsConnectionV1 task output', () => {
     readonly source: TaskOutputSource;
     write(text: string): void;
     readonly listenerCount: () => number;
+    readonly sourceCalls: () => number;
     holdTailRead(): () => void;
+    holdSource(): () => void;
     failTailRead(): void;
+    corruptTailRead(): void;
+    withholdTailBytes(count: number): void;
   }
 
   function makeTaskOutput(taskId: string, initial = '', ownerAgentId = 'main'): FakeTaskOutput {
     let bytes = Buffer.from(initial, 'utf-8');
     const listeners = new Set<(chunk: AgentTaskOutputChunk) => void>();
     let gate: Promise<void> | undefined;
+    let sourceGate: Promise<void> | undefined;
+    let sourceCalls = 0;
     let tailReadFails = false;
+    let tailReadCorrupt = false;
+    let withheld = 0;
     const tasks = {
       getTask: (id: string) => (id === taskId ? { taskId } : undefined),
       onDidAppendOutput: (listener: (chunk: AgentTaskOutputChunk) => void) => {
@@ -668,15 +676,36 @@ describe('WsConnectionV1 task output', () => {
       readOutputTail: async (_id: string, maxBytes: number) => {
         await gate;
         if (tailReadFails) throw new Error('EACCES: permission denied');
-        const offset = Math.max(0, bytes.byteLength - maxBytes);
-        return { offset, data: new Uint8Array(bytes.subarray(offset)) };
+        if (tailReadCorrupt) return { offset: 0, data: undefined };
+        const visible = bytes.subarray(0, bytes.byteLength - withheld);
+        const offset = Math.max(0, visible.byteLength - maxBytes);
+        return { offset, data: new Uint8Array(visible.subarray(offset)) };
       },
     } as unknown as IAgentTaskService;
     return {
       source: async (sessionId, agentId, id) => {
+        sourceCalls += 1;
+        await sourceGate;
         if (sessionId !== 's1') return { kind: 'session_not_found' };
         if (agentId !== ownerAgentId || id !== taskId) return { kind: 'task_not_found' };
         return { kind: 'found', tasks };
+      },
+      sourceCalls: () => sourceCalls,
+      holdSource: () => {
+        let release!: () => void;
+        sourceGate = new Promise((resolve) => {
+          release = resolve;
+        });
+        return () => {
+          sourceGate = undefined;
+          release();
+        };
+      },
+      corruptTailRead: () => {
+        tailReadCorrupt = true;
+      },
+      withholdTailBytes: (count) => {
+        withheld = count;
       },
       write: (text) => {
         const offset = bytes.byteLength;
@@ -1083,5 +1112,74 @@ describe('WsConnectionV1 task output', () => {
     conn.close();
 
     expect(output.listenerCount()).toBe(0);
+  });
+
+  it('does not resolve watches still queued when the connection closes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+    const release = output.holdSource();
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.watch', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.sourceCalls()).toBe(1));
+    conn.close();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(output.sourceCalls()).toBe(1);
+    expect(output.listenerCount()).toBe(0);
+  });
+
+  it('replies with an internal error and releases the watch when streaming setup throws', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    output.corruptTailRead();
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 50001, msg: 'internal error' },
+    ]);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('forwards the unread rest of a chunk the tail read caught mid-write', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+    const release = output.holdTailRead();
+    const line = 'héllo\n';
+
+    send(socket, { type: 'task.watch', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
+    output.write(line);
+    output.withholdTailBytes(Buffer.byteLength(line, 'utf-8') - 2);
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    const start = Buffer.byteLength(startLines, 'utf-8');
+    expect(taskFrames(socket).slice(1)).toEqual([
+      {
+        type: 'task.output',
+        session_id: 's1',
+        agent_id: 'main',
+        task_id: 'bash-k3f9x2ab',
+        offset: 0,
+        text: `${startLines}h`,
+      },
+      {
+        type: 'task.output',
+        session_id: 's1',
+        agent_id: 'main',
+        task_id: 'bash-k3f9x2ab',
+        offset: start + 1,
+        text: 'éllo\n',
+      },
+    ]);
+    conn.close();
   });
 });

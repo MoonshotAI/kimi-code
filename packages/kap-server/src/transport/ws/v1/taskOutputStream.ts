@@ -85,8 +85,7 @@ export class TaskOutputWatches {
   }
 
   private enqueue(key: string, run: () => Promise<void>): void {
-    const next = (this.queues.get(key) ?? Promise.resolve()).then(run).catch(() => {
-    });
+    const next = (this.queues.get(key) ?? Promise.resolve()).then(run).catch(() => undefined);
     this.queues.set(key, next);
     void next.then(() => {
       if (this.queues.get(key) === next) this.queues.delete(key);
@@ -94,10 +93,12 @@ export class TaskOutputWatches {
   }
 
   private async watch(request: TaskWatchMessage): Promise<void> {
+    if (this.disposed) return;
     const { request_id: requestId, session_id: sessionId, agent_id: agentId, task_id: taskId } = request;
     const key = watchKey(request);
     this.unwatch(key);
     const fail = (code: number, msg: string): void => {
+      this.unwatch(key);
       this.sink.respond(requestId, code, msg);
     };
 
@@ -118,47 +119,51 @@ export class TaskOutputWatches {
     }
     if (this.disposed) return;
 
-    const pending: AgentTaskOutputChunk[] = [];
-    let live = false;
-    const forward = (chunk: { readonly offset: number; readonly text: string }): void => {
-      this.sink.output({
-        type: 'task.output',
-        session_id: sessionId,
-        agent_id: agentId,
-        task_id: taskId,
-        offset: chunk.offset,
-        text: chunk.text,
-      });
-    };
-    this.watches.set(
-      key,
-      resolved.tasks.onDidAppendOutput((chunk) => {
-        if (chunk.taskId !== taskId) return;
-        if (live) forward(chunk);
-        else pending.push(chunk);
-      }),
-    );
-
-    let tail: AgentTaskOutputTail;
     try {
-      tail = await resolved.tasks.readOutputTail(
-        taskId,
-        request.tail_bytes ?? TASK_OUTPUT_DEFAULT_TAIL_BYTES,
+      const pending: AgentTaskOutputChunk[] = [];
+      let live = false;
+      const forward = (chunk: { readonly offset: number; readonly text: string }): void => {
+        this.sink.output({
+          type: 'task.output',
+          session_id: sessionId,
+          agent_id: agentId,
+          task_id: taskId,
+          offset: chunk.offset,
+          text: chunk.text,
+        });
+      };
+      this.watches.set(
+        key,
+        resolved.tasks.onDidAppendOutput((chunk) => {
+          if (chunk.taskId !== taskId) return;
+          if (live) forward(chunk);
+          else pending.push(chunk);
+        }),
       );
-    } catch {
-      this.unwatch(key);
-      fail(ErrorCode.PERSISTENCE_FAILURE, 'task output unavailable');
-      return;
-    }
-    if (this.disposed) return;
 
-    this.sink.respond(requestId, ErrorCode.SUCCESS);
-    const end = tail.offset + tail.data.byteLength;
-    forward(firstChunk(tail.offset, tail.data, request.since_offset));
-    for (const chunk of pending) {
-      if (chunk.offset >= end) forward(chunk);
+      let tail: AgentTaskOutputTail;
+      try {
+        tail = await resolved.tasks.readOutputTail(
+          taskId,
+          request.tail_bytes ?? TASK_OUTPUT_DEFAULT_TAIL_BYTES,
+        );
+      } catch {
+        fail(ErrorCode.PERSISTENCE_FAILURE, 'task output unavailable');
+        return;
+      }
+      if (this.disposed) return;
+
+      const first = firstChunk(tail.offset, tail.data, request.since_offset);
+      this.sink.respond(requestId, ErrorCode.SUCCESS);
+      forward(first);
+      for (const chunk of pending) {
+        const rest = chunkAfter(chunk, first.end);
+        if (rest !== undefined) forward(rest);
+      }
+      live = true;
+    } catch {
+      fail(ErrorCode.INTERNAL_ERROR, 'internal error');
     }
-    live = true;
   }
 
   private unwatch(key: string): void {
@@ -171,23 +176,48 @@ function firstChunk(
   tailOffset: number,
   data: Uint8Array,
   sinceOffset: number | undefined,
-): { readonly offset: number; readonly text: string } {
-  const end = tailOffset + data.byteLength;
+): { readonly offset: number; readonly text: string; readonly end: number } {
+  const stop = completeUtf8Length(data);
   let start = 0;
   if (
     sinceOffset !== undefined &&
     sinceOffset >= tailOffset &&
-    sinceOffset <= end &&
+    sinceOffset <= tailOffset + stop &&
     isCharBoundary(data, sinceOffset - tailOffset)
   ) {
     start = sinceOffset - tailOffset;
   } else {
-    while (start < data.byteLength && isUtf8Continuation(data[start]!)) start += 1;
+    while (start < stop && isUtf8Continuation(data[start]!)) start += 1;
   }
   return {
     offset: tailOffset + start,
-    text: Buffer.from(data.buffer, data.byteOffset + start, data.byteLength - start).toString('utf-8'),
+    text: Buffer.from(data.buffer, data.byteOffset + start, stop - start).toString('utf-8'),
+    end: tailOffset + stop,
   };
+}
+
+function chunkAfter(
+  chunk: AgentTaskOutputChunk,
+  end: number,
+): { readonly offset: number; readonly text: string } | undefined {
+  if (chunk.offset >= end) return chunk;
+  const bytes = Buffer.from(chunk.text, 'utf-8');
+  if (chunk.offset + bytes.byteLength <= end) return undefined;
+  return { offset: end, text: bytes.subarray(end - chunk.offset).toString('utf-8') };
+}
+
+function completeUtf8Length(data: Uint8Array): number {
+  let lead = data.byteLength - 1;
+  while (lead >= 0 && data.byteLength - lead < 4 && isUtf8Continuation(data[lead]!)) lead -= 1;
+  if (lead < 0) return data.byteLength;
+  return lead + utf8SequenceLength(data[lead]!) <= data.byteLength ? data.byteLength : lead;
+}
+
+function utf8SequenceLength(leadByte: number): number {
+  if (leadByte >= 0xf0) return 4;
+  if (leadByte >= 0xe0) return 3;
+  if (leadByte >= 0xc0) return 2;
+  return 1;
 }
 
 function isCharBoundary(data: Uint8Array, index: number): boolean {
