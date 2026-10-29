@@ -19,6 +19,7 @@ import {
   type ISkillSource,
   type SkillContribution,
 } from '#/features/skill/catalog/skillSource';
+import type { ILogService } from '#/_base/log/log';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
 import { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
@@ -55,6 +56,7 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IWorkspaceDirs private readonly workspaceDirs: IWorkspaceDirs,
     private readonly fs: IHostFileSystem,
+    private readonly log?: ILogService,
     private readonly watchEnabled = true,
   ) {
     super();
@@ -115,20 +117,24 @@ export class WorkspaceRootSkillSource extends Disposable implements IWorkspaceRo
     const resources = this.watchResources.add(new DisposableStore());
     try {
       for (const [projectRoot, candidates] of watches) {
-        const handle = watchCandidates(projectRoot, candidates, {
-          ignored: subtreeWatchFilter(projectRoot, candidates, {
-            scannedDirectories,
-            keepEntryFile: 'SKILL.md',
-          }),
-          signal: true,
-        });
-        resources.add(handle);
-        resources.add(
-          handle.onDidChange(() => {
-            this.watchDebounce.cancelAndSet(() => this.onDidChangeEmitter.fire(), WATCH_DEBOUNCE_MS);
-          }),
-        );
-        await handle.ready;
+        try {
+          const handle = watchCandidates(projectRoot, candidates, {
+            ignored: subtreeWatchFilter(projectRoot, candidates, {
+              scannedDirectories,
+              keepEntryFile: 'SKILL.md',
+            }),
+            signal: true,
+          });
+          resources.add(handle);
+          resources.add(
+            handle.onDidChange(() => {
+              this.watchDebounce.cancelAndSet(() => this.onDidChangeEmitter.fire(), WATCH_DEBOUNCE_MS);
+            }),
+          );
+          await handle.ready;
+        } catch (error) {
+          this.log?.warn(`project skill watcher failed for ${projectRoot}: ${String(error)}`);
+        }
       }
     } catch (error) {
       this.watchResources.delete(resources);

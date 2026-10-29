@@ -194,6 +194,8 @@ export interface WorkspaceTrustInfo {
 
 export interface WorkspaceTrustInfoOptions {
   readonly additionalDirs?: readonly string[];
+  readonly environmentId?: string;
+  readonly environmentCwd?: string;
 }
 
 /**

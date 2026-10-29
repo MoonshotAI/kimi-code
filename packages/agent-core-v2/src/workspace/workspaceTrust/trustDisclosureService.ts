@@ -67,14 +67,15 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   async describeGatedActivation(
     pendingAdditionalDirs: readonly string[] = [],
     baseDir = this.context.cwd,
+    pendingAdditionalDirsResolved = false,
   ): Promise<TrustGatedActivation> {
     if (await this.trust.get()) return EMPTY_ACTIVATION;
     await this.workspaceDirs.ready;
-    const resolvedPendingAdditionalDirs = await this.localConfig.resolveAdditionalDirs(
-      baseDir,
-      pendingAdditionalDirs,
-    );
+    const resolvedPendingAdditionalDirs = pendingAdditionalDirsResolved
+      ? pendingAdditionalDirs
+      : await this.localConfig.resolveAdditionalDirs(baseDir, pendingAdditionalDirs);
     const warnings: string[] = [];
+    await this.skills.reloadSources(['workspace']).catch(() => undefined);
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {
         this.log.warn(`trust disclosure: MCP scan failed: ${String(error)}`);

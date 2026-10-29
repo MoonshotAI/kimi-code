@@ -336,6 +336,41 @@ describe('WorkspaceSkillCatalogService', () => {
     }
   });
 
+  it('retains discovered skills when a secondary watcher fails', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'skill-catalog-watch-failure-'));
+    const primary = join(base, 'primary');
+    const secondary = join(base, 'secondary');
+    await seedCatalogSkill(primary, 'primary-only', 'from primary');
+    await seedCatalogSkill(secondary, 'secondary-only', 'from secondary');
+    const secondaryRoot = await realpath(secondary);
+    watchMockState.factory = (path) => ({
+      ready: path === secondaryRoot
+        ? Promise.reject(new Error('unwatchable'))
+        : Promise.resolve(),
+      onDidChange: () => ({ dispose: () => {} }),
+      dispose: () => {},
+    });
+    const { host, workspace } = makeHost(
+      new FileSkillDiscovery(stubLog()),
+      workspaceContextStub(primary),
+      [],
+      undefined,
+      undefined,
+      workspaceDirsStub([secondary]),
+    );
+
+    try {
+      const catalog = workspace.accessor.get(IWorkspaceSkillCatalog);
+      await catalog.load();
+
+      expect(catalog.catalog.getSkill('primary-only')).toBeDefined();
+      expect(catalog.catalog.getSkill('secondary-only')).toBeDefined();
+    } finally {
+      host.dispose();
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
   it('excludes session-only directories from the shared workspace catalog', async () => {
     const base = await mkdtemp(join(tmpdir(), 'skill-catalog-session-only-'));
     const primary = join(base, 'primary');

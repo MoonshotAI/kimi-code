@@ -34,7 +34,7 @@ import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspac
 import type { IEnvironmentService } from '#/app/environment/environment';
 
 import type { ProgramDependencies } from './programDependencies';
-import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness } from './programWorkdirs';
+import { PROGRAM_CAPABILITIES, ProgramWorkdirs, type ProgramHarness, type ProgramWorkdir } from './programWorkdirs';
 
 export type { ProgramWorkdir } from './programWorkdirs';
 
@@ -159,6 +159,16 @@ export class Program {
     } catch (error) {
       release();
       throw error;
+    }
+  }
+
+  async acquireWorkdir(environmentId: string, cwd: string): Promise<ProgramWorkdir> {
+    const generation = this.requireGeneration();
+    const lease = await this.environments.acquireWhenReady({ environmentId }, ['fs']);
+    try {
+      return await generation.workdirs.acquire(environmentId, cwd);
+    } finally {
+      lease.dispose();
     }
   }
 

@@ -2681,6 +2681,74 @@ describe('SDKRpcClientV2 workspace trust', () => {
     }
   });
 
+  it('resolves trust paths against the bound environment', async () => {
+    const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-local-'));
+    const remoteCwd = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-remote-'));
+    const remoteHome = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-remote-home-'));
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-trust-home-'));
+    const remoteAdditionalDir = join(remoteCwd, 'shared');
+    const remoteHomeAdditionalDir = join(remoteHome, 'home-shared');
+    tempDirs.push(workDir, remoteCwd, remoteHome, homeDir);
+    await mkdir(remoteAdditionalDir);
+    await mkdir(remoteHomeAdditionalDir);
+    await writeFile(
+      join(homeDir, 'config.toml'),
+      `[environments.fake-box]\ntype = "ssh"\nhost = "example.com"\ndefaultCwd = ${JSON.stringify(remoteCwd)}\n`,
+      'utf8',
+    );
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', 'false');
+    const client = new SDKRpcClientV2({ homeDir, identity: TEST_IDENTITY });
+    const harness = new KimiHarness(client, {
+      identity: client.identity,
+      homeDir: client.homeDir,
+      configPath: client.configPath,
+      auth: client.auth,
+      telemetry: client.telemetry,
+      ensureConfigFile: () => client.ensureConfigFile(),
+      onClose: () => client.close(),
+    });
+    const attached = await (client as unknown as {
+      remoteEnvironmentProvider: Promise<{ dispose(): void | Promise<void> } | undefined>;
+    }).remoteEnvironmentProvider;
+    await attached?.dispose();
+    const provider = await client.engineAccessor.get(IEnvironmentService).addProvider({
+      id: 'fake-box-provider',
+      attach: async (host) => {
+        const fake = new FakeEnvironment(
+          { environmentId: 'fake-box', generation: 'fake-generation' },
+          { capabilities: ['fs', 'process'], host: { homeDir: remoteHome } },
+        );
+        const environment = Object.assign(fake, {
+          fs: new HostFileSystem(),
+          process: new HostProcessService(),
+        });
+        const registration = host.registerEnvironment(environment);
+        return { dispose: () => registration.remove() };
+      },
+    });
+
+    try {
+      const info = await harness.getWorkspaceTrustInfo(workDir, {
+        additionalDirs: ['shared', '~/home-shared'],
+        environmentId: 'fake-box',
+        environmentCwd: remoteCwd,
+      });
+
+      expect(info.gatedAdditionalDirs).toEqual([
+        await realpath(remoteAdditionalDir),
+        await realpath(remoteHomeAdditionalDir),
+      ]);
+      expect(info.additionalDirSources).toEqual([
+        await realpath(remoteAdditionalDir),
+        await realpath(remoteHomeAdditionalDir),
+      ]);
+    } finally {
+      await provider.dispose();
+      await harness.close();
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('resolves relative session-only dirs without loading their skills', async () => {
     const { harness } = await makeHarness();
     const workDir = await mkdtemp(join(tmpdir(), 'kimi-sdk-v2-work-'));

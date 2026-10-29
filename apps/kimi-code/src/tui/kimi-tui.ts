@@ -4798,6 +4798,8 @@ export class KimiTUI {
     try {
       info = await this.harness.getWorkspaceTrustInfo(workDir, {
         additionalDirs: this.state.appState.additionalDirs,
+        environmentId: this.options.startup.environment,
+        environmentCwd: this.options.startup.environmentCwd,
       });
     } catch {
       info = {

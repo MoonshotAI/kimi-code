@@ -31,6 +31,7 @@ export interface IWorkspaceTrustDisclosure {
   describeGatedActivation(
     pendingAdditionalDirs?: readonly string[],
     baseDir?: string,
+    pendingAdditionalDirsResolved?: boolean,
   ): Promise<TrustGatedActivation>;
 }
 

@@ -13,12 +13,8 @@ vi.mock('#/_base/di/scope', async (importOriginal) => {
 });
 
 describe('SessionLifecycleService', () => {
-  it('awaits workspace skill reload after merging additional dirs before creating session scope', async () => {
+  it('does not rescan workspace skills when additional dirs are session-only', async () => {
     const calls: string[] = [];
-    let release!: () => void;
-    const blocked = new Promise<void>((resolve) => {
-      release = resolve;
-    });
     const workspaceDirs = {
       ready: Promise.resolve(),
       mergeAdditionalDirs: vi.fn(async () => {
@@ -30,7 +26,7 @@ describe('SessionLifecycleService', () => {
       sessionData: () => ({}),
       reloadSources: vi.fn(() => {
         calls.push('reload');
-        return blocked;
+        return Promise.resolve();
       }),
     };
     const ready = Promise.resolve();
@@ -103,16 +99,11 @@ describe('SessionLifecycleService', () => {
     );
 
     try {
-      await vi.waitFor(() => {
-        expect(workspaceSkillCatalog.reloadSources).toHaveBeenCalledWith(['workspace']);
-      });
-      expect(createScopedChildHandleMock).not.toHaveBeenCalled();
-      release();
       await materialize;
-      expect(calls).toEqual(['merge', 'reload', 'scope']);
+      expect(calls).toEqual(['merge', 'scope']);
+      expect(workspaceSkillCatalog.reloadSources).not.toHaveBeenCalled();
       expect(workspaceDirs.mergeAdditionalDirs).toHaveBeenCalledWith('/workspace', ['/additional']);
     } finally {
-      release();
       await materialize.catch(() => undefined);
       service.dispose();
       createScopedChildHandleMock.mockReset();

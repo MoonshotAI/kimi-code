@@ -559,7 +559,7 @@ describe('WorkspaceTrustService', () => {
       } as never,
       { ready: Promise.resolve(), sharedAdditionalDirs: [secondary] } as never,
       { ready: Promise.resolve(), get: async () => false } as never,
-      { ready: Promise.resolve(), catalog } as never,
+      { ready: Promise.resolve(), catalog, reloadSources: async () => undefined } as never,
       { ready: Promise.resolve() } as never,
       { entries: () => [] } as never,
       { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
@@ -577,6 +577,61 @@ describe('WorkspaceTrustService', () => {
     } finally {
       await rm(secondary, { recursive: true, force: true });
     }
+  });
+
+  it('awaits the current workspace reload before disclosing skills', async () => {
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const catalog = new InMemorySkillCatalog();
+    const skill = {
+      name: 'reload-secondary',
+      description: 'Reload secondary',
+      source: 'project' as const,
+      path: '/secondary/.kimi-code/skills/reload-secondary/SKILL.md',
+      dir: '/secondary/.kimi-code/skills/reload-secondary',
+      metadata: { type: 'prompt' as const },
+      content: 'Reload secondary',
+    };
+    const reloadSources = vi.fn(async () => {
+      await blocked;
+      catalog.register(skill);
+    });
+    const fs = new HostFileSystem();
+    const service = new WorkspaceTrustDisclosureService(
+      { cwd, workspaceId: 'wm_test' } as never,
+      fs,
+      stubBootstrap(homeDir),
+      { get: () => true } as never,
+      {
+        readAdditionalDirs: async () => ({
+          projectRoot: cwd,
+          configPath: join(cwd, '.kimi-code', 'local.toml'),
+          additionalDirs: [],
+        }),
+        resolveAdditionalDirs: async (_baseDir: string, dirs: readonly string[]) => [...dirs],
+      } as never,
+      { ready: Promise.resolve(), sharedAdditionalDirs: [] } as never,
+      { ready: Promise.resolve(), get: async () => false } as never,
+      { ready: Promise.resolve(), catalog, reloadSources } as never,
+      { ready: Promise.resolve() } as never,
+      { entries: () => [] } as never,
+      { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,
+      stubLog(),
+    );
+
+    const pending = service.describeGatedActivation();
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(reloadSources).toHaveBeenCalledWith(['workspace']));
+    expect(settled).toBe(false);
+
+    release();
+    const result = await pending;
+    expect(result.instructionSources.skills).toContain('reload-secondary');
   });
 
   it('expands home-relative pending dirs without discovering their skills', async () => {
@@ -597,7 +652,7 @@ describe('WorkspaceTrustService', () => {
       new FileProjectLocalConfigService(stubBootstrap(homeDir), fs, secondary),
       { ready: Promise.resolve(), sharedAdditionalDirs: [] } as never,
       { ready: Promise.resolve(), get: async () => false } as never,
-      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog() } as never,
+      { ready: Promise.resolve(), catalog: new InMemorySkillCatalog(), reloadSources: async () => undefined } as never,
       { ready: Promise.resolve() } as never,
       { entries: () => [] } as never,
       { ready: Promise.resolve(), snapshot: { agentsMdPaths: [] } } as never,

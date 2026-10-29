@@ -216,9 +216,9 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
   }
 
   private setFileDirs(dirs: readonly string[]): boolean {
-    const before = this.additionalDirs;
+    const before = this.sharedAdditionalDirs;
     this.fileDirs = dirs;
-    return !sameStringList(before, this.additionalDirs);
+    return !sameStringList(before, this.sharedAdditionalDirs);
   }
 
   private async reloadFromRegistry(): Promise<void> {
@@ -245,12 +245,12 @@ export class WorkspaceDirsService implements IWorkspaceDirs {
         dirs.push(dir);
       }
     }
-    const beforeDirs = this.additionalDirs;
+    const beforeDirs = this.sharedAdditionalDirs;
     const beforePrimary = this.primaryByWorkspace;
     this.registryDirs = dirs;
     this.primaryByWorkspace = primary;
     if (
-      !sameStringList(beforeDirs, this.additionalDirs) ||
+      !sameStringList(beforeDirs, this.sharedAdditionalDirs) ||
       !samePrimaryByWorkspace(beforePrimary, primary)
     ) {
       this.fireChange();

@@ -283,7 +283,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await Promise.all([this.config.ready, this.models.ready, this.providers.ready]);
       await dirs.ready;
       await dirs.mergeAdditionalDirs(environment?.cwd ?? opts.workDir, opts.additionalDirs ?? []);
-      await workdir.skills.reloadSources(['workspace']).catch(() => undefined);
     } catch (error) {
       workdir.dispose();
       throw error;
