@@ -24,10 +24,12 @@ import {
   touchForkedFileHistory,
 } from '#/features/fileHistory/fileHistoryRetention';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IProjectPermissionRulesService } from '#/agent/permissionRules/projectPermissionRules';
 import { IAgentPlanService } from '#/features/plan/plan';
 import { LifecycleScope } from '#/app/scopes';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IProjectLocalConfigService } from '#/app/projectLocalConfig/projectLocalConfig';
 import { IEventService } from '#/app/event/event';
 import { IFlagService } from '#/app/flag/flag';
 import { CHILD_SESSION_KIND,
@@ -310,6 +312,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         {
           seeds: [
             ...sessionContextSeed(ctx),
+            [IProjectLocalConfigService, workdir.localConfig],
             [ITelemetryService, telemetryBinding.telemetry],
             ...sessionAgentProfileCatalogSeed({
               _serviceBrand: undefined,
@@ -360,6 +363,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await handle.accessor.get(ISessionMetadata).ready;
       await handle.accessor.get(ISessionNotify).ready;
       await handle.accessor.get(ISessionToolPolicy).ready;
+      await handle.accessor.get(IProjectPermissionRulesService).ready;
       await Promise.all([
         workdir.agentProfiles.ready,
         this.extraAgentProfileLoader.ready,

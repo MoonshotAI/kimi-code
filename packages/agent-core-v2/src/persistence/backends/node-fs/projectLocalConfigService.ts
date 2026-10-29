@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
-import { parse as parseToml } from 'smol-toml';
+import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 import { z } from 'zod';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -7,6 +7,7 @@ import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import {
   IProjectLocalConfigService,
   type ProjectAdditionalDirsLoadResult,
+  type ProjectPermissionRulesLoadResult,
 } from '#/app/projectLocalConfig/projectLocalConfig';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -23,6 +24,8 @@ const ProjectLocalTomlSchema = z.object({
 
 type ProjectLocalToml = z.infer<typeof ProjectLocalTomlSchema>;
 
+const permissionWriteTails = new Map<string, Promise<void>>();
+
 export class FileProjectLocalConfigService implements IProjectLocalConfigService {
   declare readonly _serviceBrand: undefined;
 
@@ -35,9 +38,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
   async readAdditionalDirs(workDir: string): Promise<ProjectAdditionalDirsLoadResult> {
     const projectRoot = await this.findProjectRoot(workDir);
     const configPath = this.getProjectLocalConfigPath(projectRoot);
-    const parsed = await this.readProjectLocalToml(configPath);
+    const file = await this.readProjectLocalToml(configPath);
 
-    const additionalDirs = parsed?.workspace?.additional_dir;
+    const additionalDirs = file?.parsed.workspace?.additional_dir;
     if (additionalDirs === undefined) {
       return { projectRoot, configPath, additionalDirs: [] };
     }
@@ -51,6 +54,37 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
 
   resolveAdditionalDirs(baseDir: string, additionalDirs: readonly string[]): Promise<string[]> {
     return this.resolveAdditionalDirsInternal(baseDir, additionalDirs);
+  }
+
+  async readPermissionRules(workDir: string): Promise<ProjectPermissionRulesLoadResult> {
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    const file = await this.readProjectLocalToml(configPath);
+    return { projectRoot, configPath, rules: readRawPermissionRules(file?.raw) };
+  }
+
+  async appendPermissionRules(
+    workDir: string,
+    rules: readonly unknown[],
+  ): Promise<ProjectPermissionRulesLoadResult> {
+    const projectRoot = await this.findProjectRoot(workDir);
+    const configPath = this.getProjectLocalConfigPath(projectRoot);
+    return enqueuePermissionWrite(configPath, async () => {
+      const file = (await this.readProjectLocalToml(configPath)) ?? { raw: {}, parsed: {} };
+      const existing = readRawPermissionRules(file.raw);
+      const permission = cloneRecord(file.raw['permission']);
+      permission['rules'] = [...existing, ...rules];
+      file.raw['permission'] = permission;
+
+      try {
+        await this.fs.mkdir(dirname(configPath), { recursive: true });
+        await this.fs.writeText(configPath, `${stringifyToml(file.raw)}\n`);
+      } catch (error: unknown) {
+        throw toStorageIoError(error, { path: configPath, op: 'write' });
+      }
+
+      return { projectRoot, configPath, rules: permission['rules'] as unknown[] };
+    });
   }
 
   private getProjectLocalConfigPath(projectRoot: string): string {
@@ -69,7 +103,9 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
     }
   }
 
-  private async readProjectLocalToml(configPath: string): Promise<ProjectLocalToml | undefined> {
+  private async readProjectLocalToml(
+    configPath: string,
+  ): Promise<{ raw: Record<string, unknown>; parsed: ProjectLocalToml } | undefined> {
     let text: string;
     try {
       text = await this.fs.readText(configPath);
@@ -78,7 +114,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       throw toStorageIoError(error, { path: configPath, op: 'read' });
     }
 
-    if (text.trim().length === 0) return {};
+    if (text.trim().length === 0) return { raw: {}, parsed: {} };
 
     let raw: unknown;
     try {
@@ -101,7 +137,7 @@ export class FileProjectLocalConfigService implements IProjectLocalConfigService
       );
     }
 
-    return parseProjectLocalToml(raw);
+    return { raw, parsed: parseProjectLocalToml(raw) };
   }
 
   private async resolveAdditionalDirsInternal(
@@ -228,6 +264,28 @@ function describeProjectLocalValidationError(error: z.ZodError): string {
   }
   if (issue?.path[0] === 'workspace') return 'workspace must be a table';
   return `Invalid project local config: ${error.message}`;
+}
+
+function enqueuePermissionWrite<T>(configPath: string, work: () => Promise<T>): Promise<T> {
+  const previous = permissionWriteTails.get(configPath) ?? Promise.resolve();
+  const run = previous.then(work, work);
+  permissionWriteTails.set(configPath, run.then(
+    () => undefined,
+    () => undefined,
+  ));
+  return run;
+}
+
+function cloneRecord(value: unknown): Record<string, unknown> {
+  if (!isPlainObject(value)) return {};
+  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
+}
+
+function readRawPermissionRules(raw: Record<string, unknown> | undefined): unknown[] {
+  const permission = raw?.['permission'];
+  if (!isPlainObject(permission)) return [];
+  const rules = permission['rules'];
+  return Array.isArray(rules) ? [...rules] : [];
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

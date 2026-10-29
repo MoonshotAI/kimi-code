@@ -157,6 +157,7 @@ import {
   IAgentPermissionGate,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
+  IProjectPermissionRulesService,
   IHostFileSystem,
   IHostProcessService,
   ISessionBtwService,
@@ -1426,6 +1427,12 @@ export class AgentTestContext {
               IAgentPermissionRulesService,
               new SyncDescriptor(AgentPermissionRulesService),
             );
+            reg.defineInstance(IProjectPermissionRulesService, {
+              _serviceBrand: undefined,
+              ready: Promise.resolve(),
+              rules: [],
+              appendRules: () => Promise.resolve(),
+            });
             reg.defineDescriptor(
               IAgentPermissionGate,
               new SyncDescriptor(AgentPermissionGate),
