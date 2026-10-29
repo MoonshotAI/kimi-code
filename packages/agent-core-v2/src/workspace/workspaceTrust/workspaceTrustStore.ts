@@ -86,7 +86,13 @@ class WorkspaceTrustEntry extends Disposable implements IWorkspaceTrustEntry {
   }
 
   onConfigChange(): void {
-    this.changeEmitter.fire({ trusted: this.trusted });
+    if (!this.trustGateEnabled()) {
+      this.changeEmitter.fire({ trusted: this.trusted });
+      return;
+    }
+    void this.ready
+      .catch(() => undefined)
+      .then(() => this.changeEmitter.fire({ trusted: this.trusted }));
   }
 
   trust(): Promise<void> {

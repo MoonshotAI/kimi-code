@@ -3,7 +3,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -174,6 +174,23 @@ describe('WorkspaceTrustService', () => {
       { trusted: false },
       { trusted: false },
     ]);
+
+    await writeWorkspaceTrust(
+      new JsonAtomicDocumentStore(new FileStorageService(homeDir)),
+      cwd,
+      1,
+    );
+    workspaceTrustEnabled = false;
+    const restored = createService(cwd);
+    expect(await restored.service.get()).toBe(true);
+    expect(restored.states.get(workspaceTrustTrustedKey)).toBe(false);
+
+    workspaceTrustEnabled = true;
+    fireTrustConfigChange(false);
+    await vi.waitFor(() => {
+      expect(restored.states.get(workspaceTrustTrustedKey)).toBe(true);
+    });
+    expect(await restored.service.get()).toBe(true);
   });
 
   it('keeps persistence semantics under KIMI_CODE_TRUST_WORKSPACE', async () => {
