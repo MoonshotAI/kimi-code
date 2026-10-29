@@ -62,7 +62,7 @@ Error codes are grouped by band:
 | Band | Meaning | Examples |
 | --- | --- | --- |
 | `0` | Success | |
-| `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed |
+| `400xx` | Bad request | `40001` validation failed (`details` lists each field), `40003` provider is OAuth-managed, `40006` duplicate workspace source folder |
 | `401xx` | Auth and readiness | `40101` unauthorized, `40110` no provider configured, `40113` model not resolved |
 | `404xx` | Not found | `40401` session, `40408` MCP server, `40409` file path |
 | `409xx` | State conflict | `40901` session busy, `40902` interaction already ended, `40922` page conditions mismatch `page_token`, `40931` session occupied by another client, `40932` session updated by another client |
@@ -1547,7 +1547,8 @@ Registers a new workspace and returns it. Every call creates a fresh entry (`wm_
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: `root` is missing or not an absolute path, or `additional_dirs` contains duplicates or the primary directory itself (`details` lists the field)
+- `40001`: `root` is missing or not an absolute path, or another request validation failure (`details` lists the field)
+- `40006`: `additional_dirs` contains duplicates or the primary directory itself. `msg` is `Duplicate source folder: <actual path>`; `details` is `[{ "path": "additional_dirs.N", "directory": "<resolved absolute path>" }]`, where `path` locates the request field and `directory` is the duplicate directory
 - `40409`: `root` or a path in `additional_dirs` does not exist or is not a directory
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
@@ -1562,7 +1563,8 @@ Updates a workspace's display name and/or source folders. `additional_dirs` uses
 
 On success, `data` is [the workspace object](#the-workspace-object).
 
-- `40001`: validation failure (both fields missing, or duplicate entries, or an entry equal to the primary directory; `details` lists each field)
+- `40001`: both fields are missing, or another request validation failure (`details` lists each field)
+- `40006`: duplicate entries or an entry equal to the primary directory; `msg`, `details.path`, and `details.directory` have the same meaning as for `POST /api/v1/workspaces`
 - `40409`: a path in `additional_dirs` does not exist or is not a directory
 - `40410`: workspace not found
 

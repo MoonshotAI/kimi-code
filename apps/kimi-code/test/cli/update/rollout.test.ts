@@ -215,16 +215,16 @@ describe('decidePassiveUpdate', () => {
     });
   });
 
-  it('uses the normal eligible path for an empty dev rollout', () => {
-    const manifest = makeManifest({ version: '0.0.0-dev.42', rollout: [] });
+  it('uses the normal eligible path for an empty canary rollout', () => {
+    const manifest = makeManifest({ version: '2.4.1-canary.20261028012345-0123456', rollout: [] });
     const decision = decidePassiveUpdate(
-      '0.0.0-dev.41',
-      { channel: 'dev', latest: '0.0.0-dev.42', manifest },
+      '2.4.1-canary.20261027012345-89abcde',
+      { channel: 'canary', latest: '2.4.1-canary.20261028012345-0123456', manifest },
       'device-a',
       now,
     );
     expect(decision).toMatchObject({
-      plan: { kind: 'upgrade', target: { channel: 'dev', version: '0.0.0-dev.42' } },
+      plan: { kind: 'upgrade', target: { channel: 'canary', version: '2.4.1-canary.20261028012345-0123456' } },
       reason: 'eligible',
       delaySeconds: 0,
     });
@@ -233,7 +233,7 @@ describe('decidePassiveUpdate', () => {
   it('returns a channel switch without applying the stable rollout hold', () => {
     const manifest = makeManifest({ version: '2.4.1', rollout: [{ percent: 100, delaySeconds: 86_400 }] });
     const decision = decidePassiveUpdate(
-      '0.0.0-dev.42',
+      '2.4.1-canary.20261028012345-0123456',
       { channel: 'stable', latest: '2.4.1', manifest },
       'device-a',
       now,
@@ -241,7 +241,7 @@ describe('decidePassiveUpdate', () => {
     expect(decision).toMatchObject({
       plan: {
         kind: 'switch-channel',
-        sourceChannel: 'dev',
+        sourceChannel: 'canary',
         target: { channel: 'stable', version: '2.4.1' },
       },
       reason: 'switch-channel',
@@ -375,7 +375,7 @@ describe('experimental flag bypass', () => {
   it('does not turn a channel switch into an automatic upgrade', () => {
     const decision = decidePassiveUpdate(
       '2.4.1',
-      { channel: 'dev', latest: '0.0.0-dev.42', manifest: null },
+      { channel: 'canary', latest: '2.4.1-canary.20261028012345-0123456', manifest: null },
       'device-a',
       now,
       true,
@@ -384,7 +384,7 @@ describe('experimental flag bypass', () => {
       plan: {
         kind: 'switch-channel',
         sourceChannel: 'stable',
-        target: { channel: 'dev', version: '0.0.0-dev.42' },
+        target: { channel: 'canary', version: '2.4.1-canary.20261028012345-0123456' },
       },
       reason: 'switch-channel',
     });

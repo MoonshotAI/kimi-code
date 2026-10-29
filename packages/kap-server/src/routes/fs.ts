@@ -315,7 +315,13 @@ async function resolveWorkspaceFs(
       return undefined;
     }
   }
-  return acquireWorkspaceFs(core, ws.id, { workDir: ws.root }, runtimeId, required);
+  return acquireWorkspaceFs(
+    core,
+    ws.id,
+    { workDir: ws.root, additionalDirs: ws.additionalDirs },
+    runtimeId,
+    required,
+  );
 }
 
 export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
