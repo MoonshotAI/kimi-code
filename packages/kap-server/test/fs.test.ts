@@ -689,6 +689,33 @@ describe('server-v2 /api/v1 fs routes', () => {
     }
   });
 
+  interface RegisteredWorkspaceWire {
+    id: string;
+    root: string;
+    additional_dirs: string[];
+  }
+
+  async function createRegisteredWorkspace(additionalDirs: readonly string[] = []): Promise<RegisteredWorkspaceWire> {
+    const res = await fetch(`${base}/api/v1/workspaces`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ root: work, additional_dirs: [...additionalDirs] }),
+    } as never);
+    const body = (await res.json()) as Envelope<RegisteredWorkspaceWire>;
+    expect(body.code).toBe(0);
+    return body.data;
+  }
+
+  async function updateRegisteredWorkspaceDirs(id: string, additionalDirs: readonly string[]): Promise<void> {
+    const res = await fetch(`${base}/api/v1/workspaces/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ additional_dirs: [...additionalDirs] }),
+    } as never);
+    const body = (await res.json()) as Envelope<RegisteredWorkspaceWire>;
+    expect(body.code).toBe(0);
+  }
+
   async function postWorkspaceSearch<T>(body: unknown): Promise<Envelope<T>> {
     const res = await fetch(`${base}/api/v1/workspace/fs:search`, {
       method: 'POST',
@@ -774,6 +801,162 @@ describe('server-v2 /api/v1 fs routes', () => {
     } as never);
     return (await res.json()) as Envelope<T>;
   }
+
+  it('workspace fs:suggest searches registered source folders with root-specific paths', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      await writeFile(join(work!, 'primary-only.ts'), '');
+      await writeFile(join(work!, 'shared.ts'), 'primary');
+      await writeFile(join(extra, 'secondary-only.ts'), '');
+      await writeFile(join(extra, 'shared.ts'), 'secondary');
+      const workspace = await createRegisteredWorkspace([extra]);
+      const extraShared = join(extra, 'shared.ts').split(sep).join('/');
+      const extraSecondary = join(extra, 'secondary-only.ts').split(sep).join('/');
+
+      const shared = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'shared',
+      });
+      expect(shared.code).toBe(0);
+      expect(shared.data.items.map((item) => item.path)).toHaveLength(2);
+      expect(shared.data.items.map((item) => item.path)).toEqual(
+        expect.arrayContaining(['shared.ts', extraShared]),
+      );
+
+      const secondary = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'secondary-only',
+      });
+      expect(secondary.code).toBe(0);
+      expect(secondary.data.items.map((item) => item.path)).toEqual([extraSecondary]);
+
+      const empty = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: '',
+      });
+      expect(empty.code).toBe(0);
+      expect(empty.data.items.map((item) => item.path)).toEqual(
+        expect.arrayContaining(['primary-only.ts', 'shared.ts', extraSecondary, extraShared]),
+      );
+    } finally {
+      await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('workspace fs:search searches registered source folders including cold session refs', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    try {
+      await writeFile(join(work!, 'shared.ts'), 'primary');
+      await writeFile(join(extra, 'shared.ts'), 'secondary');
+      await writeFile(join(extra, 'secondary-only.ts'), '');
+      const workspace = await createRegisteredWorkspace([extra]);
+      const extraShared = join(extra, 'shared.ts').split(sep).join('/');
+      const extraSecondary = join(extra, 'secondary-only.ts').split(sep).join('/');
+
+      const shared = await postWorkspaceSearch<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'shared',
+      });
+      expect(shared.code).toBe(0);
+      expect(shared.data.items.map((item) => item.path)).toHaveLength(2);
+      expect(shared.data.items.map((item) => item.path)).toEqual(
+        expect.arrayContaining(['shared.ts', extraShared]),
+      );
+
+      const empty = await postWorkspaceSearch<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: '',
+      });
+      expect(empty.code).toBe(0);
+      expect(empty.data.items.map((item) => item.path)).toEqual(
+        expect.arrayContaining(['shared.ts', extraShared, extraSecondary]),
+      );
+
+      const cold = await postFs<{ items: SuggestItemWire[] }>(workspace.id, 'search', {
+        query: 'secondary-only',
+      });
+      expect(cold.code).toBe(0);
+      expect(cold.data.items.map((item) => item.path)).toEqual([extraSecondary]);
+    } finally {
+      await rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('workspace fs routes use the latest registered source folders after materialization', async () => {
+    const removed = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-removed-'));
+    const added = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-added-'));
+    try {
+      await writeFile(join(removed, 'removed-only.ts'), '');
+      await writeFile(join(added, 'added-only.ts'), '');
+      const workspace = await createRegisteredWorkspace([removed]);
+      const removedPath = join(removed, 'removed-only.ts').split(sep).join('/');
+      const addedPath = join(added, 'added-only.ts').split(sep).join('/');
+
+      const initial = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'removed-only',
+      });
+      expect(initial.code).toBe(0);
+      expect(initial.data.items.map((item) => item.path)).toEqual([removedPath]);
+
+      await updateRegisteredWorkspaceDirs(workspace.id, [removed, added]);
+      const withAdded = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'added-only',
+      });
+      expect(withAdded.code).toBe(0);
+      expect(withAdded.data.items.map((item) => item.path)).toEqual([addedPath]);
+
+      await updateRegisteredWorkspaceDirs(workspace.id, [added]);
+      const afterRemoval = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: workspace.id,
+        query: 'removed-only',
+      });
+      expect(afterRemoval.code).toBe(0);
+      expect(afterRemoval.data.items).toEqual([]);
+    } finally {
+      await Promise.all([
+        rm(removed, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+        rm(added, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+      ]);
+    }
+  });
+
+  it('workspace fs:list respects registered source folder boundaries', async () => {
+    const extra = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-extra-'));
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-outside-'));
+    try {
+      await writeFile(join(work!, 'primary.ts'), '');
+      await writeFile(join(extra, 'secondary.ts'), '');
+      await writeFile(join(outside, 'outside.ts'), '');
+      const workspace = await createRegisteredWorkspace([extra]);
+
+      const primary = await postWorkspaceList<{ items: FsEntryWire[] }>({
+        workspace: workspace.id,
+        path: '.',
+      });
+      expect(primary.code).toBe(0);
+      expect(primary.data.items.map((item) => item.path)).toEqual(['primary.ts']);
+
+      const additional = await postWorkspaceList<{ items: FsEntryWire[] }>({
+        workspace: workspace.id,
+        path: extra,
+      });
+      expect(additional.code).toBe(0);
+      expect(additional.data.items.map((item) => item.path)).toEqual(['secondary.ts']);
+
+      const rejected = await postWorkspaceList<null>({
+        workspace: workspace.id,
+        path: outside,
+      });
+      expect(rejected.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+    } finally {
+      await Promise.all([
+        rm(extra, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+        rm(outside, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+      ]);
+    }
+  });
 
   it('workspace fs:suggest finds files by registered workspace id', async () => {
     await writeFile(join(work!, 'epsilon.ts'), '');
