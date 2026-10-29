@@ -62,7 +62,7 @@ HTTP 状态码几乎总是 200，业务结果以 `code` 为准。例外情况：
 | 段位 | 含义 | 示例 |
 | --- | --- | --- |
 | `0` | 成功 | |
-| `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管 |
+| `400xx` | 请求参数错误 | `40001` 校验失败（`details` 逐字段说明）、`40003` 供应商由 OAuth 托管、`40006` 工作区源文件夹重复 |
 | `401xx` | 鉴权与就绪状态 | `40101` 未授权、`40110` 未配置供应商、`40113` 模型未解析 |
 | `404xx` | 资源不存在 | `40401` 会话、`40408` MCP 服务、`40409` 文件路径 |
 | `409xx` | 状态冲突 | `40901` 会话忙、`40902` 交互已结束、`40922` 分页条件与 `page_token` 不符、`40931` 会话正被其他客户端使用、`40932` 会话已被其他客户端更新 |
@@ -1549,7 +1549,8 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：`root` 缺失或不是绝对路径，或 `additional_dirs` 含重复项、与主目录相同（`details` 会列出该字段）
+- `40001`：`root` 缺失或不是绝对路径，或其他请求校验失败（`details` 会列出该字段）
+- `40006`：`additional_dirs` 含重复项或与主目录相同。`msg` 为 `Duplicate source folder: <实际路径>`；`details` 为 `[{ "path": "additional_dirs.N", "directory": "<解析后的绝对路径>" }]`，其中 `path` 是请求字段位置，`directory` 是重复目录
 - `40409`：`root` 或 `additional_dirs` 中的路径不存在或不是目录
 
 #### `PATCH /api/v1/workspaces/{workspace_id}`
@@ -1564,7 +1565,8 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 
 成功时 `data` 为 [workspace 对象](#workspace-对象)。
 
-- `40001`：校验失败（两个字段都缺失，或目录项重复、与主目录相同；`details` 逐字段说明）
+- `40001`：两个字段都缺失，或其他请求校验失败（`details` 逐字段说明）
+- `40006`：目录项重复或与主目录相同，`msg`、`details.path` 和 `details.directory` 的含义同 `POST /api/v1/workspaces`
 - `40409`：`additional_dirs` 中的路径不存在或不是目录
 - `40410`：工作区不存在
 

@@ -793,6 +793,67 @@ describe('server-v2 /api/v1 fs routes', () => {
     expect(body.data.items.map((i) => i.path)).toContain('epsilon.ts');
   });
 
+  it('workspace fs routes keep additional dirs scoped to the requested registered workspace', async () => {
+    const shared = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-shared-'));
+    const firstOnly = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-first-'));
+    const secondOnly = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-second-'));
+    try {
+      await writeFile(join(shared, 'shared-file.ts'), '');
+      await writeFile(join(firstOnly, 'first-only.ts'), '');
+      await writeFile(join(secondOnly, 'second-only.ts'), '');
+      const create = async (additionalDirs: string[]): Promise<string> => {
+        const res = await fetch(`${base}/api/v1/workspaces`, {
+          method: 'POST',
+          headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+          body: JSON.stringify({ root: work, additional_dirs: additionalDirs }),
+        } as never);
+        const created = (await res.json()) as Envelope<{ id: string }>;
+        expect(created.code).toBe(0);
+        return created.data.id;
+      };
+      const first = await create([shared, firstOnly]);
+      const second = await create([shared, secondOnly]);
+
+      const listed = await postWorkspaceList<{ items: FsEntryWire[] }>({ workspace: first, path: shared });
+      expect(listed.code).toBe(0);
+      expect(listed.data.items.map((item) => item.name)).toContain('shared-file.ts');
+
+      const firstSearch = await postWorkspaceSearch<{ items: { path: string }[] }>({
+        workspace: first,
+        query: 'only',
+      });
+      const secondSearch = await postWorkspaceSearch<{ items: { path: string }[] }>({
+        workspace: second,
+        query: 'only',
+      });
+      expect(firstSearch.code).toBe(0);
+      expect(secondSearch.code).toBe(0);
+      expect(firstSearch.data.items.some((item) => item.path.endsWith('first-only.ts'))).toBe(true);
+      expect(firstSearch.data.items.some((item) => item.path.endsWith('second-only.ts'))).toBe(false);
+      expect(secondSearch.data.items.some((item) => item.path.endsWith('second-only.ts'))).toBe(true);
+      expect(secondSearch.data.items.some((item) => item.path.endsWith('first-only.ts'))).toBe(false);
+
+      const suggested = await postWorkspaceSuggest<{ items: SuggestItemWire[] }>({
+        workspace: second,
+        query: 'shared-file',
+      });
+      expect(suggested.code).toBe(0);
+      expect(suggested.data.items.some((item) => item.path.endsWith('shared-file.ts'))).toBe(true);
+
+      const res = await fetch(`${base}/api/v1/workspaces`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const workspaces = (await res.json()) as Envelope<{
+        items: { id: string; root: string; additional_dirs: string[] }[];
+      }>;
+      expect(workspaces.data.items.some((item) => [shared, firstOnly, secondOnly].includes(item.root))).toBe(false);
+    } finally {
+      await rm(shared, { recursive: true, force: true });
+      await rm(firstOnly, { recursive: true, force: true });
+      await rm(secondOnly, { recursive: true, force: true });
+    }
+  });
+
   it('workspace fs:suggest finds files by absolute root path', async () => {
     await writeFile(join(work!, 'zeta.ts'), '');
     const body = await postWorkspaceSuggest<{ items: SuggestItemWire[]; truncated: boolean }>({
