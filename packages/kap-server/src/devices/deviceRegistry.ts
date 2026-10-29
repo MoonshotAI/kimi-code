@@ -305,7 +305,7 @@ export class DeviceRegistry {
   }
 
   handleResult(connection: ActiveDevice, frame: RuntimeResult): void {
-    if (!this.isCurrent(connection) || frame.generation !== connection.generation) return;
+    if (!this.isCurrent(connection) || !this.isCurrentResponse(connection, frame)) return;
     const pending = connection.pending.get(frame.request_id);
     if (pending === undefined) return;
     connection.pending.delete(frame.request_id);
@@ -314,7 +314,7 @@ export class DeviceRegistry {
   }
 
   handleError(connection: ActiveDevice, frame: Extract<DeviceClientErrorFrame, { type: 'runtime.error' }>): void {
-    if (!this.isCurrent(connection) || frame.generation !== connection.generation) return;
+    if (!this.isCurrent(connection) || !this.isCurrentResponse(connection, frame)) return;
     const pending = connection.pending.get(frame.request_id);
     if (pending === undefined) return;
     connection.pending.delete(frame.request_id);
@@ -460,6 +460,16 @@ export class DeviceRegistry {
     return this.records.get(connection.deviceId)?.online === connection && this.connections.get(connection.connectionId) === connection;
   }
 
+  private isCurrentResponse(
+    connection: ActiveDevice,
+    frame: { readonly device_id: string; readonly connection_id: string; readonly generation: string; readonly protocol_version: number },
+  ): boolean {
+    return frame.protocol_version === DEVICE_BRIDGE_PROTOCOL_VERSION &&
+      frame.device_id === connection.deviceId &&
+      frame.connection_id === connection.connectionId &&
+      frame.generation === connection.generation;
+  }
+
   private rejectPending(connection: ActiveDevice, error: DeviceBridgeError): void {
     for (const pending of connection.pending.values()) {
       clearTimeout(pending.timer);
@@ -511,6 +521,7 @@ export class DeviceRegistry {
 
 interface DeviceClientErrorFrame {
   readonly type: 'runtime.error';
+  readonly protocol_version: number;
   readonly device_id: string;
   readonly connection_id: string;
   readonly generation: string;

@@ -308,7 +308,7 @@ async function resolveWorkspaceFs(
   const workspaces = core.accessor.get(IWorkspaceService);
   let ws = await workspaces.get(ref);
   if (ws === undefined) {
-    if (!isAbsolute(ref)) return undefined;
+    if (runtimeId !== 'local' || !isAbsolute(ref)) return undefined;
     try {
       ws = await workspaces.createOrTouch(ref);
     } catch {
