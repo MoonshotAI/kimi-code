@@ -973,7 +973,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 ### 消息与转录
 
-`messages` 端点分页返回 main agent 的扁平化消息历史，`transcript` 端点则提供按 Agent 组织的结构化转录——轮次、任务、交互、附件——即 WebSocket [转录协议](#转录协议) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。
+`messages` 端点分页返回 main agent 的扁平化消息历史，`transcript` 端点则提供按 Agent 组织的结构化转录——轮次、交互、附件——即 WebSocket [转录协议](#转录协议) 实时流式推送的内容。历史分页与补漏用这些端点，实时尾部用 WebSocket 订阅。
 
 | 方法与路径 | 说明 |
 | --- | --- |
@@ -1017,7 +1017,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 
 #### `GET /api/v1/sessions/{session_id}/transcript`
 
-返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记与任务引用。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。这是转录能力的历史半边——实时流式半边是 [转录协议](#转录协议) 订阅。
+返回某个 Agent 的结构化转录中的一页：轮次（含其步骤与帧）以及轮次之间的标记。活跃会话从内存存储应答（先回填所请求 Agent 的持久化历史）；冷会话则从持久化的线上记录重建 Agent。这是转录能力的历史半边——实时流式半边是 [转录协议](#转录协议) 订阅。
 
 | 参数 | 位置 | 类型 | 说明 |
 | --- | --- | --- | --- |
@@ -1027,7 +1027,7 @@ main agent 的实时状态汇总；读取它会在会话为冷态时将其恢复
 | `after_turn` | query | string | 只保留晚于该轮次 id 的轮次；与 `before_turn` 互斥 |
 | `page_size` | query | integer | 1–100 个轮次。默认 `20` |
 
-分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。
+分页单位是轮次：不带游标时返回最新的一页，`has_more` 表示还有更早的轮次。成功时，`data` 为 `{ agent_id, items, has_more, interactions, attachments, todos, meta, agents, pending_interactions, seq? }`——`items` 是本次分页的轮次切片，`interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` 是不分页、随每次响应一起返回的全局 Agent 状态，`seq` 是该 Agent 用于恢复流的 op 批次水位（仅活跃会话）。任务不属于转录，通过 WebSocket 的 `task` 帧到达（见 [事件](#事件)）。
 
 - `40001`：校验失败——`before_turn` 与 `after_turn` 同用，或 `agent_id` 不是纯文本形式
 - `40401`：会话不存在
@@ -1289,79 +1289,6 @@ schema 还接受共享消息格式中的 `tool_use`、`tool_result` 和 `thinkin
 - `40401`：会话不存在
 - `40405`：没有该 id 的待处理提问
 - `40902`：提问已被答复；`data` 携带 `{ resolved: false }`
-
-### 后台任务
-
-后台任务是会话的异步单元——后台 Shell、subagent 与长时间运行的工具任务。注册表仅包含实时数据：未加载到本服务进程中的会话会返回空列表。
-
-| 方法与路径 | 说明 |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/tasks` | 列出后台任务 |
-| `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | 读取任务（可选输出预览） |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | 取消任务 |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | 将前台任务转入后台 |
-
-#### `GET /api/v1/sessions/{session_id}/tasks`
-
-列出会话的后台任务。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `status` | query | string | 只保留单一状态：`running` / `completed` / `failed` / `cancelled` |
-
-成功时，`data` 为 `{ items }`，每个元素是任务对象 `{ id, session_id, kind, description, status, created_at, started_at?, completed_at?, command?, model?, thinking_effort?, agent_id?, subagent_type?, parent_tool_call_id?, output_preview?, output_bytes? }`。`kind` 为 `bash` / `subagent` / `tool`；`command` 仅在 `bash` 任务时设置，模型与 Agent 字段仅在 `subagent` 任务时设置，输出字段仅在以 `with_output` 读取任务时设置。超时与丢失的任务上报为 `failed`；被杀死的任务上报为 `cancelled`。
-
-- `40001`：校验失败——未知的 `status`
-- `40401`：会话不存在
-
-#### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
-
-读取单个后台任务，可选携带输出的末尾片段。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `task_id` | path | string | **必填。** 任务 id |
-| `with_output` | query | boolean | 在响应中包含输出末尾片段。默认 `false` |
-| `output_bytes` | query | integer | 请求的输出末尾片段的字节大小，最小 `0`。默认 `32768` |
-
-成功时，`data` 为上文 `GET /api/v1/sessions/{session_id}/tasks` 中说明的任务对象；当 `with_output=true` 且输出非空时，`output_preview` 携带末尾片段文本，`output_bytes` 为其字节长度。
-
-- `40001`：校验失败
-- `40401`：会话不存在
-- `40406`：没有该 id 的任务（冷会话完全没有实时任务）
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
-
-取消运行中的任务。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，支持 `cancel` / `detach` 两个动作——单独的任务 id 或未知动作返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `task_id` | path | string | **必填。** 任务 id |
-
-成功时，`data` 为 `{ cancelled: true }`。
-
-- `40001`：动作后缀缺失或未知
-- `40401`：会话不存在
-- `40406`：没有该 id 的任务
-- `40904`：任务已结束；`data` 携带 `{ cancelled: false }`，`details.current_status` 为最终状态
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
-
-将运行中的前台任务转入后台而不终止它：等待该任务的工具调用会立即以后台任务结果返回，轮次继续推进，任务则在后台任务注册表下继续运行（输出持久化，完成时以任务通知投递）。已在后台或已结束的任务为幂等空操作。它通过 `POST /api/v1/sessions/{session_id}/tasks/{tail}` 分发，支持 `cancel` / `detach` 两个动作——单独的任务 id 或未知动作返回 `40001`。
-
-| 参数 | 位置 | 类型 | 说明 |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **必填。** 会话 id |
-| `task_id` | path | string | **必填。** 任务 id |
-
-成功时，`data` 为 `{ detached, status }`：本次调用确实将运行中的前台任务转入后台时 `detached` 为 `true`，幂等空操作时为 `false`；`status` 为调用后的任务状态。
-
-- `40001`：动作后缀缺失或未知
-- `40401`：会话不存在
-- `40406`：没有该 id 的任务
 
 ### 技能、工具与 MCP
 
@@ -2419,18 +2346,22 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 | 帧 | payload | 说明 |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | 订阅会话事件；带 `cursors`（每会话 `{seq, epoch}`）时回放错过的持久事件 |
-| `unsubscribe` | `{ session_ids }` | 取消会话订阅 |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅转录流（唯一的转录订阅通道），`transcript` 按 agent 指定粒度 |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 表示整个会话 |
-| `client_hello` | `{ client_id }` | 握手帧，其余字段为遗留兼容 |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | 订阅会话（唯一的会话订阅方式）：转录流与交互，`transcript` 按 agent 指定粒度 |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | 退订转录流；省略 `agent_ids` 或退订最后一个 agent 时取消整个会话订阅 |
+| `client_hello` | `{ client_id }` | 握手帧，其余字段会被忽略 |
+| `task.watch` | 平铺：`{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | 把某个任务的输出流式推送到本连接，无需订阅会话；`agent_id` 是任务所属的 agent（即该任务 `task` 帧上的 `agent_id`），`since_offset` 从客户端已有输出之后续传，`tail_bytes` 是首段输出最多包含的字节数 |
+| `task.unwatch` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 停止推送该任务的输出 |
+| `task.stop` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 停止任务；已结束的任务直接应答其状态 |
+| `task.background` | 平铺：`{ request_id, session_id, agent_id, task_id }` | 让发起任务的工具调用不再等它，任务转入后台继续运行；已在后台或已结束时直接应答其状态 |
+
+`task.watch`、`task.unwatch`、`task.stop` 与 `task.background` 是平铺帧：字段与 `type` 并列而不放在 `payload` 下，用 `request_id` 代替 `id`，应答为 `{ "type": "response", "request_id", "code", "msg"?, "task"? }` 而不是 ack；缺少可读的 `request_id` 时服务端以关闭码 1008 断开连接。`task.watch`、`task.stop` 与 `task.background` 成功时，`task` 是任务此刻的状态（形状见下文 `task` 帧，不含 `type`、`session_id`、`agent_id` 与 `event_created_at`）。同一个任务的请求按到达顺序逐个处理，因此在 `task.watch` 尚未应答时发出的 `task.unwatch` 会在它之后生效；不同任务之间、以及它们与其他控制帧之间互不等待。`task.watch` 成功时先应答 `code` 0，再用一个 `task.output` 帧发送最后 `tail_bytes` 字节的输出（默认 32 KiB，最大 1 MiB；`since_offset` 落在这段范围内时只发它之后的部分；没有可发送的输出时 `text` 为空），之后推送实时输出；已结束的任务同样可以 watch。错误：`40001` 帧格式错误（含 `tail_bytes` 超出范围），`40401` 会话不存在，`40406` 该 agent 下没有这个任务，`50001` 内部错误，`50003` 输出无法读取。
 
 ### 事件
 
 事件帧形状为 `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`，`type` 即事件类型。按投递范围分两类：
 
 - **全局事件**：发送到每个已建立连接，无需订阅——`session.meta.updated`、`event.session.created`、`event.session.archived`、`event.session.work_changed`、`event.session.status_changed`、`event.workspace.*`、`event.config.*`、`event.model_catalog.*`。
-- **会话事件**：只发给订阅了该会话的连接，受 `agent_filter` 过滤。主要事件族：
+- **会话帧**：只发给用 `subscribe_v2` 订阅了该会话的连接——`transcript.reset` / `transcript.ops`（见 [转录协议](#转录协议)）、`task.list`、`task` 与 `interaction`。`task.output` 只发给用 `task.watch` 订阅了该任务输出的连接。
 
 | 事件族 | 主要事件 |
 | --- | --- |
@@ -2446,9 +2377,11 @@ locator 寻址的目录（脱敏配置），外加对每个 OAuth 候选的批�
 
 事件另分持久与易失两种：持久事件带严格递增的 `seq`，落盘并可回放；易失事件（各 `*.delta`、`tool.progress`、`shell.*` 等）标 `volatile: true`，不回放。消费易失文本流时用 `offset`（该轮次内的累计字符偏移）与本地已累积文本比对：小于本地长度说明是重复帧，大于说明有缺漏、需走快照恢复。
 
+每个 agent 正在跑的任务——Shell 命令（前台与后台）、subagent（含 swarm 成员）及其他异步工作——由 `task.list` 与 `task` 两种平铺帧同步，和 `interaction` 一样不回放。连接开始接收某个 agent 的任务时（`subscribe_v2` 中粒度非 `off` 且此前未接收的 agent），先收到一帧 `{ type: "task.list", session_id, agent_id, tasks }`，`tasks` 是该 agent 此刻正在跑的全部任务，客户端用它整份替换本地列表；之后每次变化收到一帧 `{ type: "task", session_id, agent_id, event_created_at, ...任务状态 }`，之后才加入会话的 agent 直接从 `task` 帧开始。任务状态为 `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`，每帧都携带完整状态。`detached` 表示发起它的工具调用已不再等它，即后台任务；`outcome`（仅已结束的任务）为 `completed` / `failed` / `timed_out` / `killed` / `lost`；`phase`（仅运行中的 subagent）为 `working` / `suspended`，挂起原因在 `state_reason`；`child_agent_id` 是 subagent 任务的 agent id；`swarm_index` 是 swarm 成员在其 swarm 中的序号；`command` 是 Shell 任务的命令。任务结束时推送它最后一帧 `task`（`status: "ended"`），之后不再出现在 `task.list` 里：已结束任务的结果在会话历史中（工具结果与完成通知），需要精确的最终状态时对它发送 `task.watch`，应答带有其状态。服务端重启后失联的后台任务会以 `level: "warning"` 的 `notice` marker 出现在转录里。任务与转录互相独立：`transcript.ops` 里因撤销产生的 `reset` 操作不影响任务。任务输出单独推送，形状为 `{ type: "task.output", session_id, agent_id, task_id, offset, text }`，`offset` 是 `text` 在任务输出中的 UTF-8 字节偏移。
+
 ### 断线恢复
 
-重连后在 `subscribe` 的 `cursors` 里带上每个会话最后应用事件的 `{seq, epoch}`，服务端会回放缺口；落后超过缓冲（1000 条）或游标失效时改为收到 `resync_required`。此时调用 `GET /api/v1/sessions/{session_id}/snapshot` 拿全量快照（含 `as_of_seq` 与 `epoch`），再以新游标重新订阅。
+订阅不会跨断线保留。重连后对每个会话重新发送 `subscribe_v2`：带 `transcript_since` 可续传转录流，省略则从新的 `transcript.reset` 开始；确认后会补发待处理的交互，并重新收到各 agent 的 `task.list`。任务输出的订阅同样会丢失：重新发送 `task.watch`，并把 `since_offset` 设为已有输出的末尾。断线期间错过的全局事件不会回放，请通过 REST（例如 `GET /api/v1/sessions`）刷新本地维护的列表。
 
 ### 转录协议
 

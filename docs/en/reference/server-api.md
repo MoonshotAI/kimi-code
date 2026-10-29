@@ -973,7 +973,7 @@ Downloads a prompt media file (an image or other attachment referenced by the se
 
 ### Messages and transcript
 
-The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, tasks, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
+The `messages` endpoints page the main agent's flattened message history, while the `transcript` endpoints serve the structured per-agent transcript — turns, interactions, attachments — that the WebSocket [Transcript protocol](#transcript-protocol) streams live. Use these endpoints for history paging and catch-up, and the WebSocket subscription for the live tail.
 
 | Method and path | Description |
 | --- | --- |
@@ -1017,7 +1017,7 @@ On success, `data` is the message object in the item shape documented under `GET
 
 #### `GET /api/v1/sessions/{session_id}/transcript`
 
-Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers and task references between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
+Returns one page of an agent's structured transcript: turns (with their steps and frames) plus the markers between them. Live sessions answer from the in-memory store (the requested agent's persisted history is backfilled first); cold sessions rebuild the agent from the persisted wire records. This is the history half of the transcript surface — the live streaming half is the [Transcript protocol](#transcript-protocol) subscription.
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
@@ -1027,7 +1027,7 @@ Returns one page of an agent's structured transcript: turns (with their steps an
 | `after_turn` | query | string | Only turns newer than this turn id; mutually exclusive with `before_turn` |
 | `page_size` | query | integer | 1–100 turns. Default `20` |
 
-The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, tasks, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `tasks` / `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only).
+The page unit is the turn: without a cursor the newest page is returned, and `has_more` reports that older turns remain. On success, `data` is `{ agent_id, items, has_more, interactions, attachments, todos, meta, agents, pending_interactions, seq? }` — `items` is the paged turn slice, `interactions` / `attachments` / `todos` / `meta` / `agents` / `pending_interactions` are global agent state that ships unpaginated with every response, and `seq` is the agent's op-batch watermark for resuming the stream (live sessions only). Tasks are not part of the transcript; they arrive as the WebSocket `task` frame (see [Events](#events)).
 
 - `40001`: validation failure — `before_turn` combined with `after_turn`, or a non-plain `agent_id`
 - `40401`: session not found
@@ -1289,79 +1289,6 @@ On success the envelope `code` is `40909` (`question dismissed`) rather than `0`
 - `40401`: session not found
 - `40405`: no pending question with that id
 - `40902`: the question was already resolved; `data` carries `{ resolved: false }`
-
-### Background tasks
-
-Background tasks are the session's asynchronous units — background shells, subagents, and long-running tool tasks. The registry is live-only: a session not loaded in this server process reports an empty list.
-
-| Method and path | Description |
-| --- | --- |
-| `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
-| `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
-| `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
-
-#### `GET /api/v1/sessions/{session_id}/tasks`
-
-Lists the session's background tasks.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `status` | query | string | Keep only one status: `running` / `completed` / `failed` / `cancelled` |
-
-On success, `data` is `{ items }` where each item is a task object `{ id, session_id, kind, description, status, created_at, started_at?, completed_at?, command?, model?, thinking_effort?, agent_id?, subagent_type?, parent_tool_call_id?, output_preview?, output_bytes? }`. `kind` is `bash` / `subagent` / `tool`; `command` is set for `bash` tasks, the model and agent fields for `subagent` tasks, and the output fields only when a task is read with `with_output`. Timed-out and lost tasks report `failed`; killed tasks report `cancelled`.
-
-- `40001`: validation failure — an unknown `status`
-- `40401`: session not found
-
-#### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
-
-Reads one background task, optionally with a tail of its output.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-| `with_output` | query | boolean | Include an output tail in the response. Default `false` |
-| `output_bytes` | query | integer | Size of the requested output tail in bytes, minimum `0`. Default `32768` |
-
-On success, `data` is the task object documented under `GET /api/v1/sessions/{session_id}/tasks` above; with `with_output=true` and non-empty output, `output_preview` carries the tail text and `output_bytes` its byte length.
-
-- `40001`: validation failure
-- `40401`: session not found
-- `40406`: no task with that id (a cold session has no live tasks at all)
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel`
-
-Cancels a running task. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-
-On success, `data` is `{ cancelled: true }`.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40406`: no task with that id
-- `40904`: the task already finished; `data` carries `{ cancelled: false }` and `details.current_status` the terminal status
-
-#### `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach`
-
-Moves a running foreground task to the background without stopping it: the tool call waiting on the task returns immediately with a background-task result, the turn continues, and the task keeps running under the background task registry (its output is persisted, and its completion arrives as a task notification). Already-background or finished tasks are an idempotent no-op. It dispatches through `POST /api/v1/sessions/{session_id}/tasks/{tail}` with `cancel` / `detach` as the supported actions — a bare task id or an unknown action fails `40001`.
-
-| Parameter | In | Type | Description |
-| --- | --- | --- | --- |
-| `session_id` | path | string | **Required.** Session id |
-| `task_id` | path | string | **Required.** Task id |
-
-On success, `data` is `{ detached, status }`: `detached` is `true` when the call moved a running foreground task to the background and `false` for the idempotent no-op; `status` is the task's status after the call.
-
-- `40001`: missing or unknown action suffix
-- `40401`: session not found
-- `40406`: no task with that id
 
 ### Skills, tools, and MCP
 
@@ -2416,18 +2343,22 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 
 | Frame | payload | Description |
 | --- | --- | --- |
-| `subscribe` | `{ session_ids, cursors?, agent_filter? }` | Subscribe to session events; with `cursors` (per-session `{seq, epoch}`) the server replays missed durable events |
-| `unsubscribe` | `{ session_ids }` | Drop session subscriptions |
-| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to transcript streams (the only transcript channel); `transcript` sets per-agent grades |
-| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids` means the whole session |
-| `client_hello` | `{ client_id }` | Handshake frame; the remaining fields are legacy compatibility |
+| `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
+| `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
+| `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
+| `task.watch` | flat: `{ request_id, session_id, agent_id, task_id, since_offset?, tail_bytes? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), `since_offset` resumes after output the client already has, and `tail_bytes` caps the size of the first chunk |
+| `task.unwatch` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
+| `task.stop` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop a task; an ended task just replies with its state |
+| `task.background` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop the starting tool call from waiting so the task keeps running in the background; a task already in the background or ended just replies with its state |
+
+`task.watch`, `task.unwatch`, `task.stop`, and `task.background` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"?, "task"? }` instead of an ack; a frame without a readable `request_id` closes the socket with code 1008. On success, `task.watch`, `task.stop`, and `task.background` carry the task's current state in `task` (the `task` frame shape below, without `type`, `session_id`, `agent_id`, and `event_created_at`). Requests for the same task are handled one at a time in arrival order, so a `task.unwatch` sent while a `task.watch` is still pending takes effect after it; different tasks, and other control frames, never wait on each other. A successful `task.watch` replies with code 0, then sends the last `tail_bytes` of output (32 KiB by default, at most 1 MiB; only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output; ended tasks can be watched too. Errors: `40001` malformed frame (including an out-of-range `tail_bytes`), `40401` session not found, `40406` the agent has no such task, `50001` internal error, `50003` output unreadable.
 
 ### Events
 
 Event frames look like `{ "type", "seq", "epoch"?, "volatile"?, "offset"?, "session_id"?, "timestamp", "payload" }`, where `type` is the event type itself. Two delivery scopes:
 
 - **Global events**: sent to every established connection, no subscription needed — `session.meta.updated`, `event.session.created`, `event.session.archived`, `event.session.work_changed`, `event.session.status_changed`, `event.workspace.*`, `event.config.*`, `event.model_catalog.*`.
-- **Session events**: sent only to connections subscribed to that session, subject to `agent_filter`. Main families:
+- **Session frames**: sent only to connections subscribed to that session with `subscribe_v2` — `transcript.reset` / `transcript.ops` (see [Transcript protocol](#transcript-protocol)), `task.list`, `task`, and `interaction`. `task.output` goes only to connections watching that task with `task.watch`.
 
 | Family | Main events |
 | --- | --- |
@@ -2443,9 +2374,11 @@ Three global lifecycle events keep a cross-workspace overview fresh without poll
 
 Events also split into durable and volatile: durable events carry a strictly increasing `seq`, are journaled, and can be replayed; volatile events (the `*.delta` family, `tool.progress`, `shell.*`, and similar) are marked `volatile: true` and never replayed. When consuming a volatile text stream, compare `offset` (the cumulative character offset within the turn) against your locally accumulated text: below the local length means a duplicate frame; above means a gap that needs snapshot recovery.
 
+Each agent's running tasks — shell commands in the foreground and background, subagents (swarm members included), and other asynchronous work — are synced by two flat frames, `task.list` and `task`, never replayed like `interaction`. When a connection starts receiving an agent's tasks (an agent whose grade in `subscribe_v2` is not `off` and that it was not receiving yet), it first gets `{ type: "task.list", session_id, agent_id, tasks }`, where `tasks` is every task the agent is running right now and replaces the client's list; after that it gets `{ type: "task", session_id, agent_id, event_created_at, ...task state }` on every change. An agent that joins the session later starts directly with `task` frames. The task state is `{ task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, swarm_index?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, model?, thinking? }`, and every frame carries the full state. `detached` means the tool call that started the task no longer waits for it, so it runs in the background; `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`, with the reason in `state_reason`; `child_agent_id` is a subagent task's agent id; `swarm_index` is a swarm member's position in its swarm; `command` is a shell task's command. When a task ends, its last `task` frame (`status: "ended"`) is sent and it no longer appears in `task.list`: the outcome of an ended task lives in the session history (tool results and task notifications), and `task.watch` on it replies with its exact final state. Background tasks lost to a server restart show up in the transcript as a `notice` marker with `level: "warning"`. Tasks are independent of the transcript: a `reset` op inside `transcript.ops` after an undo does not touch tasks. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
+
 ### Reconnect and recovery
 
-After reconnecting, pass each session's last applied `{seq, epoch}` in `subscribe`'s `cursors`; the server replays the gap. If you fall more than the buffer (1000 events) behind, or the cursor is no longer valid, you get `resync_required` instead. In that case, call `GET /api/v1/sessions/{session_id}/snapshot` for a full snapshot (with `as_of_seq` and `epoch`), then subscribe again with the fresh cursor.
+Subscriptions do not survive a disconnect. After reconnecting, send `subscribe_v2` again for each session: pass `transcript_since` to resume the transcript streams, or omit it to start from a fresh `transcript.reset`; pending interactions are resent after the ack, and every agent's `task.list` is sent again. Task output watches are dropped as well: send `task.watch` again with `since_offset` set to the end of the output you already have. Global events missed while disconnected are not replayed, so refresh the lists you keep (for example `GET /api/v1/sessions`) over REST.
 
 ### Transcript protocol
 

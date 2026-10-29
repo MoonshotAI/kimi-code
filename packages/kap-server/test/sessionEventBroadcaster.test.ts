@@ -18,6 +18,7 @@ import {
   IAgentLoopService,
   IAgentProfileService,
   IAgentScopeContext,
+  IAgentTaskService,
   IEventBus,
   IEventService,
   IModelCatalog,
@@ -40,6 +41,7 @@ import {
   EventBusService,
 } from '@moonshot-ai/agent-core-v2/app/event/eventBusService';
 import type { AgentActivitySnapshot } from '@moonshot-ai/agent-core-v2/agent/loop/loop';
+import type { AgentTaskInfo } from '@moonshot-ai/agent-core-v2/agent/task/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -160,9 +162,29 @@ class FakeManagerEvents {
 
 }
 
+class FakeAgentTasks {
+  private readonly listeners = new Set<(info: AgentTaskInfo) => void>();
+  private readonly tasks = new Map<string, AgentTaskInfo>();
+
+  readonly onDidChangeTask = (listener: (info: AgentTaskInfo) => void) => {
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  };
+
+  list(activeOnly = true): AgentTaskInfo[] {
+    return [...this.tasks.values()].filter((info) => !activeOnly || info.status === 'running');
+  }
+
+  change(info: AgentTaskInfo): void {
+    this.tasks.set(info.taskId, info);
+    for (const listener of this.listeners) listener(info);
+  }
+}
+
 class FakeAgentHandle {
   readonly kind = LifecycleScope.Agent;
   readonly bus = new FakeAgentBus();
+  readonly tasks = new FakeAgentTasks();
   readonly accessor;
   readonly context: AgentContext;
   activity: AgentActivitySnapshot = {};
@@ -176,6 +198,7 @@ class FakeAgentHandle {
     this.context = scope.agentContext;
     this.services.set(IAgentScopeContext, scope);
     this.services.set(IEventBus, this.bus);
+    this.services.set(IAgentTaskService, this.tasks);
     this.services.set(IAgentConversationUndoParticipantRegistry, {
       register: () => ({ dispose: () => {} }),
     });
@@ -1562,7 +1585,7 @@ describe('SessionEventBroadcaster', () => {
           session_id: 's1',
           payload: { agent_id: 'main', has_more_older: false, snapshot: { items: [] } },
         });
-        expect(view.deliveries).toEqual(['subscription']);
+        expect(view.deliveries).toEqual(['subscription', 'subscription']);
       }
 
       main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
@@ -1640,6 +1663,123 @@ describe('SessionEventBroadcaster', () => {
       const ops = transcriptEnvelopes(view.envelopes).at(-1)!;
       expect(ops.type).toBe('transcript.ops');
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
+    });
+
+    function shellTask(taskId: string, status: AgentTaskInfo['status']): AgentTaskInfo {
+      return {
+        taskId,
+        kind: 'process',
+        description: 'dev server',
+        status,
+        detached: true,
+        startedAt: 1_700_000_000_000,
+        endedAt: status === 'running' ? null : 1_700_000_005_000,
+        command: 'npm run dev',
+        pid: 1,
+        exitCode: null,
+        parentToolCallId: 'call_bash',
+      };
+    }
+
+    type TaskFrame = { type: string; agent_id: string; task_id?: string; status?: string };
+    const taskFramesOf = (view: ReturnType<typeof collectingTarget>): TaskFrame[] =>
+      view.envelopes.filter(
+        (frame) => frame.type === 'task' || frame.type === 'task.list',
+      ) as unknown as TaskFrame[];
+    const summarize = (frames: TaskFrame[]): string[] =>
+      frames.map((frame) =>
+        frame.type === 'task.list'
+          ? `list:${frame.agent_id}`
+          : `task:${frame.agent_id}:${frame.task_id}:${frame.status}`,
+      );
+
+    it('lists the running tasks of every subscribed agent, then streams each change as a task frame', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      main.tasks.change(shellTask('bash-1', 'running'));
+      main.tasks.change(shellTask('bash-0', 'completed'));
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      const offView = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+      await bc.subscribe('s1', offView.target, { '*': 'off' });
+      main.tasks.change(shellTask('bash-1', 'killed'));
+
+      expect(taskFramesOf(view)).toEqual([
+        {
+          type: 'task.list',
+          session_id: 's1',
+          agent_id: 'main',
+          tasks: [
+            {
+              task_id: 'bash-1',
+              kind: 'shell',
+              status: 'running',
+              detached: true,
+              description: 'dev server',
+              parent_tool_call_id: 'call_bash',
+              command: 'npm run dev',
+              started_at: new Date(1_700_000_000_000).toISOString(),
+            },
+          ],
+        },
+        expect.objectContaining({
+          type: 'task',
+          agent_id: 'main',
+          task_id: 'bash-1',
+          status: 'ended',
+          outcome: 'killed',
+          ended_at: new Date(1_700_000_005_000).toISOString(),
+        }),
+      ]);
+      expect(taskFramesOf(offView)).toEqual([]);
+    });
+
+    it('lists only newly subscribed agents on a re-subscribe and keeps streaming changes meanwhile', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      const sub = lc.addAgent('agent-0');
+      main.tasks.change(shellTask('bash-1', 'running'));
+      sub.tasks.change(shellTask('bash-2', 'running'));
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      let ended = false;
+      const target: BroadcastTarget = {
+        send: (frame, delivery) => {
+          view.target.send(frame, delivery);
+          if (ended || frame.type !== 'transcript.reset') return;
+          if ((frame.payload as { agent_id?: string }).agent_id !== 'agent-0') return;
+          ended = true;
+          main.tasks.change(shellTask('bash-1', 'completed'));
+        },
+      };
+      await bc.subscribe('s1', target, { main: 'turn', 'agent-0': 'off' });
+      await bc.subscribe('s1', target, { main: 'turn', 'agent-0': 'turn' });
+
+      expect(ended).toBe(true);
+      expect(summarize(taskFramesOf(view))).toEqual([
+        'list:main',
+        'list:agent-0',
+        'task:main:bash-1:ended',
+      ]);
+    });
+
+    it('streams the task changes of an agent created after the subscription', async () => {
+      const lc = new FakeLifecycle();
+      lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, { '*': 'turn' });
+      const late = lc.addAgent('agent-1');
+      late.tasks.change(shellTask('bash-3', 'running'));
+
+      expect(summarize(taskFramesOf(view))).toEqual(['list:main', 'task:agent-1:bash-3:running']);
     });
 
     it('streams for a client subscribed before any agent exists', async () => {
@@ -1819,8 +1959,8 @@ describe('SessionEventBroadcaster', () => {
       expect(payload.snapshot.items).toEqual([]);
       expect(payload.has_more_older).toBe(true);
       expect(payload.seq).toBeTypeOf('number');
+      expect(payload.snapshot).not.toHaveProperty('tasks');
       expect(payload.snapshot).toMatchObject({
-        tasks: [],
         interactions: [],
         attachments: [],
         todos: [],

@@ -4,6 +4,7 @@ import { WebSocketServer } from 'ws';
 import type { CredentialValidator } from '../../../services/auth/credentials';
 import { type IConnectionRegistry } from '../connectionRegistry';
 import type { SessionEventBroadcaster } from './sessionEventBroadcaster';
+import { createTaskSource } from './taskRequests';
 import { WsConnectionV1 } from './wsConnectionV1';
 import { selectWsBearerProtocol } from '../bearerProtocol';
 
@@ -20,14 +21,15 @@ export interface RegisterWsV1Options {
 }
 
 export function registerWsV1(core: Scope, opts: RegisterWsV1Options): WebSocketServer {
-  void core;
   const wss = new WebSocketServer({ noServer: true, handleProtocols: selectWsBearerProtocol });
   const { registry, broadcaster } = opts;
+  const taskSource = createTaskSource(core);
 
   wss.on('connection', (socket, req) => {
     const conn = new WsConnectionV1({
       socket,
       broadcaster,
+      taskSource,
       connectionRegistry: registry,
       validateCredential: opts.validateCredential,
       remoteAddress: req.socket.remoteAddress ?? null,
