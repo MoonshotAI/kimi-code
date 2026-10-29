@@ -25,7 +25,7 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   SKILL_SOURCE_PRIORITY,
   configuredRoots,
-  projectRoots,
+  projectRootsForDirs,
   sessionMediaOriginalsDir,
   userRoots,
   type ISessionScopeHandle,
@@ -170,7 +170,9 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         );
         return;
       }
-      const skills = (await listWorkspaceSkillsForRoot(core, ws.root)).map(toProtocolSkill);
+      const skills = (
+        await listWorkspaceSkillsForRoots(core, ws.root, ws.additionalDirs)
+      ).map(toProtocolSkill);
       reply.send(okEnvelope({ skills }, req.id));
     },
   );
@@ -308,9 +310,10 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
   );
 }
 
-async function listWorkspaceSkillsForRoot(
+async function listWorkspaceSkillsForRoots(
   core: Scope,
   workDir: string,
+  additionalDirs: readonly string[],
 ): Promise<readonly SkillDefinition[]> {
   const discovery = core.accessor.get(ISkillDiscovery);
   const bootstrap = core.accessor.get(IBootstrapService);
@@ -327,7 +330,9 @@ async function listWorkspaceSkillsForRoot(
 
   const [userRootList, projectRootList, explicitRootList, extraRootList, pluginRootList] = await Promise.all([
     useExplicitDirs ? Promise.resolve([]) : userRoots(bootstrap.homeDir, bootstrap.osHomeDir, rootOptions),
-    useExplicitDirs ? Promise.resolve([]) : projectRoots(workDir, rootOptions),
+    useExplicitDirs
+      ? Promise.resolve([])
+      : projectRootsForDirs([workDir, ...additionalDirs], rootOptions),
     useExplicitDirs
       ? configuredRoots(explicitDirs, workDir, bootstrap.osHomeDir, 'user')
       : Promise.resolve([]),

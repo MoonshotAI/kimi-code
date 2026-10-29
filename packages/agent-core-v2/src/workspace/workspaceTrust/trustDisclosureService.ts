@@ -12,12 +12,13 @@ import {
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
   type MergeAllAvailableSkillsConfig,
 } from '#/features/skill/catalog/configSection';
-import { projectRoots } from '#/features/skill/catalog/skillRoots';
+import { projectRootsForDirs } from '#/features/skill/catalog/skillRoots';
 import type { IWorkspaceSkillCatalog } from '#/features/skill/workspace/workspaceSkillCatalog';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IWorkspaceAgentProfileLoader } from '#/workspace/workspaceAgentProfileLoader/workspaceAgentProfileLoader';
 import type { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
+import type { IWorkspaceDirs } from '#/workspace/workspaceDirs/workspaceDirs';
 import type { IWorkspaceInstructionsService } from '#/workspace/workspaceInstructions/workspaceInstructions';
 
 import type {
@@ -54,6 +55,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     private readonly bootstrap: IBootstrapService,
     private readonly config: IConfigService,
     private readonly localConfig: IProjectLocalConfigService,
+    private readonly workspaceDirs: IWorkspaceDirs,
     private readonly trust: IWorkspaceTrust,
     private readonly skills: IWorkspaceSkillCatalog,
     private readonly agentProfilesLoader: IWorkspaceAgentProfileLoader,
@@ -65,6 +67,7 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   async describeGatedActivation(): Promise<TrustGatedActivation> {
     await this.trust.ready;
     if (this.trust.isTrusted()) return EMPTY_ACTIVATION;
+    await this.workspaceDirs.ready;
     const warnings: string[] = [];
     const [mcpServers, configuredDirs, skillRoots, instructionSources] = await Promise.all([
       this.describeGatedMcpServers().catch((error: unknown) => {
@@ -141,7 +144,10 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
     const projectRoot =
       (await findGitWorkTree(this.fs, this.context.cwd))?.root ?? this.context.cwd;
     const [roots, realRoot] = await Promise.all([
-      projectRoots(this.context.cwd, { mergeAllAvailableSkills }),
+      projectRootsForDirs(
+        [this.context.cwd, ...this.workspaceDirs.additionalDirs],
+        { mergeAllAvailableSkills },
+      ),
       realpathOrSelf(this.fs, projectRoot),
     ]);
     return roots
@@ -218,7 +224,12 @@ export class WorkspaceTrustDisclosureService implements IWorkspaceTrustDisclosur
   private async projectSkillRootPaths(): Promise<readonly string[]> {
     const mergeAllAvailableSkills =
       this.config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
-    return (await projectRoots(this.context.cwd, { mergeAllAvailableSkills }))
+    return (
+      await projectRootsForDirs(
+        [this.context.cwd, ...this.workspaceDirs.additionalDirs],
+        { mergeAllAvailableSkills },
+      )
+    )
       .map((root) => root.path)
       .toSorted();
   }
