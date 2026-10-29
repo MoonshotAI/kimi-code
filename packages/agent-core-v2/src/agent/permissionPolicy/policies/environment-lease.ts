@@ -5,9 +5,10 @@ import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentE
 export function acquireEnvironmentLease(
   environment: IAgentEnvironmentService,
   required: readonly EnvironmentCapability[] = [],
+  environmentId?: string,
 ): EnvironmentLease | undefined {
   try {
-    return environment.acquire(required);
+    return environment.acquire(required, environmentId);
   } catch (error) {
     if (error instanceof EnvironmentError) return undefined;
     throw error;

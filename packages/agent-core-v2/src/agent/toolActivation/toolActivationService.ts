@@ -75,6 +75,7 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
         const registration = this.toolRegistry.register(tool, {
           source: options.source,
           disclosure: options.disclosure,
+          environmentScoped: options.environmentScoped,
         });
         this.registrations.set(record, registration);
         this._register(registration);

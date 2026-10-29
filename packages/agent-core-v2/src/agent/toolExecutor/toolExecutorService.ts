@@ -388,13 +388,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     let execution: ToolExecution;
     try {
-      execution = await call.tool.resolveExecution(call.args);
+      execution = await call.tool.resolveExecution(call.input, { environmentId: call.environmentId });
     } catch (error) {
       const output =
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
       return settleError(call.args, output, 'resolution-failed');
+    }
+    if (
+      call.environmentId !== undefined &&
+      execution.isError !== true &&
+      (execution.display?.kind === 'command' || execution.display?.kind === 'file_io')
+    ) {
+      execution = { ...execution, display: { ...execution.display, environment: call.environmentId } };
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
@@ -427,6 +434,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         toolCall: call.toolCall,
         execution,
         args: call.args,
+        environmentId: call.environmentId,
       },
       options.signal,
     );
@@ -640,6 +648,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCalls: [call.toolCall],
       tool: call.kind === 'runnable' ? call.tool : undefined,
       args: call.args,
+      environmentId: call.kind === 'runnable' ? call.environmentId : undefined,
       outcome,
       accesses: resolvedAccesses,
       result: result as ExecutableToolResult,
@@ -689,6 +698,8 @@ interface RunnableToolCall {
   readonly toolName: string;
   readonly tool: ExecutableTool;
   readonly args: unknown;
+  readonly input: unknown;
+  readonly environmentId?: string;
 }
 
 interface RejectedToolCall {
@@ -725,6 +736,7 @@ function buildBeforeExecuteContext(
     toolCalls: allCalls,
     tool: call.tool,
     args: call.args,
+    environmentId: call.environmentId,
     execution,
   };
 }
@@ -778,7 +790,17 @@ function preflightToolCall(
       output: unavailable,
     };
   }
-  const validationError = validateExecutableToolArgs(tool, parsedArgs.data);
+  const route = toolRegistry.routeEnvironment(toolName, parsedArgs.data);
+  if (route.error !== undefined) {
+    return {
+      kind: 'rejected',
+      toolCall,
+      toolName,
+      args: parsedArgs.data,
+      output: route.error,
+    };
+  }
+  const validationError = validateExecutableToolArgs(tool, route.args);
   if (validationError !== null) {
     return {
       kind: 'rejected',
@@ -788,7 +810,15 @@ function preflightToolCall(
       output: `Invalid args for tool "${toolName}": ${validationError}`,
     };
   }
-  return { kind: 'runnable', toolCall, toolName, tool, args: parsedArgs.data };
+  return {
+    kind: 'runnable',
+    toolCall,
+    toolName,
+    tool,
+    args: parsedArgs.data,
+    input: route.args,
+    environmentId: route.environmentId,
+  };
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {

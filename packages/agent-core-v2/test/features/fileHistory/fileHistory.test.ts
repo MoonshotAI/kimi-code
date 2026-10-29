@@ -63,6 +63,7 @@ describe('AgentFileHistoryService', () => {
   let blobs: IBlobStore;
   let scopeCtx: IAgentScopeContext;
   let files: Map<string, Uint8Array>;
+  let gpuFiles: Map<string, Uint8Array>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -85,6 +86,7 @@ describe('AgentFileHistoryService', () => {
     executorEvents = stubToolExecutorEvents();
     blobs = new BlobStoreService(new InMemoryStorageService());
     files = new Map();
+    gpuFiles = new Map();
   });
 
   afterEach(() => {
@@ -97,16 +99,21 @@ describe('AgentFileHistoryService', () => {
       path: posix,
       workspace: { mapRoots: (roots: unknown) => roots },
     };
+    const gpu = { ...environment, fs: hostFs(false, gpuFiles) };
     return {
       inspect: () => environment,
-      acquire: () => ({
-        environment,
+      acquire: (_required: unknown, environmentId?: string) => ({
+        environment: environmentId === 'gpu' ? gpu : environment,
+        dispose: () => {},
+      }),
+      acquireWhenReady: async (_required: unknown, environmentId?: string) => ({
+        environment: environmentId === 'gpu' ? gpu : environment,
         dispose: () => {},
       }),
     } as unknown as IAgentEnvironmentService;
   }
 
-  function hostFs(remoteShape = false): IHostFileSystem {
+  function hostFs(remoteShape = false, store: Map<string, Uint8Array> = files): IHostFileSystem {
     const missing = (path: string): Error =>
       remoteShape
         ? new HostFsError('os.fs.not_found', 'stat failed: path does not exist', {
@@ -115,12 +122,12 @@ describe('AgentFileHistoryService', () => {
         : Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     return createFakeHostFs({
       stat: async (path: string) => {
-        const content = files.get(path);
+        const content = store.get(path);
         if (content === undefined) throw missing(path);
         return { isFile: true, isDirectory: false, size: content.byteLength };
       },
       readBytes: async (path: string) => {
-        const content = files.get(path);
+        const content = store.get(path);
         if (content === undefined) throw missing(path);
         return content;
       },
@@ -183,7 +190,12 @@ describe('AgentFileHistoryService', () => {
     files.set(path, encoder.encode(content));
   }
 
-  async function fireEdit(service: AgentFileHistoryService, path: string, turnId: number): Promise<void> {
+  async function fireEdit(
+    service: AgentFileHistoryService,
+    path: string,
+    turnId: number,
+    environmentId?: string,
+  ): Promise<void> {
     const toolCall: ToolCall = { type: 'function', id: `call-${String(turnId)}`, name: 'Edit', arguments: null };
     const execution: RunnableToolExecution = {
       approvalRule: 'Edit',
@@ -191,7 +203,7 @@ describe('AgentFileHistoryService', () => {
       execute: async () => ({ output: '' }),
     };
     await executorEvents.fireWillExecute(
-      { turnId, toolCall, execution, args: {} },
+      { turnId, toolCall, execution, args: {}, environmentId },
       new AbortController().signal,
     );
     await service.settled();
@@ -537,6 +549,46 @@ describe('AgentFileHistoryService', () => {
     endTurn(8);
     await service.settled();
     expect(await blobs.list(scopeCtx.scope(), 'file-history/')).toEqual([]);
+  });
+
+  it('tracks an edit routed to another environment under an environment-qualified path', async () => {
+    const service = createService();
+    setFile('/srv/app/a.txt', 'primary copy\n');
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('one\ntwo\n'));
+
+    startTurn(1);
+    await fireEdit(service, '/srv/app/a.txt', 1, 'gpu');
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('one\nTWO\n'));
+    expect(await service.changes(1)).toEqual([
+      { path: 'gpu:/srv/app/a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    endTurn(1);
+    startTurn(2);
+    await service.settled();
+
+    expect(service.history().tracked).toEqual(['gpu:/srv/app/a.txt']);
+    expect(await service.changes(1)).toEqual([
+      { path: 'gpu:/srv/app/a.txt', status: 'modified', additions: 1, deletions: 1 },
+    ]);
+    expect((await service.contentAt(1, 'gpu:/srv/app/a.txt'))?.content).toBe('one\ntwo\n');
+    expect((await service.contentAt(1, 'gpu:/srv/app/a.txt', 'end'))?.content).toBe('one\nTWO\n');
+  });
+
+  it('keeps the environment on a reused backup so an unchanged routed file is not read from the primary', async () => {
+    const service = createService();
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('one\n'));
+
+    startTurn(1);
+    await fireEdit(service, '/srv/app/a.txt', 1, 'gpu');
+    gpuFiles.set('/srv/app/a.txt', encoder.encode('two\n'));
+    endTurn(1);
+    startTurn(2);
+    await fireEdit(service, '/srv/app/a.txt', 2, 'gpu');
+    endTurn(2);
+    startTurn(3);
+    await service.settled();
+
+    expect(await service.changes(2)).toEqual([]);
   });
 
   it('keeps files outside the workspace keyed by absolute path', async () => {

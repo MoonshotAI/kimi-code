@@ -5,6 +5,7 @@ import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IOAuthService } from '#/app/auth/auth';
@@ -81,18 +82,19 @@ export class GrepTool implements IGrepTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: GrepInput): Promise<ToolExecution> {
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+  async resolveExecution(args: GrepInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environmentId;
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [
           ...this.workspaceCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
-      });
+      } : this.environment.workspaceRoots(environmentId));
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspace(view);
       let path: string | undefined;
@@ -113,7 +115,7 @@ export class GrepTool implements IGrepTool {
         approvalRule: literalRulePattern(this.name, args.pattern),
         matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.pattern),
         execute: async ({ signal }) => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs', 'process']);
+          const lease = await acquireOrWhenReady(this.environment, ['fs', 'process'], environmentId);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -361,6 +363,7 @@ registerAgentToolService(IGrepTool, GrepTool, {
   name: 'Grep',
   domain: 'os/backends',
   requiredEnvironmentCapabilities: ['fs', 'process'],
+  environmentScoped: true,
 });
 
 function formatSpawnError(error: unknown, environment: Environment): string {

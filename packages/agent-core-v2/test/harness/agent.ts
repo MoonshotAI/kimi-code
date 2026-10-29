@@ -1383,6 +1383,7 @@ export class AgentTestContext {
             reg.defineInstance<IAgentEnvironmentService>(IAgentEnvironmentService, {
               _serviceBrand: undefined,
               onDidChange: () => ({ dispose: () => {} }),
+              targets: () => [{ environmentId: environment.identity.environmentId, primary: true }],
               isAvailable: (required = []) => required.every((capability) => environment.capabilities.has(capability)),
               inspect: () => environment,
               acquire: (required = []): EnvironmentLease => {
@@ -2406,6 +2407,7 @@ function createPermissionRulesStub(
     get sessionApprovalRulePatterns() {
       return [];
     },
+    environmentSessionApprovalRulePatterns: () => [],
     addRules: (nextRules) => {
       rules = [...rules, ...nextRules];
     },

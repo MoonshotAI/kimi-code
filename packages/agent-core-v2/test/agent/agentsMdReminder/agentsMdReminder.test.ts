@@ -273,6 +273,7 @@ function didCtx(
     readonly result?: ExecutableToolResult;
     readonly preflightRejected?: boolean;
     readonly accesses?: ToolAccessesType;
+    readonly environmentId?: string;
   } = {},
 ): ToolDidExecuteContext {
   const toolCall: ToolCall = {
@@ -287,6 +288,7 @@ function didCtx(
     toolCall,
     toolCalls: [toolCall],
     args,
+    environmentId: options.environmentId,
     tool: options.preflightRejected === true ? undefined : ({} as ExecutableTool),
     outcome: options.preflightRejected === true ? 'preflight-rejected' : 'executed',
     accesses:
@@ -1554,6 +1556,18 @@ describe('agentsMdReminder environment degradation', () => {
     expect(h.reminders).toHaveLength(0);
   });
 
+  it('does not inspect the primary environment for calls routed elsewhere', async () => {
+    const h = createHarness();
+    const environment = h.ix.get(IAgentEnvironmentService);
+    environment.acquire = () => {
+      throw new Error('primary environment must not be read');
+    };
+
+    await fire(h, didCtx('Read', { path: '/srv/app/AGENTS.md' }, { environmentId: 'gpu' }));
+
+    expect(agentsMdMessages(h)).toHaveLength(0);
+    expect(h.reminders).toHaveLength(0);
+  });
 });
 
 describe('extractBashTargetDirs', () => {

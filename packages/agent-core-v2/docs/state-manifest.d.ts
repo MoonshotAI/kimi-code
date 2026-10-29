@@ -879,6 +879,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -887,6 +888,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1092,6 +1094,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -1100,6 +1103,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1314,6 +1318,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -1322,6 +1327,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1528,6 +1534,7 @@ export interface AgentStateSnapshot {
       cwd?: string;
       description?: string;
       language?: 'bash';
+      environment?: string;
     } | {
       kind: 'file_io';
       operation: 'read' | 'write' | 'edit' | 'glob' | 'grep';
@@ -1536,6 +1543,7 @@ export interface AgentStateSnapshot {
       content?: string;
       before?: string;
       after?: string;
+      environment?: string;
     } | {
       kind: 'diff';
       path: string;
@@ -1790,6 +1798,7 @@ export interface AgentStateSnapshot {
       readonly reason?: string;
     }[];
     readonly sessionApprovalRulePatterns: readonly string[];
+    readonly environmentSessionApprovalRulePatterns?: Readonly<Record<string, readonly string[]>>;
   };
   // src/agent/plugin/agentPluginOps.ts
   // replayable · durable — folds: PluginSessionStartEvent

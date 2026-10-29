@@ -193,6 +193,7 @@ function createRegistryBackedTool(environmentValue: FakeEnvironment) {
   const environment: IAgentEnvironmentService = {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
+    targets: () => [{ environmentId: 'local', primary: true }],
     isAvailable: (required = []) => {
       try {
         const lease = registry.acquire(binding, required);

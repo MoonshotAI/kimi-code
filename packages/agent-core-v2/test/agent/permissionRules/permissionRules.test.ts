@@ -90,6 +90,15 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
 
+  it('keeps session approvals for another environment out of the primary pattern set', () => {
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: 'gpu' });
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: 'gpu' });
+
+    expect(svc.sessionApprovalRulePatterns).toEqual([]);
+    expect(svc.environmentSessionApprovalRulePatterns('gpu')).toEqual(['Bash(rm *)']);
+    expect(svc.environmentSessionApprovalRulePatterns('staging')).toEqual([]);
+  });
+
   it('ignores non-session approvals for the pattern set', () => {
     const oneTime: PermissionApprovalResultRecord = {
       turnId: 2,
@@ -126,6 +135,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
   it('replay rebuilds session approval patterns only (rules are not persisted)', async () => {
     svc.addRules([allowRule, denyRule]);
     svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+    svc.recordApprovalResult({ ...sessionApproval('Bash(rm *)'), environmentId: 'gpu' });
     const records = await readRecords();
 
     const ix2 = disposables.add(new TestInstantiationService());
@@ -149,6 +159,7 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(freshState.get(permissionRulesKey)).toEqual({
       rules: [],
       sessionApprovalRulePatterns: ['Bash(rm *)'],
+      environmentSessionApprovalRulePatterns: { gpu: ['Bash(rm *)'] },
     });
     const written: WireRecord[] = [];
     for await (const record of log2.read<WireRecord>(testWireScope(SCOPE, 'permission-rules-replay'), AGENT_WIRE_RECORD_KEY)) {

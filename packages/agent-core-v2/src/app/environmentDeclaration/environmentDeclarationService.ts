@@ -40,6 +40,10 @@ export class EnvironmentDeclarationService implements IEnvironmentDeclarationSer
     return this.current;
   }
 
+  snapshot(): EnvironmentDeclarationSet {
+    return this.current;
+  }
+
   registrationError(environmentId: string): Error | undefined {
     return this.registrationErrors.get(environmentId);
   }

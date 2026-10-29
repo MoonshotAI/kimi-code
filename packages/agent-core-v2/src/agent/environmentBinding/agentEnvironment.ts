@@ -3,11 +3,14 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { ISessionEventBus } from '#/app/event/eventBus';
+import { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import { IFlagService } from '#/app/flag/flag';
 import { LifecycleScope } from '#/app/scopes';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { Environment, EnvironmentBinding, EnvironmentCapability, EnvironmentLease, EnvironmentPath, EnvironmentWorkspaceRoots } from '#/environment/environment';
 import { LOCAL_ENVIRONMENT_ID } from '#/environment/environment';
-import { environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
+import { normalizeRemoteCwd } from '#/environment/environmentDefaults';
+import { EnvironmentError, environmentIsReady, type EnvironmentGenerationSnapshot, type EnvironmentRegistryChange } from '#/environment/environmentRegistry';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -19,6 +22,7 @@ import { IEnvironmentService } from '#/app/environment/environment';
 
 import { IAgentEnvironmentBindingService } from './environmentBinding';
 import { EnvironmentStatusChanged } from './environmentEvents';
+import { MULTI_ENVIRONMENT_FLAG_ID } from './flag';
 
 export interface AgentEnvironmentBindingSnapshot {
   readonly binding: EnvironmentBinding;
@@ -26,14 +30,21 @@ export interface AgentEnvironmentBindingSnapshot {
   readonly environment?: EnvironmentGenerationSnapshot;
 }
 
+export interface AgentEnvironmentTarget {
+  readonly environmentId: string;
+  readonly primary: boolean;
+  readonly cwd?: string;
+}
+
 export interface IAgentEnvironmentService {
   readonly _serviceBrand: undefined;
   readonly onDidChange: Event<void>;
-  inspect(): Environment;
-  isAvailable(required?: readonly EnvironmentCapability[]): boolean;
-  acquire(required?: readonly EnvironmentCapability[]): EnvironmentLease;
-  acquireWhenReady(required?: readonly EnvironmentCapability[]): Promise<EnvironmentLease>;
-  workspaceRoots(): EnvironmentWorkspaceRoots;
+  targets(): readonly AgentEnvironmentTarget[];
+  inspect(environmentId?: string): Environment;
+  isAvailable(required?: readonly EnvironmentCapability[], environmentId?: string): boolean;
+  acquire(required?: readonly EnvironmentCapability[], environmentId?: string): EnvironmentLease;
+  acquireWhenReady(required?: readonly EnvironmentCapability[], environmentId?: string): Promise<EnvironmentLease>;
+  workspaceRoots(environmentId?: string): EnvironmentWorkspaceRoots;
 }
 
 export const IAgentEnvironmentService: ServiceIdentifier<IAgentEnvironmentService> =
@@ -42,9 +53,10 @@ export const IAgentEnvironmentService: ServiceIdentifier<IAgentEnvironmentServic
 export async function acquireOrWhenReady(
   service: IAgentEnvironmentService,
   required: readonly EnvironmentCapability[] = [],
+  environmentId?: string,
 ): Promise<EnvironmentLease> {
-  if (service.isAvailable(required)) return service.acquire(required);
-  return service.acquireWhenReady(required);
+  if (service.isAvailable(required, environmentId)) return service.acquire(required, environmentId);
+  return service.acquireWhenReady(required, environmentId);
 }
 
 export function pinnedGeneration(environment: Environment): string | undefined {
@@ -119,6 +131,8 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     @ISessionEventBus private readonly eventBus: ISessionEventBus,
     @ISessionContext private readonly session: ISessionContext,
     @ISessionStateService private readonly sessionState: ISessionStateService,
+    @IFlagService private readonly flags?: IFlagService,
+    @IEnvironmentDeclarationService private readonly declarations?: IEnvironmentDeclarationService,
   ) {
     this.bindingSubscription = this.binding.onDidChange(() => this.changeEmitter.fire());
     this.registrySubscription = this.resolver.onDidChange((change) => {
@@ -129,12 +143,31 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
     });
   }
 
-  inspect(): Environment {
-    return this.resolver.inspect(this.binding.current);
+  targets(): readonly AgentEnvironmentTarget[] {
+    const current = this.binding.current;
+    const primary: AgentEnvironmentTarget = { environmentId: current.environmentId, primary: true, cwd: current.cwd };
+    if (this.declarations === undefined || this.flags?.enabled(MULTI_ENVIRONMENT_FLAG_ID) !== true) return [primary];
+    const declared = new Map(
+      this.declarations.snapshot().entries.map((declaration) => [declaration.id, declaration.entry.defaultCwd]),
+    );
+    if (current.environmentId !== LOCAL_ENVIRONMENT_ID && !declared.has(current.environmentId)) return [primary];
+    const secondary = [LOCAL_ENVIRONMENT_ID, ...declared.keys()]
+      .filter((environmentId) => environmentId !== current.environmentId && this.resolver.current(environmentId) !== undefined)
+      .toSorted((left, right) => left.localeCompare(right))
+      .map((environmentId): AgentEnvironmentTarget => ({
+        environmentId,
+        primary: false,
+        cwd: environmentId === LOCAL_ENVIRONMENT_ID ? this.session.cwd : declared.get(environmentId),
+      }));
+    return [primary, ...secondary];
   }
 
-  workspaceRoots(): EnvironmentWorkspaceRoots {
-    const binding = this.binding.current;
+  inspect(environmentId?: string): Environment {
+    return this.resolver.inspect(this.bindingFor(environmentId));
+  }
+
+  workspaceRoots(environmentId?: string): EnvironmentWorkspaceRoots {
+    const binding = this.bindingFor(environmentId);
     let workDir = binding.cwd;
     if (workDir === undefined && binding.environmentId !== LOCAL_ENVIRONMENT_ID) {
       try {
@@ -144,27 +177,44 @@ export class AgentEnvironmentService implements IAgentEnvironmentService {
         workDir = undefined;
       }
     }
+    if (binding.environmentId !== this.binding.current.environmentId) {
+      if (workDir === undefined) {
+        throw new EnvironmentError('environment.unavailable', `environment ${binding.environmentId} has no working directory until it connects`);
+      }
+      return { workDir, additionalDirs: [] };
+    }
     return {
       workDir: workDir ?? this.session.cwd,
       additionalDirs: this.sessionState.get(workspaceContextAdditionalDirsKey),
     };
   }
 
-  isAvailable(required: readonly EnvironmentCapability[] = []): boolean {
+  isAvailable(required: readonly EnvironmentCapability[] = [], environmentId?: string): boolean {
     try {
-      const environment = this.inspect();
+      const environment = this.inspect(environmentId);
       return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
     } catch {
       return false;
     }
   }
 
-  acquire(required: readonly EnvironmentCapability[] = []): EnvironmentLease {
-    return this.resolver.acquire(this.binding.current, required);
+  acquire(required: readonly EnvironmentCapability[] = [], environmentId?: string): EnvironmentLease {
+    return this.resolver.acquire(this.bindingFor(environmentId), required);
   }
 
-  async acquireWhenReady(required: readonly EnvironmentCapability[] = []): Promise<EnvironmentLease> {
-    return this.resolver.acquireWhenReady(this.binding.current, required);
+  async acquireWhenReady(required: readonly EnvironmentCapability[] = [], environmentId?: string): Promise<EnvironmentLease> {
+    return this.resolver.acquireWhenReady(this.bindingFor(environmentId), required);
+  }
+
+  private bindingFor(environmentId: string | undefined): EnvironmentBinding {
+    const current = this.binding.current;
+    if (environmentId === undefined || environmentId === current.environmentId) return current;
+    const target = this.targets().find((candidate) => candidate.environmentId === environmentId);
+    if (target === undefined) {
+      throw new EnvironmentError('environment.not_found', `environment ${environmentId} is not available to this agent`);
+    }
+    if (target.cwd === undefined || environmentId === LOCAL_ENVIRONMENT_ID) return { environmentId, cwd: target.cwd };
+    return { environmentId, cwd: normalizeRemoteCwd(target.cwd) };
   }
 
   dispose(): void {

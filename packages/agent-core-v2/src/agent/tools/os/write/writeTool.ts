@@ -11,6 +11,7 @@ import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
@@ -39,8 +40,9 @@ export class WriteTool implements IWriteTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: WriteInput): Promise<ToolExecution> {
-    const planTarget = await this.planService?.resolveFile(args.path);
+  async resolveExecution(args: WriteInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environmentId;
+    const planTarget = environmentId === undefined ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
       return {
@@ -58,17 +60,17 @@ export class WriteTool implements IWriteTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [
           ...this.workspaceCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
-      });
+      } : this.environment.workspaceRoots(environmentId));
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
@@ -88,7 +90,7 @@ export class WriteTool implements IWriteTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -161,4 +163,5 @@ registerAgentToolService(IWriteTool, WriteTool, {
   name: 'Write',
   domain: 'os/backends',
   requiredEnvironmentCapabilities: ['fs'],
+  environmentScoped: true,
 });

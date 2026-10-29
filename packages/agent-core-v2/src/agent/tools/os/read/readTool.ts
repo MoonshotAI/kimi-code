@@ -25,6 +25,7 @@ import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
@@ -211,23 +212,26 @@ export class ReadTool implements IReadTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: ReadInput): Promise<ToolExecution> {
+  async resolveExecution(args: ReadInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environmentId;
     if (args.column_offset !== undefined && (args.line_offset ?? 1) < 0) {
       return { isError: true, output: 'column_offset is only supported for forward reads. Use a positive line_offset or the forward Next Read arguments.' };
     }
     if (isDaemonFileUrl(args.path)) return this.attachmentExecution(args);
-    const planTarget = await this.planService?.resolveFile(args.path, 'read');
-    if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
-    const artifactTarget = this.localOutputTarget(args.path);
-    if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    if (environmentId === undefined) {
+      const planTarget = await this.planService?.resolveFile(args.path, 'read');
+      if (planTarget !== undefined) return this.localArtifactExecution(args, planTarget, true);
+      const artifactTarget = this.localOutputTarget(args.path);
+      if (artifactTarget !== undefined) return this.localArtifactExecution(args, artifactTarget, false);
+    }
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [...this.workspaceCtx.additionalDirs, ...this.skillCatalog.catalog.getSkillRoots()],
-      });
+      } : this.environment.workspaceRoots(environmentId));
       const env = { _serviceBrand: undefined, ...view.host, ready: Promise.resolve() };
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
@@ -247,7 +251,7 @@ export class ReadTool implements IReadTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -672,4 +676,5 @@ export class ReadTool implements IReadTool {
 registerAgentToolService(IReadTool, ReadTool, {
   name: 'Read',
   domain: 'os/backends',
+  environmentScoped: true,
 });

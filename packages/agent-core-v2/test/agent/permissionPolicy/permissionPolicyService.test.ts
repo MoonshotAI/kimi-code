@@ -52,6 +52,7 @@ describe('AgentPermissionPolicyService chain', () => {
   let mode: PermissionMode;
   let rules: PermissionRule[];
   let sessionApprovalRulePatterns: string[];
+  let environmentSessionApprovalRulePatterns: Record<string, string[]>;
   let workspace: ReturnType<typeof workspaceStub>;
   let hostArgs: HostArgs;
   let dangerousCommandGuardEnabled: boolean;
@@ -61,6 +62,7 @@ describe('AgentPermissionPolicyService chain', () => {
     mode = 'manual';
     rules = [];
     sessionApprovalRulePatterns = [];
+    environmentSessionApprovalRulePatterns = {};
     workspace = workspaceStub('/workspace');
     hostArgs = { requestHeaders: {}, nonInteractive: false };
     dangerousCommandGuardEnabled = true;
@@ -86,12 +88,15 @@ describe('AgentPermissionPolicyService chain', () => {
         reg.definePartialInstance(IAgentPermissionRulesService, permissionRulesStub({
           rules: () => rules,
           sessionApprovalRulePatterns: () => sessionApprovalRulePatterns,
+          environmentSessionApprovalRulePatterns: (environmentId) =>
+            environmentSessionApprovalRulePatterns[environmentId] ?? [],
         }));
         reg.defineInstance(ISessionWorkspaceContext, workspace.stub);
         reg.defineInstance(IHostEnvironment, kaosStub());
         reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
           onDidChange: () => ({ dispose: () => {} }),
+          targets: () => [{ environmentId: 'local', primary: true }],
           isAvailable: () => true,
           inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
           acquire: () => ({
@@ -220,6 +225,34 @@ describe('AgentPermissionPolicyService chain', () => {
           match_strategy: 'matches_rule',
         },
       },
+    });
+  });
+
+  it('keeps approve-for-session decisions inside the environment they were granted for', async () => {
+    rules.push({
+      decision: 'ask',
+      scope: 'user',
+      pattern: 'Bash',
+    });
+    sessionApprovalRulePatterns.push('Bash(printf first)');
+    const routed = {
+      toolName: 'Bash',
+      args: { command: 'printf first', timeout: 60 },
+      environmentId: 'gpu',
+    };
+
+    await expect(evaluate(routed)).resolves.toMatchObject({
+      policyName: 'user-configured-ask',
+      result: { kind: 'ask' },
+    });
+
+    environmentSessionApprovalRulePatterns['gpu'] = ['Bash(printf first)'];
+    await expect(evaluate(routed)).resolves.toMatchObject({
+      policyName: 'session-approval-history',
+      result: { kind: 'approve' },
+    });
+    await expect(evaluate({ ...routed, environmentId: 'staging' })).resolves.toMatchObject({
+      policyName: 'user-configured-ask',
     });
   });
 
@@ -499,12 +532,14 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
   let cleanupDirs: string[];
   let environmentAcquireError: (() => Error) | undefined;
   let environmentFsAvailable: boolean;
+  let acquiredEnvironments: (string | undefined)[];
 
   beforeEach(async () => {
     disposables = new DisposableStore();
     mode = 'manual';
     environmentAcquireError = undefined;
     environmentFsAvailable = true;
+    acquiredEnvironments = [];
     workspaceDir = await mkdtemp(join(tmpdir(), 'kimi-permission-git-'));
     cleanupDirs = [workspaceDir];
     await mkdir(join(workspaceDir, '.git'), { recursive: true });
@@ -529,14 +564,16 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
         reg.defineInstance(IAgentEnvironmentService, {
           _serviceBrand: undefined,
           onDidChange: () => ({ dispose: () => {} }),
+          targets: () => [{ environmentId: 'local', primary: true }],
           isAvailable: () => true,
           inspect() { return (this as IAgentEnvironmentService).acquire().environment; },
-          acquire: () => {
+          acquire: (_required, environmentId) => {
             if (environmentAcquireError !== undefined) throw environmentAcquireError();
+            acquiredEnvironments.push(environmentId);
             return {
               track: (resource) => resource,
               environment: {
-                identity: { environmentId: 'local', generation: 'test' },
+                identity: { environmentId: environmentId ?? 'local', generation: 'test' },
                 capabilities: new Set(),
                 status: 'ready',
                 onDidChangeStatus: () => ({ dispose: () => {} }),
@@ -553,13 +590,18 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
                   dirname: (path: string) => dirname(path),
                 },
                 workspace: { mapRoots: (roots) => roots },
-                fs: environmentFsAvailable ? hostFs : undefined,
+                fs: environmentId !== undefined
+                  ? ({ stat: async () => { throw new Error('missing'); } } as unknown as typeof hostFs)
+                  : environmentFsAvailable ? hostFs : undefined,
               },
               dispose: () => {},
             };
           },
           acquireWhenReady() { return Promise.resolve((this as IAgentEnvironmentService).acquire()); },
-          workspaceRoots: () => ({ workDir: '/workspace', additionalDirs: [] }),
+          workspaceRoots: (environmentId) => ({
+            workDir: environmentId === undefined ? '/workspace' : workspaceDir,
+            additionalDirs: [],
+          }),
         });
         reg.defineInstance(ITelemetryService, recordingTelemetry([]));
         reg.definePartialInstance(IGitService, {
@@ -603,6 +645,20 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       policyName: 'git-cwd-write-approve',
       result: { kind: 'approve' },
     });
+  });
+
+  it('judges a routed Write by the target environment instead of the primary git checkout', async () => {
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(workspaceDir, 'src/a.ts')),
+      environmentId: 'gpu',
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+    expect(acquiredEnvironments).toContain('gpu');
+    expect(acquiredEnvironments).not.toContain(undefined);
   });
 
   it('approves Edit on an additionalDir path in manual mode', async () => {
@@ -721,6 +777,7 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
 interface MutablePermissionRulesStubOptions {
   readonly rules?: () => readonly PermissionRule[];
   readonly sessionApprovalRulePatterns?: () => readonly string[];
+  readonly environmentSessionApprovalRulePatterns?: (environmentId: string) => readonly string[];
 }
 
 function permissionRulesStub(
@@ -735,6 +792,7 @@ function permissionRulesStub(
     get sessionApprovalRulePatterns() {
       return sessionApprovalRulePatterns();
     },
+    environmentSessionApprovalRulePatterns: options.environmentSessionApprovalRulePatterns ?? (() => []),
     addRules: () => {},
     recordApprovalResult: () => {},
   };
@@ -745,6 +803,7 @@ interface PolicyContextInput {
   readonly toolName: string;
   readonly args: Record<string, unknown>;
   readonly accesses?: ToolAccessList;
+  readonly environmentId?: string;
 }
 
 function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookContext {
@@ -756,6 +815,7 @@ function policyContext(input: PolicyContextInput): ResolvedToolExecutionHookCont
     toolCall,
     toolCalls: [toolCall],
     args: input.args,
+    environmentId: input.environmentId,
     execution: {
       description: description(input.toolName),
       display: display(input.toolName, input.args),

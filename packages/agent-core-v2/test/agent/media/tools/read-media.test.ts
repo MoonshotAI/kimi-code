@@ -943,6 +943,7 @@ describe('AgentMediaToolsRegistrar', () => {
     const environment: IAgentEnvironmentService = {
       _serviceBrand: undefined,
       onDidChange: environmentChanges.event,
+      targets: () => [{ environmentId: 'local', primary: true }],
       isAvailable: (required = []) => environmentAvailable && baseEnvironment.isAvailable(required),
       inspect: () => {
         if (!environmentAvailable) throw new Error('environment unavailable');

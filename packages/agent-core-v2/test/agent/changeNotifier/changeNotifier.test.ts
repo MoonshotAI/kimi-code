@@ -267,6 +267,7 @@ function createHarness(options: {
       reg.defineInstance(IAgentEnvironmentService, {
         _serviceBrand: undefined,
         onDidChange: () => ({ dispose: () => {} }),
+        targets: () => [{ environmentId: 'local', primary: true }],
         isAvailable: () => true,
         inspect() {
           return this.acquire().environment;

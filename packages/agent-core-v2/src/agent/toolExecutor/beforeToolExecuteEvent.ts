@@ -28,6 +28,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
   readonly toolCalls: readonly ToolCall[];
   readonly tool?: ExecutableTool | undefined;
   readonly args: unknown;
+  readonly environmentId?: string;
   readonly execution: RunnableToolExecution;
 
   private _vetoResult: ExecutableToolResult | undefined;
@@ -44,6 +45,7 @@ export class BeforeToolExecuteEventImpl implements BeforeToolExecuteEvent {
     this.toolCalls = context.toolCalls;
     this.tool = context.tool;
     this.args = context.args;
+    this.environmentId = context.environmentId;
     this.execution = context.execution;
   }
 

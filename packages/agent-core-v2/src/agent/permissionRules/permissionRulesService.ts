@@ -35,6 +35,10 @@ export class AgentPermissionRulesService implements IAgentPermissionRulesService
     return [...this.agentState.get(permissionRulesKey).sessionApprovalRulePatterns];
   }
 
+  environmentSessionApprovalRulePatterns(environmentId: string): readonly string[] {
+    return [...(this.agentState.get(permissionRulesKey).environmentSessionApprovalRulePatterns?.[environmentId] ?? [])];
+  }
+
   addRules(rules: readonly PermissionRule[]): void {
     if (rules.length === 0) return;
     void this.dispatcher.dispatch(

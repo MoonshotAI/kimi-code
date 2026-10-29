@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { PassThrough, Readable } from 'node:stream';
 import { Jimp } from 'jimp';
 
@@ -18,6 +19,7 @@ import {
   type ExecutableToolContext,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
@@ -51,7 +53,7 @@ import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { FakeEnvironment } from '#/environment/fakeEnvironment';
-import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
+import { IAgentEnvironmentService, type AgentEnvironmentTarget } from '#/agent/environmentBinding/agentEnvironment';
 import type { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { stubWorkspaceContext } from '../../session/workspaceContext/stub-workspace-context';
 import { stubAgentEnvironment } from '../../environment/stubs';
@@ -74,6 +76,10 @@ import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
+import { stubConfigService } from '../../app/config/stubs';
+import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
+
+import { RemoteSession } from '#/remote/client/remoteSession';
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
@@ -88,6 +94,7 @@ let events: ToolExecutorEvent[];
 let protocolEvents: ProtocolEvent[];
 let telemetryEvents: TelemetryRecord[];
 let truncateForModel: IAgentToolResultTruncationService['truncateForModel'];
+let environmentTargets: AgentEnvironmentTarget[];
 
 let durations: number[];
 
@@ -98,6 +105,7 @@ beforeEach(() => {
   protocolEvents = [];
   telemetryEvents = [];
   truncateForModel = async (input) => input.result;
+  environmentTargets = [{ environmentId: 'local', primary: true }];
   ix = createServices(disposables, {
     additionalServices: (reg) => {
       registerStateServices(reg);
@@ -105,6 +113,9 @@ beforeEach(() => {
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
+      reg.defineInstance(IAgentEnvironmentService, {
+        targets: () => environmentTargets,
+      } as unknown as IAgentEnvironmentService);
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
       reg.defineInstance(IAgentToolResultTruncationService, {
         _serviceBrand: undefined,
@@ -1598,6 +1609,197 @@ describe('truncation pipeline', () => {
     expect(readFileSync(join(homeDir, 'config.toml'), 'utf8')).toContain('default_max_chars = 1500');
   });
 });
+
+describe('AgentToolExecutorService environment routing', () => {
+  const textSchema = {
+    type: 'object',
+    properties: { text: { type: 'string' } },
+    required: ['text'],
+    additionalProperties: false,
+  };
+
+  beforeEach(() => {
+    environmentTargets = [
+      { environmentId: 'local', primary: true },
+      { environmentId: 'gpu', primary: false, cwd: '/work' },
+    ];
+  });
+
+  it('adds the environment argument to environment-scoped tools only', () => {
+    registry.register(new RoutedTool('scoped', textSchema), { environmentScoped: true });
+    registry.register(new RoutedTool('plain', textSchema));
+
+    const parameters = Object.fromEntries(registry.list().map((info) => [info.name, info.parameters]));
+    expect(parameters['scoped']).toEqual({
+      ...textSchema,
+      properties: {
+        text: { type: 'string' },
+        environment: {
+          type: 'string',
+          enum: ['local', 'gpu'],
+          description: 'Environment to run this call in. Omit to use the primary environment.',
+        },
+      },
+    });
+    expect(parameters['plain']).toBe(textSchema);
+  });
+
+  it('routes a call to the named environment, hands the tool its own arguments, and stamps the display', async () => {
+    const tool = new RoutedTool('scoped', textSchema);
+    registry.register(tool, { environmentScoped: true });
+    const observed: { readonly environmentId: string | undefined; readonly args: unknown }[] = [];
+    executor.onBeforeExecuteTool((event) => {
+      observed.push({ environmentId: event.environmentId, args: event.args });
+    });
+
+    await execute([
+      toolCall('call_gpu', 'scoped', { text: 'a', environment: 'gpu' }),
+      toolCall('call_primary', 'scoped', { text: 'b', environment: 'local' }),
+      toolCall('call_default', 'scoped', { text: 'c' }),
+    ]);
+
+    expect(tool.resolutions).toEqual([
+      { args: { text: 'a' }, environmentId: 'gpu' },
+      { args: { text: 'b' }, environmentId: undefined },
+      { args: { text: 'c' }, environmentId: undefined },
+    ]);
+    expect(observed).toEqual([
+      { environmentId: 'gpu', args: { text: 'a', environment: 'gpu' } },
+      { environmentId: undefined, args: { text: 'b', environment: 'local' } },
+      { environmentId: undefined, args: { text: 'c' } },
+    ]);
+    const displays = protocolEvents
+      .filter((event): event is ToolCallStarted => event.type === 'tool.call.started')
+      .map((event) => event.display);
+    expect(displays).toEqual([
+      { kind: 'command', command: 'a', environment: 'gpu' },
+      { kind: 'command', command: 'b' },
+      { kind: 'command', command: 'c' },
+    ]);
+  });
+
+  it('rejects an unknown environment without resolving the tool', async () => {
+    const tool = new RoutedTool('scoped', textSchema);
+    registry.register(tool, { environmentScoped: true });
+
+    const results = await execute([toolCall('call_bad', 'scoped', { text: 'a', environment: 'prod' })]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        isError: true,
+        output: 'Unknown environment "prod". Available environments: local (primary), gpu.',
+      }),
+    ]);
+    expect(tool.resolutions).toEqual([]);
+  });
+
+  it('keeps rejecting the environment argument while only the primary environment is available', async () => {
+    environmentTargets = [{ environmentId: 'local', primary: true }];
+    const tool = new RoutedTool('scoped', textSchema);
+    registry.register(tool, { environmentScoped: true });
+
+    const results = await execute([toolCall('call_single', 'scoped', { text: 'a', environment: 'local' })]);
+
+    expect(results[0]).toMatchObject({
+      isError: true,
+      output: expect.stringContaining('Invalid args for tool "scoped"'),
+    });
+    expect(tool.resolutions).toEqual([]);
+    expect(registry.list().find((info) => info.name === 'scoped')?.parameters).toBe(textSchema);
+  });
+
+  it('routes Read through the registry to a lazily connected exec-server', async () => {
+    const remoteDir = await mkdtemp(join(tmpdir(), 'multi-env-read-'));
+    const require = createRequire(import.meta.url);
+    const tsxCli = join(dirname(require.resolve('tsx/package.json')), 'dist', 'cli.mjs');
+    const child = join(import.meta.dirname, '../../remote/fixtures/exec-server-child.ts');
+    let session: RemoteSession | undefined;
+    const environment = {
+      identity: { environmentId: 'gpu', generation: 'gpu-one' },
+      capabilities: new Set(['fs', 'process'] as const),
+      status: 'pending' as const,
+      onDidChangeStatus: () => ({ dispose: () => {} }),
+      connect: async () => {
+        session = await RemoteSession.connect({
+          environmentId: 'gpu',
+          launcher: { type: 'command', program: process.execPath, args: [tsxCli, child], env: { EXEC_SERVER_VERSION: '9.9.9-test' } },
+        });
+        Object.assign(environment, {
+          host: session.host,
+          fs: session.fs,
+          process: session.process,
+          status: 'ready',
+        });
+      },
+      dispose: async () => {
+        await session?.dispose();
+      },
+    };
+    try {
+      await writeFile(join(remoteDir, 'notes.txt'), 'from remote exec-server\n');
+      ix.stub(IAgentEnvironmentService, {
+        targets: () => [
+          { environmentId: 'local', primary: true, cwd: '/workspace' },
+          { environmentId: 'gpu', primary: false, cwd: remoteDir },
+        ],
+        inspect: () => environment,
+        isAvailable: () => false,
+        acquireWhenReady: async () => {
+          await environment.connect();
+          return { environment, dispose: () => {} };
+        },
+        workspaceRoots: () => ({ workDir: remoteDir, additionalDirs: [] }),
+      } as unknown as IAgentEnvironmentService);
+      registry.register(
+        new ReadTool(
+          ix.get(IAgentEnvironmentService),
+          stubWorkspaceContext('/workspace'),
+          { catalog: { getSkillRoots: () => [] } } as unknown as ISessionSkillCatalog,
+          stubToolResultTruncationService(),
+          stubConfigService(),
+          { getModelCapabilities: () => ({ image_in: true, video_in: true }) } as unknown as IAgentProfileService,
+          { isToolActive: () => true } as unknown as IAgentToolPolicyService,
+          registry,
+        ),
+        { environmentScoped: true },
+      );
+
+      const results = await execute([
+        toolCall('remote-read', 'Read', { path: 'notes.txt', environment: 'gpu' }),
+      ]);
+
+      expect(results).toEqual([
+        expect.objectContaining({
+          output: '1\tfrom remote exec-server',
+          display: expect.objectContaining({ path: join(remoteDir, 'notes.txt'), environment: 'gpu' }),
+        }),
+      ]);
+      expect(results[0]?.isError).not.toBe(true);
+    } finally {
+      await session?.dispose();
+      await rm(remoteDir, { recursive: true, force: true });
+    }
+  });
+});
+
+class RoutedTool implements ExecutableTool<Record<string, unknown>> {
+  readonly description = 'Routed tool.';
+  readonly resolutions: Array<{ readonly args: Record<string, unknown>; readonly environmentId: string | undefined }> = [];
+
+  constructor(
+    readonly name: string,
+    readonly parameters: Record<string, unknown>,
+  ) {}
+
+  resolveExecution(args: Record<string, unknown>, context?: ToolResolutionContext): ToolExecution {
+    this.resolutions.push({ args, environmentId: context?.environmentId });
+    return {
+      approvalRule: this.name,
+      display: { kind: 'command', command: String(args['text']) },
+      execute: async () => ({ output: 'ok' }),
+    };
+  }
+}
 
 function renderedOutputPath(output: string): string {
   const match = /^output_path: (.+)$/m.exec(output);

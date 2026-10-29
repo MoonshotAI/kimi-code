@@ -29,9 +29,10 @@ export class GitControlPathAccessAskPermissionPolicyService implements Permissio
     context: ResolvedToolExecutionHookContext,
   ): Promise<PermissionPolicyResult | undefined> {
     if (!isDangerousCommandGuardEnabled(this.config)) return undefined;
-    const cwd = this.workspace.workDir;
+    const environmentId = context.environmentId;
+    const cwd = environmentId === undefined ? this.workspace.workDir : this.environment.workspaceRoots(environmentId).workDir;
     if (cwd.length === 0) return undefined;
-    const lease = acquireEnvironmentLease(this.environment);
+    const lease = acquireEnvironmentLease(this.environment, [], environmentId);
     if (lease === undefined) return undefined;
     try {
       const pathClass = lease.environment.host?.pathClass;

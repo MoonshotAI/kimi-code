@@ -64,6 +64,7 @@ function registryBackedService(registry: EnvironmentRegistry): IAgentEnvironment
   return {
     _serviceBrand: undefined,
     onDidChange: (listener) => registry.onDidChange(() => listener()),
+    targets: () => [{ environmentId: 'local', primary: true }],
     isAvailable: (required: readonly EnvironmentCapability[] = []) => {
       try {
         const environment = registry.inspect(BINDING);
@@ -416,5 +417,98 @@ describe('Bash environment generation guard', () => {
 
     expect(harness.calls).toEqual(['connect']);
     expect(outputText(result)).not.toContain(ENVIRONMENT_CHANGED_OUTPUT);
+  });
+});
+
+describe('tool environment routing', () => {
+  function routedHarness() {
+    const registry = new EnvironmentRegistry();
+    const spawns: { readonly environmentId: string; readonly cwd: string | undefined }[] = [];
+    for (const [environmentId, content] of [['local', 'local content'], ['gpu', 'gpu content']] as const) {
+      registry.register(Object.assign(
+        new FakeEnvironment(
+          { environmentId, generation: `${environmentId}-one` },
+          { status: 'ready', capabilities: ['fs', 'process'] },
+        ),
+        {
+          fs: textFs(content),
+          process: {
+            spawn: async (_command: string, _args: readonly string[], options?: { readonly cwd?: string }) => {
+              spawns.push({ environmentId, cwd: options?.cwd });
+              throw new Error(`spawned on ${environmentId}`);
+            },
+          },
+        },
+      ));
+    }
+    const binding = (environmentId?: string): EnvironmentBinding => ({ environmentId: environmentId ?? 'local' });
+    const service: IAgentEnvironmentService = {
+      _serviceBrand: undefined,
+      onDidChange: () => ({ dispose: () => {} }),
+      targets: () => [
+        { environmentId: 'local', primary: true },
+        { environmentId: 'gpu', primary: false, cwd: '/gpu' },
+      ],
+      isAvailable: (required = [], environmentId) => {
+        const environment = registry.inspect(binding(environmentId));
+        return environmentIsReady(environment) && required.every((capability) => environment.capabilities.has(capability));
+      },
+      inspect: (environmentId) => registry.inspect(binding(environmentId)),
+      acquire: (required = [], environmentId) => registry.acquire(binding(environmentId), required),
+      acquireWhenReady: (required = [], environmentId) => registry.acquireWhenReady(binding(environmentId), required),
+      workspaceRoots: (environmentId) => ({
+        workDir: environmentId === undefined ? '/workspace' : '/gpu',
+        additionalDirs: [],
+      }),
+    };
+    return { service, spawns };
+  }
+
+  it('reads from the requested environment and resolves relative paths against its working directory', async () => {
+    const { service } = routedHarness();
+    const read = (environmentId?: string) =>
+      new ReadTool(
+        service,
+        stubWorkspaceContext('/workspace'),
+        skillCatalog,
+        stubToolResultTruncationService(),
+        stubConfigService(),
+        profile,
+        toolPolicy,
+        toolRegistry,
+      ).resolveExecution({ path: 'notes.txt' }, { environmentId });
+
+    const routed = await read('gpu');
+    expect(routed).toMatchObject({ display: { kind: 'file_io', operation: 'read', path: '/gpu/notes.txt' } });
+    expect(outputText(await finish(routed))).toContain('gpu content');
+
+    const primary = await read();
+    expect(primary).toMatchObject({ display: { path: '/workspace/notes.txt' } });
+    expect(outputText(await finish(primary))).toContain('local content');
+  });
+
+  it('runs Bash on the requested environment in its working directory', async () => {
+    const { service, spawns } = routedHarness();
+    const bash = new BashTool(
+      service,
+      makeSessionContext({
+        sessionId: 'ses',
+        workspaceId: 'ws',
+        sessionDir: '/tmp/ses',
+        sessionScope: 'ses',
+        cwd: '/workspace',
+      }),
+      stubWorkspaceContext('/workspace'),
+      {} as never,
+      toolPolicy,
+      stubConfigService(),
+    );
+
+    const resolved = bash.resolveExecution({ command: 'pwd' }, { environmentId: 'gpu' });
+    expect(resolved).toMatchObject({ display: { kind: 'command', cwd: '/gpu' } });
+    const result = await finish(resolved);
+
+    expect(spawns).toEqual([{ environmentId: 'gpu', cwd: '/gpu' }]);
+    expect(outputText(result)).toContain('spawned on gpu');
   });
 });

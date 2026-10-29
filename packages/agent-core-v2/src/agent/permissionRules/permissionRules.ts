@@ -7,6 +7,7 @@ export interface PermissionApprovalResultRecord {
   readonly toolName: string;
   readonly action: string;
   readonly sessionApprovalRule?: string;
+  readonly environmentId?: string;
   readonly result: ApprovalResponse;
 }
 
@@ -26,6 +27,7 @@ export interface IAgentPermissionRulesService {
 
   readonly rules: readonly PermissionRule[];
   readonly sessionApprovalRulePatterns: readonly string[];
+  environmentSessionApprovalRulePatterns(environmentId: string): readonly string[];
   addRules(rules: readonly PermissionRule[]): void;
   recordApprovalResult(record: PermissionApprovalResultRecord): void;
 }

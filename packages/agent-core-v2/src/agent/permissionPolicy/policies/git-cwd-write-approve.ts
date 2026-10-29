@@ -24,7 +24,8 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
   ): Promise<PermissionPolicyResult | undefined> {
     const toolName = context.toolCall.name;
     if (toolName !== 'Write' && toolName !== 'Edit') return undefined;
-    const lease = acquireEnvironmentLease(this.environment);
+    const environmentId = context.environmentId;
+    const lease = acquireEnvironmentLease(this.environment, [], environmentId);
     if (lease === undefined) return undefined;
     try {
       const pathClass = lease.environment.host?.pathClass;
@@ -32,7 +33,8 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
       const fs = lease.environment.fs;
       if (fs === undefined) return undefined;
 
-      const cwd = this.workspace.workDir;
+      const roots = environmentId === undefined ? this.workspace : this.environment.workspaceRoots(environmentId);
+      const cwd = roots.workDir;
       if (cwd.length === 0) return undefined;
 
       const writeAccesses = writeFileAccesses(context);
@@ -41,7 +43,7 @@ export class GitCwdWriteApprovePermissionPolicyService implements PermissionPoli
         !writeAccesses.every((access) =>
           isWithinWorkspace(
             access.path,
-            { workspaceDir: cwd, additionalDirs: this.workspace.additionalDirs },
+            { workspaceDir: cwd, additionalDirs: roots.additionalDirs ?? [] },
             'posix',
           ),
         )

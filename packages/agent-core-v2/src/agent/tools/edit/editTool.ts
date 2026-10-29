@@ -15,6 +15,7 @@ import {
   ToolAccesses,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
 } from '#/tool/toolContract';
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 
@@ -39,8 +40,9 @@ export class EditTool implements IEditTool {
     return { workspaceDir: view.workDir, additionalDirs: view.additionalDirs };
   }
 
-  async resolveExecution(args: EditInput): Promise<ToolExecution> {
-    const planTarget = await this.planService?.resolveFile(args.path);
+  async resolveExecution(args: EditInput, context?: ToolResolutionContext): Promise<ToolExecution> {
+    const environmentId = context?.environmentId;
+    const planTarget = environmentId === undefined ? await this.planService?.resolveFile(args.path) : undefined;
     if (planTarget !== undefined) {
       const path = planTarget.path;
       return {
@@ -58,17 +60,17 @@ export class EditTool implements IEditTool {
         },
       };
     }
-    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs']);
+    const resolutionLease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
     try {
       const inspected = resolutionLease.environment;
       const expectedGeneration = pinnedGeneration(inspected);
-      const view = new EnvironmentWorkspaceView(inspected, {
+      const view = new EnvironmentWorkspaceView(inspected, environmentId === undefined ? {
         workDir: this.workspaceCtx.workDir,
         additionalDirs: [
           ...this.workspaceCtx.additionalDirs,
           ...(this.skillCatalog?.catalog.getSkillRoots() ?? []),
         ],
-      });
+      } : this.environment.workspaceRoots(environmentId));
       const env = view.host;
       const workspace = this.workspaceConfig(view);
       const path = resolvePathAccessPath(args.path, {
@@ -94,7 +96,7 @@ export class EditTool implements IEditTool {
             homeDir: env.homeDir,
           }),
         execute: async () => {
-          const lease = await acquireOrWhenReady(this.environment, ['fs']);
+          const lease = await acquireOrWhenReady(this.environment, ['fs'], environmentId);
           try {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
@@ -141,4 +143,5 @@ registerAgentToolService(IEditTool, EditTool, {
   name: 'Edit',
   domain: 'edit',
   requiredEnvironmentCapabilities: ['fs'],
+  environmentScoped: true,
 });

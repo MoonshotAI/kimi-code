@@ -1,6 +1,9 @@
+import { ref, type LiveRef } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
+import { isPlainRecord } from '#/_base/utils/canonical-args';
+import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type {
   ExecutableTool,
   ToolDisclosure,
@@ -8,7 +11,9 @@ import type {
   ToolSource,
 } from '#/tool/toolContract';
 import {
+  ENVIRONMENT_ARGUMENT,
   IAgentToolRegistryService,
+  type ToolEnvironmentRoute,
   type ToolReference,
   type ToolRegistrationOptions,
 } from './toolRegistry';
@@ -19,15 +24,25 @@ interface ToolEntry {
   readonly tool: ExecutableTool;
   readonly source: ToolSource;
   readonly disclosure?: ToolDisclosure;
+  readonly environmentScoped: boolean;
 }
 
 export class AgentToolRegistryService implements IAgentToolRegistryService {
   declare readonly _serviceBrand: undefined;
   private readonly tools = new Map<string, ToolEntry>();
 
+  constructor(
+    @ref(IAgentEnvironmentService) private readonly environment?: LiveRef<IAgentEnvironmentService>,
+  ) {}
+
   register(tool: ExecutableTool, options: ToolRegistrationOptions = {}): IDisposable {
     const source = options.source ?? 'builtin';
-    const entry: ToolEntry = { tool, source, disclosure: options.disclosure };
+    const entry: ToolEntry = {
+      tool,
+      source,
+      disclosure: options.disclosure,
+      environmentScoped: options.environmentScoped === true,
+    };
     this.unregisterTool(tool.name);
     this.tools.set(tool.name, entry);
 
@@ -39,11 +54,25 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
   }
 
   list(): readonly ToolInfo[] {
+    const targets = this.environment?.current?.targets() ?? [];
+    const environmentSchema = targets.length < 2
+      ? undefined
+      : {
+          type: 'string',
+          enum: targets.map((target) => target.environmentId),
+          description: 'Environment to run this call in. Omit to use the primary environment.',
+        };
     return [...this.tools.values()]
-      .map(({ tool, source, disclosure }) => ({
+      .map(({ tool, source, disclosure, environmentScoped }) => ({
         name: tool.name,
         description: tool.description,
-        parameters: tool.parameters,
+        parameters:
+          environmentScoped && environmentSchema !== undefined && isPlainRecord(tool.parameters['properties'])
+            ? {
+                ...tool.parameters,
+                properties: { ...tool.parameters['properties'], [ENVIRONMENT_ARGUMENT]: environmentSchema },
+              }
+            : tool.parameters,
         source,
         disclosure,
       }))
@@ -58,6 +87,23 @@ export class AgentToolRegistryService implements IAgentToolRegistryService {
 
   resolve(name: string): ExecutableTool | undefined {
     return this.tools.get(name)?.tool;
+  }
+
+  routeEnvironment(name: string, args: unknown): ToolEnvironmentRoute {
+    if (this.tools.get(name)?.environmentScoped !== true || !isPlainRecord(args) || !Object.hasOwn(args, ENVIRONMENT_ARGUMENT)) {
+      return { args };
+    }
+    const targets = this.environment?.current?.targets() ?? [];
+    if (targets.length < 2) return { args };
+    const { [ENVIRONMENT_ARGUMENT]: requested, ...rest } = args;
+    const target = targets.find((candidate) => candidate.environmentId === requested);
+    if (target === undefined) {
+      const available = targets
+        .map((candidate) => (candidate.primary ? `${candidate.environmentId} (primary)` : candidate.environmentId))
+        .join(', ');
+      return { args, error: `Unknown environment ${JSON.stringify(requested)}. Available environments: ${available}.` };
+    }
+    return { args: rest, environmentId: target.primary ? undefined : target.environmentId };
   }
 
   private unregisterTool(name: string): ToolEntry | undefined {

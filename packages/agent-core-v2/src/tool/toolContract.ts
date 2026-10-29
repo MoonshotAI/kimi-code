@@ -89,8 +89,12 @@ export interface RunnableToolExecution {
 
 export type ToolExecution = RunnableToolExecution | ExecutableToolErrorResult;
 
+export interface ToolResolutionContext {
+  readonly environmentId?: string;
+}
+
 export interface ExecutableTool<Input = unknown> extends Tool {
-  resolveExecution(input: Input): ToolExecution | Promise<ToolExecution>;
+  resolveExecution(input: Input, context?: ToolResolutionContext): ToolExecution | Promise<ToolExecution>;
 }
 
 export type ToolSource = 'builtin' | 'user' | 'mcp';

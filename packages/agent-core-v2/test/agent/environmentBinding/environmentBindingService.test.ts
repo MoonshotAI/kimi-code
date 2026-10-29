@@ -25,6 +25,12 @@ import {
   workspaceContextWorkDirKey,
 } from '#/session/workspaceContext/workspaceContextService';
 import { IEnvironmentService, type EnvironmentResolver } from '#/app/environment/environment';
+import type { IEnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclaration';
+import type { IFlagService } from '#/app/flag/flag';
+import { MULTI_ENVIRONMENT_FLAG_ID } from '#/agent/environmentBinding/flag';
+import { AgentEnvironmentRosterService, ENVIRONMENT_ROSTER_REMINDER_VARIANT } from '#/agent/environmentBinding/environmentRoster';
+import type { ContextInjectionContext, ContextInjectionProvider, ContextInjectionResult } from '#/features/reminder/types';
+import type { RemoteEnvironmentEntry } from '#/remote/declaration/remoteEnvironmentDeclaration';
 import { stubAgentContext } from '../agentContext/stubs';
 import { noopLogger } from '../../wire/stubs';
 import { fakeEnvironment } from '../../environment/stubs';
@@ -123,10 +129,34 @@ interface RestoreHook {
   (ctx: unknown, next: () => Promise<void>): Promise<void>;
 }
 
+interface MultiEnvironmentOptions {
+  readonly enabled?: boolean;
+  readonly declarations: readonly { readonly id: string; readonly defaultCwd?: string }[];
+}
+
+function multiEnvironmentServices(options: MultiEnvironmentOptions | undefined): {
+  readonly flags?: IFlagService;
+  readonly declarations?: IEnvironmentDeclarationService;
+} {
+  if (options === undefined) return {};
+  return {
+    flags: { enabled: (id: string) => id === MULTI_ENVIRONMENT_FLAG_ID && options.enabled !== false } as unknown as IFlagService,
+    declarations: {
+      snapshot: () => ({
+        entries: options.declarations.map((declaration) => ({
+          id: declaration.id,
+          entry: { type: 'ssh', host: declaration.id, defaultCwd: declaration.defaultCwd } as RemoteEnvironmentEntry,
+        })),
+      }),
+    } as unknown as IEnvironmentDeclarationService,
+  };
+}
+
 function setup(options: {
   agentId?: string;
   sessionCwd?: string;
   seedBinding?: EnvironmentBinding;
+  multiEnvironment?: MultiEnvironmentOptions;
 } = {}) {
   const registry = new EnvironmentRegistry();
   const local = environment('local', 'local-one', 'ready', ['fs', 'process'], LOCAL_HOST);
@@ -198,9 +228,19 @@ function setup(options: {
       noopLogger,
       stubBootstrap(),
     );
+    const multi = multiEnvironmentServices(options.multiEnvironment);
     return {
       binding: agentBinding,
-      agentEnvironment: new AgentEnvironmentService(agentScopeContext, agentBinding, registry as unknown as IEnvironmentService, eventBus, session, sessionState),
+      agentEnvironment: new AgentEnvironmentService(
+        agentScopeContext,
+        agentBinding,
+        registry as unknown as IEnvironmentService,
+        eventBus,
+        session,
+        sessionState,
+        multi.flags,
+        multi.declarations,
+      ),
       state: agentState,
     };
   };
@@ -493,5 +533,139 @@ describe('AgentEnvironmentService on-demand connect', () => {
     expect(calls).toEqual(['connect', 'connect']);
     expect(lease.environment.identity.generation).toBe('remote-x-ready');
     lease.dispose();
+  });
+});
+
+describe('AgentEnvironmentService multi-environment targets', () => {
+  it('exposes only the primary binding while the flag is off', () => {
+    const { agentEnvironment } = setup({
+      multiEnvironment: { enabled: false, declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
+    });
+
+    expect(agentEnvironment.targets()).toEqual([{ environmentId: 'local', primary: true, cwd: undefined }]);
+    expect(() => agentEnvironment.acquire([], 'remote')).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
+    );
+  });
+
+  it('routes declared environments to their own environment and default working directory', () => {
+    const { agentEnvironment, registry, sessionState } = setup({
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app/' }] },
+    });
+    sessionState.set(workspaceContextAdditionalDirsKey, ['/workspace-extra']);
+    registry.register(environment('acp:other-session', 'acp-one', 'ready', ['fs', 'process']));
+
+    expect(agentEnvironment.targets()).toEqual([
+      { environmentId: 'local', primary: true, cwd: undefined },
+      { environmentId: 'remote', primary: false, cwd: '/srv/app/' },
+    ]);
+    const lease = agentEnvironment.acquire(['process'], 'remote');
+    expect(lease.environment.identity.environmentId).toBe('remote');
+    lease.dispose();
+    expect(agentEnvironment.workspaceRoots('remote')).toEqual({ workDir: '/srv/app', additionalDirs: [] });
+    expect(agentEnvironment.workspaceRoots()).toEqual({ workDir: '/workspace', additionalDirs: ['/workspace-extra'] });
+    expect(() => agentEnvironment.acquire([], 'acp:other-session')).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.not_found' }),
+    );
+  });
+
+  it('offers local beside a declared remote primary and resolves it to the session directory', () => {
+    const { agentEnvironment } = setup({
+      seedBinding: { environmentId: 'remote', cwd: '/srv/app' },
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
+    });
+
+    expect(agentEnvironment.targets()).toEqual([
+      { environmentId: 'remote', primary: true, cwd: '/srv/app' },
+      { environmentId: 'local', primary: false, cwd: '/workspace' },
+    ]);
+    expect(agentEnvironment.workspaceRoots('local')).toEqual({ workDir: '/workspace', additionalDirs: [] });
+  });
+
+  it('keeps a session-private primary isolated from other environments', () => {
+    const { agentEnvironment, registry } = setup({
+      seedBinding: { environmentId: 'acp:session', cwd: '/workspace' },
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
+    });
+    registry.register(environment('acp:session', 'acp-session-one', 'ready', ['fs', 'process']));
+
+    expect(agentEnvironment.targets()).toEqual([{ environmentId: 'acp:session', primary: true, cwd: '/workspace' }]);
+  });
+
+  it('rejects a relative default working directory instead of guessing one', () => {
+    const { agentEnvironment } = setup({
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: 'relative/dir' }] },
+    });
+
+    expect(() => agentEnvironment.acquire([], 'remote')).toThrowError(
+      expect.objectContaining<Partial<EnvironmentError>>({ code: 'environment.invalid_cwd' }),
+    );
+  });
+
+  it('falls back to the connected host directory when no default working directory is declared', () => {
+    const { agentEnvironment } = setup({ multiEnvironment: { declarations: [{ id: 'remote' }] } });
+
+    expect(agentEnvironment.workspaceRoots('remote').workDir).toBe('/home/fake');
+  });
+});
+
+describe('AgentEnvironmentRosterService', () => {
+  function rosterProvider(agentEnvironment: ConstructorParameters<typeof AgentEnvironmentRosterService>[1]) {
+    let provider: ContextInjectionProvider<string> | undefined;
+    const reminder = {
+      _serviceBrand: undefined,
+      register: (variant: string, registered: ContextInjectionProvider<string>) => {
+        expect(variant).toBe(ENVIRONMENT_ROSTER_REMINDER_VARIANT);
+        provider = registered;
+        return { dispose: () => {} };
+      },
+    } as unknown as IAgentReminderService;
+    const roster = new AgentEnvironmentRosterService(reminder, agentEnvironment);
+    const provide = (context: Partial<ContextInjectionContext<string>>) =>
+      provider!({ injectedPositions: [], lastInjectedAt: null, isNewTurn: true, ...context }) as
+        | ContextInjectionResult<string>
+        | undefined;
+    return { roster, provide };
+  }
+
+  it('lists every environment once and repeats only after the roster changes or leaves the context', () => {
+    const { agentEnvironment, registry } = setup({
+      multiEnvironment: { declarations: [{ id: 'remote', defaultCwd: '/srv/app' }, { id: 'staging' }, { id: 'unregistered' }] },
+    });
+    registry.register(environment('staging', 'staging-one', 'pending'));
+    const { provide } = rosterProvider(agentEnvironment);
+
+    const first = provide({});
+    expect(first?.content).toBe(
+      [
+        'Execution environments available in this session:',
+        '- `local` (primary): working directory /workspace',
+        '- `remote`: working directory /srv/app',
+        '- `staging`: working directory resolved on first use',
+        'Tools with an `environment` argument run in the environment you name; omit it to use the primary environment. ' +
+          'Each environment has its own files, shell, and installed programs, and relative paths resolve against its working directory. ' +
+          'A remote environment connects on its first use; if it cannot connect, the call fails instead of running elsewhere. ' +
+          "The system prompt's working directory, AGENTS.md instructions, and skills describe the primary environment only; " +
+          "read a project's AGENTS.md before changing files in another environment.",
+      ].join('\n'),
+    );
+    const injected = { role: 'user' as const, content: [] };
+    expect(provide({ lastInjection: injected, lastDisclosure: first?.disclosure })).toBeUndefined();
+    expect(provide({ lastDisclosure: first?.disclosure })?.content).toBe(first?.content);
+  });
+
+  it('withdraws the roster once only the primary environment remains', () => {
+    const { agentEnvironment } = setup({
+      multiEnvironment: { enabled: false, declarations: [{ id: 'remote', defaultCwd: '/srv/app' }] },
+    });
+    const { provide } = rosterProvider(agentEnvironment);
+    const injected = { role: 'user' as const, content: [] };
+
+    expect(provide({})).toBeUndefined();
+    expect(provide({ lastInjection: injected, lastDisclosure: '- `local` (primary): working directory /workspace' })).toEqual({
+      content: 'Only the primary environment `local` is available now. Tools no longer take an `environment` argument.',
+      disclosure: 'single',
+    });
+    expect(provide({ lastInjection: injected, lastDisclosure: 'single' })).toBeUndefined();
   });
 });

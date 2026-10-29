@@ -6,6 +6,7 @@ export interface IEnvironmentDeclarationService {
   readonly _serviceBrand: undefined;
   readonly onDidChange: Event<EnvironmentDeclarationSet & IWaitUntil>;
   declarations(): Promise<EnvironmentDeclarationSet>;
+  snapshot(): EnvironmentDeclarationSet;
   registrationError(environmentId: string): Error | undefined;
   reportRegistration(environmentId: string, error?: Error): void;
 }

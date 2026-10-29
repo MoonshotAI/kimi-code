@@ -13,6 +13,7 @@ import {
   DEFAULT_TOOL_RESULT_MAX_CHARS,
   type ExecutableToolResult,
   type ToolExecution,
+  type ToolResolutionContext,
   type ToolUpdate,
 } from '#/tool/toolContract';
 import {
@@ -134,8 +135,9 @@ export class BashTool implements IBashTool {
     return renderedDescription;
   }
 
-  resolveExecution(args: BashInput): ToolExecution {
-    const expectedGeneration = this.reviewedGeneration();
+  resolveExecution(args: BashInput, context?: ToolResolutionContext): ToolExecution {
+    const environmentId = context?.environmentId;
+    const expectedGeneration = this.reviewedGeneration(environmentId);
     const preview = args.command.length > 50 ? `${args.command.slice(0, 50)}…` : args.command;
     return {
       description: args.run_in_background
@@ -144,31 +146,34 @@ export class BashTool implements IBashTool {
       display: {
         kind: 'command',
         command: args.command,
-        cwd: this.executionCwd(args),
+        cwd: this.executionCwd(args, environmentId),
         description: args.description,
         language: 'bash',
       },
       approvalRule: literalRulePattern(this.name, args.command),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.command),
       execute: ({ signal, onUpdate, onForegroundTaskStart, toolCallId }) =>
-        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration),
+        this.execution(args, signal, toolCallId, onUpdate, onForegroundTaskStart, expectedGeneration, environmentId),
     };
   }
 
-  private reviewedGeneration(): string | undefined {
+  private reviewedGeneration(environmentId: string | undefined): string | undefined {
     try {
-      return pinnedGeneration(this.environment.inspect());
+      return pinnedGeneration(this.environment.inspect(environmentId));
     } catch {
       return undefined;
     }
   }
 
-  private executionCwd(args: BashInput): string {
+  private executionCwd(args: BashInput, environmentId: string | undefined): string | undefined {
     try {
-      const view = new EnvironmentWorkspaceView(this.environment.inspect(), this.workspaceCtx);
+      const view = new EnvironmentWorkspaceView(
+        this.environment.inspect(environmentId),
+        environmentId === undefined ? this.workspaceCtx : this.environment.workspaceRoots(environmentId),
+      );
       return view.resolve(args.cwd ?? view.workDir);
     } catch {
-      return args.cwd ?? this.ctx.cwd;
+      return environmentId === undefined ? args.cwd ?? this.ctx.cwd : args.cwd;
     }
   }
 
@@ -197,18 +202,22 @@ export class BashTool implements IBashTool {
     onUpdate?: (update: ToolUpdate) => void,
     onForegroundTaskStart?: (taskId: string) => void,
     expectedGeneration?: string,
+    environmentId?: string,
   ): Promise<ExecutableToolResult> {
     const validationError = this.validateRunRequest(args, signal);
     if (validationError !== undefined) return validationError;
 
     const startsInBackground = args.run_in_background === true;
     const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
-    const lease = await acquireOrWhenReady(this.environment, ['process']);
+    const lease = await acquireOrWhenReady(this.environment, ['process'], environmentId);
     if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
       lease.dispose();
       return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
     }
-    const view = new EnvironmentWorkspaceView(lease.environment, this.workspaceCtx);
+    const view = new EnvironmentWorkspaceView(
+      lease.environment,
+      environmentId === undefined ? this.workspaceCtx : this.environment.workspaceRoots(environmentId),
+    );
     const env = view.host;
     const command = env.osKind === 'Windows' ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = view.resolve(args.cwd ?? view.workDir);
@@ -463,6 +472,7 @@ registerAgentToolService(IBashTool, BashTool, {
   name: 'Bash',
   domain: 'os/backends',
   requiredEnvironmentCapabilities: ['process'],
+  environmentScoped: true,
 });
 
 function formatTimeoutLabel(timeoutMs: number): string {

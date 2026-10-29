@@ -157,6 +157,22 @@ describe('approval reverse-rpc', () => {
     );
   });
 
+  it('labels a routed call with its own environment instead of the session environment', async () => {
+    const controller = new ApprovalController();
+    const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
+    const handler = createApprovalRequestHandler(controller, undefined, () => 'ssh:dev');
+
+    await handler(approvalEvent({
+      display: { kind: 'command', command: 'pwd', cwd: '/work', environment: 'gpu' },
+    }));
+    await handler(approvalEvent({
+      display: { kind: 'file_io', operation: 'write', path: '/tmp/a.txt', environment: 'local' },
+    }));
+    await handler(approvalEvent({ display: { kind: 'command', command: 'pwd' } }));
+
+    expect(show.mock.calls.map(([data]) => data.environment)).toEqual(['gpu', 'local', 'ssh:dev']);
+  });
+
   it('tracks the requesting agent until approval settles or fails', async () => {
     const controller = new ApprovalController();
     const show = vi.spyOn(controller, 'show').mockResolvedValue({ decision: 'approved' });
