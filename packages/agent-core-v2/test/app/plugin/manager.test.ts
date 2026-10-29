@@ -57,6 +57,7 @@ describe('PluginManager', () => {
     id: string,
     version = '1.0.0',
     skillName?: string,
+    customize?: (sourceRoot: string) => Promise<void>,
   ): Promise<{ dir: string; buffer: Buffer }> {
     const dir = await mkdtemp(join(tmpdir(), 'plugin-zip-fixture-'));
     const sourceRoot = join(dir, 'source');
@@ -79,6 +80,7 @@ describe('PluginManager', () => {
         'utf8',
       );
     }
+    await customize?.(sourceRoot);
     const zipPath = join(dir, 'plugin.zip');
     execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
     return { dir, buffer: await readFile(zipPath) };
@@ -253,6 +255,144 @@ describe('PluginManager', () => {
     expect(info?.manifest?.interface?.mcpOverrides?.['mac']?.iconUrl).toBe(
       'https://example.com/friendly-mcp.png',
     );
+  });
+
+  it('reuses cached archives and inspections across locales, restarts, and installation', async () => {
+    const fixture = await makeZip('cache-demo', '1.0.0', 'cache-skill', async (sourceRoot) => {
+      await mkdir(join(sourceRoot, 'locales'), { recursive: true });
+      await writeFile(
+        join(sourceRoot, 'kimi.plugin.json'),
+        JSON.stringify({
+          name: 'cache-demo',
+          version: '1.0.0',
+          skills: ['./skills'],
+          interface: {
+            locales: './locales/',
+            skillOverrides: {
+              'cache-skill': { displayName: '默认技能', description: '默认描述' },
+            },
+          },
+        }),
+        'utf8',
+      );
+      await writeFile(
+        join(sourceRoot, 'locales', 'en-US.json'),
+        JSON.stringify({
+          skillOverrides: {
+            'cache-skill': { displayName: 'English skill', description: 'English description' },
+          },
+        }),
+        'utf8',
+      );
+    });
+    try {
+      const sha256sum = createHash('sha256').update(fixture.buffer).digest('hex');
+      const source = 'https://example.test/cache-demo.zip';
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+      const discoverSkills = vi.fn(discoverFileSkills);
+      const options = { expectedSha256: sha256sum, expectedPluginId: 'cache-demo', fetchImpl };
+      const manager = new PluginManager({ kimiHomeDir: home, discoverSkills });
+
+      const chinese = await manager.inspect(source, { ...options, locale: 'zh-CN' });
+      const english = await manager.inspect(source, { ...options, locale: 'en-US' });
+
+      expect(chinese.skills[0]).toMatchObject({ displayName: '默认技能', description: '默认描述' });
+      expect(english.skills[0]).toMatchObject({
+        displayName: 'English skill',
+        description: 'English description',
+      });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(discoverSkills).toHaveBeenCalledTimes(1);
+      const archivePath = join(home, 'plugins', 'cache', 'archives', `${sha256sum}.zip`);
+      await expect(readFile(archivePath)).resolves.toEqual(fixture.buffer);
+
+      const restarted = new PluginManager({ kimiHomeDir: home, discoverSkills });
+      const afterRestart = await restarted.inspect(source, { ...options, locale: 'en-US' });
+
+      expect(afterRestart.skills[0]).toMatchObject({ displayName: 'English skill' });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(discoverSkills).toHaveBeenCalledTimes(2);
+
+      await restarted.install(source, options);
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(restarted.get('cache-demo')?.manifest?.version).toBe('1.0.0');
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('shares one in-flight archive download across concurrent previews and installation', async () => {
+    const fixture = await makeZip('concurrent-cache', '1.0.0', 'concurrent-skill');
+    try {
+      const sha256sum = createHash('sha256').update(fixture.buffer).digest('hex');
+      let resolveResponse!: (response: Response) => void;
+      const response = new Promise<Response>((resolve) => {
+        resolveResponse = resolve;
+      });
+      const fetchImpl = vi.fn(() => response) as unknown as typeof fetch;
+      const source = 'https://example.test/concurrent-cache.zip';
+      const options = { expectedSha256: sha256sum, expectedPluginId: 'concurrent-cache', fetchImpl };
+      const manager = new PluginManager({ kimiHomeDir: home });
+
+      const chinese = manager.inspect(source, { ...options, locale: 'zh-CN' });
+      const english = manager.inspect(source, { ...options, locale: 'en-US' });
+      const installation = manager.install(source, options);
+      try {
+        await vi.waitFor(() => {
+          expect(fetchImpl).toHaveBeenCalledTimes(1);
+        });
+      } finally {
+        resolveResponse(new Response(fixture.buffer));
+      }
+      const [chineseResult, englishResult, installed] = await Promise.all([
+        chinese,
+        english,
+        installation,
+      ]);
+
+      expect(chineseResult.skills[0]?.name).toBe('concurrent-skill');
+      expect(englishResult.skills[0]?.name).toBe('concurrent-skill');
+      expect(installed.id).toBe('concurrent-cache');
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  it('replaces a corrupt cached archive and uses a new archive when the hash changes', async () => {
+    const fixture = await makeZip('recovery-cache');
+    const nextFixture = await makeZip('recovery-cache', '2.0.0', 'next-skill');
+    try {
+      const sha256sum = createHash('sha256').update(fixture.buffer).digest('hex');
+      const source = 'https://example.test/recovery-cache.zip';
+      const fetchImpl = vi.fn(async () => new Response(fixture.buffer)) as unknown as typeof fetch;
+      const options = { expectedSha256: sha256sum, expectedPluginId: 'recovery-cache', fetchImpl };
+      const archivePath = join(home, 'plugins', 'cache', 'archives', `${sha256sum}.zip`);
+      await new PluginManager({ kimiHomeDir: home }).inspect(source, options);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      await writeFile(archivePath, 'corrupt archive');
+      await new PluginManager({ kimiHomeDir: home }).inspect(source, options);
+
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+      await expect(readFile(archivePath)).resolves.toEqual(fixture.buffer);
+
+      const nextSha256 = createHash('sha256').update(nextFixture.buffer).digest('hex');
+      const nextFetch = vi.fn(async () => new Response(nextFixture.buffer)) as unknown as typeof fetch;
+      const next = await new PluginManager({ kimiHomeDir: home }).inspect(source, {
+        expectedSha256: nextSha256,
+        expectedPluginId: 'recovery-cache',
+        fetchImpl: nextFetch,
+      });
+
+      expect(next.skills[0]?.name).toBe('next-skill');
+      expect(nextFetch).toHaveBeenCalledTimes(1);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    } finally {
+      await rm(fixture.dir, { recursive: true, force: true });
+      await rm(nextFixture.dir, { recursive: true, force: true });
+    }
   });
 
   it('installs a local-path plugin into the managed root', async () => {

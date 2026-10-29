@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -14,6 +13,7 @@ import { downloadZip, extractZip } from './archive';
 import { loadPluginCommand } from './commands';
 import { resolveGithubCommitSha, resolveGithubSource } from './github-resolver';
 import { parseManifest, type ParsedManifestResult } from './manifest';
+import { PluginPackageCache } from './packageCache';
 import { resolveInstallSource } from './source';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import type { PluginAgentRoot } from './types';
@@ -75,14 +75,25 @@ export interface PluginInstallReloadResult {
   readonly summary: ReloadSummary;
 }
 
+type PluginInspection = Pick<
+  PluginRecord,
+  'id' | 'capabilities' | 'manifest' | 'interfaceLocales' | 'skills'
+>;
+
+const INSPECTION_CACHE_LIMIT = 20;
+
 export class PluginManager {
   private readonly kimiHomeDir: string;
   private readonly discoverSkills: (roots: readonly SkillRoot[]) => Promise<SkillDiscoveryResult>;
+  private readonly packages: PluginPackageCache;
+  private readonly inspections = new Map<string, PluginInspection>();
+  private readonly inspectionLoads = new Map<string, Promise<PluginInspection>>();
   private records = new Map<string, PluginRecord>();
 
   constructor(options: PluginManagerOptions) {
     this.kimiHomeDir = options.kimiHomeDir;
     this.discoverSkills = options.discoverSkills ?? discoverFileSkills;
+    this.packages = new PluginPackageCache(options.kimiHomeDir);
   }
 
   async load(): Promise<void> {
@@ -178,23 +189,14 @@ export class PluginManager {
                 return resolution.tarballUrl;
               })()
             : resolved.path;
-        const buffer = await downloadZip(zipUrl, undefined, options.fetchImpl);
-        if (options.expectedSha256 !== undefined) {
-          const actualSha256 = createHash('sha256').update(buffer).digest('hex');
-          if (actualSha256 !== options.expectedSha256.toLowerCase()) {
-            throw new Error2(
-              ErrorCodes.PLUGIN_LOAD_FAILED,
-              `Plugin archive SHA-256 mismatch: expected ${options.expectedSha256.toLowerCase()}, got ${actualSha256}`,
-              {
-                details: {
-                  expectedSha256: options.expectedSha256.toLowerCase(),
-                  actualSha256,
-                  expectedPluginId: options.expectedPluginId,
-                },
-              },
-            );
-          }
-        }
+        const buffer =
+          options.expectedSha256 === undefined
+            ? await downloadZip(zipUrl, undefined, options.fetchImpl)
+            : await this.packages.load(zipUrl, {
+                expectedSha256: options.expectedSha256,
+                expectedPluginId: options.expectedPluginId,
+                fetchImpl: options.fetchImpl,
+              });
         zipTmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-zip-'));
         sourceRoot = await extractZip(buffer, zipTmpDir);
       }
@@ -570,21 +572,39 @@ export class PluginManager {
         { details: { source } },
       );
     }
-    const buffer = await downloadZip(resolved.path, undefined, options.fetchImpl);
-    const actualSha256 = createHash('sha256').update(buffer).digest('hex');
-    if (actualSha256 !== options.expectedSha256.toLowerCase()) {
-      throw new Error2(
-        ErrorCodes.PLUGIN_LOAD_FAILED,
-        `Plugin archive SHA-256 mismatch: expected ${options.expectedSha256.toLowerCase()}, got ${actualSha256}`,
-        {
-          details: {
-            expectedSha256: options.expectedSha256.toLowerCase(),
-            actualSha256,
-            expectedPluginId: options.expectedPluginId,
-          },
-        },
-      );
+    const cacheKey = options.expectedSha256.toLowerCase();
+    const cached = this.inspections.get(cacheKey);
+    if (cached !== undefined) {
+      this.inspections.delete(cacheKey);
+      this.inspections.set(cacheKey, cached);
+      return pluginCapabilities(cached, options.locale);
     }
+    const pending = this.inspectionLoads.get(cacheKey);
+    if (pending !== undefined) return pluginCapabilities(await pending, options.locale);
+    const load = this.inspectArchive(resolved.path, options);
+    this.inspectionLoads.set(cacheKey, load);
+    try {
+      const record = await load;
+      this.inspections.set(cacheKey, record);
+      if (this.inspections.size > INSPECTION_CACHE_LIMIT) {
+        const oldest = this.inspections.keys().next().value;
+        if (oldest !== undefined) this.inspections.delete(oldest);
+      }
+      return pluginCapabilities(record, options.locale);
+    } finally {
+      if (this.inspectionLoads.get(cacheKey) === load) this.inspectionLoads.delete(cacheKey);
+    }
+  }
+
+  private async inspectArchive(
+    source: string,
+    options: PluginInspectionOptions,
+  ): Promise<PluginInspection> {
+    const buffer = await this.packages.load(source, {
+      expectedSha256: options.expectedSha256,
+      expectedPluginId: options.expectedPluginId,
+      fetchImpl: options.fetchImpl,
+    });
     const zipTmpDir = await mkdtemp(path.join(tmpdir(), 'kimi-plugin-inspect-'));
     try {
       const sourceRoot = await extractZip(buffer, zipTmpDir);
@@ -629,8 +649,11 @@ export class PluginManager {
         );
       }
       return {
-        skills: pluginSkillsInfo(record, options.locale),
-        mcpServers: pluginMcpServersInfo(record, options.locale),
+        id: record.id,
+        capabilities: record.capabilities,
+        manifest: record.manifest,
+        interfaceLocales: record.interfaceLocales,
+        skills: record.skills,
       };
     } finally {
       await rm(zipTmpDir, { recursive: true, force: true });
@@ -943,7 +966,17 @@ function recordToInfo(record: PluginRecord, locale?: string): PluginInfo {
   };
 }
 
-function pluginSkillsInfo(record: PluginRecord, locale?: string): readonly PluginSkillInfo[] {
+function pluginCapabilities(
+  record: PluginInspection,
+  locale?: string,
+): PluginCapabilities {
+  return {
+    skills: pluginSkillsInfo(record, locale),
+    mcpServers: pluginMcpServersInfo(record, locale),
+  };
+}
+
+function pluginSkillsInfo(record: PluginInspection, locale?: string): readonly PluginSkillInfo[] {
   const localized = pluginInterfaceForLocale(record, locale);
   return (record.skills ?? []).map((skill) => {
     const override = localized?.skillOverrides?.[skill.overrideKey];
@@ -955,7 +988,7 @@ function pluginSkillsInfo(record: PluginRecord, locale?: string): readonly Plugi
   });
 }
 
-function pluginInterfaceForLocale(record: PluginRecord, locale?: string): PluginInterface | undefined {
+function pluginInterfaceForLocale(record: PluginInspection, locale?: string): PluginInterface | undefined {
   if (locale === undefined) return undefined;
   const normalized = normalizedLocale(locale);
   const base = normalized.split('-')[0];
@@ -973,11 +1006,11 @@ function normalizedLocale(value: string): string {
   return value.replaceAll('_', '-').toLowerCase();
 }
 
-function isMcpServerEnabled(record: PluginRecord, name: string, config: McpServerConfig): boolean {
+function isMcpServerEnabled(record: PluginInspection, name: string, config: McpServerConfig): boolean {
   return record.capabilities?.mcpServers?.[name]?.enabled ?? config.enabled !== false;
 }
 
-function pluginMcpServersInfo(record: PluginRecord, locale?: string): readonly PluginMcpServerInfo[] {
+function pluginMcpServersInfo(record: PluginInspection, locale?: string): readonly PluginMcpServerInfo[] {
   const localized = pluginInterfaceForLocale(record, locale);
   return Object.entries(record.manifest?.mcpServers ?? {})
     .map(([name, config]) => pluginMcpServerInfo(record, name, config, localized))
@@ -985,7 +1018,7 @@ function pluginMcpServersInfo(record: PluginRecord, locale?: string): readonly P
 }
 
 function pluginMcpServerInfo(
-  record: PluginRecord,
+  record: PluginInspection,
   name: string,
   config: McpServerConfig,
   localized?: PluginInterface,
