@@ -1,13 +1,7 @@
 import type { ToolDescription } from '#/llm/message';
 import { isAbortError, toLlmErrorMessage } from '#/llm/protocol/errors';
 import type { LlmRequest } from '#/llm/request';
-import type {
-  LlmErrorMessage,
-  LlmOutcome,
-  LlmRemoteErrorMessage,
-  LlmRunEvent,
-  LlmRunStarted,
-} from '#/llm/response';
+import type { LlmOutcome, LlmRunEvent, LlmRunStarted } from '#/llm/response';
 import { sha256Hex } from '#/utils/hash';
 
 import {
@@ -63,10 +57,6 @@ function delay(ms: number, signal: AbortSignal): Promise<boolean> {
     }
     signal.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-function asRemote(error: LlmErrorMessage): LlmRemoteErrorMessage | undefined {
-  return error.kind === 'syntax' ? undefined : error;
 }
 
 function abortedOf(result: Extract<LlmOutcome, { type: 'failed' }>): LlmOutcome {
@@ -190,27 +180,24 @@ async function runAttempts(
       return result;
     }
 
-    const remote = asRemote(result.error);
-    if (remote !== undefined) {
-      const proposal = proposeFirst(listOf(policy.recoveries), {
-        error: remote,
-        request: recoveryRequest,
-        appliedRecoveries: ledger.applied,
-        endpoint: recoveryRequest.endpoint,
+    const proposal = proposeFirst(listOf(policy.recoveries), {
+      error: result.error,
+      request: recoveryRequest,
+      appliedRecoveries: ledger.applied,
+      endpoint: recoveryRequest.endpoint,
+    });
+    if (proposal !== undefined) {
+      proposal.beforeNextAttempt?.();
+      ledger.record(proposal);
+      attempt = 1;
+      onEvent?.({
+        type: 'llm.retrying',
+        reason: 'recovery',
+        strategy: proposal.strategy,
+        action: proposal.action,
+        error: result.error,
       });
-      if (proposal !== undefined) {
-        proposal.beforeNextAttempt?.();
-        ledger.record(proposal);
-        attempt = 1;
-        onEvent?.({
-          type: 'llm.retrying',
-          reason: 'recovery',
-          strategy: proposal.strategy,
-          action: proposal.action,
-          error: result.error,
-        });
-        continue;
-      }
+      continue;
     }
 
     if (shouldRetry(policy.retry, attempt, result.error, listOf(policy.retryables))) {

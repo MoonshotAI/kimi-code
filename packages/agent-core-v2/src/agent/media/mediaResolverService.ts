@@ -264,7 +264,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         reason: 'unsupported',
         model: model.name,
       });
-      return degradedImage(await this.displayPath(ref));
+      const path = await this.displayPath(ref);
+      return model.capabilities.image_in ? degradedImage(path) : unsupportedMedia('image', path);
     }
     const providerKey = model.providerType ?? model.protocol;
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
@@ -445,7 +446,8 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
   ): Promise<ContentPart> {
     const support = mediaSupportForRequest(request, 'video', position);
     if (!model.capabilities.video_in || support === undefined) {
-      return videoTag(await this.displayPath(ref));
+      const path = await this.displayPath(ref);
+      return model.capabilities.video_in ? videoTag(path) : unsupportedMedia('video', path);
     }
     const providerKey = model.providerType ?? model.protocol;
     const uploadSupported = support.sources.includes('file') || support.sources.includes('url');
@@ -666,6 +668,17 @@ function inlinePartBytes(part: ContentPart): number {
 
 function budgetOmittedMedia(kind: 'image' | 'video'): ContentPart {
   return { type: 'text', text: `[${kind} omitted: dropped to fit the request media budget]` };
+}
+
+function unsupportedMedia(kind: 'image' | 'video', path: string | undefined): ContentPart {
+  const capability = `${kind} input`;
+  const hint =
+    `[${kind} omitted: the current model does not support ${capability}; ` +
+    `use a model with ${capability} capability or convert the file to text]`;
+  return {
+    type: 'text',
+    text: path === undefined ? hint : `${hint}\n${buildMediaPathTag(kind, path)}`,
+  };
 }
 
 function degradedImage(path: string | undefined): ContentPart {

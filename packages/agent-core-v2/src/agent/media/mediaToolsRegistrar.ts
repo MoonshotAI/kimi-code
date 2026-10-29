@@ -8,11 +8,9 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IEventDispatcher } from '#/state/eventDispatcher';
 import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IModelCatalog, type Model } from '#/llm-adapter/model/catalog';
 import { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import { ISessionSkillCatalog } from '#/features/skill/session/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
@@ -32,8 +30,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
 
   constructor(
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
-    @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IEventBus eventBus: IEventBus,
     @IEventDispatcher dispatcher: IEventDispatcher,
     @IAgentEnvironmentService private readonly environment: IAgentEnvironmentService,
@@ -65,44 +61,14 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
     this.states.set(mediaRegisteredKeyKey, value);
   }
 
-  private tryResolveModel(alias: string): Model | undefined {
-    if (alias === '') return undefined;
-    try {
-      return this.modelCatalog.get(alias);
-    } catch {
-      return undefined;
-    }
-  }
-
   private refresh(): void {
-    const capabilities = this.profile.getModelCapabilities();
-    const modelAlias = this.profile.getModel();
     const hasEnvironmentFs = this.environment.isAvailable(['fs']);
-    if (!hasEnvironmentFs && this.attachmentStore === undefined) {
-      const key = [
-        modelAlias,
-        String(capabilities.image_in),
-        String(capabilities.video_in),
-        'environment-unavailable',
-      ].join('|');
-      if (key === this.registeredKey) return;
-      this.registeredKey = key;
-      this.registration?.dispose();
-      this.registration = undefined;
-      return;
-    }
     const inspected = hasEnvironmentFs ? this.environment.inspect() : undefined;
     const identityKey = inspected === undefined ? 'session-attachments' : [
       inspected.identity.environmentId,
       inspected.identity.generation,
     ].join('|');
-    const model = this.tryResolveModel(modelAlias);
     const key = [
-      modelAlias,
-      model?.providerType ?? '',
-      model?.protocol ?? '',
-      String(capabilities.image_in),
-      String(capabilities.video_in),
       identityKey,
       inspected?.status,
       inspected?.host?.pathClass,
@@ -130,8 +96,6 @@ export class AgentMediaToolsRegistrar extends Service implements IAgentMediaTool
           ).additionalDirs;
         },
       },
-      capabilities,
-      providerType: model?.providerType,
       telemetry: this.telemetry,
     });
   }

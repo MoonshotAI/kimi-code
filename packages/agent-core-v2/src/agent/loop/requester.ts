@@ -387,6 +387,7 @@ export class AgentLoopRequester implements LoopRequester {
           ],
           resolvers: [
             toolSelectResolver,
+            ...(mediaPolicy === undefined ? [] : [mediaPolicy.toolResolver]),
             structureResolver,
             ...(mediaPolicy === undefined ? [] : [mediaPolicy.resolver]),
           ],

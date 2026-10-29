@@ -21,6 +21,7 @@ import {
   isAbortError,
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#human/llm/message';
+import { createMediaDegradeRecovery } from '#human/llm/builtin/policy/media-degrade';
 import type { Model } from '#/llm-adapter/model/catalog';
 import {
   effectiveMaxCompletionTokens,
@@ -338,7 +339,7 @@ describe('generateModel request execution', () => {
     expect(requester.calls).toHaveLength(1);
   });
 
-  it('translates remote, syntax and empty-response failures and rethrows aborts untouched', async () => {
+  it('translates failures and preserves abort and media recovery semantics', async () => {
     const requester = new FakeLlmRequester();
     requester.handler = (_i, emit) =>
       emit({
@@ -377,6 +378,51 @@ describe('generateModel request execution', () => {
     const empty = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect(empty).toBeInstanceOf(APIEmptyResponseError);
     expect((empty as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+
+    const recoveryRequester = new FakeLlmRequester();
+    recoveryRequester.handler = (index, emit) => {
+      if (index === 0) {
+        emit({
+          type: 'llm.failed.syntax',
+          error: {
+            kind: 'syntax',
+            code: 'request_format',
+            message: 'Invalid data URL for image: data:image/png;base64,AAAA',
+          },
+        });
+        return;
+      }
+      textStream(emit);
+    };
+    const attempts: ModelRequestInput[] = [];
+    const recovery = modelEventRequester(
+      modelWith(createStaticCredentialProvider()),
+      recoveryRequester,
+      {
+        recoveries: [createMediaDegradeRecovery()],
+        onAttempt: (input) => attempts.push(input),
+      },
+    );
+    await collect(
+      recovery.request({
+        systemPrompt: 'sys',
+        tools: [],
+        messages: [
+          {
+            role: 'user',
+            content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } }],
+          },
+        ],
+      }),
+    );
+    expect(recoveryRequester.calls).toHaveLength(2);
+    expect(
+      attempts.map(
+        (input) =>
+          input.messages.flatMap((message) => message.content).filter((part) => part.type === 'image_url')
+            .length,
+      ),
+    ).toEqual([1, 0]);
   });
 
   it('uploadVideo presence is the capability declaration', async () => {

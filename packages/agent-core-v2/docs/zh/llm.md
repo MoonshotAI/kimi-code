@@ -51,7 +51,7 @@ human/
 
 宿主组合位于 `agent/loop/` 与 `llm-adapter/`：`requester.ts`、`projector.ts` 和 `projection.ts` 是随 Loop 构造的普通对象，不再是 scoped Service。`llm-adapter/model/generate.ts` 把核心 outcome 转成既有 `ModelRequestEvent` 传输词汇，不保留 `ModelRequester` 对象。
 
-请求生命周期：Loop 解析 turn 或 side request 的配置与上下文 → `ProtocolAdapterRegistry` 用 protocol、model、endpoint、凭据头、超时 fetch 和可选 `LlmEndpoint.files` 初始化核心 requester → `generateModel` 叠加 profile/content，并携带 ToolSelect/结构/媒体 resolver 与 recovery ledger 执行 `runLlmRequest` → 每个 attempt 先应用继承和新提出的重写，再依次执行 ToolSelect、结构与媒体 resolver，然后发出 `llm.started` 并记录 resolved request → 协议 legalize/pipeline 编码并过滤 deferred 工具 → client 使用 `sendStream`，非流式则 `send` + replay → settle 产生 outcome 与流式事实 → Loop 或 klient 边界发出既有事件词汇。full compaction、cache probe 和媒体工具共用同一 Loop 门面；klient direct-generate 只创建调用级核心 requester，公开契约不变。
+请求生命周期：Loop 解析 turn 或 side request 的配置与上下文 → `ProtocolAdapterRegistry` 用 protocol、model、endpoint、凭据头、超时 fetch 和可选 `LlmEndpoint.files` 初始化核心 requester → `generateModel` 叠加 profile/content，并携带 ToolSelect/媒体工具/结构/媒体 resolver 与 recovery ledger 执行 `runLlmRequest` → 每个 attempt 先应用继承和新提出的重写，再依次执行 ToolSelect、媒体工具、结构与媒体 resolver，然后发出 `llm.started` 并记录 resolved request → 协议 legalize/pipeline 编码并过滤 deferred 工具 → client 使用 `sendStream`，非流式则 `send` + replay → settle 产生 outcome 与流式事实 → Loop 或 klient 边界发出既有事件词汇。ReadMediaFile 始终注册且只生成 `kimi-file` 引用；模型同时不支持图片和视频时，媒体工具 resolver 隐藏其 schema、调用与结果，媒体 resolver 再把引用转换为模型能力提示、上传后的 file-id 或内联 base64。full compaction、cache probe 和媒体工具共用同一 Loop 门面；klient direct-generate 只创建调用级核心 requester，公开契约不变。
 
 ## 已否决方案（勿重新引入）
 

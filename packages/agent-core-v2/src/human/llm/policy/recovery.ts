@@ -1,5 +1,5 @@
 import type { LlmEndpoint, LlmRequest } from '#/llm/request';
-import type { LlmRemoteErrorMessage } from '#/llm/response';
+import type { LlmErrorMessage } from '#/llm/response';
 
 export interface LlmRecoveryRecord {
   readonly strategy: string;
@@ -7,7 +7,7 @@ export interface LlmRecoveryRecord {
 }
 
 export interface LlmRecoveryContext {
-  readonly error: LlmRemoteErrorMessage;
+  readonly error: LlmErrorMessage;
   readonly request: LlmRequest;
   readonly appliedRecoveries: readonly LlmRecoveryRecord[];
   readonly endpoint?: LlmEndpoint;

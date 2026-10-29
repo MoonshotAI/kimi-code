@@ -1,9 +1,8 @@
-import type { ModelCapability } from '#human/llm-requester/capability';
 import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from './sessionMediaStore';
 
-import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
+import type { IDisposable } from '#/_base/di/lifecycle';
 import type { WorkspaceConfig } from '#/tool/path-access';
 import type { IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import type { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -14,27 +13,15 @@ export interface RegisterMediaToolsDeps {
   readonly attachmentStore: ISessionMediaStore;
   readonly environment: IAgentEnvironmentService;
   readonly workspace: WorkspaceConfig;
-  readonly capabilities: ModelCapability;
   readonly telemetry?: ITelemetryService;
-  readonly providerType?: string;
 }
 
 export function registerMediaTools(
   toolRegistry: IAgentToolRegistryService,
   deps: RegisterMediaToolsDeps,
 ): IDisposable {
-  if (!deps.capabilities.image_in && !deps.capabilities.video_in) {
-    return toDisposable(() => {});
-  }
   return toolRegistry.register(
-    new ReadMediaFileTool(
-      deps.environment,
-      deps.workspace,
-      deps.capabilities,
-      deps.attachmentStore,
-      deps.telemetry,
-      deps.providerType,
-    ),
+    new ReadMediaFileTool(deps.environment, deps.workspace, deps.attachmentStore, deps.telemetry),
   );
 }
 

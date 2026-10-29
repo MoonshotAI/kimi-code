@@ -2,6 +2,7 @@ import {
   countMediaParts,
   createMediaDegradeRecovery,
 } from '#human/llm/builtin/policy/media-degrade';
+import type { Message } from '#human/llm/message';
 import type { LlmRecovery } from '#human/llm/policy/recovery';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
@@ -9,8 +10,39 @@ import type { Model } from '#/llm-adapter/model/catalog';
 import type { InitializedLlmRequester } from '#/llm-adapter/model/generate';
 import { IAgentMediaResolverService } from '#/agent/media/mediaResolver';
 import { buildMediaPathTag, mediaKindOfPart } from '#/agent/media/mediaRef';
+import { READ_MEDIA_FILE_TOOL_NAME } from '#/agent/tools/read-media-file/read-media-file';
+
+function hideReadMediaFile(messages: readonly Message[]): readonly Message[] {
+  const hiddenCallIds = new Set<string>();
+  for (const message of messages) {
+    if (message.role !== 'assistant') continue;
+    for (const call of message.toolCalls) {
+      if (call.name === READ_MEDIA_FILE_TOOL_NAME) hiddenCallIds.add(call.id);
+    }
+  }
+  if (hiddenCallIds.size === 0) return messages;
+  const out: Message[] = [];
+  for (const message of messages) {
+    if (message.role === 'tool') {
+      if (message.toolCallId === undefined || !hiddenCallIds.has(message.toolCallId)) out.push(message);
+      continue;
+    }
+    if (message.role !== 'assistant') {
+      out.push(message);
+      continue;
+    }
+    const toolCalls = message.toolCalls.filter((call) => call.name !== READ_MEDIA_FILE_TOOL_NAME);
+    if (toolCalls.length === message.toolCalls.length) {
+      out.push(message);
+      continue;
+    }
+    if (toolCalls.length > 0 || message.content.length > 0) out.push({ ...message, toolCalls });
+  }
+  return out;
+}
 
 export interface AgentMediaPolicy {
+  readonly toolResolver: LlmResolver;
   readonly resolver: LlmResolver;
   readonly recovery: LlmRecovery;
 }
@@ -27,6 +59,25 @@ export function createAgentMediaPolicy(
 ): AgentMediaPolicy {
   let mediaPaths: ReadonlyMap<string, string> = new Map();
   return {
+    toolResolver: {
+      id: 'agent-media-tools',
+      recoveryRequest: 'resolved',
+      resolve: async (current) => {
+        if (model.capabilities.image_in || model.capabilities.video_in) return current;
+        const messages = hideReadMediaFile(current.content.messages);
+        return {
+          ...current,
+          profile:
+            current.profile === undefined
+              ? undefined
+              : {
+                  ...current.profile,
+                  tools: current.profile.tools?.filter((tool) => tool.name !== READ_MEDIA_FILE_TOOL_NAME),
+                },
+          content: { ...current.content, messages },
+        };
+      },
+    },
     resolver: {
       id: 'agent-media',
       resolve: async (current, control) => {

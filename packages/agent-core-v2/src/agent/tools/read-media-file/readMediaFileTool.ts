@@ -1,4 +1,3 @@
-import type { ModelCapability } from '#human/llm-requester/capability';
 import type { ContentPart } from '#human/llm/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionMediaStore } from '#/agent/media/sessionMediaStore';
@@ -6,7 +5,6 @@ import { isDaemonFileUrl } from '#/agent/media/mediaRef';
 import { attachmentFileSource, environmentFileSource, withAttachmentLocation, type FileReadSource } from '#/agent/tools/fileReadSource';
 
 import { EnvironmentWorkspaceView } from '#/environment/environmentWorkspaceView';
-import type { HostEnvironmentInfo } from '#/os/interface/hostEnvironment';
 import { acquireOrWhenReady, pinnedGeneration, type IAgentEnvironmentService } from '#/agent/environmentBinding/agentEnvironment';
 import {
   ToolAccesses,
@@ -30,44 +28,23 @@ import {
   resolveReadImageByteBudget,
   type ImageCropRegion,
 } from '#/agent/media/image-compress';
-import {
-  buildImageConversionGuidance,
-  buildOversizedImageConversionGuidance,
-  isModelAcceptedImageMime,
-} from '#/agent/media/image-format-policy';
-import { providerImagePolicy } from '#human/llm/protocol/kit/media';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import {
   MAX_MEDIA_BYTES,
   MAX_MEDIA_MEGABYTES,
+  READ_MEDIA_FILE_TOOL_NAME,
   ReadMediaFileInputSchema,
   type ReadMediaFileInput,
 } from './read-media-file';
 import readMediaDescriptionHead from './read-media.md?raw';
 
-function buildDescription(capabilities: ModelCapability): string {
-  const head = renderPrompt(readMediaDescriptionHead, { MAX_MEDIA_MEGABYTES });
-  const lines: string[] = [head];
-  const hasImage = capabilities.image_in;
-  const hasVideo = capabilities.video_in;
-  if (hasImage && hasVideo) {
-    lines.push('- This tool supports image and video files for the current model.');
-  } else if (hasImage) {
-    lines.push(
-      '- This tool supports image files for the current model.',
-      '- Video files are not supported by the current model.',
-    );
-  } else if (hasVideo) {
-    lines.push(
-      '- This tool supports video files for the current model.',
-      '- Image files are not supported by the current model.',
-    );
-  } else {
-    lines.push('- The current model does not support image or video input.');
-  }
-  return lines.join('\n');
+function buildDescription(): string {
+  return [
+    renderPrompt(readMediaDescriptionHead, { MAX_MEDIA_MEGABYTES }),
+    '- This tool supports image and video files.',
+  ].join('\n');
 }
 
 interface ImageDelivery {
@@ -173,24 +150,18 @@ function buildFullResolutionLimitError(
 
 export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   declare readonly _serviceBrand: undefined;
-  readonly name = 'ReadMediaFile' as const;
+  readonly name = READ_MEDIA_FILE_TOOL_NAME;
   readonly description: string;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(ReadMediaFileInputSchema);
   private readonly telemetry: ITelemetryService | undefined;
-  private readonly providerType: string | undefined;
-  private readonly inlineImageByteBudget: number;
   constructor(
     private readonly environment: IAgentEnvironmentService,
     private readonly workspace: WorkspaceConfig,
-    private readonly capabilities: ModelCapability,
     private readonly attachmentStore: ISessionMediaStore,
     telemetry?: ITelemetryService,
-    providerType?: string,
   ) {
-    this.description = buildDescription(capabilities);
+    this.description = buildDescription();
     this.telemetry = telemetry;
-    this.providerType = providerType;
-    this.inlineImageByteBudget = providerImagePolicy(providerType).inlineByteBudget;
   }
 
   async resolveExecution(args: ReadMediaFileInput): Promise<ToolExecution> {
@@ -232,7 +203,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             if (expectedGeneration !== undefined && lease.environment.identity.generation !== expectedGeneration) {
               return { isError: true, output: 'Environment changed before execution. Retry the tool call.' };
             }
-            return await this.execution(args, environmentFileSource(lease.environment.fs!, path), env, signal);
+            return await this.execution(args, environmentFileSource(lease.environment.fs!, path), signal);
           } finally {
             lease.dispose();
           }
@@ -252,7 +223,7 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
       approvalRule: literalRulePattern(this.name, args.path),
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, args.path),
       execute: async ({ signal }) => withAttachmentLocation(
-        await this.execution(args, source, { osKind: 'unknown' }, signal), source,
+        await this.execution(args, source, signal), source,
       ),
     };
   }
@@ -260,7 +231,6 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
   private async execution(
     args: ReadMediaFileInput,
     source: FileReadSource,
-    env: Pick<HostEnvironmentInfo, 'osKind'>,
     signal?: AbortSignal,
   ): Promise<ExecutableToolResult> {
     if (!args.path) {
@@ -285,32 +255,6 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           output:
             `"${args.path}" is not a supported image or video file. ` +
             'Use Read for text files, or Bash or an MCP tool for other binary formats.',
-        };
-      }
-
-      if (fileType.kind === 'image' && !this.capabilities.image_in) {
-        return {
-          isError: true,
-          output:
-            'The current model does not support image input. ' +
-            'Tell the user to use a model with image input capability.',
-        };
-      }
-      if (
-        fileType.kind === 'image' &&
-        !isModelAcceptedImageMime(fileType.mimeType, this.providerType)
-      ) {
-        return {
-          isError: true,
-          output: buildImageConversionGuidance(source.localPath ?? args.path, fileType.mimeType, env.osKind),
-        };
-      }
-      if (fileType.kind === 'video' && !this.capabilities.video_in) {
-        return {
-          isError: true,
-          output:
-            'The current model does not support video input. ' +
-            'Tell the user to use a model with video input capability.',
         };
       }
 
@@ -345,22 +289,21 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
         };
       }
 
-      if (
-        fileType.kind === 'image' &&
-        args.region === undefined &&
-        args.full_resolution === true &&
-        stat.size > this.inlineImageByteBudget
-      ) {
-        return {
-          isError: true,
-          output: buildFullResolutionLimitError(args.path, stat.size, this.inlineImageByteBudget),
-        };
-      }
-
       const imageDeliveryLimits = {
         readByteBudget: resolveReadImageByteBudget(),
         maxEdge: resolveMaxImageEdgePx(),
       };
+      if (
+        fileType.kind === 'image' &&
+        args.region === undefined &&
+        args.full_resolution === true &&
+        stat.size > imageDeliveryLimits.readByteBudget
+      ) {
+        return {
+          isError: true,
+          output: buildFullResolutionLimitError(args.path, stat.size, imageDeliveryLimits.readByteBudget),
+        };
+      }
       if (
         fileType.kind === 'image' &&
         args.region === undefined &&
@@ -405,13 +348,13 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
           };
           dimensions = { width: outcome.originalWidth, height: outcome.originalHeight };
         } else if (args.full_resolution === true) {
-          if (data.length > this.inlineImageByteBudget) {
+          if (data.length > imageDeliveryLimits.readByteBudget) {
             return {
               isError: true,
               output: buildFullResolutionLimitError(
                 args.path,
                 data.length,
-                this.inlineImageByteBudget,
+                imageDeliveryLimits.readByteBudget,
               ),
             };
           }
@@ -433,23 +376,10 @@ export class ReadMediaFileTool implements AgentTool<ReadMediaFileInput> {
             telemetry: this.telemetry,
             telemetrySource: 'read_media',
           });
-          if (inlineOnly) {
-            const inlineLimit = Math.max(readByteBudget, this.inlineImageByteBudget);
-            if (compressed.finalByteLength > inlineLimit) {
-              return {
-                isError: true,
-                output: buildOversizedImageConversionGuidance(
-                  source.localPath ?? args.path,
-                  fileType.mimeType,
-                  env.osKind,
-                  compressed.finalByteLength,
-                  inlineLimit,
-                ),
-              };
-            }
-          } else if (
-            compressed.finalByteLength > readByteBudget ||
-            Math.max(compressed.width, compressed.height) > maxEdge
+          if (
+            !inlineOnly &&
+            (compressed.finalByteLength > readByteBudget ||
+              Math.max(compressed.width, compressed.height) > maxEdge)
           ) {
             return {
               isError: true,

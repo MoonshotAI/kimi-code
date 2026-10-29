@@ -52,6 +52,10 @@ const IMAGE_UNAVAILABLE_TEXT = '[image omitted: the uploaded file is no longer a
 const VIDEO_UNAVAILABLE_TEXT = '[video omitted: the uploaded file is no longer available]';
 const VIDEO_TAG = '<video path="/cache/file_abc.mp4"></video>';
 const IMAGE_TAG = '<image path="/cache/file_abc.png"></image>';
+const IMAGE_CAPABILITY_HINT =
+  '[image omitted: the current model does not support image input; use a model with image input capability or convert the file to text]';
+const VIDEO_CAPABILITY_HINT =
+  '[video omitted: the current model does not support video input; use a model with video input capability or convert the file to text]';
 const PNG_DATA_URL = `data:image/png;base64,${PNG_BYTES.toString('base64')}`;
 
 function videoMessage(url: string): Message {
@@ -333,7 +337,7 @@ describe('AgentMediaResolverService video strategy', () => {
     expect(await resolveMedia(res, plain, req)).toBe(plain);
   });
 
-  it('degrades to the path tag when the current model cannot accept video, ignoring a memoized upload', async () => {
+  it('degrades to a capability hint when the current model cannot accept video, ignoring a memoized upload', async () => {
     const upload = vi.fn(async (): Promise<VideoURLPart> => msPart('prov-1'));
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const res = resolver(new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]), sessionDir);
@@ -348,7 +352,7 @@ describe('AgentMediaResolverService video strategy', () => {
     );
     expect(firstPart(incapable)).toEqual({
       type: 'text',
-      text: `<video path="${canonical}"></video>`,
+      text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`,
     });
     expect(upload).toHaveBeenCalledTimes(1);
   });
@@ -379,6 +383,7 @@ describe('AgentMediaResolverService video strategy', () => {
     name: string;
     files: Map<string, { name: string; bytes: Buffer }>;
     fileId: string;
+    modelUnsupported?: boolean;
     req: (upload: VideoUploader | undefined) => TestMediaResolution;
   };
 
@@ -387,6 +392,7 @@ describe('AgentMediaResolverService video strategy', () => {
       name: 'the model cannot ingest video',
       files: new Map([[FILE_ID, { name: 'clip.mp4', bytes: VIDEO_BYTES }]]),
       fileId: FILE_ID,
+      modelUnsupported: true,
       req: (upload) => requester({ videoIn: false, uploadVideo: upload }),
     },
     {
@@ -407,7 +413,7 @@ describe('AgentMediaResolverService video strategy', () => {
       fileId: 'missing',
       req: (upload) => requester({ uploadVideo: upload }),
     },
-  ])('degrades when $name', async ({ files, fileId, req }) => {
+  ])('degrades when $name', async ({ files, fileId, modelUnsupported, req }) => {
     const upload = vi.fn();
     const canonical =
       fileId === FILE_ID ? await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES) : undefined;
@@ -418,7 +424,12 @@ describe('AgentMediaResolverService video strategy', () => {
 
     expect(firstPart(out)).toEqual({
       type: 'text',
-      text: canonical === undefined ? VIDEO_UNAVAILABLE_TEXT : `<video path="${canonical}"></video>`,
+      text:
+        canonical === undefined
+          ? VIDEO_UNAVAILABLE_TEXT
+          : modelUnsupported === true
+            ? `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`
+            : `<video path="${canonical}"></video>`,
     });
     expect(upload).not.toHaveBeenCalled();
   });
@@ -711,7 +722,11 @@ describe('AgentMediaResolverService image strategy', () => {
       {
         type: 'text',
         text:
-          canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
+          canonical === undefined
+            ? IMAGE_UNAVAILABLE_TEXT
+            : imageIn
+              ? `<image path="${canonical}"></image>`
+              : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       },
     ]);
   });
@@ -759,7 +774,7 @@ describe('AgentMediaResolverService image strategy', () => {
       files: new Map([[FILE_ID, { name: 'pic.png', bytes: PNG_BYTES }]]),
       url: buildKimiFileUrl(FILE_ID),
       imageIn: false,
-      expected: IMAGE_UNAVAILABLE_TEXT,
+      expected: IMAGE_CAPABILITY_HINT,
     },
     {
       name: 'a bare stale reference has no canonical copy',
@@ -890,7 +905,9 @@ describe('AgentMediaResolverService image strategy', () => {
 
       expect(firstPart(degraded)).toEqual({
         type: 'text',
-        text: `<image path="${canonical}"></image>`,
+        text: imageIn
+          ? `<image path="${canonical}"></image>`
+          : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       });
       expect(firstPart(out)).toEqual({ type: 'image_url', imageUrl: { url: PNG_DATA_URL } });
       expect(counting.gets).toBe(reads);
@@ -1101,11 +1118,11 @@ describe('AgentMediaResolverService image upload', () => {
 describe('AgentMediaResolverService session-canonical display path', () => {
   it.each([
     {
-      name: 'synthesizes the degrade tag from the canonical path when it exists',
+      name: 'synthesizes the capability hint and canonical path when it exists',
       canonical: true,
     },
     {
-      name: 'emits the unavailable placeholder when no canonical copy exists',
+      name: 'emits only the capability hint when no canonical copy exists',
       canonical: false,
     },
   ])('$name', async ({ canonical: plant }) => {
@@ -1118,25 +1135,30 @@ describe('AgentMediaResolverService session-canonical display path', () => {
       {
         type: 'text',
         text:
-          canonical === undefined ? IMAGE_UNAVAILABLE_TEXT : `<image path="${canonical}"></image>`,
+          canonical === undefined
+            ? IMAGE_CAPABILITY_HINT
+            : `${IMAGE_CAPABILITY_HINT}\n<image path="${canonical}"></image>`,
       },
     ]);
   });
 
-  it('refreshes the degrade form when the canonical copy appears', async () => {
+  it('refreshes the capability hint when the canonical copy appears', async () => {
     const res = resolver(new Map(), sessionDir);
     const message = videoMessage(buildKimiFileUrl(FILE_ID));
     const req = requester({ videoIn: false });
 
     const first = await resolveMedia(res, [message], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_UNAVAILABLE_TEXT });
+    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
 
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const second = await resolveMedia(res, [message], req);
-    expect(firstPart(second)).toEqual({ type: 'text', text: `<video path="${canonical}"></video>` });
+    expect(firstPart(second)).toEqual({
+      type: 'text',
+      text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>`,
+    });
   });
 
-  it('keeps a legacy persisted tag as text and degrades the reference with a synthesized tag', async () => {
+  it('keeps a legacy persisted tag as text and degrades the reference with a capability hint', async () => {
     const canonical = await plantCanonical(FILE_ID, '.mp4', VIDEO_BYTES);
     const message: Message = {
       role: 'user',
@@ -1151,11 +1173,11 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     );
     expect(out[0]!.content).toEqual([
       { type: 'text', text: VIDEO_TAG },
-      { type: 'text', text: `<video path="${canonical}"></video>` },
+      { type: 'text', text: `${VIDEO_CAPABILITY_HINT}\n<video path="${canonical}"></video>` },
     ]);
   });
 
-  it('keeps a legacy persisted tag as text when the reference degrades to the placeholder', async () => {
+  it('keeps a legacy persisted tag as text when the reference degrades to the capability hint', async () => {
     const res = resolver(new Map(), sessionDir);
     const req = requester({ videoIn: false });
     const bare: Message = {
@@ -1165,7 +1187,7 @@ describe('AgentMediaResolverService session-canonical display path', () => {
       ],
     };
     const first = await resolveMedia(res, [bare], req);
-    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_UNAVAILABLE_TEXT });
+    expect(firstPart(first)).toEqual({ type: 'text', text: VIDEO_CAPABILITY_HINT });
 
     const withLegacyTag: Message = {
       role: 'user',
@@ -1177,7 +1199,7 @@ describe('AgentMediaResolverService session-canonical display path', () => {
     const second = await resolveMedia(res, [withLegacyTag], req);
     expect(second[0]!.content).toEqual([
       { type: 'text', text: VIDEO_TAG },
-      { type: 'text', text: VIDEO_UNAVAILABLE_TEXT },
+      { type: 'text', text: VIDEO_CAPABILITY_HINT },
     ]);
   });
 });

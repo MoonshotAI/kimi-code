@@ -41,6 +41,7 @@ import {
   APIProviderRateLimitError,
   APIRequestTooLargeError,
   APIStatusError,
+  ChatProviderError,
 } from '#/llm-adapter/contract/errors';
 import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 import {
@@ -542,19 +543,25 @@ describe('AgentLoopRequester media-stripped resend', () => {
     );
   }
 
-  it('resends once with the media-stripped projection after an image-format 400', async () => {
-    const calls = { value: 0 };
-    const inputs: ModelRequestInput[] = [];
-    const { service } = createService(
-      createRequester(calls, IMAGE_FORMAT_400, [], inputs),
-      { contextMessages },
-    );
+  it('resends once with the media-stripped projection after an image-format rejection', async () => {
+    for (const rejection of [
+      IMAGE_FORMAT_400,
+      new ChatProviderError('Unsupported media type for base64 image: image/avif'),
+      new ChatProviderError('Invalid data URL for image: data:image/png;base64,AAAA'),
+    ]) {
+      const calls = { value: 0 };
+      const inputs: ModelRequestInput[] = [];
+      const { service } = createService(
+        createRequester(calls, rejection, [], inputs),
+        { contextMessages },
+      );
 
-    const result = await service.request();
+      const result = await service.request();
 
-    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
-    expect(calls.value).toBe(2);
-    expect(mediaCounts(inputs)).toEqual([1, 0]);
+      expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+      expect(calls.value).toBe(2);
+      expect(mediaCounts(inputs)).toEqual([1, 0]);
+    }
   });
 
   it('keeps later steps of the same turn on the stripped projection', async () => {
@@ -1390,7 +1397,7 @@ describe('AgentLoopRequester trace id', () => {
 });
 
 describe('AgentLoopRequester media resolver wiring', () => {
-  it('runs ToolSelect before projection and records the resolved tools', async () => {
+  it('runs tool and media resolvers before projection and records the resolved tools', async () => {
     const inputs: ModelRequestInput[] = [];
     const requester = createRequester({ value: 0 }, null, [], inputs);
     const resolvedTool = { name: 'resolved', description: 'resolved tool', parameters: {} };
@@ -1429,6 +1436,49 @@ describe('AgentLoopRequester media resolver wiring', () => {
     const requestRecord = records.find((record) => record.type === 'llm.request');
     expect(snapshot?.['tools']).toEqual([resolvedTool]);
     expect(requestRecord?.['toolsHash']).toBe(snapshot?.['hash']);
+
+    for (const imageIn of [false, true]) {
+      const attemptInputs: ModelRequestInput[] = [];
+      const base = createRequester({ value: 0 }, null, [], attemptInputs);
+      const mediaRequester = {
+        ...base,
+        model: {
+          ...base.model,
+          capabilities: { ...base.model.capabilities, image_in: imageIn },
+        },
+      };
+      const mediaTool = { name: 'ReadMediaFile', description: 'read media', parameters: {} };
+      const otherTool = { name: 'other', description: 'other', parameters: {} };
+      const { service } = createService(mediaRequester, {
+        contextMessages: [
+          {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'calling tools' }],
+            toolCalls: [
+              { type: 'function', id: 'media', name: 'ReadMediaFile', arguments: '{}' },
+              { type: 'function', id: 'other', name: 'other', arguments: '{}' },
+            ],
+          },
+          { role: 'tool', toolCallId: 'media', content: [{ type: 'text', text: 'media result' }] },
+          { role: 'tool', toolCallId: 'other', content: [{ type: 'text', text: 'other result' }] },
+          { role: 'user', content: [{ type: 'text', text: 'continue' }] },
+        ],
+        toolSelect: { defaultTools: () => [mediaTool, otherTool] },
+      });
+
+      await service.request();
+
+      const input = attemptInputs[0]!;
+      expect(input.tools).toEqual(imageIn ? [mediaTool, otherTool] : [otherTool]);
+      expect(
+        input.messages.flatMap((message) => message.role === 'assistant' ? message.toolCalls : []).map(
+          (call) => call.name,
+        ),
+      ).toEqual(imageIn ? ['ReadMediaFile', 'other'] : ['other']);
+      expect(
+        input.messages.flatMap((message) => message.role === 'tool' ? [message.toolCallId] : []),
+      ).toEqual(imageIn ? ['media', 'other'] : ['other']);
+    }
   });
 });
 
