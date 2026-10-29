@@ -208,3 +208,57 @@
 
 - Projector 的具体投影算法在 `packages/agent-core-v2/src/agent/loop/projector.ts`，以上只记录 `AgentLoopRequester` 对它的编排职责。
 - Core `LlmOutcome` 到旧 `ModelRequestEvent` 的转换在 `packages/agent-core-v2/src/llm-adapter/model/generate.ts`，以上只记录 `AgentLoopRequester` 对它的调用与结果消费。
+
+## 八、行为对齐清单（2026-10-29）
+
+状态只表示当前会话中的决定与实施情况，不把“解释过”视为“已经定稿”。
+
+### A. 已定稿并已完成
+
+| 行为 | 当前结果 |
+| --- | --- |
+| 旧 `ChatProviderError` 图片错误文本恢复 | `provider` / `syntax` 中的 `unsupported media type for base64 image`、`invalid data url for image` 已恢复媒体剥离重发；已在 `387ad1a6` 提交。 |
+| ReadMediaFile 默认注册与隐藏 | 工具始终注册；仅在图片和视频均不支持时，MediaTool Resolver 同步隐藏 schema、assistant calls 和对应 results；其他 calls/content 保留。 |
+| ReadMediaFile 执行语义 | 不再按 model capability / providerType 拒绝调用；读取和必要处理后默认 `put` 并生成 `kimi-file://`，实际读取、解码、存储错误仍显式返回。 |
+| `kimi-file` 请求解析 | Media Resolver 按模型与协议能力、上传接口和上传结果选择能力提示 omit、provider file-id 或 inline base64；认证错误仍显式抛出。 |
+| Resolver 组合顺序 | 已固定为 ToolSelect → MediaTool → Structure → Media；中英文文档与聚焦测试已同步。 |
+
+### B. 已定稿接受现状，不再作为待修回归
+
+| 行为 | 用户决定 |
+| --- | --- |
+| 凭证解析异常分类 | 接受当前归为 `provider.api_error` 的行为，不回滚到 main 的 `config.invalid`，本轮不修改。 |
+
+### C. 已定稿但尚未实施
+
+| 行为 | 待办 |
+| --- | --- |
+| full compaction 与 fork 缓存诊断简化 | 按 2026-10-28 定稿改为 response usage 驱动：删除 `lastTurnRequest` 和 history/tools/systemPrompt 前缀比较；总输入为 `inputOther + inputCacheRead + inputCacheCreation`，只把 cache read 计为命中，缺 usage 时结果为未知；诊断不参与 recovery 或 compaction 决策。 |
+
+### D. 已讨论或说明，但尚未决定如何对齐
+
+| 行为 | 当前差异与未决点 |
+| --- | --- |
+| turn 配置冻结与 `select_tools` | 已解释 turn 开始时冻结模型上下文、请求参数和 system prompt 的原因；但“请求构造读冻结模型、工具执行读当前模型”的不一致是否修复、采用哪种口径，尚未决定。 |
+| reasoning-key 缓存 | main 为每个 catalog requester 独立缓存，313 为 App 级共享；是否按 alias/账号隔离或接受共享，尚未决定。 |
+| 无凭证 Kimi 上传 | main 本地报错并尝试 inline 回退，313 发 `Bearer unused` 后可能按 401 终止；保留还是恢复本地失败/回退，尚未决定。 |
+| recovery traceId | 后续 attempt 无 headers 或 resolver 提前失败时可能沿用旧 trace；是否每次物理 attempt 都清空，尚未决定。 |
+| 非 `Error` provider 异常 | main 转为可重试 provider 错误，313 转为 internal/unknown 且通常不重试；是否恢复旧分类，尚未决定。 |
+| `llmRequester.mediaRecovery` inspect state | main 暴露 `media.degradeCount/strip`，313 为 `ledger: unknown`；是否提供可读兼容视图，尚未决定。 |
+| sticky mediaPaths | main 每次请求重算 display path，313 的 ledger rewrite 捕获旧 map；是否改为动态读取路径，尚未决定。 |
+| 取消时的媒体 metadata 写入 | 相同 canonical 文件已存在时，313 可能在取消后仍更新 name/key metadata；是否需要在 `documents.set` 前检查 abort，尚未决定。 |
+| `video_upload.model` telemetry | main 记录模型 alias，313 记录 wire model name；按哪种维度恢复或同时保留，尚未决定。 |
+| recovery 中重新计算工具快照 | main 在一次 `start()` 内固定默认工具和动态 history，313 每个 attempt 重算；这是预期刷新还是需冻结，尚未决定。 |
+
+### E. 完全未回应的行为差异
+
+| 行为 | 当前差异与待回应问题 |
+| --- | --- |
+| kimi-inspect 模型 Ping | `IModelCatalog.ping` 已删除，但 inspector 仍调用该方法；当前 debug RPC 返回 `method not found` 且 typecheck 失败。需要决定迁移到 direct-generate 还是提供其他 Ping 入口。 |
+| 媒体降级与结构投影顺序 | main 先结构投影再计算媒体降级，313 在结构投影前计算；orphan 媒体会导致 413 后多丢有效媒体，media → structure 组合恢复的后续 body 也不同。需要决定是否恢复 main 的顺序。 |
+| provider 文件失效后的上传缓存 | 同 bytes 的 ReadMediaFile 现在跨 session 复用内容寻址引用和 provider file-id，缓存无 TTL/存在性检查；文件过期或删除后不会自动重传。尚未回应是否清理缓存重传及如何处理 provider 失效响应。 |
+
+### 验证边界
+
+- 当前实现提交为 `387ad1a6`；本轮聚焦验证为本地 235/235、远程含 klient memory/IPC 311/311，未据此宣称全量测试通过。
+- `lint:imports` 仍只有 main 基线已有的 `human/agent/origin.ts` 违规；此前 Handoff 中的全量失败集合需要在该任务要求全量验证时重新确认。
