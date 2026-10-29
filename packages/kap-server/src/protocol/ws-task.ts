@@ -39,6 +39,7 @@ export const taskAttachMessageSchema = z.object({
   type: z.literal('task.attach'),
   request_id: z.string(),
   session_id: z.string().min(1),
+  agent_id: z.string().min(1),
   task_id: z.string().min(1),
   since_offset: z.number().int().nonnegative().optional(),
 });
@@ -48,12 +49,14 @@ export const taskDetachMessageSchema = z.object({
   type: z.literal('task.detach'),
   request_id: z.string(),
   session_id: z.string().min(1),
+  agent_id: z.string().min(1),
   task_id: z.string().min(1),
 });
 
 export const taskOutputMessageSchema = z.object({
   type: z.literal('task.output'),
   session_id: z.string().min(1),
+  agent_id: z.string().min(1),
   task_id: z.string().min(1),
   offset: z.number().int().nonnegative(),
   text: z.string(),

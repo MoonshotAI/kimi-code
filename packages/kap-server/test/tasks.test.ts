@@ -33,8 +33,6 @@ interface TaskWire {
   created_at: string;
   started_at?: string;
   completed_at?: string;
-  output_preview?: string;
-  output_bytes?: number;
   agent_id?: string;
   subagent_type?: string;
   parent_tool_call_id?: string;
@@ -139,14 +137,12 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
-  function fakeTask(kind: 'process' | 'agent' | 'question', output?: string): AgentTask {
+  function fakeTask(kind: 'process' | 'agent' | 'question'): AgentTask {
     return {
       idPrefix: 'test',
       kind,
       description: `fake ${kind} task`,
-      start: (sink) => {
-        if (output !== undefined) sink.appendOutput(output);
-      },
+      start: () => {},
       toInfo: (base) => {
         switch (kind) {
           case 'process':
@@ -292,25 +288,6 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
 
     const missing = await getJson<null>(`/api/v1/sessions/${id}/tasks/nope`);
     expect(missing.body.code).toBe(40406);
-  });
-
-  it('includes output_preview / output_bytes when with_output is set', async () => {
-    const id = await createSession();
-    const tasks = await mainAgentTasks(id);
-    const taskId = tasks.registerTask(fakeTask('process', 'hello world'));
-    await flush();
-
-    const got = await getJson<TaskWire>(
-      `/api/v1/sessions/${id}/tasks/${taskId}?with_output=true`,
-    );
-    expect(got.body.code).toBe(0);
-    expect(got.body.data.output_preview).toBe('hello world');
-    expect(got.body.data.output_bytes).toBe(Buffer.byteLength('hello world', 'utf-8'));
-
-    const plain = await getJson<TaskWire>(`/api/v1/sessions/${id}/tasks/${taskId}`);
-    expect(plain.body.code).toBe(0);
-    expect(plain.body.data.output_preview).toBeUndefined();
-    expect(plain.body.data.output_bytes).toBeUndefined();
   });
 
   it('cancels a running task and reports 40904 on a second cancel', async () => {

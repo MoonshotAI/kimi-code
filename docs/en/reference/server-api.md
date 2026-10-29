@@ -1235,7 +1235,7 @@ Background tasks are the session's asynchronous units — background shells, sub
 | Method and path | Description |
 | --- | --- |
 | `GET /api/v1/sessions/{session_id}/tasks` | List background tasks |
-| `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task (optional output preview) |
+| `GET /api/v1/sessions/{session_id}/tasks/{task_id}` | Read a task |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:cancel` | Cancel a task |
 | `POST /api/v1/sessions/{session_id}/tasks/{task_id}:detach` | Move a foreground task to the background |
 
@@ -1248,23 +1248,21 @@ Lists the session's background tasks.
 | `session_id` | path | string | **Required.** Session id |
 | `status` | query | string | Keep only one status: `running` / `completed` / `failed` / `cancelled` |
 
-On success, `data` is `{ items }` where each item is a task object `{ id, session_id, kind, description, status, created_at, started_at?, completed_at?, command?, model?, thinking_effort?, agent_id?, subagent_type?, parent_tool_call_id?, output_preview?, output_bytes? }`. `kind` is `bash` / `subagent` / `tool`; `command` is set for `bash` tasks, the model and agent fields for `subagent` tasks, and the output fields only when a task is read with `with_output`. Timed-out and lost tasks report `failed`; killed tasks report `cancelled`.
+On success, `data` is `{ items }` where each item is a task object `{ id, session_id, kind, description, status, created_at, started_at?, completed_at?, command?, model?, thinking_effort?, agent_id?, subagent_type?, parent_tool_call_id? }`. `kind` is `bash` / `subagent` / `tool`; `command` is set for `bash` tasks, and the model and agent fields for `subagent` tasks. Timed-out and lost tasks report `failed`; killed tasks report `cancelled`.
 
 - `40001`: validation failure — an unknown `status`
 - `40401`: session not found
 
 #### `GET /api/v1/sessions/{session_id}/tasks/{task_id}`
 
-Reads one background task, optionally with a tail of its output.
+Reads one background task. Its output streams over the WebSocket with `task.attach` (see [Control frames](#control-frames)).
 
 | Parameter | In | Type | Description |
 | --- | --- | --- | --- |
 | `session_id` | path | string | **Required.** Session id |
 | `task_id` | path | string | **Required.** Task id |
-| `with_output` | query | boolean | Include an output tail in the response. Default `false` |
-| `output_bytes` | query | integer | Size of the requested output tail in bytes, minimum `0`. Default `32768` |
 
-On success, `data` is the task object documented under `GET /api/v1/sessions/{session_id}/tasks` above; with `with_output=true` and non-empty output, `output_preview` carries the tail text and `output_bytes` its byte length.
+On success, `data` is the task object documented under `GET /api/v1/sessions/{session_id}/tasks` above.
 
 - `40001`: validation failure
 - `40401`: session not found
@@ -2362,10 +2360,10 @@ Clients send JSON frames `{ "type", "id"?, "payload" }`; every request frame get
 | `subscribe_v2` | `{ session_id, transcript, transcript_since? }` | Subscribe to a session (the only session subscription): its transcript streams and interactions; `transcript` sets per-agent grades |
 | `unsubscribe_v2` | `{ session_id, agent_ids? }` | Detach transcript streams; omitting `agent_ids`, or detaching the last agent, drops the whole session subscription |
 | `client_hello` | `{ client_id }` | Handshake frame; other fields are ignored |
-| `task.attach` | flat: `{ request_id, session_id, task_id, since_offset? }` | Stream one main-agent task's output to this connection, no session subscription needed; `since_offset` resumes after output the client already has |
-| `task.detach` | flat: `{ request_id, session_id, task_id }` | Stop streaming that task's output |
+| `task.attach` | flat: `{ request_id, session_id, agent_id, task_id, since_offset? }` | Stream one task's output to this connection, no session subscription needed; `agent_id` is the agent that owns the task (the `agent_id` of its `task` frame), and `since_offset` resumes after output the client already has |
+| `task.detach` | flat: `{ request_id, session_id, agent_id, task_id }` | Stop streaming that task's output |
 
-`task.attach` and `task.detach` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack. A successful `task.attach` replies with code 0, then sends the last 32 KiB of output (only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output. Errors: `40001` malformed frame, `40401` session not found, `40406` task not found, `50003` output unreadable.
+`task.attach` and `task.detach` are flat: their fields sit next to `type` instead of under `payload`, `request_id` replaces `id`, and the reply is `{ "type": "response", "request_id", "code", "msg"? }` instead of an ack. Like `subscribe_v2` and `unsubscribe_v2`, they are handled one at a time in the order they arrive on the connection, so a `task.detach` sent while a `task.attach` is still pending takes effect after it. A successful `task.attach` replies with code 0, then sends the last 32 KiB of output (only the part after `since_offset` when it falls inside that window) as one `task.output` frame, with empty `text` when there is nothing to send, followed by live output. Errors: `40001` malformed frame, `40401` session not found, `40406` the agent has no such task, `50003` output unreadable.
 
 ### Events
 
@@ -2380,7 +2378,7 @@ Three global lifecycle events keep a cross-workspace overview fresh without poll
 
 Approvals and questions from every agent in the session, sub-agents included, arrive as the `interaction` frame. Unlike other events it is flat — no `timestamp` or `payload` wrapper — and it is never replayed: `{ type: "interaction", session_id, agent_id, event_created_at, interaction_id, kind: "approval" | "question", status: "pending" | "ended", outcome?, ended_at?, tool_call_id?, request, response? }`. `outcome` is `approved` / `rejected` / `cancelled` for approvals and `answered` / `dismissed` / `cancelled` for questions. An approval's `request` is `{ tool_name, action, tool_input_display?, expires_at }`, where `expires_at` is 24 hours after the request; a question's is `{ questions }`, holding 1–4 items `{ id, question, header?, body?, options, multi_select?, allow_other?, other_label?, other_description? }`, each with 2–4 `options` of `{ id, label, description? }`. The server sends the session's pending interactions right after each successful `subscribe_v2` ack, so clients should drop their pending list for that session on the ack and rebuild it from the frames that follow. Respond through [`POST /api/v1/sessions/{session_id}/interactions/{interaction_id}`](#post-apiv1sessionssession_idinteractionsinteraction_id).
 
-Each agent's tasks — background shells, subagents, and other asynchronous work — arrive as the `task` frame, flat and never replayed like `interaction`: `{ type: "task", session_id, agent_id, event_created_at, task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, usage?, model?, thinking? }`. Every frame carries the task's full state, so clients replace their copy. `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`; `child_agent_id` is a subagent task's agent id; `command` is a shell task's command; `usage` is `{ input_other, output, input_cache_read, input_cache_creation }` in tokens. A connection receives the tasks of every agent whose transcript grade is not `off`: all of the agent's tasks, ended ones included, right after each `transcript.reset` or catch-up, then the changed task on every change. Task output streams separately as `{ type: "task.output", session_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
+Each agent's tasks — background shells, subagents, and other asynchronous work — arrive as the `task` frame, flat and never replayed like `interaction`: `{ type: "task", session_id, agent_id, event_created_at, task_id, kind: "shell" | "subagent" | "other", status: "running" | "ended", outcome?, phase?, detached, description?, child_agent_id?, parent_tool_call_id?, command?, started_at?, ended_at?, result_summary?, error?, state_reason?, usage?, model?, thinking? }`. Every frame carries the task's full state, so clients replace their copy. `outcome` (ended tasks only) is `completed` / `failed` / `timed_out` / `killed` / `lost`; `phase` (running subagents only) is `working` / `suspended`; `child_agent_id` is a subagent task's agent id; `command` is a shell task's command; `usage` is `{ input_other, output, input_cache_read, input_cache_creation }` in tokens. A connection receives the tasks of every agent whose transcript grade is not `off`: all of the agent's tasks, ended ones included, right after each `transcript.reset` or catch-up, then the changed task on every change. Task output streams separately as `{ type: "task.output", session_id, agent_id, task_id, offset, text }`, where `offset` is the UTF-8 byte offset of `text` in the task's output.
 
 ### Reconnect and recovery
 

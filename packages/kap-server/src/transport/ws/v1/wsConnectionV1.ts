@@ -150,7 +150,8 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.lastInboundAt = Date.now();
 
     if (isTaskOutputMessageType(frame.type)) {
-      void this.taskOutputs?.handle(frame).catch(() => {
+      this.enqueueControl(async () => {
+        await this.taskOutputs?.handle(frame);
       });
       return;
     }

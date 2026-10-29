@@ -671,7 +671,7 @@ describe('WsConnectionV1 task output', () => {
     failTailRead(): void;
   }
 
-  function makeTaskOutput(taskId: string, initial = ''): FakeTaskOutput {
+  function makeTaskOutput(taskId: string, initial = '', ownerAgentId = 'main'): FakeTaskOutput {
     let bytes = Buffer.from(initial, 'utf-8');
     const listeners = new Set<(chunk: AgentTaskOutputChunk) => void>();
     let gate: Promise<void> | undefined;
@@ -690,9 +690,9 @@ describe('WsConnectionV1 task output', () => {
       },
     } as unknown as IAgentTaskService;
     return {
-      source: async (sessionId, id) => {
+      source: async (sessionId, agentId, id) => {
         if (sessionId !== 's1') return { kind: 'session_not_found' };
-        if (id !== taskId) return { kind: 'task_not_found' };
+        if (agentId !== ownerAgentId || id !== taskId) return { kind: 'task_not_found' };
         return { kind: 'found', tasks };
       },
       write: (text) => {
@@ -734,17 +734,18 @@ describe('WsConnectionV1 task output', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
     output.write(hmrLine);
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
 
     expect(taskFrames(socket)).toEqual([
       { type: 'response', request_id: 'r1', code: 0 },
-      { type: 'task.output', session_id: 's1', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+      { type: 'task.output', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
       {
         type: 'task.output',
         session_id: 's1',
+        agent_id: 'main',
         task_id: 'bash-k3f9x2ab',
         offset: Buffer.byteLength(startLines, 'utf-8'),
         text: hmrLine,
@@ -763,6 +764,7 @@ describe('WsConnectionV1 task output', () => {
       type: 'task.attach',
       request_id: 'r1',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       since_offset: since,
     });
@@ -771,6 +773,7 @@ describe('WsConnectionV1 task output', () => {
     expect(taskFrames(socket)[1]).toEqual({
       type: 'task.output',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       offset: since,
       text: hmrLine,
@@ -788,6 +791,7 @@ describe('WsConnectionV1 task output', () => {
       type: 'task.attach',
       request_id: 'r1',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       since_offset: end,
     });
@@ -796,7 +800,7 @@ describe('WsConnectionV1 task output', () => {
 
     expect(taskFrames(socket)).toEqual([
       { type: 'response', request_id: 'r1', code: 0 },
-      { type: 'task.output', session_id: 's1', task_id: 'bash-k3f9x2ab', offset: end, text: '' },
+      { type: 'task.output', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab', offset: end, text: '' },
     ]);
     conn.close();
   });
@@ -806,12 +810,13 @@ describe('WsConnectionV1 task output', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
 
     expect(taskFrames(socket)[1]).toEqual({
       type: 'task.output',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       offset: 0,
       text: '',
@@ -830,6 +835,7 @@ describe('WsConnectionV1 task output', () => {
       type: 'task.attach',
       request_id: 'r1',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       since_offset: 12,
     });
@@ -853,6 +859,7 @@ describe('WsConnectionV1 task output', () => {
       type: 'task.attach',
       request_id: 'r1',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       since_offset: arrowStart + 1,
     });
@@ -861,6 +868,7 @@ describe('WsConnectionV1 task output', () => {
     expect(taskFrames(socket)[1]).toEqual({
       type: 'task.output',
       session_id: 's1',
+      agent_id: 'main',
       task_id: 'bash-k3f9x2ab',
       offset: 0,
       text: startLines,
@@ -874,7 +882,7 @@ describe('WsConnectionV1 task output', () => {
     const conn = makeConn(socket, { taskOutputSource: output.source });
     const release = output.holdTailRead();
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
     output.write(hmrLine);
     release();
@@ -886,6 +894,7 @@ describe('WsConnectionV1 task output', () => {
       {
         type: 'task.output',
         session_id: 's1',
+        agent_id: 'main',
         task_id: 'bash-k3f9x2ab',
         offset: 0,
         text: startLines + hmrLine,
@@ -899,9 +908,9 @@ describe('WsConnectionV1 task output', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
-    send(socket, { type: 'task.detach', request_id: 'r2', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.detach', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
     output.write(hmrLine);
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -912,17 +921,58 @@ describe('WsConnectionV1 task output', () => {
     conn.close();
   });
 
+  it('applies a detach sent during a pending attach after that attach completes', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines);
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+    const release = output.holdTailRead();
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(output.listenerCount()).toBe(1));
+    send(socket, { type: 'task.detach', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(taskFrames(socket)).toEqual([]);
+    release();
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 0 },
+      { type: 'task.output', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+      { type: 'response', request_id: 'r2', code: 0 },
+    ]);
+    expect(output.listenerCount()).toBe(0);
+    conn.close();
+  });
+
+  it('streams a task owned by a subagent under that agent id', async () => {
+    const output = makeTaskOutput('bash-k3f9x2ab', startLines, 'agent-sub1');
+    const socket = new FakeSocket();
+    const conn = makeConn(socket, { taskOutputSource: output.source });
+
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r2', session_id: 's1', agent_id: 'agent-sub1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(3));
+
+    expect(taskFrames(socket)).toEqual([
+      { type: 'response', request_id: 'r1', code: 40406, msg: 'task not found' },
+      { type: 'response', request_id: 'r2', code: 0 },
+      { type: 'task.output', session_id: 's1', agent_id: 'agent-sub1', task_id: 'bash-k3f9x2ab', offset: 0, text: startLines },
+    ]);
+    conn.close();
+  });
+
   it('replies with error codes for unknown sessions, unknown tasks, and invalid messages', async () => {
     const output = makeTaskOutput('bash-k3f9x2ab');
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's2', task_id: 'bash-k3f9x2ab' });
-    send(socket, { type: 'task.attach', request_id: 'r2', session_id: 's1', task_id: 'bash-00000000' });
-    send(socket, { type: 'task.attach', request_id: 'r3', session_id: 's1' });
-    send(socket, { type: 'task.attach', request_id: 'r4', session_id: 's1', task_id: '' });
-    send(socket, { type: 'task.detach', request_id: 'r5', session_id: '', task_id: 'bash-k3f9x2ab' });
-    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(5));
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's2', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r2', session_id: 's1', agent_id: 'main', task_id: 'bash-00000000' });
+    send(socket, { type: 'task.attach', request_id: 'r3', session_id: 's1', agent_id: 'main' });
+    send(socket, { type: 'task.attach', request_id: 'r4', session_id: 's1', agent_id: 'main', task_id: '' });
+    send(socket, { type: 'task.detach', request_id: 'r5', session_id: '', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r6', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(6));
 
     const codes = Object.fromEntries(
       (taskFrames(socket) as Array<{ request_id: string; code: number }>).map((frame) => [
@@ -930,7 +980,7 @@ describe('WsConnectionV1 task output', () => {
         frame.code,
       ]),
     );
-    expect(codes).toEqual({ r1: 40401, r2: 40406, r3: 40001, r4: 40001, r5: 40001 });
+    expect(codes).toEqual({ r1: 40401, r2: 40406, r3: 40001, r4: 40001, r5: 40001, r6: 40001 });
     conn.close();
   });
 
@@ -942,7 +992,7 @@ describe('WsConnectionV1 task output', () => {
       },
     });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
 
     expect(taskFrames(socket)).toEqual([
@@ -957,7 +1007,7 @@ describe('WsConnectionV1 task output', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(1));
     output.write(hmrLine);
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -986,7 +1036,7 @@ describe('WsConnectionV1 task output', () => {
     const socket = new FakeSocket();
     const conn = makeConn(socket, { taskOutputSource: output.source });
 
-    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', task_id: 'bash-k3f9x2ab' });
+    send(socket, { type: 'task.attach', request_id: 'r1', session_id: 's1', agent_id: 'main', task_id: 'bash-k3f9x2ab' });
     await vi.waitFor(() => expect(taskFrames(socket)).toHaveLength(2));
     conn.close();
 

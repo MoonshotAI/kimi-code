@@ -242,7 +242,7 @@ export const clientControlOperations = [
     messageSchema: taskAttachMessageSchema,
     ackSchema: taskResponseMessageSchema,
     description:
-      "Stream one task's output to this connection without a session subscription; since_offset resumes after output the client already has.",
+      "Stream the output of one task owned by agent_id to this connection without a session subscription; since_offset resumes after output the client already has.",
   },
   {
     type: 'task.detach',

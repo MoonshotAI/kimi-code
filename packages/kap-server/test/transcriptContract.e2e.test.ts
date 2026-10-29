@@ -682,9 +682,14 @@ describe('transcript contract e2e', () => {
     const isOutput = (frame: any): boolean => frame.type === 'task.output';
 
     const first = await openFrameSocket(server!);
-    first.send({ type: 'task.attach', request_id: 'r1', session_id: sid, task_id: taskId });
+    first.send({ type: 'task.attach', request_id: 'r1', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: taskId });
     expect(await first.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r1', code: 0 });
-    expect(await first.next(isOutput)).toMatchObject({ task_id: taskId, offset: 0, text: '  VITE ready\n' });
+    expect(await first.next(isOutput)).toMatchObject({
+      agent_id: MAIN_AGENT_ID,
+      task_id: taskId,
+      offset: 0,
+      text: '  VITE ready\n',
+    });
     sink!.appendOutput('  ➜  Local: http://localhost:5173/\n');
     expect(await first.next(isOutput)).toMatchObject({ offset: 13, text: '  ➜  Local: http://localhost:5173/\n' });
     await first.close();
@@ -692,14 +697,42 @@ describe('transcript contract e2e', () => {
     sink!.appendOutput('4:42:10 PM [vite] hmr update /src/App.vue\n');
     const since = 13 + Buffer.byteLength('  ➜  Local: http://localhost:5173/\n', 'utf-8');
     const second = await openFrameSocket(server!);
-    second.send({ type: 'task.attach', request_id: 'r2', session_id: sid, task_id: taskId, since_offset: since });
+    second.send({
+      type: 'task.attach',
+      request_id: 'r2',
+      session_id: sid,
+      agent_id: MAIN_AGENT_ID,
+      task_id: taskId,
+      since_offset: since,
+    });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r2', code: 0 });
     expect(await second.next(isOutput)).toMatchObject({
       offset: since,
       text: '4:42:10 PM [vite] hmr update /src/App.vue\n',
     });
-    second.send({ type: 'task.attach', request_id: 'r3', session_id: sid, task_id: 'bash-00000000' });
+    second.send({ type: 'task.attach', request_id: 'r3', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: 'bash-00000000' });
     expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r3', code: 40406 });
+
+    const child = await agents.create({ agentId: 'agent-s9-child' });
+    const childTaskId = agents.handleOf(child.agentId)!.accessor.get(IAgentTaskService).registerTask({
+      idPrefix: 'bash',
+      kind: 'process',
+      description: 'pnpm test --watch',
+      start: (s) => {
+        s.appendOutput(' RUN  v3.2.4\n');
+      },
+      toInfo: (base) => ({ ...base, kind: 'process', command: 'pnpm test --watch', pid: 0, exitCode: null }),
+    });
+    second.send({ type: 'task.attach', request_id: 'r4', session_id: sid, agent_id: MAIN_AGENT_ID, task_id: childTaskId });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r4', code: 40406 });
+    second.send({ type: 'task.attach', request_id: 'r5', session_id: sid, agent_id: child.agentId, task_id: childTaskId });
+    expect(await second.next((f) => f.type === 'response')).toMatchObject({ request_id: 'r5', code: 0 });
+    expect(await second.next(isOutput)).toMatchObject({
+      agent_id: child.agentId,
+      task_id: childTaskId,
+      offset: 0,
+      text: ' RUN  v3.2.4\n',
+    });
     await second.close();
   });
 

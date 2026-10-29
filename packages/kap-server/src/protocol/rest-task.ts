@@ -12,12 +12,6 @@ export const listTasksResponseSchema = z.object({
 });
 export type ListTasksResponse = z.infer<typeof listTasksResponseSchema>;
 
-export const getTaskQuerySchema = z.object({
-  with_output: z.coerce.boolean().optional(),
-  output_bytes: z.coerce.number().int().nonnegative().optional(),
-});
-export type GetTaskQuery = z.infer<typeof getTaskQuerySchema>;
-
 export const getTaskResponseSchema = taskSchema;
 export type GetTaskResponse = z.infer<typeof getTaskResponseSchema>;
 

@@ -8,7 +8,6 @@ import { ErrorCode } from '../protocol/error-codes';
 import {
   cancelTaskResultSchema,
   detachTaskResultSchema,
-  getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
   listTasksResponseSchema,
@@ -21,8 +20,6 @@ import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
-
-const DEFAULT_TASK_OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
 interface TasksRouteHost {
   get(
@@ -93,7 +90,6 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
       method: 'GET',
       path: '/sessions/{session_id}/tasks/{task_id}',
       params: sessionAndTaskIdParamSchema,
-      querystring: getTaskQuerySchema,
       success: { data: getTaskResponseSchema },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
@@ -117,20 +113,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      const query = req.query as { with_output?: boolean; output_bytes?: number };
-      let output: { preview: string; bytes: number } | undefined;
-      if (query.with_output === true) {
-        const tailBytes = query.output_bytes ?? DEFAULT_TASK_OUTPUT_PREVIEW_BYTES;
-        try {
-          const preview = await resolved.tasks.readOutput(task_id, tailBytes);
-          if (preview.length > 0) {
-            output = { preview, bytes: Buffer.byteLength(preview, 'utf-8') };
-          }
-        } catch {
-        }
-      }
-
-      reply.send(okEnvelope(toWireTask(session_id, found, output), req.id));
+      reply.send(okEnvelope(toWireTask(session_id, found), req.id));
     },
   );
   app.get(getRoute.path, getRoute.options, getRoute.handler as Parameters<TasksRouteHost['get']>[2]);
@@ -265,11 +248,7 @@ function isTerminalStatus(status: TaskStatus): boolean {
   return TERMINAL_WIRE_STATUSES.has(status);
 }
 
-function toWireTask(
-  sessionId: string,
-  info: AgentTaskInfo,
-  output?: { preview: string; bytes: number },
-): Task {
+function toWireTask(sessionId: string, info: AgentTaskInfo): Task {
   const status = mapStatus(info.status);
   const createdIso = new Date(info.startedAt).toISOString();
   const base: Task = {
@@ -305,10 +284,6 @@ function toWireTask(
     info.parentToolCallId !== undefined
   ) {
     base.parent_tool_call_id = info.parentToolCallId;
-  }
-  if (output !== undefined) {
-    base.output_preview = output.preview;
-    base.output_bytes = output.bytes;
   }
   return base;
 }
