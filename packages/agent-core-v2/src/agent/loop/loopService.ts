@@ -89,7 +89,7 @@ import {
 } from './loop';
 import { mergeSteerMessages, stripBundledSkillBlocks } from '#human/agent/origin';
 import { isUserPromptSubmitHookPart } from '#/agent/contextMemory/hookParts';
-import { createUserEntry, type UserEntry } from '#human/agent/turn';
+import { createSystemEntry, createUserEntry, type UserEntry } from '#human/agent/turn';
 import {
   AssistantDelta,
   isDisplayablePromptOrigin,
@@ -237,6 +237,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       trace: () => this.activeRequestTrace,
       toolTurnId: () => this.active?.id,
       steerSignal: () => this.active?.steerController.signal,
+      remind: (message) => this.remind({ message }),
       source: () =>
         this.active === undefined
           ? undefined
@@ -465,8 +466,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   notify(note: LoopNotify = {}): LoopNotifyHandle {
+    return this.enqueueNudge(note, 'notify');
+  }
+
+  remind(note: LoopNotify = {}): LoopNotifyHandle {
+    return this.enqueueNudge(note, 'remind');
+  }
+
+  private enqueueNudge(note: LoopNotify, kind: Nudge['kind']): LoopNotifyHandle {
     if (this.disposing) throw abortError('Agent loop disposed');
     const nudge: Nudge = {
+      kind,
       contextMessage: note.message,
       bypassMaxSteps: note.bypassMaxSteps ?? false,
       turnScoped: note.turnScoped ?? true,
@@ -476,10 +486,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.nudges.push(nudge);
     if (this.quiescenceDepth === 0 && this.engine !== undefined) {
       nudge.sentToMachine = true;
-      this.machineEngine().notify(createUserEntry(machineUserMessage(note.message)));
+      this.sendNudge(nudge);
     } else {
-      this.logger.debug('loop notify buffered before reaching the machine', {
+      this.logger.debug('loop message buffered before reaching the machine', {
         agentId: this.scopeContext.agentId,
+        kind,
         buffered: this.nudges.length - this.nudgeCursor,
         quiescenceDepth: this.quiescenceDepth,
         engineAttached: this.engine !== undefined,
@@ -496,6 +507,14 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         this.maybeSettle();
       },
     };
+  }
+
+  private sendNudge(nudge: Nudge): void {
+    if (nudge.kind === 'remind') {
+      this.machineEngine().remind(machineReminderEntry(nudge.contextMessage));
+      return;
+    }
+    this.machineEngine().notify(createUserEntry(machineUserMessage(nudge.contextMessage)));
   }
 
   private createWaiter(
@@ -837,7 +856,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for (const nudge of this.nudges.slice(this.nudgeCursor)) {
       if (!nudge.dropped && !nudge.sentToMachine) {
         nudge.sentToMachine = true;
-        this.machineEngine().notify(createUserEntry(machineUserMessage(nudge.contextMessage)));
+        this.sendNudge(nudge);
       }
     }
   }
@@ -1322,15 +1341,21 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   }
 
   private materializeMessage(message: ContextMessage): void {
-    if (message.content.length === 0) return;
+    if (
+      message.content.length === 0 &&
+      (message.role !== 'system' || message.tools === undefined || message.tools.length === 0)
+    ) {
+      return;
+    }
     this.context.append(message);
   }
 
   private consumeDrainedNudges(): { readonly live: number; readonly bypass: boolean } {
     const engine = this.engine;
     if (engine === undefined) return { live: 0, bypass: false };
-    const notificationCount = engine.snapshot().notificationCount;
-    let consumed = this.nudges.length - this.nudgeCursor - notificationCount;
+    const snapshot = engine.snapshot();
+    let consumed =
+      this.nudges.length - this.nudgeCursor - snapshot.notificationCount - snapshot.reminderCount;
     let live = 0;
     let bypass = false;
     while (consumed > 0 && this.nudgeCursor < this.nudges.length) {
@@ -1341,7 +1366,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       live += 1;
       bypass = bypass || nudge.bypassMaxSteps;
       nudge.consumed = true;
-      if (nudge.contextMessage !== undefined && nudge.contextMessage.content.length > 0) {
+      if (
+        nudge.contextMessage !== undefined &&
+        (nudge.contextMessage.content.length > 0 ||
+          (nudge.contextMessage.role === 'system' && (nudge.contextMessage.tools?.length ?? 0) > 0))
+      ) {
         this.materializeMessage(nudge.contextMessage);
         if (
           nudge.promptIds !== undefined &&
@@ -1449,6 +1478,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         const messageId = children.length === 1 ? children[0]!.waiter.id : newMessageId();
         const promptIds = children.map((child) => child.waiter.id);
         this.nudges.push({
+          kind: 'notify',
           contextMessage: {
             role: 'user',
             content: gatedContent,
@@ -1755,6 +1785,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         signal: turn.controller.signal,
         turnId: turn.id,
         trace: this.activeRequestTrace,
+        remind: (message) => this.remind({ message }),
         onToolCall: (payload) => {
           const callUuid = randomUUID();
           step.toolCallUuids.set(payload.toolCallId, callUuid);
@@ -2237,6 +2268,15 @@ function normalizeFinishReason(reason: FinishReason): string {
   return reason;
 }
 
+function machineReminderEntry(
+  message: ContextMessage | undefined,
+): ReturnType<typeof createSystemEntry> | UserEntry {
+  if (message?.role === 'system') {
+    return createSystemEntry({ ...message, content: [...message.content] });
+  }
+  return createUserEntry(machineUserMessage(message));
+}
+
 function machineUserMessage(message: ContextMessage | undefined): UserMessage {
   if (message === undefined) return EMPTY_MACHINE_PROMPT;
   return { role: 'user', content: [...message.content] };
@@ -2294,6 +2334,7 @@ function projectionFromEntry(entry: UserEntry): PromptProjection {
 }
 
 interface Nudge {
+  readonly kind: 'notify' | 'remind';
   readonly contextMessage?: ContextMessage;
   readonly promptIds?: readonly string[];
   readonly bypassMaxSteps: boolean;

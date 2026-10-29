@@ -226,6 +226,7 @@
 | sticky mediaPaths | 已修复：每次请求继承媒体 Recovery 时先通过 `displayPaths()` 重算当前消息路径，再以新 replacement 重建 ledger rewrite；degrade/strip 的路径提醒不再使用旧 map。 |
 | 取消时的媒体 metadata 写入 | 已按用户决定在 `documents.set` 前执行 `input.signal?.throwIfAborted()`；same-size 且已取消的 materialize 不再更新 name/key metadata，本地 41/41、远程 100/100，产品改动未提交。 |
 | recovery traceId | 已按用户决定改为 `defineProtocol` 可选 `diagnoseError`：当前 attempt 的 error 和 headers 生成诊断 record；成功响应使用通用 `requestId`，不再对外暴露通用 `traceId`，也不跨 attempt 继承。 |
+| turn 配置冻结与 `select_tools` | 已将 dynamic disclosure 收敛为请求视图而非执行权限；`loop.remind` 与 `notify` 共用 `LoopNotify` 签名并进入独立追加队列，SelectTools 执行时直接发 schema reminder，Pending 与执行侧模型门禁已删除。Resolver 对不支持动态加载的模型剥离 select_tools schema、历史 calls/results、动态 schema system messages 和公告，默认 deferred tools 展开为普通前缀 tools，显式 override 不变；turn 中切换 alias 的 E2E 已验证。 |
 
 ### B. 已定稿接受现状，不再作为待修回归
 
@@ -237,19 +238,18 @@
 | 媒体降级与结构投影顺序 | 用户接受 313 当前顺序：媒体恢复可先按未投影历史计算和重写，随后再执行 strict 结构投影；orphan 媒体影响降级数量及组合恢复顺序不再作为待修回归。 |
 | `llmRequester.mediaRecovery` inspect state | 接受当前 ledger 的 inspect 展示，不补 main 的 `media.degradeCount/strip` 兼容视图；运行时媒体恢复行为不改。 |
 | reasoning-key 缓存 | 接受以 `baseUrl + model` 作为天然共享边界；相同连接的模型 alias 共用 App 级检测结果，不按 alias 或账号额外隔离，不处理该 corner case。 |
+| recovery 中重新计算工具快照 | 接受 313 每个 attempt 重算默认工具和动态 history，不恢复 main 在一次 `start()` 内固定 resolved 工具和动态 history 的行为；原始 messages 与显式 tools override 仍保持固定。 |
 
 ### C. 已定稿但尚未实施
 
-当前无。缓存诊断简化已于 2026-10-29 实施。
+当前无。
 
 ### D. 已讨论或说明，但尚未决定如何对齐
 
 | 行为 | 当前差异与未决点 |
 | --- | --- |
-| turn 配置冻结与 `select_tools` | 已解释 turn 开始时冻结模型上下文、请求参数和 system prompt 的原因；但“请求构造读冻结模型、工具执行读当前模型”的不一致是否修复、采用哪种口径，尚未决定。 |
 | 无凭证 Kimi 上传 | main 本地报错并尝试 inline 回退，313 发 `Bearer unused` 后可能按 401 终止；保留还是恢复本地失败/回退，尚未决定。 |
 | `video_upload.model` telemetry | main 记录模型 alias，313 记录 wire model name；按哪种维度恢复或同时保留，尚未决定。 |
-| recovery 中重新计算工具快照 | main 在一次 `start()` 内固定默认工具和动态 history，313 每个 attempt 重算；这是预期刷新还是需冻结，尚未决定。 |
 
 ### E. 完全未回应的行为差异
 
@@ -260,4 +260,5 @@
 - 缓存诊断简化为当前未提交工作副本改动；typecheck、build、comment-free 通过，聚焦 oxlint 为 0 errors；远程 usage 18/18、compaction 115/115、fork 首请求链路 23/23、compaction 后 fork 诊断 1/1，未据此宣称全量测试通过。
 - sticky mediaPaths 修复为当前未提交工作副本改动；本地 requester 61/61、远程相关 3 文件 91/91，typecheck、build、comment-free 通过，聚焦 oxlint 为 0 errors；未运行全量。
 - `diagnoseError` 改为当前未提交工作副本改动；本地相关测试 658/658；远程 Loop + kap-server 评分复跑 87/90，剩余 3 个为既有 Loop 事件顺序快照差异；agent-core、klient、product typecheck 和 agent-core build、comment-free 通过；kap-server typecheck 仅剩既有 `getRequester` 错误；未运行全量。
+- select_tools 改造为当前未提交工作副本改动；本地 select_tools 94/94、远程聚焦 276/276，typecheck、build、comment-free、完整 lint（0 errors）通过。远程全量 17877 passed / 11 failed / 26 skipped，修正后失败文件复跑剩 8 个既有失败（config 1、Loop 快照 3、plan 快照 2、tool 快照 1、已知子代理中断 1），requester、stateManifest 和 session-import 均恢复通过；未据此宣称全量通过。
 - `lint:imports` 仍只有 main 基线已有的 `human/agent/origin.ts` 违规；此前 Handoff 中的全量失败集合需要在该任务要求全量验证时重新确认。

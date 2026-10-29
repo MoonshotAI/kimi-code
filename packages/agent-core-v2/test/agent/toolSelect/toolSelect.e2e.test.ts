@@ -11,7 +11,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-import { IAgentToolSelectSchemasService } from '#/agent/toolSelect/toolSelectSchemas';
 import { LOADABLE_TOOLS_VARIANT } from '#/agent/toolSelect/dynamicTools';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -119,7 +118,6 @@ describe('progressive tool disclosure end-to-end', () => {
     }));
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
-    ctx.get(IAgentToolSelectSchemasService);
     ctx.get(IAgentToolExecutorService);
     ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
     await ctx.restorePersisted();
@@ -176,7 +174,7 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(ctx.llmCalls).toHaveLength(0);
   });
 
-  it('announces the manifest, loads by name, keeps the top-level table byte-stable, and dispatches on the next step', async () => {
+  it('announces the manifest, loads by name, keeps the top-level table byte-stable, and dispatches after a mid-turn model switch', async () => {
     ctx.mockNextResponse(selectToolsCall('call_select_1', [MCP_ALPHA]));
     ctx.mockNextResponse({
       type: 'function',
@@ -186,6 +184,12 @@ describe('progressive tool disclosure end-to-end', () => {
     });
     ctx.mockNextResponse({ type: 'text', text: 'done' });
 
+    ctx.emitter.once('tool.call.delta', () => {
+      ctx.configure({
+        provider: { type: 'kimi', model: 'no-dynamic-tools' },
+        modelCapabilities: { ...DISCLOSURE_CAPABILITIES, dynamically_loaded_tools: false },
+      });
+    });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'try the srv alpha tool' }] });
     await ctx.untilTurnEnd();
 
@@ -449,7 +453,6 @@ describe('same-turn MCP tool replacement', () => {
     try {
       ctx.get(IAgentToolSelectService);
       ctx.get(IAgentToolSelectAnnouncementsService);
-      ctx.get(IAgentToolSelectSchemasService);
       ctx.get(IAgentToolExecutorService);
       ctx.configure({ modelCapabilities: DISCLOSURE_CAPABILITIES });
       await ctx.restorePersisted();

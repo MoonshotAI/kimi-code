@@ -529,6 +529,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         metadata,
         signal,
         steerSignal: options.steerSignal,
+        remind: options.remind,
         onUpdate: (update) => {
           if (signal.aborted) return;
           this.dispatchToolProgress(call, update, options);

@@ -10,14 +10,15 @@ export function createToolSelectResolver(toolSelect: IAgentToolSelectService): L
       const capabilities =
         withProtocolCapabilities(request.model.spec, request.protocol.base).capability ?? {};
       const disclosure = toolSelect.enabled(capabilities);
+      const tools =
+        request.profile?.tools === undefined
+          ? toolSelect.defaultTools(disclosure)
+          : request.profile.tools;
       return {
         ...request,
         profile: {
           ...request.profile,
-          tools:
-            request.profile?.tools === undefined
-              ? toolSelect.defaultTools(disclosure)
-              : request.profile.tools,
+          tools,
         },
         content: {
           ...request.content,

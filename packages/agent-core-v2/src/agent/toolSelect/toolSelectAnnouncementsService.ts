@@ -19,7 +19,7 @@ export class AgentToolSelectAnnouncementsService extends Service implements IAge
     super();
     this._register(
       reminder.register(LOADABLE_TOOLS_VARIANT, async ({ isNewTurn, signal }) => {
-        if (!toolSelect.enabled()) return undefined;
+        if (!toolSelect.featureEnabled()) return undefined;
         if (isNewTurn) await mcp.waitForInitialLoad(signal);
         return toolSelect.loadableToolsAnnouncement();
       }),

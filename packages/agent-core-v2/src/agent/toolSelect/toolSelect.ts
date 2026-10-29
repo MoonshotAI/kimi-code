@@ -25,10 +25,13 @@ export interface LoadToolsResult {
   readonly consecutiveFailures: number;
   readonly suggestions: Readonly<Record<string, readonly string[]>>;
   readonly loadable: readonly string[];
+  readonly schemas: readonly Tool[];
 }
 
 export interface IAgentToolSelectService {
   readonly _serviceBrand: undefined;
+
+  featureEnabled(): boolean;
 
   enabled(capabilities?: ToolSelectCapabilities): boolean;
 
@@ -42,8 +45,6 @@ export interface IAgentToolSelectService {
   ): readonly ContextMessage[];
 
   load(names: readonly string[]): LoadToolsResult;
-
-  drainPendingToolSchemas(): readonly Tool[] | undefined;
 
   loadableToolsAnnouncement(): string | undefined;
 }

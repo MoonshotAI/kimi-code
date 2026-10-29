@@ -222,6 +222,8 @@ export interface IAgentLoopService {
 
   notify(note?: LoopNotify): LoopNotifyHandle;
 
+  remind(note?: LoopNotify): LoopNotifyHandle;
+
   buildAttachBundle(): MachineEngineAttachBundle;
 
   attachEngine(ref: MachineEngineAttachRef, bundle: MachineEngineAttachBundle): MachineEngine;

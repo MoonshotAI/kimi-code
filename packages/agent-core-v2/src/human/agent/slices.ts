@@ -80,23 +80,21 @@ export const remindersSlice = createSlice({
   initialState: () => [] as HistoryMessage[],
   reducers: {
     [inputReminded.type]: (draft, event: InputReminded) => {
-      const kept = draft.filter((entry) => entry.meta?.key !== event.key);
       const payload = event.message;
       if ('message' in payload) {
-        const meta = { source: 'reminder', key: event.key, ...payload.meta };
-        kept.push(
+        const meta = { source: 'reminder', ...payload.meta };
+        draft.push(
           payload.message.role === 'system'
             ? createSystemEntry(payload.message, meta)
             : createUserEntry(payload.message, meta),
         );
       } else {
-        kept.push(
+        draft.push(
           payload.role === 'system'
-            ? createSystemEntry(payload, { source: 'reminder', key: event.key })
-            : createUserEntry(payload, { source: 'reminder', key: event.key }),
+            ? createSystemEntry(payload, { source: 'reminder' })
+            : createUserEntry(payload, { source: 'reminder' }),
         );
       }
-      return kept;
     },
     [inputDrained.type]: () => [],
   },

@@ -1115,33 +1115,38 @@ describe('agent machine input.remind', () => {
 
     actor.send({
       type: 'input.remind',
-      key: 'todo',
-      entry: { message: createUserMessage('<system-reminder>\nold\n</system-reminder>') },
+      entry: {
+        message: createUserMessage('<system-reminder>\nold\n</system-reminder>'),
+        meta: { key: 'todo' },
+      },
     });
     actor.send({
       type: 'input.remind',
-      key: 'todo',
-      entry: { message: createUserMessage('<system-reminder>\nstale\n</system-reminder>') },
+      entry: {
+        message: createUserMessage('<system-reminder>\nstale\n</system-reminder>'),
+        meta: { key: 'todo' },
+      },
     });
     await vi.waitFor(() => {
-      expect(actor.getSnapshot().context.reminders).toHaveLength(1);
+      expect(actor.getSnapshot().context.reminders).toHaveLength(2);
     });
     expect(actor.getSnapshot().matches('idle')).toBe(true);
     expect(store.getState().history).toHaveLength(0);
-    expect(actor.getSnapshot().context.reminders).toHaveLength(1);
+    expect(actor.getSnapshot().context.reminders).toHaveLength(2);
     expect(actor.getSnapshot().context.reminders[0]?.meta).toEqual({ source: 'reminder', key: 'todo' });
-    expect(extractText(actor.getSnapshot().context.reminders[0]?.message ?? createUserMessage(''))).toContain('stale');
+    expect(extractText(actor.getSnapshot().context.reminders[0]?.message ?? createUserMessage(''))).toContain('old');
+    expect(extractText(actor.getSnapshot().context.reminders[1]?.message ?? createUserMessage(''))).toContain('stale');
 
     actor.send({ type: 'input.submit', entry: { message: createUserMessage('hi') } });
     await vi.waitFor(() => {
       expect(resolveTool).toBeDefined();
     });
-    expect(actor.getSnapshot().context.reminders).toHaveLength(1);
+    expect(actor.getSnapshot().context.reminders).toHaveLength(2);
 
     resolveTool?.({ content: [{ type: 'text', text: 'slow' }] });
     await waitFor(
       actor,
-      (s) => s.matches('idle') && store.getState().history.length === 5,
+      (s) => s.matches('idle') && store.getState().history.length === 6,
       { timeout: 5000 },
     );
 
@@ -1149,12 +1154,14 @@ describe('agent machine input.remind', () => {
       'user:hi',
       'assistant:',
       'tool:slow',
+      'user:<system-reminder>\nold\n</system-reminder>',
       'user:<system-reminder>\nstale\n</system-reminder>',
       'assistant:done',
     ]);
     expect(store.getState().history[3]?.meta).toEqual({ source: 'reminder', key: 'todo' });
+    expect(store.getState().history[4]?.meta).toEqual({ source: 'reminder', key: 'todo' });
     expect(actor.getSnapshot().context.reminders).toHaveLength(0);
-    expect(consumedKeys).toEqual([['todo']]);
+    expect(consumedKeys).toEqual([['todo', 'todo']]);
   });
 });
 

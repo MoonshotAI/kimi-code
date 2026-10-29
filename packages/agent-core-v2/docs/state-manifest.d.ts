@@ -27,7 +27,7 @@
 // references become '(circular)', and class instances collapse to a '(ClassName)'
 // marker — the wire shape of an entry is the JSON projection of the type here.
 //
-// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 73 keys)
+// Index (App: 0 keys · Workspace: 8 keys · Session: 9 keys · Agent: 71 keys)
 //   App
 //   Workspace
 //     workspaceDirs.ephemeralDirs          src/workspace/workspaceDirs/workspaceDirsService.ts
@@ -116,7 +116,6 @@
 //     toolDedupe.turnRepeatCount                      src/agent/toolDedupe/toolDedupeService.ts
 //     toolExecutor.dupTypeTurnId                      src/agent/toolExecutor/toolExecutorService.ts
 //     toolExecutor.toolCallDupTypes                   src/agent/toolExecutor/toolExecutorService.ts
-//     toolSelect.pendingLoaded                        src/agent/toolSelect/toolSelectService.ts
 //     tower                                           src/features/tower/towerOps.ts
 //     tower.owner                                     src/features/tower/towerOps.ts
 //     turn                                            src/agent/loop/turnOps.ts
@@ -1935,8 +1934,6 @@ export interface AgentStateSnapshot {
   // src/agent/toolExecutor/toolExecutorService.ts
   'toolExecutor.dupTypeTurnId': number | undefined;
   'toolExecutor.toolCallDupTypes': Map<string, /* ToolCallDupType — packages/agent-core-v2/src/agent/toolExecutor/toolExecutor.ts */ 'same_step' | 'cross_step'>;
-  // src/agent/toolSelect/toolSelectService.ts
-  'toolSelect.pendingLoaded': Set<string>;
   // src/agent/userTool/userToolOps.ts
   // replayable · durable — folds: ToolsRegisterUserTool, ToolsUnregisterUserTool
   'userTool': /* UserToolModelState — packages/agent-core-v2/src/agent/userTool/userToolOps.ts */ Map<string, /* UserToolRegistration — packages/agent-core-v2/src/agent/userTool/userTool.ts */ {

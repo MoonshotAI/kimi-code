@@ -1,4 +1,5 @@
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { SELECT_TOOLS_TOOL_NAME } from './toolSelect';
 
 export const DYNAMIC_TOOL_SCHEMA_VARIANT = 'dynamic_tool_schema';
 
@@ -19,7 +20,17 @@ export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
 export function stripDynamicToolContext(
   history: readonly ContextMessage[],
 ): readonly ContextMessage[] {
-  if (!history.some((m) => isDynamicToolSchemaMessage(m) || isLoadableToolsAnnouncement(m))) {
+  const hiddenCallIds = new Set<string>();
+  for (const message of history) {
+    if (message.role !== 'assistant') continue;
+    for (const call of message.toolCalls) {
+      if (call.name === SELECT_TOOLS_TOOL_NAME) hiddenCallIds.add(call.id);
+    }
+  }
+  if (
+    hiddenCallIds.size === 0 &&
+    !history.some((message) => isDynamicToolSchemaMessage(message) || isLoadableToolsAnnouncement(message))
+  ) {
     return history;
   }
   const out: ContextMessage[] = [];
@@ -28,11 +39,23 @@ export function stripDynamicToolContext(
     if (isDynamicToolSchemaMessage(message)) {
       const { tools: _tools, ...rest } = message;
       void _tools;
-      if (rest.content.length === 0) continue;
-      out.push(rest);
+      if (rest.content.length > 0) out.push(rest);
       continue;
     }
-    out.push(message);
+    if (message.role === 'tool') {
+      if (message.toolCallId === undefined || !hiddenCallIds.has(message.toolCallId)) out.push(message);
+      continue;
+    }
+    if (message.role !== 'assistant') {
+      out.push(message);
+      continue;
+    }
+    const toolCalls = message.toolCalls.filter((call) => call.name !== SELECT_TOOLS_TOOL_NAME);
+    if (toolCalls.length === message.toolCalls.length) {
+      out.push(message);
+      continue;
+    }
+    if (toolCalls.length > 0 || message.content.length > 0) out.push({ ...message, toolCalls });
   }
   return out;
 }
