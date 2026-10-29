@@ -652,40 +652,69 @@ describe('AgentLoopRequester media-degraded resend', () => {
     expect(mediaCounts(inputs)).toEqual([3, 2]);
   });
 
-  it('attaches display paths to degraded older media', async () => {
+  it('refreshes display paths for inherited degraded and stripped media', async () => {
     const calls = { value: 0 };
     const capturedInputs: ModelRequestInput[] = [];
+    let directory = '/session/media/first';
     const imageMessage = (url: string): Message => ({
       role: 'user',
       content: [{ type: 'image_url', imageUrl: { url } }],
     });
+    const messages = [
+      imageMessage('kimi-file://f_old'),
+      imageMessage('kimi-file://f_keep1'),
+      imageMessage('kimi-file://f_keep2'),
+    ];
     const { service } = createService(
-      createRequester(calls, BODY_TOO_LARGE_413, [], capturedInputs),
+      createRequester(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413], capturedInputs),
       {
         mediaResolver: {
-          resolve: async (messages) => messages,
-          displayPaths: async () => new Map([['kimi-file://f_old', '/session/media/f_old.png']]),
+          resolve: async (current) => current,
+          displayPaths: async () =>
+            new Map([
+              ['kimi-file://f_old', `${directory}/f_old.png`],
+              ['kimi-file://f_keep1', `${directory}/f_keep1.png`],
+              ['kimi-file://f_keep2', `${directory}/f_keep2.png`],
+            ]),
         },
       },
     );
+    const textsAt = (index: number) =>
+      capturedInputs[index]!.messages
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text);
 
-    await service.request({
-      messages: [
-        imageMessage('kimi-file://f_old'),
-        imageMessage('kimi-file://f_keep1'),
-        imageMessage('kimi-file://f_keep2'),
-      ],
-      source: { type: 'turn', turnId: 1, step: 1 },
-    });
+    await service.request({ messages, source: { type: 'turn', turnId: 1, step: 1 } });
 
-    expect(calls.value).toBe(2);
-    const parts = capturedInputs[1]!.messages.flatMap((message) => message.content);
-    const urls = parts
+    expect(calls.value).toBe(3);
+    const degradedParts = capturedInputs[1]!.messages.flatMap((message) => message.content);
+    const urls = degradedParts
       .filter((part) => part.type === 'image_url')
       .map((part) => mediaUrlOf(part));
     expect(urls).toEqual(['kimi-file://f_keep1', 'kimi-file://f_keep2']);
-    const texts = parts.filter((part) => part.type === 'text').map((part) => part.text);
-    expect(texts).toContain('<image path="/session/media/f_old.png"></image>');
+    expect(textsAt(1)).toContain('<image path="/session/media/first/f_old.png"></image>');
+    expect(textsAt(2)).toEqual(
+      expect.arrayContaining([
+        '<image path="/session/media/first/f_old.png"></image>',
+        '<image path="/session/media/first/f_keep1.png"></image>',
+        '<image path="/session/media/first/f_keep2.png"></image>',
+      ]),
+    );
+
+    directory = '/session/media/second';
+    await service.request({ messages, source: { type: 'turn', turnId: 1, step: 2 } });
+
+    expect(calls.value).toBe(4);
+    const inheritedTexts = textsAt(3);
+    expect(inheritedTexts).toEqual(
+      expect.arrayContaining([
+        '<image path="/session/media/second/f_old.png"></image>',
+        '<image path="/session/media/second/f_keep1.png"></image>',
+        '<image path="/session/media/second/f_keep2.png"></image>',
+      ]),
+    );
+    expect(inheritedTexts.join('\n')).not.toContain('/session/media/first/');
   });
 
   it('falls back to media-stripped when the media-degraded request still receives 413', async () => {

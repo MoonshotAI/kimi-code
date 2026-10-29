@@ -321,10 +321,11 @@ describe('SessionMediaStoreService', () => {
     expect(writes).toHaveBeenCalledTimes(alreadyAborted ? 0 : 1);
   });
 
-  it('keeps a same-size copy without re-reading the stream', async () => {
-    await store.materialize(input());
+  it('keeps a same-size copy without re-reading the stream or changing metadata on abort', async () => {
+    await store.materialize(input({ name: 'original.mp4' }));
     const again = await store.materialize(
       input({
+        name: 'renamed.mp4',
         stream: () => {
           throw new Error('must not be read');
         },
@@ -332,6 +333,21 @@ describe('SessionMediaStoreService', () => {
     );
     expect(again).toBe(pathFor('f_1', '.mp4'));
     expect(await readFile(again!)).toEqual(BYTES);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      store.materialize(
+        input({
+          name: 'cancelled.mp4',
+          signal: controller.signal,
+          stream: () => {
+            throw new Error('must not be read');
+          },
+        }),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect((await store.open('f_1'))?.name).toBe('renamed.mp4');
   });
 
   it('overwrites a wrong-size copy', async () => {

@@ -1,9 +1,11 @@
 import {
   countMediaParts,
   createMediaDegradeRecovery,
+  forkMediaRecovery,
+  type MediaReplacement,
 } from '#human/llm/builtin/policy/media-degrade';
 import type { Message } from '#human/llm/message';
-import type { LlmRecovery } from '#human/llm/policy/recovery';
+import type { LlmRecovery, LlmRecoveryLedger } from '#human/llm/policy/recovery';
 import type { LlmResolver } from '#human/llm/policy/resolver';
 import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
@@ -45,6 +47,10 @@ export interface AgentMediaPolicy {
   readonly toolResolver: LlmResolver;
   readonly resolver: LlmResolver;
   readonly recovery: LlmRecovery;
+  readonly refreshRecovery: (
+    ledger: LlmRecoveryLedger,
+    messages: readonly Message[],
+  ) => Promise<LlmRecoveryLedger>;
 }
 
 export type AgentMediaPolicyFactory = (
@@ -58,6 +64,13 @@ export function createAgentMediaPolicy(
   request: InitializedLlmRequester,
 ): AgentMediaPolicy {
   let mediaPaths: ReadonlyMap<string, string> = new Map();
+  const replacement: MediaReplacement = (part) => {
+    const path = mediaPaths.get(mediaUrlOf(part));
+    if (path === undefined) return undefined;
+    const kind = mediaKindOfPart(part);
+    if (kind === undefined) return undefined;
+    return { type: 'text', text: buildMediaPathTag(kind, path) };
+  };
   return {
     toolResolver: {
       id: 'agent-media-tools',
@@ -91,12 +104,10 @@ export function createAgentMediaPolicy(
           : { ...current, content: { ...current.content, messages } };
       },
     },
-    recovery: createMediaDegradeRecovery((part) => {
-      const path = mediaPaths.get(mediaUrlOf(part));
-      if (path === undefined) return undefined;
-      const kind = mediaKindOfPart(part);
-      if (kind === undefined) return undefined;
-      return { type: 'text', text: buildMediaPathTag(kind, path) };
-    }),
+    recovery: createMediaDegradeRecovery(replacement),
+    refreshRecovery: async (ledger, messages) => {
+      mediaPaths = await service.displayPaths(messages);
+      return forkMediaRecovery(ledger, replacement);
+    },
   };
 }

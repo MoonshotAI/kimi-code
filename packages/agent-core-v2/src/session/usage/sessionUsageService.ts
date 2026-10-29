@@ -5,7 +5,7 @@ import { agentSpaceOf } from '#/agent/agentContext/agentSpace';
 import type { AgentLLMRequestSource } from '#/agent/loop/requesterContract';
 import type { UsageRecordedContext, UsageStatus } from '#/agent/usage/usage';
 import { copyUsage } from '#/agent/usage/usageOps';
-import type { TokenUsage } from '#human/llm-requester/usage';
+import { emptyUsage, type TokenUsage } from '#human/llm-requester/usage';
 
 import { ISessionUsageService } from './sessionUsage';
 import { UsageAgentModelDefinition } from './usageAgentModel';
@@ -19,13 +19,21 @@ export class SessionUsageService extends Service implements ISessionUsageService
   async record(
     agent: AgentContext,
     model: string,
-    usage: TokenUsage,
+    usage: TokenUsage | undefined,
     source?: AgentLLMRequestSource,
   ): Promise<void> {
+    const recordedUsage = usage ?? emptyUsage();
     const firstRecord = await agentSpaceOf(agent).use(UsageAgentModelDefinition, (m) =>
-      m.record({ model, usage, source }),
+      m.record({ model, usage: recordedUsage, source }),
     );
-    this.onDidRecordEmitter.fire({ agent, model, usage: copyUsage(usage), source, firstRecord });
+    this.onDidRecordEmitter.fire({
+      agent,
+      model,
+      usage: copyUsage(recordedUsage),
+      usageReported: usage !== undefined,
+      source,
+      firstRecord,
+    });
   }
 
   status(agent: AgentContext): UsageStatus {

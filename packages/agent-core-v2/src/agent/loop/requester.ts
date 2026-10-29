@@ -13,6 +13,7 @@ import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';
+import { cacheProbeUsage } from '#/agent/usage/cacheProbe';
 import { IConfigService } from '#/app/config/config';
 import {
   APIContextOverflowError,
@@ -31,7 +32,6 @@ import {
   generateModel,
   type InitializedLlmRequester,
   type ModelRequestEvent,
-  type ModelRequestInput,
   type ModelRequestParams,
   type ModelRequestTiming,
 } from '#/llm-adapter/model/generate';
@@ -55,7 +55,6 @@ import {
   type AgentLLMRequestPartHandler,
   type AgentLLMRequestSource,
   type AgentLLMRequestTask,
-  type AgentLLMTurnRequestSnapshot,
   type PreparedTurnRequestConfig,
 } from './requesterContract';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
@@ -99,9 +98,7 @@ interface ResolvedLLMRequest {
   readonly tools?: readonly Tool[];
   readonly messages: Message[];
   readonly contextRevision: number;
-  readonly promptCacheProbe:
-    | { readonly source: 'compaction'; readonly baseline?: AgentLLMTurnRequestSnapshot }
-    | undefined;
+  readonly promptCacheProbe: 'compaction' | undefined;
   readonly source: AgentLLMRequestSource | undefined;
   readonly logFields: AgentLLMRequestLogFields;
 }
@@ -148,11 +145,6 @@ export const llmRequesterEmittedThinkingEffortWarningsKey = defineState<Set<stri
   'llmRequester.emittedThinkingEffortWarnings',
   () => new Set(),
 );
-export const llmRequesterLastTurnRequestKey = defineState<AgentLLMTurnRequestSnapshot | undefined>(
-  'llmRequester.lastTurnRequest',
-  () => undefined as AgentLLMTurnRequestSnapshot | undefined,
-);
-
 export class AgentLoopRequester implements LoopRequester {
   private readonly projector: AgentLoopProjector;
   private mediaPolicyFactory: AgentMediaPolicyFactory | undefined;
@@ -180,7 +172,6 @@ export class AgentLoopRequester implements LoopRequester {
     this.states.contributeState(llmRequesterTurnConfigsKey);
     this.states.contributeState(llmRequesterMediaRecoveryKey);
     this.states.contributeState(llmRequesterEmittedThinkingEffortWarningsKey);
-    this.states.contributeState(llmRequesterLastTurnRequestKey);
   }
 
   registerMediaPolicy(factory: AgentMediaPolicyFactory): void {
@@ -220,10 +211,6 @@ export class AgentLoopRequester implements LoopRequester {
     return this.modelCatalog.get(resolved.modelAlias).credentialProvider;
   }
 
-  lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined {
-    return this.states.get(llmRequesterLastTurnRequestKey);
-  }
-
   async request(
     overrides: AgentLLMRequestOverrides = {},
     onPart: AgentLLMRequestPartHandler = noopOnPart,
@@ -238,13 +225,9 @@ export class AgentLoopRequester implements LoopRequester {
     signal?: AbortSignal,
   ): AgentLLMRequestTask {
     const trace = new MutableLLMRequestTrace();
-    const promptCacheProbe =
-      overrides.promptCacheProbe === undefined
-        ? undefined
-        : { source: overrides.promptCacheProbe, baseline: this.lastTurnRequest() };
     return {
       trace,
-      result: this.requestWithTrace(trace, overrides, onPart, signal, promptCacheProbe),
+      result: this.requestWithTrace(trace, overrides, onPart, signal),
     };
   }
 
@@ -253,7 +236,6 @@ export class AgentLoopRequester implements LoopRequester {
     overrides: AgentLLMRequestOverrides,
     onPart: AgentLLMRequestPartHandler,
     signal: AbortSignal | undefined,
-    promptCacheProbe: ResolvedLLMRequest['promptCacheProbe'],
   ): Promise<AgentLLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
@@ -266,7 +248,7 @@ export class AgentLoopRequester implements LoopRequester {
     setTrace(undefined);
     try {
       return await this.runRequest(
-        this.resolveRequest(overrides, promptCacheProbe),
+        this.resolveRequest(overrides),
         onPart,
         signal,
         setTrace,
@@ -345,20 +327,21 @@ export class AgentLoopRequester implements LoopRequester {
     onRequestTrace: (traceId: string | undefined) => void,
     onAttemptRetry: (() => void) | undefined,
   ): Promise<AgentLLMRequestFinish> {
-    const cacheProbeBaseline = request.promptCacheProbe?.baseline;
     let cacheProbeReported = false;
-    const recoveryLedger = this.recoveredMedia(request)?.fork() ?? createRecoveryLedger();
+    const mediaPolicy = this.mediaPolicyFactory?.(request.model, request.request);
+    const recoveredMedia = this.recoveredMedia(request);
+    const recoveryLedger =
+      recoveredMedia === undefined
+        ? createRecoveryLedger()
+        : mediaPolicy === undefined
+          ? recoveredMedia.fork()
+          : await mediaPolicy.refreshRecovery(recoveredMedia, request.messages);
     const toolSelectResolver = createToolSelectResolver(this.toolSelect);
     const structureResolver = createStructureResolver(this.projector);
     const structureRecovery = createStructureRecovery(this.projector);
-    const mediaPolicy = this.mediaPolicyFactory?.(request.model, request.request);
     let previousMediaCount: number | undefined;
     let previousMediaRecovery: LlmRecoveryRecord | undefined;
     const run = async (): Promise<AgentLLMRequestFinish> => {
-      let input: ModelRequestInput | undefined;
-      let recorded: LlmRequestPayload | undefined;
-      let startedAt: number | undefined;
-
       let message: Extract<ModelRequestEvent, { type: 'finish' }>['message'] | undefined;
       let usage: TokenUsage | undefined;
       let timing: ModelRequestTiming | undefined;
@@ -393,7 +376,6 @@ export class AgentLoopRequester implements LoopRequester {
           ],
           recoveryLedger,
           onAttempt: (attemptInput, attemptRequest) => {
-            input = attemptInput;
             onRequestTrace(undefined);
             const mediaRecovery = latestMediaRecovery(recoveryLedger.applied);
             const projection = projectionNameOf(recoveryLedger.applied, mediaRecovery);
@@ -447,8 +429,7 @@ export class AgentLoopRequester implements LoopRequester {
               fields,
             };
             this.logRequest(logInput);
-            recorded = this.recordRequest(logInput);
-            startedAt = Date.now();
+            this.recordRequest(logInput);
           },
           onRecovery: (recovery) => {
             if (recovery.strategy === 'structure') {
@@ -510,77 +491,27 @@ export class AgentLoopRequester implements LoopRequester {
       }
 
       const completedMessage = message;
-      const completedInput = input;
-      const completedRecord = recorded;
-      const completedStartedAt = startedAt;
-      if (
-        completedMessage === undefined ||
-        finish === undefined ||
-        completedInput === undefined ||
-        completedRecord === undefined ||
-        completedStartedAt === undefined
-      ) {
+      if (completedMessage === undefined || finish === undefined) {
         throw new Error2(
           ErrorCodes.PROVIDER_API_ERROR,
           'LLM request stream ended without a finish event.',
         );
       }
       message = completedMessage;
-      if (request.promptCacheProbe?.source === 'compaction' && !cacheProbeReported) {
+      if (request.promptCacheProbe === 'compaction' && !cacheProbeReported) {
         cacheProbeReported = true;
-        const compared =
-          cacheProbeBaseline !== undefined &&
-          cacheProbeBaseline.modelAlias === request.modelAlias &&
-          cacheProbeBaseline.contextRevision === request.contextRevision;
-        const historyPrefixMatch = compared
-          ? cacheProbeBaseline.messageCount <= completedInput.messages.length &&
-            fingerprint(
-              JSON.stringify(completedInput.messages.slice(0, cacheProbeBaseline.messageCount)),
-            ) === cacheProbeBaseline.historyHash
-          : undefined;
         this.telemetry.track2('prompt_cache_probe', {
           source: 'compaction',
           turn_id: request.source?.turnId,
           provider_type: request.model.providerType ?? request.model.protocol,
           protocol: request.model.protocol,
-          input_tokens: inputTotal(usage ?? emptyUsage()),
-          input_cache_read: usage?.inputCacheRead ?? 0,
-          input_cache_creation: usage?.inputCacheCreation ?? 0,
-          output_tokens: usage?.output ?? 0,
-          model_match:
-            cacheProbeBaseline === undefined
-              ? undefined
-              : cacheProbeBaseline.modelAlias === request.modelAlias,
-          tools_match: compared
-            ? completedRecord.toolsHash === cacheProbeBaseline.toolsHash
-            : undefined,
-          system_prompt_match: compared
-            ? completedRecord.systemPromptHash === cacheProbeBaseline.systemPromptHash
-            : undefined,
-          history_prefix_match: historyPrefixMatch,
-          parent_input_tokens: compared ? cacheProbeBaseline.inputTokens : undefined,
-          parent_request_gap_ms: compared
-            ? completedStartedAt - cacheProbeBaseline.finishedAt
-            : undefined,
-        });
-      }
-      if (request.source?.type === 'turn') {
-        this.states.set(llmRequesterLastTurnRequestKey, {
-          modelAlias: request.modelAlias,
-          contextRevision: request.contextRevision,
-          toolsHash: completedRecord.toolsHash,
-          systemPromptHash: completedRecord.systemPromptHash,
-          messageCount: completedInput.messages.length,
-          historyHash: fingerprint(JSON.stringify(completedInput.messages)),
-          inputTokens: usage === undefined ? undefined : inputTotal(usage),
-          startedAt: completedStartedAt,
-          finishedAt: Date.now(),
+          ...cacheProbeUsage(usage),
         });
       }
       void this.usage.record(
         this.scopeContext.agentContext,
         request.modelAlias,
-        usage ?? emptyUsage(),
+        usage,
         request.source,
       );
       if (usage !== undefined) {
@@ -691,10 +622,7 @@ export class AgentLoopRequester implements LoopRequester {
     });
   }
 
-  private resolveRequest(
-    overrides: AgentLLMRequestOverrides,
-    promptCacheProbe: ResolvedLLMRequest['promptCacheProbe'],
-  ): ResolvedLLMRequest {
+  private resolveRequest(overrides: AgentLLMRequestOverrides): ResolvedLLMRequest {
     const turnConfig = this.resolveTurnConfig(overrides.source);
     const resolved = turnConfig?.resolved ?? this.profile.resolveModelContext();
     const baseParams = turnConfig?.params ?? this.profile.resolveRequestParams();
@@ -733,7 +661,7 @@ export class AgentLoopRequester implements LoopRequester {
       tools: overrides.tools === undefined ? undefined : [...overrides.tools],
       messages: [...messages],
       contextRevision: this.context.prefixRevision(),
-      promptCacheProbe,
+      promptCacheProbe: overrides.promptCacheProbe,
       source: overrides.source,
       logFields: logFieldsForSource(overrides.source),
     };
@@ -789,7 +717,7 @@ export class AgentLoopRequester implements LoopRequester {
     this.log.info('llm request', requestFields);
   }
 
-  private recordRequest(input: LLMRequestLogInput): LlmRequestPayload {
+  private recordRequest(input: LLMRequestLogInput): void {
     const fields = input.fields ?? {};
     const wireTools = providerVisibleTools(input.tools);
     const tools = toolSignature(wireTools);
@@ -835,7 +763,6 @@ export class AgentLoopRequester implements LoopRequester {
       droppedCount: numberField(fields, 'droppedCount'),
     };
     void this.dispatcher.dispatch(new LlmRequest(payload));
-    return payload;
   }
 
   private logResponse(

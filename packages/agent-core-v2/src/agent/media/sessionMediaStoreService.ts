@@ -127,6 +127,7 @@ export class SessionMediaStoreService implements ISessionMediaStore {
         signal: input.signal,
       });
     }
+    input.signal?.throwIfAborted();
     await this.documents.set(this.scope, this.metadataKey(input.fileId), {
       version: 1,
       key,

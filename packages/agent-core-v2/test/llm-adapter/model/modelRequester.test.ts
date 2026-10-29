@@ -19,6 +19,7 @@ import {
   PROVIDER_API_ERROR_CODE,
   PROVIDER_AUTH_ERROR_CODE,
   isAbortError,
+  isRetryableGenerateError,
 } from '#/llm-adapter/contract/errors';
 import type { Message } from '#human/llm/message';
 import { createMediaDegradeRecovery } from '#human/llm/builtin/policy/media-degrade';
@@ -359,6 +360,12 @@ describe('generateModel request execution', () => {
     );
     const failure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
     expect((failure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+
+    requester.handler = () => Promise.reject('boom');
+    const nonErrorFailure = await collect(impl.request(INPUT)).catch((error: unknown) => error);
+    expect(nonErrorFailure).toBeInstanceOf(ChatProviderError);
+    expect((nonErrorFailure as { code: string }).code).toBe(PROVIDER_API_ERROR_CODE);
+    expect(isRetryableGenerateError(nonErrorFailure)).toBe(true);
 
     requester.handler = (_i, emit) =>
       emit({

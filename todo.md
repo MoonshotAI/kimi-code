@@ -10,7 +10,7 @@
 1. **依赖组装与状态注册**（`requester.ts:162-191`）
    - 注入 context、profile、model、catalog、protocol registry、media、usage、telemetry 等 17 个依赖。
    - 创建 `AgentLoopProjector`。
-   - 注册 6 个 state key：请求 trace、配置日志签名、turn 配置、媒体恢复、thinking 警告、最近 turn 请求快照。
+   - 注册 5 个 state key：请求 trace、配置日志签名、turn 配置、媒体恢复、thinking 警告。
 
 2. **Turn 请求配置冻结**（`requester.ts:209-213`、`786-805`）
    - `prepareTurnConfig()` 为 turn 固化模型上下文、请求参数和 system prompt。
@@ -146,18 +146,17 @@
 
 ## 五、请求后的状态与观测
 
-23. **Prompt Cache 探测**（`requester.ts:256-260`、`491-524`）
-    - compaction 请求启动时保存上一 turn 基线。
-    - 成功后比较模型、context revision、tools hash、system prompt hash、历史前缀 hash、input tokens 和请求间隔。
-    - 发送 `prompt_cache_probe` telemetry；一次请求只上报一次。
+23. **Prompt Cache 探测**
+    - full compaction 成功后与 fork 首次 turn 响应只根据本次 response usage 发送 `prompt_cache_probe`。
+    - 总输入为 `inputOther + inputCacheRead + inputCacheCreation`，命中率为 `inputCacheRead / 总输入`；缺 usage 或总输入为 0 时命中率未知。
+    - 不再比较模型、context revision、tools、system prompt 或历史前缀，也不参与 recovery 或 compaction 决策。
 
-24. **最近 Turn 请求快照**（`requester.ts:226-228`、`525-537`）
-    - turn 成功后保存模型、context revision、配置与历史 hash、消息数、input tokens、起止时间。
-    - `lastTurnRequest()` 提供给 cache probe 和后续 compaction 查询。
+24. **最近 Turn 请求快照（已删除）**
+    - 不再保存 `lastTurnRequest`，相关 state key、公开方法和快照类型均已移除。
 
-25. **Usage 记账**（`requester.ts:538-543`）
-    - 将本次 usage、model alias 和请求来源写入 `ISessionUsageService`。
-    - 无 usage 时使用 `emptyUsage()`。
+25. **Usage 记账**
+    - 将本次可选 usage、model alias 和请求来源写入 `ISessionUsageService`。
+    - 无 usage 时仍按 `emptyUsage()` 记账，同时以 `usageReported` 保留响应是否真实提供 usage 的信息。
 
 26. **Token Counting 实测校准**（`requester.ts:544-546`）
     - 有真实 usage 时，把请求消息、响应消息和 usage 交给 `tokenCounting.measured()`。
@@ -201,8 +200,8 @@
     - 请求 overrides 和 streaming part handler。
     - 请求完成结果。
     - `{ trace, result }` 任务句柄。
-    - turn 预配置与最近请求快照。
-    - `LoopRequester` 的 7 个公开方法。
+    - turn 预配置。
+    - `LoopRequester` 的 5 个公开方法。
 
 ## 边界说明
 
@@ -222,43 +221,42 @@
 | ReadMediaFile 执行语义 | 不再按 model capability / providerType 拒绝调用；读取和必要处理后默认 `put` 并生成 `kimi-file://`，实际读取、解码、存储错误仍显式返回。 |
 | `kimi-file` 请求解析 | Media Resolver 按模型与协议能力、上传接口和上传结果选择能力提示 omit、provider file-id 或 inline base64；认证错误仍显式抛出。 |
 | Resolver 组合顺序 | 已固定为 ToolSelect → MediaTool → Structure → Media；中英文文档与聚焦测试已同步。 |
+| full compaction 与 fork 缓存诊断简化 | 已改为 response usage 驱动并删除 `lastTurnRequest` 及历史前缀比较；新增 `cache_hit_rate`，只把 cache read 计为命中，缺 usage 或总输入为 0 时未知，诊断不参与 recovery 或 compaction 决策。 |
+| 非 `Error` provider 异常 | 已按用户决定恢复 main 行为：`unknown` 且 rawError 为非 `Error` 时映射为 `ChatProviderError(provider.api_error)`，`isRetryableGenerateError` 为 true；本地 14/14、远程 75/75，产品改动未提交。 |
+| sticky mediaPaths | 已修复：每次请求继承媒体 Recovery 时先通过 `displayPaths()` 重算当前消息路径，再以新 replacement 重建 ledger rewrite；degrade/strip 的路径提醒不再使用旧 map。 |
+| 取消时的媒体 metadata 写入 | 已按用户决定在 `documents.set` 前执行 `input.signal?.throwIfAborted()`；same-size 且已取消的 materialize 不再更新 name/key metadata，本地 41/41、远程 100/100，产品改动未提交。 |
 
 ### B. 已定稿接受现状，不再作为待修回归
 
 | 行为 | 用户决定 |
 | --- | --- |
 | 凭证解析异常分类 | 接受当前归为 `provider.api_error` 的行为，不回滚到 main 的 `config.invalid`，本轮不修改。 |
+| kimi-inspect 模型 Ping | 用户明确不管：kimi-inspect 不对外开放，因此 Ping 的 debug RPC `method not found` 与 typecheck 失败均不处理，不再作为本任务回归。 |
+| provider 文件失效后的上传缓存 | 用户明确先不管：内容寻址引用与 provider file-id 缓存即使过期或被删除也不在本轮处理，不要求清理缓存或自动重传。 |
+| 媒体降级与结构投影顺序 | 用户接受 313 当前顺序：媒体恢复可先按未投影历史计算和重写，随后再执行 strict 结构投影；orphan 媒体影响降级数量及组合恢复顺序不再作为待修回归。 |
+| `llmRequester.mediaRecovery` inspect state | 接受当前 ledger 的 inspect 展示，不补 main 的 `media.degradeCount/strip` 兼容视图；运行时媒体恢复行为不改。 |
+| reasoning-key 缓存 | 接受以 `baseUrl + model` 作为天然共享边界；相同连接的模型 alias 共用 App 级检测结果，不按 alias 或账号额外隔离，不处理该 corner case。 |
 
 ### C. 已定稿但尚未实施
 
-| 行为 | 待办 |
-| --- | --- |
-| full compaction 与 fork 缓存诊断简化 | 按 2026-10-28 定稿改为 response usage 驱动：删除 `lastTurnRequest` 和 history/tools/systemPrompt 前缀比较；总输入为 `inputOther + inputCacheRead + inputCacheCreation`，只把 cache read 计为命中，缺 usage 时结果为未知；诊断不参与 recovery 或 compaction 决策。 |
+当前无。缓存诊断简化已于 2026-10-29 实施。
 
 ### D. 已讨论或说明，但尚未决定如何对齐
 
 | 行为 | 当前差异与未决点 |
 | --- | --- |
 | turn 配置冻结与 `select_tools` | 已解释 turn 开始时冻结模型上下文、请求参数和 system prompt 的原因；但“请求构造读冻结模型、工具执行读当前模型”的不一致是否修复、采用哪种口径，尚未决定。 |
-| reasoning-key 缓存 | main 为每个 catalog requester 独立缓存，313 为 App 级共享；是否按 alias/账号隔离或接受共享，尚未决定。 |
 | 无凭证 Kimi 上传 | main 本地报错并尝试 inline 回退，313 发 `Bearer unused` 后可能按 401 终止；保留还是恢复本地失败/回退，尚未决定。 |
 | recovery traceId | 后续 attempt 无 headers 或 resolver 提前失败时可能沿用旧 trace；是否每次物理 attempt 都清空，尚未决定。 |
-| 非 `Error` provider 异常 | main 转为可重试 provider 错误，313 转为 internal/unknown 且通常不重试；是否恢复旧分类，尚未决定。 |
-| `llmRequester.mediaRecovery` inspect state | main 暴露 `media.degradeCount/strip`，313 为 `ledger: unknown`；是否提供可读兼容视图，尚未决定。 |
-| sticky mediaPaths | main 每次请求重算 display path，313 的 ledger rewrite 捕获旧 map；是否改为动态读取路径，尚未决定。 |
-| 取消时的媒体 metadata 写入 | 相同 canonical 文件已存在时，313 可能在取消后仍更新 name/key metadata；是否需要在 `documents.set` 前检查 abort，尚未决定。 |
 | `video_upload.model` telemetry | main 记录模型 alias，313 记录 wire model name；按哪种维度恢复或同时保留，尚未决定。 |
 | recovery 中重新计算工具快照 | main 在一次 `start()` 内固定默认工具和动态 history，313 每个 attempt 重算；这是预期刷新还是需冻结，尚未决定。 |
 
 ### E. 完全未回应的行为差异
 
-| 行为 | 当前差异与待回应问题 |
-| --- | --- |
-| kimi-inspect 模型 Ping | `IModelCatalog.ping` 已删除，但 inspector 仍调用该方法；当前 debug RPC 返回 `method not found` 且 typecheck 失败。需要决定迁移到 direct-generate 还是提供其他 Ping 入口。 |
-| 媒体降级与结构投影顺序 | main 先结构投影再计算媒体降级，313 在结构投影前计算；orphan 媒体会导致 413 后多丢有效媒体，media → structure 组合恢复的后续 body 也不同。需要决定是否恢复 main 的顺序。 |
-| provider 文件失效后的上传缓存 | 同 bytes 的 ReadMediaFile 现在跨 session 复用内容寻址引用和 provider file-id，缓存无 TTL/存在性检查；文件过期或删除后不会自动重传。尚未回应是否清理缓存重传及如何处理 provider 失效响应。 |
+当前无。此前最后一项“媒体降级与结构投影顺序”已于 2026-10-29 接受为当前行为。
 
 ### 验证边界
 
-- 当前实现提交为 `387ad1a6`；本轮聚焦验证为本地 235/235、远程含 klient memory/IPC 311/311，未据此宣称全量测试通过。
+- 缓存诊断简化为当前未提交工作副本改动；typecheck、build、comment-free 通过，聚焦 oxlint 为 0 errors；远程 usage 18/18、compaction 115/115、fork 首请求链路 23/23、compaction 后 fork 诊断 1/1，未据此宣称全量测试通过。
+- sticky mediaPaths 修复为当前未提交工作副本改动；本地 requester 61/61、远程相关 3 文件 91/91，typecheck、build、comment-free 通过，聚焦 oxlint 为 0 errors；未运行全量。
 - `lint:imports` 仍只有 main 基线已有的 `human/agent/origin.ts` 违规；此前 Handoff 中的全量失败集合需要在该任务要求全量验证时重新确认。

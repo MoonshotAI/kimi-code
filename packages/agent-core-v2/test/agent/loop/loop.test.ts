@@ -2323,7 +2323,6 @@ describe('aborted step tool execution', () => {
       prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
       currentCredentialProvider: rejectingCredentials,
       credentialProviderForTurn: rejectingCredentials,
-      lastTurnRequest: () => undefined,
       async request() {
         throw new Error('request must not run');
       },
@@ -2408,7 +2407,6 @@ function createTimingRequester(): LoopRequester {
     prepareTurnConfig: () => ({ thinkingEffort: 'off' }),
     currentCredentialProvider: () => undefined,
     credentialProviderForTurn: () => undefined,
-    lastTurnRequest: () => undefined,
     async request(_overrides, onPart = () => {}) {
       await onPart({ type: 'text', text: 'answer' });
       return {

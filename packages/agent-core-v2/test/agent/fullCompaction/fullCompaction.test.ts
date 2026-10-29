@@ -4170,7 +4170,7 @@ describe('goal reminder re-injection after full compaction', () => {
 });
 
 describe('FullCompaction cache probe', () => {
-  it('reports matching request prefixes together with cache usage and timing', async () => {
+  it('reports response usage and cache hit rate without request prefix comparisons', async () => {
     const records: TelemetryRecord[] = [];
     let attempts = 0;
     const generate: GenerateFn = requesterFromGenerateFn(async () => {
@@ -4207,116 +4207,29 @@ describe('FullCompaction cache probe', () => {
       input_cache_read: 80,
       input_cache_creation: 20,
       output_tokens: 5,
-      model_match: true,
-      tools_match: true,
-      system_prompt_match: true,
-      history_prefix_match: true,
-      parent_input_tokens: 200,
+      cache_hit_rate: 80 / 120,
     });
     expect(probes[0]?.properties?.['turn_id']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeGreaterThanOrEqual(0);
+    expect(probes[0]?.properties?.['tools_match']).toBeUndefined();
+    expect(probes[0]?.properties?.['system_prompt_match']).toBeUndefined();
+    expect(probes[0]?.properties?.['history_prefix_match']).toBeUndefined();
     await ctx.expectResumeMatches();
   });
 
-  it('reports a broken history prefix when compaction pre-shrinks the last turn history', async () => {
+  it('does not count cache creation as a cache hit', async () => {
     const records: TelemetryRecord[] = [];
-    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: {
-        ...CATALOGUED_MODEL_CAPABILITIES,
-        max_context_tokens: 40_000,
-      },
-    });
-    ctx.mockNextResponse({ type: 'text', text: 'Turn response.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the conversation' }] });
-    await ctx.untilTurnEnd();
-    ctx.appendExchange(1, 'old user one', `old assistant one ${'a'.repeat(56_000)}`, 14_000);
-    ctx.appendExchange(2, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, 20_000);
-    ctx.appendExchange(3, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, 36_000);
-    const completed = ctx.once('compaction.completed');
-
-    ctx.mockNextResponse({ type: 'text', text: 'Pre-shrunk summary.' });
-    await ctx.rpc.beginCompaction({});
-    await completed;
-
-    const probes = records.filter((record) => record.event === 'prompt_cache_probe');
-    expect(probes).toHaveLength(1);
-    expect(probes[0]?.properties).toMatchObject({
-      source: 'compaction',
-      model_match: true,
-      tools_match: true,
-      system_prompt_match: true,
-      history_prefix_match: false,
-    });
-    await ctx.expectResumeMatches();
-  });
-
-  it('reports a broken history prefix when overflow shrinking drops below the baseline message count', async () => {
-    const records: TelemetryRecord[] = [];
-    const inputs: string[][] = [];
-    let attempts = 0;
-    const generate: GenerateFn = requesterFromGenerateFn(async (_provider, _system, _tools, history) => {
-      attempts += 1;
-      inputs.push(inputHistorySnapshot(history));
-      if (attempts === 2) {
-        throw new APIContextOverflowError(400, 'Context length exceeded', 'req-cache-probe-shrink');
-      }
-      return textResult(attempts === 1 ? 'Turn response.' : 'Compacted summary.');
-    });
+    const generate: GenerateFn = requesterFromGenerateFn(async () => ({
+      ...textResult('Compacted summary.'),
+      usage: { inputOther: 0, output: 5, inputCacheRead: 0, inputCacheCreation: 100 },
+    }));
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
-      modelCapabilities: {
-        ...CATALOGUED_MODEL_CAPABILITIES,
-        max_context_tokens: 40_000,
-      },
-    });
-    ctx.appendExchange(1, 'baseline user one', 'baseline assistant one', 20);
-    ctx.appendExchange(2, 'baseline user two', 'baseline assistant two', 40);
-    ctx.appendExchange(3, 'baseline user three', 'baseline assistant three', 80);
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the conversation' }] });
-    await ctx.untilTurnEnd();
-    ctx.appendExchange(4, 'old user one', `old assistant one ${'a'.repeat(56_000)}`, 14_000);
-    ctx.appendExchange(5, 'mid user two', `mid assistant two ${'b'.repeat(16_000)}`, 20_000);
-    ctx.appendExchange(6, 'recent user three', `recent assistant three ${'c'.repeat(1_000)}`, 36_000);
-    const completed = ctx.once('compaction.completed');
-
-    await ctx.rpc.beginCompaction({});
-    await completed;
-
-    expect(attempts).toBe(3);
-    expect(inputs).toHaveLength(3);
-    expect(inputs[2]!.length).toBeLessThan(inputs[0]!.length);
-    const probes = records.filter((record) => record.event === 'prompt_cache_probe');
-    expect(probes).toHaveLength(1);
-    expect(probes[0]?.properties).toMatchObject({
-      source: 'compaction',
-      model_match: true,
-      tools_match: true,
-      system_prompt_match: true,
-      history_prefix_match: false,
-    });
-    await ctx.expectResumeMatches();
-  });
-
-  it('marks a model change without comparing unrelated request prefixes', async () => {
-    const records: TelemetryRecord[] = [];
-    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
     });
-    ctx.mockNextResponse({ type: 'text', text: 'Turn response.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the conversation' }] });
-    await ctx.untilTurnEnd();
-    ctx.configure({
-      provider: { ...CATALOGUED_PROVIDER, model: 'other-model' },
-      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
-    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     const completed = ctx.once('compaction.completed');
 
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
     await ctx.rpc.beginCompaction({});
     await completed;
 
@@ -4324,59 +4237,21 @@ describe('FullCompaction cache probe', () => {
     expect(probes).toHaveLength(1);
     expect(probes[0]?.properties).toMatchObject({
       source: 'compaction',
-      model_match: false,
+      input_tokens: 100,
       input_cache_read: 0,
+      input_cache_creation: 100,
+      cache_hit_rate: 0,
     });
-    expect(probes[0]?.properties?.['tools_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['system_prompt_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['history_prefix_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_input_tokens']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeUndefined();
     await ctx.expectResumeMatches();
   });
 
-  it('omits baseline comparisons after the context prefix revision changes', async () => {
-    const records: TelemetryRecord[] = [];
-    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
-    ctx.configure({
-      provider: CATALOGUED_PROVIDER,
-      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
-    });
-    ctx.mockNextResponse({ type: 'text', text: 'Turn response.' });
-    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start the conversation' }] });
-    await ctx.untilTurnEnd();
-    ctx.context.applyCompaction({
-      summary: 'Rewrite the context prefix.',
-      compactedCount: ctx.context.get().length,
-      tokensBefore: 100,
-    });
-    const completed = ctx.once('compaction.completed');
-
-    ctx.mockNextResponse({ type: 'text', text: 'Compacted summary.' });
-    await ctx.rpc.beginCompaction({});
-    await completed;
-
-    const probes = records.filter((record) => record.event === 'prompt_cache_probe');
-    expect(probes).toHaveLength(1);
-    expect(probes[0]?.properties).toMatchObject({
-      source: 'compaction',
-      model_match: true,
-    });
-    expect(probes[0]?.properties?.['tools_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['system_prompt_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['history_prefix_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_input_tokens']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeUndefined();
-    await ctx.expectResumeMatches();
-  });
-
-  it('probes the first response after a network failure without inventing a baseline', async () => {
+  it('reports unknown usage for the first successful response after a network failure', async () => {
     const records: TelemetryRecord[] = [];
     let attempts = 0;
     const generate: GenerateFn = requesterFromGenerateFn(async () => {
       attempts += 1;
       if (attempts === 1) throw new APIConnectionError('socket hang up');
-      return textResult('Recovered compacted summary.');
+      return { ...textResult('Recovered compacted summary.'), usage: null };
     });
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
@@ -4392,14 +4267,12 @@ describe('FullCompaction cache probe', () => {
     expect(attempts).toBe(2);
     const probes = records.filter((record) => record.event === 'prompt_cache_probe');
     expect(probes).toHaveLength(1);
-    expect(probes[0]?.properties).toMatchObject({
-      source: 'compaction',
-      input_cache_read: 0,
-    });
-    expect(probes[0]?.properties?.['model_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['history_prefix_match']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_input_tokens']).toBeUndefined();
-    expect(probes[0]?.properties?.['parent_request_gap_ms']).toBeUndefined();
+    expect(probes[0]?.properties).toMatchObject({ source: 'compaction' });
+    expect(probes[0]?.properties?.['input_tokens']).toBeUndefined();
+    expect(probes[0]?.properties?.['input_cache_read']).toBeUndefined();
+    expect(probes[0]?.properties?.['input_cache_creation']).toBeUndefined();
+    expect(probes[0]?.properties?.['output_tokens']).toBeUndefined();
+    expect(probes[0]?.properties?.['cache_hit_rate']).toBeUndefined();
     await ctx.expectResumeMatches();
   });
 
@@ -4436,7 +4309,7 @@ describe('FullCompaction cache probe', () => {
     expect(probes).toHaveLength(1);
     expect(probes[0]?.properties).toMatchObject({
       source: 'compaction',
-      history_prefix_match: true,
+      cache_hit_rate: 0,
     });
     await ctx.expectResumeMatches();
   });

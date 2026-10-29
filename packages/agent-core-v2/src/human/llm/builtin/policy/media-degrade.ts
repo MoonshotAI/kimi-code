@@ -2,6 +2,7 @@ import { mediaKeyOf, type ContentPart, type MediaPart, type Message } from '#/ll
 import type {
   LlmRecovery,
   LlmRecoveryEntry,
+  LlmRecoveryLedger,
   LlmRecoveryRecord,
   LlmRequestRewrite,
 } from '#/llm/policy/recovery';
@@ -133,23 +134,29 @@ function rewriteMessages(
   };
 }
 
+interface MediaRecoveryEntry extends LlmRecoveryEntry {
+  readonly rewriteWith: (replacement?: MediaReplacement) => LlmRequestRewrite | undefined;
+}
+
 function degradeEntry(
   messages: readonly Message[],
   appliedRecoveries: readonly LlmRecoveryRecord[],
   replacement?: MediaReplacement,
-): LlmRecoveryEntry | undefined {
+): MediaRecoveryEntry | undefined {
   const count = Math.max(0, countMediaParts(messages) - MEDIA_DEGRADE_KEEP_RECENT);
   const alreadyDegraded = appliedRecoveries.some(
     (recovery) => recovery.strategy === MEDIA_RECOVERY_ID && recovery.action === 'degraded',
   );
   if (count === 0 && alreadyDegraded) return undefined;
+  const rewriteWith = (currentReplacement?: MediaReplacement) =>
+    count === 0
+      ? undefined
+      : rewriteMessages((current) => degradeLeadingMediaParts(current, count, currentReplacement));
   return {
     strategy: MEDIA_RECOVERY_ID,
     action: 'degraded',
-    rewrite:
-      count === 0
-        ? undefined
-        : rewriteMessages((current) => degradeLeadingMediaParts(current, count, replacement)),
+    rewrite: rewriteWith(replacement),
+    rewriteWith,
   };
 }
 
@@ -157,20 +164,33 @@ function stripEntry(
   messages: readonly Message[],
   appliedRecoveries: readonly LlmRecoveryRecord[],
   replacement?: MediaReplacement,
-): LlmRecoveryEntry | undefined {
+): MediaRecoveryEntry | undefined {
   const keys = captureMediaKeys(messages);
   const alreadyStripped = appliedRecoveries.some(
     (recovery) => recovery.strategy === MEDIA_RECOVERY_ID && recovery.action === 'stripped',
   );
   if (keys.size === 0 && alreadyStripped) return undefined;
+  const rewriteWith = (currentReplacement?: MediaReplacement) =>
+    keys.size === 0
+      ? undefined
+      : rewriteMessages((current) => stripMediaParts(current, keys, currentReplacement));
   return {
     strategy: MEDIA_RECOVERY_ID,
     action: 'stripped',
-    rewrite:
-      keys.size === 0
-        ? undefined
-        : rewriteMessages((current) => stripMediaParts(current, keys, replacement)),
+    rewrite: rewriteWith(replacement),
+    rewriteWith,
   };
+}
+
+export function forkMediaRecovery(
+  ledger: LlmRecoveryLedger,
+  replacement?: MediaReplacement,
+): LlmRecoveryLedger {
+  return ledger.map((entry) => {
+    if (entry.strategy !== MEDIA_RECOVERY_ID) return entry;
+    const rewriteWith = (entry as MediaRecoveryEntry).rewriteWith;
+    return rewriteWith === undefined ? entry : { ...entry, rewrite: rewriteWith(replacement) };
+  });
 }
 
 export function createMediaDegradeRecovery(replacement?: MediaReplacement): LlmRecovery {

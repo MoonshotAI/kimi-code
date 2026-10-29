@@ -70,7 +70,6 @@
 //     llm.requestTrace                                src/agent/loop/llmRequestOps.ts
 //     llmRequester.emittedThinkingEffortWarnings      src/agent/loop/requester.ts
 //     llmRequester.lastConfigLogSignature             src/agent/loop/requester.ts
-//     llmRequester.lastTurnRequest                    src/agent/loop/requester.ts
 //     llmRequester.mediaRecovery                      src/agent/loop/requester.ts
 //     llmRequester.turnConfigs                        src/agent/loop/requester.ts
 //     loop.disposing                                  src/agent/loop/loopService.ts
@@ -1645,17 +1644,6 @@ export interface AgentStateSnapshot {
   // src/agent/loop/requester.ts
   'llmRequester.emittedThinkingEffortWarnings': Set<string>;
   'llmRequester.lastConfigLogSignature': string | undefined;
-  'llmRequester.lastTurnRequest': /* AgentLLMTurnRequestSnapshot — packages/agent-core-v2/src/agent/loop/requesterContract.ts */ {
-    readonly modelAlias: string;
-    readonly contextRevision: number;
-    readonly toolsHash: string;
-    readonly systemPromptHash: string;
-    readonly messageCount: number;
-    readonly historyHash: string;
-    readonly inputTokens?: number;
-    readonly startedAt: number;
-    readonly finishedAt: number;
-  } | undefined;
   'llmRequester.mediaRecovery': /* MediaRecovery — packages/agent-core-v2/src/agent/loop/requester.ts */ {
     readonly modelAlias: string;
     readonly contextRevision: number;

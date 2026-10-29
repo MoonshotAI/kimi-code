@@ -9,7 +9,6 @@ import type {
   AgentLLMRequestPartHandler,
   AgentLLMRequestSource,
   AgentLLMRequestTask,
-  AgentLLMTurnRequestSnapshot,
   LoopRequester,
   PreparedTurnRequestConfig,
 } from '#/agent/loop/requesterContract';
@@ -69,10 +68,6 @@ export class PromptCacheGuardedLoopRequester implements LoopRequester {
 
   credentialProviderForTurn(turnId: number): LlmCredentialProvider | undefined {
     return this.inner.credentialProviderForTurn(turnId);
-  }
-
-  lastTurnRequest(): AgentLLMTurnRequestSnapshot | undefined {
-    return this.inner.lastTurnRequest();
   }
 
   request(

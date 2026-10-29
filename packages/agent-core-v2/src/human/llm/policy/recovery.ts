@@ -32,6 +32,7 @@ export interface LlmRecoveryLedger {
   apply(request: LlmRequest): LlmRequest;
   record(entry: LlmRecoveryEntry): void;
   fork(filter?: (entry: LlmRecoveryEntry) => boolean): LlmRecoveryLedger;
+  map(mapper: (entry: LlmRecoveryEntry) => LlmRecoveryEntry): LlmRecoveryLedger;
 }
 
 export function createRecoveryLedger(
@@ -49,6 +50,7 @@ export function createRecoveryLedger(
       if (entry.rewrite !== undefined) rewrites.push(entry.rewrite);
     },
     fork: (filter) => createRecoveryLedger(filter === undefined ? entries : entries.filter(filter)),
+    map: (mapper) => createRecoveryLedger(entries.map(mapper)),
   };
 }
 

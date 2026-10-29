@@ -174,8 +174,12 @@ async function runModel(
         outcome.error.kind === 'unknown' && outcome.rawError !== undefined
           ? llmMessageFromError(outcome.rawError)
           : undefined;
-      if (outcome.error.kind === 'unknown' && classified === undefined) {
-        throw translateProviderError(outcome.rawError ?? outcome.error.message);
+      if (
+        outcome.error.kind === 'unknown' &&
+        classified === undefined &&
+        outcome.rawError instanceof Error
+      ) {
+        throw translateProviderError(outcome.rawError);
       }
       const error = classified ?? outcome.error;
       throw errorFromLlmMessage(error.kind === 'auth' ? { ...error, kind: 'status' as const } : error);

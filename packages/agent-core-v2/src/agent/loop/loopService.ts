@@ -220,7 +220,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       prepareTurnConfig: (turnId) => this.requester.prepareTurnConfig(turnId),
       currentCredentialProvider: () => this.requester.currentCredentialProvider(),
       credentialProviderForTurn: (turnId) => this.requester.credentialProviderForTurn(turnId),
-      lastTurnRequest: () => this.requester.lastTurnRequest(),
       request: (overrides, onPart, signal) => this.requester.request(overrides, onPart, signal),
       start: (overrides, onPart, signal) => this.requester.start(overrides, onPart, signal),
     };
