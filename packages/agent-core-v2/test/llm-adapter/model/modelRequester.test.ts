@@ -5,15 +5,15 @@ import {
   createOAuthCredentialProvider,
   createStaticCredentialProvider,
 } from '#human/credentials/credentials';
-import type { ProviderMediaContribution } from '#human/llm/media/upload';
-import type { LlmModel } from '#human/llm/model';
+import type { ProviderMediaContribution } from '#human/media/upload';
+import type { LlmModel } from '#human/llm-requester/model';
 import type {
   LlmRequestConfig,
   LlmRequestContent,
   LlmRequestControl,
   LlmRequestEvent,
   LlmRequester,
-} from '#human/llm/requester/requester';
+} from '#human/llm-requester/requester';
 import {
   APIEmptyResponseError,
   APIStatusError,
@@ -22,7 +22,7 @@ import {
   PROVIDER_AUTH_ERROR_CODE,
   isAbortError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
+import type { Message } from '#human/llm/message';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequestEvent } from '#/llm-adapter/model/model-requester';
 import { effectiveMaxCompletionTokens } from '#/llm-adapter/model/model-requester';
@@ -131,17 +131,15 @@ describe('ModelRequesterImpl request execution', () => {
       {
         role: 'system',
         content: [{ type: 'text', text: 's' }],
-        toolCalls: [],
         tools: [{ name: 'decl', description: 'd', parameters: {} }],
       },
-      { role: 'user', content: [{ type: 'text', text: 'u' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'u' }] },
       {
         role: 'assistant',
         content: [{ type: 'text', text: 'a' }],
         toolCalls: [{ type: 'function', id: 'c1', name: 't', arguments: '{}' }],
-        partial: true,
       },
-      { role: 'tool', content: [{ type: 'text', text: 'r' }], toolCalls: [], toolCallId: 'c1' },
+      { role: 'tool', content: [{ type: 'text', text: 'r' }], toolCallId: 'c1' },
     ];
 
     await collect(
@@ -164,6 +162,7 @@ describe('ModelRequesterImpl request execution', () => {
           maxCompletionTokens: 1024,
           usedContextTokens: 5000,
           maxContextTokens: 128000,
+          stream: false,
         },
       ),
     );
@@ -177,6 +176,7 @@ describe('ModelRequesterImpl request execution', () => {
     expect(call.config.responseFormat).toEqual({ type: 'json_object' });
     expect(call.config.maxCompletionTokens).toBe(1024);
     expect(call.config.maxContextTokens).toBe(128000);
+    expect(call.config.stream).toBe(false);
     expect(call.config.extraParams).toEqual({ openai: { temperature: 0.5, top_p: 0.9 } });
     expect(call.config.model.apiKey).toBe('sk-1');
     expect(call.content.usedContextTokens).toBe(5000);
@@ -220,7 +220,7 @@ describe('ModelRequesterImpl request execution', () => {
         { type: 'llm.streaming.part', part: { type: 'text', text: 'llo' } },
         {
           type: 'llm.streaming.part',
-          part: { type: 'function', id: 'call-1', name: 'do', arguments: '{"a"', _streamIndex: 0 },
+          part: { type: 'function', id: 'call-1', rawId: 'provider-call-1', name: 'do', arguments: '{"a"', _streamIndex: 0 },
         },
         { type: 'llm.streaming.part', part: { type: 'tool_call_part', argumentsPart: ':1}', index: 0 } },
         { type: 'llm.streaming.usage', usage: { inputOther: 10 } },
@@ -258,7 +258,7 @@ describe('ModelRequesterImpl request execution', () => {
       message: {
         role: 'assistant',
         content: [{ type: 'text', text: 'hello' }],
-        toolCalls: [{ type: 'function', id: 'call-1', name: 'do', arguments: '{"a":1}' }],
+        toolCalls: [{ type: 'function', id: 'call-1', rawId: 'provider-call-1', name: 'do', arguments: '{"a":1}' }],
       },
     });
     const timing = events.find((e) => e.type === 'timing');
@@ -412,7 +412,10 @@ describe('ModelRequesterImpl request execution', () => {
       gatewayReturning(requester, media),
     );
     const part = await withMedia.uploadImage({ data: new Uint8Array([1]), mimeType: 'image/png' });
-    expect(part).toEqual({ type: 'image_url', imageUrl: { url: 'ms://img-1', id: 'img-1' } });
+    expect(part).toEqual({
+      type: 'image_url',
+      imageUrl: { url: 'ms://img-1', id: 'img-1' },
+    });
     expect(seen).toEqual(['sk-1']);
   });
 

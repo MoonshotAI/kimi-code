@@ -1,5 +1,5 @@
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
@@ -86,7 +86,9 @@ import {
   resolveSubagentBinding,
   resolveSubagentModelPool,
   resolveSubagentTimeoutMs,
+  SECONDARY_MODEL_FORCE_REMOVED_MESSAGE,
   SECONDARY_MODEL_SECTION,
+  secondaryModelRemovedKeysMessage,
   SUBAGENT_SECTION,
   SUBAGENT_TIMEOUT_ENV,
   type SecondaryModelConfig,
@@ -323,9 +325,9 @@ describe('Agent config', () => {
       [emit] prompt.submitted                { "time": "<time>", "agentId": "main", "promptId": "<msg-1>", "userMessageId": "<msg-1>", "status": "running", "content": [ { "type": "text", "text": "Look up before config changes" } ], "createdAt": "<time>" }
       [wire] turn.prompt                     { "agentId": "main", "input": [ { "type": "text", "text": "Look up before config changes" } ], "origin": { "kind": "user" }, "promptId": "<msg-1>", "turnId": 0, "time": "<time>" }
       [emit] turn.started                    { "time": "<time>", "agentId": "main", "turnId": 0, "promptId": "<msg-1>", "origin": { "kind": "user" }, "prompt": "Look up before config changes" }
-      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+      [emit] context.spliced                 { "time": "<time>", "agentId": "main", "start": 0, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "id": "<msg-1>", "origin": { "kind": "user" } } ] }
       [emit] prompt.started                  { "time": "<time>", "agentId": "main", "promptId": "<msg-1>" }
-      [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "id": "<msg-1>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message          { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ], "toolCalls": [], "id": "<msg-1>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] agent.message.appended          { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Look up before config changes" } ] }, "meta": { "source": "input", "promptId": "<msg-1>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-1>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started              { "turnId": 0, "queueItemId": "<msg-1>", "time": "<time>", "kind": "event" }
       [wire] plugin.session_start            { "agentId": "main", "content": null, "time": "<time>" }
@@ -374,7 +376,7 @@ describe('Agent config', () => {
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "tool.result", "parentUuid": "<uuid-3>", "toolCallId": "call_lookup", "result": { "output": "original-result" } }, "time": "<time>" }
       [emit] turn.step.completed         { "time": "<time>", "agentId": "main", "turnId": 0, "step": 1, "stepId": "<uuid-1>", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "finishReason": "tool_use", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "tool_use", "usage": { "inputOther": 9, "output": 17, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "tool_calls", "rawFinishReason": "tool_calls" }, "time": "<time>" }
-      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 3, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<date-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "date_change", "disclosure": { "kind": "date", "renderGeneration": 2, "localDate": "<date>", "timeZone": "<time-zone>" } } } ] }
+      [emit] context.spliced             { "time": "<time>", "agentId": "main", "start": 3, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<date-reminder>" } ], "origin": { "kind": "injection", "variant": "date_change", "disclosure": { "kind": "date", "renderGeneration": 2, "localDate": "<date>", "timeZone": "<time-zone>" } } } ] }
       [wire] context.append_message      { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "<date-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "date_change", "disclosure": { "kind": "date", "renderGeneration": 2, "localDate": "<date>", "timeZone": "<time-zone>" } } }, "time": "<time>" }
       [emit] turn.step.started           { "time": "<time>", "agentId": "main", "turnId": 0, "step": 2, "stepId": "<uuid-4>" }
       [wire] context.append_loop_event   { "agentId": "main", "event": { "type": "step.begin", "uuid": "<uuid-4>", "turnId": "0", "step": 2 }, "time": "<time>" }
@@ -415,9 +417,9 @@ describe('Agent config', () => {
       [emit] prompt.submitted               { "time": "<time>", "agentId": "main", "promptId": "<msg-2>", "userMessageId": "<msg-2>", "status": "running", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "createdAt": "<time>" }
       [wire] turn.prompt                    { "agentId": "main", "input": [ { "type": "text", "text": "Start a fresh turn" } ], "origin": { "kind": "user" }, "promptId": "<msg-2>", "turnId": 1, "time": "<time>" }
       [emit] turn.started                   { "time": "<time>", "agentId": "main", "turnId": 1, "promptId": "<msg-2>", "origin": { "kind": "user" }, "prompt": "Start a fresh turn" }
-      [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "id": "<msg-2>", "toolCalls": [], "origin": { "kind": "user" } } ] }
+      [emit] context.spliced                { "time": "<time>", "agentId": "main", "start": 5, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "id": "<msg-2>", "origin": { "kind": "user" } } ] }
       [emit] prompt.started                 { "time": "<time>", "agentId": "main", "promptId": "<msg-2>" }
-      [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "id": "<msg-2>", "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message         { "agentId": "main", "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ], "toolCalls": [], "id": "<msg-2>", "origin": { "kind": "user" } }, "time": "<time>" }
       [wire] agent.message.appended         { "message": { "message": { "role": "user", "content": [ { "type": "text", "text": "Start a fresh turn" } ] }, "meta": { "source": "input", "promptId": "<msg-2>", "origin": { "kind": "user" }, "tracked": true, "createdAt": "<time>", "userMessageId": "<msg-2>" } }, "time": "<time>", "kind": "event" }
       [wire] agent.turn.started             { "turnId": 1, "queueItemId": "<msg-2>", "time": "<time>", "kind": "event" }
       [emit] turn.step.started              { "time": "<time>", "agentId": "main", "turnId": 1, "step": 1, "stepId": "<uuid-6>" }
@@ -2050,7 +2052,7 @@ describe('subagent config section', () => {
     ix.set(IConfigService, new SyncDescriptor(ConfigService));
     const config = ix.get(IConfigService);
     await config.ready;
-    return { config, disposables };
+    return { config, disposables, storage };
   }
 
   it('defaults to two hours and honours the env override', async () => {
@@ -2124,7 +2126,7 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('resolves the spawn binding: pool default, explicit alias, primary opt-in, inherit without pool', async () => {
+  it('resolves the spawn binding: pool default, explicit alias, inherit without pool', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
 
     const noPool = await createConfig({});
@@ -2133,11 +2135,9 @@ describe('subagent config section', () => {
       thinking: 'medium',
       modelSource: 'inherited',
     });
-    expect(resolveSubagentBinding(noPool.config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
+    expect(() => resolveSubagentBinding(noPool.config, own, 'primary')).toThrow(
+      /Invalid model "primary": no \[secondary_model\] pool is configured/,
+    );
     noPool.disposables.dispose();
 
     const pool = await createConfig(
@@ -2154,11 +2154,9 @@ describe('subagent config section', () => {
       thinking: undefined,
       modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(pool.config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
+    expect(() => resolveSubagentBinding(pool.config, own, 'primary')).toThrow(
+      'Invalid model "primary". Available models: provider/fast, provider/smart.',
+    );
     pool.disposables.dispose();
   });
 
@@ -2174,13 +2172,11 @@ describe('subagent config section', () => {
       thinking: undefined,
       modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
+    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
+      'Invalid model "primary". Available models: provider/fast.',
+    );
     expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
-      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+      'Invalid model "provider/smart". Available models: provider/fast.',
     );
 
     disposables.dispose();
@@ -2207,7 +2203,7 @@ describe('subagent config section', () => {
       modelSource: 'secondary_pool',
     });
     expect(() => resolveSubagentBinding(config, own, 'provider/smart')).toThrow(
-      /Invalid model "provider\/smart"\. Available models: provider\/fast, primary\./,
+      'Invalid model "provider/smart". Available models: provider/fast.',
     );
 
     disposables.dispose();
@@ -2243,45 +2239,26 @@ describe('subagent config section', () => {
     disposables.dispose();
   });
 
-  it('lets force pin the legacy model fallback when no default_model is set', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
+  it('ignores legacy recipe patch fields with a warning and keeps them on disk', async () => {
+    const { config, disposables, storage } = await createConfig(
       {},
-      '[secondary_model]\nmodel = "provider/fast"\nforce = true\n',
-    );
-
-    expect(resolveSubagentBinding(config, own)).toEqual({
-      model: 'provider/fast',
-      thinking: undefined,
-      modelSource: 'forced',
-    });
-    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
-      /Invalid model "primary": \[secondary_model\]\.force is set/,
-    );
-
-    disposables.dispose();
-  });
-
-  it('round-trips legacy recipe patch fields the pool resolution ignores', async () => {
-    const { config, disposables } = await createConfig(
-      {},
-      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\n',
+      '[secondary_model]\nmodel = "provider/fast"\ndefault_effort = "low"\nmax_output_size = 8192\ncapabilities = ["image_in"]\n',
     );
 
     expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       model: 'provider/fast',
       defaultEffort: 'low',
-      maxOutputSize: 8192,
     });
-    expect(resolveSubagentModelPool(config)).toEqual({
-      defaultModel: 'provider/fast',
-      models: { 'provider/fast': '' },
+    expect(config.diagnostics()).toContainEqual({
+      domain: SECONDARY_MODEL_SECTION,
+      severity: 'warning',
+      message: secondaryModelRemovedKeysMessage(['max_output_size', 'capabilities']),
     });
 
     await config.set(SECONDARY_MODEL_SECTION, { defaultModel: 'provider/fast' });
-    const after = config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION);
-    expect(after?.defaultEffort).toBe('low');
-    expect(after?.maxOutputSize).toBe(8192);
+    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)?.defaultEffort).toBe('low');
+    const onDisk = new TextDecoder().decode(await storage.read('', 'config.toml'));
+    expect(onDisk).toContain('max_output_size = 8192');
 
     disposables.dispose();
   });
@@ -2298,50 +2275,39 @@ describe('subagent config section', () => {
       thinking: 'max',
       modelSource: 'secondary_pool',
     });
-    expect(resolveSubagentBinding(config, own, 'primary')).toEqual({
-      model: 'provider/main',
-      thinking: 'medium',
-      modelSource: 'primary_override',
-    });
 
     disposables.dispose();
   });
 
-  it('binds every spawn to the forced default_model, rejecting even "primary"', async () => {
+  it('ignores the removed force key with a warning, keeping the pool semantics', async () => {
     const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
-      {},
-      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n',
-    );
+    const lone = await createConfig({}, '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n');
 
-    expect(config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
+    expect(lone.config.get<SecondaryModelConfig>(SECONDARY_MODEL_SECTION)).toEqual({
       defaultModel: 'provider/fast',
-      force: true,
     });
-    expect(resolveSubagentBinding(config, own)).toEqual({
+    expect(lone.config.diagnostics()).toContainEqual({
+      domain: SECONDARY_MODEL_SECTION,
+      severity: 'warning',
+      message: SECONDARY_MODEL_FORCE_REMOVED_MESSAGE,
+    });
+    expect(resolveSubagentBinding(lone.config, own)).toEqual({
       model: 'provider/fast',
       thinking: undefined,
-      modelSource: 'forced',
+      modelSource: 'secondary_pool',
     });
-    expect(() => resolveSubagentBinding(config, own, 'primary')).toThrow(
-      /Invalid model "primary": \[secondary_model\]\.force is set/,
-    );
+    lone.disposables.dispose();
 
-    disposables.dispose();
-  });
-
-  it('rejects force combined with a models table at spawn resolution, matching startup validation', async () => {
-    const own = { modelAlias: 'provider/main', thinkingLevel: 'medium' };
-    const { config, disposables } = await createConfig(
+    const table = await createConfig(
       {},
-      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n',
+      '[secondary_model]\ndefault_model = "provider/fast"\nforce = true\n\n[secondary_model.models]\n"provider/fast" = "fast and cheap"\n"provider/smart" = ""\n',
     );
-
-    expect(() => resolveSubagentBinding(config, own)).toThrow(
-      /\[secondary_model\]\.force cannot be combined with \[secondary_model\.models\]/,
-    );
-
-    disposables.dispose();
+    expect(resolveSubagentBinding(table.config, own, 'provider/smart')).toEqual({
+      model: 'provider/smart',
+      thinking: undefined,
+      modelSource: 'secondary_pool',
+    });
+    table.disposables.dispose();
   });
 
   it('rejects an alias outside the pool, listing the available models', async () => {
@@ -2360,7 +2326,7 @@ describe('subagent config section', () => {
     expect(isError2(caught)).toBe(true);
     expect((caught as Error2).code).toBe(ErrorCodes.CONFIG_INVALID);
     expect((caught as Error2).message).toBe(
-      'Invalid model "provider/typo". Available models: provider/fast, provider/smart, primary.',
+      'Invalid model "provider/typo". Available models: provider/fast, provider/smart.',
     );
 
     disposables.dispose();
@@ -2371,7 +2337,7 @@ describe('subagent config section', () => {
     const { config, disposables } = await createConfig({});
 
     expect(() => resolveSubagentBinding(config, own, 'provider/fast')).toThrow(
-      /Invalid model "provider\/fast": no \[secondary_model\.models\] pool is configured/,
+      /Invalid model "provider\/fast": no \[secondary_model\] pool is configured/,
     );
 
     disposables.dispose();

@@ -1,4 +1,4 @@
-import type { ContentPart, Message, Tool } from './message';
+import type { ContentPart, Message, ToolDescription as Tool } from '#human/llm/message';
 
 const messageTokenEstimateCache = new WeakMap<Message, number>();
 
@@ -41,7 +41,7 @@ export function estimateTokensForMessage(message: Message): number {
 
   let total = estimateTokens(message.role);
   total += estimateTokensForContentParts(message.content);
-  if (message.toolCalls !== undefined) {
+  if (message.role === 'assistant') {
     for (const call of message.toolCalls) {
       total += estimateTokens(call.name);
       total += estimateTokens(JSON.stringify(call.arguments));

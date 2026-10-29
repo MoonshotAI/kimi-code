@@ -1,5 +1,5 @@
-import type { ContentPart, ToolCall } from '#/llm/message';
-import type { TokenUsage } from '#/llm/usage';
+import type { ContentPart, ToolCall } from '#/message';
+import type { TokenUsage } from '#/llm-requester/usage';
 import { readTodoItems, type TodoItem } from '#/todo/todoItem';
 
 import { V2WireError, type V2WireRecord } from './wire';

@@ -31,6 +31,8 @@ import type {
 } from '@agentclientprotocol/sdk';
 import { RequestError } from '@agentclientprotocol/sdk';
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { toCoreMessage } from '@moonshot-ai/agent-core-v2/human/message';
+import { toLlmMessage } from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type {
   AgentEventPayloads,
   AgentHandle,
@@ -421,9 +423,20 @@ export class AcpSession {
   async replayHistory(): Promise<void> {
     let messages: readonly ContextMessage[];
     try {
-      // `history` items cross the wire as JSON-cloned `ContextMessage`s (the
-      // facade types them via the engine RPC signature).
-      messages = (await this.agent.getContext()).history;
+      messages = (await this.agent.getContext()).history.map((message) => ({
+        ...toCoreMessage(toLlmMessage(message)),
+        id: message.id,
+        providerMessageId: message.providerMessageId,
+        name: message.name,
+        origin: message.origin,
+        isError: message.isError,
+        partial: message.partial,
+        toolCallDisplays: message.toolCallDisplays,
+        note: message.note,
+        usage: message.usage,
+        llmTiming: message.llmTiming,
+        durationMs: message.durationMs,
+      }));
     } catch (error) {
       log.warn('acp: replayHistory could not read context memory', {
         sessionId: this.sessionId,

@@ -157,3 +157,4 @@ function asMediaContainer(value: unknown): { url: unknown } | undefined {
   const obj = value as Record<string, unknown>;
   return 'url' in obj ? (obj as { url: unknown }) : undefined;
 }
+

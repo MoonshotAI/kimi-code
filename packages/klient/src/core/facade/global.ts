@@ -35,6 +35,19 @@ import type {
 import type { FileMeta } from '@moonshot-ai/agent-core-v2/app/file/fileService';
 import type { ModelRecord } from '@moonshot-ai/agent-core-v2/llm-adapter/model/model';
 import type { IModelCatalog } from '@moonshot-ai/agent-core-v2/llm-adapter/model/catalog';
+import type {
+  ModelRequestEvent,
+  ModelRequestInput,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/model/model-requester';
+import {
+  fromCoreMessage,
+  fromCorePart,
+  toCoreMessage,
+} from '@moonshot-ai/agent-core-v2/human/message';
+import {
+  fromLlmMessage,
+  toLlmMessage,
+} from '@moonshot-ai/agent-core-v2/llm-adapter/contract/message';
 import type { IProviderDiscoveryService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/discovery';
 import type { IModelsDevImportService } from '@moonshot-ai/agent-core-v2/app/kosongConfig/modelsDevImport';
 
@@ -516,8 +529,29 @@ export function createGlobalFacade(scoped: ScopedCaller, scopedStream: ScopedStr
       setDefaultModel: (id) =>
         call('modelResolver', 'setDefaultModel', [id]) as Promise<SetDefaultModelResponse>,
 
-      generate: (modelId, input, params) =>
-        streamCall('modelResolver', 'generate', [modelId, input, params]) as AsyncIterable<GenerateEvent>,
+      generate: (modelId, input, params) => {
+        const coreInput: ModelRequestInput = {
+          ...input,
+          tools: input.tools as ModelRequestInput['tools'],
+          messages: input.messages.map((message) => toCoreMessage(toLlmMessage(message))),
+        };
+        const events = streamCall('modelResolver', 'generate', [
+          modelId,
+          coreInput,
+          params,
+        ]) as AsyncIterable<ModelRequestEvent>;
+        return (async function* (): AsyncGenerator<GenerateEvent> {
+          for await (const event of events) {
+            if (event.type === 'part') {
+              yield { ...event, part: fromCorePart(event.part) };
+            } else if (event.type === 'finish') {
+              yield { ...event, message: fromLlmMessage(fromCoreMessage(event.message)) };
+            } else {
+              yield event as GenerateEvent;
+            }
+          }
+        })();
+      },
     },
 
     auth: {

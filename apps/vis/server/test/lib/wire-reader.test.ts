@@ -101,7 +101,7 @@ describe('wire-reader', () => {
     );
   });
 
-  it('passes v1.5 records through unchanged with no warnings', async () => {
+  it('decodes v1.5 context records while preserving raw messages', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vis-v15-'));
     const path = join(dir, 'wire.jsonl');
     const records = [
@@ -113,16 +113,58 @@ describe('wire-reader', () => {
         task: { id: '01ARZ3NDEKTSV4RRFFQ69G5FAV', cron: '* * * * *', prompt: 'p', createdAt: 3 },
         time: 3,
       },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'legacy' },
+            { type: 'image_url', imageUrl: { url: 'https://example.com/legacy.png' } },
+          ],
+          toolCalls: [],
+        },
+        time: 4,
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'current' },
+            { type: 'video_url', videoUrl: { url: 'https://example.com/current.mp4' } },
+          ],
+        },
+        time: 5,
+      },
     ];
     await writeFile(path, records.map((r) => JSON.stringify(r)).join('\n') + '\n');
     try {
       const result = await readAgentWire(path);
       expect(result.metadata.protocolVersion).toBe('1.5');
       expect(result.warnings).toEqual([]);
-      expect(result.records).toHaveLength(2);
-      // data === raw for current-protocol records (no migration applied).
+      expect(result.records).toHaveLength(4);
       expect(result.records[0]!.data).toEqual(result.records[0]!.raw);
       expect(result.records[1]!.data).toEqual(result.records[1]!.raw);
+      expect(result.records[2]!.data).toMatchObject({
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'legacy' },
+            { type: 'image_url', imageUrl: { url: 'https://example.com/legacy.png' } },
+          ],
+        },
+      });
+      expect(result.records[2]!.data).not.toHaveProperty('message.toolCalls');
+      expect(result.records[2]!.raw).toMatchObject({
+        message: {
+          content: [
+            { type: 'text', text: 'legacy' },
+            { type: 'image_url', imageUrl: { url: 'https://example.com/legacy.png' } },
+          ],
+          toolCalls: [],
+        },
+      });
+      expect(result.records[3]!.data).toEqual(result.records[3]!.raw);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

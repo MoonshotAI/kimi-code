@@ -1,4 +1,4 @@
-import { providerImagePolicy } from '#human/llm/media/image-formats';
+import { providerImagePolicy } from '#human/llm/protocol/kit/media';
 
 import { IMAGE_MIME_BY_SUFFIX, sniffMediaFromMagic } from './file-type';
 

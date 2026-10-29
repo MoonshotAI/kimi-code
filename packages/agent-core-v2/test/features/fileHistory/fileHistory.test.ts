@@ -26,7 +26,7 @@ import {
 } from '#/features/fileHistory/fileHistoryOps';
 import type { FoldContext } from '#/state/state';
 import type { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import type { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';

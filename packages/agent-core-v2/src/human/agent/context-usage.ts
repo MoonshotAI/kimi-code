@@ -1,5 +1,5 @@
 import type { Message, ToolDescription } from '#/llm/message';
-import { emptyUsage, type TokenUsage } from '#/llm/usage';
+import { emptyUsage, type TokenUsage } from '#/llm-requester/usage';
 
 import type { AssistantEntry, HistoryMessage } from './turn';
 

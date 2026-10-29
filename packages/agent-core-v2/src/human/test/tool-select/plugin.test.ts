@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createActor, waitFor } from '#/xstate2';
-import { UNKNOWN_CAPABILITY } from '#/llm/capability';
+import { UNKNOWN_CAPABILITY } from '#/llm-requester/capability';
 import {
   createAssistantMessage,
   createUserMessage,
@@ -9,9 +9,9 @@ import {
   type SystemMessage,
   type ToolCall,
   type UserMessage,
-} from '#/llm/message';
-import type { LlmModel } from '#/llm/model';
-import type { LlmRequestConfig, LlmRequester, LlmRequestEvent } from '#/llm/requester/requester';
+} from '#/message';
+import type { LlmModel } from '#/llm-requester/model';
+import type { LlmRequestConfig, LlmRequester, LlmRequestEvent } from '#/llm-requester/requester';
 import { connectPlugins, type AgentPluginTarget } from '#/plugin';
 import { createAgentMachine, type AgentEmitted } from '#/agent/machine';
 import { agentSlices, type AgentEventStore } from '#/agent/slices';

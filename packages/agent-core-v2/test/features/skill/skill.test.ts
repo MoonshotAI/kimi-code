@@ -4,7 +4,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { InMemorySkillCatalog } from '#/features/skill/catalog/registry';
 import { summarizeSkill } from '#/features/skill/catalog/types';
 import { IAgentSkillService } from '#/features/skill/skillService';
-import type { LlmRequester } from '#human/llm/requester/requester';
+import type { LlmRequester } from '#human/llm-requester/requester';
 import {
   ISkillTool,
   MAX_SKILL_QUERY_DEPTH,

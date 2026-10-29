@@ -3,6 +3,7 @@ import { Readable } from 'node:stream';
 
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/llm-adapter/contract/capability';
 import type { ContentPart } from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
 import { VideoUploadUnsupportedError } from '#/llm-adapter/contract/errors';
 import { Jimp } from 'jimp';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -247,6 +248,13 @@ function outputParts(result: ExecutableToolResult): ContentPart[] {
   return result.output as ContentPart[];
 }
 
+function mediaUrl(part: ContentPart | undefined): string {
+  if (part === undefined || (part.type !== 'image_url' && part.type !== 'audio_url' && part.type !== 'video_url')) {
+    throw new Error('expected media content');
+  }
+  return mediaUrlOf(part);
+}
+
 function noteText(result: ExecutableToolResult): string {
   expect(typeof result.note).toBe('string');
   return result.note as string;
@@ -349,10 +357,8 @@ describe('ReadMediaFileTool', () => {
     const parts = outputParts(result);
     expect(parts).toHaveLength(3);
     expect(parts[0]).toEqual({ type: 'text', text: '<image path="/workspace/sample.png">' });
-    expect(parts[1]).toMatchObject({
-      type: 'image_url',
-      imageUrl: { url: expect.stringContaining('data:image/png;base64,') },
-    });
+    expect(parts[1]?.type).toBe('image_url');
+    expect(mediaUrl(parts[1])).toContain('data:image/png;base64,');
     expect(parts[2]).toEqual({ type: 'text', text: '</image>' });
   });
 
@@ -374,7 +380,7 @@ describe('ReadMediaFileTool', () => {
     expect(systemText).toContain('region');
 
     const parts = outputParts(result);
-    const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
+    const url = mediaUrl(parts[1]);
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
     expect(match).not.toBeNull();
     const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
@@ -494,7 +500,7 @@ describe('ReadMediaFileTool', () => {
       region: { x: 100, y: 50, width: 400, height: 300 },
     });
     const parts = outputParts(result);
-    const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
+    const url = mediaUrl(parts[1]);
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
     expect(match).not.toBeNull();
     expect(sniffImageDimensions(Buffer.from(match![2]!, 'base64'))).toEqual({
@@ -530,7 +536,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     const parts = outputParts(result);
-    expect((parts[1] as { imageUrl: { url: string } }).imageUrl.url).toBe(
+    expect(mediaUrl(parts[1])).toBe(
       `data:image/png;base64,${big.toString('base64')}`,
     );
     expect(noteText(result)).toMatch(/native resolution/);
@@ -684,10 +690,8 @@ describe('ReadMediaFileTool', () => {
     const parts = outputParts(result);
     expect(parts).toHaveLength(3);
     expect(parts[0]).toEqual({ type: 'text', text: '<video path="/workspace/clip.mp4">' });
-    expect(parts[1]).toMatchObject({
-      type: 'video_url',
-      videoUrl: { url: expect.stringContaining('data:video/mp4;base64,') },
-    });
+    expect(parts[1]?.type).toBe('video_url');
+    expect(mediaUrl(parts[1])).toContain('data:video/mp4;base64,');
     expect(parts[2]).toEqual({ type: 'text', text: '</video>' });
   });
 
@@ -1282,7 +1286,7 @@ describe('createVideoUploader', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    const url = (outputParts(result)[1] as { imageUrl: { url: string } }).imageUrl.url;
+    const url = mediaUrl(outputParts(result)[1]);
     expect(url).toBe(`data:image/heic;base64,${heic.toString('base64')}`);
   });
 

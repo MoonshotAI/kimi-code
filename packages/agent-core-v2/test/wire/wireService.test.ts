@@ -8,6 +8,8 @@ import { ILogService } from '#/_base/log/log';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ContentPart } from '#human/llm/message';
+import { toCoreMessage } from '#human/message';
+import { toLlmMessage, type Message as LegacyMessage } from '#/llm-adapter/contract/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -104,13 +106,20 @@ describe('WireService seal', () => {
 
 describe('WireService appendRecord', () => {
   it('appends flat records without a dehydrator', async () => {
-    wire.appendRecord({ type: 'wire.test.append', value: 1, time: 10 });
-    wire.appendRecord({ type: 'wire.test.append', value: 2, time: 11 });
+    const media: ContentPart[] = [
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAA' } },
+      { type: 'audio_url', audioUrl: { url: 'https://example.com/a.mp3' } },
+      { type: 'video_url', videoUrl: { url: 'ms://video-1', id: 'video-1' } },
+    ];
+    const records: WireRecord[] = [
+      { type: 'turn.prompt', input: media, origin: { kind: 'user' }, time: 10 },
+      { type: 'turn.steer', input: media, origin: { kind: 'user' }, time: 11 },
+      { type: 'prompt.steered', content: media, time: 12 },
+    ];
+    for (const record of records) wire.appendRecord(record);
 
-    expect(await readRecords()).toEqual([
-      { type: 'wire.test.append', value: 1, time: 10 },
-      { type: 'wire.test.append', value: 2, time: 11 },
-    ]);
+    expect(await readRecords()).toEqual(records);
+    expect((await collect(wire.read())).slice(1)).toEqual(records);
   });
 
   it('runs records through the dehydrate queue in append order', async () => {
@@ -1058,7 +1067,18 @@ describe('WireService tree projection', () => {
     expect(wire.nextSeq()).toBe(8);
 
     expect(await collect(wire.read())).toEqual([
-      ...onDisk.slice(0, 3),
+      ...onDisk.slice(0, 3).map((record) => {
+        if (record.type !== 'context.append_message') return record;
+        const message = record['message'] as LegacyMessage & { id?: string; origin?: unknown };
+        return {
+          ...record,
+          message: {
+            ...toCoreMessage(toLlmMessage(message)),
+            id: message.id,
+            origin: message.origin,
+          },
+        };
+      }),
       onDisk[5]!,
       onDisk[6]!,
     ]);

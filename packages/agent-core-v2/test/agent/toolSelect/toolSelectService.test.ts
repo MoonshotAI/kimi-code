@@ -7,7 +7,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { Event2, Event2Class } from '#/app/event/event2';
 import { IFlagService } from '#/app/flag/flag';
 import type { ModelCapability } from '#/llm-adapter/contract/capability';
-import type { ToolCall } from '#human/llm/message';
+import type { Message, ToolCall } from '#human/llm/message';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { ContextSpliced } from '#/agent/contextMemory/contextEvents';
@@ -56,6 +56,10 @@ import { recordingTelemetry } from '../../app/telemetry/stubs';
 import { registerStateServices } from '../../state/stubs';
 import { stubToolExecutor, stubWire } from '../loop/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
+
+function toolsOf(message: Message | undefined) {
+  return message?.role === 'system' ? message.tools : undefined;
+}
 
 const MCP_ALPHA = 'mcp__srv__alpha';
 const MCP_BETA = 'mcp__srv__beta';
@@ -113,14 +117,13 @@ function toolCall(id: string, name: string, args: unknown = {}): ToolCall {
 }
 
 function userMessage(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
+  return { role: 'user', content: [{ type: 'text', text }] };
 }
 
 function schemaMessage(...names: string[]): ContextMessage {
   return {
     role: 'system',
     content: [],
-    toolCalls: [],
     tools: names.map((name) => ({ name, description: `${name} desc`, parameters: {} })),
     origin: { kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT },
   };
@@ -319,7 +322,6 @@ class FakeContextMemory implements IAgentContextMemoryService {
     this.history.push({
       role: 'user',
       content: [{ type: 'text', text: `<system-reminder>\n${content.trim()}\n</system-reminder>` }],
-      toolCalls: [],
       origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
     });
   }
@@ -497,8 +499,7 @@ async function announceAfterCompaction(h: Harness): Promise<string | undefined> 
         {
           role: 'user',
           content: [{ type: 'text', text: 'Compacted summary.' }],
-          toolCalls: [],
-          origin: { kind: 'compaction_summary' },
+              origin: { kind: 'compaction_summary' },
         },
       ],
     }),
@@ -745,8 +746,8 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
     const shaped = h.sut.shapeHistory(h.contextMemory.get());
 
     expect(shaped).toHaveLength(2);
-    expect(shaped[0]!.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
-    expect(h.contextMemory.get()[0]!.tools?.map((tool) => tool.name)).toEqual([
+    expect(toolsOf(shaped[0])?.map((tool) => tool.name)).toEqual([MCP_BETA]);
+    expect(toolsOf(h.contextMemory.get()[0])?.map((tool) => tool.name)).toEqual([
       MCP_ALPHA,
       MCP_BETA,
     ]);
@@ -771,7 +772,7 @@ describe('AgentToolSelectService view shaping (gate open)', () => {
       suggestions: {},
       loadable: [],
     });
-    expect(h.contextMemory.get()[0]?.tools?.map((tool) => tool.name)).toEqual([
+    expect(toolsOf(h.contextMemory.get()[0])?.map((tool) => tool.name)).toEqual([
       USER_DEFERRED,
     ]);
   });
@@ -824,7 +825,7 @@ describe('AgentToolSelectService.load', () => {
     expect(h.contextMemory.appended).toHaveLength(0);
     const declared = await declareSchemas(h);
     expect(declared?.role).toBe('system');
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_BETA]);
+    expect(toolsOf(declared)?.map((tool) => tool.name)).toEqual([MCP_BETA]);
     expect(declared?.origin).toEqual({ kind: 'injection', variant: DYNAMIC_TOOL_SCHEMA_VARIANT });
   });
 
@@ -845,7 +846,7 @@ describe('AgentToolSelectService.load', () => {
       loadable: [USER_DEFERRED],
     });
     const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
+    expect(toolsOf(declared)?.map((tool) => tool.name)).toEqual([USER_DEFERRED]);
   });
 
   it('sorts the declared schemas by name', async () => {
@@ -855,7 +856,7 @@ describe('AgentToolSelectService.load', () => {
 
     h.sut.load([MCP_BETA, MCP_ALPHA]);
     const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
+    expect(toolsOf(declared)?.map((tool) => tool.name)).toEqual([MCP_ALPHA, MCP_BETA]);
   });
 
   it('declares a selected schema after its MCP tool reconnects before a later boundary', async () => {
@@ -868,7 +869,7 @@ describe('AgentToolSelectService.load', () => {
 
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
     const declared = await declareSchemas(h, 2);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+    expect(toolsOf(declared)?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
   });
 
   it('reports names filtered out by the profile as not available in this session', async () => {
@@ -882,7 +883,7 @@ describe('AgentToolSelectService.load', () => {
     expect(result.policyDenied).toEqual([MCP_BETA]);
     expect(result.unknown).toEqual([]);
     const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+    expect(toolsOf(declared)?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
   });
 
   it('pending ledger leads the history inside the defer window', async () => {
@@ -890,7 +891,7 @@ describe('AgentToolSelectService.load', () => {
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
 
     h.sut.load([MCP_ALPHA]);
-    expect(h.contextMemory.get().some((message) => message.tools !== undefined)).toBe(false);
+    expect(h.contextMemory.get().some((message) => toolsOf(message) !== undefined)).toBe(false);
     const reselect = h.sut.load([MCP_ALPHA]);
     expect(reselect.alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(reselect.toLoad).toEqual([]);
@@ -937,7 +938,7 @@ describe('AgentToolSelectService.load', () => {
 
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
     const declared = await declareSchemas(h);
-    expect(declared?.tools?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
+    expect(toolsOf(declared)?.map((tool) => tool.name)).toEqual([MCP_ALPHA]);
   });
 
   it('reconciles the pending ledger with history when a mid-history splice removes schema messages', async () => {
@@ -1555,8 +1556,7 @@ describe('AgentToolSelectService loadable-tools announcements', () => {
       h.contextMemory.history.push({
         role: 'user',
         content: [{ type: 'text', text: `<${tag}>\n${MCP_ALPHA}\n</${tag}>` }],
-        toolCalls: [],
-        origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
+          origin: { kind: 'system_trigger', name: LOADABLE_TOOLS_VARIANT },
       });
     }
     h.eventBus.publish(new TurnStarted({ agentId: 'main', turnId: 99, origin: { kind: 'user' } }));

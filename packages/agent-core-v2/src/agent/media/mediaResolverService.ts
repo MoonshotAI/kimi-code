@@ -9,9 +9,9 @@ import { WarningIssued } from '#/agent/profile/profileOps';
 import { IFileService } from '#/app/file/fileService';
 import { LifecycleScope } from '#/app/scopes';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { Message } from '#/llm-adapter/contract/message';
 import { ImageUploadUnsupportedError } from '#/llm-adapter/contract/errors';
-import type { ContentPart } from '#human/llm/message';
+import type { ContentPart, Message } from '#human/llm/message';
+import { mediaFileIdOf, mediaUrlOf } from '#human/llm/protocol/kit/media';
 import type { Model } from '#/llm-adapter/model/catalog';
 import type { ModelRequester } from '#/llm-adapter/model/model-requester';
 import { runWithCredentialRecovery } from '#/llm-adapter/model/credential-recovery';
@@ -159,7 +159,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     for (const message of messages) {
       for (const part of message.content) {
         if (part.type !== 'image_url' && part.type !== 'video_url') continue;
-        const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+        const url = mediaUrlOf(part);
         const ref = parseDaemonFileUrl(url);
         if (ref === undefined || paths.has(url)) continue;
         const path = await this.displayPath(ref);
@@ -345,7 +345,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
           ),
         signal,
       );
-      const llmFileId = uploaded.imageUrl.id ?? msFileIdFromUrl(uploaded.imageUrl.url);
+      const llmFileId = mediaFileIdOf(uploaded) ?? msFileIdFromUrl(mediaUrlOf(uploaded));
       if (llmFileId !== undefined) {
         await this.writeCachedUpload(IMAGE_CACHE_SCOPE, upload.cacheKey, llmFileId);
       }
@@ -434,7 +434,10 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
     const cachedLlmFileId = await this.readCachedUpload(VIDEO_CACHE_SCOPE, cacheKey);
     if (cachedLlmFileId !== undefined) {
       return {
-        part: { type: 'video_url', videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId } },
+        part: {
+          type: 'video_url',
+          videoUrl: { url: `ms://${cachedLlmFileId}`, id: cachedLlmFileId },
+        },
         memoize: true,
       };
     }
@@ -477,7 +480,7 @@ export class AgentMediaResolverService implements IAgentMediaResolverService {
         () => uploader({ data: bytes, mimeType, filename }, { signal }),
         signal,
       );
-      const llmFileId = uploaded.videoUrl.id ?? msFileIdFromUrl(uploaded.videoUrl.url);
+      const llmFileId = mediaFileIdOf(uploaded) ?? msFileIdFromUrl(mediaUrlOf(uploaded));
       if (llmFileId !== undefined) await this.writeCachedUpload(VIDEO_CACHE_SCOPE, cacheKey, llmFileId);
       return { part: uploaded, memoize: true };
     } catch (error) {
@@ -577,7 +580,7 @@ function inlineMediaBudgetEntry(
   partIndex: number,
 ): MediaBudgetEntry | undefined {
   if (part.type !== 'image_url' && part.type !== 'video_url') return undefined;
-  const url = part.type === 'image_url' ? part.imageUrl.url : part.videoUrl.url;
+  const url = mediaUrlOf(part);
   if (!isDataUrl(url)) return undefined;
   const kind = part.type === 'image_url' ? 'image' : 'video';
   const hash = createHash('sha256').update(kind).update('\0').update(url).digest('hex');
@@ -585,13 +588,9 @@ function inlineMediaBudgetEntry(
 }
 
 function inlinePartBytes(part: ContentPart): number {
-  if (part.type === 'image_url') {
-    return isDataUrl(part.imageUrl.url) ? part.imageUrl.url.length : 0;
-  }
-  if (part.type === 'video_url') {
-    return isDataUrl(part.videoUrl.url) ? part.videoUrl.url.length : 0;
-  }
-  return 0;
+  if (part.type !== 'image_url' && part.type !== 'video_url') return 0;
+  const url = mediaUrlOf(part);
+  return isDataUrl(url) ? url.length : 0;
 }
 
 function budgetOmittedMedia(kind: 'image' | 'video'): ContentPart {

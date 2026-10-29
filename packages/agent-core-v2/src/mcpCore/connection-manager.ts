@@ -484,6 +484,7 @@ export class McpConnectionManager implements McpConnectionView {
   private transition(entry: InternalEntry, event: McpEntryEvent): void {
     const plan = this.planTransition(entry, event);
     if (plan === undefined) return;
+    const automaticRetry = entry.state === 'connecting' && entry.failureStreak > 0;
     const before = toPublicEntry(entry);
     const fromFamily = entry.state === 'connected' || entry.state === 'probing';
     const toFamily = plan.target === 'connected' || plan.target === 'probing';
@@ -570,7 +571,8 @@ export class McpConnectionManager implements McpConnectionView {
         break;
     }
     const after = toPublicEntry(entry);
-    if (plan.forceEmit === true || !publicEntriesEqual(before, after)) {
+    const suppressRetryStatus = event.type === 'retryDue' || (automaticRetry && plan.target === 'retryWaiting');
+    if (!suppressRetryStatus && (plan.forceEmit === true || !publicEntriesEqual(before, after))) {
       this.emit(entry);
     }
     this.scheduleReconcile();

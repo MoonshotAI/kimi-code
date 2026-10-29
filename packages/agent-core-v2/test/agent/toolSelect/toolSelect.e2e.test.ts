@@ -19,6 +19,11 @@ import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import '#/agent/tools/select-tools/selectToolsTool';
 
 import { createTestAgent, sessionService, type TestAgentContext } from '../../harness';
+import type { Message } from '#human/llm/message';
+
+function toolsOf(message: Message | undefined) {
+  return message?.role === 'system' ? message.tools : undefined;
+}
 
 const MCP_ALPHA = 'mcp__srv__alpha';
 const DASHBOARD_TOOL = 'dashboard_create';
@@ -146,6 +151,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const firstWire = ctx.llmCalls[0]!;
     expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
+    expect(historyText(firstWire.history)).toContain('<tools_added>');
     expect(historyText(firstWire.history)).toContain(MCP_ALPHA);
   });
 
@@ -153,12 +159,17 @@ describe('progressive tool disclosure end-to-end', () => {
     const waiting = createControlledPromise<void>();
     mcpReady = new Promise(() => {});
     onMcpWait = waiting.resolve;
+    ctx.mockNextResponse({ type: 'text', text: 'must not be requested' });
 
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'use the server tool' }] });
     await waiting;
     expect(ctx.get(IAgentLoopService).cancel()).toBe(true);
     await ctx.untilTurnEnd();
 
+    const turnEnded = ctx.allEvents.find(
+      (entry) => entry.type === '[rpc]' && entry.event === 'turn.ended',
+    );
+    expect(turnEnded?.args).toMatchObject({ reason: 'cancelled' });
     expect(ctx.llmCalls).toHaveLength(0);
   });
 
@@ -198,11 +209,11 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
-      (message) => message.tools?.some((tool) => tool.name === MCP_ALPHA),
+      (message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA),
     );
     expect(schemaMessages).toHaveLength(1);
 
-    const alphaFromSchema = schemaMessages[0]!.tools!.find((tool) => tool.name === MCP_ALPHA)!;
+    const alphaFromSchema = toolsOf(schemaMessages[0])!.find((tool) => tool.name === MCP_ALPHA)!;
     expect(alphaFromSchema.parameters).toEqual(alpha.parameters);
 
     expect(secondWire.tools).toEqual(firstWire.tools);
@@ -242,9 +253,9 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const secondWire = ctx.llmCalls[1]!;
     const injected = secondWire.history.find((message) =>
-      message.tools?.some((tool) => tool.name === DASHBOARD_TOOL),
+      toolsOf(message)?.some((tool) => tool.name === DASHBOARD_TOOL),
     );
-    expect(injected?.tools?.find((tool) => tool.name === DASHBOARD_TOOL)?.parameters).toEqual({
+    expect(toolsOf(injected)?.find((tool) => tool.name === DASHBOARD_TOOL)?.parameters).toEqual({
       type: 'object',
       properties: { title: { type: 'string' } },
       required: ['title'],
@@ -263,7 +274,6 @@ describe('progressive tool disclosure end-to-end', () => {
     ctx.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],
-      toolCalls: [],
       origin: { kind: 'user' },
     });
 
@@ -274,7 +284,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
     await ctx.get(IAgentConversationUndoService).undo(1);
     const afterUndo = ctx.get(IAgentContextMemoryService).get();
-    expect(afterUndo.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA))).toBe(
+    expect(afterUndo.some((message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA))).toBe(
       true,
     );
 
@@ -285,7 +295,7 @@ describe('progressive tool disclosure end-to-end', () => {
 
     const afterReload = ctx.get(IAgentContextMemoryService).get();
     expect(
-      afterReload.some((message) => message.tools?.some((tool) => tool.name === MCP_ALPHA)),
+      afterReload.some((message) => toolsOf(message)?.some((tool) => tool.name === MCP_ALPHA)),
     ).toBe(true);
     expect(historyText(afterReload)).toContain('Already available: mcp__srv__alpha');
     expect(historyText(afterReload)).not.toContain('Loaded: mcp__srv__alpha');

@@ -1,4 +1,4 @@
-import type { ModelCapability } from '#/llm/capability';
+import type { ModelCapability } from '#/llm-requester/capability';
 import type { ToolDescription } from '#/llm/message';
 import type { ToolDefinition } from '#/tool/tool';
 

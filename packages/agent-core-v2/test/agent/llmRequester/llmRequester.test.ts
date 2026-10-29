@@ -3,10 +3,13 @@ import {
   APIRequestTooLargeError,
   APIStatusError,
 } from '#/llm-adapter/contract/errors';
-import type { Message } from '#/llm-adapter/contract/message';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
-import type { StreamedMessagePart, ToolDescription as Tool } from '#human/llm/message';
-import { emptyUsage, inputTotal } from '#human/llm/usage';
+import type {
+  Message,
+  StreamedMessagePart,
+  ToolDescription as Tool,
+} from '#human/llm/message';
+import { emptyUsage, inputTotal } from '#human/llm-requester/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -790,7 +793,7 @@ function wireEvents(
 }
 
 function userMessage(text: string) {
-  return { role: 'user' as const, content: [{ type: 'text' as const, text }], toolCalls: [] };
+  return { role: 'user' as const, content: [{ type: 'text' as const, text }] };
 }
 
 async function collectLLMRequest(

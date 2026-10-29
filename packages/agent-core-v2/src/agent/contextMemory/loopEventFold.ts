@@ -1,9 +1,8 @@
 import { freeze, isDraft, original } from 'immer';
 
-import type { FinishReason } from '#human/llm/finish-reason';
-import { createToolMessage } from '#/llm-adapter/contract/message';
-import type { ContentPart, ToolCall } from '#human/llm/message';
-import type { TokenUsage } from '#human/llm/usage';
+import type { FinishReason } from '#human/llm-requester/finish-reason';
+import { createToolMessage, type ContentPart, type ToolCall } from '#human/llm/message';
+import type { TokenUsage } from '#human/llm-requester/usage';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import type { ContextMessage, ContextMessageTiming } from './types';
@@ -324,14 +323,17 @@ function createFoldSink(initial: readonly ContextMessage[], initialMutable: bool
       updateOpen((message) => ({ ...message, content: [...message.content, part] }));
     },
     appendOpenToolCall: (call, display) => {
-      updateOpen((message) => ({
-        ...message,
-        toolCalls: [...message.toolCalls, call],
-        toolCallDisplays:
-          display === undefined
-            ? message.toolCallDisplays
-            : { ...message.toolCallDisplays, [call.id]: display },
-      }));
+      updateOpen((message) => {
+        if (message.role !== 'assistant') return message;
+        return {
+          ...message,
+          toolCalls: [...message.toolCalls, call],
+          toolCallDisplays:
+            display === undefined
+              ? message.toolCallDisplays
+              : { ...message.toolCallDisplays, [call.id]: display },
+        };
+      });
     },
     dropOpenAssistant: () => {
       if (openIndex === -1) return;
@@ -379,6 +381,7 @@ function recoverFoldState(state: readonly ContextMessage[]): InitialFoldState | 
   const openIndex = findOpenAssistantIndex(state);
   if (openIndex === -1) return undefined;
   const open = state[openIndex]!;
+  if (open.role !== 'assistant') return undefined;
   const resolvedToolCallIds = new Set<string>();
   for (let i = openIndex + 1; i < state.length; i++) {
     const message = state[i]!;

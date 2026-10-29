@@ -28,6 +28,19 @@ import {
   unsupportedImageMimeFromUrl,
 } from '#/agent/media/image-format-policy';
 import { buildDaemonFileUrl } from '#/agent/media/mediaRef';
+import type { ContentPart } from '#human/llm/message';
+import { mediaUrlOf } from '#human/llm/protocol/kit/media';
+
+function image(url: string, id?: string): ContentPart {
+  return {
+    type: 'image_url',
+    imageUrl: id === undefined ? { url } : { url, id },
+  };
+}
+
+function video(url: string): ContentPart {
+  return { type: 'video_url', videoUrl: { url } };
+}
 
 async function solidPng(width: number, height: number, color = 0x3366ccff): Promise<Uint8Array> {
   const image = new Jimp({ width, height, color });
@@ -501,14 +514,14 @@ describe('compressImageContentParts', () => {
     const big = await solidPng(2100, 1050);
     const parts = [
       { type: 'text' as const, text: 'look at this' },
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } },
+      image(dataUrl('image/png', big)),
     ];
     const { parts: out } = await compressImageContentParts(parts);
 
     expect(out[0]).toEqual({ type: 'text', text: 'look at this' });
     const imagePart = out[1];
     if (imagePart?.type !== 'image_url') throw new Error('expected image_url');
-    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(imagePart.imageUrl.url);
+    const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(mediaUrlOf(imagePart));
     expect(match).not.toBeNull();
     const dims = sniffImageDimensions(Buffer.from(match![2]!, 'base64'));
     expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(MAX_IMAGE_EDGE_PX);
@@ -517,36 +530,33 @@ describe('compressImageContentParts', () => {
   it('preserves the part identity for a within-budget image (no change)', async () => {
     const small = await solidPng(48, 48);
     const url = dataUrl('image/png', small);
-    const parts = [{ type: 'image_url' as const, imageUrl: { url } }];
+    const parts = [image(url)];
     const { parts: out } = await compressImageContentParts(parts);
-    expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url } });
+    expect(out[0]).toEqual(image(url));
   });
 
   it('leaves remote (non-data) image URLs untouched', async () => {
-    const parts = [
-      { type: 'image_url' as const, imageUrl: { url: 'https://example.com/pic.png' } },
-    ];
+    const url = 'https://example.com/pic.png';
+    const parts = [image(url)];
     const { parts: out } = await compressImageContentParts(parts);
-    expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url: 'https://example.com/pic.png' } });
+    expect(out[0]).toEqual(image(url));
   });
 
   it('keeps an image part id when rewriting the compressed url', async () => {
     const big = await solidPng(2100, 1050);
-    const parts = [
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big), id: 'att-1' } },
-    ];
+    const parts = [image(dataUrl('image/png', big), 'att-1')];
     const { parts: out } = await compressImageContentParts(parts);
     const imagePart = out[0];
     if (imagePart?.type !== 'image_url') throw new Error('expected image_url');
     expect(imagePart.imageUrl.id).toBe('att-1');
-    expect(imagePart.imageUrl.url).not.toBe(dataUrl('image/png', big));
+    expect(mediaUrlOf(imagePart)).not.toBe(dataUrl('image/png', big));
   });
 
   it('drops image parts the provider cannot accept, replacing each with a notice', async () => {
     const parts = [
       { type: 'text' as const, text: 'search results' },
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/avif', new Uint8Array([1, 2, 3])) } },
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/heic', new Uint8Array([4, 5, 6])) } },
+      image(dataUrl('image/avif', new Uint8Array([1, 2, 3]))),
+      image(dataUrl('image/heic', new Uint8Array([4, 5, 6]))),
     ];
     const { parts: out, captions } = await compressImageContentParts(parts);
 
@@ -561,9 +571,9 @@ describe('compressImageContentParts', () => {
   it('passes the accepted formats through the format gate untouched', async () => {
     for (const mime of ['image/png', 'image/jpeg', 'image/gif', 'image/webp']) {
       const url = dataUrl(mime, new Uint8Array([1, 2, 3]));
-      const parts = [{ type: 'image_url' as const, imageUrl: { url } }];
+      const parts = [image(url)];
       const { parts: out } = await compressImageContentParts(parts);
-      expect(out[0]).toEqual({ type: 'image_url', imageUrl: { url } });
+      expect(out[0]).toEqual(image(url));
     }
   });
 
@@ -571,25 +581,15 @@ describe('compressImageContentParts', () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const base64 = Buffer.from(bytes).toString('base64');
     for (const alias of ['image/jpg', 'Image/JPEG', ' image/jpeg ']) {
-      const parts = [
-        { type: 'image_url' as const, imageUrl: { url: `data:${alias};base64,${base64}` } },
-      ];
+      const parts = [image(`data:${alias};base64,${base64}`)];
       const { parts: out, captions } = await compressImageContentParts(parts);
-      expect(out[0]).toEqual({
-        type: 'image_url',
-        imageUrl: { url: `data:image/jpeg;base64,${base64}` },
-      });
+      expect(out[0]).toEqual(image(`data:image/jpeg;base64,${base64}`));
       expect(captions).toEqual([]);
     }
   });
 
   it('drops an unsupported image even when its data URL carries MIME parameters', async () => {
-    const parts = [
-      {
-        type: 'image_url' as const,
-        imageUrl: { url: dataUrl('image/avif;charset=utf-8', new Uint8Array([1, 2, 3])) },
-      },
-    ];
+    const parts = [image(dataUrl('image/avif;charset=utf-8', new Uint8Array([1, 2, 3])))];
     const { parts: out } = await compressImageContentParts(parts);
     expect(out.some((p) => p.type === 'image_url')).toBe(false);
     expect(out[0]).toMatchObject({ type: 'text' });
@@ -605,10 +605,10 @@ describe('gateImageFormatParts', () => {
   it('replaces every unsupported inline image with a notice and keeps the rest', () => {
     const parts = [
       { type: 'text' as const, text: 'results' },
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/avif', new Uint8Array([1])) } },
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/bmp', new Uint8Array([2])) } },
-      { type: 'video_url' as const, videoUrl: { url: dataUrl('video/mp4', new Uint8Array([3])) } },
-      { type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', new Uint8Array([4])) } },
+      image(dataUrl('image/avif', new Uint8Array([1]))),
+      image(dataUrl('image/bmp', new Uint8Array([2]))),
+      video(dataUrl('video/mp4', new Uint8Array([3]))),
+      image(dataUrl('image/png', new Uint8Array([4]))),
     ];
     const out = gateImageFormatParts(parts);
 
@@ -620,31 +620,21 @@ describe('gateImageFormatParts', () => {
     expect(out).toContainEqual(parts[4]);
     expect(
       out.some(
-        (p) => p.type === 'image_url' && !p.imageUrl.url.startsWith('data:image/png'),
+        (p) => p.type === 'image_url' && !mediaUrlOf(p).startsWith('data:image/png'),
       ),
     ).toBe(false);
   });
 
   it('rewrites accepted MIME aliases to canonical form', () => {
     const base64 = Buffer.from([1, 2, 3]).toString('base64');
-    const out = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/jpg;base64,${base64}` } },
-    ]);
-    expect(out[0]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: `data:image/jpeg;base64,${base64}` },
-    });
+    const out = gateImageFormatParts([image(`data:image/jpg;base64,${base64}`)]);
+    expect(out[0]).toEqual(image(`data:image/jpeg;base64,${base64}`));
   });
 
   it('rewrites an accepted MIME carrying parameters to the bare canonical form', () => {
     const base64 = Buffer.from([1, 2, 3]).toString('base64');
-    const out = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/jpeg;charset=utf-8;base64,${base64}` } },
-    ]);
-    expect(out[0]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: `data:image/jpeg;base64,${base64}` },
-    });
+    const out = gateImageFormatParts([image(`data:image/jpeg;charset=utf-8;base64,${base64}`)]);
+    expect(out[0]).toEqual(image(`data:image/jpeg;base64,${base64}`));
   });
 
   it('gates on the sniffed bytes, not the declared MIME', () => {
@@ -658,27 +648,24 @@ describe('gateImageFormatParts', () => {
     };
 
     const mislabeled = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${ftyp('avif').toString('base64')}` } },
+      image(`data:image/png;base64,${ftyp('avif').toString('base64')}`),
     ]);
     expect(mislabeled.some((p) => p.type === 'image_url')).toBe(false);
     expect((mislabeled[0] as { text: string }).text).toContain('image/avif');
 
     const video = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${ftyp('isom').toString('base64')}` } },
+      image(`data:image/png;base64,${ftyp('isom').toString('base64')}`),
     ]);
     expect(video.some((p) => p.type === 'image_url')).toBe(false);
     expect((video[0] as { text: string }).text).toContain('video/mp4');
 
     const rescued = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/avif;base64,${pngBytes.toString('base64')}` } },
+      image(`data:image/avif;base64,${pngBytes.toString('base64')}`),
     ]);
-    expect(rescued[0]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: `data:image/png;base64,${pngBytes.toString('base64')}` },
-    });
+    expect(rescued[0]).toEqual(image(`data:image/png;base64,${pngBytes.toString('base64')}`));
 
     const garbage = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/png;base64,${Buffer.from([1, 2, 3]).toString('base64')}` } },
+      image(`data:image/png;base64,${Buffer.from([1, 2, 3]).toString('base64')}`),
     ]);
     expect(garbage[0]).toMatchObject({ type: 'image_url' });
   });
@@ -686,17 +673,10 @@ describe('gateImageFormatParts', () => {
   it('parses the base64 marker case-insensitively', () => {
     const base64 = Buffer.from([1, 2, 3]).toString('base64');
 
-    const accepted = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/jpeg;BASE64,${base64}` } },
-    ]);
-    expect(accepted[0]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: `data:image/jpeg;base64,${base64}` },
-    });
+    const accepted = gateImageFormatParts([image(`data:image/jpeg;BASE64,${base64}`)]);
+    expect(accepted[0]).toEqual(image(`data:image/jpeg;base64,${base64}`));
 
-    const unsupported = gateImageFormatParts([
-      { type: 'image_url', imageUrl: { url: `data:image/avif;BASE64,${base64}` } },
-    ]);
+    const unsupported = gateImageFormatParts([image(`data:image/avif;BASE64,${base64}`)]);
     expect(unsupported.some((p) => p.type === 'image_url')).toBe(false);
     expect((unsupported[0] as { text: string }).text).toContain('image/avif');
   });
@@ -710,7 +690,7 @@ describe('gateImageFormatParts', () => {
       'https://example.com/icon.ico',
       'https://example.com/logo.svg',
     ]) {
-      const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url: bad } }]);
+      const out = gateImageFormatParts([image(bad)]);
       expect(out[0]).toMatchObject({ type: 'text' });
       expect((out[0] as { text: string }).text).toContain(bad);
     }
@@ -720,7 +700,7 @@ describe('gateImageFormatParts', () => {
       'https://example.com/avatar',
       'https://cdn.example.com/v2/image?id=123',
     ]) {
-      const part = { type: 'image_url' as const, imageUrl: { url: ok } };
+      const part = image(ok);
       expect(gateImageFormatParts([part])).toEqual([part]);
     }
   });
@@ -731,7 +711,7 @@ describe('gateImageFormatParts', () => {
       buildDaemonFileUrl(fileId),
       `kimi-file://${fileId}?path=${encodeURIComponent('/tmp/upload/photo.heic')}`,
     ]) {
-      const part = { type: 'image_url' as const, imageUrl: { url } };
+      const part = image(url);
       expect(gateImageFormatParts([part])).toEqual([part]);
     }
   });
@@ -745,7 +725,7 @@ describe('gateImageFormatParts', () => {
       'DATA:image/avif',
     ];
     for (const url of cases) {
-      const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url } }]);
+      const out = gateImageFormatParts([image(url)]);
       expect(out.some((p) => p.type === 'image_url')).toBe(false);
       expect(out[0]).toMatchObject({ type: 'text' });
       expect((out[0] as { text: string }).text).toContain('not a valid data URL');
@@ -754,7 +734,7 @@ describe('gateImageFormatParts', () => {
 
   it('truncates a long malformed data URL in the notice', () => {
     const url = `data:image/png${'x'.repeat(500)}`;
-    const out = gateImageFormatParts([{ type: 'image_url', imageUrl: { url } }]);
+    const out = gateImageFormatParts([image(url)]);
     const notice = (out[0] as { text: string }).text;
     expect(notice.length).toBeLessThan(250);
     expect(notice).not.toContain(url);
@@ -828,7 +808,7 @@ describe('provider-aware image format policy', () => {
       0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63,
     ]).toString('base64');
     const url = `data:image/heic;base64,${base64}`;
-    const part = { type: 'image_url' as const, imageUrl: { url } };
+    const part = image(url);
     expect(gateImageFormatParts([part], 'kimi')).toEqual([part]);
     const rejected = gateImageFormatParts([part]);
     expect(rejected.some((p) => p.type === 'image_url')).toBe(false);
@@ -1138,7 +1118,7 @@ describe('compressImageContentParts — annotate', () => {
   it('collects a caption for a compressed image and persists the original', async () => {
     const big = await solidPng(2100, 1050);
     const persisted: { bytes: Uint8Array; mimeType: string }[] = [];
-    const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
+    const parts = [image(dataUrl('image/png', big))];
     const out = await compressImageContentParts(parts, {
       annotate: {
         persistOriginal: (bytes, mimeType) => {
@@ -1161,17 +1141,17 @@ describe('compressImageContentParts — annotate', () => {
   it('collects no caption when the image passes through unchanged', async () => {
     const small = await solidPng(48, 48);
     const url = dataUrl('image/png', small);
-    const out = await compressImageContentParts([{ type: 'image_url' as const, imageUrl: { url } }], {
+    const out = await compressImageContentParts([image(url)], {
       annotate: {},
     });
     expect(out.parts).toHaveLength(1);
-    expect(out.parts[0]).toEqual({ type: 'image_url', imageUrl: { url } });
+    expect(out.parts[0]).toEqual(image(url));
     expect(out.captions).toEqual([]);
   });
 
   it('captions without a path when persistence fails', async () => {
     const big = await solidPng(2100, 1050);
-    const parts = [{ type: 'image_url' as const, imageUrl: { url: dataUrl('image/png', big) } }];
+    const parts = [image(dataUrl('image/png', big))];
     const out = await compressImageContentParts(parts, {
       annotate: { persistOriginal: () => Promise.resolve(null) },
     });
@@ -1445,7 +1425,7 @@ describe('compressImageForModel — telemetry', () => {
     const { telemetry, events } = captureTelemetry();
     const big = await solidPng(2100, 1050);
     const url = `data:image/png;base64,${Buffer.from(big).toString('base64')}`;
-    await compressImageContentParts([{ type: 'image_url', imageUrl: { url } }], {
+    await compressImageContentParts([image(url)], {
       telemetry,
       telemetrySource: 'mcp_tool_result',
     });

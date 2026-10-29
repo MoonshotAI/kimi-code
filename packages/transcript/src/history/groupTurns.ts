@@ -3,7 +3,7 @@ import type { TranscriptAttachment } from '../model/attachment';
 import type { TranscriptFrame, TranscriptUserOrigin } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { StepTiming, StepUsage, TurnOrigin } from '../model/turn';
-import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
+import { daemonFileRefFromPairingPart, parseDaemonFileRef } from '../contract/mediaRef';
 import { projectTranscriptUserOrigin, projectTranscriptUserTurnOrigin } from '../contract/origin';
 
 export type HistoryMediaSource =
@@ -18,10 +18,21 @@ export interface HistoryTextPartMeta {
   readonly [key: string]: unknown;
 }
 
+export type NativeHistoryMediaSource =
+  | { readonly kind: 'url'; readonly url: string }
+  | { readonly kind: 'inline'; readonly mimeType: string; readonly data: string }
+  | { readonly kind: 'file'; readonly id: string; readonly mimeType: string }
+  | { readonly kind: 'store'; readonly ref: string };
+
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string; readonly meta?: HistoryTextPartMeta }
   | { readonly type: 'think'; readonly think: string; readonly hidden?: boolean }
   | { readonly type: 'image' | 'video' | 'audio'; readonly source: HistoryMediaSource; readonly name?: string }
+  | {
+      readonly type: 'image_url' | 'video_url' | 'audio_url';
+      readonly source: NativeHistoryMediaSource;
+      readonly name?: string;
+    }
   | {
       readonly type: 'file';
       readonly file_id: string;
@@ -180,6 +191,33 @@ export function groupMessagesIntoSnapshot(
         texts.push(part.text);
         continue;
       }
+      if (
+        (part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url') &&
+        'source' in part &&
+        part.source !== undefined
+      ) {
+        const source = part.source as NativeHistoryMediaSource;
+        const kind = part.type === 'image_url' ? 'image' : part.type === 'video_url' ? 'video' : 'audio';
+        const daemonRef = source.kind === 'url' ? parseDaemonFileRef(source.url) : undefined;
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          mediaType: source.kind === 'inline' ? source.mimeType : `${kind}/*`,
+          name: part.name,
+          source:
+            daemonRef !== undefined
+              ? { kind: 'session_media', fileId: daemonRef.fileId }
+              : source.kind === 'url'
+                ? { kind: 'url', url: source.url }
+                : source.kind === 'file'
+                  ? { kind: 'file', fileId: source.id }
+                  : source.kind === 'store'
+                    ? { kind: 'url', url: `media://${source.ref}` }
+                    : undefined,
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+        continue;
+      }
       if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
         if (!('source' in part) || part.source === undefined) continue;
         const source = part.source as HistoryMediaSource;
@@ -221,6 +259,25 @@ export function groupMessagesIntoSnapshot(
         };
         attachments.push(entity);
         ids.push(entity.attachmentId);
+        continue;
+      }
+      if (part.type === 'image_url' || part.type === 'video_url' || part.type === 'audio_url') {
+        const container = part.type === 'image_url'
+          ? (part as { imageUrl?: { url?: string; name?: string } }).imageUrl
+          : part.type === 'video_url'
+            ? (part as { videoUrl?: { url?: string; name?: string } }).videoUrl
+            : (part as { audioUrl?: { url?: string; name?: string } }).audioUrl;
+        if (typeof container?.url === 'string') {
+          const kind = part.type === 'image_url' ? 'image' : part.type === 'video_url' ? 'video' : 'audio';
+          const entity: TranscriptAttachment = {
+            attachmentId: `att_${attachments.length + 1}`,
+            mediaType: `${kind}/*`,
+            name: container.name,
+            source: { kind: 'url', url: container.url },
+          };
+          attachments.push(entity);
+          ids.push(entity.attachmentId);
+        }
       }
     }
     for (const attachment of originFileAttachments(message)) {

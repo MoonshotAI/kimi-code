@@ -974,7 +974,6 @@ describe('AgentTaskService — notification delivery', () => {
         {
           role: 'user',
           content: [{ type: 'text', text: 'already delivered' }],
-          toolCalls: [],
           origin,
         },
       );
@@ -1189,7 +1188,6 @@ describe('AgentTaskService — notification delivery', () => {
       ctx.get(IAgentContextMemoryService).append({
         role: 'user',
         content: [{ type: 'text', text: '<notification>interrupted task lost.</notification>' }],
-        toolCalls: [],
         origin: {
           kind: 'task',
           taskId: 'agent-old00000',

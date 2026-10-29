@@ -99,11 +99,11 @@ export const ModelAliasSchema = ModelAliasBaseSchema.extend({
 
 export type ModelAlias = z.infer<typeof ModelAliasSchema>;
 
-export const SecondaryModelConfigSchema = ModelAliasOverrideSchema.extend({
+export const SecondaryModelConfigSchema = z.object({
   model: z.string().min(1).optional(),
   defaultModel: z.string().min(1).optional(),
   models: z.record(z.string(), z.string()).optional(),
-  force: z.boolean().optional(),
+  defaultEffort: z.string().optional(),
 });
 
 export type SecondaryModelConfig = z.infer<typeof SecondaryModelConfigSchema>;

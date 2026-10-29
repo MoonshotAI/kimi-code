@@ -6,13 +6,13 @@ import type {
 import { unwrapErrorCause } from '#/errors';
 import { llmMessageFromError } from '#/llm-adapter/contract/errors';
 import type { LLMRequestTrace } from '#/llm-adapter/contract/request-trace';
-import { toLlmErrorMessage, type LlmRemoteErrorMessage } from '#human/llm/errors';
+import { toLlmErrorMessage, type LlmRemoteErrorMessage } from '#human/llm-requester/errors';
 import type {
   LlmRequestConfig,
   LlmRequestContent,
   LlmRequestControl,
   LlmRequester,
-} from '#human/llm/requester/requester';
+} from '#human/llm-requester/requester';
 
 export type MachineRequesterGateDecision =
   | { readonly type: 'proceed'; readonly signal?: AbortSignal; readonly step?: number }

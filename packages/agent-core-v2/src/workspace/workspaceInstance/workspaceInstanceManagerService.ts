@@ -22,6 +22,7 @@ import { IAppStateService } from '#/app/state/appState';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { LifecycleScope } from '#/app/scopes';
 import { IWorkspaceService, type Workspace } from '#/app/workspace/workspace';
+import { IWorkspacePersistence } from '#/app/workspace/workspacePersistence';
 import { IModelService } from '#/llm-adapter/model/model';
 import { IProviderService } from '#/llm-adapter/provider/provider';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -32,6 +33,7 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { LocalRuntimeProviderFactory } from '#/runtime/localRuntime';
 import { canonicalWorkspaceRoot } from '#/_base/utils/paths';
+import { workspaceRootKey } from '#/_base/utils/workdir-slug';
 import type { Runtime, RuntimeBinding, RuntimeCapability, RuntimeLease } from '#/runtime/runtime';
 import { RuntimeError, RuntimeRegistry } from '#/runtime/runtimeRegistry';
 import type { RuntimeProviderFactory } from '#/runtime/runtimeProvider';
@@ -86,6 +88,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @ISessionLockService private readonly sessionLocks: ISessionLockService,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
     @IFileSystemStorageService private readonly storage: IFileSystemStorageService,
+    @IWorkspacePersistence private readonly workspaceStore: IWorkspacePersistence,
     @IWorkspaceTrustStore private readonly trustStore: IWorkspaceTrustStore,
     private readonly unitHostFactory: RuntimeUnitHostFactory = new SharedRuntimeUnitHostFactory(),
   ) {
@@ -105,11 +108,13 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     const probe = canonicalWorkspaceRoot(cwd);
     let best: { readonly instance: WorkspaceInstance; readonly rootLength: number } | undefined;
     for (const instance of this.instances.values()) {
-      const root = canonicalWorkspaceRoot(instance.root);
-      const prefix = root.endsWith('/') ? root : `${root}/`;
-      if (probe !== root && !probe.startsWith(prefix)) continue;
-      if (best === undefined || root.length > best.rootLength) {
-        best = { instance, rootLength: root.length };
+      for (const dir of [instance.root, ...instance.program.dirs.additionalDirs]) {
+        const root = canonicalWorkspaceRoot(dir);
+        const prefix = root.endsWith('/') ? root : `${root}/`;
+        if (probe !== root && !probe.startsWith(prefix)) continue;
+        if (best === undefined || root.length > best.rootLength) {
+          best = { instance, rootLength: root.length };
+        }
       }
     }
     return best?.instance;
@@ -154,7 +159,13 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
   private async acquireWorkspace(workspace: Workspace): Promise<WorkspaceInstanceLease> {
     while (!this.disposing) {
       const existing = this.instances.get(workspace.id);
-      if (existing !== undefined) return this.retain(existing);
+      if (existing !== undefined) {
+        if (workspaceRootKey(existing.root) === workspaceRootKey(workspace.root)) {
+          return this.retain(existing);
+        }
+        await this.close(existing);
+        continue;
+      }
       const closing = this.closing.get(workspace.id);
       if (closing !== undefined) {
         await closing;
@@ -279,6 +290,9 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         builtinSkills: this.builtinSkills,
         userSkills: this.userSkills,
         telemetry: this.telemetry,
+        docs: this.docs,
+        workspaces: this.workspaces,
+        workspaceStore: this.workspaceStore,
         trustStore: this.trustStore,
         createSessionController: (input) => new SessionLifecycleService(
           this.instantiation,

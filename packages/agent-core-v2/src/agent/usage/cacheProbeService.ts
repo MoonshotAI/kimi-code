@@ -9,7 +9,7 @@ import {
 } from '#/agent/llmRequester/llmRequester';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { inputTotal } from '#human/llm/usage';
+import { inputTotal } from '#human/llm-requester/usage';
 import { IModelCatalog } from '#/llm-adapter/model/catalog';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionUsageService } from '#/session/usage/sessionUsage';

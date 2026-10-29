@@ -75,6 +75,7 @@ import {
 } from './internal/fsSearch';
 
 const SEARCH_HARD_CAP = 500;
+const LIST_TOTAL_ENTRY_BUDGET = 10_000;
 const PROBE_MAX_DEPTH = 6;
 const PROBE_MAX_ENTRIES = 500;
 const GREP_TIMEOUT_MS = 30_000;
@@ -134,13 +135,13 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     });
   }
 
-  private absOf(rel: string): string {
-    return rel === '' || rel === '.' ? this.workDir : this.path.join(this.workDir, rel);
-  }
-
   async list(req: FsListRequest): Promise<FsListResponse> {
-    const abs = await this.resolveWithin(req.path);
-    const rel = this.toRel(abs);
+    const abs = await this.resolveWithin(req.path, req.allow_external_symlinks === true);
+    const anchored = this.path.isAbsolute(req.path);
+    const base = anchored ? this.anchorRoot(abs) : this.workDir;
+    const rel = anchored ? this.toRelFrom(base, abs) : this.toRel(abs);
+    const absOf = (relPath: string): string =>
+      relPath === '' || relPath === '.' ? base : this.path.join(base, relPath);
 
     let topStat: HostFileStat;
     try {
@@ -154,32 +155,46 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       });
     }
 
-    const gitignore = req.follow_gitignore ? await this.matcher() : undefined;
+    const gitignore = req.follow_gitignore ? await this.matcherFor(base) : undefined;
 
     const items: FsEntry[] = [];
     const childrenByPath: Record<string, FsEntry[]> = {};
     const probeBudget = { visited: 0 };
+    let symlinkEntries = 0;
+    let budgetExhausted = false;
     let truncated = false;
 
     interface QueueEntry {
       readonly relPath: string;
       readonly depthRemaining: number;
+      readonly ancestors: readonly string[];
+      readonly viaSymlink: boolean;
     }
+    const rootRel = rel === '.' ? '' : rel;
+    const rootIsSymlink = await this.pathHasSymlink(absOf(rootRel));
     const queue: QueueEntry[] = [
-      { relPath: rel === '.' ? '' : rel, depthRemaining: req.depth },
+      {
+        relPath: rootRel,
+        depthRemaining: req.depth,
+        ancestors: [await this.realpathExistingPrefix(absOf(rootRel))],
+        viaSymlink: rootIsSymlink,
+      },
     ];
 
     interface Child {
       readonly name: string;
       readonly relPath: string;
       readonly stat: HostFileStat;
+      readonly isDirectory: boolean;
+      readonly realPath?: string;
     }
 
     while (queue.length > 0) {
       const entry = queue.shift()!;
+      if (budgetExhausted && entry.viaSymlink) continue;
       let names: readonly string[];
       try {
-        names = (await this.hostFs.readdir(this.absOf(entry.relPath))).map((e) => e.name);
+        names = (await this.hostFs.readdir(absOf(entry.relPath))).map((e) => e.name);
       } catch (error) {
         if (entry.relPath === (rel === '.' ? '' : rel)) {
           throw mapFsError(error, req.path);
@@ -200,13 +215,33 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           }
         }
         if (req.exclude_globs && matchesAnyGlob(childRel, req.exclude_globs)) continue;
-        const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
-        if (st === undefined || (ancestorOfAllowed && !st.isDirectory)) continue;
+        const st = await this.hostFs.lstat(absOf(childRel)).catch(() => undefined);
+        if (st === undefined) continue;
+        let isDirectory = st.isDirectory;
+        let realPath: string | undefined;
+        if (st.isSymbolicLink === true) {
+          const target = await this.symlinkDirectoryTarget(
+            childRel,
+            req.allow_external_symlinks === true,
+            absOf,
+          );
+          isDirectory = target.isDirectory;
+          realPath = target.realPath;
+        }
+        if (ancestorOfAllowed && !isDirectory) continue;
         if (
           ancestorOfAllowed &&
-          !(await this.hasAllowedDescendant(childRel, req.allow_ignored_globs!, req.exclude_globs, req.show_hidden, probeBudget))
+          !(await this.hasAllowedDescendant(
+            childRel,
+            req.allow_ignored_globs!,
+            req.exclude_globs,
+            req.show_hidden,
+            req.allow_external_symlinks === true,
+            probeBudget,
+            absOf,
+          ))
         ) continue;
-        visible.push({ name, relPath: childRel, stat: st });
+        visible.push({ name, relPath: childRel, stat: st, isDirectory, realPath });
       }
 
       sortChildren(visible, req.sort);
@@ -218,13 +253,38 @@ export class WorkspaceFsService implements IWorkspaceFsService {
           truncated = true;
           break;
         }
+        const viaSymlink = entry.viaSymlink;
+        if (viaSymlink && symlinkEntries >= LIST_TOTAL_ENTRY_BUDGET) {
+          truncated = true;
+          budgetExhausted = true;
+          break;
+        }
         const fsEntry = buildFsEntry(child.relPath, child.name, child.stat, false);
+        if (child.stat.isSymbolicLink === true && child.isDirectory) {
+          fsEntry.is_directory = true;
+        }
         if (entry.depthRemaining === req.depth) {
           items.push(fsEntry);
         }
         bucket.push(fsEntry);
-        if (child.stat.isDirectory && entry.depthRemaining > 1) {
-          queue.push({ relPath: child.relPath, depthRemaining: entry.depthRemaining - 1 });
+        if (viaSymlink) symlinkEntries += 1;
+        if (child.isDirectory && entry.depthRemaining > 1) {
+          const realPath =
+            child.realPath ??
+            (await this.realpathExistingPrefix(absOf(child.relPath)).catch(() => undefined));
+          const childViaSymlink = viaSymlink || child.stat.isSymbolicLink === true;
+          if (
+            realPath !== undefined &&
+            !entry.ancestors.includes(realPath) &&
+            (!budgetExhausted || !childViaSymlink)
+          ) {
+            queue.push({
+              relPath: child.relPath,
+              depthRemaining: entry.depthRemaining - 1,
+              ancestors: [...entry.ancestors, realPath],
+              viaSymlink: childViaSymlink,
+            });
+          }
         }
       }
 
@@ -240,18 +300,52 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return response;
   }
 
+  private async pathHasSymlink(absPath: string): Promise<boolean> {
+    let current = absPath;
+    for (;;) {
+      const st = await this.hostFs.lstat(current).catch(() => undefined);
+      if (st?.isSymbolicLink === true) return true;
+      const parent = this.path.dirname(current);
+      if (parent === current) return false;
+      current = parent;
+    }
+  }
+
+  private async symlinkDirectoryTarget(
+    relPath: string,
+    allowExternal: boolean,
+    absOf: (rel: string) => string,
+  ): Promise<{ readonly isDirectory: boolean; readonly realPath?: string }> {
+    try {
+      const target = await this.hostFs.stat(absOf(relPath));
+      if (!target.isDirectory) return { isDirectory: false };
+      const realPath = await this.realpathExistingPrefix(absOf(relPath));
+      if (!allowExternal) {
+        const roots = await this.realRoots();
+        if (!roots.some((root) => isInsideOrEqual(this.path, realPath, root))) {
+          return { isDirectory: false };
+        }
+      }
+      return { isDirectory: true, realPath };
+    } catch {
+      return { isDirectory: false };
+    }
+  }
+
   private async hasAllowedDescendant(
     relDir: string,
     globs: readonly string[],
     excludeGlobs: readonly string[] | undefined,
     showHidden: boolean,
+    allowExternalSymlinks: boolean,
     budget: { visited: number },
+    absOf: (rel: string) => string,
   ): Promise<boolean> {
     const walk = async (rel: string, depth: number): Promise<boolean> => {
       if (depth > PROBE_MAX_DEPTH || budget.visited >= PROBE_MAX_ENTRIES) return true;
       let names: readonly string[];
       try {
-        names = (await this.hostFs.readdir(this.absOf(rel))).map((e) => e.name);
+        names = (await this.hostFs.readdir(absOf(rel))).map((e) => e.name);
       } catch {
         return false;
       }
@@ -262,8 +356,12 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         const childRel = `${rel}/${name}`;
         if (excludeGlobs !== undefined && matchesAnyGlob(childRel, excludeGlobs)) continue;
         if (matchesAnyGlob(childRel, globs)) return true;
-        const st = await this.hostFs.lstat(this.absOf(childRel)).catch(() => undefined);
-        if (st?.isDirectory === true && globCanMatchBelow(childRel, globs)) {
+        const st = await this.hostFs.lstat(absOf(childRel)).catch(() => undefined);
+        const isDirectory =
+          st?.isSymbolicLink === true
+            ? (await this.symlinkDirectoryTarget(childRel, allowExternalSymlinks, absOf)).isDirectory
+            : st?.isDirectory === true;
+        if (isDirectory && globCanMatchBelow(childRel, globs)) {
           if (await walk(childRel, depth + 1)) return true;
         }
       }
@@ -273,7 +371,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async read(req: FsReadRequest): Promise<FsReadResponse> {
-    const abs = await this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path, req.allow_external_symlinks === true);
     const rel = this.toRel(abs);
 
     let st: HostFileStat;
@@ -462,8 +560,8 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return { absolute: abs, relative: rel, isDirectory: st.isDirectory };
   }
 
-  async resolveDownload(relPath: string): Promise<FsDownloadResolved> {
-    const abs = await this.resolveWithin(relPath);
+  async resolveDownload(relPath: string, allowExternalSymlinks = false): Promise<FsDownloadResolved> {
+    const abs = await this.resolveWithin(relPath, allowExternalSymlinks);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
@@ -492,53 +590,78 @@ export class WorkspaceFsService implements IWorkspaceFsService {
   }
 
   async search(req: FsSearchRequest): Promise<FsSearchResponse> {
+    const roots = await this.suggestRoots();
     if (req.query === '') {
-      const listed = await this.list({
-        path: '.',
-        depth: 1,
-        limit: req.limit,
-        show_hidden: false,
-        follow_gitignore: req.follow_gitignore,
-        exclude_globs: req.exclude_globs,
-        sort: 'type_first',
-        include_git_status: false,
-      });
-      const items = listed.items
-        .filter(
-          (entry) =>
-            req.include_globs === undefined || matchesAnyGlob(entry.path, req.include_globs),
-        )
-        .map((entry) => ({
-          path: entry.path,
-          name: entry.name,
-          kind: entry.kind,
-          score: 1,
-          match_positions: [],
-        }));
-      return { items, truncated: listed.truncated };
+      const items: FsSearchHit[] = [];
+      const seenPaths = new Set<string>();
+      let truncated = false;
+      for (const root of roots) {
+        let listed: FsListResponse;
+        try {
+          listed = await this.list({
+            path: root.dir,
+            depth: 1,
+            limit: req.limit,
+            show_hidden: false,
+            follow_gitignore: req.follow_gitignore,
+            exclude_globs: req.exclude_globs,
+            sort: 'type_first',
+            include_git_status: false,
+          });
+        } catch (error) {
+          if (!root.primary && isMissingPathError(error)) continue;
+          throw error;
+        }
+        truncated = truncated || listed.truncated;
+        for (const entry of listed.items) {
+          if (req.include_globs !== undefined && !matchesAnyGlob(entry.path, req.include_globs)) {
+            continue;
+          }
+          const pathKey = `${root.real}/${entry.path}`;
+          if (seenPaths.has(pathKey)) continue;
+          seenPaths.add(pathKey);
+          items.push({
+            path: this.suggestDisplayPath(root, entry.path),
+            name: entry.name,
+            kind: entry.kind,
+            score: 1,
+            match_positions: [],
+          });
+        }
+      }
+      return {
+        items: items.slice(0, req.limit),
+        truncated: truncated || items.length > req.limit,
+      };
     }
 
-    const matcher = req.follow_gitignore ? await this.matcher() : undefined;
     const candidates: FsSearchHit[] = [];
     const queryLower = req.query.toLowerCase();
-
-    await this.walk(this.workDir, '', matcher, async (relPath, name, kind) => {
-      const score = computeFuzzyScore(name, queryLower);
-      if (score <= 0) return;
-      if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
-        return;
-      }
-      if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
-        return;
-      }
-      candidates.push({
-        path: relPath,
-        name,
-        kind,
-        score,
-        match_positions: computeMatchPositions(relPath, queryLower),
+    const seenPaths = new Set<string>();
+    for (const root of roots) {
+      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
+      await this.walk(root.dir, '', matcher, async (relPath, name, kind) => {
+        const pathKey = `${root.real}/${relPath}`;
+        if (seenPaths.has(pathKey)) return;
+        seenPaths.add(pathKey);
+        const score = computeFuzzyScore(name, queryLower);
+        if (score <= 0) return;
+        if (req.include_globs && !matchesAnyGlob(relPath, req.include_globs)) {
+          return;
+        }
+        if (req.exclude_globs && matchesAnyGlob(relPath, req.exclude_globs)) {
+          return;
+        }
+        const path = this.suggestDisplayPath(root, relPath);
+        candidates.push({
+          path,
+          name,
+          kind,
+          score,
+          match_positions: computeMatchPositions(path, queryLower),
+        });
       });
-    });
+    }
 
     candidates.sort((a, b) => {
       if (b.score !== a.score) return b.score - a.score;
@@ -649,6 +772,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       try {
         entries = await this.hostFs.readdir(root.dir);
       } catch (error) {
+        if (!root.primary && isMissingPathError(error)) continue;
         throw mapFsError(error, root.dir);
       }
       const visible: { name: string; kind: TopEntry['kind'] }[] = [];
@@ -940,12 +1064,19 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     }
     args.push('--max-count', String(req.max_matches_per_file));
     args.push(req.pattern);
-    args.push('.');
+    const roots = await this.suggestRoots();
+    args.push('.', ...roots.filter((root) => !root.primary).map((root) => root.dir));
 
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
     const proc = await lease.runtime.process!.spawn(rgPath, args, { cwd: this.workDir });
 
-    const acc = new RgJsonAccumulator(req);
+    const primary = roots.find((root) => root.primary);
+    const acc = new RgJsonAccumulator(req, (path) => {
+      if (!this.path.isAbsolute(path) || primary === undefined) return path;
+      return isInsideOrEqual(this.path, path, primary.dir)
+        ? this.toRelFrom(primary.dir, path)
+        : path;
+    });
     let killed = false;
     const kill = (): void => {
       if (killed) return;
@@ -998,7 +1129,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     signal: AbortSignal,
     startedAt: number,
   ): Promise<FsGrepResponse> {
-    const matcher = req.follow_gitignore ? await this.matcher() : undefined;
     const re = compileGrepPattern(req);
 
     const files: FsGrepFileHit[] = [];
@@ -1006,15 +1136,26 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     let totalMatches = 0;
     let truncated = false;
 
-    const filePaths: string[] = [];
-    await this.walk(this.workDir, '', matcher, async (rel, _name, kind) => {
-      if (kind !== 'file') return;
-      if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
-      if (req.exclude_globs && matchesAnyGlob(rel, req.exclude_globs)) return;
-      filePaths.push(rel);
-    });
+    const filePaths: { path: string; absolute: string }[] = [];
+    const seenPaths = new Set<string>();
+    const roots = await this.suggestRoots();
+    for (const root of roots) {
+      const matcher = req.follow_gitignore ? await this.matcherFor(root.dir) : undefined;
+      await this.walk(root.dir, '', matcher, async (rel, _name, kind) => {
+        if (kind !== 'file') return;
+        if (req.include_globs && !matchesAnyGlob(rel, req.include_globs)) return;
+        if (req.exclude_globs && matchesAnyGlob(rel, req.exclude_globs)) return;
+        const pathKey = `${root.real}/${rel}`;
+        if (seenPaths.has(pathKey)) return;
+        seenPaths.add(pathKey);
+        filePaths.push({
+          path: this.suggestDisplayPath(root, rel),
+          absolute: this.path.join(root.dir, rel),
+        });
+      });
+    }
 
-    for (const rel of filePaths) {
+    for (const file of filePaths) {
       if (signal.aborted) {
         if (totalMatches === 0 && filesScanned === 0) {
           throw new Error2(ErrorCodes.FS_GREP_TIMEOUT, `grep timed out after ${Date.now() - startedAt}ms`);
@@ -1029,7 +1170,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       filesScanned += 1;
       let content: string;
       try {
-        content = await this.hostFs.readText(this.absOf(rel));
+        content = await this.hostFs.readText(file.absolute);
       } catch {
         continue;
       }
@@ -1057,7 +1198,7 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         }
       }
       if (matches.length > 0) {
-        files.push({ path: rel, matches });
+        files.push({ path: file.path, matches });
       }
       if (totalMatches >= req.max_total_matches) break;
     }
@@ -1118,10 +1259,6 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return ig;
   }
 
-  private async matcher(): Promise<Ignore | undefined> {
-    return this.matcherFor(this.workDir);
-  }
-
   private async resolveRg(): Promise<RgResolution | null> {
     if (this.rgResolution !== undefined) return this.rgResolution;
     const lease = this.resolver.acquire({ workspaceId: this.workspaceId, runtimeId: this.runtimeId }, ['process']);
@@ -1176,15 +1313,10 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     return abs;
   }
 
-  private async resolveWithin(inputPath: string): Promise<string> {
+  private async resolveWithin(inputPath: string, allowExternalSymlinks = false): Promise<string> {
     if (inputPath === '' || inputPath === '/') {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
         details: { path: inputPath, reason: 'empty' },
-      });
-    }
-    if (this.path.isAbsolute(inputPath)) {
-      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (absolute)`, {
-        details: { path: inputPath, reason: 'absolute' },
       });
     }
     const segments = inputPath.split(/[/\\]+/);
@@ -1199,14 +1331,16 @@ export class WorkspaceFsService implements IWorkspaceFsService {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
     }
-    const resolved = await this.realpathExistingPrefix(abs);
-    const roots = await this.realRoots();
-    if (!roots.some((root) => isInsideOrEqual(this.path, resolved, root))) {
-      throw new Error2(
-        ErrorCodes.FS_PATH_ESCAPES,
-        `path "${inputPath}" escapes workspace through a symlink`,
-        { details: { path: inputPath, reason: 'symlink_outside' } },
-      );
+    if (!allowExternalSymlinks) {
+      const resolved = await this.realpathExistingPrefix(abs);
+      const roots = await this.realRoots();
+      if (!roots.some((root) => isInsideOrEqual(this.path, resolved, root))) {
+        throw new Error2(
+          ErrorCodes.FS_PATH_ESCAPES,
+          `path "${inputPath}" escapes workspace through a symlink`,
+          { details: { path: inputPath, reason: 'symlink_outside' } },
+        );
+      }
     }
     return abs;
   }
@@ -1218,6 +1352,23 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     if (rel === '') return '.';
     return rel.split(this.path.separator).join('/');
   }
+
+  private anchorRoot(abs: string): string {
+    const dirs = [this.workDir, ...this.workspaceDirs.additionalDirs.map((d) => this.path.resolve(d))];
+    let best: string | undefined;
+    for (const dir of dirs) {
+      if (!isInsideOrEqual(this.path, abs, dir)) continue;
+      if (best === undefined || dir.length > best.length) best = dir;
+    }
+    return best ?? this.workDir;
+  }
+
+  private toRelFrom(base: string, abs: string): string {
+    if (abs === base) return '.';
+    const rel = this.path.relative(base, abs);
+    if (rel === '') return '.';
+    return rel.split(this.path.separator).join('/');
+  }
 }
 
 class RgJsonAccumulator {
@@ -1226,11 +1377,15 @@ class RgJsonAccumulator {
     { matches: FsGrepMatch[]; pending: string[]; lastMatchLine: number }
   >();
   private readonly files: FsGrepFileHit[] = [];
+  private readonly seenPaths = new Set<string>();
   private totalMatches = 0;
   private filesScanned = 0;
   private truncated = false;
 
-  constructor(private readonly req: FsGrepRequest) {}
+  constructor(
+    private readonly req: FsGrepRequest,
+    private readonly normalizePath: (path: string) => string = (path) => path,
+  ) {}
 
   get capped(): boolean {
     return (
@@ -1247,16 +1402,21 @@ class RgJsonAccumulator {
     }
     const t = rec.type;
     if (t === 'begin') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
+      if (this.seenPaths.has(p)) {
+        this.finalize(p);
+        return;
+      }
       if (this.filesScanned >= this.req.max_files) {
         this.truncated = true;
         return;
       }
+      this.seenPaths.add(p);
       this.fileBuf.set(p, { matches: [], pending: [], lastMatchLine: -1 });
       this.filesScanned += 1;
     } else if (t === 'context') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
       const buf = this.fileBuf.get(p);
       if (buf === undefined) return;
@@ -1265,7 +1425,7 @@ class RgJsonAccumulator {
         buf.pending.shift();
       }
     } else if (t === 'match') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
       const buf = this.fileBuf.get(p);
       if (buf === undefined) return;
@@ -1284,10 +1444,15 @@ class RgJsonAccumulator {
       this.totalMatches += 1;
       if (this.totalMatches >= this.req.max_total_matches) this.truncated = true;
     } else if (t === 'end') {
-      const p = rgPath(rec.data?.path);
+      const p = this.pathOf(rec);
       if (p === undefined) return;
       this.finalize(p);
     }
+  }
+
+  private pathOf(rec: RgJsonRecord): string | undefined {
+    const path = rgPath(rec.data?.path);
+    return path === undefined ? undefined : this.normalizePath(path);
   }
 
   finish(aborted: boolean, elapsedMs: number): FsGrepResponse {
@@ -1335,13 +1500,13 @@ function isPrematureCloseError(error: unknown): boolean {
 }
 
 function sortChildren(
-  children: { name: string; stat: HostFileStat }[],
+  children: { name: string; isDirectory: boolean }[],
   sort: FsListRequest['sort'],
 ): void {
   const cmp = {
-    type_first: (a: { name: string; stat: HostFileStat }, b: { name: string; stat: HostFileStat }) => {
-      const ad = a.stat.isDirectory ? 0 : 1;
-      const bd = b.stat.isDirectory ? 0 : 1;
+    type_first: (a: { name: string; isDirectory: boolean }, b: { name: string; isDirectory: boolean }) => {
+      const ad = a.isDirectory ? 0 : 1;
+      const bd = b.isDirectory ? 0 : 1;
       if (ad !== bd) return ad - bd;
       return a.name.localeCompare(b.name);
     },

@@ -65,7 +65,7 @@ import {
   type SessionPendingInteraction,
 } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import type { ToolCall } from '#human/llm/message';
+import type { ToolCall } from '#human/message';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
