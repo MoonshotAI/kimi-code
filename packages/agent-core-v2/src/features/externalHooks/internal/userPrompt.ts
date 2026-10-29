@@ -25,7 +25,7 @@ export function renderUserPromptHookResult(
   const messages =
     results
       ?.filter((result) => result.action !== 'block')
-      ?.map(userPromptHookMessage)
+      ?.map(hookResultMessage)
       .filter(isNonEmptyString) ??
     [];
   if (messages.length === 0) return undefined;
@@ -61,7 +61,7 @@ export function renderUserPromptHookBlockResult(
   };
 }
 
-function userPromptHookMessage(result: HookResult): string | undefined {
+export function hookResultMessage(result: HookResult): string | undefined {
   if (result.timedOut === true || (result.exitCode !== undefined && result.exitCode !== 0)) {
     return undefined;
   }
