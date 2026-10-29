@@ -6,6 +6,7 @@ import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServicesAccessor } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 import type { ILogService } from '#/_base/log/log';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import type { IConfigService } from '#/app/config/config';
 import { EnvironmentDeclarationService } from '#/app/environmentDeclaration/environmentDeclarationService';
 import type { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
@@ -570,6 +571,7 @@ describe('SessionManager closeIfIdle', () => {
     readonly busy?: boolean;
     readonly pending?: 'none' | 'approval' | 'question';
     readonly cronTasks?: number;
+    readonly queuedPrompts?: number;
   }
 
   const managers: SessionManager[] = [];
@@ -582,14 +584,19 @@ describe('SessionManager closeIfIdle', () => {
       busy: false,
       pending: 'none' as const,
       cronTasks: 0,
+      queuedPrompts: 0,
       activeAt: Date.now(),
       ...guards,
     };
     const agent = {
       accessor: {
-        get: (token: unknown) => token === IAgentCronService
-          ? { list: () => Array.from({ length: state.cronTasks }) }
-          : undefined,
+        get: (token: unknown) => {
+          if (token === IAgentCronService) return { list: () => Array.from({ length: state.cronTasks }) };
+          if (token === IAgentPromptQueueService) {
+            return { snapshot: () => ({ paused: true, items: Array.from({ length: state.queuedPrompts }) }) };
+          }
+          return undefined;
+        },
       },
     };
     const handle = {
@@ -682,6 +689,7 @@ describe('SessionManager closeIfIdle', () => {
     ['a pending approval', { pending: 'approval' }],
     ['a pending question', { pending: 'question' }],
     ['pending cron tasks', { cronTasks: 1 }],
+    ['prompts held in a paused queue', { queuedPrompts: 1 }],
   ];
 
   it.each(eligibilityCases)('retains sessions with %s', async (_label, guards) => {

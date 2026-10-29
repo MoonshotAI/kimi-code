@@ -11,6 +11,7 @@ import { LifecycleScope } from '#/app/scopes';
 import { Error2, ErrorCodes, isError2, SessionErrors, unwrapErrorCause } from '#/errors';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAgentCronService } from '#/features/cron/cronService';
+import { IAgentPromptQueueService } from '#/agent/promptQueue/promptQueue';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionLockService, type SessionLockLease } from '#/persistence/interface/sessionLock';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -298,10 +299,14 @@ export class SessionManager implements ISessionManager {
 
   private async retained(handle: ISessionScopeHandle): Promise<boolean> {
     const agents = handle.accessor.get(IAgentLifecycleService);
-    const hasCron = agents
-      .list()
-      .some((agent) => (agents.handleOf(agent.agentId)?.accessor.get(IAgentCronService).list().length ?? 0) > 0);
-    if (hasCron) return true;
+    const holdsWork = agents.list().some((agent) => {
+      const accessor = agents.handleOf(agent.agentId)?.accessor;
+      return accessor !== undefined && (
+        accessor.get(IAgentCronService).list().length > 0 ||
+        accessor.get(IAgentPromptQueueService).snapshot().items.length > 0
+      );
+    });
+    if (holdsWork) return true;
     const activity = handle.accessor.get(ISessionActivityView).state();
     return activity.busy || activity.pendingInteraction !== 'none';
   }

@@ -11,6 +11,7 @@ import {
   IAgentContextMemoryService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentPlanService,
   IAgentProfileService,
   IAgentLoopService,
   IAgentStateService,
@@ -357,6 +358,24 @@ describe('server-v2 /api/v1 prompts', () => {
 
     expect(submitted.body.code).toBe(0);
     expect(createGoal).toHaveBeenCalledExactlyOnceWith({ objective: 'Fix Button: Save' });
+  });
+
+  it('keeps plan mode when a goal-mode prompt is rejected because a goal already exists', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id)!;
+    const agent = session.accessor.get(IAgentLifecycleService).handleOf('main')!;
+    const plan = agent.accessor.get(IAgentPlanService);
+    await agent.accessor.get(IAgentGoalService).createGoal({ objective: 'Existing goal' });
+    await plan.enter();
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'Another goal' }],
+      mode: 'goal',
+    });
+
+    expect(submitted.body.code).toBe(40913);
+    expect(await plan.status()).not.toBeNull();
   });
 
   it('validates compaction submissions on the prompt endpoint', async () => {

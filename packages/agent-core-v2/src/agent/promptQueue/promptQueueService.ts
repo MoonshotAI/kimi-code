@@ -35,6 +35,7 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   readonly onDidChange = this.onDidChangeEmitter.event;
 
   private entries: QueueEntry[] = [];
+  private starting: QueueEntry | undefined;
   private paused = false;
   private busy = false;
   private pumpScheduled = false;
@@ -58,12 +59,12 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   snapshot(): PromptQueueSnapshot {
     return {
       paused: this.paused,
-      items: this.entries.map(({ prepare: _prepare, onDrop: _onDrop, ...item }) => item),
+      items: this.listed().map(({ prepare: _prepare, onDrop: _onDrop, ...item }) => item),
     };
   }
 
   hasPendingInputs(): boolean {
-    return !this.paused && this.entries.length > 0;
+    return this.starting !== undefined || (!this.paused && this.entries.length > 0);
   }
 
   async submitInput(request: PromptQueueInputRequest): Promise<PromptQueueSubmitResult> {
@@ -158,7 +159,8 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
   }
 
   cancel(id: string): void {
-    const entry = this.find(id);
+    const entry = this.starting?.id === id ? this.starting : this.find(id);
+    if (entry === this.starting) this.starting = undefined;
     this.entries = this.entries.filter((item) => item !== entry);
     this.emitChange();
     entry.onDrop?.();
@@ -166,7 +168,8 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
 
   override dispose(): void {
     this.disposed = true;
-    const dropped = this.entries;
+    const dropped = this.listed();
+    this.starting = undefined;
     this.entries = [];
     for (const entry of dropped) entry.onDrop?.();
     super.dispose();
@@ -200,8 +203,12 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
     return entry;
   }
 
+  private listed(): QueueEntry[] {
+    return this.starting === undefined ? this.entries : [this.starting, ...this.entries];
+  }
+
   private assertNewId(id: string): void {
-    if (this.entries.some((item) => item.id === id)) {
+    if (this.listed().some((item) => item.id === id)) {
       throw new Error2(ErrorCodes.PROMPT_ID_CONFLICT, `prompt ${id} is already queued`);
     }
   }
@@ -250,7 +257,8 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
       return;
     }
     await this.runBusy(async () => {
-      this.take(head);
+      this.entries = this.entries.filter((item) => item !== head);
+      this.starting = head;
       if (head.prepare !== undefined) {
         try {
           await head.prepare();
@@ -259,6 +267,9 @@ export class AgentPromptQueueService extends Disposable implements IAgentPromptQ
           this.warn('queued-mode-failed', `The queued prompt could not enter its mode and started as a normal prompt: ${reasonOf(error)}`);
         }
       }
+      if (this.starting !== head) return;
+      this.starting = undefined;
+      this.emitChange();
       this.submitTaken(head);
     });
   }

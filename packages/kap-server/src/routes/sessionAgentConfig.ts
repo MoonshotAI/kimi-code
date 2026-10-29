@@ -38,8 +38,8 @@ export async function applyPromptLaunchMode(
       return;
     }
     case 'goal':
-      if ((await plan.status()) !== null) plan.exit();
       await agent.accessor.get(IAgentGoalService).createGoal({ objective });
+      if ((await plan.status()) !== null) plan.exit();
       return;
   }
 }
