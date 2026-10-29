@@ -401,6 +401,15 @@ export class ConfigService extends Disposable implements IConfigService {
     if (Object.prototype.hasOwnProperty.call(this.memory, domain)) {
       return this.memory[domain] as T;
     }
+    if (
+      this.registry
+        .listEffectiveOverlays()
+        .every((overlay) => overlay.domains !== undefined && !overlay.domains.includes(domain))
+    ) {
+      const effective: ResolvedConfig = { [domain]: this.validated[domain] };
+      this.applySectionEnvBindings(effective, false, domain);
+      return effective[domain] as T;
+    }
     return this.freshEffective()[domain] as T;
   }
 
@@ -766,9 +775,14 @@ export class ConfigService extends Disposable implements IConfigService {
     return names;
   }
 
-  private applySectionEnvBindings(effective: ResolvedConfig, reportErrors: boolean): void {
+  private applySectionEnvBindings(
+    effective: ResolvedConfig,
+    reportErrors: boolean,
+    domain?: string,
+  ): void {
     const getEnv = (name: string): string | undefined => this.bootstrap.getEnv(name);
     for (const section of this.registry.listSections()) {
+      if (domain !== undefined && section.domain !== domain) continue;
       if (section.env === undefined) continue;
       const base = effective[section.domain];
       const envValues = this.sectionEnvNames(section).map(getEnv);
