@@ -1031,21 +1031,33 @@ export class WorkspaceFsService implements IWorkspaceFsService {
       }
     }
 
-    const cwd = req.root === undefined ? this.workDir : await this.resolveWithin(req.root);
-    if (req.root !== undefined) {
-      const stat = await this.hostFs.stat(cwd).catch(() => undefined);
-      if (stat?.isDirectory !== true) {
-        throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${req.root}`, {
-          details: { cwd, path: req.root },
-        });
-      }
-    }
+    const cwd = await this.resolveGitRoot(req.root);
     return this.git.status(cwd, { pathFilter: filter, scopeToCwd: req.root !== undefined });
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
-    const abs = await this.resolveWithin(req.path);
-    return this.git.diff(this.toRel(abs), abs);
+    const cwd = await this.resolveGitRoot(req.root);
+    const inputPath = req.root !== undefined && !this.path.isAbsolute(req.path) ? this.path.join(cwd, req.path) : req.path;
+    const abs = await this.resolveWithin(inputPath);
+    const rel = this.path.relative(cwd, abs).split(this.path.separator).join('/');
+    if (rel === '..' || rel.startsWith('../') || this.path.isAbsolute(rel)) {
+      throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${req.path}" escapes git root`, {
+        details: { cwd, path: req.path },
+      });
+    }
+    return this.git.diff(cwd, rel, abs);
+  }
+
+  private async resolveGitRoot(root?: string): Promise<string> {
+    if (root === undefined) return this.workDir;
+    const cwd = await this.resolveWithin(root);
+    const stat = await this.hostFs.stat(cwd).catch(() => undefined);
+    if (stat?.isDirectory !== true) {
+      throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, `git root is not a directory: ${root}`, {
+        details: { cwd, path: root },
+      });
+    }
+    return cwd;
   }
 
   private async grepWithRg(

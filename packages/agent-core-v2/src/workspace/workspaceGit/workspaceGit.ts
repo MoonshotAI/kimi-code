@@ -5,7 +5,7 @@ export interface IWorkspaceGitService {
   readonly _serviceBrand: undefined;
 
   status(cwd: string, options?: GitStatusOptions): Promise<FsGitStatusResponse>;
-  diff(relPath: string, absPath: string): Promise<FsDiffResponse>;
+  diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse>;
 }
 
 export const IWorkspaceGitService: ServiceIdentifier<IWorkspaceGitService> =

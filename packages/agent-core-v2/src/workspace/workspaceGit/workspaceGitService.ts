@@ -16,8 +16,8 @@ export class WorkspaceGitService implements IWorkspaceGitService {
     return this.git.current!.status(cwd, options);
   }
 
-  diff(relPath: string, absPath: string): Promise<FsDiffResponse> {
-    return this.git.current!.diff(this.workspace.cwd, relPath, absPath);
+  diff(cwd: string, relPath: string, absPath: string): Promise<FsDiffResponse> {
+    return this.git.current!.diff(cwd, relPath, absPath);
   }
 }
 

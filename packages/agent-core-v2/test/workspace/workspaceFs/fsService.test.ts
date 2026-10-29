@@ -55,7 +55,7 @@ function workspaceGitStub(git: IGitService): IWorkspaceGitService {
   return {
     _serviceBrand: undefined,
     status: (cwd, options) => git.status(cwd, options),
-    diff: (rel, abs) => git.diff(WORK_DIR, rel, abs),
+    diff: (cwd, rel, abs) => git.diff(cwd, rel, abs),
   };
 }
 
@@ -524,6 +524,25 @@ describe('WorkspaceFsService.diff', () => {
     expect(calls[0]?.abs).toBe(resolve(WORK_DIR, 'src/a.ts'));
     expect(result.diff).toContain('+new');
     expect(result.truncated).toBe(false);
+  });
+
+  it('delegates file diff using the selected additional root', async () => {
+    const calls: Array<{ cwd: string; rel: string; abs: string }> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async () => ({ branch: '', ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null }),
+      diff: async (cwd, rel, abs) => {
+        calls.push({ cwd, rel, abs });
+        return { path: rel, diff: '-old\n+new\n', truncated: false };
+      },
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession({ '/extra/src/a.ts': 'content' }, emptyHandler, [], git, [], undefined, {}, ['/extra']);
+
+    const result = await fs.diff({ root: '/extra', path: 'src/a.ts' });
+
+    expect(calls).toEqual([{ cwd: '/extra', rel: 'src/a.ts', abs: '/extra/src/a.ts' }]);
+    expect(result.path).toBe('src/a.ts');
   });
 
   it('rejects paths that escape the workspace', async () => {

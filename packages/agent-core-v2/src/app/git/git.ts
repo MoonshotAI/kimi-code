@@ -49,6 +49,7 @@ export type FsGitStatusResponse = z.infer<typeof fsGitStatusResponseSchema>;
 
 export const fsDiffRequestSchema = z.object({
   path: z.string().min(1),
+  root: z.string().min(1).optional(),
 });
 export type FsDiffRequest = z.infer<typeof fsDiffRequestSchema>;
 

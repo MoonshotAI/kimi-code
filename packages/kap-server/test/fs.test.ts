@@ -577,6 +577,7 @@ describe('server-v2 /api/v1 fs routes', () => {
 
       const primary = await postFs<{ branch: string; entries: Record<string, string>; additions: number }>(id, 'git_status', { root: work });
       const additional = await postFs<{ branch: string; entries: Record<string, string>; additions: number }>(id, 'git_status', { root: extra });
+      const additionalDiff = await postFs<{ path: string; diff: string }>(id, 'diff', { root: extra, path: 'extra.txt' });
       const fileRoot = await postFs<null>(id, 'git_status', { root: 'main.txt' });
       const outside = await postFs<null>(id, 'git_status', { root: tmpdir() });
 
@@ -587,6 +588,9 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(additional.data.branch).toBe('main');
       expect(additional.data.entries).toEqual({ 'extra.txt': 'modified' });
       expect(additional.data.additions).toBe(1);
+      expect(additionalDiff.code).toBe(0);
+      expect(additionalDiff.data.path).toBe('extra.txt');
+      expect(additionalDiff.data.diff).toContain('+two');
       expect(fileRoot.code).toBe(ErrorCode.FS_GIT_UNAVAILABLE);
       expect(outside.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
     } finally {
