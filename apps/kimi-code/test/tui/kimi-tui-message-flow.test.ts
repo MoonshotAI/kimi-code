@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -2111,6 +2111,49 @@ describe('KimiTUI message flow', () => {
     });
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.appState.sessionId).toBe('');
+  });
+
+  it('mentions files from persisted workspace directories before the lazy session', async () => {
+    const root = await makeTempHome();
+    process.env['KIMI_CODE_HOME'] = join(root, 'home');
+    const workDir = join(root, 'primary');
+    const extraDir = join(root, 'extra');
+    await mkdir(join(extraDir, 'src'), { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(extraDir, 'src', 'cold-start-needle.ts'), 'export {};');
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceAdditionalDirs: vi.fn(async () => [extraDir]),
+    });
+    const startupInput: KimiTUIStartupInput = {
+      ...makeStartupInput(),
+      workDir,
+      cliOptions: { ...makeStartupInput().cliOptions, model: 'k2' },
+    };
+    const driver = new KimiTUI(harness as never, startupInput) as unknown as MessageDriver & {
+      initMainTui(): Promise<boolean>;
+    };
+    vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
+    vi.spyOn(driver.state.terminal, 'setProgress').mockImplementation(() => {});
+    driver.persistInputHistory = vi.fn(async () => {});
+    vi.spyOn(driver as unknown as { loadBanner: () => Promise<void> }, 'loadBanner')
+      .mockResolvedValue(undefined);
+
+    await driver.initMainTui();
+    const query = '@cold-start-needle';
+    for (const char of query) driver.state.editor.handleInput(char);
+
+    await vi.waitFor(() => {
+      expect(driver.state.editor.isShowingAutocomplete()).toBe(true);
+    });
+    expect(driver.state.editor.render(120).join('\n')).toContain('cold-start-needle.ts');
+    driver.state.editor.handleInput('\t');
+    const completedPath = `${extraDir.replaceAll('\\', '/')}/src/cold-start-needle.ts`;
+    const expectedText = completedPath.includes(' ')
+      ? `@"${completedPath}" `
+      : `@${completedPath} `;
+    expect(driver.state.editor.getText()).toBe(expectedText);
+    expect(driver.state.appState.sessionId).toBe('');
+    expect(harness.createSession).not.toHaveBeenCalled();
   });
 
   it('lists additional directories without creating a session (v2 engine)', async () => {

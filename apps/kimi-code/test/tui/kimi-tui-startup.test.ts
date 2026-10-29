@@ -1,6 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
 import { fetchOpenPlatformModels } from '@moonshot-ai/kimi-code-oauth';
@@ -232,6 +232,7 @@ function makeHarness(session = makeSession(), overrides: Record<string, unknown>
     track: vi.fn(),
     setTelemetryContext: vi.fn(),
     getExperimentalFeatures: vi.fn(async () => []),
+    getWorkspaceAdditionalDirs: vi.fn(async () => []),
     getWorkspaceTrustInfo: vi.fn(async () => ({ trusted: true, gatedMcpServers: [], gatedAdditionalDirs: [], additionalDirSources: [], warnings: [], instructionSources: { agentsMdPaths: [], skills: [], agentProfiles: [], paths: [] } })),
     refreshProviderModels: vi.fn(async () => ({ changed: [], unchanged: [], failed: [] })),
     auth: {
@@ -286,6 +287,67 @@ function captureInputListeners(driver: StartupDriver) {
 }
 
 describe('KimiTUI startup', () => {
+  it('loads persisted and startup additional directories before the lazy session', async () => {
+    const getWorkspaceAdditionalDirs = vi.fn(async () => ['/tmp/extra', '/tmp/cli-extra']);
+    const harness = makeHarness(makeSession(), { getWorkspaceAdditionalDirs });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ model: 'k2' }),
+      additionalDirs: ['../cli-extra'],
+    });
+
+    await (driver as unknown as { initMainTui(): Promise<boolean> }).initMainTui();
+
+    const expectedDirs = ['/tmp/extra', '../cli-extra'].map((dir) =>
+      resolve('/tmp/proj-a', dir).replaceAll('\\', '/'),
+    );
+    expect(getWorkspaceAdditionalDirs).toHaveBeenCalledWith('/tmp/proj-a');
+    expect(driver.state.appState.additionalDirs).toEqual(expectedDirs);
+    expect(driver.state.appState.sessionId).toBe('');
+    expect(harness.createSession).not.toHaveBeenCalled();
+    const showStatus = vi.spyOn(
+      driver as unknown as { showStatus: (msg: string) => void },
+      'showStatus',
+    );
+    (driver as unknown as { handleUserInput(text: string): void }).handleUserInput('/add-dir list');
+    await vi.waitFor(() => {
+      expect(showStatus).toHaveBeenCalledWith(expect.stringContaining(expectedDirs[0]!));
+    });
+  });
+
+  it('loads workspace additional directories for picker startup', async () => {
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceAdditionalDirs: vi.fn(async () => ['/tmp/extra']),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+
+    await (driver as unknown as { initMainTui(): Promise<boolean> }).initMainTui();
+
+    expect(driver.state.startupState).toBe('picker');
+    expect(driver.state.appState.additionalDirs).toEqual([
+      resolve('/tmp/extra').replaceAll('\\', '/'),
+    ]);
+    expect(harness.createSession).not.toHaveBeenCalled();
+    expect(harness.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('does not silently drop startup directories when workspace directory loading fails', async () => {
+    const harness = makeHarness(makeSession(), {
+      getWorkspaceAdditionalDirs: vi.fn(async () => {
+        throw new Error('invalid workspace directories');
+      }),
+    });
+    const driver = makeDriver(harness, {
+      ...makeStartupInput({ model: 'k2' }),
+      additionalDirs: ['../cli-extra'],
+    });
+
+    await expect(
+      (driver as unknown as { initMainTui(): Promise<boolean> }).initMainTui(),
+    ).rejects.toThrow('invalid workspace directories');
+    expect(driver.state.appState.additionalDirs).toEqual(['../cli-extra']);
+    expect(harness.createSession).not.toHaveBeenCalled();
+  });
+
   it('starts session-less on the v2 engine and carries startup flags to appState', async () => {
     const harness = makeHarness(makeSession(), {
       getConfig: vi.fn(async () => ({

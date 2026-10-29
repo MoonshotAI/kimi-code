@@ -310,6 +310,25 @@ describe('FileMentionProvider', () => {
     );
   });
 
+  it('scans additionalDirs with an independent fallback budget', async () => {
+    for (let i = 0; i < 2000; i++) {
+      writeFileSync(join(workDir, `filler-${i}.ts`), 'export {};');
+    }
+    const extraDir = createExtraDir();
+    mkdirSync(join(extraDir, 'deep'), { recursive: true });
+    writeFileSync(join(extraDir, 'deep', 'target-needle.ts'), 'export {};');
+    const provider = new FileMentionProvider([], workDir, join(workDir, 'missing-fd'), [extraDir]);
+
+    const result = await provider.getSuggestions(['@target-needle'], 0, '@target-needle'.length, {
+      signal: ctrl(),
+    });
+
+    expect(result).not.toBeNull();
+    expect(result!.items.map((item) => item.value)).toContain(
+      `@${join(extraDir, 'deep', 'target-needle.ts').replaceAll('\\', '/')}`,
+    );
+  });
+
   it.runIf(IS_FD_INSTALLED)(
     'uses fd for additionalDirs even when cwd is large enough to exhaust the fallback scanner',
     async () => {

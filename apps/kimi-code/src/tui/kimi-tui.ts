@@ -773,6 +773,21 @@ export class KimiTUI {
   private async initMainTui(): Promise<boolean> {
     const shouldReplayHistory = await this.init();
 
+    if (this.session === undefined) {
+      const workDir = this.state.appState.workDir;
+      const pendingAdditionalDirs = this.state.appState.additionalDirs;
+      const workspaceAdditionalDirs = await this.harness.getWorkspaceAdditionalDirs(workDir);
+      this.setAppState({
+        additionalDirs: [
+          ...new Set(
+            [...workspaceAdditionalDirs, ...pendingAdditionalDirs].map((dir) =>
+              resolve(workDir, dir).replaceAll('\\', '/'),
+            ),
+          ),
+        ],
+      });
+    }
+
     // Mount only after init() succeeds; see mountFooter().
     mountFooter(this.state);
     this.renderWelcome();

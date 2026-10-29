@@ -480,10 +480,9 @@ function collectFsMentionCandidates(
       isAdditionalDir: true,
     })),
   ];
-  let scanned = 0;
-
   for (const { root, isAdditionalDir } of roots) {
     const stack = [''];
+    let scanned = 0;
 
     while (stack.length > 0 && scanned < MAX_FALLBACK_SCAN) {
       if (signal.aborted) break;
