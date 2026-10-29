@@ -34,6 +34,7 @@ import {
   InMemorySessionLockService,
   Error2,
   ErrorCodes,
+  agentContextOf,
   makeAgentScopeContext,
   makeSessionContext,
   resolveKimiHome,
@@ -257,6 +258,7 @@ function makeFakeHarness() {
       {
         list: vi.fn(() => []),
         handleOf: vi.fn(() => agent),
+        onWillClose: vi.fn(() => ({ dispose: vi.fn() })),
       },
     ],
     [
@@ -297,6 +299,7 @@ function makeFakeHarness() {
       {
         create: vi.fn(async () => session),
         resume: vi.fn(async () => session),
+        close: vi.fn(async () => {}),
         get: vi.fn(() => session),
         list: vi.fn(() => [session]),
       } as unknown as ISessionManager,
@@ -362,6 +365,7 @@ function makeFakeHarness() {
           setContext: vi.fn(),
           track: vi.fn(),
           track2: vi.fn(),
+          flush: vi.fn(async () => {}),
           shutdown: vi.fn(async () => {}),
           withContext: vi.fn(() => svc),
         };
@@ -458,7 +462,7 @@ describe('runV2Print', () => {
       await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
       expect(sessions.create).toHaveBeenCalledTimes(1);
-      expect(sessions.close).toHaveBeenCalledTimes(1);
+      expect(sessions.close).toHaveBeenCalledTimes(2);
       expect(sessions.resume).toHaveBeenCalledTimes(1);
       expect(loop.submit).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(4);
@@ -918,15 +922,70 @@ describe('runV2Print', () => {
     expect(reconcileOrder).toBeGreaterThan(initOrder!);
   });
 
-  it('flushes the wire journal before disposing the app', async () => {
+  it('flushes the wire journal and awaits session close before disposing the app', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agentServices } = makeFakeHarness();
+    const { app, agent, agentServices, appServices, session, sessionServices } = makeFakeHarness();
+    const sessions = appServices.get(ISessionManager) as { close: ReturnType<typeof vi.fn> };
+    const lifecycle = sessionServices.get(IAgentLifecycleService) as {
+      list: ReturnType<typeof vi.fn>;
+      handleOf: ReturnType<typeof vi.fn>;
+      onWillClose: ReturnType<typeof vi.fn>;
+    };
+    const { agentServices: workerServices } = makeFakeHarness();
+    workerServices.set(
+      IAgentScopeContext,
+      makeAgentScopeContext({ agentId: 'worker', agentScope: 'agents/worker' }),
+    );
+    const worker = fakeScope('worker', workerServices);
+    lifecycle.list.mockReturnValue([agentContextOf(worker as never)]);
+    lifecycle.handleOf.mockImplementation((agentId) => agentId === 'worker' ? worker : agent);
+    const telemetry = appServices.get(ITelemetryService) as { flush: ReturnType<typeof vi.fn> };
+    const loop = agentServices.get(IAgentLoopService) as {
+      snapshot: ReturnType<typeof vi.fn>;
+      cancel: ReturnType<typeof vi.fn>;
+      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
+    };
+    const workerLoop = workerServices.get(IAgentLoopService) as {
+      tryAcquireQuiescence: ReturnType<typeof vi.fn>;
+    };
+    let finishClose!: () => void;
+    const closing = new Promise<void>((resolve) => {
+      finishClose = resolve;
+    });
+    sessions.close.mockReturnValue(closing);
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
 
-    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+    const run = runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+    try {
+      await vi.waitFor(() => {
+        expect(sessions.close).toHaveBeenCalledWith(session.id);
+      });
+      expect(app.dispose).not.toHaveBeenCalled();
+      expect(telemetry.flush).not.toHaveBeenCalled();
+      const mainRelease = loop.tryAcquireQuiescence.mock.results.at(-1)!.value.dispose;
+      const workerRelease = workerLoop.tryAcquireQuiescence.mock.results.at(-1)!.value.dispose;
+      expect(mainRelease).not.toHaveBeenCalled();
+      expect(workerRelease).not.toHaveBeenCalled();
+      loop.snapshot.mockReturnValue({ queue: [{ meta: { promptId: 'queued-at-exit' } }] });
+      const onWillClose = lifecycle.onWillClose.mock.calls.at(-1)![0];
+      onWillClose(agentContextOf(agent as never));
+      expect(loop.cancel).toHaveBeenCalledWith({ promptId: 'queued-at-exit' });
+      expect(mainRelease).toHaveBeenCalledTimes(1);
+      expect(mainRelease.mock.invocationCallOrder[0]).toBeGreaterThan(
+        loop.cancel.mock.invocationCallOrder.at(-1)!,
+      );
+      expect(workerRelease).not.toHaveBeenCalled();
+      onWillClose(agentContextOf(agent as never));
+      expect(mainRelease).toHaveBeenCalledTimes(1);
+      onWillClose(agentContextOf(worker as never));
+      expect(workerRelease).toHaveBeenCalledTimes(1);
+    } finally {
+      finishClose();
+      await run;
+    }
 
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;
@@ -934,14 +993,18 @@ describe('runV2Print', () => {
     expect(dispatcher.flush).toHaveBeenCalled();
     const flushOrder = dispatcher.flush.mock.invocationCallOrder[0];
     const disposeOrder = app.dispose.mock.invocationCallOrder[0];
-    expect(flushOrder).toBeDefined();
-    expect(disposeOrder).toBeGreaterThan(flushOrder!);
+    const closeOrder = sessions.close.mock.invocationCallOrder[0];
+    expect(sessions.close).toHaveBeenCalledTimes(1);
+    expect(closeOrder).toBeGreaterThan(flushOrder!);
+    expect(disposeOrder).toBeGreaterThan(closeOrder!);
+    expect(telemetry.flush.mock.invocationCallOrder[0]).toBeGreaterThan(closeOrder!);
+    expect(disposeOrder).toBeGreaterThan(telemetry.flush.mock.invocationCallOrder[0]!);
   });
 
-  it('flushes the wire journal when the turn fails', async () => {
+  it('flushes the wire journal and closes the session when the turn fails', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agentServices } = makeFakeHarness();
+    const { app, agentServices, appServices, session } = makeFakeHarness();
 
     const promptService = agentServices.get(IAgentLoopService) as {
       promptHandle: ReturnType<typeof vi.fn>;
@@ -970,12 +1033,14 @@ describe('runV2Print', () => {
     const flushOrder = dispatcher.flush.mock.invocationCallOrder[0];
     const disposeOrder = app.dispose.mock.invocationCallOrder[0];
     expect(disposeOrder).toBeGreaterThan(flushOrder!);
+    const sessions = appServices.get(ISessionManager) as { close: ReturnType<typeof vi.fn> };
+    expect(sessions.close).toHaveBeenCalledExactlyOnceWith(session.id);
   });
 
-  it('does not let a wire flush failure mask the turn outcome', async () => {
+  it.each(['wire flush', 'session close'])('preserves the turn error when %s fails', async (phase) => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agentServices } = makeFakeHarness();
+    const { app, agentServices, appServices, session } = makeFakeHarness();
 
     const promptService = agentServices.get(IAgentLoopService) as {
       promptHandle: ReturnType<typeof vi.fn>;
@@ -992,7 +1057,9 @@ describe('runV2Print', () => {
     const dispatcher = agentServices.get(IEventDispatcher) as {
       flush: ReturnType<typeof vi.fn>;
     };
-    dispatcher.flush.mockRejectedValueOnce(new Error('disk full'));
+    const sessions = appServices.get(ISessionManager) as { close: ReturnType<typeof vi.fn> };
+    if (phase === 'wire flush') dispatcher.flush.mockRejectedValueOnce(new Error('disk full'));
+    else sessions.close.mockRejectedValueOnce(new Error('close failed'));
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
@@ -1001,12 +1068,46 @@ describe('runV2Print', () => {
       'provider.overloaded: llm request failed',
     );
     expect(app.dispose).toHaveBeenCalled();
+    expect(sessions.close).toHaveBeenCalledExactlyOnceWith(session.id);
+  });
+
+  it('bounds session close by the shutdown timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const { app, appServices, session, agentServices } = makeFakeHarness();
+      const sessions = appServices.get(ISessionManager) as { close: ReturnType<typeof vi.fn> };
+      sessions.close.mockReturnValue(new Promise<void>(() => {}));
+      mocks.bootstrap.mockReturnValue({ app });
+      mocks.ensureMainAgent.mockResolvedValue({ agentId: 'main', generation: 1 });
+
+      const run = runV2Print(opts() as never, '1.2.3-test', { stdout: writer(), stderr: writer() });
+      await vi.waitFor(() => {
+        expect(sessions.close).toHaveBeenCalledExactlyOnceWith(session.id);
+      });
+      expect(app.dispose).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(CLI_SHUTDOWN_TIMEOUT_MS);
+      await run;
+      expect(app.dispose).toHaveBeenCalledTimes(1);
+      const loop = agentServices.get(IAgentLoopService) as {
+        tryAcquireQuiescence: ReturnType<typeof vi.fn>;
+      };
+      const release = loop.tryAcquireQuiescence.mock.results.at(-1)!.value.dispose;
+      expect(release.mock.invocationCallOrder[0]).toBeGreaterThan(
+        app.dispose.mock.invocationCallOrder[0]!,
+      );
+      const telemetry = appServices.get(ITelemetryService) as {
+        shutdown: ReturnType<typeof vi.fn>;
+      };
+      expect(telemetry.shutdown).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('cancels and settles the active turn before flushing on a termination signal', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agentServices } = makeFakeHarness();
+    const { app, agentServices, appServices } = makeFakeHarness();
 
     const order: string[] = [];
     const loop = agentServices.get(IAgentLoopService) as {
@@ -1146,11 +1247,15 @@ describe('runV2Print', () => {
     await sigintRun;
 
     expect(order).toEqual(['stop', 'cancel', 'settled', 'flush', 'exit:130']);
-    // The guard taken during quiesce is only released after app.dispose().
+    // Without an agent-close event, fallback release happens after app disposal.
     expect(loop.tryAcquireQuiescence).toHaveBeenCalled();
     const lastGuardRelease = guardDispose.mock.invocationCallOrder.at(-1);
     const appDisposeOrder = app.dispose.mock.invocationCallOrder[0];
+    const sessions = appServices.get(ISessionManager) as { close: ReturnType<typeof vi.fn> };
+    const closeOrder = sessions.close.mock.invocationCallOrder[0];
+    expect(sessions.close).toHaveBeenCalledTimes(1);
     expect(lastGuardRelease).toBeGreaterThan(appDisposeOrder!);
+    expect(appDisposeOrder).toBeGreaterThan(closeOrder!);
     expect(await outcome).toBeInstanceOf(Error);
   });
 

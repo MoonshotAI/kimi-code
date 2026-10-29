@@ -39,6 +39,7 @@ import {
   IWorkspaceInstanceManager,
   PRINT_MAX_TURNS_DEFAULT,
   PRINT_WAIT_CEILING_S_DEFAULT,
+  agentContextOf,
   applyPrintModeConfigDefaults,
   bootstrap,
   createCloudAppender,
@@ -213,7 +214,7 @@ export async function runV2Print(
   let restorePermission = async (): Promise<void> => {};
   let quiesceAgents = async (): Promise<void> => {};
   let releaseQuiescence: (() => void) | undefined;
-  let flushWires = async (): Promise<void> => {};
+  let finalizeSession = async (): Promise<void> => {};
   let removeTerminationCleanup: (() => void) | undefined;
   let cleanupPromise: Promise<void> | undefined;
   let telemetryService: ITelemetryService | undefined;
@@ -229,9 +230,12 @@ export async function runV2Print(
         try {
           // Concurrent so the phases' allowances cannot sum past PROMPT_CLEANUP_TIMEOUT_MS.
           await Promise.all([
-            // The turn's tail records reach the journal only via the wire's
-            // async persist queue; process.exit must not cut off that queue.
-            raceWithTimeout(flushWires(), CLI_SHUTDOWN_TIMEOUT_MS).catch(() => {}),
+            // Explicit close fires SessionEnd; flush again to include its telemetry.
+            // The parallel shutdown still drains telemetry if a hook never settles.
+            raceWithTimeout(
+              finalizeSession().then(() => telemetryService?.flush()),
+              CLI_SHUTDOWN_TIMEOUT_MS,
+            ).catch(() => {}),
             telemetryService !== undefined
               ? raceWithTimeout(telemetryService.shutdown(), CLI_SHUTDOWN_TIMEOUT_MS)
               : Promise.resolve(),
@@ -239,7 +243,7 @@ export async function runV2Print(
           ]);
           app.dispose();
         } finally {
-          // Keep producers frozen until the journals are drained and disposed.
+          // Release guards for agents that did not finish closing before the timeout.
           releaseQuiescence?.();
         }
       }
@@ -307,7 +311,13 @@ export async function runV2Print(
     quiesceAgents = async () => {
       releaseQuiescence = await quiesceSessionAgents(resolved.session, resolved.agent);
     };
-    flushWires = () => flushSessionWires(resolved.session, resolved.agent);
+    finalizeSession = async () => {
+      try {
+        await flushSessionWires(resolved.session, resolved.agent);
+      } finally {
+        await app.accessor.get(ISessionManager).close(resolved.session.id);
+      }
+    };
 
     telemetryService.setContext({ session_id: resolved.session.id, model: resolved.telemetryModel });
     setTelemetryContext({ sessionId: resolved.session.id });
@@ -1102,7 +1112,7 @@ async function quiesceSessionAgents(
   const handles = collectSessionAgentHandles(session, mainAgent);
   const loops = handles.flatMap((handle) => {
     try {
-      return [handle.accessor.get(IAgentLoopService)];
+      return [{ context: agentContextOf(handle), loop: handle.accessor.get(IAgentLoopService) }];
     } catch {
       // A torn-down agent scope has no loop to quiesce.
       return [];
@@ -1122,16 +1132,16 @@ async function quiesceSessionAgents(
   // Repeat until every queue is empty and every loop freezable: a prompt can
   // still surface from the launch window or a cancelled turn's settle chain.
   for (;;) {
-    for (const loop of loops) {
+    for (const { loop } of loops) {
       for (const queueId of loop.snapshot().queue.map((item) => item.meta?.promptId)) {
         if (queueId !== undefined) loop.cancel({ promptId: queueId });
       }
       loop.cancel();
     }
-    await Promise.allSettled(loops.map((loop) => loop.settled()));
-    const guards: { dispose(): void }[] = [];
+    await Promise.allSettled(loops.map(({ loop }) => loop.settled()));
+    const guards = new Map<IAgentLoopService, { dispose(): void }>();
     let frozen = true;
-    for (const loop of loops) {
+    for (const { loop } of loops) {
       let guard: { dispose(): void } | undefined;
       try {
         guard = loop.tryAcquireQuiescence();
@@ -1143,9 +1153,9 @@ async function quiesceSessionAgents(
         frozen = false;
         break;
       }
-      guards.push(guard);
+      guards.set(loop, guard);
     }
-    const busy = loops.some((loop) => {
+    const busy = loops.some(({ loop }) => {
       try {
         const snapshot = loop.snapshot();
         return snapshot.state === 'running' || snapshot.queue.length > 0;
@@ -1154,11 +1164,25 @@ async function quiesceSessionAgents(
       }
     });
     if (frozen && !busy) {
+      // Keep agents frozen through hooks; each close path takes over its own guard.
+      const closing = session.accessor.get(IAgentLifecycleService).onWillClose((context) => {
+        const loop = loops.find((entry) => entry.context === context)?.loop;
+        if (loop === undefined) return;
+        const guard = guards.get(loop);
+        if (guard === undefined) return;
+        for (const item of loop.snapshot().queue) {
+          if (item.meta?.promptId !== undefined) loop.cancel({ promptId: item.meta.promptId });
+        }
+        loop.cancel();
+        guards.delete(loop);
+        guard.dispose();
+      });
       return () => {
-        for (const guard of guards) guard.dispose();
+        closing.dispose();
+        for (const guard of guards.values()) guard.dispose();
       };
     }
-    for (const guard of guards) guard.dispose();
+    for (const guard of guards.values()) guard.dispose();
     await new Promise((resolve) => {
       setTimeout(resolve, PROMPT_QUIESCE_POLL_MS);
     });
