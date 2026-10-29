@@ -505,6 +505,59 @@ describe('WorkspaceFsService.gitStatus', () => {
   });
 });
 
+describe('WorkspaceFsService git batches', () => {
+  it('returns independent results and errors with bounded concurrency', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let statusCalls = 0;
+    const optionsSeen: Array<{ includePullRequest?: boolean } | undefined> = [];
+    const git: IGitService = {
+      _serviceBrand: undefined,
+      status: async (cwd, options) => {
+        statusCalls += 1;
+        optionsSeen.push(options);
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await Promise.resolve();
+        active -= 1;
+        if (cwd === '/b') throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not a repo');
+        return { branch: `branch-${cwd.slice(1)}`, ahead: 0, behind: 0, entries: {}, additions: 0, deletions: 0, pullRequest: null };
+      },
+      pullRequest: async (cwd) => {
+        if (cwd === '/b') throw new Error2(ErrorCodes.FS_GIT_UNAVAILABLE, 'not a repo');
+        return cwd === '/a' ? { number: 7, state: 'open', url: 'https://example.com/pull/7' } : null;
+      },
+      diff: async () => ({ path: '', diff: '', truncated: false }),
+      findWorkTree: async () => null,
+    };
+    const fs = makeSession(
+      { '/a/placeholder': '', '/b/placeholder': '', '/c/placeholder': '' },
+      emptyHandler,
+      [],
+      git,
+      [],
+      undefined,
+      {},
+      ['/a', '/b', '/c'],
+    );
+
+    const status = await fs.gitStatusBatch({ roots: ['/a', '/b', '/c', '/a'], include_pull_request: false });
+
+    expect(statusCalls).toBe(3);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect(optionsSeen.every(options => options?.includePullRequest === false)).toBe(true);
+    expect(Object.keys(status.results)).toEqual(['/a', '/c']);
+    expect(status.results['/a']?.branch).toBe('branch-a');
+    expect(status.results['/c']?.branch).toBe('branch-c');
+    expect(status.errors['/b']).toEqual({ code: 40908, msg: 'not a repo' });
+
+    const pullRequests = await fs.pullRequestBatch({ roots: ['/a', '/b', '/c'] });
+    expect(pullRequests.results['/a']).toEqual({ number: 7, state: 'open', url: 'https://example.com/pull/7' });
+    expect(pullRequests.results['/c']).toBeNull();
+    expect(pullRequests.errors['/b']).toEqual({ code: 40908, msg: 'not a repo' });
+  });
+});
+
 describe('WorkspaceFsService.diff', () => {
   it('delegates to IWorkspaceGitService with confined rel and abs paths', async () => {
     const calls: Array<{ cwd: string; rel: string; abs: string }> = [];

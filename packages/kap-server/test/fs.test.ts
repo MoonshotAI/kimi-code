@@ -578,6 +578,8 @@ describe('server-v2 /api/v1 fs routes', () => {
       const primary = await postFs<{ branch: string; entries: Record<string, string>; additions: number }>(id, 'git_status', { root: work });
       const additional = await postFs<{ branch: string; entries: Record<string, string>; additions: number }>(id, 'git_status', { root: extra, include_pull_request: false });
       const pullRequest = await postFs<null>(id, 'pull_request', { root: extra });
+      const batch = await postFs<{ results: Record<string, { entries: Record<string, string> }> }>(id, 'git_status:batch', { roots: [work, extra], include_pull_request: false });
+      const prBatch = await postFs<{ results: Record<string, null> }>(id, 'pull_request:batch', { roots: [work, extra] });
       const additionalDiff = await postFs<{ path: string; diff: string }>(id, 'diff', { root: extra, path: 'extra.txt' });
       const fileRoot = await postFs<null>(id, 'git_status', { root: 'main.txt' });
       const outside = await postFs<null>(id, 'git_status', { root: tmpdir() });
@@ -591,6 +593,11 @@ describe('server-v2 /api/v1 fs routes', () => {
       expect(additional.data.additions).toBe(1);
       expect(pullRequest.code).toBe(0);
       expect(pullRequest.data).toBeNull();
+      expect(batch.code).toBe(0);
+      expect(batch.data.results[work!]?.entries).toEqual({ 'main.txt': 'modified' });
+      expect(batch.data.results[extra]?.entries).toEqual({ 'extra.txt': 'modified' });
+      expect(prBatch.code).toBe(0);
+      expect(prBatch.data.results).toEqual({ [work!]: null, [extra]: null });
       expect(additionalDiff.code).toBe(0);
       expect(additionalDiff.data.path).toBe('extra.txt');
       expect(additionalDiff.data.diff).toContain('+two');

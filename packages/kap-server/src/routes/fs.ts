@@ -24,7 +24,9 @@ import { RuntimeError } from '@moonshot-ai/agent-core-v2/runtime/runtimeRegistry
 import {
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
+  fsGitStatusBatchRequestSchema,
   fsPullRequestRequestSchema,
+  fsPullRequestBatchRequestSchema,
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
@@ -134,7 +136,9 @@ const FS_ACTIONS = [
   'search',
   'grep',
   'git_status',
+  'git_status:batch',
   'pull_request',
+  'pull_request:batch',
   'diff',
   'open',
   'open-in',
@@ -355,7 +359,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         [ErrorCode.FS_ALREADY_EXISTS]: {},
       },
       description:
-        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, diff, open, open-in, reveal.',
+        'Filesystem action dispatcher. Supported actions: list, read, list_many, stat, stat_many, mkdir, search, grep, git_status, git_status:batch, pull_request, pull_request:batch, diff, open, open-in, reveal.',
       tags: ['fs'],
       operationId: 'fsAction',
     },
@@ -390,7 +394,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
         const runtimeId = runtime_id ?? 'local';
         req.body = request;
         const required: RuntimeCapability[] = ['fs'];
-        if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'diff') {
+        if (fsAction === 'search' || fsAction === 'grep' || fsAction === 'git_status' || fsAction === 'git_status:batch' || fsAction === 'pull_request' || fsAction === 'pull_request:batch' || fsAction === 'diff') {
           required.push('process');
         }
         runtimeFs = session === undefined && fsAction === 'search'
@@ -435,8 +439,14 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           case 'git_status':
             await handleGitStatus(runtimeFs.fs, req, reply);
             return;
+          case 'git_status:batch':
+            await handleGitStatusBatch(runtimeFs.fs, req, reply);
+            return;
           case 'pull_request':
             await handlePullRequest(runtimeFs.fs, req, reply);
+            return;
+          case 'pull_request:batch':
+            await handlePullRequestBatch(runtimeFs.fs, req, reply);
             return;
           case 'diff':
             await handleDiff(runtimeFs.fs, req, reply);
@@ -938,6 +948,26 @@ async function handleGitStatus(fs: IWorkspaceFsService, req: Req, reply: Reply):
     return;
   }
   const data = await fs.gitStatus(parsed.data);
+  reply.send(okEnvelope(data, req.id));
+}
+
+async function handleGitStatusBatch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+  const parsed = fsGitStatusBatchRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const data = await fs.gitStatusBatch(parsed.data);
+  reply.send(okEnvelope(data, req.id));
+}
+
+async function handlePullRequestBatch(fs: IWorkspaceFsService, req: Req, reply: Reply): Promise<void> {
+  const parsed = fsPullRequestBatchRequestSchema.safeParse(req.body ?? {});
+  if (!parsed.success) {
+    reply.send(buildValidationEnvelope(parsed.error.issues, req.id));
+    return;
+  }
+  const data = await fs.pullRequestBatch(parsed.data);
   reply.send(okEnvelope(data, req.id));
 }
 

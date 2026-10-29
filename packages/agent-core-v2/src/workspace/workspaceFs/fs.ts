@@ -8,8 +8,13 @@ import {
   type FsDiffResponse,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsGitStatusBatchRequest,
+  type FsGitStatusBatchResponse,
+  type FsBatchError,
   type FsPullRequest,
   type FsPullRequestRequest,
+  type FsPullRequestBatchRequest,
+  type FsPullRequestBatchResponse,
 } from '#/app/git/git';
 
 export {
@@ -17,10 +22,26 @@ export {
   fsDiffResponseSchema,
   fsGitStatusRequestSchema,
   fsGitStatusResponseSchema,
+  fsGitStatusBatchRequestSchema,
+  fsGitStatusBatchResponseSchema,
   fsPullRequestRequestSchema,
   fsPullRequestSchema,
+  fsPullRequestBatchRequestSchema,
+  fsPullRequestBatchResponseSchema,
 } from '#/app/git/git';
-export type { FsDiffRequest, FsDiffResponse, FsGitStatusRequest, FsGitStatusResponse, FsPullRequest, FsPullRequestRequest };
+export type {
+  FsDiffRequest,
+  FsDiffResponse,
+  FsGitStatusRequest,
+  FsGitStatusResponse,
+  FsGitStatusBatchRequest,
+  FsGitStatusBatchResponse,
+  FsBatchError,
+  FsPullRequest,
+  FsPullRequestRequest,
+  FsPullRequestBatchRequest,
+  FsPullRequestBatchResponse,
+};
 
 export const fsKindSchema = z.enum(['file', 'directory', 'symlink']);
 export type FsKind = z.infer<typeof fsKindSchema>;
@@ -265,7 +286,9 @@ export interface IWorkspaceFsService {
   suggest(req: FsSuggestRequest): Promise<FsSuggestResponse>;
   grep(req: FsGrepRequest): Promise<FsGrepResponse>;
   gitStatus(req: FsGitStatusRequest): Promise<FsGitStatusResponse>;
+  gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse>;
   pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null>;
+  pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse>;
   diff(req: FsDiffRequest): Promise<FsDiffResponse>;
   resolvePath(relPath: string): Promise<FsPathResolved>;
   resolveDownload(relPath: string, allowExternalSymlinks?: boolean): Promise<FsDownloadResolved>;

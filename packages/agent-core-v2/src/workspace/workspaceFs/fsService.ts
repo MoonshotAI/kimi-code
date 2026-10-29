@@ -4,8 +4,13 @@ import {
   type FsEntry,
   type FsGitStatusRequest,
   type FsGitStatusResponse,
+  type FsGitStatusBatchRequest,
+  type FsGitStatusBatchResponse,
+  type FsBatchError,
   type FsPullRequest,
   type FsPullRequestRequest,
+  type FsPullRequestBatchRequest,
+  type FsPullRequestBatchResponse,
   type FsGrepFileHit,
   type FsGrepMatch,
   type FsGrepRequest,
@@ -1041,9 +1046,39 @@ export class WorkspaceFsService implements IWorkspaceFsService {
     });
   }
 
+  gitStatusBatch(req: FsGitStatusBatchRequest): Promise<FsGitStatusBatchResponse> {
+    return this.batchGitValues(req.roots, (root) => this.gitStatus({ root, include_pull_request: req.include_pull_request }));
+  }
+
+  pullRequestBatch(req: FsPullRequestBatchRequest): Promise<FsPullRequestBatchResponse> {
+    return this.batchGitValues(req.roots, (root) => this.pullRequest({ root }));
+  }
+
   async pullRequest(req: FsPullRequestRequest): Promise<FsPullRequest | null> {
     const cwd = await this.resolveGitRoot(req.root);
     return this.git.pullRequest(cwd);
+  }
+
+  private async batchGitValues<T>(
+    inputRoots: readonly string[],
+    read: (root: string) => Promise<T>,
+  ): Promise<{ results: Record<string, T>; errors: Record<string, FsBatchError> }> {
+    const roots = [...new Set(inputRoots)];
+    const results: Record<string, T> = {};
+    const errors: Record<string, FsBatchError> = {};
+    let cursor = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < roots.length) {
+        const root = roots[cursor++]!;
+        try {
+          results[root] = await read(root);
+        } catch (error) {
+          errors[root] = toGitBatchError(error);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(2, roots.length) }, () => worker()));
+    return { results, errors };
   }
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
@@ -1614,6 +1649,13 @@ function mapFsError(err: unknown, inputPath: string): Error {
     });
   }
   return err instanceof Error ? err : new Error(String(err));
+}
+
+function toGitBatchError(err: unknown): FsBatchError {
+  if (err instanceof Error2 && err.code === ErrorCodes.FS_GIT_UNAVAILABLE) {
+    return { code: 40908, msg: err.message };
+  }
+  return toWireError(err);
 }
 
 function toWireError(err: unknown): { code: number; msg: string } {
